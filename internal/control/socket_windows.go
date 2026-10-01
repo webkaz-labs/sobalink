@@ -23,7 +23,11 @@ func listen(dir string) (net.Listener, error) {
 	if e != nil {
 		return nil, e
 	}
-	return winio.ListenPipe(endpoint(dir), &winio.PipeConfig{SecurityDescriptor: s, InputBufferSize: 4096, OutputBufferSize: 65536})
+	ln, e := winio.ListenPipe(endpoint(dir), &winio.PipeConfig{SecurityDescriptor: s, InputBufferSize: 4096, OutputBufferSize: 65536})
+	if e != nil {
+		return nil, e
+	}
+	return &pipeCloseListener{Listener: ln}, nil
 }
 func dial(ctx context.Context, dir string) (net.Conn, error) {
 	c, e := winio.DialPipeContext(ctx, endpoint(dir))

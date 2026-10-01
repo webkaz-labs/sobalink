@@ -44,6 +44,12 @@ This is an IPC wait policy, not a real-time OS scheduling guarantee or a bound o
 upstream tsnet shutdown. Virtual-time tests check exact policy boundaries; real
 named-pipe/Unix-socket tests use readiness barriers and diagnostic watchdogs.
 
+The Windows listener also handles go-winio 0.6.2's lost-close-notification path:
+an unexpected accept error during shutdown triggers exactly one additional close
+notification. Accept errors before shutdown and the upstream's exact closed
+sentinel do not trigger recovery. The original error remains observable and the same total
+shutdown budget still applies; protected pipe permissions are unchanged.
+
 The CLI never treats TCP reachability as a successful RustDesk session. Status has separate `rustdesk: unverified`. There is no claimed direct/DERP status without a measured per-peer observation.
 
 ## RustDesk proof requirements
