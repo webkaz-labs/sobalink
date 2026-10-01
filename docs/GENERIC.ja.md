@@ -1,10 +1,12 @@
 # 相手を選んでつなぐ・必要な間だけ渡す
 
-`0.2.0-alpha.1` 向けの名前付き接続ガイドです。従来の RustDesk 専用設定も引き続き使えます。[RustDesk の手順](VERIFICATION.md) · [English](GENERIC.en.md)
+`0.2.0-alpha.1` 向けの名前付き接続ガイドです。`0.1.0-alpha.2` にはこの機能はありません。従来の RustDesk 専用設定は実験的な別手順として残しています。[旧版の RustDesk 手順](VERIFICATION.md) · [English](GENERIC.en.md)
+
+**[0.2.0-alpha.1 は公開済み](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1)です。** [対象ソースの通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666)と[公開・4対象の mise 実導入](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369)が全成功しました。日英表示・OS 言語フォールバック・JSON の完全一致も確認しています。実機での認証・アプリ受入は未完了です。[詳しい配布記録](DISTRIBUTION.md)
 
 **普段は「相手 → 用途 → 内容を確認」の順で進めます。** JSON の編集、相手の IP や識別子の手入力は不要です。Web・SSH/SFTP・DB・AI API はポートの候補を用意し、違うサービスは `custom` または詳細指定で使います。候補はサービスが存在するという保証ではありません。
 
-管理者権限なしで導入・利用することを目指す設計です。OS の VPN・経路・DNS を変更せず、通常のユーザー権限で動く単体アプリとして、選んだ通信だけをつなぎます。接続先の管理権限やアクセス許可を不要にするものではありません。Linux の非 root オフライン導入は旧 alpha.2 で確認済みですが、Windows 標準ユーザーの実認証、実 tailnet での新機能、実アプリ・スリープ復帰の確認は残っています。
+管理者権限なしで導入・利用することを目指す設計です。OS の VPN・経路・DNS を変更せず、通常のユーザー権限で動く単体アプリとして、選んだ通信だけをつなぎます。接続先の管理権限やアクセス許可を不要にするものではありません。`0.2.0-alpha.1` の Linux 非 root オフライン導入も確認済みですが、Windows 標準ユーザーの実認証、実 tailnet の ACL・新機能、スマートフォンの QR 認証、実アプリ、OS ログイン・スリープ復帰は未確認です。
 
 ## 表示言語
 
@@ -20,7 +22,7 @@ mise exec -- tsnet-bridge --lang auto help
 
 ## 1. 最初の一度だけ
 
-[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)で対象版の公開と署名付き配布物を確認してから実行してください。未公開・ファイル不足の場合は先へ進みません。
+[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)で `v0.2.0-alpha.1` が Pre-release として公開され、`packslip.sigstore.json` と対象の配布物がそろっていることを確認してから実行してください。未公開・ファイル不足の場合は先へ進みません。対象は Linux x64/ARM64、Mac ARM64、Windows x64 です。確認対象の mise は 2026.9.18 です。
 
 ```sh
 mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
@@ -28,6 +30,8 @@ mise exec -- tsnet-bridge version
 mise exec -- tsnet-bridge init
 mise exec -- tsnet-bridge login
 ```
+
+`version` の期待値は `tsnet-bridge 0.2.0-alpha.1` です。完全な版番号の指定を保ち、`latest` に変えません。mise 2026.9.18 の完全指定は経過時間フィルターの対象外ですが、署名・識別・ダイジェストの検証は有効なままにします。OS のセキュリティ警告で止まったら、回避せず中断してください。
 
 - `init` は空の設定を保存するだけ。ネットワークへ接続しません
 - `login` はノードを開始し、正規の Tailscale 認証ページを案内します。既存 Tailscale アプリとは別のノードです。参加先と追加権限を自分で確認してください
@@ -194,4 +198,4 @@ OS の実ログインによる登録・解除・実認証は未検証です。�
 
 ## どこまで確認したか
 
-このソースには、名前付きルール・グループ、送受信の TCP/UDP、相手 ID 固定、期限・タスクリース、状態 JSON、準備待機、任意起動のユーザー登録が含まれます。ローカル／模擬試験と配布検証は、実 tailnet・実アプリ・OS のログイン／スリープ試験を代替しません。現在の証拠と未確認範囲は [検証報告](VERIFICATION.en.md) に分けて記録しています。
+対象ソース `236bd8e217f213a93b667f3d8d0509811d4f5464` には、名前付きルール・グループ、送受信の TCP/UDP、相手 ID 固定、期限・タスクリース、状態 JSON、準備待機、希望制のユーザー登録が含まれます。4環境の実パッケージで、OS 言語フォールバック・日英表示・JSON の完全一致を確認しました。公開版の mise 実導入でも同じオフライン確認に成功しました。ローカル／模擬試験や配布検証は、実 tailnet・実アプリ・OS のログイン／スリープ試験を代替しません。現在の証拠と未確認範囲は [日本語の検証概要](VERIFICATION.md#current-verification)と[詳しい検証報告](VERIFICATION.en.md)で確認できます。

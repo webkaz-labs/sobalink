@@ -1,83 +1,74 @@
 # tsnet-bridge
 
-[English](README.en.md) · **[名前付き接続の使い方](docs/GENERIC.ja.md)** · [RustDesk の手順](docs/VERIFICATION.md)
+[English](README.en.md) · **[名前付き接続の使い方](docs/GENERIC.ja.md)** · [実験的な RustDesk 手順](docs/VERIFICATION.md)
 
-tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。macOS、Windows、Linux で動作する Go の単一バイナリを目指します。OS 全体の VPN、経路、DNS は変更しません。**管理者権限なしで導入・利用することを目指し、選んだアプリの通信だけをつなぐ設計です。** Windows 標準ユーザーの実認証は未確認で、接続先の権限やアクセス許可が不要になるわけではありません。
+**相手を選ぶ → 用途を選ぶ → 内容を確認してつなぐ。** tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。`0.2.0-alpha.1` では名前付きの TCP/UDP 接続と、相手・サービス・期限を限定した共有を使います。日本語・英語は OS／実行環境のロケールから自動選択します。
 
-> **実験段階です。** ローカル／模擬トランスポートの試験と実際の tailnet・RustDesk 遠隔操作は別です。実機での双方向の画面表示・入力、および Windows 標準ユーザーでの初回認証は未検証です。配布は検証用プレリリースです。安定版・実機確認済みの製品ではありません。詳細は [検証状況](docs/VERIFICATION.md) を参照してください。
+OS 全体の VPN・経路・DNS は変更しません。管理者権限なしでの導入・利用を目指す設計ですが、接続先の権限やアクセス許可は必要です。Windows 標準ユーザーでの実認証は未確認です。
 
-## 活用案と次期計画
+> **実験段階の検証用プレリリースです。** 対象ソースの4環境ネイティブ試験とパッケージ確認は成功しました。実 tailnet への参加、スマートフォン QR 認証、実際の ACL・アプリ、OS ログイン／スリープ、RustDesk の双方向画面・入力は未検証です。`ready` は通信の準備を表し、アプリの成功を保証しません。[確認済みと未確認の範囲](docs/VERIFICATION.en.md)
 
-**[日本語の活用案と必要な拡張](docs/USE_CASES.ja.md)**に、Web・SSH・データベースなどへの応用をまとめています。現在そのまま使える機能と、設定の一般化や追加実装が必要なものを分けています。各アプリとの実接続は未確認です。
+## 0.2.0-alpha.1 の確認状況
 
-**[次期機能計画（日本語）](docs/ROADMAP.ja.md)**では、逆向き接続・名前付き複数転送、設定と診断、期限付き共有、AI/MCP・モバイル利用を整理しています。名前付き TCP/UDP・限定共有・期限・グループ・タスク管理は次期 `0.2.0-alpha.1` のソースに実装しました。実 tailnet・実アプリ・OS スリープ／ログイン試験は残っています。[基本操作](docs/GENERIC.ja.md)
+- [検証用プレリリースを公開済み](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1)。2026-10-01 19:11:08 UTC、19配布物
+- [対象ソース `236bd8e` の通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666)は全5ジョブ成功。[公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369)も全15ジョブ成功
+- 公開配布物を認証なしで取得し、署名・出所・内容を検証。Mac ARM64・Windows x64・Linux x64/ARM64 で mise の実導入と日英表示・OS 言語フォールバック・JSON の完全一致を確認
+- 署名検証やリリース経過時間の設定は変更していません。追加の Linux 非 root オフライン導入も成功
 
-## できること
+公開・実導入の詳しい証拠と、未実施の実機試験は[配布記録](docs/DISTRIBUTION.md)・[検証報告](docs/VERIFICATION.en.md)で分けて示しています。
 
-- 日本語・英語のヘルプ、案内、状態とエラー。基本はロケール自動判定、必要なときだけ `--lang ja` / `en` で切替
+## 最短の導入と接続
 
-- 相手と用途から作る名前付き TCP/UDP 接続、グループ単位の開始・停止
-- 選んだ相手だけへの TCP/UDP 限定共有。期限・停止で既存通信も閉じる
-- ルール別 JSON、準備待機、タスク所有者とリースによる後片付け
-- 希望制のユーザー単位自動起動。起動するのはルール未開始のノードだけ
+Linux x64/ARM64、macOS Apple Silicon (ARM64)、Windows x64 が対象です。Intel Mac・Windows ARM64 は今回の配布対象に含みません。CI の OS は最小対応 OS や Windows 標準ユーザー動作の保証ではありません。
 
-- 独立した tsnet ノードによる対話認証。ブラウザー・スマートフォン用 QR・非公開リンクを選択し、ログイン状態を保存
-- 127.0.0.1 の固定 TCP／UDP 転送。UDP は送信元ごとの対応を維持し、後から届く通知も返す
-- 認証必須の SOCKS5 TCP CONNECT。BIND／UDP ASSOCIATE は受け付けない
-- 設定した tailnet ピアとポートへの許可リスト。OS DNS／通常経路への転送フォールバックなし
-- バックグラウンド起動、状態表示、診断、停止、転送再作成、ログアウト
-- 同時起動の排他制御、ユーザー限定のローカル IPC と保存領域
-
-RustDesk の設定ファイルを直接書き換えません。設定値と復元時の注意を表示します。GUI、サブネットルーター、Exit Node、汎用インターネットプロキシは含みません。
-
-## 配布対象
-
-| OS | CPU | 配布形式 |
-| --- | --- | --- |
-| Linux | x64 / ARM64 | tar.gz |
-| macOS | Apple Silicon (ARM64) | tar.gz |
-| Windows | x64 | zip / exe |
-
-Intel Mac は今回のプレリリース対象に含みません。CI の OS と、実際に保証できる最小 OS・権限条件は別です。現段階では最小対応 OS を保証しません。管理者権限やシステムサービス登録は要求しない設計ですが、Windows の標準ユーザーでの認証試験は残っています。
-
-## mise で検証用プレリリースを導入する
-
-新しい名前付き機能は [0.2.0-alpha.1 の手順](docs/GENERIC.ja.md)を参照してください。以下は公開・導入確認済みの旧 RustDesk 向け alpha.2 です。
-
-[mise](https://mise.jdx.dev/getting-started.html) 2026.9.18 を確認対象にしています。Windows の PowerShell、Mac、Linux で同じコマンドです。Go のインストールや手動展開は不要です。
+[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)で `v0.2.0-alpha.1` が **Pre-release** として公開され、`packslip.sigstore.json` と対象の配布物がそろっていることを確認してから実行してください。未公開・ファイル不足なら先へ進みません。確認対象の [mise](https://mise.jdx.dev/getting-started.html) は **2026.9.18**。PowerShell、Mac、Linux で同じコマンドを使い、Go や手動展開は不要です。
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
 mise exec -- tsnet-bridge version
-```
-
-[Release v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) は公開済みです。[4対象の実mise導入と署名検証](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が成功しています。`prerelease=true` と完全な版番号を指定し、`latest` は使いません。完全な版指定は mise の24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままで、待機時間の全体設定を変更する必要はありません。
-
-**[日本語の詳しい手順](docs/VERIFICATION.md)**には、Windows / Mac / Linux 別のインストール、認証、RustDesk の設定、成功判定と終了まで記載しています。Packslip の署名は配布元と内容の確認であり、OS コード署名・公証や実際の遠隔操作成功の保証ではありません。
-
-### ソースからビルドする場合
-
-開発には mise と Go 1.27.1 を使います。リポジトリを取得してから:
-
-```sh
-mise install
-mise exec -- go test -race ./...
-mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
-```
-
-Windows では出力名を `bin/tsnet-bridge.exe` にしてください。ソースビルドしたものを試す場合は、以下の `mise exec -- tsnet-bridge` をその実行ファイルのパスへ置き換えます。[配布と検証の説明](docs/DISTRIBUTION.md)
-
-## 汎用の接続を始める
-
-```sh
 mise exec -- tsnet-bridge init
 mise exec -- tsnet-bridge login
 mise exec -- tsnet-bridge connect
 ```
 
-`0.2.0-alpha.1` の名前付き接続です。相手と用途を選び、内容を確認します。JSON 編集や RustDesk 公開鍵は不要です。相手への共有は `share`、詳しい使い方は[こちら](docs/GENERIC.ja.md)。旧プロフィールを上書きせず、移行の確認または別の保存場所を選んでください。
+`version` で `tsnet-bridge 0.2.0-alpha.1` を確認します。`init` は空の設定の保存だけで、接続や共有を始めません。`login` は既存の Tailscale アプリと別のノードを開始し、正規の認証ページを案内します。参加先と権限を確認してください。`connect` では現在の相手と用途を選び、実際の接続先を確認します。JSON 編集や RustDesk 公開鍵は不要です。
 
-## RustDesk 専用の初回設定
+既存プロフィールは上書きしません。[移行・別プロフィールの手順](docs/GENERIC.ja.md#既存設定と持ち運び)を確認し、別の保存場所を使う場合は全コマンドの前に `--state-dir PATH` を指定します。
+
+`prerelease=true` と完全な版番号を指定し、`latest` は使いません。mise 2026.9.18 の完全な版指定は24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままにします。Packslip の署名は OS コード署名・公証や実アプリの動作保証とは別です。OS のセキュリティ警告で止まったら、回避せず中断してください。
+
+## 普段の使い方
+
+```sh
+mise exec -- tsnet-bridge connect            # 相手のサービスを使う
+mise exec -- tsnet-bridge share              # 相手・サービス・期限を限定して渡す
+mise exec -- tsnet-bridge settings           # アプリへ入力する接続先を表示
+mise exec -- tsnet-bridge status
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge stop               # ノードを停止し、ログイン情報を保持
+```
+
+保存した接続は `connect web-demo`、個別停止は `stop web-demo` のように名前で操作します。名前は自分で保存したものへ置き換えます。共有は明示した loopback サービスだけを、選択した相手に必要な間だけ提供します。アプリ側の認証も必要です。期限・停止は既存通信も閉じますが、渡したデータの回収や遠隔ジョブの取消はできません。
+
+- Web・SSH/SFTP・DB・AI API の用途候補と、複数の名前付き TCP/UDP 接続
+- 相手 ID 固定、共有の期限、グループ単位の開始・停止と部分失敗の巻き戻し
+- ルール別 JSON、準備待機、タスク所有者・リースによる後片付け
+- 入力間違いの再試行、編集・戻る・取消。同じ開始操作で意図せず範囲や期限を変えない
+- ブラウザー・端末内生成 QR・非公開リンクによる認証案内
+- 希望制のユーザー単位自動起動。起動するのはルール未開始のノードだけ
+
+通常は言語指定不要です。必要なときだけコマンドの前に `--lang ja` / `en` / `auto` を指定します。コマンド名・入力値・機械向け JSON は翻訳しません。[日英表示・認証・接続・共有の詳しい手順](docs/GENERIC.ja.md)
+
+## 旧版と RustDesk の実験的手順
+
+`0.1.0-alpha.2` は従来の RustDesk 固定転送／SOCKS 向けの履歴です。新しい名前付き接続は含まれません。[公開版 alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) の[署名・公開取得・4対象の mise 実導入](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)は2026-10-01に確認しました。この旧版の結果を新しい版の配布証拠にはしません。
+
+`0.2.0-alpha.1` のソースでも従来の設定を保持していますが、RustDesk の実画面・入力は未検証です。[旧 alpha.2 に固定した受入手順](docs/VERIFICATION.md)は比較用に残しています。RustDesk の設定を自動変更・復元しません。
+
+<details>
+<summary>従来の固定転送・SOCKS と制限を読む（実験的）</summary>
+
+### RustDesk 専用の初回設定
 
 ```sh
 mise exec -- tsnet-bridge setup
@@ -91,7 +82,7 @@ mise exec -- tsnet-bridge login
 
 全てのコマンドで、別の保存場所を指定する場合はコマンドの前に `--state-dir PATH` を置きます。既存プロフィールの上書きは拒否します。変更時は停止してバックアップを取り、profile.json を編集します。
 
-## RustDesk の固定転送プロフィール
+### RustDesk の固定転送プロフィール
 
 **検証用の候補です。両方向の遠隔操作が確認済みという意味ではありません。**
 
@@ -113,13 +104,13 @@ relay アドレスは相手にも伝わるため、片側だけの導入・異�
 
 別の hbbr は `setup --relay-host <tailnet-host>` で指定できます。固定ローカルポートは自動変更しません。競合時は原因を表示し停止します。
 
-### SOCKS モードの制限
+#### SOCKS モードの制限
 
 `setup --mode socks` は認証付き TCP CONNECT プロキシです。資格情報は `settings --show-secrets` を私的なターミナルで実行した時だけ表示します。
 
 RustDesk 1.4.9 はプロキシ利用時に TCP 登録へ切り替わりますが、OSS server 1.1.16 は TCP RegisterPk に NOT_SUPPORT を返します。**SOCKS だけで接続される側の登録を満たすことはできません。** 操作側のみの用途も実測が必要です。アプリ全体のプロキシなので、更新確認・API など許可リスト外の通信は失敗し得ます。[技術的な根拠](docs/ARCHITECTURE.md)
 
-## 日常操作
+### 従来プロフィールの日常操作
 
 ```sh
 mise exec -- tsnet-bridge                 # 起動済みなら状態を表示
@@ -137,14 +128,25 @@ mise exec -- tsnet-bridge run             # 前面実行。Ctrl+C で停止
 
 停止や削除で RustDesk の設定は戻りません。控えた設定へ手動で戻してください。ログイン待機を Ctrl+C で中断した場合もバックグラウンドプロセスは残ります。必要なら `stop` してください。
 
+</details>
+
 ## 安全性と開発
 
-保存状態は Unix でディレクトリ 0700／ファイル 0600、Windows でユーザー限定 DACL を使用します。state が暗号化済みという意味ではありません。同一ユーザーのプロセスから完全に保護するものでもありません。固定転送に SOCKS の認証は付かないため、最小限の tailnet ポリシーと RustDesk 側の認証を併用してください。
+通信は許可した現在の tailnet ピアとポートに限定し、OS DNS・通常経路へフォールバックしません。共有先は明示した数値 loopback のみです。GUI、サブネットルーター、Exit Node、汎用インターネットプロキシは含みません。
 
-[セキュリティ](SECURITY.md) · [アーキテクチャ](docs/ARCHITECTURE.md) · [検証状況](docs/VERIFICATION.md) · [配布](docs/DISTRIBUTION.md)
+保存状態は Unix でディレクトリ 0700／ファイル 0600、Windows でユーザー限定 DACL を使用します。暗号化や同一ユーザーのプロセス間の完全な隔離ではありません。固定転送に SOCKS 認証は付かないため、最小限の tailnet ポリシーとアプリ側の認証を併用してください。
+
+開発には mise と Go 1.27.1 を使います。ソースを取得してから:
+
+```sh
+mise install
+mise exec -- go test -race ./...
+mise exec -- go vet ./...
+mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
+```
+
+Windows の出力名は `bin/tsnet-bridge.exe` にします。ソースビルドは署名付き配布物とは別です。試すときは例の `mise exec -- tsnet-bridge` を、その実行ファイルのパスへ置き換えます。
+
+[開発・使いやすさの方針](docs/DEVELOPMENT_PRINCIPLES.ja.md) · [セキュリティ](SECURITY.md) · [設計](docs/ARCHITECTURE.md) · [検証](docs/VERIFICATION.en.md) · [配布](docs/DISTRIBUTION.md) · [活用案](docs/USE_CASES.ja.md) · [残る受入条件と計画](docs/ROADMAP.ja.md)
 
 MIT ライセンス。依存ソフトウェアのライセンスは各配布物の notices に同梱します。
-
-## 開発方針
-
-[日英対応・使いやすさ・文書の基本方針](docs/DEVELOPMENT_PRINCIPLES.ja.md)

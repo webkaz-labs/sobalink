@@ -1,10 +1,12 @@
 # Named connections and time-limited sharing
 
-For the `0.2.0-alpha.1` source. [日本語](GENERIC.ja.md) · [Verification](VERIFICATION.en.md)
+For `0.2.0-alpha.1`; these features are absent from `0.1.0-alpha.2`. Legacy RustDesk profiles remain an experimental separate workflow. [日本語](GENERIC.ja.md) · [Verification](VERIFICATION.en.md)
+
+**[0.2.0-alpha.1 is published](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1).** [Exact-source CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666) and the [complete release/native mise-install workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369) passed, including Japanese/English output, OS-locale fallback and exact JSON checks on all four targets. Real enrollment and application acceptance remain incomplete. [Detailed distribution record](DISTRIBUTION.md)
 
 The common path is **peer → purpose → review**. Current peers are selected by number; web, SSH/SFTP, database and AI API presets suggest ports. Use `custom`, `--port`, `--listen-port`, `--network udp` or `--loopback ::1` when needed. No JSON editing or peer-ID typing is required for normal setup.
 
-The design targets ordinary-user installation and operation without OS VPN, route or DNS changes. This does not remove authorization requirements for the tailnet or destination service. Non-root Linux offline installation was verified for alpha.2; real enrollment, Windows standard-user authentication, application compatibility and OS sleep/login behavior remain unverified.
+The design targets ordinary-user installation and operation without OS VPN, route or DNS changes. This does not remove authorization requirements for the tailnet or destination service. An additional isolated non-root Linux offline installation passed for `0.2.0-alpha.1`. Real enrollment, Windows standard-user authentication, actual tailnet ACLs and applications, phone QR authentication and OS sleep/login behavior remain unverified for the new version.
 
 ## Display language
 
@@ -20,15 +22,16 @@ mise exec -- tsnet-bridge --lang auto help
 
 ## First use
 
-Confirm the target prerelease and signed assets exist on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases) before installing:
+Confirm `v0.2.0-alpha.1` is marked Pre-release on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases), with `packslip.sigstore.json` and the target archive present. Stop if publication or assets are missing. Targets are Linux x64/ARM64, macOS ARM64 and Windows x64; the verification version of mise is 2026.9.18:
 
 ```sh
 mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
 mise exec -- tsnet-bridge version
 mise exec -- tsnet-bridge init
 mise exec -- tsnet-bridge login
-mise exec -- tsnet-bridge connect
 ```
+
+Require `tsnet-bridge 0.2.0-alpha.1` from `version`. Keep the complete version pin, never `latest`. Exact pins are exempt from mise 2026.9.18's release-age discovery filter; signature, identity and digest verification remain active. Stop at OS security warnings instead of bypassing them.
 
 `init` writes an idle profile without networking. `login` starts a separate embedded node and presents the official private sign-in URL. Review the account, tailnet and node authorization yourself; never share login URLs, secrets or credentials. Existing profiles are never silently overwritten. Use `login --no-browser` for manual browser opening.
 
@@ -44,6 +47,12 @@ QR generation runs entirely in memory using the same pinned Go encoder as Tailsc
 
 Waiting, connected and device-approval-pending states are distinct. The default five-minute local wait can be changed with `--timeout 10m`; it is not the server link's expiration. Rerun `login` to request the current sign-in link if it expired. Upstream may reuse its cached link; rerunning does not guarantee rotation or revocation. Cancellation stops the wait, not the node or an already displayed authorization link; use `stop` to close the node.
 
+## Use a peer's service
+
+```sh
+mise exec -- tsnet-bridge connect
+```
+
 Choose a peer and purpose, accept or change the suggested service port and rule name, and review the connection. Typing mistakes in peer, purpose, service/local ports, name or lifetime can be corrected in place. At review, `e` edits ports/lifetime, `p` or `back` returns to peers, `u` changes purpose and `r` changes the name. Every edit returns to the full review; `q`/`cancel` cancels at any prompt without saving. Same-port forwarding is preferred. Privileged or occupied local ports produce an alternative that requires confirmation; no silent renumbering or elevation occurs. Forward local ports are 1024..65535, destination service ports 1..65535. Existing RustDesk fixed-port rules remain separate.
 
 ```sh
@@ -52,7 +61,19 @@ mise exec -- tsnet-bridge settings
 mise exec -- tsnet-bridge stop web-demo
 ```
 
-Replace `web-demo` with your saved name. Copy the displayed service endpoint into the application, not its SOCKS field. TLS names/SNI, origin/Cookie/CORS and SSH host-key checks remain application concerns. Never disable verification. Saving with `--save-only` does not connect. Replacing a saved rule requires stopping it and explicitly selecting `--replace`.
+Replace `web-demo` with your saved name. Copy the displayed service endpoint into the application, not its SOCKS field. TLS names/SNI, origin/Cookie/CORS and SSH host-key checks remain application concerns. Never disable verification. Saving with `--save-only` does not connect. Replacing a saved rule requires stopping it and explicitly selecting `--replace`. A different node with the same display name is never silently substituted for a saved peer; select the current peer again.
+
+<details>
+<summary>Specify advanced connection details</summary>
+
+```sh
+# Replace demo with a peer currently shown in your list
+mise exec -- tsnet-bridge connect --peer demo --purpose web --port 8080 --name web-demo
+mise exec -- tsnet-bridge connect --peer demo --purpose ssh --listen-port 2222 --name ssh-demo
+mise exec -- tsnet-bridge connect --peer demo --purpose custom --network udp --port 9000 --name udp-demo
+```
+
+</details>
 
 ## Share a local service
 
@@ -65,7 +86,7 @@ mise exec -- tsnet-bridge stop api-demo
 mise exec -- tsnet-bridge stop-shares
 ```
 
-Select explicitly allowed current peers, service and lifetime. Only an exact numeric `127.0.0.1` or `::1` target is allowed. TCP and UDP are supported. The receiving app connects to the provider bridge node's displayed tailnet address, not its own localhost. Tailnet ACLs and per-rule pinned-peer authorization both apply.
+Select explicitly allowed current peers, service and lifetime. Only an exact numeric `127.0.0.1` or `::1` target is allowed. TCP and UDP are supported; use `--network udp` for UDP or `--loopback ::1` for an IPv6 local service. LAN/public IPs, arbitrary hostnames and blanket sharing are rejected. The receiving app connects to the provider bridge node's displayed tailnet address, not its own localhost. Tailnet ACLs and per-rule pinned-peer authorization both apply.
 
 A concurrent change to reviewed rules/groups rejects startup and requires review again. Changing an active TTL/lease requires stop and a new reviewed start. A verified identical active scope/owner/lifetime only displays current status, without another confirmation or mutation, keeping the original expiry.
 
@@ -83,9 +104,23 @@ mise exec -- tsnet-bridge wait-ready --timeout 30s web-demo
 mise exec -- tsnet-bridge task --rules web-demo --timeout 30s -- curl http://127.0.0.1:8080/
 ```
 
-Group startup rolls back only newly started members if a member fails. Shares within groups require `--ttl` and review. Rule status includes direction, endpoints, selected identities, owner, reason code, checked time and expiry. `ready` means listener readiness, not application validation. `partial` identifies mixed results. `failed`, `stopped` and `expired` require explicit restart. Recovering traffic uses the same identity and grant, with no OS-network fallback or replayed application requests.
+Group startup rolls back only newly started members if a member fails. Shares within groups require `--ttl` and review. Rule status includes direction, endpoints, selected identities, owner, reason code, checked time and expiry.
+
+| State | Next action |
+| --- | --- |
+| `idle` | The node is running; select the needed connection |
+| `needs-login` / `approval-required` | Complete official sign-in or node approval |
+| `ready` | The selected listener is ready; verify the actual application separately |
+| `partial` | Inspect usable and unavailable rules individually |
+| `recovering` | Rechecking the same identity, authorization and lifetime; traffic may close |
+| `failed` | Review the reason, peer and ports, then start deliberately |
+| `stopped` / `expired` | Finished; recovery, reconnect and process restart do not resume it |
+
+Recovery never falls back to the OS network or replays application requests.
 
 `task` generates an owner, starts only its rules, waits, executes the command directly without a shell, and cleans up on exit/error/cancellation. A 30-second lease renewed every 10 seconds expires after caller death. It cannot reuse or stop another owner's active rule. Ownership is a cleanup boundary, not isolation from another process of the same OS user. Remote job scheduling, authorization, cancellation and results remain the application's responsibility. TCP forwarding does not turn stdio MCP into HTTP MCP.
+
+Machine JSON excludes login URLs and SOCKS credentials but includes node names and endpoints that may be identifying. Review and redact before sharing. Use the same global `--state-dir PATH` before each command when selecting a separate profile.
 
 `stop` without names stops the entire node while retaining login. `reconnect` recreates only currently requested listeners. Stopped/expired rules never restart after recovery or process restart.
 
@@ -97,3 +132,7 @@ Group startup rolls back only newly started members if a member fails. Shares wi
 - `autostart enable` previews. `autostart enable --apply` registers an idle v2 node for a future user login; `autostart disable --apply` removes registration. Linux uses user systemd, macOS LaunchAgents, Windows a least-privilege interactive logon task. No immediate node start, forwarding or sharing is included. Registration and current process stop are separate. OS login behavior is not yet real-device verified; review the executable path after updating/moving binaries
 
 No GUI, subnet/exit routing, Funnel, arbitrary destination relay, automatic certificate issuance, OS-wide sandboxing, iOS bridge binary or application authentication proxy is included. See the [roadmap](ROADMAP.ja.md) for remaining acceptance work.
+
+## Evidence and remaining acceptance
+
+Source `236bd8e217f213a93b667f3d8d0509811d4f5464` passed native race, real IPC and package checks on all four targets, including actual OS-locale fallback, Japanese/English output and exact machine-JSON equality in packaged binaries. Actual public-release mise installation passed the same offline checks on all four targets, recorded separately in [distribution](DISTRIBUTION.md). Local/mocked tests and distribution checks do not replace real tailnet enrollment, ACL/application acceptance, phone QR, OS login/sleep or RustDesk screen/input tests. See the [verification report](VERIFICATION.en.md).

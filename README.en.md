@@ -1,73 +1,74 @@
 # tsnet-bridge
 
-[日本語](README.md)
+[日本語](README.md) · **[Named connection guide](docs/GENERIC.en.md)** · [Experimental RustDesk acceptance](docs/VERIFICATION.en.md#legacy-rustdesk-acceptance-procedure)
 
-An application-scoped tailnet bridge built with Go and embedded tsnet for macOS, Windows, and Linux. It does not change system-wide VPN, routing, or DNS settings. It targets ordinary-user installation and operation; Windows standard-user enrollment remains unverified and destination permissions are still required.
+**Choose a peer → choose a purpose → review and connect.** An application-scoped tailnet bridge built with Go and embedded tsnet. `0.2.0-alpha.1` provides named TCP/UDP connections and sharing limited to explicit peers, services and lifetimes. Japanese and English are selected automatically from the OS/runtime locale.
 
-> **Experimental.** Local/fake transport tests are distinct from real tailnet enrollment and RustDesk screen/control tests. Bidirectional remote control and initial Windows standard-user enrollment are unverified. Distribution is an acceptance-testing prerelease, not a supported stable product. See [verification status](docs/VERIFICATION.en.md).
+It does not change system-wide VPN, routing or DNS settings. It targets ordinary-user installation and operation; destination permissions still apply and real Windows standard-user enrollment remains unverified.
 
-## Features
+> **Experimental acceptance-testing prerelease.** Exact-source native tests and package checks passed on four targets. Real enrollment, phone QR authentication, actual tailnet ACLs and applications, OS login/sleep behavior, and RustDesk bidirectional screen/input remain unverified. `ready` describes connection readiness, not application success. [Evidence and remaining limits](docs/VERIFICATION.en.md)
 
-- First-class Japanese/English help, prompts, state and errors; automatic locale selection with optional `--lang ja` / `en` override
+## 0.2.0-alpha.1 verification status
 
-- Named TCP/UDP connections, purpose presets and grouped start/stop
-- Restricted inbound TCP/UDP to explicit loopback services, with peer identity pins and TTL
-- Per-rule JSON, readiness waits and owned task cleanup with expiring leases
-- Optional user-level autostart of an idle v2 node, never active forwards or shares
+- [Published testing prerelease](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1): 2026-10-01 at 19:11:08 UTC, with 19 assets
+- [Exact-source CI for `236bd8e`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666): all five jobs passed. [Release workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369): all 15 jobs passed
+- All public assets were downloaded without authentication and signature/provenance/content-verified. Actual mise installation, Japanese/English output, OS-locale fallback and exact JSON checks passed on macOS ARM64, Windows x64 and Linux x64/ARM64
+- No signature bypass or release-age override. An additional isolated non-root Linux offline install also passed
 
-- Interactive authentication as a separate persistent tsnet node: browser, locally generated phone QR, or private manual link
-- Loopback-only fixed TCP/UDP forwarding, with persistent per-source UDP mappings and asynchronous replies
-- Authenticated SOCKS5 TCP CONNECT; BIND and UDP ASSOCIATE rejected
-- Explicit peer/port allowlist and netstack-only transport, with no OS DNS/routing fallback
-- Background startup, status, diagnostics, stop, forwarding recreation, and logout
-- OS-backed single-instance lock, user-private local IPC, and protected state directories
+[Distribution](docs/DISTRIBUTION.md) and [verification](docs/VERIFICATION.en.md) separate these results from unperformed real-device acceptance.
 
-No GUI, system-wide service, subnet router, exit node, or generic internet proxy. RustDesk settings are shown for manual entry, never rewritten behind the application's back.
+## Install and connect
 
-## Future plans
+Targets: Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS and Windows ARM64 are not included. CI runner versions do not establish minimum OS support or Windows standard-user operation.
 
-The [Japanese roadmap](docs/ROADMAP.ja.md) and expanded [use cases](docs/USE_CASES.ja.md) cover reverse connections, named multiple forwards, diagnostics, time-limited sharing, and AI/MCP/mobile scenarios. Named forwarding, restricted sharing, TTL, groups and task lifecycle are implemented in the `0.2.0-alpha.1` source. They are absent from alpha.2. Real-tailnet/application, OS sleep and login acceptance remain open. See the [new connection guide](docs/GENERIC.en.md).
-
-## Targets and installation
-
-For new features, follow the [0.2.0-alpha.1 guide](docs/GENERIC.en.md). The installation evidence below applies to the published legacy alpha.2.
-
-Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS is not included in this prerelease. CI runners do not establish minimum OS support or Windows standard-user enrollment.
-
-With [mise](https://mise.jdx.dev/getting-started.html) (pinned verification version: 2026.9.18), use the same command in PowerShell, macOS, and Linux. No Go compiler or manual extraction is needed:
+Before installing, confirm `v0.2.0-alpha.1` is marked **Pre-release** on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases), with `packslip.sigstore.json` and the target archive present. Stop if publication or assets are missing. The verification version of [mise](https://mise.jdx.dev/getting-started.html) is **2026.9.18**. These commands work in PowerShell, macOS and Linux; no Go compiler or manual extraction is needed:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
 mise exec -- tsnet-bridge version
-```
-
-[v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) is published. [Actual mise installation and release verification passed on all four targets](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407). Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. mise 2026.9.18 applies its default 24-hour release-age cutoff to discovery/fuzzy selections, but exact version pins are exempt. Signature, identity and digest verification remain enabled. No global age override or signature bypass is needed.
-
-Packslip verifies publisher identity and bytes, not OS code signing/notarization or application compatibility. Stop if platform security warnings prevent execution. See the [Japanese step-by-step guide](docs/VERIFICATION.md) and [English verification report](docs/VERIFICATION.en.md).
-
-### Build from source
-
-The repository pins Go 1.27.1 and Tailscale 1.102.5. In a source checkout:
-
-```sh
-mise install
-mise exec -- go test -race ./...
-mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
-```
-
-On Windows use `bin/tsnet-bridge.exe`. To test that source build, substitute its executable path for `mise exec -- tsnet-bridge` in the examples below. See [distribution](docs/DISTRIBUTION.md).
-
-## Generic first run
-
-```sh
 mise exec -- tsnet-bridge init
 mise exec -- tsnet-bridge login
 mise exec -- tsnet-bridge connect
 ```
 
-For 0.2.0-alpha.1. Choose a current peer and purpose, review and connect. No JSON editing or RustDesk key is needed. Use `share` to offer an explicitly selected local service. [Guide](docs/GENERIC.en.md)
+Require `tsnet-bridge 0.2.0-alpha.1`. `init` saves an idle profile without networking. `login` starts a separate node from any installed Tailscale app and presents the official sign-in flow. Review the account, tailnet and permissions. `connect` asks for a current peer and purpose, then shows the actual endpoints for review. No JSON editing or RustDesk key is needed.
 
-## Legacy RustDesk first run
+Existing profiles are never overwritten. Follow [migration or separate-profile guidance](docs/GENERIC.en.md#migration-local-exportimport-optional-startup); a separate profile uses the global `--state-dir PATH` before every command.
+
+Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. Exact pins are exempt from mise 2026.9.18's default 24-hour discovery cutoff. Keep signature, identity and digest checks enabled. Packslip does not establish OS code signing/notarization or application compatibility. Stop at OS security warnings instead of bypassing them.
+
+## Everyday use
+
+```sh
+mise exec -- tsnet-bridge connect            # Use a peer's service
+mise exec -- tsnet-bridge share              # Review explicit peers, service and lifetime
+mise exec -- tsnet-bridge settings           # Display endpoints for the application
+mise exec -- tsnet-bridge status
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge stop               # Stop the node, retaining saved login
+```
+
+Resume a saved connection with `connect web-demo`, or stop only that rule with `stop web-demo`; replace the example with your saved name. Sharing exposes only the selected numeric-loopback service to the selected peers for the chosen lifetime. Application authentication is still required. Stop/expiry closes existing traffic but cannot retract data or cancel an already running remote job.
+
+- Multiple named TCP/UDP connections with Web, SSH/SFTP, database and AI API purpose presets
+- Pinned peer identities, share TTLs, grouped start/stop and partial-start rollback
+- Per-rule JSON, readiness waits, task ownership and expiring cleanup leases
+- In-place input retries, edit/back/cancel, and repeat actions that preserve reviewed scope and expiry
+- Browser, locally generated terminal QR, and private manual-link sign-in guidance
+- Optional user-level autostart of an idle node, never active forwards or shares
+
+No language flag is needed normally. Override only when desired with `--lang ja`, `en` or `auto` before the command. Command names, user values and machine JSON are not translated. [Full bilingual, authentication, connection and sharing guide](docs/GENERIC.en.md)
+
+## Historical release and experimental RustDesk workflow
+
+`0.1.0-alpha.2` is the historical fixed RustDesk/SOCKS release and has no named connection features. Its [published release](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) passed [signing, public download verification and actual mise installation on all four targets](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407) on 2026-10-01. That evidence does not establish distribution of the new version.
+
+The `0.2.0-alpha.1` source retains legacy profiles, but real RustDesk screen/input remains unverified. The [alpha.2-pinned acceptance procedure](docs/VERIFICATION.en.md#legacy-rustdesk-acceptance-procedure) is preserved for comparison. RustDesk settings are never changed or restored automatically.
+
+<details>
+<summary>Read the legacy fixed-forwarding and SOCKS workflow (experimental)</summary>
+
+### Legacy RustDesk first run
 
 ```sh
 mise exec -- tsnet-bridge setup
@@ -79,7 +80,7 @@ Setup requests the ID server's tailnet peer name/IP and RustDesk public key. It 
 
 Inherited auth keys, OAuth/workload credentials, and alternate control-plane environment settings are rejected. A different profile path uses the global `--state-dir PATH` before the command. Setup refuses to overwrite existing profiles. Stop, back up, and deliberately edit profile.json for changes.
 
-## Experimental RustDesk forwarding profile
+### Experimental RustDesk forwarding profile
 
 Default bindings:
 
@@ -95,13 +96,13 @@ Back up RustDesk's existing server and proxy settings first. Run `mise exec -- t
 
 Ports are fixed after setup and never silently changed. `setup --relay-host <tailnet-host>` supports a separate relay server.
 
-### SOCKS limitations
+#### SOCKS limitations
 
 `setup --mode socks` enables authenticated CONNECT-only SOCKS. Reveal credentials only in a private terminal with `settings --show-secrets`.
 
 RustDesk 1.4.9 switches registration to TCP when a proxy is configured. OSS server 1.1.16 returns NOT_SUPPORT for TCP RegisterPk. **SOCKS alone cannot register the controlled endpoint in this combination.** Controller-only use also requires validation. The app-wide proxy may break updates/API calls outside the allowlist. See [sources and constraints](docs/ARCHITECTURE.md).
 
-## Operation
+### Legacy operation
 
 ```sh
 mise exec -- tsnet-bridge                 # Start, or show status if already running
@@ -117,14 +118,25 @@ mise exec -- tsnet-bridge run             # Foreground; Ctrl+C stops forwarding
 
 If logout fails, forwarding stops but server-side logout is explicitly reported unconfirmed. Deleting the node in the Tailscale admin console is a separate operation. Stopping the helper does not restore RustDesk settings; use the backup. Canceling a login wait leaves the background process running; use `stop` if needed.
 
+</details>
+
 ## Security and development
 
-Unix directories/files use 0700/0600; Windows uses current-user DACLs. This is access control, not state encryption. Processes running as the same user are not isolated from each other. Fixed TCP/UDP forwarding cannot insert SOCKS authentication; use narrowly scoped tailnet policy and RustDesk authentication.
+Traffic is restricted to allowed current tailnet peers and ports with no OS DNS/routing fallback. Inbound sharing only targets explicit numeric loopback services. No GUI, subnet router, exit node or generic internet proxy is included.
 
-[Security](SECURITY.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md) · [Distribution](docs/DISTRIBUTION.md)
+Unix state directories/files use 0700/0600; Windows uses current-user DACLs. This is access control, not encryption or isolation between processes of the same user. Fixed forwarding cannot add SOCKS authentication; combine narrow tailnet policy with application authentication.
+
+The repository pins Go 1.27.1 and Tailscale 1.102.5. In a source checkout:
+
+```sh
+mise install
+mise exec -- go test -race ./...
+mise exec -- go vet ./...
+mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
+```
+
+On Windows use `bin/tsnet-bridge.exe`. A source build is separate from a signed release. To test it, replace `mise exec -- tsnet-bridge` in examples with that executable's path.
+
+[Development and usability principles](docs/DEVELOPMENT_PRINCIPLES.en.md) · [Security](SECURITY.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md) · [Distribution](docs/DISTRIBUTION.md) · [Use cases](docs/USE_CASES.ja.md) · [Remaining acceptance and roadmap](docs/ROADMAP.ja.md)
 
 MIT license. Distribution archives include dependency notices.
-
-## Development principles
-
-[Bilingual UX, interface and documentation principles](docs/DEVELOPMENT_PRINCIPLES.en.md)

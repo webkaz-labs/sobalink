@@ -1,31 +1,52 @@
 # Verification status
 
-[日本語の導入・動作確認手順](VERIFICATION.md) · [English README](../README.en.md)
+[日本語の検証概要・旧 RustDesk 手順](VERIFICATION.md) · [Named connection guide](GENERIC.en.md) · [English README](../README.en.md)
 
-Updated 2026-10-01. **The experimental implementation and automated packaging checks pass. Real tailnet enrollment and RustDesk remote-control acceptance remain incomplete. The testing prerelease does not make this a supported end-to-end product.**
+Updated 2026-10-01. **The exact-source automated tests for `0.2.0-alpha.1` passed on all four native targets. Public distribution and actual mise installation are recorded separately below. Real enrollment and application acceptance remain incomplete; this is an experimental testing prerelease.**
 
-## Named-rule source candidate: 0.2.0-alpha.1
+## 0.2.0-alpha.1: current source and release evidence
 
-The source adds named forward and inbound TCP/UDP rules, pinned peer selection, presets, grouped atomic start/stop, TTL and task leases, per-rule JSON, wait-ready, local migration/import/export, and opt-in idle-node user startup. [Guide](GENERIC.en.md)
+Source [`236bd8e217f213a93b667f3d8d0509811d4f5464`](https://github.com/webkaz-labs/tsnet-bridge/commit/236bd8e217f213a93b667f3d8d0509811d4f5464) adds named forward and inbound TCP/UDP rules, pinned peer selection, presets, grouped start/stop with partial-start rollback, TTL and task leases, per-rule JSON, wait-ready, local migration/import/export, and opt-in idle-node user startup. Human output defaults to automatic Japanese/English locale selection. [Current guide](GENERIC.en.md)
 
-Local validation currently covers:
+The [exact-source ordinary CI run](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666) passed all five jobs:
 
-- Config, CLI, identity, policy, transport, autostart and distribution race suites; service/control IPC cases require the native runners
-- Japanese/English human output, locale precedence/overrides, unchanged JSON and user values, narrow-terminal QR fallback, and review/edit/cancel/repeated-operation tests
-- Packaged/installed binary checks exercise both languages and the actual read-only OS locale fallback on each native target
-- Browser/QR/manual-link login state tests, trusted-URL rejection, terminal-redirection protection and terminal QR pixel reconstruction; a separate installed libzbar decoder recovered a synthetic noncredential URL
-- Independent security review of confirmation-scope binding, repeated lifetime changes, observed revocation latching, and process-wide stream/datagram resource budgets
-- Twenty repeated race runs of new forwarding/inbound/lifecycle cases
+- Native race suites, real Unix-socket/Windows-pipe service and control IPC, vet and formatting on Linux x64/ARM64, macOS ARM64 and Windows x64
+- Native package construction, archive execution, metadata, SBOM and license-notice checks on each target
+- Packaged offline v2 initialization/settings/group/import/export/startup-planning workflows, explicit Japanese/English and automatic locale selection, read-only native OS-locale fallback and exact machine-JSON equality
+- Aggregate Packslip fixture signing/verification, distinct from public OIDC signing
+
+The [release workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369) completed all 15 jobs successfully for `0.2.0-alpha.1` and this exact source, including its source gate, four native release jobs, provenance, signing, publication, public verification and four actual mise-install jobs. Each native release job ran 25 repeated real IPC regressions, two identical package builds and native archive/language/locale/JSON smoke checks. All four restored their exact-source trusted-main Go caches. Tests still ran; cached compilation does not mean cached test results or independent-builder reproducibility.
+
+- Publication: [v0.2.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1) was published on 2026-10-01 at 19:11:08 UTC as a prerelease with 19 assets. The tag resolves to the exact source above. Packslip signing, artifact and bundle provenance, staging and publication jobs passed
+- Independent unauthenticated public downloads, signature and provenance verification: [Passed](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369): all 19 public assets downloaded without authentication, with Packslip signature, provenance and content verification
+- Actual mise installation and installed-binary checks on all four targets: [Passed on all four targets](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369): actual exact-pin installation with mise 2026.9.18, version/source metadata, SBOM/notices, Japanese/English output, actual OS-locale fallback and exact JSON equality; no signature bypass or release-age override
+
+The native mise jobs finished between 19:12:34 and 19:12:48 UTC on 2026-10-01, about 1½ minutes after the 19:11:08 publication. The full workflow completed at 19:12:54 UTC. Signature and release-age settings stayed at their verified defaults.
+
+An additional local non-root Linux check used fresh isolated HOME/XDG/mise directories and the exact public Packslip pin. Download/install took 50.4 seconds. Global activation within the isolated state, version `0.2.0-alpha.1`, source `236bd8e…`, native-binary digest, SBOM/notices and the complete Japanese/English/native-locale/exact JSON and v2 offline checks passed. No real node was started. This local result is distinct from the four native release-install jobs.
+
+These successful distribution and offline checks do not establish real enrollment, application compatibility or Windows standard-user operation. [Distribution details](DISTRIBUTION.md)
+
+### Coverage and limits
+
+Current source tests and recorded local review cover:
+
+- Japanese/English onboarding, help, confirmations, status, errors and next actions; locale precedence/overrides, preserved user values and machine JSON
+- In-place typing retries, edit/back/cancel, narrow-terminal QR fallback, interrupted and repeated operations, and unchanged scope/expiry on repeated active starts
+- Browser/QR/manual-link login states, trusted-URL rejection, terminal-redirection protection and terminal QR pixel reconstruction; a separate installed libzbar decoder recovered a synthetic noncredential URL
+- Config, CLI, identity, policy, transport, autostart and distribution; native runners complete the real service/control IPC checks blocked by the local sandbox
+- Independent security review of confirmation-scope binding, repeated lifetime changes, observed revocation latching and process-wide stream/datagram resource budgets
+- Twenty repeated local race runs of new forwarding/inbound/lifecycle cases
 - Numeric-loopback target rejection, source denial before local dial, TCP half-close, revoked replies and source-ID reassignment
-- Separate UDP source mappings and delayed/out-of-order delivery, inherited idle/queue/capacity/cancellation tests
+- Separate UDP source mappings and delayed/out-of-order delivery, idle/queue/capacity/cancellation tests
 - No start on save/import/restart; partial-group rollback preserving existing work; owner mismatch and idempotent stop; TTL/lease expiry and no reconnect resurrection
-- Installed-binary-style offline v2 initialization, preview/import/export, settings, groups and non-mutating startup planning
+- Five deliberate negative controls that rejected broken peer pins, source reassignment, expiration, independent grant cancellation and loopback-only targets
 
-The local Unix-domain socket restriction remains; the core source at [d481e0e](https://github.com/webkaz-labs/tsnet-bridge/commit/d481e0e54888edea892879ac2866da151ba7ca0a) passed [all four native jobs and Packslip CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36902789788), including native IPC and the complete service IPC test. Each native job also ran the packaged v2 offline CLI checks. Subsequent usability/localization changes require their own exact-source CI. Release signing and actual published installation will be recorded after they complete. Five deliberate negative controls confirmed tests reject broken peer pins, source reassignment, expiration, independent grant cancellation and loopback-only targets. No real tailnet node was enrolled to obtain these results.
+The earlier core source [d481e0e](https://github.com/webkaz-labs/tsnet-bridge/commit/d481e0e54888edea892879ac2866da151ba7ca0a) passed [four native jobs and the Packslip fixture](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36902789788). That is historical intermediate evidence; the exact-source run above covers the subsequent usability/localization changes. No real tailnet node was enrolled for these automated checks.
 
-Still unverified: real-tailnet inbound acceptance and ACL behavior, SSH/SFTP/HTTP/HTTPS/DB/AI/MCP application compatibility, mobile clients, direct/DERP performance, OS suspend/network handoff, user-login startup registration behavior, Windows standard-user enrollment, and RustDesk bidirectional screen/input. These are separate acceptance gates; code and local tests do not mark them passed.
+Still unverified: real enrollment and phone QR authentication, real-tailnet inbound acceptance and ACL behavior, SSH/SFTP/HTTP/HTTPS/DB/AI/MCP applications, mobile clients, direct/DERP performance, OS suspend/network handoff, user-login startup registration/removal, Windows standard-user enrollment, and RustDesk bidirectional screen/input. These are separate acceptance gates, not passed by local mocks, native CI or distribution verification.
 
-## Published alpha.2 and real installation verification
+## Historical 0.1.0-alpha.2 release and real installation verification
 
 [v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) was published on 2026-10-01 at 16:07:59 UTC from
 [`0069e38732227c8913ee6ceb0ec21784ae03d862`](https://github.com/webkaz-labs/tsnet-bridge/commit/0069e38732227c8913ee6ceb0ec21784ae03d862).
@@ -41,6 +62,8 @@ publication, using the exact prerelease pin with no age override or signature
 bypass. This proves distribution and native executable startup, not enrollment
 or real application compatibility. Windows hosted runners are administrator
 sessions; standard-user authentication remains unverified.
+
+These alpha.2 results do not establish publication or installation of `0.2.0-alpha.1`. The [legacy RustDesk procedure](#legacy-rustdesk-acceptance-procedure) below deliberately remains pinned to the historical version.
 
 The IPC regressions retain real sockets/pipes and explicitly cover connect/close
 overlap. Exact drain, timeout, cancellation, and forwarding deadlines use
@@ -64,12 +87,7 @@ All five native jobs passed:
 
 Each job ran race-enabled tests, native local IPC/lifecycle checks, vet, formatting checks, two repeatable package builds, archive/notices/SBOM validation, and execution of the packaged binary's help/version commands. The aggregate Packslip 1.4.0 job signed a disposable example-identity fixture and verified all five archives plus five scoped SBOM resources. Test signing keys/bundles were removed, not published.
 
-The run's development artifacts are historical CI outputs. The acceptance
-installation path is now the explicitly pinned testing prerelease described in
-[distribution](DISTRIBUTION.md), not a manually extracted CI artifact. Confirm
-that [v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2)
-has been published and its release workflow has completed. Installation verification
-and the real tailnet/RustDesk acceptance below are separate results.
+The run's development artifacts are historical CI outputs, not the current installation path. Use the version-specific [distribution record](DISTRIBUTION.md) and [named connection guide](GENERIC.en.md) for `0.2.0-alpha.1`. The legacy procedure below remains pinned to `0.1.0-alpha.2`. Installation verification and real tailnet/application acceptance are separate results.
 
 The current prerelease matrix is four targets: macOS ARM64, Windows x64, and
 Linux x64/ARM64. The five-target results above are historical; Intel macOS is
@@ -105,9 +123,9 @@ That additional harness is **not implemented or passed**. Tailscale's [pinned ts
 
 The current production `run` command is not an offline initialization test: tsnet starts coordination traffic even before browser approval. `version`, `setup`, `settings` and an inactive `status` can be checked without enrollment; they do not test actual tsnet startup.
 
-## Minimum real acceptance session
+## Legacy RustDesk acceptance procedure
 
-The following is a procedure, not a passed result. It needs a reachable configured hbbs/hbbr server, its public key, a standard-user Windows session, and a macOS session for the initial bidirectional test. Linux controller/controlled roles need separate acceptance afterward.
+The following is the experimental `0.1.0-alpha.2` fixed-forwarding procedure, preserved for reproducible historical comparison. For new named connections and scoped shares use [the 0.2.0-alpha.1 guide](GENERIC.en.md). This procedure is not a passed result and does not cover the new generic workflow. It needs a reachable configured hbbs/hbbr server, its public key, a standard-user Windows session, and a macOS session for the initial bidirectional test. Linux controller/controlled roles need separate acceptance afterward.
 
 1. Use mise 2026.9.18 in a normal, non-elevated terminal. Both PowerShell and
    Unix shells accept:
@@ -157,6 +175,13 @@ Remote testing requires access to the chosen test endpoints and approval for eac
 
 ## Required before a supported release
 
+The following real-device checks remain open for `0.2.0-alpha.1`. Distribution completion is a separate gate recorded above; it must not close these items.
+
+- [ ] Browser/manual-link/phone-QR enrollment on actual devices, with MFA and node approval where required
+- [ ] Named TCP/UDP forward and scoped inbound shares against real tailnet ACLs, including denied peers, identity changes, stop and TTL expiry
+- [ ] SSH/SFTP, HTTP/HTTPS, database, AI/API and applicable HTTP MCP clients with normal authentication and certificate/host-key checks
+- [ ] User-level autostart registration/removal at real OS login, remaining idle and preserving stopped/expired rules
+- [ ] Real sleep/network-change recovery, including expiry during sleep, with no unintended share restart
 - [ ] Windows standard-user clean install, interactive enrollment, state save/reuse, stop and logout
 - [ ] Linux nonroot real enrollment, state reuse, shutdown, and recovery on amd64/arm64
 - [ ] macOS real enrollment and state lifecycle on supported architectures
@@ -166,7 +191,7 @@ Remote testing requires access to the chosen test endpoints and approval for eac
 - [ ] Relay address propagation, common local relay port, server rewrite settings, and mixed-profile handling
 - [ ] Direct Tailscale and DERP paths; blocked UDP and restrictive upstream network conditions
 - [ ] Sleep/resume, network change, outages, node expiry/revocation, ACL refusal and process/application restart
-- [ ] Review testing-prerelease native mise/Packslip installation results; separately test future upgrades and rollbacks
+- [ ] Future upgrades/rollbacks and legacy-profile migration in the intended real environment; keep these separate from first-install CI
 - [ ] Final dependency/security review, upstream private logging review and OS signing/notarization decision
 
 No real tailnet credentials are required by the existing CI. Real enrollment creates persistent external access and requires explicit approval. Do not replace any unchecked item with a mock result.

@@ -1,14 +1,43 @@
-# 日本語の導入・動作確認手順
+# 検証状況と実験的な RustDesk 受入手順
 
-[README に戻る](../README.md) · [English verification report](VERIFICATION.en.md)
+[README に戻る](../README.md) · [名前付き接続の使い方](GENERIC.ja.md) · [English verification report](VERIFICATION.en.md)
 
 更新: 2026-10-01
 
-**名前付きの Web・SSH・共有機能は [0.2.0-alpha.1 の別ガイド](GENERIC.ja.md)を参照してください。** このページは従来の RustDesk alpha.2 の導入・実機受入手順です。
+## <a id="current-verification"></a>0.2.0-alpha.1 の現在の確認状況
 
-**公開・導入は確認済みです。** [alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) の[公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が全成功しました。Mac ARM64・Windows x64・Linux x64/ARM64で、公開された署名付き配布物をmiseから実際に導入し、版表示と同梱ファイルを確認しています。実際のtailnet参加やRustDeskの操作確認は、下の手順で別に行います。
+**通常の導入・接続・共有は [名前付き接続ガイド](GENERIC.ja.md)から始めてください。** 日本語・英語は OS／実行環境のロケールから自動選択します。以下の旧 RustDesk 手順とは対象と判定を分けます。
 
-**これは検証用プレリリース `0.1.0-alpha.2` の手順です。安定版ではありません。** 自動テストは成功していますが、実際の tailnet への参加、Windows 標準ユーザーでの認証、RustDesk の双方向遠隔操作は未確認です。このページは、その確認を行うための手順です。成功済みの実機試験を説明するものではありません。
+- 対象ソース: [`236bd8e217f213a93b667f3d8d0509811d4f5464`](https://github.com/webkaz-labs/tsnet-bridge/commit/236bd8e217f213a93b667f3d8d0509811d4f5464)
+- [通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666): Mac ARM64・Windows x64・Linux x64/ARM64 の4ネイティブジョブと Packslip 試験の全5ジョブが成功。race・実 IPC・vet・整形・パッケージ・SBOM・ライセンスと、実パッケージの OS 言語フォールバック・日英表示・JSON の完全一致を確認
+- [公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369): 公開後の検証・mise 実導入まで全15ジョブが成功。対象ソースのゲート、4環境のネイティブ試験・実 IPC 25回反復・2回ビルドの一致・日英パッケージ smoke と配布物の provenance 作成が成功。4環境とも対象ソースのキャッシュが完全一致し、試験自体は再実行
+- 公開: [v0.2.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1) を2026-10-01 19:11:08 UTCに検証用プレリリースとして公開（19配布物）。タグは対象ソースと一致し、公開用 Packslip 署名・配布物と署名 bundle の provenance 作成・公開処理が成功
+- 公開配布物の認証なし取得・署名・出所の独立検証: [成功](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369)。19配布物を認証なしで取得し、Packslip 署名・出所・内容を検証
+- 公開版の4環境 mise 実導入と導入済みバイナリ確認: [4対象で成功](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369)。mise 2026.9.18 で完全な版指定を実際に導入し、版・ソース情報・SBOM・ライセンス、日英表示・OS 言語フォールバック・JSON の完全一致を確認。署名無効化・経過時間の設定変更なし
+
+4環境の mise 確認は2026-10-01の19:12:34〜19:12:48 UTCに完了しました。19:11:08 UTCの公開から約1分半で、ワークフロー全体は19:12:54 UTCに成功終了しています。署名・経過時間の設定変更はありません。
+
+追加のローカル試験では、新しい HOME・XDG・mise 保存先を分離した Linux の非 root ユーザーで、公開版を完全指定して導入しました。導入は50.4秒で完了し、有効化、版・ソース、実バイナリのダイジェスト・SBOM・ライセンス、日英・OS 言語・JSON 完全一致と v2 オフライン操作が成功しました。実ノードは開始していません。これは4環境のリリース CI とは別のローカル確認です。
+
+公開・公開物検証・mise 実導入は完了しましたが、実 tailnet やアプリの受入結果ではありません。[配布結果](DISTRIBUTION.md)と[詳しい日英対応・機能試験](VERIFICATION.en.md)を分けて確認してください。
+
+### 新しい版でも残る受入条件
+
+- [ ] 実 tailnet へのブラウザー／リンク／スマートフォン QR 認証と、必要な MFA・ノード承認
+- [ ] 実 ACL と実ピアでの名前付き TCP/UDP、限定共有、拒否・識別変更・停止・期限切れ
+- [ ] SSH/SFTP・HTTP/HTTPS・DB・AI API・該当する HTTP MCP とモバイルアプリの実利用
+- [ ] Windows 標準ユーザーでの実認証と、各 OS の保存状態・終了・再利用
+- [ ] OS 実ログイン時の自動起動登録・解除と、ルール未開始の維持
+- [ ] スリープ中の期限切れ・復帰、回線変更、direct／DERP 経路
+- [ ] RustDesk の双方向画面表示・入力・切断・再接続
+
+実機試験は対象と範囲を承認して行います。自動試験・配布確認・`ready` 表示を、実アプリ成功や遠隔ジョブ完了の代わりにしません。
+
+## ここからは旧 0.1.0-alpha.2 の RustDesk 手順
+
+**旧版の公開・導入は確認済みです。** [v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) は2026-10-01の16:07:59 UTCに公開され、[公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が全成功しました。Mac ARM64・Windows x64・Linux x64/ARM64で、署名付き公開配布物を mise から実際に導入し、版表示と同梱ファイルを確認しています。これは `0.2.0-alpha.1` の配布結果ではありません。
+
+**以下は検証用プレリリース `0.1.0-alpha.2` に固定した、実験的な固定転送の手順です。** 版番号・英語の表示例を履歴として維持しています。名前付き接続や新しい版の日英表示を説明するものではありません。実 tailnet 参加、Windows 標準ユーザー認証、RustDesk 双方向遠隔操作は旧版でも未確認で、成功済みの実機試験ではありません。
 
 まず [準備](#準備) を確認し、[Windows](#windows) または [Mac](#mac) の手順を行ってください。両方で接続準備ができたら、[RustDesk の設定](#rustdesk) に進みます。[Linux](#linux) の手順もあります。
 
@@ -373,7 +402,7 @@ OS・CPU・ツールの版、失敗した手順番号、`state`、一般的な�
 
 `settings` の結果、ログ、スクリーンショット、状態フォルダーを丸ごと投稿しないでください。`settings --show-secrets` はこの手順では不要です。非公開認証 URL が tsnet のローカルログに残る場合もあるため、ログの一括アップロードは避けてください。
 
-## 検証記録と、まだ残っていること
+## 旧 alpha.2 の検証記録と、まだ残っていること
 
 公開用の記録には固有情報を入れず、次の項目を **成功・失敗・未実施**で区別します。
 
@@ -388,13 +417,13 @@ OS・CPU・ツールの版、失敗した手順番号、`state`、一般的な�
 - [x] `0.1.0-alpha.2` の mise / Packslip 実導入（4対象のCI。公開から約2分後、経過時間の設定変更なし）
 - [ ] 今後の更新・巻き戻し試験と、実際に使う環境での導入確認
 
-**現在の公開版で確認したこと:** [ソース `0069e387`](https://github.com/webkaz-labs/tsnet-bridge/commit/0069e38732227c8913ee6ceb0ec21784ae03d862) に対する[通常CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888075794)と[公開・導入検証](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が成功しました。4対象でrace試験、実IPCの25回反復、2回ビルドの一致、実Packslip署名、全19配布物の公開取得と出所検証、mise実導入と版表示、SBOM・ライセンスの保持を確認しています。Windowsの接続開始と終了の競合試験も含みます。
+**旧 `0.1.0-alpha.2` で確認したこと:** [ソース `0069e387`](https://github.com/webkaz-labs/tsnet-bridge/commit/0069e38732227c8913ee6ceb0ec21784ae03d862) に対する[通常CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888075794)と[公開・導入検証](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が成功しました。4対象でrace試験、実IPCの25回反復、2回ビルドの一致、実Packslip署名、全19配布物の公開取得と出所検証、mise実導入と版表示、SBOM・ライセンスの保持を確認しています。Windowsの接続開始と終了の競合試験も含みます。
 
 署名や24時間待機の検査を無効にする設定は使っていません。完全な版番号の指定によるmiseの正規の選択処理で導入しています。
 
 **過去の基盤試験:** [CI #5](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36857522576) では Linux x64/ARM64、Mac ARM64/Intel、Windows x64 の全5対象で、競合検出付きテスト、ローカル IPC、vet、整形、再現ビルド、圧縮物・ライセンス・SBOM、同梱バイナリの版・ヘルプ表示が成功しました。Packslip の試験用署名と全対象ファイルの検証も成功しています。実 tailnet の資格情報は使っていません。
 
-現在のプレリリース対象は Mac ARM64、Windows x64、Linux x64/ARM64 の4対象です。上の5対象の記録は過去の成功結果であり、現在 Intel Mac 向けの配布があるという意味ではありません。
+新しい `0.2.0-alpha.1` も配布対象は Mac ARM64、Windows x64、Linux x64/ARM64 の4対象です。上の5対象の記録は過去の成功結果であり、現在 Intel Mac 向けの配布があるという意味ではありません。
 
 その後の通常 CI は、全テスト・配布物確認・Packslip 検証を維持したまま、各対象のパッケージ作成を1回にしています。プレリリース時は引き続き2回ビルドして一致を確認します。依存・コンパイルのキャッシュは利用しますが、テスト結果は再利用しません。詳しくは [配布とキャッシュ](DISTRIBUTION.md#ci-and-prerelease-caches)を参照してください。
 
