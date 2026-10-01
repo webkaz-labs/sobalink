@@ -113,6 +113,7 @@ bin/tsnet-bridge[.exe]
 share/tsnet-bridge/LICENSE
 share/tsnet-bridge/README.md
 share/tsnet-bridge/README.en.md
+share/tsnet-bridge/SECURITY.md
 share/tsnet-bridge/docs/*.md
 share/tsnet-bridge/go.mod
 share/tsnet-bridge/go.sum
