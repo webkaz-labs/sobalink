@@ -10,7 +10,7 @@ import sys
 root = pathlib.Path(sys.argv[1])
 version, commit, target = sys.argv[2:]
 share = root / "share" / "tsnet-bridge"
-meta = json.loads((share / "build.json").read_text())
+meta = json.loads((share / "build.json").read_text(encoding="utf-8"))
 assert meta["version"] == version and meta["source_commit"] == commit and meta["target"] == target
 actual_os = {"Linux": "linux", "Darwin": "darwin", "Windows": "windows"}[platform.system()]
 actual_arch = {"x86_64": "amd64", "AMD64": "amd64", "arm64": "arm64", "aarch64": "arm64"}[platform.machine()]
@@ -23,9 +23,9 @@ binary = root / expected_binary
 assert binary.is_file()
 assert hashlib.sha256(binary.read_bytes()).hexdigest() == meta["binary"]["sha256"]
 assert hashlib.sha256((share / "go.sum").read_bytes()).hexdigest() == meta["go_sum_sha256"]
-bom = json.loads((share / "bom.cdx.json").read_text())
+bom = json.loads((share / "bom.cdx.json").read_text(encoding="utf-8"))
 assert bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5"
-notices = json.loads((share / "third-party-notices.json").read_text())
+notices = json.loads((share / "third-party-notices.json").read_text(encoding="utf-8"))
 assert notices["modules"]
 for module in notices["modules"] + [notices["go_standard_library"]]:
     assert module["notices"], "missing installed module notices"

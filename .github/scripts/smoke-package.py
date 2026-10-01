@@ -42,16 +42,16 @@ with tempfile.TemporaryDirectory(prefix="tsnet-bridge-smoke-") as tmp:
                 else:
                     raise ValueError("package contains a special file")
     share = root / "share" / "tsnet-bridge"
-    build = json.loads((share / "build.json").read_text())
+    build = json.loads((share / "build.json").read_text(encoding="utf-8"))
     binary = destination(build["binary"]["path"])
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == build["binary"]["sha256"]
     assert build["version"] == version
     assert (share / "LICENSE").is_file()
     assert (share / "README.md").is_file()
     assert (share / "SECURITY.md").is_file()
-    bom = json.loads((share / "bom.cdx.json").read_text())
+    bom = json.loads((share / "bom.cdx.json").read_text(encoding="utf-8"))
     assert bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5"
-    notices = json.loads((share / "third-party-notices.json").read_text())
+    notices = json.loads((share / "third-party-notices.json").read_text(encoding="utf-8"))
     assert notices["modules"], "no target dependencies recorded"
     for module in notices["modules"] + [notices["go_standard_library"]]:
         assert module["notices"], "missing notices"

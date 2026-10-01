@@ -117,7 +117,7 @@ def check_assets(root, version, commit, bundle=False):
     require({p.name for p in root.iterdir()} == expected, "release asset set differs from the exact five-target inventory")
     require(all(p.is_file() and not p.is_symlink() for p in root.iterdir()), "release assets must be regular files")
     checksums = {}
-    for line in (root / "SHA256SUMS").read_text().splitlines():
+    for line in (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
         match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)", line)
         require(match is not None, "invalid checksum line")
         digest, name = match.groups()
@@ -128,12 +128,12 @@ def check_assets(root, version, commit, bundle=False):
         require(sha256(root / name) == digest, "checksum mismatch: " + name)
     for target in TARGETS:
         stem = "tsnet-bridge-" + version + "-" + target
-        meta = json.loads((root / (stem + ".build.json")).read_text())
+        meta = json.loads((root / (stem + ".build.json")).read_text(encoding="utf-8"))
         require(meta["project"] == PROJECT and meta["version"] == version and meta["source_commit"] == commit and meta["target"] == target, "incorrect build identity: " + target)
         require(meta["go_version"] == "go1.27.1" and meta["cgo_enabled"] is False and meta["trimpath"] is True and meta["buildvcs"] is False, "unexpected build settings")
-        bom = json.loads((root / (stem + ".cdx.json")).read_text())
+        bom = json.loads((root / (stem + ".cdx.json")).read_text(encoding="utf-8"))
         require(bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5", "invalid SBOM")
-        notices = json.loads((root / (stem + ".notices.json")).read_text())
+        notices = json.loads((root / (stem + ".notices.json")).read_text(encoding="utf-8"))
         require(bool(notices["modules"]), "empty dependency notices")
         for module in notices["modules"] + [notices["go_standard_library"]]:
             require(bool(module["notices"]), "missing module license notices")
@@ -143,7 +143,7 @@ def check_assets(root, version, commit, bundle=False):
 def check_bundle(root, version, commit):
     """Semantic/digest checks only; call packslip verify first for cryptography."""
     validate_inputs(version, commit)
-    raw = json.loads((root / "packslip.sigstore.json").read_text())
+    raw = json.loads((root / "packslip.sigstore.json").read_text(encoding="utf-8"))
     statement = json.loads(base64.b64decode(raw["dsseEnvelope"]["payload"], validate=True))
     require(statement["_type"] == "https://in-toto.io/Statement/v1" and statement["predicateType"] == "https://packslip.dev/release/v1", "unexpected signed statement type")
     predicate = statement["predicate"]
@@ -213,7 +213,7 @@ def main():
         source_gate(version, commit, os.environ)
         release_state(version, commit)
         if os.environ.get("GITHUB_OUTPUT"):
-            with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 output.write("version=" + version + "\ntag=v" + version + "\ncommit=" + commit + "\n")
     elif args.command in ("draft", "publish-ready"):
         require(api("git/ref/heads/main")["object"]["sha"] == commit, "main moved before publication; do not publish stale source")

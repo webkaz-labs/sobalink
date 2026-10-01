@@ -30,7 +30,7 @@ class WorkflowAttestationPolicy(unittest.TestCase):
 
     def commands(self):
         workflow = pathlib.Path(__file__).parents[1] / "workflows" / "prerelease.yml"
-        logical_lines = workflow.read_text().replace("\\\n", " ").splitlines()
+        logical_lines = workflow.read_text(encoding="utf-8").replace("\\\n", " ").splitlines()
         return [line.strip() for line in logical_lines if line.strip().startswith("gh attestation verify ")]
 
     def test_every_attestation_command_uses_one_exact_identity_selector(self):
@@ -53,7 +53,7 @@ class WorkflowCachePolicy(unittest.TestCase):
     CACHE_PATHS = "\n".join(("          path: |", "            ${{ steps.go-cache-info.outputs.gomodcache }}", "            ${{ steps.go-cache-info.outputs.gocache }}"))
 
     def workflow(self, name):
-        return (pathlib.Path(__file__).parents[1] / "workflows" / (name + ".yml")).read_text()
+        return (pathlib.Path(__file__).parents[1] / "workflows" / (name + ".yml")).read_text(encoding="utf-8")
 
     def job(self, workflow, name):
         # Extract known, fixed-indentation policy blocks without adding a YAML
@@ -153,6 +153,28 @@ class WorkflowCachePolicy(unittest.TestCase):
         release = self.job("prerelease", "native")
         self.assertIn('cp dist/SHA256SUMS "$RUNNER_TEMP/first-SHA256SUMS"', release)
         self.assertIn('cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS', release)
+
+
+class ScriptTextEncoding(unittest.TestCase):
+    def test_workflow_policy_reads_ignore_legacy_windows_default(self):
+        original_open = pathlib.Path.open
+
+        def legacy_windows_open(path, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+            if "b" not in mode and encoding in (None, "locale"):
+                encoding = "cp1252"
+            return original_open(path, mode, buffering, encoding, errors, newline)
+
+        workflow = pathlib.Path(__file__).parents[1] / "workflows" / "prerelease.yml"
+        expected = workflow.read_bytes().decode("utf-8")
+        with patch.object(pathlib.Path, "open", legacy_windows_open):
+            # Reproduce the Windows failure first, without changing PYTHONUTF8.
+            with self.assertRaises(UnicodeDecodeError):
+                workflow.read_text(encoding="locale")
+            self.assertEqual(WorkflowCachePolicy().workflow("prerelease"), expected)
+            commands = WorkflowAttestationPolicy().commands()
+            self.assertEqual(len(commands), 3)
+            for command in commands:
+                WorkflowAttestationPolicy().check_command(command)
 
 
 class ReleaseGuards(unittest.TestCase):
@@ -300,11 +322,11 @@ class ArtifactGuards(unittest.TestCase):
         self.checksums()
 
     def write(self, name, value):
-        (self.root / name).write_text(json.dumps(value))
+        (self.root / name).write_text(json.dumps(value), encoding="utf-8")
 
     def checksums(self):
         names = checks.filenames(VERSION) - {"SHA256SUMS"}
-        (self.root / "SHA256SUMS").write_text("".join(checks.sha256(self.root / name) + "  " + name + "\n" for name in sorted(names)))
+        (self.root / "SHA256SUMS").write_text("".join(checks.sha256(self.root / name) + "  " + name + "\n" for name in sorted(names)), encoding="utf-8")
 
     def check(self):
         checks.check_assets(self.root, VERSION, COMMIT)
@@ -314,7 +336,7 @@ class ArtifactGuards(unittest.TestCase):
         self.check()
 
     def test_unexpected_asset_rejected(self):
-        (self.root / "unintended.txt").write_text("do not publish")
+        (self.root / "unintended.txt").write_text("do not publish", encoding="utf-8")
         with self.assertRaises(ValueError):
             self.check()
 
@@ -330,7 +352,7 @@ class ArtifactGuards(unittest.TestCase):
 
     def test_wrong_source_rejected_even_with_valid_checksums(self):
         file = next(self.root.glob("*.build.json"))
-        meta = json.loads(file.read_text())
+        meta = json.loads(file.read_text(encoding="utf-8"))
         meta["source_commit"] = "b" * 40
         self.write(file.name, meta)
         self.checksums()
@@ -339,7 +361,7 @@ class ArtifactGuards(unittest.TestCase):
 
     def test_missing_license_notices_rejected(self):
         file = next(self.root.glob("*.notices.json"))
-        notices = json.loads(file.read_text())
+        notices = json.loads(file.read_text(encoding="utf-8"))
         notices["go_standard_library"]["notices"] = []
         self.write(file.name, notices)
         self.checksums()
@@ -348,15 +370,15 @@ class ArtifactGuards(unittest.TestCase):
 
     def test_duplicate_or_incomplete_checksums_rejected(self):
         file = self.root / "SHA256SUMS"
-        original = file.read_text()
+        original = file.read_text(encoding="utf-8")
         for content in (original + original.splitlines()[0] + "\n", "\n".join(original.splitlines()[:-1]) + "\n"):
             with self.subTest(content=content[:70]):
-                file.write_text(content)
+                file.write_text(content, encoding="utf-8")
                 with self.assertRaises(ValueError):
                     self.check()
 
     def test_unsafe_checksum_path_rejected(self):
-        (self.root / "SHA256SUMS").write_text("0" * 64 + "  ../outside\n")
+        (self.root / "SHA256SUMS").write_text("0" * 64 + "  ../outside\n", encoding="utf-8")
         with self.assertRaises(ValueError):
             self.check()
 
