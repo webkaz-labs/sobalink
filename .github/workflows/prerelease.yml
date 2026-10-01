@@ -100,6 +100,33 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - name: Locate Go module and compilation caches
+        id: go-cache-info
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      # Only main CI writes this namespace. Release restores the exact tested SHA;
+      # GitHub's branch scope and the release gate exclude PR and branch caches.
+      - name: Restore trusted main Go caches
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.gate.outputs.commit }}
+      - name: Report Go cache result and require an exact release key
+        env:
+          CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
+          CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
+          CACHE_HIT: ${{ steps.go-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          printf 'Go cache exact hit: %s\nRequested key: %s\nMatched key: %s\n' "${CACHE_HIT:-miss}" "$CACHE_PRIMARY_KEY" "${CACHE_MATCHED_KEY:-none}" | tee logs/go-cache.txt
+          test -z "$CACHE_MATCHED_KEY" || test "$CACHE_MATCHED_KEY" = "$CACHE_PRIMARY_KEY"
       - name: Verify source, exact toolchain, native target, and dependencies
         run: |
           set -euo pipefail
@@ -169,6 +196,32 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - name: Locate Go module and compilation caches
+        id: go-cache-info
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      # Only main CI writes this namespace. Release restores the exact tested SHA;
+      # GitHub's branch scope and the release gate exclude PR and branch caches.
+      - name: Restore trusted main Go caches
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.gate.outputs.commit }}
+      - name: Report Go cache result and require an exact release key
+        env:
+          CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
+          CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
+          CACHE_HIT: ${{ steps.go-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          printf 'Go cache exact hit: %s\nRequested key: %s\nMatched key: %s\n' "${CACHE_HIT:-miss}" "$CACHE_PRIMARY_KEY" "${CACHE_MATCHED_KEY:-none}"
+          test -z "$CACHE_MATCHED_KEY" || test "$CACHE_MATCHED_KEY" = "$CACHE_PRIMARY_KEY"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: prerelease-native-*
@@ -178,6 +231,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          go mod verify
           go run ./cmd/package-tool manifest "$RELEASE_VERSION"
           go run ./cmd/package-tool checksums
           python .github/scripts/release-validation.py assets

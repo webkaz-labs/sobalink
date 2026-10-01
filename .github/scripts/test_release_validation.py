@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import pathlib
+import re
 import shlex
 import tempfile
 import unittest
@@ -44,6 +45,114 @@ class WorkflowAttestationPolicy(unittest.TestCase):
         for selector in self.SELECTORS:
             with self.subTest(selector=selector), self.assertRaises(AssertionError):
                 self.check_command(command + " " + selector + " conflicting-selector")
+
+
+class WorkflowCachePolicy(unittest.TestCase):
+    CACHE_PIN = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+    MAIN_GUARD = "github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+    CACHE_PATHS = "\n".join(("          path: |", "            ${{ steps.go-cache-info.outputs.gomodcache }}", "            ${{ steps.go-cache-info.outputs.gocache }}"))
+
+    def workflow(self, name):
+        return (pathlib.Path(__file__).parents[1] / "workflows" / (name + ".yml")).read_text()
+
+    def job(self, workflow, name):
+        # Extract known, fixed-indentation policy blocks without adding a YAML
+        # dependency to the offline gate. actionlint validates the full syntax.
+        match = re.search(r"^  " + re.escape(name) + r":\n.*?(?=^  [a-z][a-z0-9-]*:\n|\Z)", self.workflow(workflow), re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, "missing workflow job: " + name)
+        return match.group()
+
+    def step(self, workflow, job, needle):
+        steps = re.findall(r"^      - .*?(?=^      - |\Z)", self.job(workflow, job), re.MULTILINE | re.DOTALL)
+        matches = [step for step in steps if needle in step]
+        self.assertEqual(len(matches), 1, "expected exactly one step containing: " + needle)
+        return matches[0]
+
+    def key(self, workflow, job):
+        restore = self.step(workflow, job, "uses: actions/cache/restore@")
+        return re.search(r"^          key: (.+)$", restore, re.MULTILINE).group(1)
+
+    def test_cache_keys_include_exact_runner_toolchain_manifests_and_source(self):
+        prefix = "trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-"
+        suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-"
+        for job, runner in (("native", "${{ matrix.runner }}"), ("manifest-smoke", "ubuntu-24.04")):
+            release_job = "native" if job == "native" else "provenance"
+            with self.subTest(job=job):
+                self.assertEqual(self.key("ci", job), prefix + runner + suffix + "${{ github.sha }}")
+                self.assertEqual(self.key("prerelease", release_job), prefix + runner + suffix + "${{ needs.gate.outputs.commit }}")
+        native_matrix = lambda name: re.findall(r"^          - runner: (.+)\n            goos: (.+)\n            goarch: (.+)$", self.job(name, "native"), re.MULTILINE)
+        self.assertEqual(native_matrix("ci"), native_matrix("prerelease"))
+        self.assertEqual(len(native_matrix("ci")), 5)
+        self.assertIn(("ubuntu-24.04", "linux", "amd64"), native_matrix("ci"))
+
+    def test_all_cache_paths_and_actions_match_the_pinned_producer(self):
+        for workflow, jobs in (("ci", ("native", "manifest-smoke")), ("prerelease", ("native", "provenance"))):
+            self.assertNotIn("cache: true", self.workflow(workflow))
+            self.assertNotRegex(self.workflow(workflow), r"uses: actions/cache@")
+            for job in jobs:
+                with self.subTest(workflow=workflow, job=job):
+                    restore = self.step(workflow, job, "uses: actions/cache/restore@")
+                    self.assertIn("uses: actions/cache/restore@" + self.CACHE_PIN, restore)
+                    self.assertIn(self.CACHE_PATHS, restore)
+                    paths = self.step(workflow, job, "id: go-cache-info")
+                    self.assertIn('test "$(go env GOVERSION)" = go1.27.1', paths)
+                    self.assertIn('echo "gomodcache=$(go env GOMODCACHE)"', paths)
+                    self.assertIn('echo "gocache=$(go env GOCACHE)"', paths)
+                    self.assertLess(self.job(workflow, job).index(paths), self.job(workflow, job).index(restore))
+
+    def test_only_successful_canonical_main_native_ci_can_save(self):
+        ci = self.workflow("ci")
+        self.assertEqual(ci.count("uses: actions/cache/save@"), 1)
+        save = self.step("ci", "native", "uses: actions/cache/save@")
+        self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
+        self.assertIn("        if: success() && " + self.MAIN_GUARD + " && steps.go-cache.outputs.cache-hit != 'true'\n", save)
+        self.assertIn(self.CACHE_PATHS, save)
+        self.assertIn("key: ${{ steps.go-cache.outputs.cache-primary-key }}", save)
+        native = self.job("ci", "native")
+        self.assertGreater(native.index(save), native.index("uses: actions/upload-artifact@"))
+        for job in ("native", "manifest-smoke"):
+            self.assertIn("        if: " + self.MAIN_GUARD + "\n", self.step("ci", job, "uses: actions/cache/restore@"))
+        fallback = re.findall(r"^          restore-keys: (.+)$", ci, re.MULTILINE)
+        self.assertEqual(fallback, [self.key("ci", "native").removesuffix("${{ github.sha }}")])
+
+    def test_prerelease_restores_exact_tested_source_without_saving(self):
+        release = self.workflow("prerelease")
+        self.assertNotIn("actions/cache/save@", release)
+        self.assertNotIn("restore-keys:", release)
+        self.assertEqual(release.count("uses: actions/cache/restore@"), 2)
+        for job in ("native", "provenance"):
+            with self.subTest(job=job):
+                report = self.step("prerelease", job, "CACHE_MATCHED_KEY:")
+                self.assertIn('test -z "$CACHE_MATCHED_KEY" || test "$CACHE_MATCHED_KEY" = "$CACHE_PRIMARY_KEY"', report)
+                self.assertIn("steps.go-cache.outputs.cache-primary-key", report)
+                self.assertIn("steps.go-cache.outputs.cache-matched-key", report)
+                self.assertIn("steps.go-cache.outputs.cache-hit", report)
+                self.assertLess(self.job("prerelease", job).index(report), self.job("prerelease", job).index("go mod verify"))
+        self.assertIn("tee logs/go-cache.txt", self.step("prerelease", "native", "CACHE_MATCHED_KEY:"))
+        self.assertIn("    needs: gate", self.job("prerelease", "native"))
+        self.assertIn("    needs: [gate, native]", self.job("prerelease", "provenance"))
+
+    def test_tests_and_native_validation_always_execute(self):
+        for workflow in ("ci", "prerelease"):
+            for needle in ("go test -race -count=1 -timeout=10m ./...", "go vet ./...", "gofmt -l cmd internal", "python .github/scripts/smoke-package.py"):
+                with self.subTest(workflow=workflow, command=needle):
+                    step = self.step(workflow, "native", needle)
+                    self.assertNotIn("        if:", step)
+                    self.assertNotIn("cache-hit", step)
+        self.assertIn("python -m unittest discover -s .github/scripts -p 'test_release_validation.py' -v", self.job("ci", "native"))
+        self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
+        self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
+
+    def test_ci_builds_once_and_prerelease_still_compares_two_builds(self):
+        for workflow, count in (("ci", 1), ("prerelease", 2)):
+            native = self.job(workflow, "native")
+            with self.subTest(workflow=workflow):
+                self.assertEqual(native.count("go run ./cmd/package-tool build "), count)
+                self.assertEqual(native.count("go run ./cmd/package-tool checksums"), count)
+        self.assertNotIn("first-SHA256SUMS", self.job("ci", "native"))
+        release = self.job("prerelease", "native")
+        self.assertIn('cp dist/SHA256SUMS "$RUNNER_TEMP/first-SHA256SUMS"', release)
+        self.assertIn('cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS', release)
 
 
 class ReleaseGuards(unittest.TestCase):

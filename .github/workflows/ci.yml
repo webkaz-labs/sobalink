@@ -53,7 +53,36 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27.1'
-          cache: true
+          cache: false
+      - name: Locate Go module and compilation caches
+        id: go-cache-info
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      # Only main CI writes this namespace. Release restores the exact tested SHA;
+      # GitHub's branch scope and the release gate exclude PR and branch caches.
+      - name: Restore trusted main Go caches
+        id: go-cache
+        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          # Reuse only identical runner, toolchain, and dependency manifests.
+          restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-
+      - name: Report Go cache result
+        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
+          CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
+          CACHE_HIT: ${{ steps.go-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          printf 'Go cache exact hit: %s\nRequested key: %s\nMatched key: %s\n' "${CACHE_HIT:-miss}" "$CACHE_PRIMARY_KEY" "${CACHE_MATCHED_KEY:-none}"
       - name: Check exact toolchain and native target
         run: |
           set -euo pipefail
@@ -61,6 +90,7 @@ jobs:
           test "$(go env GOOS)" = '${{ matrix.goos }}'
           test "$(go env GOARCH)" = '${{ matrix.goarch }}'
           go mod verify
+          python -m unittest discover -s .github/scripts -p 'test_release_validation.py' -v
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail
@@ -71,7 +101,7 @@ jobs:
             printf 'Go files need gofmt (check checkout line endings):\n%s\n' "$unformatted" >&2
             exit 1
           fi
-      - name: Build twice, verify reproducible packaging, and smoke native archive
+      - name: Build native package and smoke archive contents
         run: |
           set -euo pipefail
           version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
@@ -79,10 +109,6 @@ jobs:
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
           go run ./cmd/package-tool checksums
-          cp dist/SHA256SUMS "$RUNNER_TEMP/first-SHA256SUMS"
-          go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
-          go run ./cmd/package-tool checksums
-          cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS
           if [[ '${{ matrix.goos }}' == windows ]]; then
             extension=zip
           else
@@ -97,6 +123,14 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+      - name: Save Go caches after all native checks pass on main
+        if: success() && github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   manifest-smoke:
     needs: native
@@ -109,7 +143,35 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27.1'
-          cache: true
+          cache: false
+      - name: Locate Go module and compilation caches
+        id: go-cache-info
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      # Only main CI writes this namespace. Release restores the exact tested SHA;
+      # GitHub's branch scope and the release gate exclude PR and branch caches.
+      - name: Restore trusted main Go caches
+        id: go-cache
+        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+      - name: Report Go cache result and require an exact source key
+        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
+          CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
+          CACHE_HIT: ${{ steps.go-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          printf 'Go cache exact hit: %s\nRequested key: %s\nMatched key: %s\n' "${CACHE_HIT:-miss}" "$CACHE_PRIMARY_KEY" "${CACHE_MATCHED_KEY:-none}"
+          test -z "$CACHE_MATCHED_KEY" || test "$CACHE_MATCHED_KEY" = "$CACHE_PRIMARY_KEY"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: package-*
@@ -118,6 +180,7 @@ jobs:
       - name: Prepare complete Packslip signing input and checksums
         run: |
           set -euo pipefail
+          go mod verify
           go run ./cmd/package-tool manifest "0.0.0-dev.${GITHUB_RUN_NUMBER}"
           go run ./cmd/package-tool checksums
           (cd dist && sha256sum --check SHA256SUMS)

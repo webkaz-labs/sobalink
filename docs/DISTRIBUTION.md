@@ -152,11 +152,33 @@ entries, normalized modes/owners, and timestamps from `SOURCE_DATE_EPOCH` (zero
 when omitted; ZIP timestamps before 1980 are normalized to 1980). Symlinks and
 special archive entries are rejected. No build-host path is included in metadata.
 
-CI rebuilds each target twice and compares all output digests in the same runner.
-This checks repeatability for identical inputs; it does not yet establish
+The prerelease workflow rebuilds each target twice and compares all output
+digests in the same runner. Ordinary CI builds each target once while retaining
+all tests, archive/SBOM/notices checks, and the Packslip fixture. The two-build
+release check establishes repeatability for identical inputs; it does not yet establish
 independent-builder reproducibility, code signing/notarization, or OS-wide runtime
 compatibility. Final platform signing, if introduced, must precede hashing and
 Packslip signing because it changes artifact bytes.
+
+### CI and prerelease caches
+
+Go module downloads and compiled objects are cached in a dedicated trusted-main
+namespace. Only successful native CI jobs on the canonical repository's main
+branch save that namespace. The key binds the OS, CPU architecture, runner label,
+Go version, dependency manifests (`go.mod` and `go.sum`), and producing commit. Ordinary CI may
+reuse an earlier main cache only within the same exact dependency/toolchain
+prefix; pull requests never write this trusted namespace.
+
+The prerelease restores only the full **tested-commit key**, with no fallback and
+no cache save. Its successful-CI gate ensures that the source commit completed
+the normal workflow before publication. Hit/miss and matched keys are printed in
+the job logs. A missing cache triggers an ordinary build, not a skipped check.
+
+Caching does not reuse test results: `go test -race -count=1` executes tests every
+time. Both package builds and their digest comparison remain mandatory. This is
+repeatability with cached compilation, not a claim of independent-builder
+reproducibility. The first run in a new namespace populates the cache and can
+still take as long as a cold build.
 
 ### Dependency and licensing inventory
 

@@ -384,6 +384,8 @@ OS・CPU・ツールの版、失敗した手順番号、`state`、一般的な�
 
 **すでに自動試験で確認したこと:** [CI #5](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36857522576) では Linux x64/ARM64、Mac ARM64/Intel、Windows x64 の全5対象で、競合検出付きテスト、ローカル IPC、vet、整形、再現ビルド、圧縮物・ライセンス・SBOM、同梱バイナリの版・ヘルプ表示が成功しました。Packslip の試験用署名と全対象ファイルの検証も成功しています。実 tailnet の資格情報は使っていません。
 
+その後の通常 CI は、全テスト・配布物確認・Packslip 検証を維持したまま、各対象のパッケージ作成を1回にしています。プレリリース時は引き続き2回ビルドして一致を確認します。依存・コンパイルのキャッシュは利用しますが、テスト結果は再利用しません。詳しくは [配布とキャッシュ](DISTRIBUTION.md#ci-and-prerelease-caches)を参照してください。
+
 Windows の GitHub ホスト実行環境は [管理者として動く](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#administrative-privileges)ため、この成功を標準ユーザーでの成功とは扱いません。通常の CI #5 の試験用署名と、プレリリースの公開用 Packslip 署名は別です。プレリリースの公開・導入検証結果は [配布の説明](DISTRIBUTION.md)に記録します。上の未確認項目を、自動試験の成功で置き換えることはしません。
 
 詳しい自動試験・セキュリティレビューの記録は [英語版](VERIFICATION.en.md) に残しています。

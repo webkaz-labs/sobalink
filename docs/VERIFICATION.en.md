@@ -27,6 +27,11 @@ that [v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v
 has been published and its release workflow has completed. Installation verification
 and the real tailnet/RustDesk acceptance below are separate results.
 
+Current ordinary CI now builds each target once, preserving all tests, packaged
+archive checks and the Packslip fixture. The prerelease still builds twice and
+compares digests. Trusted-main module/compilation caches reduce repeated work;
+test results are never reused. [Cache boundaries](DISTRIBUTION.md#ci-and-prerelease-caches)
+
 ## Local checks and review
 
 - TCP forwarding, half-close, timeout/cancellation, shutdown, connection caps and loopback binding
