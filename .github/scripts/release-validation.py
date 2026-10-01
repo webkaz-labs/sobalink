@@ -71,13 +71,37 @@ def source_gate(version, commit, env):
     return latest
 
 
+
+def find_release(tag):
+    # The by-tag endpoint returns published releases only. Authenticated listing
+    # also includes drafts visible to the token; fetch their stable numeric ID.
+    # Never infer that a draft is absent from a by-tag 404 alone.
+    release = api("releases/tags/" + tag, missing=True)
+    if release is not None:
+        return release
+    matches = []
+    for page in range(1, 101):
+        releases = api("releases?per_page=100&page=" + str(page))
+        require(isinstance(releases, list), "invalid release listing")
+        matches.extend(item for item in releases if item["tag_name"] == tag)
+        require(len(matches) <= 1, "multiple releases use the requested tag")
+        if len(releases) < 100:
+            if not matches:
+                return None
+            release_id = matches[0]["id"]
+            require(type(release_id) is int and release_id > 0, "invalid release ID")
+            release = api("releases/" + str(release_id))
+            require(release["id"] == release_id and release["tag_name"] == tag, "release changed during lookup")
+            return release
+    raise ValueError("release listing exceeded the review limit; refusing an incomplete lookup")
+
 def release_state(version, commit, required=False, published=False):
     validate_inputs(version, commit)
     tag = "v" + version
     ref = api("git/ref/tags/" + tag, missing=True)
     if ref is not None:
         require(ref["object"]["type"] == "commit" and ref["object"]["sha"] == commit, "existing tag must point directly to tested_commit; tags are never moved")
-    release = api("releases/tags/" + tag, missing=True)
+    release = find_release(tag)
     require(not required or release is not None, "expected release does not exist")
     if release is not None:
         require(ref is not None, "release tag is missing")

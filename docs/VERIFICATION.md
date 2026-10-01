@@ -4,7 +4,7 @@
 
 更新: 2026-10-01
 
-**これは検証用プレリリース `0.1.0-alpha.1` の手順です。安定版ではありません。** 自動テストは成功していますが、実際の tailnet への参加、Windows 標準ユーザーでの認証、RustDesk の双方向遠隔操作は未確認です。このページは、その確認を行うための手順です。成功済みの実機試験を説明するものではありません。
+**これは検証用プレリリース `0.1.0-alpha.2` の手順です。安定版ではありません。** 自動テストは成功していますが、実際の tailnet への参加、Windows 標準ユーザーでの認証、RustDesk の双方向遠隔操作は未確認です。このページは、その確認を行うための手順です。成功済みの実機試験を説明するものではありません。
 
 まず [準備](#準備) を確認し、[Windows](#windows) または [Mac](#mac) の手順を行ってください。両方で接続準備ができたら、[RustDesk の設定](#rustdesk) に進みます。[Linux](#linux) の手順もあります。
 
@@ -30,7 +30,7 @@
 
 ## <a id="ダウンロード"></a>2. mise から検証用プレリリースを導入する
 
-[プレリリース v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1) を使います。Release ページに **Pre-release** と表示され、`packslip.sigstore.json` と各 OS の配布物が公開されていることを確認してください。ページが見つからなければ公開処理がまだ終わっていないため、公開完了を待ちます。
+[プレリリース v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) を使います。Release ページに **Pre-release** と表示され、`packslip.sigstore.json` と各 OS の配布物が公開されていることを確認してください。ページが見つからなければ公開処理がまだ終わっていないため、公開完了を待ちます。
 
 **Go のコンパイル環境や圧縮ファイルの手動展開は不要です。** mise が署名・リポジトリの識別・ファイルのダイジェストを検証し、自分の OS / CPU の配布物を選びます。Linux x64/ARM64、Mac Apple Silicon (ARM64)、Windows x64 が対象です。Intel Mac と Windows ARM64 の配布はありません。
 
@@ -40,7 +40,7 @@
 
 - `packslip:`: 署名付き配布物を利用します
 - `[prerelease=true]`: プレリリースを明示的に選択対象へ含めます
-- `@0.1.0-alpha.1`: 検証対象をこの版に固定します。`latest` に置き換えません
+- `@0.1.0-alpha.2`: 検証対象をこの版に固定します。`latest` に置き換えません
 - `-g`: このユーザーの mise 設定へ登録します。管理者権限でのシステムインストールではありません
 
 ### 公開直後の24時間制限について
@@ -59,11 +59,11 @@ Packslip の署名は配布元と内容の確認です。Windows / macOS のコ�
 
 ```powershell
 mise --version
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
 mise exec -- tsnet-bridge version
 ```
 
-最後に `tsnet-bridge 0.1.0-alpha.1` と表示されれば、版と実行開始を確認できています。`mise exec --` を付けるので、PowerShell の PATH / シェル連携を追加変更する必要はありません。インストールが失敗したら後続の操作はせず、[困ったとき](#問題)を確認してください。
+最後に `tsnet-bridge 0.1.0-alpha.2` と表示されれば、版と実行開始を確認できています。`mise exec --` を付けるので、PowerShell の PATH / シェル連携を追加変更する必要はありません。インストールが失敗したら後続の操作はせず、[困ったとき](#問題)を確認してください。
 
 ### 3-2. 初回の設定を保存する
 
@@ -128,11 +128,11 @@ mise exec -- tsnet-bridge settings
 
 ```sh
 mise --version
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
 mise exec -- tsnet-bridge version
 ```
 
-`tsnet-bridge 0.1.0-alpha.1` と表示されることを確認します。`mise exec --` を付けるので、シェルの設定を書き換えなくても実行できます。
+`tsnet-bridge 0.1.0-alpha.2` と表示されることを確認します。`mise exec --` を付けるので、シェルの設定を書き換えなくても実行できます。
 
 ### 4-2. 初回設定する
 
@@ -314,11 +314,11 @@ Tailscale 管理画面からノードを削除する操作は別です。必要�
 
 ```sh
 mise --version
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
 mise exec -- tsnet-bridge version
 ```
 
-`tsnet-bridge 0.1.0-alpha.1` を確認してから、初回設定します。入力は Mac と同じ2つです。hbbr が別ホストなら、下の `setup` の行に `--relay-host relay.example.ts.net` を加えます。このホスト名は架空の例なので、確認した中継サーバー名に置き換えます。
+`tsnet-bridge 0.1.0-alpha.2` を確認してから、初回設定します。入力は Mac と同じ2つです。hbbr が別ホストなら、下の `setup` の行に `--relay-host relay.example.ts.net` を加えます。このホスト名は架空の例なので、確認した中継サーバー名に置き換えます。
 
 ```sh
 mise exec -- tsnet-bridge setup
@@ -343,7 +343,7 @@ mise exec -- tsnet-bridge settings
 | 表示・症状 | 確認すること |
 | --- | --- |
 | `mise` が見つからない | mise の公式導入手順を完了したか、新しい PowerShell / ターミナルを開いて `mise --version` が通るか確認します |
-| 版または署名付き配布物が見つからない | Release が公開済みか、`[prerelease=true]@0.1.0-alpha.1` を引用符ごと指定したか、mise の版を確認します。`latest` や版番号の省略は使いません |
+| 版または署名付き配布物が見つからない | Release が公開済みか、`[prerelease=true]@0.1.0-alpha.2` を引用符ごと指定したか、mise の版を確認します。`latest` や版番号の省略は使いません |
 | 署名・ダイジェスト・識別の検証に失敗 | 実行を中断し、エラーを確認します。検証を無効にしたり、記録済みの署名者を確認せず消したりしません |
 | `tsnet-bridge` が見つからない / 別の版が出る | `mise use -g` が成功したか確認し、`mise exec -- tsnet-bridge version` を使います。別プロジェクトの mise 設定が優先される場所なら、ホームフォルダーで試します |
 | `profile already exists` | 初回設定済みです。同じ設定を再利用するなら `setup` を省きます。修正するなら停止し、保存先の `profile.json` を手元でバックアップして必要箇所だけ編集し、保存後に `run` で再起動します。`reconnect` では設定ファイルを読み直しません。ノードの認証状態は削除しません。ローカル relay ポートは全端末で一致させます |

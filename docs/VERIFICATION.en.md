@@ -23,7 +23,7 @@ Each job ran race-enabled tests, native local IPC/lifecycle checks, vet, formatt
 The run's development artifacts are historical CI outputs. The acceptance
 installation path is now the explicitly pinned testing prerelease described in
 [distribution](DISTRIBUTION.md), not a manually extracted CI artifact. Confirm
-that [v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1)
+that [v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2)
 has been published and its release workflow has completed. Installation verification
 and the real tailnet/RustDesk acceptance below are separate results.
 
@@ -69,11 +69,11 @@ The following is a procedure, not a passed result. It needs a reachable configur
    Unix shells accept:
 
    ```sh
-   mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+   mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
    mise exec -- tsnet-bridge version
    ```
 
-   Require `tsnet-bridge 0.1.0-alpha.1`. The full version pin is exempt from the
+   Require `tsnet-bridge 0.1.0-alpha.2`. The full version pin is exempt from the
    default 24-hour discovery delay; verification stays enabled. Stop on signature
    errors or OS security warnings. A prerelease is not a stable support claim.
 2. In terminal A, create the profile and run in the foreground:

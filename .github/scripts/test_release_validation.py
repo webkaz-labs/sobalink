@@ -191,6 +191,62 @@ class ScriptTextEncoding(unittest.TestCase):
                 WorkflowAttestationPolicy().check_command(command)
 
 
+class ReleaseLookup(unittest.TestCase):
+    def setUp(self):
+        self.tag = "v" + VERSION
+        self.draft = {"id": 123, "tag_name": self.tag, "draft": True}
+
+    def test_published_release_uses_tag_endpoint(self):
+        published = dict(self.draft, draft=False)
+        with patch.object(checks, "api", return_value=published) as api:
+            self.assertEqual(checks.find_release(self.tag), published)
+            api.assert_called_once_with("releases/tags/" + self.tag, missing=True)
+
+    def test_draft_tag_404_falls_back_to_list_and_numeric_id(self):
+        with patch.object(checks, "api", side_effect=[None, [self.draft], self.draft]) as api:
+            self.assertEqual(checks.find_release(self.tag), self.draft)
+            self.assertEqual([call.args[0] for call in api.call_args_list], [
+                "releases/tags/" + self.tag, "releases?per_page=100&page=1", "releases/123"])
+
+    def test_draft_on_second_page_is_found(self):
+        first = [{"id": i + 1, "tag_name": "v9.0.0-test." + str(i)} for i in range(100)]
+        with patch.object(checks, "api", side_effect=[None, first, [self.draft], self.draft]) as api:
+            self.assertEqual(checks.find_release(self.tag), self.draft)
+            self.assertEqual(api.call_args_list[2].args[0], "releases?per_page=100&page=2")
+
+    def test_absent_release_requires_completed_listing(self):
+        with patch.object(checks, "api", side_effect=[None, []]) as api:
+            self.assertIsNone(checks.find_release(self.tag))
+            self.assertEqual(api.call_count, 2)
+
+    def test_duplicate_matching_drafts_fail_closed(self):
+        with patch.object(checks, "api", side_effect=[None, [self.draft, dict(self.draft, id=124)]]):
+            with self.assertRaisesRegex(ValueError, "multiple releases"):
+                checks.find_release(self.tag)
+
+    def test_changed_release_identity_and_invalid_id_fail_closed(self):
+        for detail in (dict(self.draft, id=124), dict(self.draft, tag_name="v9.9.9-test")):
+            with self.subTest(detail=detail), patch.object(checks, "api", side_effect=[None, [self.draft], detail]):
+                with self.assertRaisesRegex(ValueError, "release changed"):
+                    checks.find_release(self.tag)
+        for release_id in ("123", "../unexpected", 0, True):
+            with self.subTest(id=release_id), patch.object(checks, "api", side_effect=[None, [dict(self.draft, id=release_id)]]):
+                with self.assertRaisesRegex(ValueError, "invalid release ID"):
+                    checks.find_release(self.tag)
+
+    def test_listing_errors_are_not_treated_as_absence(self):
+        error = PermissionError("fixture access denied")
+        with patch.object(checks, "api", side_effect=[None, error]):
+            with self.assertRaises(PermissionError):
+                checks.find_release(self.tag)
+
+    def test_incomplete_listing_fails_closed(self):
+        page = [{"id": i + 1, "tag_name": "v9.0.0-test." + str(i)} for i in range(100)]
+        with patch.object(checks, "api", side_effect=[None] + [page] * 100):
+            with self.assertRaisesRegex(ValueError, "incomplete lookup"):
+                checks.find_release(self.tag)
+
+
 class ReleaseGuards(unittest.TestCase):
     def setUp(self):
         self.env = {"GITHUB_REPOSITORY": checks.REPOSITORY, "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": COMMIT, "GITHUB_WORKFLOW_REF": checks.REPOSITORY + "/" + checks.WORKFLOW + "@refs/heads/main"}
@@ -214,6 +270,10 @@ class ReleaseGuards(unittest.TestCase):
         if path.startswith("git/ref/tags/"):
             return self.tag
         if path.startswith("releases/tags/"):
+            return self.release if self.release is not None and not self.release["draft"] else None
+        if path == "releases?per_page=100&page=1":
+            return [self.release] if self.release is not None else []
+        if path == "releases/1":
             return self.release
         self.fail("unexpected API path: " + path)
 
@@ -222,7 +282,7 @@ class ReleaseGuards(unittest.TestCase):
 
     def draft(self):
         self.tag = copy.deepcopy(self.ref)
-        self.release = {"tag_name": "v" + VERSION, "target_commitish": COMMIT, "prerelease": True, "draft": True, "body": "<!-- tsnet-bridge-source:" + COMMIT + " -->", "assets": []}
+        self.release = {"id": 1, "tag_name": "v" + VERSION, "target_commitish": COMMIT, "prerelease": True, "draft": True, "body": "<!-- tsnet-bridge-source:" + COMMIT + " -->", "assets": []}
 
     def test_accept_exact_main_and_successful_ci(self):
         self.assertEqual(self.gate()["id"], 10)
@@ -279,6 +339,23 @@ class ReleaseGuards(unittest.TestCase):
         self.draft()
         self.assertEqual(checks.release_state(VERSION, COMMIT, required=True)[1], self.release)
 
+    def test_staging_lifecycle_with_realistic_draft_visibility(self):
+        self.assertEqual(checks.release_state(VERSION, COMMIT), (None, None))
+        self.tag = copy.deepcopy(self.ref)
+        self.assertEqual(checks.release_state(VERSION, COMMIT), (self.tag, None))
+        self.draft()
+        # GitHub's by-tag route is still 404 after successful draft creation.
+        self.assertIsNone(self.api("releases/tags/v" + VERSION, missing=True))
+        self.assertEqual(checks.release_state(VERSION, COMMIT, required=True)[1], self.release)
+        self.release["assets"] = [{"name": name} for name in checks.filenames(VERSION)]
+        checks.release_state(VERSION, COMMIT, required=True)
+        self.release["assets"].append({"name": "packslip.sigstore.json"})
+        checks.release_state(VERSION, COMMIT, required=True)
+        self.release["draft"] = False
+        checks.release_state(VERSION, COMMIT, required=True, published=True)
+        with self.assertRaisesRegex(ValueError, "published releases are immutable"):
+            checks.release_state(VERSION, COMMIT)
+
     def test_main_commitish_metadata_requires_exact_immutable_tag(self):
         self.draft()
         self.release["target_commitish"] = "main"
@@ -304,7 +381,7 @@ class ReleaseGuards(unittest.TestCase):
         self.draft()
         for key, value in (("target_commitish", "unreviewed-branch"), ("tag_name", "v9.9.9-rc.1"), ("prerelease", False), ("body", "missing source marker")):
             with self.subTest(key=key), patch.dict(self.release, {key: value}), self.assertRaises(ValueError):
-                checks.release_state(VERSION, COMMIT)
+                checks.release_state(VERSION, COMMIT, required=True)
 
     def test_reject_missing_required_release_or_tag(self):
         with self.assertRaises(ValueError):

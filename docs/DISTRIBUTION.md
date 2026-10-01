@@ -2,10 +2,10 @@
 
 ## Current status: testing prerelease
 
-The requested `v0.1.0-alpha.1` is an **experimental acceptance-testing prerelease**,
+The requested `v0.1.0-alpha.2` is an **experimental acceptance-testing prerelease**,
 not a supported stable release. Publication and installation are verified by the
 manually dispatched [prerelease workflow](https://github.com/webkaz-labs/tsnet-bridge/blob/main/.github/workflows/prerelease.yml).
-Check its completed run and the [release page](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1)
+Check its completed run and the [release page](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2)
 before treating the install path as available. A missing release page means
 publication has not finished.
 
@@ -65,11 +65,11 @@ With mise **2026.9.18**, these commands work in PowerShell and Unix shells after
 the release is published:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
 mise exec -- tsnet-bridge version
 ```
 
-Expected application version: `tsnet-bridge 0.1.0-alpha.1`. The explicit
+Expected application version: `tsnet-bridge 0.1.0-alpha.2`. The explicit
 `prerelease=true` option opts into prerelease selection; the complete version pins
 the tested release. Do not use `latest`. Packslip selects the native archive and
 executable, including `.exe` on Windows. Go is not required for end users.

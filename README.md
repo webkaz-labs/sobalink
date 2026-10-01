@@ -36,11 +36,11 @@ Intel Mac は今回のプレリリース対象に含みません。CI の OS と
 [mise](https://mise.jdx.dev/getting-started.html) 2026.9.18 を確認対象にしています。Windows の PowerShell、Mac、Linux で同じコマンドです。Go のインストールや手動展開は不要です。
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
 mise exec -- tsnet-bridge version
 ```
 
-[Release v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1) の公開後に利用できます。`prerelease=true` と完全な版番号を指定し、`latest` は使いません。完全な版指定は mise の24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままで、待機時間の全体設定を変更する必要はありません。
+[Release v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) の公開後に利用できます。`prerelease=true` と完全な版番号を指定し、`latest` は使いません。完全な版指定は mise の24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままで、待機時間の全体設定を変更する必要はありません。
 
 **[日本語の詳しい手順](docs/VERIFICATION.md)**には、Windows / Mac / Linux 別のインストール、認証、RustDesk の設定、成功判定と終了まで記載しています。Packslip の署名は配布元と内容の確認であり、OS コード署名・公証や実際の遠隔操作成功の保証ではありません。
 

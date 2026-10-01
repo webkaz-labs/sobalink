@@ -24,11 +24,11 @@ Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS is no
 With [mise](https://mise.jdx.dev/getting-started.html) (pinned verification version: 2026.9.18), use the same command in PowerShell, macOS, and Linux. No Go compiler or manual extraction is needed:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.2"
 mise exec -- tsnet-bridge version
 ```
 
-Available after [v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1) is published. Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. mise 2026.9.18 applies its default 24-hour release-age cutoff to discovery/fuzzy selections, but exact version pins are exempt. Signature, identity and digest verification remain enabled. No global age override or signature bypass is needed.
+Available after [v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) is published. Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. mise 2026.9.18 applies its default 24-hour release-age cutoff to discovery/fuzzy selections, but exact version pins are exempt. Signature, identity and digest verification remain enabled. No global age override or signature bypass is needed.
 
 Packslip verifies publisher identity and bytes, not OS code signing/notarization or application compatibility. Stop if platform security warnings prevent execution. See the [Japanese step-by-step guide](docs/VERIFICATION.md) and [English verification report](docs/VERIFICATION.en.md).
 
