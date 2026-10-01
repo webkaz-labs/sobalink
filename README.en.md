@@ -4,7 +4,7 @@
 
 An application-scoped tailnet bridge built with Go and embedded tsnet for macOS, Windows, and Linux. It does not change system-wide VPN, routing, or DNS settings.
 
-> **Experimental.** Local/fake transport tests are distinct from real tailnet enrollment and RustDesk screen/control tests. Bidirectional remote control and initial Windows standard-user enrollment are unverified. There is no public Release yet. See [verification status](docs/VERIFICATION.en.md).
+> **Experimental.** Local/fake transport tests are distinct from real tailnet enrollment and RustDesk screen/control tests. Bidirectional remote control and initial Windows standard-user enrollment are unverified. Distribution is an acceptance-testing prerelease, not a supported stable product. See [verification status](docs/VERIFICATION.en.md).
 
 ## Features
 
@@ -19,9 +19,22 @@ No GUI, autostart registration, system service, subnet router, exit node, or gen
 
 ## Targets and installation
 
-Linux x64/ARM64, macOS Apple Silicon/Intel, and Windows x64. Linux/macOS archives are tar.gz; Windows archives are zip with an exe. CI runner versions do not establish minimum OS support. Windows standard-user enrollment remains a release gate.
+Linux x64/ARM64, macOS Apple Silicon/Intel, and Windows x64. CI runners do not establish minimum OS support or Windows standard-user enrollment.
 
-For development, install [mise](https://mise.jdx.dev/getting-started.html), then:
+With [mise](https://mise.jdx.dev/getting-started.html) (pinned verification version: 2026.9.18), use the same command in PowerShell, macOS, and Linux. No Go compiler or manual extraction is needed:
+
+```sh
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise exec -- tsnet-bridge version
+```
+
+Available after [v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1) is published. Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. mise 2026.9.18 applies its default 24-hour release-age cutoff to discovery/fuzzy selections, but exact version pins are exempt. Signature, identity and digest verification remain enabled. No global age override or signature bypass is needed.
+
+Packslip verifies publisher identity and bytes, not OS code signing/notarization or application compatibility. Stop if platform security warnings prevent execution. See the [Japanese step-by-step guide](docs/VERIFICATION.md) and [English verification report](docs/VERIFICATION.en.md).
+
+### Build from source
+
+The repository pins Go 1.27.1 and Tailscale 1.102.5. In a source checkout:
 
 ```sh
 mise install
@@ -29,24 +42,14 @@ mise exec -- go test -race ./...
 mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
 ```
 
-On Windows use `bin/tsnet-bridge.exe` as the output name. The repository pins Go 1.27.1 and Tailscale 1.102.5 with go.sum integrity checks.
-
-Signed Packslip through mise is the planned distribution entry point. **This command is not usable until a verified public release exists:**
-
-```sh
-# Future release workflow; replace <version> with a published explicit version
-mise use -g packslip:github.com/webkaz-labs/tsnet-bridge@<version>
-mise exec -- tsnet-bridge
-```
-
-End users will not need a Go compiler. See [distribution](docs/DISTRIBUTION.md).
+On Windows use `bin/tsnet-bridge.exe`. To test that source build, substitute its executable path for `mise exec -- tsnet-bridge` in the examples below. See [distribution](docs/DISTRIBUTION.md).
 
 ## First run
 
 ```sh
-tsnet-bridge setup
-tsnet-bridge
-tsnet-bridge login
+mise exec -- tsnet-bridge setup
+mise exec -- tsnet-bridge
+mise exec -- tsnet-bridge login
 ```
 
 Setup requests the ID server's tailnet peer name/IP and RustDesk public key. It saves the profile without network authentication. Start runs an embedded node; login opens a private Tailscale authorization URL for explicit enrollment. This is a separate identity from any installed Tailscale app. Use `login --no-browser` to open the URL manually; do not share it.
@@ -63,7 +66,7 @@ Default bindings:
 | TCP 127.0.0.1:32115 | hbbs:21115 |
 | TCP 127.0.0.1:32117 | hbbr:21117 |
 
-Back up RustDesk's existing server and proxy settings first. Run `tsnet-bridge settings` and enter its ID server, relay, and public key. Leave the proxy blank, keep UDP enabled, disable WebSocket, and connect using `remote-ID/r`.
+Back up RustDesk's existing server and proxy settings first. Run `mise exec -- tsnet-bridge settings` and enter its ID server, relay, and public key. Leave the proxy blank, keep UDP enabled, disable WebSocket, and connect using `remote-ID/r`.
 
 **Every endpoint using this profile must run the helper with the same loopback relay address and port.** RustDesk forwards the relay address to its peer. One-sided deployment, independently chosen ports, and mixed native-tailnet/loopback profiles are unverified. Also check hbbs relay-address rewrite settings. `/r` does not guarantee the absence of direct probes; NAT reporting and address propagation require real testing.
 
@@ -78,13 +81,13 @@ RustDesk 1.4.9 switches registration to TCP when a proxy is configured. OSS serv
 ## Operation
 
 ```sh
-tsnet-bridge                 # Start, or show status if already running
-tsnet-bridge status --json
-tsnet-bridge doctor
-tsnet-bridge reconnect       # Recreate forwarding, retain saved login
-tsnet-bridge stop            # Stop forwarding, retain saved login
-tsnet-bridge logout          # Log out a running node, then stop
-tsnet-bridge run             # Foreground; Ctrl+C stops forwarding
+mise exec -- tsnet-bridge                 # Start, or show status if already running
+mise exec -- tsnet-bridge status --json
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge reconnect       # Recreate forwarding, retain saved login
+mise exec -- tsnet-bridge stop            # Stop forwarding, retain saved login
+mise exec -- tsnet-bridge logout          # Log out a running node, then stop
+mise exec -- tsnet-bridge run             # Foreground; Ctrl+C stops forwarding
 ```
 
 `ready` only means the allowed peer and TCP server ports were reachable. RustDesk screen/control always remains separately labeled `unverified`. Temporary failures close listeners and retry with increasing intervals. Authentication, admin approval, peer policy, and port conflicts have distinct messages.

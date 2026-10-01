@@ -4,7 +4,7 @@
 
 更新: 2026-10-01
 
-**いま配布できるのは開発・検証用の実験版です。** 自動テストは成功していますが、実際の tailnet への参加、Windows 標準ユーザーでの認証、RustDesk の双方向遠隔操作は未確認です。このページは、その確認を行うための手順です。成功済みの実機試験を説明するものではありません。
+**これは検証用プレリリース `0.1.0-alpha.1` の手順です。安定版ではありません。** 自動テストは成功していますが、実際の tailnet への参加、Windows 標準ユーザーでの認証、RustDesk の双方向遠隔操作は未確認です。このページは、その確認を行うための手順です。成功済みの実機試験を説明するものではありません。
 
 まず [準備](#準備) を確認し、[Windows](#windows) または [Mac](#mac) の手順を行ってください。両方で接続準備ができたら、[RustDesk の設定](#rustdesk) に進みます。[Linux](#linux) の手順もあります。
 
@@ -28,63 +28,47 @@
 
 このツールは端末ごとに**別の Tailscale ノード**を作ります。すでに入っている Tailscale アプリのログインは引き継ぎません。参加を承認してよい端末・tailnet でだけ、後述の認証を実施してください。
 
-## <a id="ダウンロード"></a>2. 成功済みの開発版を入手する
+## <a id="ダウンロード"></a>2. mise から検証用プレリリースを導入する
 
-現時点で正式 Release はありません。**以下では Go のビルド環境や mise のインストールは不要です。** 将来用の `mise use` コマンドは、まだ実行しないでください。
+[プレリリース v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1) を使います。Release ページに **Pre-release** と表示され、`packslip.sigstore.json` と各 OS の配布物が公開されていることを確認してください。ページが見つからなければ公開処理がまだ終わっていないため、公開完了を待ちます。
 
-1. GitHub にサインインし、[成功済み CI #5](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36857522576) を開きます
-2. コミットが **`0f7ec79`**、結果が緑色の成功であることを確認します
-3. ページ下部の **Artifacts**（生成ファイル）から、自分の OS と CPU に合う名前をクリックします
+**Go のコンパイル環境や圧縮ファイルの手動展開は不要です。** mise が署名・リポジトリの識別・ファイルのダイジェストを検証し、自分の OS / CPU の配布物を選びます。Linux x64/ARM64、Mac Apple Silicon/Intel、Windows x64 が対象です。Windows ARM64 のネイティブ配布はありません。
 
-| 使う端末 | ダウンロードする Artifact |
-| --- | --- |
-| Apple Silicon の Mac | `package-darwin-arm64` |
-| Intel の Mac | `package-darwin-amd64` |
-| Windows x64 | `package-windows-amd64` |
-| Linux x64 | `package-linux-amd64` |
-| Linux ARM64 | `package-linux-arm64` |
+まだ mise がない場合は、[公式の導入手順](https://mise.jdx.dev/getting-started.html)から自分の OS 用を導入します。本書の確認対象は **mise 2026.9.18** です。古い mise に Packslip バックエンドがない場合は、導入に使った公式の方法で更新してください。
 
-Mac の CPU は Apple メニュー →「この Mac について」で確認できます。`darwin` は macOS、`amd64` は x64 の意味です。Windows ARM64 向けのネイティブ配布はありません。
+次の Windows / Mac / Linux の手順では、共通してこの指定を使います。
 
-この CI の版番号は **`0.0.0-dev.5`** です。同梱文書は作成当時の内容なので、日本語の説明はこのページを参照してください。Artifact は 2026-10-15 に期限切れになります。消えていたら、この手順に別の版を混ぜず、次の成功済み版の案内を確認してください。
+- `packslip:`: 署名付き配布物を利用します
+- `[prerelease=true]`: プレリリースを明示的に選択対象へ含めます
+- `@0.1.0-alpha.1`: 検証対象をこの版に固定します。`latest` に置き換えません
+- `-g`: このユーザーの mise 設定へ登録します。管理者権限でのシステムインストールではありません
 
-ダウンロードは **二重の圧縮ファイル**です。外側の `package-…zip` を展開すると、中に本体の `.tar.gz` または `.zip`、チェックサム、ビルド情報などが入っています。本体をさらに展開すると、`bin` フォルダーに実行ファイルがあります。
+### 公開直後の24時間制限について
 
-保存先を「ダウンロード」から変更している場合や、ブラウザーが名前に `(1)` を付けた場合は、以下のダウンロード元パスを実際の名前へ置き換えてください。展開先に同名のフォルダーがすでにある場合は、上書きせず、空の別フォルダーを選びます。その場合は、窓Bを開くときも含め、以降の全コマンドの保存先・移動先を同じフォルダーへ読み替えてください。
+mise 2026.9.18 の既定の最小リリース経過時間は24時間で、`latest` や曖昧な版指定による候補選択へ適用されます。ただし、**この手順のような完全な版番号の明示指定は経過時間フィルターの対象外**です。公開直後でもその版を選べます。署名・識別・ダイジェストの検証は引き続き有効です。全体設定で待機時間をゼロにしたり、署名検証を無効にしたりする必要はありません。[mise の設定仕様](https://mise.jdx.dev/configuration/settings.html#minimum-release-age)
 
-**開発版の OS 署名・公証は保証していません。SmartScreen、Gatekeeper などで止まったら、警告を回避せず、その段階で中断してください。**
+Packslip の署名は配布元と内容の確認です。Windows / macOS のコード署名・公証や、実際の遠隔操作成功を保証するものではありません。SmartScreen、Gatekeeper などで止まったら、警告を回避せず中断してください。
 
 ## <a id="windows"></a>3. Windows で設定・起動する
 
-### 3-1. 普通の PowerShell で展開する
+### 3-1. 普通の PowerShell でインストールする
 
 スタートメニューから **PowerShell** を普通に開きます。「管理者として実行」は選びません。標準ユーザーでの受入確認には、管理者グループに属さないアカウントでの実行が必要です。管理者アカウントから普通に開くだけでは、その条件を満たしたとは記録できません。
 
-以下は1行ずつ実行します。`$HOME` は現在のユーザーのホームフォルダーです。
+1行ずつ実行します。インストールは既定の設定のまま、公開版の署名検証を行います。
 
 ```powershell
-Expand-Archive -LiteralPath "$HOME\Downloads\package-windows-amd64.zip" -DestinationPath "$HOME\tsnet-bridge-test\artifact"
-Set-Location "$HOME\tsnet-bridge-test\artifact"
-Get-FileHash .\tsnet-bridge-0.0.0-dev.5-windows-amd64.zip -Algorithm SHA256
-Get-Content .\SHA256SUMS-windows-amd64 | Select-String 'tsnet-bridge-0\.0\.0-dev\.5-windows-amd64\.zip$'
+mise --version
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise exec -- tsnet-bridge version
 ```
 
-上の2つの結果に出る **64桁のハッシュ値が同じ**か確認します。大文字・小文字の違いは無視できます。違う、または対象行が出ない場合は実行せず中断します。この照合はダウンロード破損の確認であり、正式な署名の確認ではありません。
-
-一致したら本体を展開します。
-
-```powershell
-Expand-Archive -LiteralPath .\tsnet-bridge-0.0.0-dev.5-windows-amd64.zip -DestinationPath ..\app
-Set-Location ..\app\bin
-.\tsnet-bridge.exe version
-```
-
-`tsnet-bridge 0.0.0-dev.5` と表示されれば、版と実行開始を確認できています。
+最後に `tsnet-bridge 0.1.0-alpha.1` と表示されれば、版と実行開始を確認できています。`mise exec --` を付けるので、PowerShell の PATH / シェル連携を追加変更する必要はありません。インストールが失敗したら後続の操作はせず、[困ったとき](#問題)を確認してください。
 
 ### 3-2. 初回の設定を保存する
 
 ```powershell
-.\tsnet-bridge.exe setup
+mise exec -- tsnet-bridge setup
 ```
 
 英語で2回だけ入力を求められます。
@@ -97,7 +81,7 @@ Set-Location ..\app\bin
 hbbr が別ホストの場合だけ、通常の `setup` の代わりに、最初から次を使います。`relay.example.ts.net` は**架空の例**なので、確認した中継サーバー名に置き換えてください。
 
 ```powershell
-.\tsnet-bridge.exe setup --relay-host relay.example.ts.net
+mise exec -- tsnet-bridge setup --relay-host relay.example.ts.net
 ```
 
 設定がすでにあると上書きせず止まります。これは正常な保護動作です。[困ったとき](#問題)を参照してください。
@@ -107,7 +91,7 @@ hbbr が別ホストの場合だけ、通常の `setup` の代わりに、最初
 同じ PowerShell で次を実行します。
 
 ```powershell
-.\tsnet-bridge.exe run
+mise exec -- tsnet-bridge run
 ```
 
 この窓を **窓A** とします。終了せず待ち続けるのが正常です。表示が増えなくても、それだけでは失敗ではありません。ここから Tailscale への通信を始めます。認証前でも、完全なオフライン試験にはなりません。
@@ -117,8 +101,7 @@ hbbr が別ホストの場合だけ、通常の `setup` の代わりに、最初
 同じユーザーで、普通の PowerShell をもう1つ開きます。これを **窓B** とします。
 
 ```powershell
-Set-Location "$HOME\tsnet-bridge-test\app\bin"
-.\tsnet-bridge.exe login --no-browser
+mise exec -- tsnet-bridge login --no-browser
 ```
 
 `Private sign-in URL (do not share):` の後ろに、**この端末用の非公開認証 URL** が出ます。自分のブラウザーで開き、正しい Tailscale アカウント・tailnet で、この新規ノードの参加を自分で承認してください。URL、パスワード、認証キーをチャットや Issue に貼らないでください。
@@ -130,42 +113,31 @@ Set-Location "$HOME\tsnet-bridge-test\app\bin"
 窓A は開いたまま、窓B で実行します。
 
 ```powershell
-.\tsnet-bridge.exe status --json
-.\tsnet-bridge.exe doctor
-.\tsnet-bridge.exe settings
+mise exec -- tsnet-bridge status --json
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge settings
 ```
 
 [状態の読み方](#状態)で判定します。Windows の準備ができたら、Mac でも次の手順を行います。
 
 ## <a id="mac"></a>4. Mac で設定・起動する
 
-### 4-1. ターミナルで展開する
+### 4-1. ターミナルでインストールする
 
-「アプリケーション」→「ユーティリティ」→ **ターミナル**を開きます。`sudo` は使いません。
-
-以下は **Apple Silicon** 用です。Intel の場合は、コマンド内の `arm64` をすべて `amd64` に置き換えてください。
+「アプリケーション」→「ユーティリティ」→ **ターミナル**を開きます。`sudo` は使いません。Apple Silicon / Intel とも同じコマンドです。mise が対応する配布物を選びます。
 
 ```sh
-mkdir -p "$HOME/tsnet-bridge-test/artifact" "$HOME/tsnet-bridge-test/app"
-unzip "$HOME/Downloads/package-darwin-arm64.zip" -d "$HOME/tsnet-bridge-test/artifact"
-cd "$HOME/tsnet-bridge-test/artifact"
-shasum -a 256 -c SHA256SUMS-darwin-arm64
+mise --version
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise exec -- tsnet-bridge version
 ```
 
-すべて `OK` ならダウンロード破損の照合は成功です。`FAILED`、対象ファイルなし、展開時の上書き確認が出たら、そのまま続けないでください。チェックサムは正式な署名や公証の代わりではありません。
-
-```sh
-tar -xzf tsnet-bridge-0.0.0-dev.5-darwin-arm64.tar.gz -C ../app
-cd ../app/bin
-./tsnet-bridge version
-```
-
-`tsnet-bridge 0.0.0-dev.5` と表示されることを確認します。ブラウザーが外側の ZIP を自動展開していたら、その展開済みフォルダー内のファイルを上の `artifact` に置き、チェックサムの行から進めます。
+`tsnet-bridge 0.1.0-alpha.1` と表示されることを確認します。`mise exec --` を付けるので、シェルの設定を書き換えなくても実行できます。
 
 ### 4-2. 初回設定する
 
 ```sh
-./tsnet-bridge setup
+mise exec -- tsnet-bridge setup
 ```
 
 1. `Tailnet ID-server name or IP:` → [準備](#準備)で確認した **サーバーの tailnet 名または IP** を入力し、Enter
@@ -176,13 +148,13 @@ Windows と同じサーバー・公開鍵を使います。`Profile saved. No ta
 hbbr が別ホストの場合だけ、通常の `setup` の代わりに次を使います。`relay.example.ts.net` は架空の例なので置き換えます。
 
 ```sh
-./tsnet-bridge setup --relay-host relay.example.ts.net
+mise exec -- tsnet-bridge setup --relay-host relay.example.ts.net
 ```
 
 ### 4-3. 起動用のターミナルを残す
 
 ```sh
-./tsnet-bridge run
+mise exec -- tsnet-bridge run
 ```
 
 この **窓A** は開いたままにします。コマンドが終了しないのが正常です。この段階から Tailscale へ通信します。
@@ -192,8 +164,7 @@ hbbr が別ホストの場合だけ、通常の `setup` の代わりに次を使
 ターミナルの「シェル」→「新規ウインドウ」で **窓B** を開きます。
 
 ```sh
-cd "$HOME/tsnet-bridge-test/app/bin"
-./tsnet-bridge login --no-browser
+mise exec -- tsnet-bridge login --no-browser
 ```
 
 表示された非公開の認証 URL を、自分のブラウザーで開きます。Mac 用にも新しいノードの参加を承認します。Windows での承認だけでは Mac は参加しません。URL は共有しないでください。
@@ -201,9 +172,9 @@ cd "$HOME/tsnet-bridge-test/app/bin"
 認証後、窓B で確認します。
 
 ```sh
-./tsnet-bridge status --json
-./tsnet-bridge doctor
-./tsnet-bridge settings
+mise exec -- tsnet-bridge status --json
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge settings
 ```
 
 [状態の読み方](#状態)を確認したら、両方の RustDesk を設定します。
@@ -292,28 +263,28 @@ RustDesk の接続情報で「中継接続」と表示されるかも確認し�
 Windows:
 
 ```powershell
-.\tsnet-bridge.exe stop
-.\tsnet-bridge.exe status --json
+mise exec -- tsnet-bridge stop
+mise exec -- tsnet-bridge status --json
 ```
 
 Mac / Linux:
 
 ```sh
-./tsnet-bridge stop
-./tsnet-bridge status --json
+mise exec -- tsnet-bridge stop
+mise exec -- tsnet-bridge status --json
 ```
 
 `state` が `stopped` になり、窓A の `run` が終了します。窓A で **Ctrl+C** を押しても停止できます。**停止しても Tailscale の保存ログインや RustDesk の設定は消えません。**
 
 ### 保存したログインで再開する
 
-窓A で再び Windows は `.\tsnet-bridge.exe run`、Mac / Linux は `./tsnet-bridge run` を実行し、窓B で `status --json` と `doctor` を確認します。期限切れや承認条件の変更がなければ再認証なしで戻るかを試します。
+窓A で再び `mise exec -- tsnet-bridge run` を実行し、窓B で `status --json` と `doctor` を確認します。期限切れや承認条件の変更がなければ再認証なしで戻るかを試します。
 
-初回確認後にバックグラウンド起動を使いたい場合は、前面の `run` を停止してから、Windows は `.\tsnet-bridge.exe`、Mac / Linux は `./tsnet-bridge` を実行します。こちらは起動後に入力待ちへ戻ります。終了には `stop` を使います。
+初回確認後にバックグラウンド起動を使いたい場合は、前面の `run` を停止してから、`mise exec -- tsnet-bridge` を実行します。こちらは起動後に入力待ちへ戻ります。終了には `stop` を使います。
 
 ### 転送だけ作り直す
 
-稼働中に Windows は `.\tsnet-bridge.exe reconnect`、Mac / Linux は `./tsnet-bridge reconnect`。ログインを保存したまま転送を作り直します。実行中の接続は切れます。tsnet 自体の再起動や再認証をするコマンドではありません。
+稼働中に `mise exec -- tsnet-bridge reconnect` を実行します。ログインを保存したまま転送を作り直します。実行中の接続は切れます。tsnet 自体の再起動や再認証をするコマンドではありません。
 
 ### 試験ノードを使い終わったらログアウトする
 
@@ -322,13 +293,13 @@ Mac / Linux:
 Windows:
 
 ```powershell
-.\tsnet-bridge.exe logout
+mise exec -- tsnet-bridge logout
 ```
 
 Mac / Linux:
 
 ```sh
-./tsnet-bridge logout
+mise exec -- tsnet-bridge logout
 ```
 
 成功時は `logged-out` と表示され、ツールが終了します。その後の `status` が `stopped` になるのは正常です。`local forwarding stopped; server-side logout unconfirmed` は「手元の転送は停止したが、ログアウトを確認できていない」という意味です。通信復旧後に再開してやり直し、成功したことにしないでください。
@@ -339,46 +310,42 @@ Tailscale 管理画面からノードを削除する操作は別です。必要�
 
 ## <a id="linux"></a>Linux で試す場合
 
-ログイン中の一般ユーザーで、`sudo` やサービス登録を使わずに実行します。端末で `uname -m` を実行し、`x86_64` なら `amd64`、`aarch64` なら `arm64` の Artifact を選びます。
-
-以下は x64 用です。ARM64 では、すべての `amd64` を `arm64` に置き換えます。ダウンロード先は実際の場所に合わせてください。`unzip` がなければ、デスクトップの圧縮ファイル管理アプリで外側 ZIP を同じ `artifact` フォルダーへ展開できます。
+一般ユーザーの端末で、`sudo` やサービス登録を使わずに実行します。Linux x64 / ARM64 は同じコマンドです。mise が対象を選びます。
 
 ```sh
-mkdir -p "$HOME/tsnet-bridge-test/artifact" "$HOME/tsnet-bridge-test/app"
-unzip "$HOME/Downloads/package-linux-amd64.zip" -d "$HOME/tsnet-bridge-test/artifact"
-cd "$HOME/tsnet-bridge-test/artifact"
-sha256sum --check SHA256SUMS-linux-amd64
+mise --version
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise exec -- tsnet-bridge version
 ```
 
-すべて `OK` であることを確認してから進みます。hbbr が別ホストの場合は、以下の `./tsnet-bridge setup` の行を、最初から `./tsnet-bridge setup --relay-host relay.example.ts.net` に置き換えてください。`relay.example.ts.net` は架空の例なので、確認した中継サーバー名に置き換えます。
+`tsnet-bridge 0.1.0-alpha.1` を確認してから、初回設定します。入力は Mac と同じ2つです。hbbr が別ホストなら、下の `setup` の行に `--relay-host relay.example.ts.net` を加えます。このホスト名は架空の例なので、確認した中継サーバー名に置き換えます。
 
 ```sh
-tar -xzf tsnet-bridge-0.0.0-dev.5-linux-amd64.tar.gz -C ../app
-cd ../app/bin
-./tsnet-bridge version
-./tsnet-bridge setup
-./tsnet-bridge run
+mise exec -- tsnet-bridge setup
+mise exec -- tsnet-bridge run
 ```
 
-`setup` の2つの入力は Mac と同じです。`run` の窓を残し、同じユーザーの別の端末を開きます。
+`run` の窓を残し、同じユーザーの別の端末を開きます。
 
 ```sh
-cd "$HOME/tsnet-bridge-test/app/bin"
-./tsnet-bridge login --no-browser
-./tsnet-bridge status --json
-./tsnet-bridge doctor
-./tsnet-bridge settings
+mise exec -- tsnet-bridge login --no-browser
+mise exec -- tsnet-bridge status --json
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge settings
 ```
 
-非公開認証 URL の扱い、参加承認、[状態の判定](#状態)、[RustDesk の設定](#rustdesk)、[停止・ログアウト](#終了)は共通です。Linux を操作側・操作される側にする試験は、それぞれ別に記録します。画面のあるセッションが必要で、Wayland / X11 や RustDesk 側の画面共有許可によって結果が変わるため、Linux バイナリの CI 成功だけでは遠隔操作成功を意味しません。
+非公開認証 URL の扱い、参加承認、[状態の判定](#状態)、[RustDesk の設定](#rustdesk)、[停止・ログアウト](#終了)は共通です。Linux を操作側・操作される側にする試験は、それぞれ別に記録します。画面のあるセッションが必要で、Wayland / X11 や RustDesk 側の画面共有許可によって結果が変わります。mise で導入できたことだけでは遠隔操作成功を意味しません。
 
-既定の保存先は `$XDG_CONFIG_HOME/tsnet-bridge`、未設定なら `$HOME/.config/tsnet-bridge` です。Mac は `$HOME/Library/Application Support/tsnet-bridge`、Windows は `%AppData%\tsnet-bridge` です。認証状態を含むため、公開したり同期・共有フォルダーへ置いたりしないでください。
+既定の状態保存先は `$XDG_CONFIG_HOME/tsnet-bridge`、未設定なら `$HOME/.config/tsnet-bridge` です。Mac は `$HOME/Library/Application Support/tsnet-bridge`、Windows は `%AppData%\tsnet-bridge` です。バイナリのインストール先とは別です。認証状態を含むため、公開したり同期・共有フォルダーへ置いたりしないでください。
 
 ## <a id="問題"></a>困ったとき
 
 | 表示・症状 | 確認すること |
 | --- | --- |
-| 実行ファイルが見つからない | 外側と内側の2回を展開したか、`bin` に移動したか。Windows は先頭の `.\`、Mac / Linux は `./` も必要です |
+| `mise` が見つからない | mise の公式導入手順を完了したか、新しい PowerShell / ターミナルを開いて `mise --version` が通るか確認します |
+| 版または署名付き配布物が見つからない | Release が公開済みか、`[prerelease=true]@0.1.0-alpha.1` を引用符ごと指定したか、mise の版を確認します。`latest` や版番号の省略は使いません |
+| 署名・ダイジェスト・識別の検証に失敗 | 実行を中断し、エラーを確認します。検証を無効にしたり、記録済みの署名者を確認せず消したりしません |
+| `tsnet-bridge` が見つからない / 別の版が出る | `mise use -g` が成功したか確認し、`mise exec -- tsnet-bridge version` を使います。別プロジェクトの mise 設定が優先される場所なら、ホームフォルダーで試します |
 | `profile already exists` | 初回設定済みです。同じ設定を再利用するなら `setup` を省きます。修正するなら停止し、保存先の `profile.json` を手元でバックアップして必要箇所だけ編集し、保存後に `run` で再起動します。`reconnect` では設定ファイルを読み直しません。ノードの認証状態は削除しません。ローカル relay ポートは全端末で一致させます |
 | `RustDesk public key must be base64 encoding of 32 bytes` | `.pub` の中身を貼ったか、ファイル名や秘密鍵を入れていないか。前後の引用符や余分な改行を入れていないか |
 | `needs-login` | 窓B で `login --no-browser`。約5分で待機が終了したら再実行します。待機を Ctrl+C で止めても窓A のツールは残るため、終了したいなら `stop` も行います |
@@ -413,10 +380,10 @@ OS・CPU・ツールの版、失敗した手順番号、`state`、一般的な�
 - [ ] 実際の relay アドレス伝播、サーバー書換え設定との整合
 - [ ] Linux x64 / ARM64 の非 root 認証と、両方の役割での相互接続
 - [ ] スリープ、ネットワーク変化、UDP 制限、Tailscale の直接経路・DERP 経路、ノード失効や許可取り消し
-- [ ] 正式に署名された公開版での mise / Packslip 導入、更新、固定、巻き戻し
+- [ ] 検証用プレリリースの mise / Packslip 導入結果の確認と、今後の更新・巻き戻し試験
 
 **すでに自動試験で確認したこと:** [CI #5](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36857522576) では Linux x64/ARM64、Mac ARM64/Intel、Windows x64 の全5対象で、競合検出付きテスト、ローカル IPC、vet、整形、再現ビルド、圧縮物・ライセンス・SBOM、同梱バイナリの版・ヘルプ表示が成功しました。Packslip の試験用署名と全対象ファイルの検証も成功しています。実 tailnet の資格情報は使っていません。
 
-Windows の GitHub ホスト実行環境は [管理者として動く](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#administrative-privileges)ため、この成功を標準ユーザーでの成功とは扱いません。試験用署名は正式な配布署名ではありません。上の未確認項目を、自動試験の成功で置き換えることはしません。
+Windows の GitHub ホスト実行環境は [管理者として動く](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#administrative-privileges)ため、この成功を標準ユーザーでの成功とは扱いません。通常の CI #5 の試験用署名と、プレリリースの公開用 Packslip 署名は別です。プレリリースの公開・導入検証結果は [配布の説明](DISTRIBUTION.md)に記録します。上の未確認項目を、自動試験の成功で置き換えることはしません。
 
 詳しい自動試験・セキュリティレビューの記録は [英語版](VERIFICATION.en.md) に残しています。

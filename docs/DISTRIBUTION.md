@@ -1,30 +1,28 @@
 # Distribution and verification
 
-## Current status
+## Current status: testing prerelease
 
-This repository is a development preview. CI prepares artifacts, checks repeatable
-packaging, and exercises Packslip signing with a disposable, offline test key. It
-**does not create a tag, publish a release, sign a production manifest, or connect
-to a real tailnet**. A successful CI run is not evidence that a real RustDesk
-session or a standard-user Windows login works.
+The requested `v0.1.0-alpha.1` is an **experimental acceptance-testing prerelease**,
+not a supported stable release. Publication and installation are verified by the
+manually dispatched [prerelease workflow](https://github.com/webkaz-labs/tsnet-bridge/blob/main/.github/workflows/prerelease.yml).
+Check its completed run and the [release page](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1)
+before treating the install path as available. A missing release page means
+publication has not finished.
 
-Required before the first public binary release:
+Ordinary CI remains credential-free and does not publish releases. The separate
+prerelease workflow builds all five targets, creates genuine GitHub provenance,
+signs a Packslip bundle using short-lived GitHub OIDC, verifies the published
+bytes, and tests real mise installation on native runners. It does not enroll a
+Tailscale node or start the embedded networking service.
 
-- All five native CI targets pass at the exact release commit
-- Real tailnet login, restart, logout, node expiry/revocation, ACL denial and
-  reconnect are exercised with an explicitly authorized test account
-- A real RustDesk connection works through the intended TCP/UDP routes, including
-  interruption, reconnect and relay fallback; configuration examples alone do not
-  establish compatibility
-- Windows standard-user operation is tested separately. GitHub's Windows runners
-  run as administrators with UAC disabled, so their passing tests cannot prove it
-- Review target-specific dependency notices and source-embedded license terms,
-  then resolve any remaining redistribution obligations
-- Explicitly approve release/tag creation, production signing identity and final
-  publication, then verify installation from the published assets through mise
+Real tailnet login, standard-user Windows enrollment, RustDesk registration and
+bidirectional screen/input acceptance remain **unverified**. These are required
+before claiming a supported end-to-end product, not prerequisites for this
+explicitly experimental testing distribution. Installation checks are not those
+application tests. [Remaining acceptance](VERIFICATION.en.md)
 
 The [official runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
-confirms the workflow labels and the Windows runner privilege limitation.
+explains why Windows hosted-runner success does not prove standard-user operation.
 
 ## Targets
 
@@ -62,26 +60,39 @@ for a Windows source build use:
 mise exec -- go build -trimpath -o bin/tsnet-bridge.exe ./cmd/tsnet-bridge
 ```
 
-## Install a future signed release through mise
+## Install the testing prerelease through mise
 
-**These release installation commands are intentionally not available until the
-release blockers above are resolved and a signed release actually exists.**
-Replace `X.Y.Z` with a published stable version:
+With mise **2026.9.18**, these commands work in PowerShell and Unix shells after
+the release is published:
 
 ```sh
-mise use -g packslip:github.com/webkaz-labs/tsnet-bridge@X.Y.Z
-mise exec packslip:github.com/webkaz-labs/tsnet-bridge@X.Y.Z -- tsnet-bridge --version
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise exec -- tsnet-bridge version
 ```
 
-The same tool identifier works on Linux, macOS and Windows. Packslip selects the
-native archive and declared executable, including `.exe` on Windows. A recent
-mise version with the Packslip backend is required; CI uses mise 2026.9.18.
+Expected application version: `tsnet-bridge 0.1.0-alpha.1`. The explicit
+`prerelease=true` option opts into prerelease selection; the complete version pins
+the tested release. Do not use `latest`. Packslip selects the native archive and
+executable, including `.exe` on Windows. Go is not required for end users.
 
-Keep mise's signature, identity, digest and release-age checks enabled. Its default
-minimum release age is 24 hours; a new release may take time to become eligible.
-For a project-scoped install, omit `-g`, install once, and commit the resulting
-`mise.toml` and `mise.lock`; subsequent installs can use `mise install --locked`.
-See [mise's Packslip documentation](https://mise.jdx.dev/dev-tools/backends/packslip.html).
+mise's default `minimum_release_age` is 24 hours for discovery/fuzzy selection.
+**Exact version pins and lockfile selections are exempt in mise 2026.9.18**, so
+this exact prerelease can be installed immediately after publication. Signature,
+identity, digest, size, and platform checks remain active. No age override or
+signature bypass is used by the release installation tests. See the
+[pinned setting semantics](https://github.com/jdx/mise/blob/v2026.9.18/settings.toml#L1855-L1908)
+and [exact-pin implementation](https://github.com/jdx/mise/blob/v2026.9.18/src/backend/packslip.rs#L726-L735).
+
+For a project-scoped install, omit `-g` in a dedicated project directory. Review
+and keep the resulting `mise.toml` and `mise.lock`; use `mise install --locked`
+when the lockfile exists. Keep the same pinned version during acceptance. A
+future upgrade or rollback changes the pinned version explicitly after stopping
+the helper; binary installation does not migrate or delete the separate identity
+state. Upgrade/rollback compatibility has not been established by a first release.
+
+The workflow sets GitHub's prerelease flag, but Packslip also recognizes the semantic
+prerelease suffix. A published release must contain `packslip.sigstore.json`;
+a tag or archive alone is insufficient. [mise Packslip documentation](https://mise.jdx.dev/dev-tools/backends/packslip.html)
 
 ## Local package commands
 
@@ -124,9 +135,12 @@ share/tsnet-bridge/licenses/...
 ```
 
 The SBOM, build metadata and notices index are also emitted as separate assets.
-`SHA256SUMS` covers every regular file currently in `dist`, apart from itself;
-verify from that directory with `sha256sum --check SHA256SUMS`. Checksums alone
-provide integrity, not publisher authentication.
+`package-tool checksums` covers the regular files present in `dist` when it runs,
+apart from `SHA256SUMS` itself. The release inventory is generated before signing:
+it lists 21 files and does not include the later `packslip.sigstore.json`. The
+bundle is independently signature-verified and has its own GitHub provenance.
+From the download directory use `sha256sum --check SHA256SUMS` for the listed
+files. Checksums alone provide integrity, not publisher authentication.
 
 ### Reproducibility boundaries
 
@@ -163,38 +177,58 @@ This is an auditable notice inventory, not an automatic legal determination.
 Source-only terms outside conventional notice files may need additional inclusion;
 review those before authorizing distribution.
 
-## Packslip signing flow
+## Packslip signing and publication flow
 
 `package-tool manifest VERSION` checks that all five target packages, SBOMs,
 metadata and notices indexes exist and refer to one source commit. It generates
-`dist/packslip.toml`, which is **TOML input, not a signature**. It declares explicit
-platforms, archive formats, executable paths, and per-artifact SBOM resources.
+`dist/packslip.toml`, which is **signing input, not a signature**. It declares
+explicit platforms, archive formats, executable paths, and per-artifact SBOM
+resources.
 
-CI installs Packslip 1.4.0 through mise and performs a local signing/verification
-round-trip with the reserved project `tsnet-bridge-ci.example.com`. The disposable
-key is deleted on exit; neither key nor test bundle is uploaded. `--no-log` and
-`--allow-unlogged` are used only for this isolated fixture. No OIDC permissions or
-production signing credentials are requested.
+Ordinary CI signs a disposable example-identity fixture offline. Its `--no-log`
+and `--allow-unlogged` options are confined to that fixture and are **not used for
+public prereleases**. No fixture key or bundle is published.
 
-After the release gates and publication are explicitly approved, a production
-workflow should follow this sequence:
+The manual prerelease workflow separates permissions and responsibilities:
 
-1. Build and verify final artifacts at the reviewed commit, including any desired
-   platform signing. Create an unpublished release and upload final assets
-2. Attest final bytes in a dedicated build-provenance job
-3. In a separate signing job with `contents: read`, `id-token: write` and no checkout,
-   run `jdx/packslip@87479dfc6443253dff69601cace5fc6ea07e6df5` (1.4.0), with
-   `manifest: dist/packslip.toml`, all archives and SBOM assets in `artifacts`,
-   `attest: link` only if they were actually attested, and `upload: false`
-4. Verify the returned bundle with the expected GitHub workflow/repository identity,
-   GitHub OIDC issuer, and every supplied archive/SBOM digest. Do not use the CI
-   fixture key, example project identity, or unlogged-signature exceptions
-5. Use a minimal separate `contents: write` job to upload only the verified bundle,
-   then publish the release under the approved release procedure
-6. Install that exact published version through mise on each native platform and
-   verify the installed executable and packaged notices
+1. Require a strict prerelease version, the exact current main SHA, and a
+   successful Cross-platform CI run for that SHA
+2. Test and build all five targets natively, build each package twice, compare
+   digests, and execute the packaged help/version commands
+3. Assemble the complete manifest/checksums and attest the final distribution
+   bytes using GitHub build provenance
+4. In a separate job with `contents: read`, `id-token: write` and no checkout,
+   run SHA-pinned Packslip 1.4.0 with `attest: link` only after genuine attestations
+   have been independently verified; verify the bundle, exact workflow identity,
+   issuer, and all archive/SBOM digests without transparency-log exceptions. A
+   separate job also attests the finished bundle
+5. Recheck the source and CI, create the exact tag and an unpublished prerelease,
+   and upload final assets. Refuse to replace an already-published version or
+   change an existing tag
+6. Use a separate minimal write-enabled job to upload the verified bundle,
+   compare every staged asset digest, and publish as a prerelease, never as the
+   stable latest release
+7. Download the public files without download authentication and separately
+   verify all signatures and provenance. Then install the complete version on
+   all five native targets through mise with its default signature and age
+   settings. Execute only offline help/version checks, inspect the installed
+   metadata/notices, and verify the expected source commit
 
-This production flow is deliberately documentation only at this stage; no current
-workflow can create a release or a tag. See the upstream
-[Packslip publishing guide](https://packslip.dev/docs/publishing/) and
-[artifact configuration](https://packslip.dev/docs/describing-releases/).
+The dispatch workflow identity is
+`https://github.com/webkaz-labs/tsnet-bridge/.github/workflows/prerelease.yml@refs/heads/main`.
+The release tag and source commit are passed explicitly; they do not turn that
+identity into a tag-triggered workflow identity. The expected OIDC issuer is
+`https://token.actions.githubusercontent.com`.
+
+**Packslip and mise do not themselves fetch and verify linked build provenance.**
+The release workflow performs that additional verification with `gh attestation
+verify`, binding it to this repository, workflow, source SHA, main ref and
+GitHub-hosted runners. Merely seeing an attestation link is not that verification.
+
+No long-lived signing key is created. OS code signing/notarization is a separate
+property and is not promised by the Packslip signature. No real tailnet secrets,
+interactive enrollment, or remote-control sessions are part of release CI.
+
+References: [Packslip publishing](https://packslip.dev/docs/publishing/),
+[artifact configuration](https://packslip.dev/docs/describing-releases/),
+[GitHub attestation verification](https://cli.github.com/manual/gh_attestation_verify).

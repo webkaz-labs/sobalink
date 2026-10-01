@@ -35,4 +35,4 @@ Report reproducible issues through the repository's security reporting feature w
 
 ## Dependency changes
 
-Go and Tailscale are pinned. The netstack-only adapter relies on an unstable upstream API; review it and rerun policy, lifecycle, and native tests before upgrading. CI does not enroll a node, use real tailnet secrets, publish a Release, or create persistent signing credentials.
+Go and Tailscale are pinned. The netstack-only adapter relies on an unstable upstream API; review it and rerun policy, lifecycle, and native tests before upgrading. CI never enrolls a node or uses real tailnet secrets. Ordinary CI does not publish releases. The separately dispatched prerelease workflow can publish explicitly requested testing releases, using short-lived GitHub OIDC signing and genuine build attestations without a persistent signing key. Packslip signatures do not replace OS code signing or real application acceptance.

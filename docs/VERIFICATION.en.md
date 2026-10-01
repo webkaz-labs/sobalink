@@ -2,7 +2,7 @@
 
 [日本語の導入・動作確認手順](VERIFICATION.md) · [English README](../README.en.md)
 
-Updated 2026-10-01. **The experimental implementation and automated packaging checks pass. Real tailnet enrollment and RustDesk remote-control acceptance remain incomplete. This is not yet a supported end-to-end product or public release.**
+Updated 2026-10-01. **The experimental implementation and automated packaging checks pass. Real tailnet enrollment and RustDesk remote-control acceptance remain incomplete. The testing prerelease does not make this a supported end-to-end product.**
 
 ## Verified source and native CI
 
@@ -20,7 +20,12 @@ All five native jobs passed:
 
 Each job ran race-enabled tests, native local IPC/lifecycle checks, vet, formatting checks, two repeatable package builds, archive/notices/SBOM validation, and execution of the packaged binary's help/version commands. The aggregate Packslip 1.4.0 job signed a disposable example-identity fixture and verified all five archives plus five scoped SBOM resources. Test signing keys/bundles were removed, not published.
 
-The run contains five `package-<os>-<arch>` artifacts and `distribution-inputs-not-a-release`, retained until 2026-10-15. These are development outputs, not a signed public release or a verified end-user mise installation. Follow the run link to download the desired artifact while available. The outer Actions ZIP contains the target tar.gz/ZIP plus metadata and checksums.
+The run's development artifacts are historical CI outputs. The acceptance
+installation path is now the explicitly pinned testing prerelease described in
+[distribution](DISTRIBUTION.md), not a manually extracted CI artifact. Confirm
+that [v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1)
+has been published and its release workflow has completed. Installation verification
+and the real tailnet/RustDesk acceptance below are separate results.
 
 ## Local checks and review
 
@@ -51,21 +56,46 @@ The current production `run` command is not an offline initialization test: tsne
 
 The following is a procedure, not a passed result. It needs a reachable configured hbbs/hbbr server, its public key, a standard-user Windows session, and a macOS session for the initial bidirectional test. Linux controller/controlled roles need separate acceptance afterward.
 
-1. Download the matching development artifacts from the verified CI run, check their SHA-256 entries, and extract both the outer Actions artifact and inner target archive. Do not bypass platform security warnings. Current binaries are not claimed to be signed/notarized.
-2. In a normal, non-elevated Windows PowerShell session, enter the extracted `bin` directory and run:
+1. Use mise 2026.9.18 in a normal, non-elevated terminal. Both PowerShell and
+   Unix shells accept:
 
-   ```powershell
-   .\tsnet-bridge.exe version
-   .\tsnet-bridge.exe setup
-   .\tsnet-bridge.exe
-   .\tsnet-bridge.exe login --no-browser
-   .\tsnet-bridge.exe status --json
-   .\tsnet-bridge.exe doctor
-   .\tsnet-bridge.exe settings
+   ```sh
+   mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+   mise exec -- tsnet-bridge version
    ```
 
-   Setup requests the server's tailnet name/IP and RustDesk **public** key. Start contacts Tailscale. Login prints a private authorization URL; the person running the test opens it and approves this specific new node. Do not send auth keys, passwords, tokens or private login URLs to chat, issues or CI logs.
-3. Repeat setup/start/login on macOS using `./tsnet-bridge`. Each endpoint creates its own tsnet identity and needs separate explicit approval. Grant only the server/port access needed for the test.
+   Require `tsnet-bridge 0.1.0-alpha.1`. The full version pin is exempt from the
+   default 24-hour discovery delay; verification stays enabled. Stop on signature
+   errors or OS security warnings. A prerelease is not a stable support claim.
+2. In terminal A, create the profile and run in the foreground:
+
+   ```sh
+   mise exec -- tsnet-bridge setup
+   mise exec -- tsnet-bridge run
+   ```
+
+   Setup requests the server's tailnet name/IP and RustDesk **public** key (the
+   contents of `id_ed25519.pub`, never `id_ed25519`). A separate relay uses
+   `setup --relay-host` with the confirmed host instead of plain setup. Keep A
+   open. Run starts real Tailscale coordination traffic before browser approval.
+   In another non-elevated terminal B under the same user:
+
+   ```sh
+   mise exec -- tsnet-bridge login --no-browser
+   mise exec -- tsnet-bridge status --json
+   mise exec -- tsnet-bridge doctor
+   mise exec -- tsnet-bridge settings
+   ```
+
+   The person running the test opens the private authorization URL and approves
+   this specific node. Do not send auth keys, passwords, tokens or private URLs to
+   chat, issues or CI logs. Require `state: ready`, `tailnet_state: Running`,
+   `mode: forward`, and the expected loopback listeners. `doctor` exiting zero is
+   insufficient. `rustdesk: unverified` remains expected.
+3. Repeat on the other endpoint. Each creates its own tsnet identity and requires
+   separate approval. Windows standard-user acceptance requires a genuinely
+   non-administrator account; merely opening a non-elevated shell from an admin
+   account does not establish that condition.
 4. Back up existing RustDesk settings before entering the displayed values. Use the same loopback relay address/port on every participant, keep the proxy blank and UDP enabled, and select relay with `remote-ID/r`. Check server relay-address rewrite settings first. Authenticate through RustDesk's normal UI.
 5. Test Windows as the controlled endpoint first, then reverse direction. Record cold and idle registration, actual screen display/input, disconnect/reconnect, and observed relay address. A `ready` status or TCP connect is not this evidence.
 6. Test `stop` and restart for saved-state reuse, process/application restarts, port conflicts and network interruption. Restore the backed-up RustDesk settings afterward. If a test node is no longer needed, explicitly log out while the helper is running; removal from the admin console is a separate approved action.
@@ -83,7 +113,7 @@ Remote testing requires access to the chosen test endpoints and approval for eac
 - [ ] Relay address propagation, common local relay port, server rewrite settings, and mixed-profile handling
 - [ ] Direct Tailscale and DERP paths; blocked UDP and restrictive upstream network conditions
 - [ ] Sleep/resume, network change, outages, node expiry/revocation, ACL refusal and process/application restart
-- [ ] Native mise/Packslip installation, pinning, upgrade and rollback with the actual signed public manifest
+- [ ] Review testing-prerelease native mise/Packslip installation results; separately test future upgrades and rollbacks
 - [ ] Final dependency/security review, upstream private logging review and OS signing/notarization decision
 
 No real tailnet credentials are required by the existing CI. Real enrollment creates persistent external access and requires explicit approval. Do not replace any unchecked item with a mock result.

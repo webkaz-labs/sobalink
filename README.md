@@ -4,7 +4,7 @@
 
 tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。macOS、Windows、Linux で動作する Go の単一バイナリを目指します。OS 全体の VPN、経路、DNS は変更しません。
 
-> **実験段階です。** ローカル／模擬トランスポートの試験と実際の tailnet・RustDesk 遠隔操作は別です。実機での双方向の画面表示・入力、および Windows 標準ユーザーでの初回認証は未検証です。公開 Release はまだありません。詳細は [検証状況](docs/VERIFICATION.md) を参照してください。
+> **実験段階です。** ローカル／模擬トランスポートの試験と実際の tailnet・RustDesk 遠隔操作は別です。実機での双方向の画面表示・入力、および Windows 標準ユーザーでの初回認証は未検証です。配布は検証用プレリリースです。安定版・実機確認済みの製品ではありません。詳細は [検証状況](docs/VERIFICATION.md) を参照してください。
 
 ## 活用案
 
@@ -31,13 +31,22 @@ RustDesk の設定ファイルを直接書き換えません。設定値と復�
 
 CI の OS と、実際に保証できる最小 OS・権限条件は別です。現段階では最小対応 OS を保証しません。管理者権限やシステムサービス登録は要求しない設計ですが、Windows の標準ユーザーでの認証試験は残っています。
 
-## 開発版を試す
+## mise で検証用プレリリースを導入する
 
-ビルドせず試す場合は、**[日本語の手順](docs/VERIFICATION.md)**へ進んでください。成功済み CI のファイルの選び方、二重の圧縮ファイルの展開、Windows / Mac / Linux それぞれのコマンド、認証、RustDesk の設定、成功判定と終了まで説明しています。
+[mise](https://mise.jdx.dev/getting-started.html) 2026.9.18 を確認対象にしています。Windows の PowerShell、Mac、Linux で同じコマンドです。Go のインストールや手動展開は不要です。
+
+```sh
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0-alpha.1"
+mise exec -- tsnet-bridge version
+```
+
+[Release v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1) の公開後に利用できます。`prerelease=true` と完全な版番号を指定し、`latest` は使いません。完全な版指定は mise の24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままで、待機時間の全体設定を変更する必要はありません。
+
+**[日本語の詳しい手順](docs/VERIFICATION.md)**には、Windows / Mac / Linux 別のインストール、認証、RustDesk の設定、成功判定と終了まで記載しています。Packslip の署名は配布元と内容の確認であり、OS コード署名・公証や実際の遠隔操作成功の保証ではありません。
 
 ### ソースからビルドする場合
 
-開発には [mise](https://mise.jdx.dev/getting-started.html) と Go 1.27.1 を使います。リポジトリを取得してから:
+開発には mise と Go 1.27.1 を使います。リポジトリを取得してから:
 
 ```sh
 mise install
@@ -45,24 +54,14 @@ mise exec -- go test -race ./...
 mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
 ```
 
-Windows では出力名を `bin/tsnet-bridge.exe` にしてください。以下ではビルドした実行ファイルを `tsnet-bridge` と表記します。
-
-正式配布の入口は署名付き Packslip マニフェストを利用する mise です。Release が公開されるまでは、次のコマンドは利用できません:
-
-```sh
-# 将来の正式リリース向け。<version> は公開済みの明示的な版へ置換
-mise use -g packslip:github.com/webkaz-labs/tsnet-bridge@<version>
-mise exec -- tsnet-bridge
-```
-
-利用者向け配布では Go のコンパイル環境を要求しません。[配布・検証手順](docs/DISTRIBUTION.md) を参照してください。
+Windows では出力名を `bin/tsnet-bridge.exe` にしてください。ソースビルドしたものを試す場合は、以下の `mise exec -- tsnet-bridge` をその実行ファイルのパスへ置き換えます。[配布と検証の説明](docs/DISTRIBUTION.md)
 
 ## 初回設定
 
 ```sh
-tsnet-bridge setup
-tsnet-bridge
-tsnet-bridge login
+mise exec -- tsnet-bridge setup
+mise exec -- tsnet-bridge
+mise exec -- tsnet-bridge login
 ```
 
 `setup` は ID サーバーの tailnet 名または IP と、RustDesk の公開鍵を聞きます。設定保存だけではネットワーク認証しません。通常起動でノードを開始し、`login` で表示される Tailscale の認証ページから参加を承認します。既存の Tailscale アプリとは別のノードになります。
@@ -84,7 +83,7 @@ tsnet-bridge login
 | リレー | TCP 127.0.0.1:32117 | hbbr:21117 |
 
 1. 現在の RustDesk サーバー設定とプロキシ設定を控える
-2. `tsnet-bridge settings` の ID サーバー、リレー、公開鍵を設定する
+2. `mise exec -- tsnet-bridge settings` の ID サーバー、リレー、公開鍵を設定する
 3. プロキシは空欄、UDP は有効、WebSocket は無効にする
 4. このプロフィールを使う**全ての端点で同一の 127.0.0.1:32117** を使用する
 5. 接続先 ID に `/r` を付けてリレーを選ぶ
@@ -102,13 +101,13 @@ RustDesk 1.4.9 はプロキシ利用時に TCP 登録へ切り替わりますが
 ## 日常操作
 
 ```sh
-tsnet-bridge                 # 起動済みなら状態を表示
-tsnet-bridge status --json
-tsnet-bridge doctor
-tsnet-bridge reconnect       # 保存ログインを維持して転送を再作成
-tsnet-bridge stop            # ログイン状態を残して停止
-tsnet-bridge logout          # 稼働中のノードをログアウトして停止
-tsnet-bridge run             # 前面実行。Ctrl+C で停止
+mise exec -- tsnet-bridge                 # 起動済みなら状態を表示
+mise exec -- tsnet-bridge status --json
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge reconnect       # 保存ログインを維持して転送を再作成
+mise exec -- tsnet-bridge stop            # ログイン状態を残して停止
+mise exec -- tsnet-bridge logout          # 稼働中のノードをログアウトして停止
+mise exec -- tsnet-bridge run             # 前面実行。Ctrl+C で停止
 ```
 
 `ready` は設定したピアと TCP ポートへの到達確認を意味します。RustDesk の画面表示・入力の成功は意味しません。状態は必ず `rustdesk: unverified` と区別します。
