@@ -17,6 +17,10 @@ An application-scoped tailnet bridge built with Go and embedded tsnet for macOS,
 
 No GUI, autostart registration, system service, subnet router, exit node, or generic internet proxy. RustDesk settings are shown for manual entry, never rewritten behind the application's back.
 
+## Future plans
+
+The [Japanese roadmap](docs/ROADMAP.ja.md) and expanded [use cases](docs/USE_CASES.ja.md) cover reverse connections, named multiple forwards, diagnostics, time-limited sharing, and AI/MCP/mobile scenarios. These additions are planned, not implemented in `alpha.2`; application compatibility is unverified.
+
 ## Targets and installation
 
 Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS is not included in this prerelease. CI runners do not establish minimum OS support or Windows standard-user enrollment.
@@ -28,7 +32,7 @@ mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0
 mise exec -- tsnet-bridge version
 ```
 
-Available after [v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) is published. Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. mise 2026.9.18 applies its default 24-hour release-age cutoff to discovery/fuzzy selections, but exact version pins are exempt. Signature, identity and digest verification remain enabled. No global age override or signature bypass is needed.
+[v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) is published. [Actual mise installation and release verification passed on all four targets](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407). Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. mise 2026.9.18 applies its default 24-hour release-age cutoff to discovery/fuzzy selections, but exact version pins are exempt. Signature, identity and digest verification remain enabled. No global age override or signature bypass is needed.
 
 Packslip verifies publisher identity and bytes, not OS code signing/notarization or application compatibility. Stop if platform security warnings prevent execution. See the [Japanese step-by-step guide](docs/VERIFICATION.md) and [English verification report](docs/VERIFICATION.en.md).
 

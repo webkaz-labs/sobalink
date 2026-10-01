@@ -4,6 +4,8 @@
 
 更新: 2026-10-01
 
+**公開・導入は確認済みです。** [alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) の[公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が全成功しました。Mac ARM64・Windows x64・Linux x64/ARM64で、公開された署名付き配布物をmiseから実際に導入し、版表示と同梱ファイルを確認しています。実際のtailnet参加やRustDeskの操作確認は、下の手順で別に行います。
+
 **これは検証用プレリリース `0.1.0-alpha.2` の手順です。安定版ではありません。** 自動テストは成功していますが、実際の tailnet への参加、Windows 標準ユーザーでの認証、RustDesk の双方向遠隔操作は未確認です。このページは、その確認を行うための手順です。成功済みの実機試験を説明するものではありません。
 
 まず [準備](#準備) を確認し、[Windows](#windows) または [Mac](#mac) の手順を行ってください。両方で接続準備ができたら、[RustDesk の設定](#rustdesk) に進みます。[Linux](#linux) の手順もあります。
@@ -30,7 +32,7 @@
 
 ## <a id="ダウンロード"></a>2. mise から検証用プレリリースを導入する
 
-[プレリリース v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) を使います。Release ページに **Pre-release** と表示され、`packslip.sigstore.json` と各 OS の配布物が公開されていることを確認してください。ページが見つからなければ公開処理がまだ終わっていないため、公開完了を待ちます。
+[プレリリース v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) を使います。Release ページに **Pre-release** と表示され、`packslip.sigstore.json` と各 OS の配布物が公開されていることを確認してください。ページや必要ファイルを確認できない場合は実行せず、URL・接続状況・公開状態を確認します。
 
 **Go のコンパイル環境や圧縮ファイルの手動展開は不要です。** mise が署名・リポジトリの識別・ファイルのダイジェストを検証し、自分の OS / CPU の配布物を選びます。Linux x64/ARM64、Mac Apple Silicon (ARM64)、Windows x64 が対象です。Intel Mac と Windows ARM64 の配布はありません。
 
@@ -381,9 +383,14 @@ OS・CPU・ツールの版、失敗した手順番号、`state`、一般的な�
 - [ ] 実際の relay アドレス伝播、サーバー書換え設定との整合
 - [ ] Linux x64 / ARM64 の非 root 認証と、両方の役割での相互接続
 - [ ] スリープ、ネットワーク変化、UDP 制限、Tailscale の直接経路・DERP 経路、ノード失効や許可取り消し
-- [ ] 検証用プレリリースの mise / Packslip 導入結果の確認と、今後の更新・巻き戻し試験
+- [x] `0.1.0-alpha.2` の mise / Packslip 実導入（4対象のCI。公開から約2分後、経過時間の設定変更なし）
+- [ ] 今後の更新・巻き戻し試験と、実際に使う環境での導入確認
 
-**すでに自動試験で確認したこと:** [CI #5](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36857522576) では Linux x64/ARM64、Mac ARM64/Intel、Windows x64 の全5対象で、競合検出付きテスト、ローカル IPC、vet、整形、再現ビルド、圧縮物・ライセンス・SBOM、同梱バイナリの版・ヘルプ表示が成功しました。Packslip の試験用署名と全対象ファイルの検証も成功しています。実 tailnet の資格情報は使っていません。
+**現在の公開版で確認したこと:** [ソース `0069e387`](https://github.com/webkaz-labs/tsnet-bridge/commit/0069e38732227c8913ee6ceb0ec21784ae03d862) に対する[通常CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888075794)と[公開・導入検証](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が成功しました。4対象でrace試験、実IPCの25回反復、2回ビルドの一致、実Packslip署名、全19配布物の公開取得と出所検証、mise実導入と版表示、SBOM・ライセンスの保持を確認しています。Windowsの接続開始と終了の競合試験も含みます。
+
+署名や24時間待機の検査を無効にする設定は使っていません。完全な版番号の指定によるmiseの正規の選択処理で導入しています。
+
+**過去の基盤試験:** [CI #5](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36857522576) では Linux x64/ARM64、Mac ARM64/Intel、Windows x64 の全5対象で、競合検出付きテスト、ローカル IPC、vet、整形、再現ビルド、圧縮物・ライセンス・SBOM、同梱バイナリの版・ヘルプ表示が成功しました。Packslip の試験用署名と全対象ファイルの検証も成功しています。実 tailnet の資格情報は使っていません。
 
 現在のプレリリース対象は Mac ARM64、Windows x64、Linux x64/ARM64 の4対象です。上の5対象の記録は過去の成功結果であり、現在 Intel Mac 向けの配布があるという意味ではありません。
 

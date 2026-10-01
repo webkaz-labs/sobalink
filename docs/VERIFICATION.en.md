@@ -4,7 +4,30 @@
 
 Updated 2026-10-01. **The experimental implementation and automated packaging checks pass. Real tailnet enrollment and RustDesk remote-control acceptance remain incomplete. The testing prerelease does not make this a supported end-to-end product.**
 
-## Verified source and native CI
+## Published alpha.2 and real installation verification
+
+[v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) was published on 2026-10-01 at 16:07:59 UTC from
+[`0069e38732227c8913ee6ceb0ec21784ae03d862`](https://github.com/webkaz-labs/tsnet-bridge/commit/0069e38732227c8913ee6ceb0ec21784ae03d862).
+The [complete release workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407) succeeded, including:
+
+- Native race tests and 25 repeated IPC regression runs on Linux amd64/arm64, macOS arm64, and Windows amd64
+- Two identical package builds per target, native archive execution, SBOMs and license notices
+- Real GitHub OIDC Packslip signing, provenance verification, and unauthenticated download of all 19 public assets
+- Actual mise 2026.9.18 installation, global activation, version/help execution, source metadata, SBOM and retained notice checks on all four targets
+
+Installation completed between 16:09:42 and 16:10:12 UTC, about two minutes after
+publication, using the exact prerelease pin with no age override or signature
+bypass. This proves distribution and native executable startup, not enrollment
+or real application compatibility. Windows hosted runners are administrator
+sessions; standard-user authentication remains unverified.
+
+The IPC regressions retain real sockets/pipes and explicitly cover connect/close
+overlap. Exact drain, timeout, cancellation, and forwarding deadlines use
+virtual-time tests. The Windows adapter recovers a lost-close-notification path
+in pinned go-winio; the successful native repetitions do not establish a blanket
+OS scheduling or shutdown-latency guarantee.
+
+## Historical source and native CI
 
 Source commit: [`0f7ec7909c3d95750842931c79b95ef0d410135c`](https://github.com/webkaz-labs/tsnet-bridge/commit/0f7ec7909c3d95750842931c79b95ef0d410135c)
 

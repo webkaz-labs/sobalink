@@ -6,9 +6,11 @@ tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。ma
 
 > **実験段階です。** ローカル／模擬トランスポートの試験と実際の tailnet・RustDesk 遠隔操作は別です。実機での双方向の画面表示・入力、および Windows 標準ユーザーでの初回認証は未検証です。配布は検証用プレリリースです。安定版・実機確認済みの製品ではありません。詳細は [検証状況](docs/VERIFICATION.md) を参照してください。
 
-## 活用案
+## 活用案と次期計画
 
 **[日本語の活用案と必要な拡張](docs/USE_CASES.ja.md)**に、Web・SSH・データベースなどへの応用をまとめています。現在そのまま使える機能と、設定の一般化や追加実装が必要なものを分けています。各アプリとの実接続は未確認です。
+
+**[次期機能計画（日本語）](docs/ROADMAP.ja.md)**では、逆向き接続・名前付き複数転送、設定と診断、期限付き共有、AI/MCP・モバイル利用を整理しています。これらの追加機能は `alpha.2` には含まれません。
 
 ## できること
 
@@ -40,7 +42,7 @@ mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.1.0
 mise exec -- tsnet-bridge version
 ```
 
-[Release v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) の公開後に利用できます。`prerelease=true` と完全な版番号を指定し、`latest` は使いません。完全な版指定は mise の24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままで、待機時間の全体設定を変更する必要はありません。
+[Release v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) は公開済みです。[4対象の実mise導入と署名検証](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が成功しています。`prerelease=true` と完全な版番号を指定し、`latest` は使いません。完全な版指定は mise の24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままで、待機時間の全体設定を変更する必要はありません。
 
 **[日本語の詳しい手順](docs/VERIFICATION.md)**には、Windows / Mac / Linux 別のインストール、認証、RustDesk の設定、成功判定と終了まで記載しています。Packslip の署名は配布元と内容の確認であり、OS コード署名・公証や実際の遠隔操作成功の保証ではありません。
 

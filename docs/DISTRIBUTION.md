@@ -2,12 +2,14 @@
 
 ## Current status: testing prerelease
 
-The requested `v0.1.0-alpha.2` is an **experimental acceptance-testing prerelease**,
-not a supported stable release. Publication and installation are verified by the
-manually dispatched [prerelease workflow](https://github.com/webkaz-labs/tsnet-bridge/blob/main/.github/workflows/prerelease.yml).
-Check its completed run and the [release page](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2)
-before treating the install path as available. A missing release page means
-publication has not finished.
+[v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) is a published **experimental acceptance-testing prerelease**,
+not a supported stable release. Its [complete release workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407) succeeded
+from source `0069e38732227c8913ee6ceb0ec21784ae03d862`. All 19 public assets were downloaded without authentication
+and verified, followed by actual mise installation on all four native targets.
+Publication was at 16:07:59 UTC on 2026-10-01; installation checks finished about
+two minutes later without an age override or disabled signature verification.
+
+The pipeline is defined in the [pinned prerelease workflow](https://github.com/webkaz-labs/tsnet-bridge/blob/0069e38732227c8913ee6ceb0ec21784ae03d862/.github/workflows/prerelease.yml).
 
 Ordinary CI remains credential-free and does not publish releases. The separate
 prerelease workflow builds all four targets, creates genuine GitHub provenance,
