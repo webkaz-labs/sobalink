@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import pathlib
+import shlex
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,6 +14,36 @@ checks = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checks)
 VERSION = "0.1.0-alpha.1"
 COMMIT = "a" * 40
+
+
+class WorkflowAttestationPolicy(unittest.TestCase):
+    SELECTORS = {"--cert-identity", "--cert-identity-regex", "--signer-repo", "--signer-workflow"}
+
+    def check_command(self, command):
+        words = shlex.split(command)
+        selectors = [word.split("=", 1)[0] for word in words if word.split("=", 1)[0] in self.SELECTORS]
+        self.assertEqual(selectors, ["--cert-identity"], "gh attestation identity selectors are mutually exclusive; retain the exact certificate identity")
+        for flag, value in (("--repo", "$GITHUB_REPOSITORY"), ("--cert-identity", "https://github.com/$GITHUB_WORKFLOW_REF"), ("--cert-oidc-issuer", "https://token.actions.githubusercontent.com"), ("--source-digest", "$TESTED_COMMIT"), ("--source-ref", "refs/heads/main")):
+            self.assertEqual(words[words.index(flag) + 1], value)
+        self.assertIn("--deny-self-hosted-runners", words)
+
+    def commands(self):
+        workflow = pathlib.Path(__file__).parents[1] / "workflows" / "prerelease.yml"
+        logical_lines = workflow.read_text().replace("\\\n", " ").splitlines()
+        return [line.strip() for line in logical_lines if line.strip().startswith("gh attestation verify ")]
+
+    def test_every_attestation_command_uses_one_exact_identity_selector(self):
+        commands = self.commands()
+        self.assertEqual(len(commands), 3, "check signing inputs, signature bundle, and public assets independently")
+        for command in commands:
+            with self.subTest(command=command):
+                self.check_command(command)
+
+    def test_duplicate_identity_selectors_are_rejected(self):
+        command = self.commands()[0]
+        for selector in self.SELECTORS:
+            with self.subTest(selector=selector), self.assertRaises(AssertionError):
+                self.check_command(command + " " + selector + " conflicting-selector")
 
 
 class ReleaseGuards(unittest.TestCase):
