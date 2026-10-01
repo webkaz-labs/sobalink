@@ -1,0 +1,9 @@
+[tools]
+go = "1.27.1"
+
+[tasks.test]
+run = "go test -race ./..."
+[tasks.check]
+run = "go vet ./..."
+[tasks.build]
+run = "go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge"

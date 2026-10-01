@@ -1,0 +1,156 @@
+name: Cross-platform CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly
+
+jobs:
+  native:
+    # Standard public runners only. No login, tailnet, OIDC signing or release.
+    if: github.event.repository.private == false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - runner: macos-26
+            goos: darwin
+            goarch: arm64
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+          - runner: windows-2025
+            goos: windows
+            goarch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - name: Check exact toolchain and native target
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = '${{ matrix.goos }}'
+          test "$(go env GOARCH)" = '${{ matrix.goarch }}'
+          go mod verify
+      - name: Local and mock tests, race detector, and vet
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -timeout=10m ./...
+          go vet ./...
+          test -z "$(gofmt -l cmd internal)"
+      - name: Build twice, verify reproducible packaging, and smoke native archive
+        run: |
+          set -euo pipefail
+          version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          commit="$(git rev-parse HEAD)"
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
+          go run ./cmd/package-tool checksums
+          cp dist/SHA256SUMS "$RUNNER_TEMP/first-SHA256SUMS"
+          go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
+          go run ./cmd/package-tool checksums
+          cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS
+          if [[ '${{ matrix.goos }}' == windows ]]; then
+            extension=zip
+          else
+            extension=tar.gz
+          fi
+          python .github/scripts/smoke-package.py "dist/tsnet-bridge-$version-${{ matrix.goos }}-${{ matrix.goarch }}.$extension" "$version"
+          # Per-target checksum names avoid collisions when matrix artifacts merge.
+          mv dist/SHA256SUMS "dist/SHA256SUMS-${{ matrix.goos }}-${{ matrix.goarch }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: package-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  manifest-smoke:
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - name: Prepare complete Packslip signing input and checksums
+        run: |
+          set -euo pipefail
+          go run ./cmd/package-tool manifest "0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          go run ./cmd/package-tool checksums
+          (cd dist && sha256sum --check SHA256SUMS)
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: '2026.9.18'
+          install: false
+          cache: false
+      - name: Exercise signing and verification offline with a disposable test key
+        env:
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mise install github:jdx/packslip@1.4.0
+          keydir="$(mktemp -d "$RUNNER_TEMP/packslip-test.XXXXXX")"
+          trap 'rm -rf "$keydir"' EXIT
+          mkdir -p "$keydir/bundle"
+          mise exec github:jdx/packslip@1.4.0 -- packslip keygen --out "$keydir/fixture.key"
+          # The reserved example domain prevents this fixture from claiming the
+          # production project identity. No transparency-log entry is created.
+          mise exec github:jdx/packslip@1.4.0 -- packslip create \
+            --manifest dist/packslip.toml \
+            --project tsnet-bridge-ci.example.com \
+            --url-base https://tsnet-bridge-ci.example.com/test-only \
+            --key "$keydir/fixture.key" --no-log --out "$keydir/bundle"
+          args=()
+          for file in dist/*.tar.gz dist/*.zip dist/*.cdx.json; do
+            args+=(--artifact "$file")
+          done
+          mise exec github:jdx/packslip@1.4.0 -- packslip verify \
+            "$keydir/bundle/packslip.sigstore.json" \
+            --pubkey "$keydir/fixture.pub" --allow-unlogged "${args[@]}"
+          mise exec github:jdx/packslip@1.4.0 -- packslip show "$keydir/bundle/packslip.sigstore.json"
+          # Test keys and bundles are intentionally not persisted or uploaded.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: distribution-inputs-not-a-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,9 @@
+/bin/
+/dist/
+/.build/
+*.exe
+*.test
+*.log
+
+__pycache__/
+*.pyc
