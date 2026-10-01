@@ -1,10 +1,14 @@
 # tsnet-bridge
 
-[English](README.en.md)
+[English](README.en.md) · **[日本語の導入・動作確認手順（Windows / Mac / Linux）](docs/VERIFICATION.md)**
 
 tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。macOS、Windows、Linux で動作する Go の単一バイナリを目指します。OS 全体の VPN、経路、DNS は変更しません。
 
 > **実験段階です。** ローカル／模擬トランスポートの試験と実際の tailnet・RustDesk 遠隔操作は別です。実機での双方向の画面表示・入力、および Windows 標準ユーザーでの初回認証は未検証です。公開 Release はまだありません。詳細は [検証状況](docs/VERIFICATION.md) を参照してください。
+
+## 活用案
+
+**[日本語の活用案と必要な拡張](docs/USE_CASES.ja.md)**に、Web・SSH・データベースなどへの応用をまとめています。現在そのまま使える機能と、設定の一般化や追加実装が必要なものを分けています。各アプリとの実接続は未確認です。
 
 ## できること
 
@@ -28,6 +32,10 @@ RustDesk の設定ファイルを直接書き換えません。設定値と復�
 CI の OS と、実際に保証できる最小 OS・権限条件は別です。現段階では最小対応 OS を保証しません。管理者権限やシステムサービス登録は要求しない設計ですが、Windows の標準ユーザーでの認証試験は残っています。
 
 ## 開発版を試す
+
+ビルドせず試す場合は、**[日本語の手順](docs/VERIFICATION.md)**へ進んでください。成功済み CI のファイルの選び方、二重の圧縮ファイルの展開、Windows / Mac / Linux それぞれのコマンド、認証、RustDesk の設定、成功判定と終了まで説明しています。
+
+### ソースからビルドする場合
 
 開発には [mise](https://mise.jdx.dev/getting-started.html) と Go 1.27.1 を使います。リポジトリを取得してから:
 

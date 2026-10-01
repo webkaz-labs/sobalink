@@ -4,7 +4,7 @@
 
 An application-scoped tailnet bridge built with Go and embedded tsnet for macOS, Windows, and Linux. It does not change system-wide VPN, routing, or DNS settings.
 
-> **Experimental.** Local/fake transport tests are distinct from real tailnet enrollment and RustDesk screen/control tests. Bidirectional remote control and initial Windows standard-user enrollment are unverified. There is no public Release yet. See [verification status](docs/VERIFICATION.md).
+> **Experimental.** Local/fake transport tests are distinct from real tailnet enrollment and RustDesk screen/control tests. Bidirectional remote control and initial Windows standard-user enrollment are unverified. There is no public Release yet. See [verification status](docs/VERIFICATION.en.md).
 
 ## Features
 
@@ -95,6 +95,6 @@ If logout fails, forwarding stops but server-side logout is explicitly reported 
 
 Unix directories/files use 0700/0600; Windows uses current-user DACLs. This is access control, not state encryption. Processes running as the same user are not isolated from each other. Fixed TCP/UDP forwarding cannot insert SOCKS authentication; use narrowly scoped tailnet policy and RustDesk authentication.
 
-[Security](SECURITY.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.md) · [Distribution](docs/DISTRIBUTION.md)
+[Security](SECURITY.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md) · [Distribution](docs/DISTRIBUTION.md)
 
 MIT license. Distribution archives include dependency notices.
