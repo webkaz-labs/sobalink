@@ -27,6 +27,10 @@ that [v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v
 has been published and its release workflow has completed. Installation verification
 and the real tailnet/RustDesk acceptance below are separate results.
 
+The current prerelease matrix is four targets: macOS ARM64, Windows x64, and
+Linux x64/ARM64. The five-target results above are historical; Intel macOS is
+not included in the current distribution.
+
 Current ordinary CI now builds each target once, preserving all tests, packaged
 archive checks and the Packslip fixture. The prerelease still builds twice and
 compares digests. Trusted-main module/compilation caches reduce repeated work;

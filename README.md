@@ -26,10 +26,10 @@ RustDesk の設定ファイルを直接書き換えません。設定値と復�
 | OS | CPU | 配布形式 |
 | --- | --- | --- |
 | Linux | x64 / ARM64 | tar.gz |
-| macOS | Apple Silicon / Intel | tar.gz |
+| macOS | Apple Silicon (ARM64) | tar.gz |
 | Windows | x64 | zip / exe |
 
-CI の OS と、実際に保証できる最小 OS・権限条件は別です。現段階では最小対応 OS を保証しません。管理者権限やシステムサービス登録は要求しない設計ですが、Windows の標準ユーザーでの認証試験は残っています。
+Intel Mac は今回のプレリリース対象に含みません。CI の OS と、実際に保証できる最小 OS・権限条件は別です。現段階では最小対応 OS を保証しません。管理者権限やシステムサービス登録は要求しない設計ですが、Windows の標準ユーザーでの認証試験は残っています。
 
 ## mise で検証用プレリリースを導入する
 

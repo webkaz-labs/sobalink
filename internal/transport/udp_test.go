@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -109,79 +110,106 @@ func TestUDPPersistentMappingAndAsynchronousReply(t *testing.T) {
 
 func TestUDPIdleExpiryAndSessionBound(t *testing.T) {
 	t.Parallel()
-	upstream := udpSocket(t)
-	var dials atomic.Int64
-	closed := make(chan struct{}, 8)
-	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
-		c, err := (&net.Dialer{}).DialContext(ctx, network, address)
-		if err != nil {
-			return nil, err
+	synctest.Test(t, func(t *testing.T) {
+		v := virtualUDPServer(t, DefaultUDPIdleTimeout, 1)
+		defer closeServer(t, v.server)
+		first := netip.MustParseAddrPort("127.0.0.1:12345")
+		second := netip.MustParseAddrPort("127.0.0.1:12346")
+		v.send(first, "first")
+		mapping := v.mapping(t)
+		defer mapping.peer.Close()
+		if got := readBytes(t, mapping.peer, len("first")); string(got) != "first" {
+			t.Fatalf("packet %q", got)
 		}
-		dials.Add(1)
-		tracked := &trackedConn{Conn: c, closed: make(chan struct{})}
-		go func() { <-tracked.closed; closed <- struct{}{} }()
-		return tracked, nil
-	}
-	s, err := StartUDP(context.Background(), UDPConfig{ListenAddress: "127.0.0.1:0", Target: upstream.LocalAddr().String(), IdleTimeout: 100 * time.Millisecond, MaxSessions: 1}, dial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeServer(t, s)
-	first, second := udpClient(t, s.Addr()), udpClient(t, s.Addr())
-	first.Write([]byte("first"))
-	receiveUDP(t, upstream)
-	second.Write([]byte("over capacity"))
-	upstream.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
-	if _, _, err := upstream.ReadFromUDPAddrPort(make([]byte, 10)); err == nil {
-		t.Fatal("capacity limit admitted a second source")
-	}
-	if dials.Load() != 1 {
-		t.Fatal("capacity limit allocated an upstream socket")
-	}
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("idle mapping was not closed")
-	}
-	// Closing the socket precedes table removal; allow the worker to finish.
-	time.Sleep(10 * time.Millisecond)
-	second.Write([]byte("after expiry"))
-	if got, _ := receiveUDP(t, upstream); string(got) != "after expiry" {
-		t.Fatalf("replacement packet %q", got)
-	}
-	if dials.Load() != 2 {
-		t.Fatalf("dials %d, want 2", dials.Load())
-	}
+		synctest.Wait()
+		v.send(second, "over capacity")
+		synctest.Wait()
+		v.noAdditionalMapping(t)
+		if got := v.sessionCount(); got != 1 {
+			t.Fatalf("sessions %d, want 1", got)
+		}
+
+		time.Sleep(DefaultUDPIdleTimeout - time.Nanosecond)
+		synctest.Wait()
+		mapping.assertOpen(t)
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		mapping.assertClosed(t)
+		if got := v.sessionCount(); got != 0 {
+			t.Fatalf("expired session was not removed: %d", got)
+		}
+
+		// Worker completion, not a guessed sleep, establishes capacity is free.
+		v.send(second, "after expiry")
+		replacement := v.mapping(t)
+		defer replacement.peer.Close()
+		if replacement.peer == mapping.peer {
+			t.Fatal("expired socket was reused")
+		}
+		if got := readBytes(t, replacement.peer, len("after expiry")); string(got) != "after expiry" {
+			t.Fatalf("replacement packet %q", got)
+		}
+		synctest.Wait()
+		if got := v.sessionCount(); got != 1 {
+			t.Fatalf("replacement sessions %d, want 1", got)
+		}
+	})
 }
 
 func TestUDPActivityExtendsSession(t *testing.T) {
 	t.Parallel()
-	upstream := udpSocket(t)
-	var dials atomic.Int64
-	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
-		dials.Add(1)
-		return (&net.Dialer{}).DialContext(ctx, network, address)
-	}
-	s, err := StartUDP(context.Background(), UDPConfig{ListenAddress: "127.0.0.1:0", Target: upstream.LocalAddr().String(), IdleTimeout: 100 * time.Millisecond}, dial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeServer(t, s)
-	client := udpClient(t, s.Addr())
-	client.Write([]byte("start"))
-	_, mapping := receiveUDP(t, upstream)
-	for i := 0; i < 8; i++ {
-		time.Sleep(25 * time.Millisecond)
-		upstream.WriteToUDPAddrPort([]byte("keepalive"), mapping)
-		if got, _ := receiveUDP(t, client); string(got) != "keepalive" {
-			t.Fatalf("reply %q", got)
+	synctest.Test(t, func(t *testing.T) {
+		v := virtualUDPServer(t, DefaultUDPIdleTimeout, 1)
+		defer closeServer(t, v.server)
+		source := netip.MustParseAddrPort("127.0.0.1:12345")
+		v.send(source, "start")
+		mapping := v.mapping(t)
+		defer mapping.peer.Close()
+		if got := readBytes(t, mapping.peer, len("start")); string(got) != "start" {
+			t.Fatalf("packet %q", got)
 		}
-	}
-	client.Write([]byte("still same"))
-	_, gotMapping := receiveUDP(t, upstream)
-	if gotMapping != mapping || dials.Load() != 1 {
-		t.Fatal("active reverse traffic did not retain mapping")
-	}
+		synctest.Wait()
+
+		// Exercise the actual upstream Read -> touch -> local delivery path across
+		// twice the production idle window, without any local keepalive traffic.
+		for i := 0; i < 8; i++ {
+			time.Sleep(DefaultUDPIdleTimeout / 4)
+			if err := writeFull(mapping.peer, []byte("keepalive")); err != nil {
+				t.Fatal(err)
+			}
+			packet := v.receive(t)
+			if string(packet.data) != "keepalive" || packet.address != source {
+				t.Fatalf("reply %+v", packet)
+			}
+			synctest.Wait()
+			mapping.assertOpen(t)
+			v.noAdditionalMapping(t)
+			if got := v.sessionCount(); got != 1 {
+				t.Fatalf("active sessions %d, want 1", got)
+			}
+		}
+
+		// A later local packet must use that same upstream socket, not a newly
+		// created mapping. The virtual clock remains at the last reply time.
+		v.send(source, "still same")
+		if got := readBytes(t, mapping.peer, len("still same")); string(got) != "still same" {
+			t.Fatalf("later packet %q", got)
+		}
+		synctest.Wait()
+		v.noAdditionalMapping(t)
+
+		// Inbound activity must reset the deadline, not merely keep an unrelated
+		// timer alive. It expires exactly one idle window after the last reply.
+		time.Sleep(DefaultUDPIdleTimeout - time.Nanosecond)
+		synctest.Wait()
+		mapping.assertOpen(t)
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		mapping.assertClosed(t)
+		if got := v.sessionCount(); got != 0 {
+			t.Fatalf("inactive session was not removed: %d", got)
+		}
+	})
 }
 
 func TestUDPRevokedPolicyClosesMapping(t *testing.T) {
@@ -248,26 +276,25 @@ func TestUDPRevokedPolicyClosesMapping(t *testing.T) {
 
 func TestUDPExpiryInterruptsBlockedWrite(t *testing.T) {
 	t.Parallel()
-	closed := make(chan struct{})
-	peerSeen := make(chan net.Conn, 1)
-	dial := func(context.Context, string, string) (net.Conn, error) {
-		a, b := net.Pipe()
-		peerSeen <- b
-		return &trackedConn{Conn: a, closed: closed}, nil
-	}
-	s, err := StartUDP(context.Background(), UDPConfig{ListenAddress: "127.0.0.1:0", Target: "example.test:53", IdleTimeout: 40 * time.Millisecond, WriteTimeout: time.Second}, dial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeServer(t, s)
-	udpClient(t, s.Addr()).Write([]byte("blocked because nobody reads"))
-	peer := <-peerSeen
-	defer peer.Close()
-	select {
-	case <-closed:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("idle expiry waited for a blocked write")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		const idle = 40 * time.Millisecond
+		v := virtualUDPServer(t, idle, 1)
+		defer closeServer(t, v.server)
+		v.send(netip.MustParseAddrPort("127.0.0.1:12345"), "nobody reads this packet")
+		mapping := v.mapping(t)
+		defer mapping.peer.Close()
+		// net.Pipe blocks the actual session Write while the peer does not read.
+		synctest.Wait()
+		time.Sleep(idle - time.Nanosecond)
+		synctest.Wait()
+		mapping.assertOpen(t)
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		mapping.assertClosed(t)
+		if got := v.sessionCount(); got != 0 {
+			t.Fatalf("blocked writer was not joined: %d sessions", got)
+		}
+	})
 }
 
 func TestUDPShutdownCancelsDialAndValidation(t *testing.T) {

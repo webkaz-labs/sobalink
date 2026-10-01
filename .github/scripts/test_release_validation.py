@@ -82,8 +82,22 @@ class WorkflowCachePolicy(unittest.TestCase):
                 self.assertEqual(self.key("prerelease", release_job), prefix + runner + suffix + "${{ needs.gate.outputs.commit }}")
         native_matrix = lambda name: re.findall(r"^          - runner: (.+)\n            goos: (.+)\n            goarch: (.+)$", self.job(name, "native"), re.MULTILINE)
         self.assertEqual(native_matrix("ci"), native_matrix("prerelease"))
-        self.assertEqual(len(native_matrix("ci")), 5)
+        self.assertEqual(len(native_matrix("ci")), 4)
         self.assertIn(("ubuntu-24.04", "linux", "amd64"), native_matrix("ci"))
+
+    def test_four_target_inventories_match(self):
+        expected = ("linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64")
+        self.assertEqual(checks.TARGETS, expected)
+        root = pathlib.Path(__file__).parents[2]
+        source = (root / "internal/distribution/distribution.go").read_text(encoding="utf-8")
+        target_line = next(line for line in source.splitlines() if line.startswith("var Targets = "))
+        go_targets = tuple(a + "-" + b for a, b in re.findall(r'\{"([^"\n]+)", "([^"\n]+)"\}', target_line))
+        self.assertEqual(go_targets, expected)
+        install_targets = tuple(re.findall(r"^            target: ([a-z0-9-]+)$", self.job("prerelease", "verify-mise-install"), re.MULTILINE))
+        self.assertEqual(install_targets, expected)
+        for name in ("ci", "prerelease"):
+            self.assertNotIn("macos-15-intel", self.workflow(name))
+        self.assertFalse(any("darwin-amd64" in name for name in checks.filenames(VERSION)))
 
     def test_all_cache_paths_and_actions_match_the_pinned_producer(self):
         for workflow, jobs in (("ci", ("native", "manifest-smoke")), ("prerelease", ("native", "provenance"))):
@@ -331,8 +345,8 @@ class ArtifactGuards(unittest.TestCase):
     def check(self):
         checks.check_assets(self.root, VERSION, COMMIT)
 
-    def test_complete_five_target_inventory(self):
-        self.assertEqual(len(checks.filenames(VERSION)), 22)
+    def test_complete_four_target_inventory(self):
+        self.assertEqual(len(checks.filenames(VERSION)), 18)
         self.check()
 
     def test_unexpected_asset_rejected(self):

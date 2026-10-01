@@ -10,7 +10,7 @@ before treating the install path as available. A missing release page means
 publication has not finished.
 
 Ordinary CI remains credential-free and does not publish releases. The separate
-prerelease workflow builds all five targets, creates genuine GitHub provenance,
+prerelease workflow builds all four targets, creates genuine GitHub provenance,
 signs a Packslip bundle using short-lived GitHub OIDC, verifies the published
 bytes, and tests real mise installation on native runners. It does not enroll a
 Tailscale node or start the embedded networking service.
@@ -31,10 +31,9 @@ explains why Windows hosted-runner success does not prove standard-user operatio
 | linux | amd64 | ubuntu-24.04 | tar.gz |
 | linux | arm64 | ubuntu-24.04-arm | tar.gz |
 | darwin | arm64 | macos-26 | tar.gz |
-| darwin | amd64 | macos-15-intel | tar.gz |
 | windows | amd64 | windows-2025 | zip |
 
-Windows ARM64 is not a distribution target yet. Testing on these images does not
+Intel macOS and Windows ARM64 are not current distribution targets. Testing on these images does not
 establish a minimum supported OS version. Binaries use `CGO_ENABLED=0`, with
 baseline `GOAMD64=v1` / `GOARM64=v8.0`; Linux archives are not bound to a host libc.
 No installer, kernel driver, service installation, or elevated startup is added
@@ -137,7 +136,7 @@ share/tsnet-bridge/licenses/...
 The SBOM, build metadata and notices index are also emitted as separate assets.
 `package-tool checksums` covers the regular files present in `dist` when it runs,
 apart from `SHA256SUMS` itself. The release inventory is generated before signing:
-it lists 21 files and does not include the later `packslip.sigstore.json`. The
+it lists 17 files and does not include the later `packslip.sigstore.json`. The
 bundle is independently signature-verified and has its own GitHub provenance.
 From the download directory use `sha256sum --check SHA256SUMS` for the listed
 files. Checksums alone provide integrity, not publisher authentication.
@@ -201,7 +200,7 @@ review those before authorizing distribution.
 
 ## Packslip signing and publication flow
 
-`package-tool manifest VERSION` checks that all five target packages, SBOMs,
+`package-tool manifest VERSION` checks that all four target packages, SBOMs,
 metadata and notices indexes exist and refer to one source commit. It generates
 `dist/packslip.toml`, which is **signing input, not a signature**. It declares
 explicit platforms, archive formats, executable paths, and per-artifact SBOM
@@ -215,7 +214,7 @@ The manual prerelease workflow separates permissions and responsibilities:
 
 1. Require a strict prerelease version, the exact current main SHA, and a
    successful Cross-platform CI run for that SHA
-2. Test and build all five targets natively, build each package twice, compare
+2. Test and build all four targets natively, build each package twice, compare
    digests, and execute the packaged help/version commands
 3. Assemble the complete manifest/checksums and attest the final distribution
    bytes using GitHub build provenance
@@ -232,7 +231,7 @@ The manual prerelease workflow separates permissions and responsibilities:
    stable latest release
 7. Download the public files without download authentication and separately
    verify all signatures and provenance. Then install the complete version on
-   all five native targets through mise with its default signature and age
+   all four native targets through mise with its default signature and age
    settings. Execute only offline help/version checks, inspect the installed
    metadata/notices, and verify the expected source commit
 

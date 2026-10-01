@@ -32,7 +32,7 @@
 
 [プレリリース v0.1.0-alpha.1](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.1) を使います。Release ページに **Pre-release** と表示され、`packslip.sigstore.json` と各 OS の配布物が公開されていることを確認してください。ページが見つからなければ公開処理がまだ終わっていないため、公開完了を待ちます。
 
-**Go のコンパイル環境や圧縮ファイルの手動展開は不要です。** mise が署名・リポジトリの識別・ファイルのダイジェストを検証し、自分の OS / CPU の配布物を選びます。Linux x64/ARM64、Mac Apple Silicon/Intel、Windows x64 が対象です。Windows ARM64 のネイティブ配布はありません。
+**Go のコンパイル環境や圧縮ファイルの手動展開は不要です。** mise が署名・リポジトリの識別・ファイルのダイジェストを検証し、自分の OS / CPU の配布物を選びます。Linux x64/ARM64、Mac Apple Silicon (ARM64)、Windows x64 が対象です。Intel Mac と Windows ARM64 の配布はありません。
 
 まだ mise がない場合は、[公式の導入手順](https://mise.jdx.dev/getting-started.html)から自分の OS 用を導入します。本書の確認対象は **mise 2026.9.18** です。古い mise に Packslip バックエンドがない場合は、導入に使った公式の方法で更新してください。
 
@@ -124,7 +124,7 @@ mise exec -- tsnet-bridge settings
 
 ### 4-1. ターミナルでインストールする
 
-「アプリケーション」→「ユーティリティ」→ **ターミナル**を開きます。`sudo` は使いません。Apple Silicon / Intel とも同じコマンドです。mise が対応する配布物を選びます。
+「アプリケーション」→「ユーティリティ」→ **ターミナル**を開きます。`sudo` は使いません。この手順は Apple Silicon (ARM64) 用です。Intel Mac は今回の配布対象に含みません。
 
 ```sh
 mise --version
@@ -383,6 +383,8 @@ OS・CPU・ツールの版、失敗した手順番号、`state`、一般的な�
 - [ ] 検証用プレリリースの mise / Packslip 導入結果の確認と、今後の更新・巻き戻し試験
 
 **すでに自動試験で確認したこと:** [CI #5](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36857522576) では Linux x64/ARM64、Mac ARM64/Intel、Windows x64 の全5対象で、競合検出付きテスト、ローカル IPC、vet、整形、再現ビルド、圧縮物・ライセンス・SBOM、同梱バイナリの版・ヘルプ表示が成功しました。Packslip の試験用署名と全対象ファイルの検証も成功しています。実 tailnet の資格情報は使っていません。
+
+現在のプレリリース対象は Mac ARM64、Windows x64、Linux x64/ARM64 の4対象です。上の5対象の記録は過去の成功結果であり、現在 Intel Mac 向けの配布があるという意味ではありません。
 
 その後の通常 CI は、全テスト・配布物確認・Packslip 検証を維持したまま、各対象のパッケージ作成を1回にしています。プレリリース時は引き続き2回ビルドして一致を確認します。依存・コンパイルのキャッシュは利用しますが、テスト結果は再利用しません。詳しくは [配布とキャッシュ](DISTRIBUTION.md#ci-and-prerelease-caches)を参照してください。
 

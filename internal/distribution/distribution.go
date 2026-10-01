@@ -21,7 +21,7 @@ const GoVersion = "go1.27.1"
 
 type Target struct{ OS, Arch string }
 
-var Targets = []Target{{"linux", "amd64"}, {"linux", "arm64"}, {"darwin", "arm64"}, {"darwin", "amd64"}, {"windows", "amd64"}}
+var Targets = []Target{{"linux", "amd64"}, {"linux", "arm64"}, {"darwin", "arm64"}, {"windows", "amd64"}}
 
 func (t Target) String() string { return t.OS + "-" + t.Arch }
 func (t Target) Binary() string {

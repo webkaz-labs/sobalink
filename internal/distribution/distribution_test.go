@@ -278,7 +278,7 @@ func TestBuildDeterministicAndManifestComplete(t *testing.T) {
 			t.Fatalf("manifest missing %s", want)
 		}
 	}
-	if strings.Count(manifest, "[[artifact]]") != 5 || strings.Count(manifest, "[[resource]]") != 5 {
+	if strings.Count(manifest, "[[artifact]]") != len(Targets) || strings.Count(manifest, "[[resource]]") != len(Targets) {
 		t.Fatal("manifest targets/resources incomplete")
 	}
 	if err := tool.Checksums(); err != nil {
@@ -400,5 +400,15 @@ func TestNoticeCollectionFollowsOnlySuppliedRoot(t *testing.T) {
 	// A regular file is never accepted as a notice inventory root.
 	if _, err = collectNotices(filepath.Join(target, "LICENSE"), t.TempDir(), false); err == nil {
 		t.Fatal("accepted non-directory root")
+	}
+}
+
+func TestSupportedDistributionTargets(t *testing.T) {
+	want := []Target{{"linux", "amd64"}, {"linux", "arm64"}, {"darwin", "arm64"}, {"windows", "amd64"}}
+	if !reflect.DeepEqual(Targets, want) {
+		t.Fatalf("targets = %v, want %v", Targets, want)
+	}
+	if (Target{"darwin", "amd64"}).valid() {
+		t.Fatal("Intel macOS is not a distribution target")
 	}
 }

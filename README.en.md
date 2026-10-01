@@ -19,7 +19,7 @@ No GUI, autostart registration, system service, subnet router, exit node, or gen
 
 ## Targets and installation
 
-Linux x64/ARM64, macOS Apple Silicon/Intel, and Windows x64. CI runners do not establish minimum OS support or Windows standard-user enrollment.
+Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS is not included in this prerelease. CI runners do not establish minimum OS support or Windows standard-user enrollment.
 
 With [mise](https://mise.jdx.dev/getting-started.html) (pinned verification version: 2026.9.18), use the same command in PowerShell, macOS, and Linux. No Go compiler or manual extraction is needed:
 

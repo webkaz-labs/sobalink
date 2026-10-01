@@ -30,11 +30,18 @@ type UDPConfig struct {
 	Validate func(context.Context, string, string) error
 }
 
+// udpPacketIO keeps the session engine independent of the socket implementation.
+// Production always supplies the loopback *net.UDPConn created by StartUDP.
+type udpPacketIO interface {
+	ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error)
+	WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
+}
+
 type udpTable struct {
 	mu       sync.Mutex
 	sessions map[netip.AddrPort]*udpSession
 	server   *Server
-	local    *net.UDPConn
+	local    udpPacketIO
 	cfg      UDPConfig
 	dial     Dialer
 }

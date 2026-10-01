@@ -21,7 +21,7 @@ PROJECT = "github.com/" + REPOSITORY
 WORKFLOW = ".github/workflows/prerelease.yml"
 IDENTITY = "https://github.com/" + REPOSITORY + "/" + WORKFLOW + "@refs/heads/main"
 ISSUER = "https://token.actions.githubusercontent.com"
-TARGETS = ("linux-amd64", "linux-arm64", "darwin-arm64", "darwin-amd64", "windows-amd64")
+TARGETS = ("linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64")
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*\Z")
 
 
@@ -114,7 +114,7 @@ def check_assets(root, version, commit, bundle=False):
     expected = filenames(version)
     if bundle:
         expected.add("packslip.sigstore.json")
-    require({p.name for p in root.iterdir()} == expected, "release asset set differs from the exact five-target inventory")
+    require({p.name for p in root.iterdir()} == expected, "release asset set differs from the exact four-target inventory")
     require(all(p.is_file() and not p.is_symlink() for p in root.iterdir()), "release assets must be regular files")
     checksums = {}
     for line in (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
@@ -137,7 +137,7 @@ def check_assets(root, version, commit, bundle=False):
         require(bool(notices["modules"]), "empty dependency notices")
         for module in notices["modules"] + [notices["go_standard_library"]]:
             require(bool(module["notices"]), "missing module license notices")
-    print("Verified five native targets, source identity, SBOMs, notices, and all distribution checksums")
+    print("Verified four native targets, source identity, SBOMs, notices, and all distribution checksums")
 
 
 def check_bundle(root, version, commit):
@@ -152,12 +152,12 @@ def check_bundle(root, version, commit):
     require(predicate["identity"] == {"scheme": "sigstore-oidc", "key_id": IDENTITY, "issuer": ISSUER}, "wrong signed workflow identity")
     expected = {name for name in filenames(version) if name.endswith((".tar.gz", ".zip", ".cdx.json"))}
     subjects = statement["subject"]
-    require(len(subjects) == len(expected) and {s["name"] for s in subjects} == expected, "signed subjects differ from five archives and five SBOMs")
+    require(len(subjects) == len(expected) and {s["name"] for s in subjects} == expected, "signed subjects differ from four archives and four SBOMs")
     for subject in subjects:
         require(subject["digest"]["sha256"] == sha256(root / subject["name"]), "signed digest mismatch")
     artifacts = predicate["artifacts"]
     resources = predicate["resources"]
-    require(len(artifacts) == 5 and len(resources) == 5, "expected exactly five installable archives and SBOM resources")
+    require(len(artifacts) == len(TARGETS) and len(resources) == len(TARGETS), "expected exactly four installable archives and SBOM resources")
     url_base = "https://" + PROJECT + "/releases/download/v" + version + "/"
     for target in TARGETS:
         target_os, target_arch = target.split("-")
@@ -173,7 +173,7 @@ def check_bundle(root, version, commit):
         require(artifact["provenance"] == ["https://api.github.com/repos/" + REPOSITORY + "/attestations/sha256:" + sha256(root / name)], "wrong or missing provenance link")
         resource = next(r for r in resources if r["artifact"] == name)
         require(resource["kind"] == "sbom" and resource["format"] == "cyclonedx" and resource["asset"] == stem + ".cdx.json" and resource["url"] == url_base + stem + ".cdx.json", "wrong signed SBOM binding")
-    print("Verified signed project, workflow identity, source, five platforms, provenance links, and all ten signed digests")
+    print("Verified signed project, workflow identity, source, four platforms, provenance links, and all eight signed digests")
 
 
 def download_public(root, version, commit):

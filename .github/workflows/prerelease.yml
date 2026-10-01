@@ -75,9 +75,6 @@ jobs:
           - runner: macos-26
             goos: darwin
             goarch: arm64
-          - runner: macos-15-intel
-            goos: darwin
-            goarch: amd64
           - runner: windows-2025
             goos: windows
             goarch: amd64
@@ -159,7 +156,7 @@ jobs:
           extension=tar.gz
           if [[ "$TARGET_OS" == windows ]]; then extension=zip; fi
           python .github/scripts/smoke-package.py "dist/tsnet-bridge-$RELEASE_VERSION-$TARGET_OS-$TARGET_ARCH.$extension" "$RELEASE_VERSION" 2>&1 | tee logs/package-smoke.txt
-          # The combined checksum inventory is generated after all five builds.
+          # The combined checksum inventory is generated after all four builds.
           rm dist/SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -281,7 +278,7 @@ jobs:
               --source-digest "$TESTED_COMMIT" --source-ref refs/heads/main \
               --deny-self-hosted-runners 2>&1 | tee "logs/provenance-$(basename "$file").txt"
           done
-      - name: Sign five native archives and their five SBOMs with GitHub OIDC
+      - name: Sign four native archives and their four SBOMs with GitHub OIDC
         id: packslip
         uses: jdx/packslip@87479dfc6443253dff69601cace5fc6ea07e6df5 # v1 / CLI 1.4.0
         with:
@@ -381,14 +378,14 @@ jobs:
           if release is None:
               notes = "\n".join([
                   "実験的なプレリリースです。本番利用向けの安定版ではありません。",
-                  "5環境でネイティブの race test、vet、再現可能なパッケージ生成とオフライン smoke test を実施しています。",
+                  "4環境でネイティブの race test、vet、再現可能なパッケージ生成とオフライン smoke test を実施しています。",
                   "実際の tailnet 接続、非管理者ユーザーでの認証、RustDesk のエンドツーエンド接続は未検証です。",
-                  "公開後に5環境で実際の mise インストールを検証します。結果はこのリリースの Actions 実行で確認してください。",
+                  "公開後に4環境で実際の mise インストールを検証します。結果はこのリリースの Actions 実行で確認してください。",
                   "",
                   "Experimental prerelease; this is not a stable production release.",
-                  "Native race tests, vet, reproducible packaging, and offline archive smoke tests run on all five targets.",
+                  "Native race tests, vet, reproducible packaging, and offline archive smoke tests run on all four targets.",
                   "Real tailnet connections, non-administrator authentication, and RustDesk end-to-end connections have not been verified.",
-                  "Actual mise installation is checked on all five targets after publication; inspect the linked Actions run for its result.",
+                  "Actual mise installation is checked on all four targets after publication; inspect the linked Actions run for its result.",
                   "",
                   "Verification: https://github.com/" + checks.REPOSITORY + "/actions/runs/" + os.environ["GITHUB_RUN_ID"],
                   "Source commit: " + commit,
@@ -496,8 +493,6 @@ jobs:
             target: linux-arm64
           - runner: macos-26
             target: darwin-arm64
-          - runner: macos-15-intel
-            target: darwin-amd64
           - runner: windows-2025
             target: windows-amd64
     runs-on: ${{ matrix.runner }}
