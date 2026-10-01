@@ -46,6 +46,7 @@ func parseLoginOptions(args []string, out io.Writer) (loginOptions, error) {
 	return opts, nil
 }
 func privateTerminal(out io.Writer) bool {
+	out = unwrapLocaleWriter(out)
 	if f, ok := out.(*os.File); ok {
 		return term.IsTerminal(int(f.Fd()))
 	}
@@ -57,6 +58,16 @@ func checkPrivateTerminal(out io.Writer) error {
 	}
 	return nil
 }
+
+var loginTerminalWidth = func(out io.Writer) (int, error) {
+	out = unwrapLocaleWriter(out)
+	if f, ok := out.(*os.File); ok {
+		width, _, err := term.GetSize(int(f.Fd()))
+		return width, err
+	}
+	return 0, nil
+}
+
 func renderLoginQR(out io.Writer, url, format string) error {
 	if !validAuthURL(url) {
 		return errors.New("unexpected login URL; refusing QR generation")
@@ -68,6 +79,13 @@ func renderLoginQR(out io.Writer, url, format string) error {
 	// Explicit contrast avoids dependence on a light/dark terminal theme. The QR
 	// is generated entirely in memory, never sent to an image service or saved.
 	bits := q.Bitmap()
+	columns := len(bits)
+	if format == "large" {
+		columns *= 2
+	}
+	if width, err := loginTerminalWidth(out); err == nil && width > 0 && columns > width {
+		return fmt.Errorf("QR needs %d columns; terminal has %d. Widen it or use the private link", columns, width)
+	}
 	var b strings.Builder
 	step := 2
 	if format == "large" {
@@ -117,11 +135,11 @@ func loginWithOptions(ctx context.Context, dir string, out io.Writer, opts login
 	}
 	if s.Backend == "Running" {
 		fmt.Fprintln(out, "Sign-in complete. This node is already connected.")
-		return printStatus(out, s, false)
+		return printStatus(out, s, false, dir)
 	}
 	if s.State == "approval-required" || s.Backend == "NeedsMachineAuth" {
 		fmt.Fprintln(out, "Sign-in is already complete; this node needs approval in the tailnet admin console.")
-		return printStatus(out, s, false)
+		return printStatus(out, s, false, dir)
 	}
 	if e := call(ctx, dir, "login", nil); e != nil {
 		return e
@@ -162,7 +180,8 @@ func loginWithOptions(ctx context.Context, dir string, out io.Writer, opts login
 			if opts.QR {
 				fmt.Fprintln(out, "Scan with a trusted phone, then confirm the intended account, tailnet and node in its browser.")
 				if e := renderLoginQR(out, auth.URL, opts.QRFormat); e != nil {
-					fmt.Fprintln(out, e, "Use the private link above.")
+					fmt.Fprintln(out, e)
+					fmt.Fprintln(out, "Use the private link above.")
 				}
 			}
 			if !opts.NoBrowser {
@@ -182,11 +201,11 @@ func loginWithOptions(ctx context.Context, dir string, out io.Writer, opts login
 		}
 		if s.Backend == "Running" {
 			fmt.Fprintln(out, "Sign-in complete. This bridge node is connected; application checks are separate.")
-			return printStatus(out, s, false)
+			return printStatus(out, s, false, dir)
 		}
 		if s.State == "approval-required" || s.Backend == "NeedsMachineAuth" {
 			fmt.Fprintln(out, "Account sign-in finished; this node still needs approval in the tailnet admin console.")
-			return printStatus(out, s, false)
+			return printStatus(out, s, false, dir)
 		}
 		if s.State != "" && s.State != lastState {
 			fmt.Fprintln(out, "Sign-in status:", s.State)

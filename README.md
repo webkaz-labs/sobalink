@@ -14,6 +14,8 @@ tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。ma
 
 ## できること
 
+- 日本語・英語のヘルプ、案内、状態とエラー。基本はロケール自動判定、必要なときだけ `--lang ja` / `en` で切替
+
 - 相手と用途から作る名前付き TCP/UDP 接続、グループ単位の開始・停止
 - 選んだ相手だけへの TCP/UDP 限定共有。期限・停止で既存通信も閉じる
 - ルール別 JSON、準備待機、タスク所有者とリースによる後片付け
@@ -142,3 +144,7 @@ mise exec -- tsnet-bridge run             # 前面実行。Ctrl+C で停止
 [セキュリティ](SECURITY.md) · [アーキテクチャ](docs/ARCHITECTURE.md) · [検証状況](docs/VERIFICATION.md) · [配布](docs/DISTRIBUTION.md)
 
 MIT ライセンス。依存ソフトウェアのライセンスは各配布物の notices に同梱します。
+
+## 開発方針
+
+[日英対応・使いやすさ・文書の基本方針](docs/DEVELOPMENT_PRINCIPLES.ja.md)

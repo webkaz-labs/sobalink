@@ -8,6 +8,8 @@ An application-scoped tailnet bridge built with Go and embedded tsnet for macOS,
 
 ## Features
 
+- First-class Japanese/English help, prompts, state and errors; automatic locale selection with optional `--lang ja` / `en` override
+
 - Named TCP/UDP connections, purpose presets and grouped start/stop
 - Restricted inbound TCP/UDP to explicit loopback services, with peer identity pins and TTL
 - Per-rule JSON, readiness waits and owned task cleanup with expiring leases
@@ -122,3 +124,7 @@ Unix directories/files use 0700/0600; Windows uses current-user DACLs. This is a
 [Security](SECURITY.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md) · [Distribution](docs/DISTRIBUTION.md)
 
 MIT license. Distribution archives include dependency notices.
+
+## Development principles
+
+[Bilingual UX, interface and documentation principles](docs/DEVELOPMENT_PRINCIPLES.en.md)

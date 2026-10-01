@@ -1,14 +1,67 @@
 #!/usr/bin/env python3
 """Exercise the installed v2 CLI without node startup or external networking."""
 import json
+import os
+import platform
+import re
 import pathlib
 import subprocess
 import sys
 import tempfile
 
 
+def check_locales(binary):
+    # Exercise the packaged/installed executable, including the native read-only
+    # fallback. Never modify OS preferences or start a node to test presentation.
+    base = dict(os.environ)
+    for key in ("TSNET_BRIDGE_LANG", "LC_ALL", "LC_MESSAGES", "LANG"):
+        base.pop(key, None)
+
+    def run(args, env=None, success=True):
+        result = subprocess.run([binary, *args], env=base if env is None else env,
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert (result.returncode == 0) == success, (args, result.returncode, result.stdout, result.stderr)
+        return result
+
+    english = run(["--lang", "en", "help"]).stdout
+    japanese = run(["--lang", "ja", "help"]).stdout
+    assert "First time:" in english and "初回:" in japanese
+    assert run(["help"], dict(base, LANG="ja_JP.UTF-8")).stdout == japanese
+    assert run(["help"], dict(base, LANG="ja_JP.UTF-8", LC_MESSAGES="en_US.UTF-8")).stdout == english
+    assert run(["help"], dict(base, LANG="ja_JP.UTF-8", LC_ALL="C")).stdout == english
+    assert run(["help"], dict(base, LANG="xx_XX")).stdout == english
+    assert run(["help"], dict(base, LANG="en_US", TSNET_BRIDGE_LANG="ja")).stdout == japanese
+    assert run(["--lang", "auto", "help"], dict(base, LANG="en_US", TSNET_BRIDGE_LANG="ja")).stdout == english
+    assert run(["--lang", "en", "help"], dict(base, LANG="ja_JP", TSNET_BRIDGE_LANG="ja")).stdout == english
+    native_ja = False
+    if platform.system() == "Windows":
+        import ctypes
+        native_ja = (ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3ff) == 0x11
+    elif platform.system() == "Darwin":
+        result = subprocess.run(["/usr/bin/defaults", "read", "-g", "AppleLanguages"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=5)
+        if result.returncode == 0:
+            first = result.stdout.strip().lstrip("(").strip().split(",")[0].splitlines()[0].strip().strip('"').rstrip(")").strip()
+            native_ja = re.match(r"^ja(?:$|[-_.@])", first.lower()) is not None
+    assert run(["help"]).stdout == (japanese if native_ja else english), "native locale fallback mismatch"
+    for lang in ("ja", "en"):
+        for topic in ("login", "connect", "share", "status", "task", "all"):
+            text = run(["--lang", lang, "help", topic]).stdout
+            assert "tsnet-bridge" in text
+        error = run(["--lang", lang, "help", "unknown"], success=False).stderr
+        assert ("不明" in error or "見つか" in error) if lang == "ja" else "unknown help topic" in error
+    with tempfile.TemporaryDirectory(prefix="tsnet-bridge-locale-") as tmp:
+        prefix = ["--state-dir", str(pathlib.Path(tmp) / "state space")]
+        initialized = run(["--lang", "ja", *prefix, "init"]).stdout
+        assert "保存" in initialized and str(pathlib.Path(tmp) / "state space") in initialized
+        assert run(["--lang", "ja", *prefix, "rules", "--json"]).stdout == run(["--lang", "en", *prefix, "rules", "--json"]).stdout
+        assert "まだありません" in run(["--lang", "ja", *prefix, "rules"]).stdout
+    print("Native packaged/installed Japanese/English, locale fallback, overrides and exact JSON checks passed")
+
+
 def check(binary):
     binary = str(pathlib.Path(binary).resolve())
+    check_locales(binary)
     with tempfile.TemporaryDirectory(prefix="tsnet-bridge-v2-offline-") as tmp:
         root = pathlib.Path(tmp)
         state = root / "state"

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Prerelease version without v (for example 0.1.0-alpha.2)'
+        description: 'Prerelease version without v (for example 0.2.0-alpha.1)'
         required: true
         type: string
       tested_commit:
@@ -57,6 +57,7 @@ jobs:
           path: |
             .github/scripts/release-validation.py
             .github/scripts/verify-installed.py
+            .github/scripts/offline-smoke.py
           if-no-files-found: error
           retention-days: 14
 
@@ -380,12 +381,14 @@ jobs:
           if release is None:
               notes = "\n".join([
                   "実験的なプレリリースです。本番利用向けの安定版ではありません。",
-                  "4環境でネイティブの race test、vet、再現可能なパッケージ生成とオフライン smoke test を実施しています。",
+                  "名前付き TCP/UDP 接続、相手を限定する期限付き共有、グループ・タスク管理、日英自動切替とブラウザー／QR 認証案内を追加しました。",
+                  "4環境でネイティブの race test、vet、再現可能なパッケージ生成と日英のオフライン smoke test を実施しています。",
                   "実際の tailnet 接続、非管理者ユーザーでの認証、RustDesk のエンドツーエンド接続は未検証です。",
                   "公開後に4環境で実際の mise インストールを検証します。結果はこのリリースの Actions 実行で確認してください。",
                   "",
                   "Experimental prerelease; this is not a stable production release.",
-                  "Native race tests, vet, reproducible packaging, and offline archive smoke tests run on all four targets.",
+                  "Adds named TCP/UDP connections, peer-scoped temporary sharing, groups/tasks, automatic Japanese/English presentation, and browser/QR sign-in guidance.",
+                  "Native race tests, vet, reproducible packaging, and bilingual offline archive smoke tests run on all four targets.",
                   "Real tailnet connections, non-administrator authentication, and RustDesk end-to-end connections have not been verified.",
                   "Actual mise installation is checked on all four targets after publication; inspect the linked Actions run for its result.",
                   "",

@@ -162,6 +162,9 @@ func TestGroupFailedStartReportsAllRulesAndReturnsError(t *testing.T) {
 		t.Fatal(e)
 	}
 	installRequest(t, func(_ context.Context, _ string, command string, v any) error {
+		if command == "status" {
+			return assign(v, app.Status{State: "idle"})
+		}
 		var q app.RuleCommand
 		if e := json.Unmarshal([]byte(strings.TrimPrefix(command, "rules:")), &q); e != nil {
 			t.Fatal(e)

@@ -33,6 +33,9 @@ type RuleCommand struct {
 	GroupConfig   *config.Group `json:"group_config,omitempty"`
 }
 type RuleStatus struct {
+	ScopeDigest   string           `json:"scope_digest,omitempty"`
+	TTLSeconds    int64            `json:"ttl_seconds,omitempty"`
+	LeaseSeconds  int64            `json:"lease_seconds,omitempty"`
 	AllowedPeers  []config.PeerRef `json:"allowed_peers,omitempty"`
 	Name          string           `json:"name"`
 	Purpose       string           `json:"purpose,omitempty"`
@@ -292,6 +295,7 @@ func (m *ruleManager) command(ctx context.Context, q RuleCommand) (any, error) {
 		}
 		m.s.Config = next
 	case "start":
+		m.expire()
 		if q.TTLSeconds < 0 || q.TTLSeconds > 86400 || q.LeaseSeconds < 0 || q.LeaseSeconds > 300 {
 			return nil, errors.New("TTL must be 0..86400 seconds; lease 0..300 seconds")
 		}
@@ -332,6 +336,9 @@ func (m *ruleManager) command(ctx context.Context, q RuleCommand) (any, error) {
 			now := time.Now()
 			r.life = &lifetime{}
 			r.ttlSeconds = q.TTLSeconds
+			r.status.TTLSeconds = q.TTLSeconds
+			r.status.LeaseSeconds = q.LeaseSeconds
+			r.status.ScopeDigest = config.RulesDigest([]config.Rule{r.config})
 			r.leaseSeconds = q.LeaseSeconds
 			r.status.Owner = q.Owner
 			r.status.ExpiresAt = time.Time{}

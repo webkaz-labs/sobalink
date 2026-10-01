@@ -251,3 +251,27 @@ func TestPrivateWritePreservesParentPermissions(t *testing.T) {
 		t.Fatal(info.Mode())
 	}
 }
+
+func TestJapaneseRuleAndGroupNamesPreserved(t *testing.T) {
+	c, e := NewRules()
+	if e != nil {
+		t.Fatal(e)
+	}
+	r := ruleFixture()
+	r.Name = "開発用API"
+	c.Rules = []Rule{r}
+	c.Groups = []Group{{Name: "開発環境", Rules: []string{r.Name}}}
+	dir := t.TempDir()
+	if e = Save(dir, c); e != nil {
+		t.Fatal(e)
+	}
+	got, e := Load(dir)
+	if e != nil || got.Rules[0].Name != r.Name || got.Groups[0].Name != "開発環境" {
+		t.Fatal(got, e)
+	}
+	for _, bad := range []string{"../設定", "名前 空白", "接続\n注入", strings.Repeat("界", 65)} {
+		if ValidName(bad) {
+			t.Fatal("invalid name accepted", bad)
+		}
+	}
+}

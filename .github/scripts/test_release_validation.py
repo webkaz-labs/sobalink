@@ -72,6 +72,17 @@ class WorkflowCachePolicy(unittest.TestCase):
         restore = self.step(workflow, job, "uses: actions/cache/restore@")
         return re.search(r"^          key: (.+)$", restore, re.MULTILINE).group(1)
 
+    def test_release_validation_artifact_contains_offline_install_dependency(self):
+        upload = self.step("prerelease", "gate", "name: release-validation-tools")
+        for filename in ("release-validation.py", "verify-installed.py", "offline-smoke.py"):
+            self.assertIn("            .github/scripts/" + filename + "\n", upload)
+        root = pathlib.Path(__file__).parent
+        for filename in ("verify-installed.py", "smoke-package.py"):
+            self.assertIn('with_name("offline-smoke.py")', (root / filename).read_text(encoding="utf-8"))
+        offline = (root / "offline-smoke.py").read_text(encoding="utf-8")
+        self.assertIn("check_locales(binary)", offline)
+        self.assertIn("native locale fallback mismatch", offline)
+
     def test_cache_keys_include_exact_runner_toolchain_manifests_and_source(self):
         prefix = "trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-"
         suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-"

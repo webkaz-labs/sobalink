@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"github.com/webkaz-labs/tsnet-bridge/internal/app"
 	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,5 +69,69 @@ func TestSetupCancellationDoesNotSave(t *testing.T) {
 	}
 	if _, e := config.Load(d); e == nil {
 		t.Fatal("saved incomplete profile")
+	}
+}
+
+func TestStatusKeepsProfileAndSuccessfulDiagnostic(t *testing.T) {
+	dir := t.TempDir()
+	for _, reason := range []string{"No reachable process; run tsnet-bridge to start", "Run tsnet-bridge login to sign in"} {
+		var out bytes.Buffer
+		s := app.Status{State: "stopped", Reason: reason}
+		if e := printStatus(&out, s, false, dir); e != nil || !strings.Contains(out.String(), commandPrefix(dir)) {
+			t.Fatal(out.String(), e)
+		}
+		var a, b bytes.Buffer
+		printStatus(&a, s, true, dir)
+		printStatus(&b, s, true)
+		if a.String() != b.String() {
+			t.Fatal("profile hint changed machine JSON")
+		}
+	}
+	s := app.Status{Mode: "rules", State: "ready", Rules: []app.RuleStatus{{Name: "web", State: "ready", Direction: "forward", Network: "tcp", ReasonCode: "tcp-reachable", Reason: "TCP accepted a connection; protocol/TLS/application behavior remains unverified"}}}
+	for _, localized := range []bool{false, true} {
+		var out bytes.Buffer
+		var writer interface{ Write([]byte) (int, error) } = &out
+		if localized {
+			writer = &localeWriter{out: &out, language: "ja"}
+		}
+		printStatus(writer, s, false, dir)
+		if !strings.Contains(out.String(), "tcp-reachable") {
+			t.Fatal("successful doctor result hidden", out.String())
+		}
+	}
+}
+
+func TestStopJSONNamedRoutingAndNoProcess(t *testing.T) {
+	for _, selection := range [][]string{{"--json", "web"}, {"--json", "--group", "work"}} {
+		t.Run(strings.Join(selection, "-"), func(t *testing.T) {
+			dir := saveRules(t, testRule("web"))
+			fake := newFake(t, dir)
+			var out bytes.Buffer
+			args := append([]string{"--lang", "ja", "--state-dir", dir, "stop"}, selection...)
+			if e := run(t.Context(), args, strings.NewReader(""), &out); e != nil || !json.Valid(out.Bytes()) {
+				t.Fatal(e, out.String())
+			}
+			if len(fake.commands) != 1 || fake.commands[0].Action != "stop" {
+				t.Fatal(fake.commands)
+			}
+		})
+	}
+	installRequest(t, func(context.Context, string, string, any) error { return os.ErrNotExist })
+	var out bytes.Buffer
+	if e := run(t.Context(), []string{"--lang", "ja", "--state-dir", t.TempDir(), "stop", "--json"}, strings.NewReader(""), &out); e != nil || !json.Valid(out.Bytes()) {
+		t.Fatal(e, out.String())
+	}
+}
+func TestNodeStartJSONHasNoHumanPreamble(t *testing.T) {
+	dir := t.TempDir()
+	installRequest(t, func(_ context.Context, got, command string, v any) error {
+		if got != dir || command != "status" {
+			t.Fatal(got, command)
+		}
+		return assign(v, app.Status{State: "needs-login", Reason: "Run tsnet-bridge login to sign in"})
+	})
+	var out bytes.Buffer
+	if e := run(t.Context(), []string{"--lang", "ja", "--state-dir", dir, "start", "--json"}, strings.NewReader(""), &out); e != nil || !json.Valid(out.Bytes()) {
+		t.Fatal(e, out.String())
 	}
 }

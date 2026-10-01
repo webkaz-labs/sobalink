@@ -43,7 +43,7 @@ type Group struct {
 	Rules []string `json:"rules"`
 }
 
-var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+var namePattern = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}_-]{0,63}$`)
 var peerIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,127}$`)
 
 func ValidName(s string) bool   { return namePattern.MatchString(s) }

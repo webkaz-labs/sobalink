@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,8 +33,8 @@ var checkPort = probePort
 var runTaskProcess = func(ctx context.Context, argv []string, in io.Reader, out io.Writer) error {
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	command.Stdin = in
-	command.Stdout = out
-	command.Stderr = out
+	command.Stdout = unwrapLocaleWriter(out)
+	command.Stderr = unwrapLocaleWriter(out)
 	command.WaitDelay = 2 * time.Second
 	return command.Run()
 }
@@ -58,7 +59,11 @@ func (p *prompts) ask(message string) (string, error) {
 		}
 		return "", errors.New("canceled; no changes made")
 	}
-	return strings.TrimSpace(p.scanner.Text()), nil
+	answer := strings.TrimSpace(p.scanner.Text())
+	if cancelInput(answer) {
+		return "", errors.New("canceled; no changes made")
+	}
+	return answer, nil
 }
 func (p *prompts) confirm(message string, yes bool) error {
 	if yes {
@@ -68,7 +73,7 @@ func (p *prompts) confirm(message string, yes bool) error {
 	if err != nil {
 		return err
 	}
-	if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+	if !affirmativeInput(answer) {
 		return errors.New("canceled; no changes made")
 	}
 	return nil
@@ -99,14 +104,22 @@ func initRules(dir string, args []string, out io.Writer) error {
 	}
 	defer lock.Close()
 	if _, err = os.Lstat(filepath.Join(dir, "profile.json")); err == nil {
-		return errors.New("profile already exists; use a different --state-dir or preview migrate")
+		existing, e := config.Load(dir)
+		if e != nil {
+			return e
+		}
+		if existing.Version == 2 {
+			return fmt.Errorf("profile already exists; next: %s login or %s rules", commandPrefix(dir), commandPrefix(dir))
+		}
+		return errors.New("legacy profile already exists; use a different --state-dir or preview migrate")
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	if err = config.Save(dir, c); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Idle profile saved. No networking, sign-in, forwarding or sharing has started.\nNext: tsnet-bridge login, then tsnet-bridge connect or tsnet-bridge share.")
+	fmt.Fprintln(out, "Idle profile saved. No networking, sign-in, forwarding or sharing has started.")
+	fmt.Fprintf(out, "Next: %s login, then %s connect or %s share.\n", commandPrefix(dir), commandPrefix(dir), commandPrefix(dir))
 	return nil
 }
 
@@ -235,14 +248,22 @@ func templateFor(name string) (purposeTemplate, error) {
 }
 
 func configureRule(ctx context.Context, dir, direction string, args []string, in io.Reader, out io.Writer) error {
-	f := flags(direction, out)
+	command := "connect"
+	if direction == "share" {
+		command = "share"
+	}
+	f := flags(command, out)
 	peer := f.String("peer", "", "current peer name, ID, number; comma-separated for share")
 	purpose := f.String("purpose", "", "web, ssh, db, ai or custom")
 	name := f.String("name", "", "saved rule name")
 	port := f.Int("port", 0, "actual service port")
 	listen := f.Int("listen-port", 0, "explicit listen port")
 	network := f.String("network", "tcp", "advanced: tcp or udp")
-	loopback := f.String("loopback", "127.0.0.1", "share target: 127.0.0.1 or ::1")
+	loopbackValue := "127.0.0.1"
+	loopback := &loopbackValue
+	if direction == "share" {
+		f.StringVar(loopback, "loopback", "127.0.0.1", "share target: 127.0.0.1 or ::1")
+	}
 	ttl := f.Duration("ttl", 0, "lifetime (share: required, 1s..24h)")
 	saveOnly := f.Bool("save-only", false, "save disabled without starting")
 	yes := f.Bool("confirm", false, "confirm the displayed configuration and start/save")
@@ -290,23 +311,12 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 		return errors.New("no eligible current peers; check tailnet sign-in and permissions")
 	}
 	p := newPrompts(in, out)
-	if *peer == "" {
-		for i, v := range peers {
-			h, _ := peerHost(v)
-			fmt.Fprintf(out, "%d. %s  peer=%s\n", i+1, h, v.ID)
-		}
-		*peer, err = p.ask("Choose peer (number or ID; comma-separated for share): ")
-		if err != nil {
-			return err
-		}
-	}
-	selected, err := selectPeers(peers, *peer, direction == "share")
+	selected, err := choosePeersPrompt(peers, *peer, direction == "share", p)
 	if err != nil {
 		return err
 	}
 	if *purpose == "" {
-		fmt.Fprintln(out, "Purpose: web / ssh / db / ai / custom")
-		*purpose, err = p.ask("Purpose: ")
+		*purpose, selected, err = choosePurposePrompt(peers, selected, direction == "share", "web", p)
 		if err != nil {
 			return err
 		}
@@ -317,17 +327,16 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 	}
 	fmt.Fprintln(out, tmpl.note)
 	if *port == 0 {
-		if tmpl.port == 0 {
-			value, e := p.ask("Service port: ")
-			if e != nil {
-				return e
+		*port = tmpl.port
+		if tmpl.port == 0 || !*yes {
+			message := "Service port: "
+			if tmpl.port != 0 {
+				message = fmt.Sprintf("Service port [%d]: ", tmpl.port)
 			}
-			*port, e = strconv.Atoi(value)
-			if e != nil {
-				return errors.New("service port must be a number")
+			*port, err = promptPort(p, message, tmpl.port, false, nil)
+			if err != nil {
+				return err
 			}
-		} else {
-			*port = tmpl.port
 		}
 	}
 	if *name == "" {
@@ -335,14 +344,10 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 		if !config.ValidName(suggested) {
 			suggested = *purpose + "-service"
 		}
-		value, e := p.ask("Rule name [" + suggested + "]: ")
-		if e != nil {
-			return e
+		*name, err = promptRuleName(p, suggested, c, *replace)
+		if err != nil {
+			return err
 		}
-		if value == "" {
-			value = suggested
-		}
-		*name = value
 	}
 	old := false
 	for _, r := range c.Rules {
@@ -377,16 +382,11 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 			alternative := suggestPort(r.TargetPort)
 			fmt.Fprintf(out, "Cannot use local port %d: %s. Candidate alternative: %d.\n", r.ListenPort, reason, alternative)
 			// --confirm never approves an unseen changed port. Explicit --listen-port does.
-			answer, e := p.ask(fmt.Sprintf("Choose local port explicitly [%d], or cancel: ", alternative))
-			if e != nil {
-				return e
-			}
-			if answer == "" {
-				answer = strconv.Itoa(alternative)
-			}
-			r.ListenPort, e = strconv.Atoi(answer)
-			if e != nil {
-				return errors.New("invalid local port")
+			r.ListenPort, err = promptPort(p, fmt.Sprintf("Choose local port explicitly [%d], or cancel: ", alternative), alternative, true, func(port int) error {
+				return checkPort(ctx, r.Network, port)
+			})
+			if err != nil {
+				return err
 			}
 		} else if reason != "" {
 			return fmt.Errorf("explicit local port %d unavailable; choose another --listen-port deliberately", r.ListenPort)
@@ -402,25 +402,93 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 		return errors.New("ttl must use whole seconds")
 	}
 	if direction == "share" && !*saveOnly && *ttl == 0 {
-		value, e := p.ask("Share lifetime (1s..24h, e.g. 1h): ")
+		*ttl, err = promptLifetime(p, "Share lifetime (1s..24h, e.g. 1h): ", 0, false)
+		if err != nil {
+			return err
+		}
+	}
+	for {
+		printRulePreview(out, r, *ttl)
+		if direction == "share" {
+			fmt.Fprintln(out, "Remote peers will reach this local service. Localhost-only trust is insufficient: enable app authentication. Stopping transport does not cancel remote jobs.")
+		}
+		if *yes {
+			break
+		}
+		action := "Save and start?"
+		if *saveOnly {
+			action = "Save disabled without connecting?"
+		}
+		fmt.Fprintln(out, "Edit: e ports/lifetime, p peers, u purpose, r name; back returns to peers; q cancels.")
+		answer, e := p.ask(action + " [y/e(edit)/N]: ")
 		if e != nil {
 			return e
 		}
-		*ttl, e = time.ParseDuration(value)
-		if e != nil || *ttl < time.Second || *ttl > 24*time.Hour || *ttl%time.Second != 0 {
-			return errors.New("share ttl must be whole seconds in 1s..24h")
+		if affirmativeInput(answer) {
+			break
 		}
-	}
-	printRulePreview(out, r, *ttl)
-	if direction == "share" {
-		fmt.Fprintln(out, "Remote peers will reach this local service. Localhost-only trust is insufficient: enable app authentication. Stopping the bridge does not revoke data already transferred or cancel remote jobs.")
-	}
-	action := "Save disabled and start this rule?"
-	if *saveOnly {
-		action = "Save this disabled rule without connecting?"
-	}
-	if err = p.confirm(action, *yes); err != nil {
-		return err
+		switch strings.ToLower(answer) {
+		case "p", "peer", "peers", "back", "戻る", "相手":
+			selected, e = choosePeersPrompt(peers, "", direction == "share", p)
+			if e != nil {
+				return e
+			}
+			if direction == "share" {
+				r.AllowedPeers = selected
+			} else {
+				r.TargetHost, r.PeerID = selected[0].Host, selected[0].ID
+			}
+		case "u", "purpose", "用途":
+			r.Purpose, selected, e = choosePurposePrompt(peers, selected, direction == "share", r.Purpose, p)
+			if e != nil {
+				return e
+			}
+			if direction == "share" {
+				r.AllowedPeers = selected
+			} else {
+				r.TargetHost, r.PeerID = selected[0].Host, selected[0].ID
+			}
+			tmpl, _ = templateFor(r.Purpose)
+			fmt.Fprintln(out, tmpl.note)
+			// A purpose is a suggestion; keep the actual endpoint until the user
+			// explicitly chooses a different service port.
+			r.TargetPort, e = promptPort(p, fmt.Sprintf("Service port [%d]: ", r.TargetPort), r.TargetPort, false, nil)
+			if e != nil {
+				return e
+			}
+		case "r", "name", "名前":
+			r.Name, e = promptRuleName(p, r.Name, c, *replace)
+			if e != nil {
+				return e
+			}
+		case "e", "edit", "編集":
+			r.TargetPort, e = promptPort(p, fmt.Sprintf("Service port [%d]: ", r.TargetPort), r.TargetPort, false, nil)
+			if e != nil {
+				return e
+			}
+			var available func(int) error
+			if direction == "forward" {
+				available = func(port int) error { return checkPort(ctx, r.Network, port) }
+			}
+			r.ListenPort, e = promptPort(p, fmt.Sprintf("Listen port [%d]: ", r.ListenPort), r.ListenPort, direction == "forward", available)
+			if e != nil {
+				return e
+			}
+			if direction == "share" {
+				*ttl, e = promptLifetime(p, fmt.Sprintf("Share lifetime [%s]: ", *ttl), *ttl, *saveOnly)
+				if e != nil {
+					return e
+				}
+			}
+		case "", "n", "no", "いいえ":
+			return errors.New("canceled; no changes made")
+		default:
+			fmt.Fprintln(out, "Choose y to save, an edit option, or q to cancel.")
+			continue
+		}
+		if err = r.Validate(); err != nil {
+			return err
+		}
 	}
 	if err = saveRule(ctx, dir, r, *replace); err != nil {
 		return err
@@ -433,7 +501,7 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 	if err != nil {
 		return err
 	}
-	if err = printStatus(out, s, false); err != nil {
+	if err = printStatus(out, s, false, dir); err != nil {
 		return err
 	}
 	return checkStarted(s, []string{r.Name}, "")
@@ -589,6 +657,10 @@ func namedAction(ctx context.Context, dir, action string, args []string, in io.R
 			return e
 		}
 		expected = config.RulesDigest(reviewed)
+		var current app.Status
+		if e := call(ctx, dir, "status", &current); e == nil && alreadyActive(current, reviewed, *owner, int64(*ttl/time.Second)) {
+			return printStatus(out, current, *j, dir)
+		}
 		if *j && !*yes {
 			for _, r := range reviewed {
 				if r.Direction == "share" {
@@ -608,7 +680,7 @@ func namedAction(ctx context.Context, dir, action string, args []string, in io.R
 	if err != nil {
 		return err
 	}
-	if err = printStatus(out, s, *j); err != nil {
+	if err = printStatus(out, s, *j, dir); err != nil {
 		return err
 	}
 	if action == "start" {
@@ -719,6 +791,9 @@ func listRules(ctx context.Context, dir string, args []string, out io.Writer, sh
 		if *j {
 			return json.NewEncoder(out).Encode(c.Disabled())
 		}
+		if len(c.Rules) == 0 {
+			fmt.Fprintf(out, "No saved connections yet; run %s connect.\n", commandPrefix(dir))
+		}
 		for _, r := range c.Rules {
 			fmt.Fprintf(out, "%s  %s/%s  %s  %d -> %s (saved disabled)\n", r.Name, r.Direction, r.Network, r.Purpose, r.ListenPort, config.Address(r.TargetHost, r.TargetPort))
 		}
@@ -735,7 +810,7 @@ func listRules(ctx context.Context, dir string, args []string, out io.Writer, sh
 		}
 	}
 	s.Rules = filtered
-	return printStatus(out, s, *j)
+	return printStatus(out, s, *j, dir)
 }
 
 func groupCommand(ctx context.Context, dir string, args []string, in io.Reader, out io.Writer) error {
@@ -751,6 +826,9 @@ func groupCommand(ctx context.Context, dir string, args []string, in io.Reader, 
 		}
 		if len(args) != 0 {
 			return errors.New("group list takes no arguments")
+		}
+		if len(c.Groups) == 0 {
+			fmt.Fprintln(out, "No saved groups yet; use group save NAME RULE...")
 		}
 		for _, g := range c.Groups {
 			fmt.Fprintf(out, "%s: %s\n", g.Name, strings.Join(g.Rules, ", "))
@@ -918,7 +996,7 @@ func waitCommand(ctx context.Context, dir string, args []string, out io.Writer) 
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 	s, err := waitReady(ctx, dir, names, *owner, 200*time.Millisecond)
-	if printErr := printStatus(out, s, *j); printErr != nil {
+	if printErr := printStatus(out, s, *j, dir); printErr != nil {
 		return printErr
 	}
 	if err == nil && !*j {
@@ -993,7 +1071,7 @@ func taskCommand(ctx context.Context, dir string, args []string, in io.Reader, o
 		return err
 	}
 	if err = checkStarted(started, names, owner); err != nil {
-		_ = printStatus(out, started, false)
+		_ = printStatus(out, started, false, dir)
 		return err
 	}
 	renewalDone := make(chan struct{})
@@ -1027,4 +1105,173 @@ func taskCommand(ctx context.Context, dir string, args []string, in io.Reader, o
 		return cause
 	}
 	return err
+}
+
+func commandPrefix(dir string) string {
+	standard, e := config.DefaultDir()
+	if e == nil && filepath.Clean(standard) == filepath.Clean(dir) {
+		return "tsnet-bridge"
+	}
+	quoted := "'" + strings.ReplaceAll(dir, "'", "'\"'\"'") + "'"
+	if runtime.GOOS == "windows" {
+		quoted = "'" + strings.ReplaceAll(dir, "'", "''") + "'"
+	}
+	return "tsnet-bridge --state-dir " + quoted
+}
+
+func cancelInput(s string) bool {
+	return strings.EqualFold(s, "q") || strings.EqualFold(s, "cancel") || s == "取消" || s == "キャンセル"
+}
+func choosePeersPrompt(peers []policy.Peer, input string, multiple bool, p *prompts) ([]config.PeerRef, error) {
+	if input != "" {
+		return selectPeers(peers, input, multiple)
+	}
+	for i, v := range peers {
+		h, _ := peerHost(v)
+		fmt.Fprintf(p.out, "%d. %s\n", i+1, h)
+	}
+	for {
+		value, e := p.ask("Choose peer (number/name; comma-separated for share, q to cancel): ")
+		if e != nil {
+			return nil, e
+		}
+		if cancelInput(value) {
+			return nil, errors.New("canceled; no changes made")
+		}
+		selected, e := selectPeers(peers, value, multiple)
+		if e != nil {
+			fmt.Fprintln(p.out, "That peer is missing or ambiguous. Choose a displayed number, or q to cancel.")
+			continue
+		}
+		return selected, nil
+	}
+}
+
+func alreadyActive(status app.Status, rules []config.Rule, owner string, ttl int64) bool {
+	if len(rules) == 0 {
+		return false
+	}
+	for _, r := range rules {
+		found := false
+		for _, active := range status.Rules {
+			if active.Name == r.Name && active.State == "ready" && active.Owner == owner && active.TTLSeconds == ttl && active.LeaseSeconds == 0 && active.ScopeDigest == config.RulesDigest([]config.Rule{r}) && (active.ExpiresAt.IsZero() || time.Now().Before(active.ExpiresAt)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func affirmativeInput(s string) bool {
+	return strings.EqualFold(s, "y") || strings.EqualFold(s, "yes") || s == "はい"
+}
+
+// Prompt validation is kept before all save/start operations. CLI flag errors
+// remain immediate; interactive typing errors can be corrected in place.
+func promptPort(p *prompts, message string, current int, local bool, available func(int) error) (int, error) {
+	for {
+		value, err := p.ask(message)
+		if err != nil {
+			return 0, err
+		}
+		port := current
+		if value != "" {
+			port, err = strconv.Atoi(value)
+		}
+		if err != nil {
+			fmt.Fprintln(p.out, "service port must be a number")
+			continue
+		}
+		if local && (port < 1024 || port > 65535) {
+			fmt.Fprintln(p.out, "forward listen port must be in 1024..65535")
+			continue
+		}
+		if port < 1 || port > 65535 {
+			fmt.Fprintln(p.out, "target port must be in 1..65535")
+			continue
+		}
+		if available != nil && available(port) != nil {
+			fmt.Fprintf(p.out, "Local port %d is unavailable. Choose another port, or q to cancel.\n", port)
+			continue
+		}
+		return port, nil
+	}
+}
+
+func promptRuleName(p *prompts, current string, c config.Config, replace bool) (string, error) {
+	for {
+		value, err := p.ask("Rule name [" + current + "]: ")
+		if err != nil {
+			return "", err
+		}
+		if value == "" {
+			value = current
+		}
+		if !config.ValidName(value) {
+			fmt.Fprintln(p.out, "rule name must be 1..64 letters, digits, hyphens or underscores, beginning with a letter or digit")
+			continue
+		}
+		conflict := false
+		for _, r := range c.Rules {
+			if r.Name == value && !replace {
+				conflict = true
+				break
+			}
+		}
+		if conflict {
+			fmt.Fprintln(p.out, "That name already exists. Choose a different name, or q to cancel; replacing requires --replace.")
+			continue
+		}
+		return value, nil
+	}
+}
+
+func promptLifetime(p *prompts, message string, current time.Duration, allowZero bool) (time.Duration, error) {
+	for {
+		value, err := p.ask(message)
+		if err != nil {
+			return 0, err
+		}
+		ttl := current
+		if value != "" {
+			ttl, err = time.ParseDuration(value)
+		}
+		if err != nil || (!allowZero || ttl != 0) && (ttl < time.Second || ttl > 24*time.Hour || ttl%time.Second != 0) {
+			fmt.Fprintln(p.out, "share ttl must be whole seconds in 1s..24h")
+			continue
+		}
+		return ttl, nil
+	}
+}
+
+func choosePurposePrompt(peers []policy.Peer, selected []config.PeerRef, multiple bool, current string, p *prompts) (string, []config.PeerRef, error) {
+	for {
+		fmt.Fprintln(p.out, "Purpose: 1 web / 2 ssh / 3 db / 4 ai / 5 custom")
+		value, err := p.ask(fmt.Sprintf("Purpose [%s] (back to peers, q to cancel): ", current))
+		if err != nil {
+			return "", selected, err
+		}
+		if strings.EqualFold(value, "back") || value == "戻る" {
+			selected, err = choosePeersPrompt(peers, "", multiple, p)
+			if err != nil {
+				return "", selected, err
+			}
+			continue
+		}
+		if value == "" {
+			value = current
+		}
+		if n, err := strconv.Atoi(value); err == nil && n >= 1 && n <= len(templates) {
+			value = templates[n-1].name
+		}
+		if _, err = templateFor(value); err != nil {
+			fmt.Fprintln(p.out, "Choose a purpose from the list, or q to cancel.")
+			continue
+		}
+		return value, selected, nil
+	}
 }

@@ -34,6 +34,17 @@ func main() {
 	}
 }
 func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
+	cleaned, display, translate, err := prepareLocale(args, out)
+	if err != nil {
+		return err
+	}
+	err = runCommand(ctx, cleaned, in, display)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return translate(err)
+}
+func runCommand(ctx context.Context, args []string, in io.Reader, out io.Writer) error {
 	if len(args) == 1 {
 		switch args[0] {
 		case "--version":
@@ -50,6 +61,7 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 	}
 	global := flag.NewFlagSet("tsnet-bridge", flag.ContinueOnError)
 	global.SetOutput(out)
+	global.Usage = func() { fmt.Fprintln(out, help) }
 	global.StringVar(&dir, "state-dir", dir, "private profile directory (put before command)")
 	if e = global.Parse(args); e != nil {
 		return e
@@ -60,11 +72,20 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		cmd = args[0]
 		args = args[1:]
 	}
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		return commandHelp(cmd, out)
+	}
 	switch cmd {
 	case "version", "--version":
 		fmt.Fprintln(out, "tsnet-bridge", version)
 		return nil
 	case "help":
+		if len(args) > 1 {
+			return errors.New("usage: help [COMMAND|all]")
+		}
+		if len(args) == 1 {
+			return commandHelp(args[0], out)
+		}
 		fmt.Fprintln(out, help)
 		return nil
 	case "init":
@@ -98,7 +119,7 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 	case "setup":
 		return setup(dir, args, in, out)
 	case "status", "doctor", "stop", "reconnect", "logout":
-		if cmd == "stop" && len(args) > 0 && args[0] != "--json" {
+		if cmd == "stop" && len(args) > 0 && !(len(args) == 1 && args[0] == "--json") {
 			return namedAction(ctx, dir, "stop", args, in, out)
 		}
 		if len(args) > 1 || (len(args) == 1 && args[0] != "--json") {
@@ -108,6 +129,9 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		e = call(ctx, dir, cmd, &s)
 		if e != nil && cmd == "stop" {
 			if control.Unavailable(e) {
+				if len(args) == 1 {
+					return printStatus(out, app.Status{State: "stopped", Reason: "No reachable process", RustDesk: "unverified"}, true, dir)
+				}
 				fmt.Fprintln(out, "Stopped (no process)")
 				return nil
 			}
@@ -119,7 +143,7 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		if e != nil {
 			return e
 		}
-		return printStatus(out, s, len(args) > 0)
+		return printStatus(out, s, len(args) > 0, dir)
 	case "settings":
 		return settings(dir, args, out)
 	case "login":
@@ -163,11 +187,16 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		s := &app.Service{Dir: dir, Config: c, Node: n}
 		return s.Run(ctx)
 	case "start":
-		if len(args) != 0 {
+		jsonOutput := len(args) == 1 && args[0] == "--json"
+		if len(args) != 0 && !jsonOutput {
 			return namedAction(ctx, dir, "start", args, in, out)
 		}
+		startupOut := out
+		if jsonOutput {
+			startupOut = io.Discard
+		}
 		if _, e = config.Load(dir); os.IsNotExist(e) {
-			if e = initRules(dir, nil, out); e != nil {
+			if e = initRules(dir, nil, startupOut); e != nil {
 				return e
 			}
 		} else if e != nil {
@@ -189,16 +218,16 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 				return e
 			}
 		}
-		if s.State == "needs-login" {
-			fmt.Fprintln(out, "Tailscale sign-in is required. Run: tsnet-bridge login\nEnrollment creates a separate node in the selected tailnet.")
+		if s.State == "needs-login" && !jsonOutput {
+			fmt.Fprintf(out, "Tailscale sign-in is required. Run: %s login\nEnrollment creates a separate node in the selected tailnet.\n", commandPrefix(dir))
 		}
-		return printStatus(out, s, false)
+		return printStatus(out, s, jsonOutput, dir)
 	default:
 		return fmt.Errorf("unknown command %q; use tsnet-bridge help", cmd)
 	}
 }
 
-const help = `tsnet-bridge: experimental application-scoped tailnet bridge
+const helpAll = `tsnet-bridge: experimental application-scoped tailnet bridge
 
 Basic named-rule workflow (version 2):
   init                     Save an idle profile; no networking or enrollment
@@ -233,6 +262,7 @@ Node and existing RustDesk workflow:
   version
 
 Flags precede positional names. Global --state-dir PATH precedes the command.
+Language is automatic; --lang ja|en|auto before COMMAND overrides it.
 Share start requires --ttl 1s..24h and confirmation (--confirm for scripts).
 Privileged/conflicting local ports require an explicitly chosen alternative.
 No OS VPN, route or DNS changes. TLS/SSH checks are never disabled.
@@ -396,7 +426,7 @@ func start(ctx context.Context, dir string, out io.Writer) error {
 			return e
 		}
 	}
-	return errors.New("background startup did not become reachable; run tsnet-bridge run for a direct error (state retained)")
+	return fmt.Errorf("background startup did not become reachable; run %s run for a direct error (state retained)", commandPrefix(dir))
 }
 func running(ctx context.Context, dir string) bool {
 	var s app.Status
@@ -407,18 +437,37 @@ func call(ctx context.Context, dir, command string, v any) error {
 	defer cancel()
 	return request(c, dir, command, v)
 }
-func printStatus(out io.Writer, s app.Status, j bool) error {
+func printStatus(out io.Writer, s app.Status, j bool, profileDirs ...string) error {
 	if j {
 		return json.NewEncoder(out).Encode(s)
+	}
+	if len(profileDirs) > 0 {
+		switch s.Reason {
+		case "No reachable process; run tsnet-bridge to start":
+			s.Reason = fmt.Sprintf("No reachable process; run %s start to start", commandPrefix(profileDirs[0]))
+		case "Run tsnet-bridge login to sign in":
+			s.Reason = fmt.Sprintf("Run %s login to sign in", commandPrefix(profileDirs[0]))
+		}
 	}
 	fmt.Fprintf(out, "%s: %s\nTailnet: %s\n", s.State, s.Reason, s.Backend)
 	if s.Mode != "rules" {
 		fmt.Fprintln(out, "RustDesk screen/control:", s.RustDesk)
 	}
 	for _, r := range s.Rules {
-		fmt.Fprintf(out, "%s [%s/%s] %s (%s): %s\n  Listen: %s  Target: %s  Peer: %s  Owner: %s\n  Application: %s\n", r.Name, r.Direction, r.Network, r.State, r.ReasonCode, r.Reason, r.ListenAddress, r.Target, r.PeerID, r.Owner, r.Application)
+		fmt.Fprintf(out, "%s: %s [%s/%s]\n", r.Name, r.State, r.Direction, r.Network)
+		if r.ListenAddress != "" {
+			fmt.Fprintf(out, "  Connect: %s -> %s\n", r.ListenAddress, r.Target)
+		} else {
+			fmt.Fprintln(out, "  Target:", r.Target)
+		}
+		if r.State != "ready" || r.ReasonCode == "tcp-reachable" {
+			fmt.Fprintf(out, "  %s (%s)\n", r.Reason, r.ReasonCode)
+		}
 		for _, peer := range r.AllowedPeers {
-			fmt.Fprintf(out, "  Allowed peer: %s (%s)\n", peer.Host, peer.ID)
+			fmt.Fprintln(out, "  Allowed peer:", peer.Host)
+		}
+		if r.Owner != "" {
+			fmt.Fprintln(out, "  Task:", r.Owner)
 		}
 		if !r.ExpiresAt.IsZero() {
 			remaining := time.Until(r.ExpiresAt).Round(time.Second)
@@ -429,6 +478,9 @@ func printStatus(out io.Writer, s app.Status, j bool) error {
 		}
 	}
 	for _, a := range s.Listeners {
+		if len(s.Rules) > 0 {
+			break
+		}
 		label := "Loopback:"
 		if s.Mode == "rules" {
 			label = "Listener:"

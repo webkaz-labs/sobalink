@@ -10,7 +10,9 @@ The source adds named forward and inbound TCP/UDP rules, pinned peer selection, 
 
 Local validation currently covers:
 
-- Full config, CLI, identity, policy, transport, autostart and distribution race suites
+- Config, CLI, identity, policy, transport, autostart and distribution race suites; service/control IPC cases require the native runners
+- Japanese/English human output, locale precedence/overrides, unchanged JSON and user values, narrow-terminal QR fallback, and review/edit/cancel/repeated-operation tests
+- Packaged/installed binary checks exercise both languages and the actual read-only OS locale fallback on each native target
 - Browser/QR/manual-link login state tests, trusted-URL rejection, terminal-redirection protection and terminal QR pixel reconstruction; a separate installed libzbar decoder recovered a synthetic noncredential URL
 - Independent security review of confirmation-scope binding, repeated lifetime changes, observed revocation latching, and process-wide stream/datagram resource budgets
 - Twenty repeated race runs of new forwarding/inbound/lifecycle cases
@@ -19,7 +21,7 @@ Local validation currently covers:
 - No start on save/import/restart; partial-group rollback preserving existing work; owner mismatch and idempotent stop; TTL/lease expiry and no reconnect resurrection
 - Installed-binary-style offline v2 initialization, preview/import/export, settings, groups and non-mutating startup planning
 
-The local Unix-domain socket restriction remains: native IPC and the complete service IPC test must run on hosted CI. Cross-platform CI, release signing and actual published installation will be recorded after they complete. Five deliberate negative controls confirmed tests reject broken peer pins, source reassignment, expiration, independent grant cancellation and loopback-only targets. No real tailnet node was enrolled to obtain these results.
+The local Unix-domain socket restriction remains; the core source at [d481e0e](https://github.com/webkaz-labs/tsnet-bridge/commit/d481e0e54888edea892879ac2866da151ba7ca0a) passed [all four native jobs and Packslip CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36902789788), including native IPC and the complete service IPC test. Each native job also ran the packaged v2 offline CLI checks. Subsequent usability/localization changes require their own exact-source CI. Release signing and actual published installation will be recorded after they complete. Five deliberate negative controls confirmed tests reject broken peer pins, source reassignment, expiration, independent grant cancellation and loopback-only targets. No real tailnet node was enrolled to obtain these results.
 
 Still unverified: real-tailnet inbound acceptance and ACL behavior, SSH/SFTP/HTTP/HTTPS/DB/AI/MCP application compatibility, mobile clients, direct/DERP performance, OS suspend/network handoff, user-login startup registration behavior, Windows standard-user enrollment, and RustDesk bidirectional screen/input. These are separate acceptance gates; code and local tests do not mark them passed.
 

@@ -6,6 +6,18 @@ The common path is **peer → purpose → review**. Current peers are selected b
 
 The design targets ordinary-user installation and operation without OS VPN, route or DNS changes. This does not remove authorization requirements for the tailnet or destination service. Non-root Linux offline installation was verified for alpha.2; real enrollment, Windows standard-user authentication, application compatibility and OS sleep/login behavior remain unverified.
 
+## Display language
+
+Language selection is automatic: Japanese locales use Japanese, otherwise English is the safe fallback. The order is `LC_ALL`, `LC_MESSAGES`, then `LANG`; when unset, Windows reads the current user's UI language and macOS reads the first preferred language. Override only when desired:
+
+```sh
+mise exec -- tsnet-bridge --lang ja help
+mise exec -- tsnet-bridge --lang en help
+mise exec -- tsnet-bridge --lang auto help
+```
+
+`TSNET_BRIDGE_LANG=ja`, `en` or `auto` is also supported. Command/flag names and complete machine JSON remain unchanged. Endpoints, identifiers and user values are not translated. Rule/group names may use Japanese letters as well as other letters/digits, hyphens and underscores. English and Japanese confirmation/edit/back/cancel inputs are accepted.
+
 ## First use
 
 Confirm the target prerelease and signed assets exist on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases) before installing:
@@ -28,11 +40,11 @@ mise exec -- tsnet-bridge connect
 
 [Tailscale documents this cross-device QR flow](https://tailscale.com/docs/features/access-control/device-management/how-to/set-up-qr-code). The bridge node is enrolled, not the scanning phone. Account authentication, MFA and device approval still apply. This bridge's complete real-phone flow remains unverified.
 
-QR generation runs entirely in memory using the same pinned Go encoder as Tailscale; no external QR service, screenshot or image file is used. QR output refuses redirected files/pipes. Do not share, record or screenshot the terminal. Enlarge the terminal, use `--qr-format large`, or fall back to the private link if scanning is difficult.
+QR generation runs entirely in memory using the same pinned Go encoder as Tailscale; no external QR service, screenshot or image file is used. QR output refuses redirected files/pipes. Do not share, record or screenshot the terminal. A terminal narrower than the required QR width receives a specific width message and link fallback instead of wrapped QR output. Enlarge the terminal, use `--qr-format large`, or fall back to the private link if scanning is difficult.
 
 Waiting, connected and device-approval-pending states are distinct. The default five-minute local wait can be changed with `--timeout 10m`; it is not the server link's expiration. Rerun `login` to request the current sign-in link if it expired. Upstream may reuse its cached link; rerunning does not guarantee rotation or revocation. Cancellation stops the wait, not the node or an already displayed authorization link; use `stop` to close the node.
 
-Choose a peer and purpose, accept or change the suggested rule name, and review the connection. Same-port forwarding is preferred. Privileged or occupied local ports produce an alternative that requires confirmation; no silent renumbering or elevation occurs. Forward local ports are 1024..65535, destination service ports 1..65535. Existing RustDesk fixed-port rules remain separate.
+Choose a peer and purpose, accept or change the suggested service port and rule name, and review the connection. Typing mistakes in peer, purpose, service/local ports, name or lifetime can be corrected in place. At review, `e` edits ports/lifetime, `p` or `back` returns to peers, `u` changes purpose and `r` changes the name. Every edit returns to the full review; `q`/`cancel` cancels at any prompt without saving. Same-port forwarding is preferred. Privileged or occupied local ports produce an alternative that requires confirmation; no silent renumbering or elevation occurs. Forward local ports are 1024..65535, destination service ports 1..65535. Existing RustDesk fixed-port rules remain separate.
 
 ```sh
 mise exec -- tsnet-bridge connect web-demo
@@ -55,7 +67,7 @@ mise exec -- tsnet-bridge stop-shares
 
 Select explicitly allowed current peers, service and lifetime. Only an exact numeric `127.0.0.1` or `::1` target is allowed. TCP and UDP are supported. The receiving app connects to the provider bridge node's displayed tailnet address, not its own localhost. Tailnet ACLs and per-rule pinned-peer authorization both apply.
 
-A concurrent change to reviewed rules/groups rejects startup and requires review again. Changing an active TTL/lease requires stop and a new reviewed start; identical repeated starts keep the original expiry.
+A concurrent change to reviewed rules/groups rejects startup and requires review again. Changing an active TTL/lease requires stop and a new reviewed start. A verified identical active scope/owner/lifetime only displays current status, without another confirmation or mutation, keeping the original expiry.
 
 Saved shares require a fresh explicit lifetime, for example `share --ttl 30m api-demo`. TTL is 1 second..24 hours. Stop/expiry closes the listener and existing streams/datagram mappings. It does not retract data or cancel an already running remote job. Local applications see the bridge's loopback connection: do not expose a sensitive API relying on “localhost means trusted” instead of authentication.
 
