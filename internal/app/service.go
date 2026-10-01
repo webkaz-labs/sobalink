@@ -70,7 +70,7 @@ func (s *Service) Status() Status {
 	v.Listeners = append([]string(nil), v.Listeners...)
 	return v
 }
-func (s *Service) Run(ctx context.Context) error {
+func (s *Service) Run(ctx context.Context) (err error) {
 	lock, e := config.AcquireLock(s.Dir)
 	if e != nil {
 		return e
@@ -83,7 +83,9 @@ func (s *Service) Run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	defer ipc.Close()
+	// A timed-out IPC shutdown must reach the foreground/daemon exit path rather
+	// than being reported as a successful service exit.
+	defer func() { err = errors.Join(err, ipc.Close()) }()
 	defer s.Node.Close()
 	if e = s.Node.Start(); e != nil {
 		s.set("error", "Node startup failed; state retained. Check permissions and retry.", "Error")

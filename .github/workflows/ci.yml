@@ -92,6 +92,8 @@ jobs:
         run: |
           set -euo pipefail
           go test -race -count=1 -timeout=10m ./...
+          # Repeat real native IPC cleanup; exact timer policy is tested virtually.
+          go test -race -count=5 -timeout=2m ./internal/control
           go vet ./...
           unformatted="$(gofmt -l cmd internal)"
           if [[ -n "$unformatted" ]]; then

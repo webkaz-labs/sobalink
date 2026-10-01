@@ -1,15 +1,19 @@
 package distribution
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func makeJunction(t *testing.T, link, target string) {
 	t.Helper()
-	output, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
 	if err != nil {
 		t.Fatalf("create fixture junction: %v: %s", err, output)
 	}

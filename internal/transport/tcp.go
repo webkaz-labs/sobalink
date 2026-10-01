@@ -34,14 +34,19 @@ func StartTCP(ctx context.Context, cfg TCPConfig, dial Dialer) (*Server, error) 
 	}
 	return startServer(ctx, l, l.Addr(), func(s *Server) {
 		acceptConnections(s, l, func(client net.Conn) {
-			dialCtx, cancel := context.WithTimeout(s.ctx, timeout)
-			remote, err := dialTracked(s, dialCtx, dial, "tcp", cfg.Target)
-			cancel()
-			if err != nil {
-				return
-			}
-			defer s.release(remote)
-			bridge(client, remote)
+			serveTCP(s, client, cfg.Target, timeout, dial)
 		})
 	}), nil
+}
+
+// serveTCP keeps the connection lifecycle shared by the listener and tests.
+func serveTCP(s *Server, client net.Conn, target string, timeout time.Duration, dial Dialer) {
+	dialCtx, cancel := context.WithTimeout(s.ctx, timeout)
+	remote, err := dialTracked(s, dialCtx, dial, "tcp", target)
+	cancel()
+	if err != nil {
+		return
+	}
+	defer s.release(remote)
+	bridge(client, remote)
 }

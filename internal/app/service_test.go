@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"runtime/pprof"
 	"sync"
 	"testing"
 	"time"
@@ -86,12 +87,18 @@ func TestDoctorRequestDoesNotOwnListeners(t *testing.T) {
 		default:
 		}
 	}
-	c, e := net.DialTimeout("tcp", config.Loopback(s.Config.LocalIDPort), time.Second)
+	// Native socket liveness uses a bounded diagnostic watchdog, not a latency
+	// assertion. The property here is that request cancellation keeps the listener.
+	ctx, stop := context.WithTimeout(t.Context(), 15*time.Second)
+	defer stop()
+	var dialer net.Dialer
+	c, e := dialer.DialContext(ctx, "tcp", config.Loopback(s.Config.LocalIDPort))
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer c.Close()
-	c.SetDeadline(time.Now().Add(time.Second))
+	deadline, _ := ctx.Deadline()
+	c.SetDeadline(deadline)
 	if _, e = c.Write([]byte("echo")); e != nil {
 		t.Fatal(e)
 	}
@@ -176,19 +183,32 @@ func TestReadinessHasNoAuthSecret(t *testing.T) {
 
 // This test uses real user-private IPC but a fake backend, never a tailnet.
 func TestServiceIPCStop(t *testing.T) {
-	s, _, cancel := appFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	s, _, _ := appFixture(t)
+	s.runCtx = ctx
 	d, e := os.MkdirTemp("", "tb-app-")
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer os.RemoveAll(d)
 	s.Dir = d
 	done := make(chan error, 1)
-	go func() { done <- s.Run(s.runCtx) }()
-	deadline := time.Now().Add(5 * time.Second)
+	exited := make(chan struct{})
+	go func() { defer close(exited); done <- s.Run(s.runCtx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
+			t.Error("native service cleanup did not finish")
+		}
+		os.RemoveAll(d)
+	}()
+	// This native watchdog is a hang diagnostic, not a shutdown latency claim.
 	for {
 		var st Status
-		e = control.Call(context.Background(), d, "status", &st)
+		e = control.Call(ctx, d, "status", &st)
 		if e == nil {
 			break
 		}
@@ -197,14 +217,15 @@ func TestServiceIPCStop(t *testing.T) {
 			t.Fatalf("service startup: %v", e)
 		default:
 		}
-		if time.Now().After(deadline) {
-			cancel()
+		select {
+		case <-ctx.Done():
+			pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
 			t.Fatal("IPC not ready", e)
+		case <-time.After(10 * time.Millisecond):
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	var st Status
-	if e = control.Call(context.Background(), d, "stop", &st); e != nil {
+	if e = control.Call(ctx, d, "stop", &st); e != nil {
 		t.Fatal("stop response lost", e)
 	}
 	if st.State != "stopped" {
@@ -215,8 +236,8 @@ func TestServiceIPCStop(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-	case <-time.After(3 * time.Second):
-		cancel()
-		t.Fatal("service did not stop")
+	case <-ctx.Done():
+		pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
+		t.Fatal("service did not stop before native test watchdog")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -225,32 +226,35 @@ func TestRevocationDuringDialClosesSocket(t *testing.T) {
 }
 
 func TestUDPValidationCanceledByClose(t *testing.T) {
-	p, _, raw := liveFixture("udp")
-	conn, err := p.Dial(context.Background(), "udp", "server:21116")
-	if err != nil {
-		t.Fatal(err)
-	}
-	started := make(chan struct{})
-	p.Source = func(ctx context.Context) (Snapshot, error) {
-		close(started)
-		<-ctx.Done()
-		return Snapshot{}, ctx.Err()
-	}
-	done := make(chan error, 1)
-	go func() { _, err := conn.Write([]byte("waiting")); done <- err }()
-	<-started
-	conn.Close()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("write accepted after close")
+	synctest.Test(t, func(t *testing.T) {
+		p, _, raw := liveFixture("udp")
+		conn, err := p.Dial(context.Background(), "udp", "server:21116")
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("close did not cancel policy lookup")
-	}
-	if raw.writes.Load() != 0 {
-		t.Fatal("blocked packet reached socket")
-	}
+		started := make(chan struct{})
+		p.Source = func(ctx context.Context) (Snapshot, error) {
+			close(started)
+			<-ctx.Done()
+			return Snapshot{}, ctx.Err()
+		}
+		done := make(chan error, 1)
+		go func() { _, err := conn.Write([]byte("waiting")); done <- err }()
+		<-started
+		conn.Close()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("write accepted after close")
+			}
+		default:
+			t.Fatal("close did not cancel policy lookup")
+		}
+		if raw.writes.Load() != 0 {
+			t.Fatal("blocked packet reached socket")
+		}
+	})
 }
 
 func TestConcurrentRevalidationAndClose(t *testing.T) {

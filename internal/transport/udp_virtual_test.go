@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -55,6 +56,17 @@ func (c *virtualPacketSocket) LocalAddr() net.Addr {
 type virtualMapping struct {
 	peer   net.Conn
 	closed <-chan struct{}
+	writes *atomic.Int64
+}
+
+type countedVirtualConn struct {
+	net.Conn
+	writes *atomic.Int64
+}
+
+func (c *countedVirtualConn) Write(p []byte) (int, error) {
+	c.writes.Add(1)
+	return c.Conn.Write(p)
 }
 
 func (m virtualMapping) assertOpen(t *testing.T) {
@@ -94,8 +106,9 @@ func virtualUDPServer(t *testing.T, idle time.Duration, maxSessions int) *virtua
 			dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				remote, peer := net.Pipe()
 				closed := make(chan struct{})
-				dialed <- virtualMapping{peer: peer, closed: closed}
-				return &trackedConn{Conn: remote, closed: closed}, nil
+				writes := new(atomic.Int64)
+				dialed <- virtualMapping{peer: peer, closed: closed, writes: writes}
+				return &trackedConn{Conn: &countedVirtualConn{Conn: remote, writes: writes}, closed: closed}, nil
 			},
 		}
 		tableReady <- table

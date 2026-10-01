@@ -45,7 +45,7 @@ func udpClient(t *testing.T, addr net.Addr) *net.UDPConn {
 
 func receiveUDP(t *testing.T, c *net.UDPConn) ([]byte, netip.AddrPort) {
 	t.Helper()
-	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	c.SetReadDeadline(time.Now().Add(nativeTestTimeout))
 	buffer := make([]byte, 65535)
 	n, from, err := c.ReadFromUDPAddrPort(buffer)
 	if err != nil {
@@ -215,61 +215,59 @@ func TestUDPActivityExtendsSession(t *testing.T) {
 func TestUDPRevokedPolicyClosesMapping(t *testing.T) {
 	for _, direction := range []string{"outbound", "inbound"} {
 		t.Run(direction, func(t *testing.T) {
-			upstream := udpSocket(t)
-			var allowed atomic.Bool
-			allowed.Store(true)
-			var validations atomic.Int64
-			closed := make(chan struct{})
-			dial := func(ctx context.Context, network, address string) (net.Conn, error) {
-				c, err := (&net.Dialer{}).DialContext(ctx, network, address)
-				if err != nil {
-					return nil, err
+			synctest.Test(t, func(t *testing.T) {
+				v := virtualUDPServer(t, DefaultUDPIdleTimeout, 1)
+				defer closeServer(t, v.server)
+				var allowed atomic.Bool
+				allowed.Store(true)
+				var validations atomic.Int64
+				v.table.cfg.Validate = func(ctx context.Context, network, address string) error {
+					validations.Add(1)
+					if network != "udp" || address != v.table.cfg.Target {
+						return errors.New("wrong target")
+					}
+					if !allowed.Load() {
+						return errors.New("policy revoked")
+					}
+					return nil
 				}
-				return &trackedConn{Conn: c, closed: closed}, nil
-			}
-			validate := func(ctx context.Context, network, address string) error {
-				validations.Add(1)
-				if network != "udp" || address != upstream.LocalAddr().String() {
-					return errors.New("wrong target")
+				source := netip.MustParseAddrPort("127.0.0.1:12345")
+				v.send(source, "allowed")
+				mapping := v.mapping(t)
+				defer mapping.peer.Close()
+				if got := readBytes(t, mapping.peer, len("allowed")); string(got) != "allowed" {
+					t.Fatalf("initial packet %q", got)
 				}
-				if !allowed.Load() {
-					return errors.New("policy revoked")
+				synctest.Wait()
+				if got := mapping.writes.Load(); got != 1 {
+					t.Fatalf("initial upstream writes %d", got)
 				}
-				return nil
-			}
-			s, err := StartUDP(context.Background(), UDPConfig{ListenAddress: "127.0.0.1:0", Target: upstream.LocalAddr().String(), Validate: validate}, dial)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer closeServer(t, s)
-			client := udpClient(t, s.Addr())
-			client.Write([]byte("allowed"))
-			_, mapping := receiveUDP(t, upstream)
-			allowed.Store(false)
-			if direction == "outbound" {
-				client.Write([]byte("denied"))
-			} else {
-				upstream.WriteToUDPAddrPort([]byte("denied"), mapping)
-			}
-			select {
-			case <-closed:
-			case <-time.After(time.Second):
-				t.Fatal("revoked session remained open")
-			}
-			if validations.Load() < 2 {
-				t.Fatal("policy was not revalidated per datagram")
-			}
-			if direction == "outbound" {
-				upstream.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
-				if _, _, err := upstream.ReadFromUDPAddrPort(make([]byte, 30)); err == nil {
-					t.Fatal("denied outbound packet arrived")
+				allowed.Store(false)
+				if direction == "outbound" {
+					v.send(source, "denied")
+				} else {
+					if err := writeFull(mapping.peer, []byte("denied")); err != nil {
+						t.Fatal(err)
+					}
 				}
-			} else {
-				client.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
-				if _, err := client.Read(make([]byte, 30)); err == nil {
-					t.Fatal("denied inbound packet arrived")
+				synctest.Wait()
+				assertChannelClosed(t, mapping.closed, "revoked mapping remained open")
+				if got := v.sessionCount(); got != 0 {
+					t.Fatalf("revoked session was not removed: %d", got)
 				}
-			}
+				if validations.Load() < 2 {
+					t.Fatal("policy was not revalidated per datagram")
+				}
+				if got := mapping.writes.Load(); got != 1 {
+					t.Fatalf("revoked packet reached upstream Write: %d writes", got)
+				}
+				select {
+				case packet := <-v.local.outgoing:
+					t.Fatalf("revoked inbound packet delivered: %+v", packet)
+				default:
+				}
+				v.noAdditionalMapping(t)
+			})
 		})
 	}
 }
@@ -330,7 +328,7 @@ func TestUDPShutdownCancelsDialAndValidation(t *testing.T) {
 			udpClient(t, s.Addr()).Write([]byte("packet"))
 			select {
 			case <-started:
-			case <-time.After(time.Second):
+			case <-time.After(nativeTestTimeout):
 				t.Fatal("worker did not start")
 			}
 			closeServer(t, s)
@@ -388,6 +386,8 @@ func TestUDPSessionQueueAndTerminalExpiry(t *testing.T) {
 func TestUDPConcurrentTrafficAndShutdown(t *testing.T) {
 	t.Parallel()
 	upstream := udpSocket(t)
+	activeTraffic := make(chan struct{})
+	var seenTraffic sync.Once
 	var echo sync.WaitGroup
 	echo.Add(1)
 	go func() {
@@ -398,30 +398,49 @@ func TestUDPConcurrentTrafficAndShutdown(t *testing.T) {
 			if err != nil {
 				return
 			}
+			seenTraffic.Do(func() { close(activeTraffic) })
 			upstream.WriteToUDPAddrPort(buffer[:n], from)
 		}
 	}()
+	defer func() { upstream.Close(); echo.Wait() }()
 	var d net.Dialer
-	s, err := StartUDP(context.Background(), UDPConfig{ListenAddress: "127.0.0.1:0", Target: upstream.LocalAddr().String(), IdleTimeout: 10 * time.Millisecond, MaxSessions: 8}, d.DialContext)
+	// Idle expiry has its own virtual tests. Use the production idle window so
+	// native scheduling cannot remove the live flow before this shutdown check.
+	s, err := StartUDP(context.Background(), UDPConfig{ListenAddress: "127.0.0.1:0", Target: upstream.LocalAddr().String(), MaxSessions: 8}, d.DialContext)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeServer(t, s)
-	var clients sync.WaitGroup
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseTraffic := func() { releaseOnce.Do(func() { close(release) }) }
+	var clients, firstWrites sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		c := udpClient(t, s.Addr())
+		c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		clients.Add(1)
+		firstWrites.Add(1)
 		go func() {
 			defer clients.Done()
+			c.Write([]byte("initial"))
+			firstWrites.Done()
+			<-release
 			for j := 0; j < 30; j++ {
 				c.Write([]byte("data"))
-				time.Sleep(time.Millisecond)
 			}
 		}()
 	}
-	time.Sleep(15 * time.Millisecond)
+	defer clients.Wait()
+	defer releaseTraffic()
+	firstWrites.Wait()
+	select {
+	case <-activeTraffic:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no forwarded traffic reached the upstream")
+	}
+	// All local writers are queued at the barrier and at least one upstream
+	// mapping has actually forwarded a datagram. Release them during shutdown.
+	releaseTraffic()
 	closeServer(t, s)
 	clients.Wait()
-	upstream.Close()
-	echo.Wait()
 }

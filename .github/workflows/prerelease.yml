@@ -137,6 +137,8 @@ jobs:
         run: |
           set -euo pipefail
           go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
+          # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
+          go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
       - name: Native vet and formatting
         run: |
           set -euo pipefail

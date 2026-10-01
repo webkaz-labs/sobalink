@@ -9,8 +9,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
+
+// Native I/O watchdogs detect stuck tests; protocol timing is checked in synctest.
+const nativeTestTimeout = 15 * time.Second
 
 func closeServer(t *testing.T, s *Server) {
 	t.Helper()
@@ -21,19 +25,21 @@ func closeServer(t *testing.T, s *Server) {
 		if err != nil {
 			t.Errorf("server close: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(nativeTestTimeout):
 		t.Error("server workers did not terminate")
 	}
 }
 
 func clientTCP(t *testing.T, addr net.Addr) net.Conn {
 	t.Helper()
-	c, err := net.DialTimeout("tcp4", addr.String(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), nativeTestTimeout)
+	defer cancel()
+	c, err := (&net.Dialer{}).DialContext(ctx, "tcp4", addr.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
-	c.SetDeadline(time.Now().Add(2 * time.Second))
+	c.SetDeadline(time.Now().Add(nativeTestTimeout))
 	return c
 }
 
@@ -44,17 +50,6 @@ func readBytes(t *testing.T, c net.Conn, n int) []byte {
 		t.Fatal(err)
 	}
 	return p
-}
-
-func eventually(t *testing.T, predicate func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for !predicate() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition did not become true")
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 func TestRejectNonLoopbackListeners(t *testing.T) {
@@ -96,7 +91,7 @@ func TestTCPHalfClose(t *testing.T) {
 			return
 		}
 		defer c.Close()
-		c.SetDeadline(time.Now().Add(2 * time.Second))
+		c.SetDeadline(time.Now().Add(nativeTestTimeout))
 		data, err := io.ReadAll(c)
 		if err == nil {
 			err = writeFull(c, append([]byte("reply:"), data...))
@@ -151,7 +146,7 @@ func TestTCPCancelClosesActiveConnections(t *testing.T) {
 	if _, err := remote.Read(make([]byte, 1)); err == nil {
 		t.Fatal("remote remained open")
 	}
-	if c, err := net.DialTimeout("tcp4", s.Addr().String(), 50*time.Millisecond); err == nil {
+	if c, err := net.DialTimeout("tcp4", s.Addr().String(), nativeTestTimeout); err == nil {
 		c.Close()
 		t.Fatal("listener remained open")
 	}
@@ -160,29 +155,51 @@ func TestTCPCancelClosesActiveConnections(t *testing.T) {
 func TestTCPDialCancellationAndTimeout(t *testing.T) {
 	for _, cancelServer := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "cancel"}[cancelServer], func(t *testing.T) {
-			started := make(chan struct{})
-			finished := make(chan struct{})
-			dial := func(ctx context.Context, network, address string) (net.Conn, error) {
-				close(started)
-				<-ctx.Done()
-				close(finished)
-				return nil, ctx.Err()
-			}
-			s, err := StartTCP(context.Background(), TCPConfig{ListenAddress: "127.0.0.1:0", Target: "example.test:80", DialTimeout: 30 * time.Millisecond}, dial)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer closeServer(t, s)
-			clientTCP(t, s.Addr())
-			<-started
-			if cancelServer {
-				closeServer(t, s)
-			}
-			select {
-			case <-finished:
-			case <-time.After(time.Second):
-				t.Fatal("dial was not canceled")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				const timeout = 30 * time.Millisecond
+				started := make(chan struct{})
+				finished := make(chan error, 1)
+				dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+					close(started)
+					<-ctx.Done()
+					finished <- ctx.Err()
+					return nil, ctx.Err()
+				}
+				s, client, closed := virtualStreamServer(t, func(s *Server, c net.Conn) { serveTCP(s, c, "example.test:80", timeout, dial) })
+				defer closeServer(t, s)
+				defer client.Close()
+				synctest.Wait()
+				select {
+				case <-started:
+				default:
+					t.Fatal("dial did not start")
+				}
+				time.Sleep(timeout - time.Nanosecond)
+				synctest.Wait()
+				assertChannelOpen(t, closed, "client closed before cancellation/deadline")
+				select {
+				case err := <-finished:
+					t.Fatalf("dial ended early: %v", err)
+				default:
+				}
+				want := context.DeadlineExceeded
+				if cancelServer {
+					want = context.Canceled
+					closeServer(t, s)
+				} else {
+					time.Sleep(time.Nanosecond)
+				}
+				synctest.Wait()
+				assertChannelClosed(t, closed, "client remained open after cancellation/deadline")
+				select {
+				case err := <-finished:
+					if !errors.Is(err, want) {
+						t.Fatalf("dial error %v, want %v", err, want)
+					}
+				default:
+					t.Fatal("dial did not finish at cancellation/deadline")
+				}
+			})
 		})
 	}
 }
@@ -219,7 +236,7 @@ func TestSOCKSRequiresAuthentication(t *testing.T) {
 	s := socksServer(t, func(context.Context, string, string) (net.Conn, error) {
 		dials.Add(1)
 		return nil, errors.New("unexpected")
-	}, time.Second)
+	}, defaultHandshakeTimeout)
 	client := clientTCP(t, s.Addr())
 	writeFull(client, []byte{5, 1, 0})
 	if got := readBytes(t, client, 2); string(got) != string([]byte{5, 255}) {
@@ -243,7 +260,7 @@ func TestSOCKSRejectsUnsupportedCommandBeforeReadingAddress(t *testing.T) {
 	s := socksServer(t, func(context.Context, string, string) (net.Conn, error) {
 		dials.Add(1)
 		return nil, errors.New("unexpected")
-	}, time.Second)
+	}, defaultHandshakeTimeout)
 	for _, command := range []byte{2, 3, 255} {
 		client := clientTCP(t, s.Addr())
 		authenticateClient(t, client)
@@ -259,7 +276,7 @@ func TestSOCKSRejectsUnsupportedCommandBeforeReadingAddress(t *testing.T) {
 	}
 }
 
-func TestSOCKSConnectAndClearsDeadline(t *testing.T) {
+func TestSOCKSConnectLoopback(t *testing.T) {
 	t.Parallel()
 	type target struct{ network, address string }
 	dialed := make(chan target, 1)
@@ -269,7 +286,7 @@ func TestSOCKSConnectAndClearsDeadline(t *testing.T) {
 		a, b := net.Pipe()
 		go func() { defer close(echoDone); defer b.Close(); io.Copy(b, b) }()
 		return a, nil
-	}, 100*time.Millisecond)
+	}, defaultHandshakeTimeout)
 	client := clientTCP(t, s.Addr())
 	authenticateClient(t, client)
 	request := append([]byte{5, 1, 0, 3, byte(len("host.example"))}, []byte("host.example")...)
@@ -280,7 +297,6 @@ func TestSOCKSConnectAndClearsDeadline(t *testing.T) {
 	if got := <-dialed; got.network != "tcp" || got.address != "host.example:443" {
 		t.Fatalf("dial target %+v", got)
 	}
-	time.Sleep(150 * time.Millisecond)
 	writeFull(client, []byte("payload"))
 	if got := readBytes(t, client, 7); string(got) != "payload" {
 		t.Fatalf("echo %q", got)
@@ -288,48 +304,132 @@ func TestSOCKSConnectAndClearsDeadline(t *testing.T) {
 	closeServer(t, s)
 	select {
 	case <-echoDone:
-	case <-time.After(time.Second):
+	case <-time.After(nativeTestTimeout):
 		t.Fatal("echo did not stop")
 	}
+}
+
+func TestSOCKSConnectAndClearsDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const handshake = 2 * time.Second
+		echoDone := make(chan struct{})
+		dialed := make(chan string, 1)
+		dial := func(ctx context.Context, network, address string) (net.Conn, error) {
+			dialed <- network + " " + address
+			a, b := net.Pipe()
+			go func() { defer close(echoDone); defer b.Close(); io.Copy(b, b) }()
+			return a, nil
+		}
+		cfg := SOCKSConfig{Username: "user", Password: "secret", HandshakeTimeout: handshake, DialTimeout: defaultDialTimeout}
+		s, client, closed := virtualStreamServer(t, func(s *Server, c net.Conn) { serveSOCKS(s, c, cfg, dial) })
+		defer closeServer(t, s)
+		defer client.Close()
+		authenticateClient(t, client)
+		request := append([]byte{5, 1, 0, 3, byte(len("host.example"))}, []byte("host.example")...)
+		if err := writeFull(client, append(request, 1, 187)); err != nil {
+			t.Fatal(err)
+		}
+		if reply := readBytes(t, client, 10); reply[1] != 0 {
+			t.Fatalf("connect reply %v", reply)
+		}
+		if got := <-dialed; got != "tcp host.example:443" {
+			t.Fatalf("dial target %q", got)
+		}
+		synctest.Wait()
+		time.Sleep(2 * handshake)
+		synctest.Wait()
+		assertChannelOpen(t, closed, "successful CONNECT kept its handshake deadline")
+		if err := writeFull(client, []byte("payload")); err != nil {
+			t.Fatal(err)
+		}
+		if got := readBytes(t, client, 7); string(got) != "payload" {
+			t.Fatalf("echo %q", got)
+		}
+		closeServer(t, s)
+		synctest.Wait()
+		assertChannelClosed(t, echoDone, "echo did not stop with its server")
+	})
 }
 
 func TestSOCKSHandshakeAndDialHaveHardDeadline(t *testing.T) {
 	t.Parallel()
 	for _, phase := range []string{"greeting", "authentication", "request", "dial"} {
 		t.Run(phase, func(t *testing.T) {
-			dialDone := make(chan struct{})
-			s := socksServer(t, func(ctx context.Context, _, _ string) (net.Conn, error) {
-				<-ctx.Done()
-				close(dialDone)
-				return nil, ctx.Err()
-			}, 40*time.Millisecond)
-			client := clientTCP(t, s.Addr())
-			switch phase {
-			case "greeting":
-				writeFull(client, []byte{5})
-			case "authentication":
-				writeFull(client, []byte{5, 1, 2})
-				readBytes(t, client, 2)
-				writeFull(client, []byte{1, 10})
-			case "request":
-				authenticateClient(t, client)
-				writeFull(client, []byte{5, 1})
-			case "dial":
-				authenticateClient(t, client)
-				writeFull(client, []byte{5, 1, 0, 1, 192, 0, 2, 1, 0, 80})
-			}
-			client.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			_, err := io.ReadAll(client)
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				t.Fatal("handshake did not end before client deadline")
-			}
-			if phase == "dial" {
-				select {
-				case <-dialDone:
-				case <-time.After(time.Second):
-					t.Fatal("dial ignored handshake deadline")
+			synctest.Test(t, func(t *testing.T) {
+				const handshake = 2 * time.Second
+				start := time.Now()
+				dialStarted := make(chan time.Time, 1)
+				dialDone := make(chan error, 1)
+				dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+					d, _ := ctx.Deadline()
+					dialStarted <- d
+					<-ctx.Done()
+					dialDone <- ctx.Err()
+					return nil, ctx.Err()
 				}
-			}
+				cfg := SOCKSConfig{Username: "user", Password: "secret", HandshakeTimeout: handshake, DialTimeout: defaultDialTimeout}
+				s, client, closed := virtualStreamServer(t, func(s *Server, c net.Conn) { serveSOCKS(s, c, cfg, dial) })
+				defer closeServer(t, s)
+				defer client.Close()
+				synctest.Wait() // The original absolute handshake deadline is now installed.
+				time.Sleep(handshake / 4)
+				switch phase {
+				case "greeting":
+					writeFull(client, []byte{5})
+				case "authentication":
+					writeFull(client, []byte{5, 1, 2})
+					readBytes(t, client, 2)
+					time.Sleep(handshake / 4)
+					writeFull(client, []byte{1, 10})
+				case "request":
+					authenticateClient(t, client)
+					time.Sleep(handshake / 4)
+					writeFull(client, []byte{5, 1})
+				case "dial":
+					authenticateClient(t, client)
+					time.Sleep(handshake / 4)
+					writeFull(client, []byte{5, 1, 0, 1, 192, 0, 2, 1, 0, 80})
+				}
+				synctest.Wait()
+				if phase == "dial" {
+					select {
+					case deadline := <-dialStarted:
+						if !deadline.Equal(start.Add(handshake)) {
+							t.Fatalf("dial deadline %v, want original handshake deadline", deadline)
+						}
+					default:
+						t.Fatal("request never reached the dial phase")
+					}
+				}
+				remaining := start.Add(handshake).Sub(time.Now())
+				if remaining <= 0 {
+					t.Fatal("phase setup crossed the virtual handshake deadline")
+				}
+				time.Sleep(remaining - time.Nanosecond)
+				synctest.Wait()
+				assertChannelOpen(t, closed, "handshake ended before its original deadline")
+				if phase == "dial" {
+					select {
+					case err := <-dialDone:
+						t.Fatalf("dial ended early: %v", err)
+					default:
+					}
+				}
+				time.Sleep(time.Nanosecond)
+				synctest.Wait()
+				assertChannelClosed(t, closed, "handshake remained open at its original deadline")
+				if phase == "dial" {
+					select {
+					case err := <-dialDone:
+						if !errors.Is(err, context.DeadlineExceeded) {
+							t.Fatalf("dial cancellation %v", err)
+						}
+					default:
+						t.Fatal("dial ignored handshake deadline")
+					}
+				}
+			})
 		})
 	}
 }
@@ -351,7 +451,7 @@ func TestSOCKSInvalidRequestsDoNotDial(t *testing.T) {
 	s := socksServer(t, func(context.Context, string, string) (net.Conn, error) {
 		dials.Add(1)
 		return nil, errors.New("unexpected")
-	}, time.Second)
+	}, defaultHandshakeTimeout)
 	for _, request := range [][]byte{{5, 1, 1, 1}, {4, 1, 0, 1}, {5, 1, 0, 99}, {5, 1, 0, 3, 0}, {5, 1, 0, 1, 192, 0, 2, 1, 0, 0}} {
 		client := clientTCP(t, s.Addr())
 		authenticateClient(t, client)
@@ -433,7 +533,7 @@ func TestUnexpectedListenerErrorStopsServer(t *testing.T) {
 		if err == nil {
 			t.Fatal("listener failure was lost")
 		}
-	case <-time.After(time.Second):
+	case <-time.After(nativeTestTimeout):
 		t.Fatal("listener failure did not stop server")
 	}
 }
@@ -489,35 +589,40 @@ func (l *pipeListener) client(t *testing.T) net.Conn {
 func TestTCPAndSOCKSBoundLocalConnections(t *testing.T) {
 	for _, mode := range []string{"tcp", "socks"} {
 		t.Run(mode, func(t *testing.T) {
-			var handlers atomic.Int64
-			listener := &pipeListener{queue: make(chan net.Conn, 1), done: make(chan struct{})}
-			server := startServer(context.Background(), listener, listener.Addr(), func(s *Server) {
-				acceptConnections(s, listener, func(c net.Conn) {
-					handlers.Add(1)
-					if mode == "tcp" {
-						<-s.ctx.Done()
-						return
-					}
-					serveSOCKS(s, c, SOCKSConfig{Username: "user", Password: "secret", HandshakeTimeout: 10 * time.Second}, func(context.Context, string, string) (net.Conn, error) {
-						return nil, errors.New("unauthenticated connection must not dial")
+			synctest.Test(t, func(t *testing.T) {
+				var handlers atomic.Int64
+				listener := &pipeListener{queue: make(chan net.Conn, 1), done: make(chan struct{})}
+				server := startServer(context.Background(), listener, listener.Addr(), func(s *Server) {
+					acceptConnections(s, listener, func(c net.Conn) {
+						handlers.Add(1)
+						if mode == "tcp" {
+							<-s.ctx.Done()
+							return
+						}
+						serveSOCKS(s, c, SOCKSConfig{Username: "user", Password: "secret", HandshakeTimeout: defaultHandshakeTimeout}, func(context.Context, string, string) (net.Conn, error) {
+							return nil, errors.New("unauthenticated connection must not dial")
+						})
 					})
 				})
+				defer closeServer(t, server)
+				for i := 0; i < maxLocalConnections; i++ {
+					listener.client(t)
+				}
+				synctest.Wait()
+				if got := handlers.Load(); got != maxLocalConnections {
+					t.Fatalf("handlers %d, want %d", got, maxLocalConnections)
+				}
+				overflow, closed := virtualStreamClient(t, listener)
+				defer overflow.Close()
+				synctest.Wait()
+				assertChannelClosed(t, closed, "overflow connection was not immediately rejected")
+				if _, err := overflow.Read(make([]byte, 1)); err == nil {
+					t.Fatal("overflow connection stayed open")
+				}
+				if got := handlers.Load(); got != maxLocalConnections {
+					t.Fatalf("handlers %d, want %d", got, maxLocalConnections)
+				}
 			})
-			defer closeServer(t, server)
-			for i := 0; i < maxLocalConnections; i++ {
-				listener.client(t)
-			}
-			eventually(t, func() bool { return handlers.Load() == maxLocalConnections })
-			overflow := listener.client(t)
-			overflow.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			if _, err := overflow.Read(make([]byte, 1)); err == nil {
-				t.Fatal("overflow connection stayed open")
-			} else if e, ok := err.(net.Error); ok && e.Timeout() {
-				t.Fatal("overflow connection was not rejected promptly")
-			}
-			if got := handlers.Load(); got != maxLocalConnections {
-				t.Fatalf("handlers %d, want %d", got, maxLocalConnections)
-			}
 		})
 	}
 }

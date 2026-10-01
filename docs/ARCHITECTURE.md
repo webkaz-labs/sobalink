@@ -35,6 +35,15 @@ Health checks distinguish login required, machine approval, peer policy, server 
 
 Stop retains login. Reconnect recreates forwarding using the existing node and login state; it does not claim to restart tsnet itself. Logout closes forwarding first and calls the upstream logout API. Failure reports local stop with server-side logout unconfirmed. Node deletion is separate.
 
+IPC shutdown stops admission, gives an in-flight response a 200 ms drain window,
+then cancels handlers and closes connections outside the registry lock. Native
+listener/connection closure runs concurrently, within a five-second total wait
+budget. An incomplete join returns `ErrShutdownTimeout` with the pending stages;
+cleanup may continue in the background, and the service exit propagates the error.
+This is an IPC wait policy, not a real-time OS scheduling guarantee or a bound on
+upstream tsnet shutdown. Virtual-time tests check exact policy boundaries; real
+named-pipe/Unix-socket tests use readiness barriers and diagnostic watchdogs.
+
 The CLI never treats TCP reachability as a successful RustDesk session. Status has separate `rustdesk: unverified`. There is no claimed direct/DERP status without a measured per-peer observation.
 
 ## RustDesk proof requirements

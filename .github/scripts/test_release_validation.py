@@ -157,6 +157,14 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
+    def test_native_ipc_regression_is_repeated_without_cache_skips(self):
+        for workflow, command in (("ci", "go test -race -count=5 -timeout=2m ./internal/control"), ("prerelease", "go test -race -count=25 -timeout=3m ./internal/control")):
+            with self.subTest(workflow=workflow):
+                step = self.step(workflow, "native", command)
+                self.assertNotIn("        if:", step)
+                self.assertNotIn("cache-hit", step)
+        self.assertIn("tee logs/ipc-regression.txt", self.job("prerelease", "native"))
+
     def test_ci_builds_once_and_prerelease_still_compares_two_builds(self):
         for workflow, count in (("ci", 1), ("prerelease", 2)):
             native = self.job(workflow, "native")
