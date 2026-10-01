@@ -2,6 +2,7 @@ package main
 
 // Exact strings and anchored format templates. Captured user values stay unchanged.
 var japaneseCatalog = map[string]string{
+	"Language is automatic; --lang ja|en|auto before COMMAND overrides it.":                            "言語は自動選択します。切り替える場合はコマンドの前に --lang ja|en|auto を指定します",
 	"Edit: e ports/lifetime, p peers, u purpose, r name; back returns to peers; q cancels.":            "編集: e ポート・有効期間 / p 相手 / u 用途 / r 名前。back で相手選択へ戻り、q でキャンセルします",
 	"Choose y to save, an edit option, or q to cancel.":                                                "保存する場合は y、編集する場合は編集項目、キャンセルする場合は q を入力してください",
 	"Local port %d is unavailable. Choose another port, or q to cancel.":                               "ローカルポート %d を利用できません。別のポートを選ぶか、q でキャンセルしてください",

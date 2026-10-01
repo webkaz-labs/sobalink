@@ -378,3 +378,18 @@ func TestLocaleJapaneseRuleNamesKeepLocalizedState(t *testing.T) {
 		}
 	}
 }
+
+// Every explanatory line in the two fixed help screens must have a catalog
+// entry, rather than passing merely because another line is Japanese.
+func TestLocaleTopLevelHelpHasCompleteLineCoverage(t *testing.T) {
+	for _, source := range []string{help, helpAll} {
+		for _, line := range strings.Split(source, "\n") {
+			if strings.TrimSpace(line) == "" || strings.TrimSpace(line) == "version" {
+				continue
+			}
+			if _, ok := japaneseCatalog[line]; !ok {
+				t.Errorf("missing fixed-help translation: %q", line)
+			}
+		}
+	}
+}
