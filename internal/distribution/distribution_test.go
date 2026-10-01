@@ -369,3 +369,36 @@ func TestManifestRejectsMismatchedPlatformMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestNoticeCollectionFollowsOnlySuppliedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native junction case is covered separately")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "actual")
+	writeFixture(t, filepath.Join(target, "LICENSE"), "root license")
+	writeFixture(t, filepath.Join(target, "nested", "NOTICE"), "nested notice")
+	outside := t.TempDir()
+	writeFixture(t, filepath.Join(outside, "NOTICE"), "must not copy")
+	link := filepath.Join(root, "toolchain-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	notices, err := collectNotices(link, t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notices) != 2 || notices[0].Path != "LICENSE" || notices[1].Path != "nested/NOTICE" {
+		t.Fatalf("notices = %+v", notices)
+	}
+	if err := os.Symlink(outside, filepath.Join(target, "nested-link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collectNotices(link, t.TempDir(), true); err == nil {
+		t.Fatal("accepted nested directory link")
+	}
+	// A regular file is never accepted as a notice inventory root.
+	if _, err = collectNotices(filepath.Join(target, "LICENSE"), t.TempDir(), false); err == nil {
+		t.Fatal("accepted non-directory root")
+	}
+}

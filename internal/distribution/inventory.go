@@ -81,41 +81,49 @@ func noticeName(name string) bool {
 	return false
 }
 func collectNotices(root, destination string, skipToolSources bool) ([]Notice, error) {
-	root, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil, err
-	}
-	root, err = filepath.Abs(root)
+	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
 	var notices []Notice
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	// fs.WalkDir Stat-follows only the explicitly supplied root. This matters
+	// for Windows toolcache junctions: since Go 1.23 they are ModeIrregular,
+	// so EvalSymlinks leaves a final-component junction in place and
+	// filepath.WalkDir's Lstat would silently visit only that non-directory.
+	// Descendants still come from ReadDir and are never link-followed.
+	err = fs.WalkDir(os.DirFS(root), ".", func(rel string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if rel == "." {
+			if !entry.IsDir() {
+				return errors.New("notice source must be a directory")
+			}
+			return nil
+		}
+		if entry.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return fmt.Errorf("link or reparse entry in notice source: %s (%s)", rel, entry.Type())
+		}
 		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == "testdata" || (skipToolSources && path == filepath.Join(root, "src", "cmd")) {
+			if entry.Name() == ".git" || entry.Name() == "testdata" || (skipToolSources && rel == "src/cmd") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
+		// Reject interior links/reparse points even when their names do not
+		// look like licenses: skipping one could omit an entire notice subtree.
+		// The explicitly supplied root is the only link-following exception.
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("non-regular entry in notice source: %s (%s)", rel, entry.Type())
+		}
 		if !noticeName(entry.Name()) {
 			return nil
 		}
-		// The source root may itself be a toolchain link, but notices may never
-		// follow a nested link out into unrelated filesystem contents.
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("notice must be a regular file: %s", entry.Name())
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if !within(root, path) {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if !fs.ValidPath(rel) || !within(root, path) {
 			return errors.New("notice escapes source root")
 		}
-		target := filepath.Join(destination, rel)
+		target := filepath.Join(destination, filepath.FromSlash(rel))
 		if err = copyFile(path, target); err != nil {
 			return err
 		}
@@ -130,7 +138,17 @@ func collectNotices(root, destination string, skipToolSources bool) ([]Notice, e
 		return nil, err
 	}
 	if len(notices) == 0 {
-		return nil, errors.New("no license or notice files found")
+		rootType := "unavailable"
+		if info, err := os.Lstat(root); err == nil {
+			rootType = info.Mode().String()
+		}
+		licenseType := "unavailable"
+		if info, err := os.Lstat(filepath.Join(root, "LICENSE")); err == nil {
+			licenseType = info.Mode().String()
+		} else if os.IsNotExist(err) {
+			licenseType = "missing"
+		}
+		return nil, fmt.Errorf("no license or notice files found (root Lstat mode: %s; root LICENSE: %s)", rootType, licenseType)
 	}
 	return notices, nil
 }
