@@ -14,10 +14,10 @@ import (
 )
 
 type Peer struct {
-	ID      string
-	DNSName string
-	IPs     []netip.Addr
-	Expired bool
+	ID      string       `json:"id"`
+	DNSName string       `json:"dns_name"`
+	IPs     []netip.Addr `json:"ips"`
+	Expired bool         `json:"expired"`
 }
 type Snapshot struct {
 	Running bool
@@ -26,11 +26,16 @@ type Snapshot struct {
 type Source func(context.Context) (Snapshot, error)
 type DialIP func(context.Context, string, netip.AddrPort) (net.Conn, error)
 type Rule struct {
+	PeerID string
+
 	Host    string
 	Port    int
 	Network string
 }
 type Policy struct {
+	OnRevoked func()
+	Guard     func() error
+
 	Rules  []Rule
 	Source Source
 	DialIP DialIP
@@ -45,12 +50,20 @@ func (p *Policy) Resolve(ctx context.Context, network, address string) (netip.Ad
 }
 
 func (p *Policy) resolve(ctx context.Context, network, address string) (netip.AddrPort, string, error) {
+	if p.Guard != nil {
+		if err := p.Guard(); err != nil {
+			return netip.AddrPort{}, "", err
+		}
+	}
 	if p.Source == nil {
 		return netip.AddrPort{}, "", errors.New("peer information unavailable")
 	}
 	snapshot, err := p.Source(ctx)
 	if err != nil || ctx.Err() != nil {
 		return netip.AddrPort{}, "", errors.New("peer information unavailable")
+	}
+	if err := p.checkPins(snapshot); err != nil {
+		return netip.AddrPort{}, "", err
 	}
 	return p.resolveSnapshot(snapshot, network, address)
 }
@@ -86,7 +99,7 @@ func (p *Policy) resolveSnapshot(s Snapshot, network, address string) (netip.Add
 	allowed := false
 	for _, r := range matches {
 		rp := findPeer(s, r.Host)
-		if rp != nil && rp.ID == requested.ID {
+		if rp != nil && rp.ID == requested.ID && (r.PeerID == "" || r.PeerID == requested.ID) {
 			allowed = true
 			break
 		}
@@ -182,4 +195,39 @@ func (p *Policy) Dial(ctx context.Context, network, address string) (net.Conn, e
 		return nil, err
 	}
 	return live, nil
+}
+
+// ValidateSnapshot applies the same identity/endpoint checks to an already-read
+// health snapshot; it does not perform another blocking control-plane query.
+func (p *Policy) ValidateSnapshot(snapshot Snapshot, network, address string) error {
+	if p.Guard != nil {
+		if err := p.Guard(); err != nil {
+			return err
+		}
+	}
+	if err := p.checkPins(snapshot); err != nil {
+		return err
+	}
+	_, _, err := p.resolveSnapshot(snapshot, network, address)
+	return err
+}
+
+// A successful current snapshot can revoke a pinned grant. A temporary missing
+// snapshot or disconnected backend is handled as recovery, not identity change.
+func (p *Policy) checkPins(snapshot Snapshot) error {
+	if !snapshot.Running {
+		return nil
+	}
+	for _, r := range p.Rules {
+		if r.PeerID != "" {
+			peer := findPeer(snapshot, r.Host)
+			if peer == nil || peer.ID != r.PeerID {
+				if p.OnRevoked != nil {
+					p.OnRevoked()
+				}
+				return errors.New("pinned peer identity changed")
+			}
+		}
+	}
+	return nil
 }

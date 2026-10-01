@@ -26,6 +26,8 @@ type Handler func(context.Context, string) (any, error)
 
 const (
 	responseDrainTimeout = 200 * time.Millisecond
+	maxRequestBytes      = 64 << 10
+	maxResponseBytes     = 256 << 10
 	// Total cleanup includes response draining. This five-second budget leaves
 	// ample margin within the 20-second control-call deadline for Windows I/O
 	// completion scheduling, while still refusing an indefinitely stuck close.
@@ -92,7 +94,7 @@ func serveListener(parent context.Context, ln net.Listener, h Handler) *Server {
 				defer c.Close()
 				_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 				var r Request
-				d := json.NewDecoder(io.LimitReader(c, 4096))
+				d := json.NewDecoder(io.LimitReader(c, maxRequestBytes))
 				d.DisallowUnknownFields()
 				if e := d.Decode(&r); e != nil {
 					return
@@ -219,6 +221,13 @@ func awaitShutdown(deadline <-chan time.Time, expired bool, listenerClosed <-cha
 }
 
 func Call(ctx context.Context, dir, command string, v any) error {
+	encoded, err := json.Marshal(Request{command})
+	if err != nil {
+		return err
+	}
+	if len(encoded)+1 > maxRequestBytes {
+		return errors.New("control request exceeds 64 KiB")
+	}
 	c, e := dial(ctx, dir)
 	if e != nil {
 		return e
@@ -242,7 +251,7 @@ func Call(ctx context.Context, dir, command string, v any) error {
 		return e
 	}
 	var r Response
-	if e = json.NewDecoder(io.LimitReader(c, 64<<10)).Decode(&r); e != nil {
+	if e = json.NewDecoder(io.LimitReader(c, maxResponseBytes)).Decode(&r); e != nil {
 		return e
 	}
 	if r.Error != "" {

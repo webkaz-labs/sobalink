@@ -4,6 +4,8 @@
 
 更新: 2026-10-01
 
+**名前付きの Web・SSH・共有機能は [0.2.0-alpha.1 の別ガイド](GENERIC.ja.md)を参照してください。** このページは従来の RustDesk alpha.2 の導入・実機受入手順です。
+
 **公開・導入は確認済みです。** [alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) の[公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)が全成功しました。Mac ARM64・Windows x64・Linux x64/ARM64で、公開された署名付き配布物をmiseから実際に導入し、版表示と同梱ファイルを確認しています。実際のtailnet参加やRustDeskの操作確認は、下の手順で別に行います。
 
 **これは検証用プレリリース `0.1.0-alpha.2` の手順です。安定版ではありません。** 自動テストは成功していますが、実際の tailnet への参加、Windows 標準ユーザーでの認証、RustDesk の双方向遠隔操作は未確認です。このページは、その確認を行うための手順です。成功済みの実機試験を説明するものではありません。

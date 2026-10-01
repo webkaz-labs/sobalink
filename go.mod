@@ -4,7 +4,9 @@ go 1.27.1
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/sys v0.47.0
+	golang.org/x/term v0.45.0
 	tailscale.com v1.102.5
 )
 
@@ -45,7 +47,6 @@ require (
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect

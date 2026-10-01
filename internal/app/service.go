@@ -13,11 +13,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
 type Status struct {
+	Rules []RuleStatus `json:"rules,omitempty"`
+
 	State     string    `json:"state"`
 	Reason    string    `json:"reason"`
 	Backend   string    `json:"tailnet_state"`
@@ -47,6 +51,7 @@ type Service struct {
 	commands chan command
 	forwards []*transport.Server
 	p        *policy.Policy
+	rules    *ruleManager
 }
 
 func (s *Service) set(state, reason, backend string) {
@@ -59,6 +64,14 @@ func (s *Service) set(state, reason, backend string) {
 	s.status.RustDesk = "unverified"
 	s.status.Mode = s.Config.Mode
 	s.status.Listeners = nil
+	if s.rules != nil {
+		s.status.Rules = s.rules.statuses()
+		for _, r := range s.status.Rules {
+			if r.ListenAddress != "" {
+				s.status.Listeners = append(s.status.Listeners, r.ListenAddress)
+			}
+		}
+	}
 	for _, f := range s.forwards {
 		s.status.Listeners = append(s.status.Listeners, f.Addr().String())
 	}
@@ -68,6 +81,10 @@ func (s *Service) Status() Status {
 	defer s.mu.RUnlock()
 	v := s.status
 	v.Listeners = append([]string(nil), v.Listeners...)
+	v.Rules = append([]RuleStatus(nil), v.Rules...)
+	for i := range v.Rules {
+		v.Rules[i].AllowedPeers = append([]config.PeerRef(nil), v.Rules[i].AllowedPeers...)
+	}
 	return v
 }
 func (s *Service) Run(ctx context.Context) (err error) {
@@ -77,6 +94,9 @@ func (s *Service) Run(ctx context.Context) (err error) {
 	}
 	defer lock.Close()
 	s.runCtx = ctx
+	if s.Config.Version == 2 {
+		s.rules = newRuleManager(s)
+	}
 	s.commands = make(chan command)
 	s.set("starting", "Starting embedded tailnet node", "Starting")
 	ipc, e := control.Serve(ctx, s.Dir, s.handle)
@@ -100,6 +120,8 @@ func (s *Service) Run(ctx context.Context) (err error) {
 	tick := time.NewTimer(0)
 	defer tick.Stop()
 	retry := time.Second
+	expiry := time.NewTicker(250 * time.Millisecond)
+	defer expiry.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -109,6 +131,10 @@ func (s *Service) Run(ctx context.Context) (err error) {
 			c.result <- result{out, err}
 			if exit {
 				return nil
+			}
+		case <-expiry.C:
+			if s.rules != nil {
+				s.rules.expire()
 			}
 		case <-tick.C:
 			healthy := s.check(ctx)
@@ -142,9 +168,11 @@ func (s *Service) handle(ctx context.Context, name string) (any, error) {
 		return map[string]string{"url": s.authURL}, nil
 	}
 	switch name {
-	case "stop", "logout", "login", "doctor", "reconnect":
+	case "stop", "logout", "login", "doctor", "reconnect", "peers":
 	default:
-		return nil, errors.New("unknown command")
+		if !strings.HasPrefix(name, "rules:") || s.rules == nil {
+			return nil, errors.New("unknown command")
+		}
 	}
 	c := command{ctx: ctx, name: name, result: make(chan result, 1)}
 	select {
@@ -160,6 +188,28 @@ func (s *Service) handle(ctx context.Context, name string) (any, error) {
 	}
 }
 func (s *Service) execute(ctx context.Context, name string) (any, error, bool) {
+	if strings.HasPrefix(name, "rules:") {
+		q, e := parseRuleCommand(name)
+		if e != nil {
+			return nil, e, false
+		}
+		v, e := s.rules.command(ctx, q)
+		return v, e, false
+	}
+	if name == "peers" {
+		st, e := s.Node.State(ctx)
+		if e != nil || !st.Snapshot.Running {
+			return nil, errors.New("tailnet peer information unavailable"), false
+		}
+		peers := []policy.Peer{}
+		for _, p := range st.Snapshot.Peers {
+			if !p.Expired && p.ID != "" {
+				peers = append(peers, p)
+			}
+		}
+		sort.Slice(peers, func(i, j int) bool { return peers[i].DNSName < peers[j].DNSName })
+		return peers, nil, false
+	}
 	switch name {
 	case "stop":
 		s.closeForwards()
@@ -180,11 +230,20 @@ func (s *Service) execute(ctx context.Context, name string) (any, error, bool) {
 		}
 		return s.Status(), nil, false
 	case "reconnect":
-		s.closeForwards()
+		if s.rules != nil {
+			for _, r := range s.rules.entries {
+				s.rules.close(r)
+			}
+		} else {
+			s.closeForwards()
+		}
 		s.check(ctx)
 		return s.Status(), nil, false
 	case "doctor":
 		s.check(ctx)
+		if s.rules != nil {
+			s.rules.diagnose(ctx)
+		}
 		return s.Status(), nil, false
 	}
 	return nil, errors.New("unknown command"), false
@@ -193,6 +252,25 @@ func (s *Service) check(ctx context.Context) bool {
 	check, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	st, e := s.Node.State(check)
+	if s.rules != nil {
+		s.mu.Lock()
+		s.authURL = st.AuthURL
+		s.mu.Unlock()
+		ok := s.rules.check(check, st, e)
+		if e != nil {
+			s.set("recovering", "Cannot read node status; forwarding is closed", "")
+		} else if !st.Snapshot.Running {
+			state, reason := "recovering", "Waiting for tailnet connection"
+			if st.Backend == "NeedsLogin" {
+				state, reason = "needs-login", "Run tsnet-bridge login to sign in"
+			}
+			if st.Backend == "NeedsMachineAuth" {
+				state, reason = "approval-required", "Approve this node in the Tailscale admin console"
+			}
+			s.set(state, reason, st.Backend)
+		}
+		return ok
+	}
 	if e != nil {
 		s.closeForwards()
 		s.set("recovering", "Cannot read node status; forwarding is closed", "")
@@ -287,6 +365,9 @@ func (s *Service) startForwards(ctx context.Context) error {
 	return add(transport.StartUDP(ctx, transport.UDPConfig{ListenAddress: config.Loopback(s.Config.LocalIDPort), Target: config.Address(s.Config.IDHost, s.Config.IDPort), Validate: s.p.Validate}, s.p.Dial))
 }
 func (s *Service) closeForwards() {
+	if s.rules != nil {
+		s.rules.closeAll("stopped", "service-stopped", "Service stopped; start explicitly to resume")
+	}
 	for _, f := range s.forwards {
 		_ = f.Close()
 	}
@@ -295,6 +376,9 @@ func (s *Service) closeForwards() {
 
 // Preflight claims every saved port before enrollment and immediately releases it.
 func Preflight(c config.Config) error {
+	if c.Version == 2 {
+		return c.Validate()
+	}
 	var closers []interface{ Close() error }
 	defer func() {
 		for _, v := range closers {

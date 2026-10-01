@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 )
@@ -45,7 +46,7 @@ func TestPersistPrivateAndLock(t *testing.T) {
 		t.Fatal(e)
 	}
 	got, e := Load(d)
-	if e != nil || got != c {
+	if e != nil || !reflect.DeepEqual(got, c) {
 		t.Fatal(got, e)
 	}
 	if runtime.GOOS != "windows" {

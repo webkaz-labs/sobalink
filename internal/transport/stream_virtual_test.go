@@ -3,7 +3,9 @@ package transport
 import (
 	"context"
 	"net"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 )
 
 // These helpers are for synctest bubbles only: every wait uses in-bubble pipes
@@ -40,4 +42,38 @@ func assertChannelClosed(t *testing.T, ch <-chan struct{}, message string) {
 	default:
 		t.Fatal(message)
 	}
+}
+
+func TestProcessStreamCapAndCleanup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		if len(connectionSlots) != 0 {
+			t.Fatal("existing stream slots")
+		}
+		for range maxTotalConnections - 1 {
+			connectionSlots <- struct{}{}
+		}
+		defer func() {
+			for range maxTotalConnections - 1 {
+				<-connectionSlots
+			}
+		}()
+		listener := &pipeListener{queue: make(chan net.Conn, 2), done: make(chan struct{})}
+		var handlers atomic.Int32
+		s := startServer(t.Context(), listener, listener.Addr(), func(s *Server) { acceptConnections(s, listener, func(c net.Conn) { handlers.Add(1); <-s.ctx.Done() }) })
+		defer closeServer(t, s)
+		first, _ := virtualStreamClient(t, listener)
+		defer first.Close()
+		synctest.Wait()
+		second, closed := virtualStreamClient(t, listener)
+		defer second.Close()
+		synctest.Wait()
+		assertChannelClosed(t, closed, "excess process stream admitted")
+		if handlers.Load() != 1 {
+			t.Fatal("stream cap not enforced")
+		}
+		closeServer(t, s)
+		if len(connectionSlots) != maxTotalConnections-1 {
+			t.Fatal("stream slot leaked")
+		}
+	})
 }

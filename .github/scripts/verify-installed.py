@@ -38,4 +38,5 @@ for module in notices["modules"] + [notices["go_standard_library"]]:
 result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
 assert result.stdout.strip() == "tsnet-bridge " + version
 subprocess.run([str(binary), "--help"], check=True)
+subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("offline-smoke.py")), str(binary)], check=True)
 print("Actual mise installation, native execution, source, SBOM, and all retained notices verified:", target)

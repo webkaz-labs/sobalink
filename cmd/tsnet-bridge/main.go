@@ -67,9 +67,40 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 	case "help":
 		fmt.Fprintln(out, help)
 		return nil
+	case "init":
+		return initRules(dir, args, out)
+	case "peers":
+		return printPeers(ctx, dir, args, out)
+	case "connect":
+		return configureRule(ctx, dir, "forward", args, in, out)
+	case "share":
+		return configureRule(ctx, dir, "share", args, in, out)
+	case "rules":
+		return listRules(ctx, dir, args, out, false)
+	case "shares":
+		return listRules(ctx, dir, args, out, true)
+	case "group":
+		return groupCommand(ctx, dir, args, in, out)
+	case "stop-shares":
+		return namedAction(ctx, dir, "stop-shares", args, in, out)
+	case "wait-ready":
+		return waitCommand(ctx, dir, args, out)
+	case "task":
+		return taskCommand(ctx, dir, args, in, out)
+	case "migrate":
+		return migrateCommand(dir, args, in, out)
+	case "export":
+		return exportCommand(dir, args, in, out)
+	case "import":
+		return importCommand(ctx, dir, args, in, out)
+	case "autostart":
+		return autostartCommand(ctx, dir, args, in, out)
 	case "setup":
 		return setup(dir, args, in, out)
 	case "status", "doctor", "stop", "reconnect", "logout":
+		if cmd == "stop" && len(args) > 0 && args[0] != "--json" {
+			return namedAction(ctx, dir, "stop", args, in, out)
+		}
 		if len(args) > 1 || (len(args) == 1 && args[0] != "--json") {
 			return errors.New("only --json is accepted")
 		}
@@ -92,21 +123,30 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 	case "settings":
 		return settings(dir, args, out)
 	case "login":
-		noBrowser := len(args) == 1 && args[0] == "--no-browser"
-		if len(args) > 0 && !noBrowser {
-			return errors.New("usage: login [--no-browser]")
+		options, e := parseLoginOptions(args, out)
+		if e != nil {
+			return e
+		}
+		if options.QR {
+			if e = checkPrivateTerminal(out); e != nil {
+				return e
+			}
 		}
 		if e = start(ctx, dir, out); e != nil {
 			return e
 		}
-		return login(ctx, dir, out, noBrowser)
+		return loginWithOptions(ctx, dir, out, options)
 	case "run":
-		if len(args) != 0 {
-			return errors.New("run takes no arguments")
+		idleOnly := len(args) == 1 && args[0] == "--idle"
+		if len(args) != 0 && !idleOnly {
+			return errors.New("usage: run [--idle]; --idle requires a version 2 profile")
 		}
 		c, e := config.Load(dir)
 		if e != nil {
-			return fmt.Errorf("profile unavailable: run setup first: %w", e)
+			return fmt.Errorf("profile unavailable: run init (or setup for legacy RustDesk) first: %w", e)
+		}
+		if idleOnly && c.Version != 2 {
+			return errors.New("idle startup requires a version 2 profile; refusing legacy automatic forwarding")
 		}
 		if e = app.Preflight(c); e != nil {
 			return e
@@ -124,10 +164,10 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 		return s.Run(ctx)
 	case "start":
 		if len(args) != 0 {
-			return errors.New("start takes no arguments")
+			return namedAction(ctx, dir, "start", args, in, out)
 		}
 		if _, e = config.Load(dir); os.IsNotExist(e) {
-			if e = setup(dir, nil, in, out); e != nil {
+			if e = initRules(dir, nil, out); e != nil {
 				return e
 			}
 		} else if e != nil {
@@ -160,21 +200,44 @@ func run(ctx context.Context, args []string, in io.Reader, out io.Writer) error 
 
 const help = `tsnet-bridge: experimental application-scoped tailnet bridge
 
-  tsnet-bridge setup        Create a profile (no network activity)
-  tsnet-bridge              Start in background, or show current status
-  tsnet-bridge run          Run in foreground; Ctrl+C stops forwarding
-  tsnet-bridge login        Open interactive Tailscale sign-in
-  tsnet-bridge status       Show status; --json for structured output
-  tsnet-bridge doctor       Recheck identity, allowlist and TCP reachability
-  tsnet-bridge settings     Show values to enter in RustDesk
-  tsnet-bridge stop         Stop forwarding; retain saved login
-  tsnet-bridge reconnect    Recreate local forwarding; retain saved login
-  tsnet-bridge logout       Stop forwarding and log out; must be running
-  tsnet-bridge version
+Basic named-rule workflow (version 2):
+  init                     Save an idle profile; no networking or enrollment
+  login                    Browser sign-in; --qr for phone, --link for private URL
+  peers                    Choose from current tailnet peers; --json available
+  connect                  Choose peer -> purpose -> preview -> start
+  share                    Choose peers -> local service -> lifetime -> confirm
+  connect/share --save-only Save disabled; never connects or shares
+  rules                    List saved rules; --json available
+  start NAME...            Explicitly start selected saved rules
+  stop NAME...             Stop selected manually owned rules
+  group save NAME RULE...  Save a group; add --confirm before names for scripts
+  group start/stop NAME    Operate one group; --ttl is mandatory for shares
+  shares                   Show sharing state, targets and expiry
+  stop-shares              Immediately stop all shares, including task shares
+  wait-ready NAME...       Wait for transport readiness, with timeout/cancel
+  task --rules N -- CMD    Lease named rules to a directly executed command
+  settings                 Show connection endpoints and verification cautions
+  export                   Preview a credential-free disabled profile
+  import FILE              Preview an import; --confirm applies it
+  migrate                  Preview a v1 forward migration; keeps original backup
+  autostart                Preview optional user-level idle-node startup
 
-Global --state-dir PATH goes before the command. No OS VPN, route or DNS changes.
-RustDesk remote-control compatibility is experimental, not yet E2E verified.
-Use a dedicated profile; keep a backup of existing RustDesk settings.`
+Node and existing RustDesk workflow:
+  setup                    Create legacy v1 RustDesk profile (no networking)
+  start                    Start background node; v2 starts NO saved rules
+  run                      Run in foreground; Ctrl+C closes all connections
+  status / doctor          Current state and diagnostics; --json available
+  stop                     Stop node and connections; retain saved login
+  reconnect                Recheck identity and connections; no expired restart
+  logout                   Stop connections and log out; node must be running
+  version
+
+Flags precede positional names. Global --state-dir PATH precedes the command.
+Share start requires --ttl 1s..24h and confirmation (--confirm for scripts).
+Privileged/conflicting local ports require an explicitly chosen alternative.
+No OS VPN, route or DNS changes. TLS/SSH checks are never disabled.
+Readiness is not application verification or remote-job completion.
+RustDesk remains experimental and not yet end-to-end verified.`
 
 func setup(dir string, args []string, in io.Reader, out io.Writer) error {
 	f := flag.NewFlagSet("setup", flag.ContinueOnError)
@@ -268,6 +331,9 @@ func settings(dir string, args []string, out io.Writer) error {
 	if e != nil {
 		return e
 	}
+	if c.Version == 2 {
+		return ruleSettings(c, out)
+	}
 	fmt.Fprintln(out, "Back up the existing RustDesk server and proxy settings before changing them.")
 	if c.Mode == "forward" {
 		fmt.Fprintf(out, "ID server: %s\nRelay server: %s\nProxy: blank\nUDP: enabled\nConnection: remote-ID/r\n", config.Loopback(c.LocalIDPort), config.Loopback(c.LocalRelayPort))
@@ -291,7 +357,7 @@ func start(ctx context.Context, dir string, out io.Writer) error {
 		return nil
 	}
 	if _, e := config.Load(dir); e != nil {
-		return fmt.Errorf("run setup first: %w", e)
+		return fmt.Errorf("run init (or setup for legacy RustDesk) first: %w", e)
 	}
 	if e := config.SecureDir(dir); e != nil {
 		return e
@@ -339,68 +405,53 @@ func running(ctx context.Context, dir string) bool {
 func call(ctx context.Context, dir, command string, v any) error {
 	c, cancel := context.WithTimeout(ctx, 18*time.Second)
 	defer cancel()
-	return control.Call(c, dir, command, v)
+	return request(c, dir, command, v)
 }
 func printStatus(out io.Writer, s app.Status, j bool) error {
 	if j {
 		return json.NewEncoder(out).Encode(s)
 	}
-	fmt.Fprintf(out, "%s: %s\nTailnet: %s\nRustDesk screen/control: %s\n", s.State, s.Reason, s.Backend, s.RustDesk)
+	fmt.Fprintf(out, "%s: %s\nTailnet: %s\n", s.State, s.Reason, s.Backend)
+	if s.Mode != "rules" {
+		fmt.Fprintln(out, "RustDesk screen/control:", s.RustDesk)
+	}
+	for _, r := range s.Rules {
+		fmt.Fprintf(out, "%s [%s/%s] %s (%s): %s\n  Listen: %s  Target: %s  Peer: %s  Owner: %s\n  Application: %s\n", r.Name, r.Direction, r.Network, r.State, r.ReasonCode, r.Reason, r.ListenAddress, r.Target, r.PeerID, r.Owner, r.Application)
+		for _, peer := range r.AllowedPeers {
+			fmt.Fprintf(out, "  Allowed peer: %s (%s)\n", peer.Host, peer.ID)
+		}
+		if !r.ExpiresAt.IsZero() {
+			remaining := time.Until(r.ExpiresAt).Round(time.Second)
+			if remaining < 0 {
+				remaining = 0
+			}
+			fmt.Fprintf(out, "  Expires: %s (%s remaining)\n", r.ExpiresAt.Format(time.RFC3339), remaining)
+		}
+	}
 	for _, a := range s.Listeners {
-		fmt.Fprintln(out, "Loopback:", a)
+		label := "Loopback:"
+		if s.Mode == "rules" {
+			label = "Listener:"
+		}
+		fmt.Fprintln(out, label, a)
 	}
 	return nil
 }
-func login(ctx context.Context, dir string, out io.Writer, noBrowser bool) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	var s app.Status
-	if e := call(ctx, dir, "status", &s); e != nil {
-		return e
-	}
-	if s.Backend == "Running" {
-		return printStatus(out, s, false)
-	}
-	if e := call(ctx, dir, "login", nil); e != nil {
-		return e
-	}
-	fmt.Fprintln(out, "Waiting for interactive sign-in. Ctrl+C cancels this wait; saved profile is retained.")
-	deadline := time.Now().Add(5 * time.Minute)
-	last := ""
-	for time.Now().Before(deadline) {
-		var auth struct {
-			URL string `json:"url"`
-		}
-		if e := call(ctx, dir, "auth-url", &auth); e != nil {
-			return e
-		}
-		if auth.URL != "" && auth.URL != last {
-			if !validAuthURL(auth.URL) {
-				return errors.New("unexpected login URL; refusing to open browser")
-			}
-			last = auth.URL
-			fmt.Fprintln(out, "Private sign-in URL (do not share):", auth.URL)
-			if !noBrowser {
-				if e := openBrowser(ctx, auth.URL); e != nil {
-					fmt.Fprintln(out, "Browser could not be opened. Open the private URL above manually.")
-				}
-			}
-		}
-		if e := call(ctx, dir, "status", &s); e != nil {
-			return e
-		}
-		if s.Backend == "Running" || s.State == "approval-required" {
-			return printStatus(out, s, false)
-		}
-		if e := pause(ctx, time.Second); e != nil {
-			return e
-		}
-	}
-	return errors.New("sign-in timed out; run login to retry, or stop to close the process")
-}
 func validAuthURL(s string) bool {
 	u, e := url.Parse(s)
-	return e == nil && u.Scheme == "https" && u.Host == "login.tailscale.com" && u.User == nil && strings.HasPrefix(u.Path, "/a/")
+	if e != nil || len(s) > 2048 || u.Scheme != "https" || u.Host != "login.tailscale.com" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || !strings.HasPrefix(u.Path, "/a/") {
+		return false
+	}
+	token := strings.TrimPrefix(u.Path, "/a/")
+	if token == "" {
+		return false
+	}
+	for _, c := range token {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 func openBrowser(ctx context.Context, u string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

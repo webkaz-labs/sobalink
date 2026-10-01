@@ -1,8 +1,8 @@
 # tsnet-bridge
 
-[English](README.en.md) · **[日本語の導入・動作確認手順（Windows / Mac / Linux）](docs/VERIFICATION.md)**
+[English](README.en.md) · **[名前付き接続の使い方](docs/GENERIC.ja.md)** · [RustDesk の手順](docs/VERIFICATION.md)
 
-tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。macOS、Windows、Linux で動作する Go の単一バイナリを目指します。OS 全体の VPN、経路、DNS は変更しません。
+tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。macOS、Windows、Linux で動作する Go の単一バイナリを目指します。OS 全体の VPN、経路、DNS は変更しません。**管理者権限なしで導入・利用することを目指し、選んだアプリの通信だけをつなぐ設計です。** Windows 標準ユーザーの実認証は未確認で、接続先の権限やアクセス許可が不要になるわけではありません。
 
 > **実験段階です。** ローカル／模擬トランスポートの試験と実際の tailnet・RustDesk 遠隔操作は別です。実機での双方向の画面表示・入力、および Windows 標準ユーザーでの初回認証は未検証です。配布は検証用プレリリースです。安定版・実機確認済みの製品ではありません。詳細は [検証状況](docs/VERIFICATION.md) を参照してください。
 
@@ -10,18 +10,23 @@ tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。ma
 
 **[日本語の活用案と必要な拡張](docs/USE_CASES.ja.md)**に、Web・SSH・データベースなどへの応用をまとめています。現在そのまま使える機能と、設定の一般化や追加実装が必要なものを分けています。各アプリとの実接続は未確認です。
 
-**[次期機能計画（日本語）](docs/ROADMAP.ja.md)**では、逆向き接続・名前付き複数転送、設定と診断、期限付き共有、AI/MCP・モバイル利用を整理しています。これらの追加機能は `alpha.2` には含まれません。
+**[次期機能計画（日本語）](docs/ROADMAP.ja.md)**では、逆向き接続・名前付き複数転送、設定と診断、期限付き共有、AI/MCP・モバイル利用を整理しています。名前付き TCP/UDP・限定共有・期限・グループ・タスク管理は次期 `0.2.0-alpha.1` のソースに実装しました。実 tailnet・実アプリ・OS スリープ／ログイン試験は残っています。[基本操作](docs/GENERIC.ja.md)
 
 ## できること
 
-- 独立した tsnet ノードによる対話認証とログイン状態の保存
+- 相手と用途から作る名前付き TCP/UDP 接続、グループ単位の開始・停止
+- 選んだ相手だけへの TCP/UDP 限定共有。期限・停止で既存通信も閉じる
+- ルール別 JSON、準備待機、タスク所有者とリースによる後片付け
+- 希望制のユーザー単位自動起動。起動するのはルール未開始のノードだけ
+
+- 独立した tsnet ノードによる対話認証。ブラウザー・スマートフォン用 QR・非公開リンクを選択し、ログイン状態を保存
 - 127.0.0.1 の固定 TCP／UDP 転送。UDP は送信元ごとの対応を維持し、後から届く通知も返す
 - 認証必須の SOCKS5 TCP CONNECT。BIND／UDP ASSOCIATE は受け付けない
 - 設定した tailnet ピアとポートへの許可リスト。OS DNS／通常経路への転送フォールバックなし
 - バックグラウンド起動、状態表示、診断、停止、転送再作成、ログアウト
 - 同時起動の排他制御、ユーザー限定のローカル IPC と保存領域
 
-RustDesk の設定ファイルを直接書き換えません。設定値と復元時の注意を表示します。GUI、自動起動登録、サブネットルーター、Exit Node、汎用インターネットプロキシは含みません。
+RustDesk の設定ファイルを直接書き換えません。設定値と復元時の注意を表示します。GUI、サブネットルーター、Exit Node、汎用インターネットプロキシは含みません。
 
 ## 配布対象
 
@@ -34,6 +39,8 @@ RustDesk の設定ファイルを直接書き換えません。設定値と復�
 Intel Mac は今回のプレリリース対象に含みません。CI の OS と、実際に保証できる最小 OS・権限条件は別です。現段階では最小対応 OS を保証しません。管理者権限やシステムサービス登録は要求しない設計ですが、Windows の標準ユーザーでの認証試験は残っています。
 
 ## mise で検証用プレリリースを導入する
+
+新しい名前付き機能は [0.2.0-alpha.1 の手順](docs/GENERIC.ja.md)を参照してください。以下は公開・導入確認済みの旧 RustDesk 向け alpha.2 です。
 
 [mise](https://mise.jdx.dev/getting-started.html) 2026.9.18 を確認対象にしています。Windows の PowerShell、Mac、Linux で同じコマンドです。Go のインストールや手動展開は不要です。
 
@@ -58,7 +65,17 @@ mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
 
 Windows では出力名を `bin/tsnet-bridge.exe` にしてください。ソースビルドしたものを試す場合は、以下の `mise exec -- tsnet-bridge` をその実行ファイルのパスへ置き換えます。[配布と検証の説明](docs/DISTRIBUTION.md)
 
-## 初回設定
+## 汎用の接続を始める
+
+```sh
+mise exec -- tsnet-bridge init
+mise exec -- tsnet-bridge login
+mise exec -- tsnet-bridge connect
+```
+
+`0.2.0-alpha.1` の名前付き接続です。相手と用途を選び、内容を確認します。JSON 編集や RustDesk 公開鍵は不要です。相手への共有は `share`、詳しい使い方は[こちら](docs/GENERIC.ja.md)。旧プロフィールを上書きせず、移行の確認または別の保存場所を選んでください。
+
+## RustDesk 専用の初回設定
 
 ```sh
 mise exec -- tsnet-bridge setup

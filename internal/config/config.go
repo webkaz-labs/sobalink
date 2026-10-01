@@ -19,17 +19,19 @@ import (
 )
 
 type Config struct {
-	Version        int    `json:"version"`
-	Hostname       string `json:"hostname"`
-	Mode           string `json:"mode"`
-	IDHost         string `json:"id_host"`
-	RelayHost      string `json:"relay_host"`
-	PublicKey      string `json:"public_key"`
-	IDPort         int    `json:"id_port"`
-	RelayPort      int    `json:"relay_port"`
-	LocalIDPort    int    `json:"local_id_port"`
-	LocalRelayPort int    `json:"local_relay_port"`
-	SOCKSPort      int    `json:"socks_port"`
+	Rules          []Rule  `json:"rules,omitempty"`
+	Groups         []Group `json:"groups,omitempty"`
+	Version        int     `json:"version"`
+	Hostname       string  `json:"hostname"`
+	Mode           string  `json:"mode"`
+	IDHost         string  `json:"id_host,omitempty"`
+	RelayHost      string  `json:"relay_host,omitempty"`
+	PublicKey      string  `json:"public_key,omitempty"`
+	IDPort         int     `json:"id_port,omitempty"`
+	RelayPort      int     `json:"relay_port,omitempty"`
+	LocalIDPort    int     `json:"local_id_port,omitempty"`
+	LocalRelayPort int     `json:"local_relay_port,omitempty"`
+	SOCKSPort      int     `json:"socks_port,omitempty"`
 }
 type Credentials struct {
 	Username string `json:"username"`
@@ -73,8 +75,14 @@ func TailnetIP(ip netip.Addr) bool {
 	return ip.Zone() == "" && ip != netip.MustParseAddr("100.100.100.100") && (netip.MustParsePrefix("100.64.0.0/10").Contains(ip) || netip.MustParsePrefix("fd7a:115c:a1e0::/48").Contains(ip))
 }
 func (c Config) Validate() error {
+	if c.Version == 2 {
+		return c.validateRules()
+	}
 	if c.Version != 1 {
 		return errors.New("unsupported profile version")
+	}
+	if len(c.Rules) != 0 || len(c.Groups) != 0 {
+		return errors.New("named rules and groups require version 2")
 	}
 	if !label.MatchString(c.Hostname) || len(c.Hostname) > 63 {
 		return errors.New("invalid node hostname")
@@ -124,6 +132,9 @@ func ReadJSON(path string, v any) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("JSON file must be a regular file, not a symlink")
 	}
+	if info.Size() > 64<<10 {
+		return errors.New("JSON file exceeds 64 KiB limit")
+	}
 	f, e := os.Open(path)
 	if e != nil {
 		return e
@@ -144,6 +155,9 @@ func Save(dir string, c Config) error {
 	if e := c.Validate(); e != nil {
 		return e
 	}
+	if c.Version == 2 {
+		c = c.Disabled()
+	}
 	return WriteJSON(filepath.Join(dir, "profile.json"), c)
 }
 func WriteJSON(path string, v any) error {
@@ -151,12 +165,35 @@ func WriteJSON(path string, v any) error {
 	if e != nil {
 		return e
 	}
+	if len(b)+1 > 64<<10 {
+		return errors.New("JSON exceeds 64 KiB limit; reduce rules or peer scope before saving")
+	}
 	return AtomicWrite(path, append(b, '\n'))
 }
 func AtomicWrite(path string, b []byte) error {
 	if e := SecureDir(filepath.Dir(path)); e != nil {
 		return e
 	}
+	return atomicWriteFile(path, b)
+}
+
+// AtomicWritePrivate writes a private file while preserving permissions of an
+// existing parent directory, for exports and per-user startup registrations.
+func AtomicWritePrivate(path string, b []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("destination parent must be a real directory")
+	}
+	return atomicWriteFile(path, b)
+}
+func atomicWriteFile(path string, b []byte) error {
 	if info, e := os.Lstat(path); e == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 		return errors.New("refusing non-regular destination")
 	}

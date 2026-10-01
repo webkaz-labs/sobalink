@@ -2,14 +2,30 @@
 
 ## Scope
 
-The same Go CLI runs as an unprivileged foreground or detached process on Linux, macOS, and Windows. It embeds a separate Tailscale identity. It never configures an OS TUN, global proxy, OS DNS, subnet router, exit node, or automatic startup service.
+The same Go CLI runs as an unprivileged foreground or detached process on Linux, macOS, and Windows. It embeds a separate Tailscale identity. It never configures an OS TUN, global proxy, OS DNS, subnet router, exit node, or system-wide startup service. Optional user-level registration starts only an idle v2 node; `run --idle` rejects legacy automatic-forwarding profiles.
 
-Two forwarding modes share a small policy layer:
+Legacy forwarding modes share a small policy layer:
 
 - Fixed profile: TCP ID-port minus one, TCP/UDP ID-port, TCP relay-port
 - SOCKS profile: authenticated SOCKS5 CONNECT only, restricted to the configured TCP peers/ports
 
-All exposed application listeners bind IPv4 loopback. Control commands use a 0600 Unix socket inside a 0700 directory, or a Windows current-user-only named pipe. The Windows client verifies the server process user before sending commands, preventing another user from impersonating a server by pre-creating its predictable name. Local control is not an HTTP endpoint.
+Outward and legacy application listeners bind IPv4 loopback. Restricted inbound listeners bind the embedded node’s explicit tailnet address. Control commands (64 KiB request / 256 KiB response bounds, 16 concurrent handlers) use a 0600 Unix socket inside a 0700 directory, or a Windows current-user-only named pipe. The Windows client verifies the server process user before sending commands, preventing another user from impersonating a server by pre-creating its predictable name. Local control is not an HTTP endpoint.
+
+## Named rules and restricted inbound connections
+
+Version 2 persists named TCP/UDP rules and groups. Every save/import disables rules; startup and restart never reconstruct runtime grants. A start request carries a digest of the exact reviewed rule definitions; the daemon compares the current atomic selection before changing state. A group start is transactional for newly started members. Other owners' active listeners are preserved. Peer IDs are pinned in saved forward rules and inbound source lists, preventing same-name replacement from retargeting a connection.
+
+Forward listeners stay numeric IPv4 loopback; remote service ports span 1..65535 independently from unprivileged local ports 1024..65535. Inbound listeners use only `tsnet.Server.Listen` / `ListenPacket` on an explicitly current self tailnet address. Local targets are exactly `127.0.0.1` or `::1`. The OS dialer is used only for that explicitly selected loopback service, never for outward tailnet traffic.
+
+Incoming source addresses are checked against current, nonexpired peer IDs and their start-time numeric mapping. Even an address reassigned to another allowed peer cannot inherit the previous stream/datagram mapping. TCP authorization is checked around data I/O and by a periodic watcher; UDP checks both directions. Listener/flow shutdown and application authentication warnings accompany sharing. Limits are 128 streams per listener / 512 process-wide, 256 UDP source mappings per rule / 512 process-wide, and 64 queued packets per source. UDP queued payload has additional 1 MiB per-rule / 16 MiB process-wide budgets, reserved before copying and released on send, error or close. Read buffers and upstream stack overhead are separate from queue budgets.
+
+Every share requires a TTL of at most 24 hours. Grant guards check both monotonic elapsed time and wall-clock expiry before data forwarding. An independent grant canceler closes existing streams and mappings even while the manager is busy; per-I/O guards reject post-expiry traffic. A daemon pass updates observed status. Restart cannot revive a grant. Identical repeated starts retain the original expiry; changed TTL/lease values require explicit stop and a reviewed restart. A task has its own cleanup owner and renewable short lease. `task` renews a 30-second lease every 10 seconds and stops only its rules on command exit; absent renewals expire. This is not an OS security boundary or remote-job cancellation.
+
+A common connection outage closes listeners while preserving the original grant within its lifetime. Recovery checks the same pinned identities. Observed identity disappearance/change latches a terminal failure requiring explicit restart. Per-rule state/JSON distinguishes listener readiness and TCP diagnostic reachability from unverified application behavior. No application request is replayed.
+
+## Login presentation
+
+The explicit login command supports local browser launch, a private copyable URL, or locally generated terminal QR for a trusted phone. Only the official HTTPS login.tailscale.com authorization URL is accepted. QR generation uses the same pinned skip2/go-qrcode version as Tailscale, with no remote image service or saved QR file. Redirected QR output is rejected. Login completion and machine approval remain distinct; local wait timeout is not advertised as server-side link expiry. The process-wide upstream logtail kill switch runs before tsnet construction to prevent auth URLs entering new disk-buffered diagnostics, in addition to disabling upload and quiet callbacks. Existing buffers are retained privately rather than automatically erased. No alternative authentication credentials or automatic approval are introduced.
 
 ## Identity and fail-closed policy
 

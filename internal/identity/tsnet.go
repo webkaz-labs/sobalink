@@ -11,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"tailscale.com/client/local"
+	"tailscale.com/logtail"
 	"tailscale.com/tsnet"
 )
 
 type State struct {
+	IPs      []netip.Addr
 	Backend  string
 	AuthURL  string
 	Snapshot policy.Snapshot
@@ -55,7 +57,10 @@ func New(dir, hostname string) (*Node, error) {
 	}); e != nil {
 		return nil, e
 	}
-	// Diagnostic upload is disabled before tsnet starts. No application analytics.
+	// Disable before constructing tsnet: the environment knob suppresses upload
+	// but the pinned logger would otherwise buffer private auth URLs on disk.
+	logtail.Disable()
+	// Defense in depth: retain disabled transport/upload and quiet callbacks.
 	if e := os.Setenv("TS_NO_LOGS_NO_SUPPORT", "true"); e != nil {
 		return nil, e
 	}
@@ -79,6 +84,9 @@ func (n *Node) State(ctx context.Context) (State, error) {
 		return State{}, e
 	}
 	out := State{Backend: s.BackendState, AuthURL: s.AuthURL, Snapshot: policy.Snapshot{Running: s.BackendState == "Running"}}
+	if s.Self != nil {
+		out.IPs = append([]netip.Addr(nil), s.Self.TailscaleIPs...)
+	}
 	for _, p := range s.Peer {
 		out.Snapshot.Peers = append(out.Snapshot.Peers, policy.Peer{ID: string(p.ID), DNSName: p.DNSName, IPs: p.TailscaleIPs, Expired: p.Expired})
 	}
@@ -114,4 +122,43 @@ func dialNetstack(ctx context.Context, network string, a netip.AddrPort, tcp, ud
 		}
 	}
 	return nil, errors.New("netstack transport unavailable")
+}
+
+// InboundBackend binds only the embedded node's own tailnet addresses.
+type InboundBackend interface {
+	Listen(string, string) (net.Listener, error)
+	ListenPacket(string, string) (net.PacketConn, error)
+}
+
+func (n *Node) validInbound(address string) error {
+	ap, err := netip.ParseAddrPort(address)
+	if err != nil || ap.Port() == 0 || !config.TailnetIP(ap.Addr()) {
+		return errors.New("explicit tailnet address and port required")
+	}
+	if n.client == nil {
+		return errors.New("node not started")
+	}
+	ip4, ip6 := n.s.TailscaleIPs()
+	if ap.Addr() != ip4 && ap.Addr() != ip6 {
+		return errors.New("listener must use this node's current tailnet address")
+	}
+	return nil
+}
+func (n *Node) Listen(network, address string) (net.Listener, error) {
+	if network != "tcp" {
+		return nil, errors.New("only TCP is supported")
+	}
+	if e := n.validInbound(address); e != nil {
+		return nil, e
+	}
+	return n.s.Listen(network, address)
+}
+func (n *Node) ListenPacket(network, address string) (net.PacketConn, error) {
+	if network != "udp" {
+		return nil, errors.New("only UDP is supported")
+	}
+	if e := n.validInbound(address); e != nil {
+		return nil, e
+	}
+	return n.s.ListenPacket(network, address)
 }

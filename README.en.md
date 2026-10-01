@@ -2,26 +2,33 @@
 
 [日本語](README.md)
 
-An application-scoped tailnet bridge built with Go and embedded tsnet for macOS, Windows, and Linux. It does not change system-wide VPN, routing, or DNS settings.
+An application-scoped tailnet bridge built with Go and embedded tsnet for macOS, Windows, and Linux. It does not change system-wide VPN, routing, or DNS settings. It targets ordinary-user installation and operation; Windows standard-user enrollment remains unverified and destination permissions are still required.
 
 > **Experimental.** Local/fake transport tests are distinct from real tailnet enrollment and RustDesk screen/control tests. Bidirectional remote control and initial Windows standard-user enrollment are unverified. Distribution is an acceptance-testing prerelease, not a supported stable product. See [verification status](docs/VERIFICATION.en.md).
 
 ## Features
 
-- Interactive authentication as a separate persistent tsnet node
+- Named TCP/UDP connections, purpose presets and grouped start/stop
+- Restricted inbound TCP/UDP to explicit loopback services, with peer identity pins and TTL
+- Per-rule JSON, readiness waits and owned task cleanup with expiring leases
+- Optional user-level autostart of an idle v2 node, never active forwards or shares
+
+- Interactive authentication as a separate persistent tsnet node: browser, locally generated phone QR, or private manual link
 - Loopback-only fixed TCP/UDP forwarding, with persistent per-source UDP mappings and asynchronous replies
 - Authenticated SOCKS5 TCP CONNECT; BIND and UDP ASSOCIATE rejected
 - Explicit peer/port allowlist and netstack-only transport, with no OS DNS/routing fallback
 - Background startup, status, diagnostics, stop, forwarding recreation, and logout
 - OS-backed single-instance lock, user-private local IPC, and protected state directories
 
-No GUI, autostart registration, system service, subnet router, exit node, or generic internet proxy. RustDesk settings are shown for manual entry, never rewritten behind the application's back.
+No GUI, system-wide service, subnet router, exit node, or generic internet proxy. RustDesk settings are shown for manual entry, never rewritten behind the application's back.
 
 ## Future plans
 
-The [Japanese roadmap](docs/ROADMAP.ja.md) and expanded [use cases](docs/USE_CASES.ja.md) cover reverse connections, named multiple forwards, diagnostics, time-limited sharing, and AI/MCP/mobile scenarios. These additions are planned, not implemented in `alpha.2`; application compatibility is unverified.
+The [Japanese roadmap](docs/ROADMAP.ja.md) and expanded [use cases](docs/USE_CASES.ja.md) cover reverse connections, named multiple forwards, diagnostics, time-limited sharing, and AI/MCP/mobile scenarios. Named forwarding, restricted sharing, TTL, groups and task lifecycle are implemented in the `0.2.0-alpha.1` source. They are absent from alpha.2. Real-tailnet/application, OS sleep and login acceptance remain open. See the [new connection guide](docs/GENERIC.en.md).
 
 ## Targets and installation
+
+For new features, follow the [0.2.0-alpha.1 guide](docs/GENERIC.en.md). The installation evidence below applies to the published legacy alpha.2.
 
 Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS is not included in this prerelease. CI runners do not establish minimum OS support or Windows standard-user enrollment.
 
@@ -48,7 +55,17 @@ mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
 
 On Windows use `bin/tsnet-bridge.exe`. To test that source build, substitute its executable path for `mise exec -- tsnet-bridge` in the examples below. See [distribution](docs/DISTRIBUTION.md).
 
-## First run
+## Generic first run
+
+```sh
+mise exec -- tsnet-bridge init
+mise exec -- tsnet-bridge login
+mise exec -- tsnet-bridge connect
+```
+
+For 0.2.0-alpha.1. Choose a current peer and purpose, review and connect. No JSON editing or RustDesk key is needed. Use `share` to offer an explicitly selected local service. [Guide](docs/GENERIC.en.md)
+
+## Legacy RustDesk first run
 
 ```sh
 mise exec -- tsnet-bridge setup

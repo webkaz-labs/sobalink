@@ -44,7 +44,13 @@ func (c *liveConn) validate(ctx context.Context) error {
 	if err != nil || ctx.Err() != nil {
 		return errors.New("peer information unavailable")
 	}
-	return c.authorized(snapshot)
+	if err := c.authorized(snapshot); err != nil {
+		if snapshot.Running && c.policy.OnRevoked != nil {
+			c.policy.OnRevoked()
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *liveConn) validateDatagram() error {
@@ -58,7 +64,20 @@ func (c *liveConn) validateDatagram() error {
 }
 
 func (c *liveConn) Read(b []byte) (int, error) {
+	if c.policy.Guard != nil {
+		if err := c.policy.Guard(); err != nil {
+			_ = c.Close()
+			return 0, err
+		}
+	}
 	n, err := c.Conn.Read(b)
+	if c.policy.Guard != nil {
+		if guardErr := c.policy.Guard(); guardErr != nil {
+			clear(b[:n])
+			_ = c.Close()
+			return 0, guardErr
+		}
+	}
 	if c.network == "udp" && (n > 0 || err == nil) {
 		if validateErr := c.validateDatagram(); validateErr != nil {
 			// Never expose bytes from a now-revoked destination, including when
@@ -71,6 +90,12 @@ func (c *liveConn) Read(b []byte) (int, error) {
 }
 
 func (c *liveConn) Write(b []byte) (int, error) {
+	if c.policy.Guard != nil {
+		if err := c.policy.Guard(); err != nil {
+			_ = c.Close()
+			return 0, err
+		}
+	}
 	if c.network == "udp" {
 		if err := c.validateDatagram(); err != nil {
 			return 0, err
@@ -135,6 +160,9 @@ func (p *Policy) RevalidateActive(ctx context.Context) error {
 	var result error
 	for _, c := range connections {
 		if err := c.authorized(snapshot); err != nil {
+			if snapshot.Running && p.OnRevoked != nil {
+				p.OnRevoked()
+			}
 			_ = c.Close()
 			result = err
 		}

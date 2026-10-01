@@ -62,4 +62,5 @@ with tempfile.TemporaryDirectory(prefix="tsnet-bridge-smoke-") as tmp:
     result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
     assert version in result.stdout, result.stdout
     subprocess.run([str(binary), "--help"], check=True)
+    subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("offline-smoke.py")), str(binary)], check=True)
     print(f"Packaged executable, SBOM and {len(notices['modules'])} module notice sets verified")

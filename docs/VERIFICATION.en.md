@@ -4,6 +4,25 @@
 
 Updated 2026-10-01. **The experimental implementation and automated packaging checks pass. Real tailnet enrollment and RustDesk remote-control acceptance remain incomplete. The testing prerelease does not make this a supported end-to-end product.**
 
+## Named-rule source candidate: 0.2.0-alpha.1
+
+The source adds named forward and inbound TCP/UDP rules, pinned peer selection, presets, grouped atomic start/stop, TTL and task leases, per-rule JSON, wait-ready, local migration/import/export, and opt-in idle-node user startup. [Guide](GENERIC.en.md)
+
+Local validation currently covers:
+
+- Full config, CLI, identity, policy, transport, autostart and distribution race suites
+- Browser/QR/manual-link login state tests, trusted-URL rejection, terminal-redirection protection and terminal QR pixel reconstruction; a separate installed libzbar decoder recovered a synthetic noncredential URL
+- Independent security review of confirmation-scope binding, repeated lifetime changes, observed revocation latching, and process-wide stream/datagram resource budgets
+- Twenty repeated race runs of new forwarding/inbound/lifecycle cases
+- Numeric-loopback target rejection, source denial before local dial, TCP half-close, revoked replies and source-ID reassignment
+- Separate UDP source mappings and delayed/out-of-order delivery, inherited idle/queue/capacity/cancellation tests
+- No start on save/import/restart; partial-group rollback preserving existing work; owner mismatch and idempotent stop; TTL/lease expiry and no reconnect resurrection
+- Installed-binary-style offline v2 initialization, preview/import/export, settings, groups and non-mutating startup planning
+
+The local Unix-domain socket restriction remains: native IPC and the complete service IPC test must run on hosted CI. Cross-platform CI, release signing and actual published installation will be recorded after they complete. Five deliberate negative controls confirmed tests reject broken peer pins, source reassignment, expiration, independent grant cancellation and loopback-only targets. No real tailnet node was enrolled to obtain these results.
+
+Still unverified: real-tailnet inbound acceptance and ACL behavior, SSH/SFTP/HTTP/HTTPS/DB/AI/MCP application compatibility, mobile clients, direct/DERP performance, OS suspend/network handoff, user-login startup registration behavior, Windows standard-user enrollment, and RustDesk bidirectional screen/input. These are separate acceptance gates; code and local tests do not mark them passed.
+
 ## Published alpha.2 and real installation verification
 
 [v0.1.0-alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) was published on 2026-10-01 at 16:07:59 UTC from

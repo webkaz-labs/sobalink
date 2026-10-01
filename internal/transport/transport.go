@@ -20,6 +20,9 @@ type Dialer func(context.Context, string, string) (net.Conn, error)
 
 const defaultDialTimeout = 10 * time.Second
 const maxLocalConnections = 128
+const maxTotalConnections = 512
+
+var connectionSlots = make(chan struct{}, maxTotalConnections)
 
 // Server owns its listener, accepted connections, and remote connections.
 // Close and context cancellation shut down all of them; Wait joins all workers.
@@ -145,14 +148,22 @@ func acceptConnections(s *Server, l net.Listener, handle func(net.Conn)) {
 			_ = c.Close()
 			continue
 		}
+		select {
+		case connectionSlots <- struct{}{}:
+		default:
+			_ = c.Close()
+			<-slots
+			continue
+		}
 		if !s.track(c) {
+			<-connectionSlots
 			<-slots
 			return
 		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			defer func() { <-slots }()
+			defer func() { <-slots; <-connectionSlots }()
 			defer s.release(c)
 			handle(c)
 		}()

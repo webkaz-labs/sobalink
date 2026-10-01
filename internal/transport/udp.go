@@ -38,23 +38,28 @@ type udpPacketIO interface {
 }
 
 type udpTable struct {
-	mu       sync.Mutex
-	sessions map[netip.AddrPort]*udpSession
-	server   *Server
-	local    udpPacketIO
-	cfg      UDPConfig
-	dial     Dialer
+	bytesMu     sync.Mutex
+	queuedBytes int
+	authorize   SourceAuthorizer
+	guard       func() error
+	mu          sync.Mutex
+	sessions    map[netip.AddrPort]*udpSession
+	server      *Server
+	local       udpPacketIO
+	cfg         UDPConfig
+	dial        Dialer
 }
 
 type udpSession struct {
-	table      *udpTable
-	source     netip.AddrPort
-	ctx        context.Context
-	cancel     context.CancelFunc
-	queue      chan []byte
-	mu         sync.Mutex
-	lastActive time.Time
-	closed     bool
+	globalReserved bool
+	table          *udpTable
+	source         netip.AddrPort
+	ctx            context.Context
+	cancel         context.CancelFunc
+	queue          chan []byte
+	mu             sync.Mutex
+	lastActive     time.Time
+	closed         bool
 }
 
 // StartUDP keeps one connected upstream socket per local source, preserving
@@ -70,25 +75,7 @@ func StartUDP(ctx context.Context, cfg UDPConfig, dial Dialer) (*Server, error) 
 	if cfg.Target == "" {
 		return nil, errors.New("target is required")
 	}
-	if cfg.IdleTimeout < 0 || cfg.MaxSessions < 0 || cfg.QueueSize < 0 {
-		return nil, errors.New("UDP limits must be positive")
-	}
-	if cfg.IdleTimeout == 0 {
-		cfg.IdleTimeout = DefaultUDPIdleTimeout
-	}
-	if cfg.MaxSessions == 0 {
-		cfg.MaxSessions = defaultMaxUDPSessions
-	}
-	if cfg.QueueSize == 0 {
-		cfg.QueueSize = defaultUDPQueueSize
-	}
-	var err error
-	cfg.DialTimeout, err = normalizeTimeout(cfg.DialTimeout)
-	if err != nil {
-		return nil, err
-	}
-	cfg.WriteTimeout, err = normalizeTimeout(cfg.WriteTimeout)
-	if err != nil {
+	if err := normalizeUDPConfig(&cfg); err != nil {
 		return nil, err
 	}
 	localPacket, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp4", cfg.ListenAddress)
@@ -113,12 +100,28 @@ func (t *udpTable) readLocal() {
 		if t.server.ctx.Err() != nil {
 			return
 		}
-		packet := append([]byte{}, buffer[:n]...)
+		if t.authorize != nil {
+			if err := authorizeInbound(t.server.ctx, source, t.authorize, t.guard); err != nil {
+				t.mu.Lock()
+				if session := t.sessions[source]; session != nil {
+					session.stop()
+				}
+				t.mu.Unlock()
+				continue
+			}
+		}
+		packet := buffer[:n]
 		t.mu.Lock()
 		session := t.sessions[source]
 		if session == nil && len(t.sessions) < t.cfg.MaxSessions {
+			select {
+			case udpSessionSlots <- struct{}{}:
+			default:
+				t.mu.Unlock()
+				continue
+			}
 			ctx, cancel := context.WithCancel(t.server.ctx)
-			session = &udpSession{table: t, source: source, ctx: ctx, cancel: cancel, queue: make(chan []byte, t.cfg.QueueSize), lastActive: time.Now()}
+			session = &udpSession{globalReserved: true, table: t, source: source, ctx: ctx, cancel: cancel, queue: make(chan []byte, t.cfg.QueueSize), lastActive: time.Now()}
 			t.sessions[source] = session
 			t.server.wg.Add(1)
 			go func() { defer t.server.wg.Done(); session.run() }()
@@ -136,10 +139,15 @@ func (s *udpSession) offer(packet []byte) {
 	if s.closed || s.ctx.Err() != nil {
 		return
 	}
+	if !s.table.reserveBytes(len(packet)) {
+		return
+	}
+	stored := append([]byte{}, packet...)
 	select {
-	case s.queue <- packet:
+	case s.queue <- stored:
 		s.lastActive = time.Now()
-	default: // A slow source cannot grow memory without bound.
+	default:
+		s.table.releaseBytes(len(stored))
 	}
 }
 
@@ -174,12 +182,25 @@ func (s *udpSession) stop() {
 	s.mu.Lock()
 	s.closed = true
 	s.cancel()
-	s.mu.Unlock()
+	for {
+		select {
+		case packet := <-s.queue:
+			s.table.releaseBytes(len(packet))
+		default:
+			s.mu.Unlock()
+			return
+		}
+	}
 }
 
 func (s *udpSession) validate() error {
 	if s.ctx.Err() != nil {
 		return s.ctx.Err()
+	}
+	if s.table.authorize != nil {
+		if err := authorizeInbound(s.ctx, s.source, s.table.authorize, s.table.guard); err != nil {
+			return err
+		}
 	}
 	if s.table.cfg.Validate == nil {
 		return nil
@@ -196,12 +217,18 @@ func (s *udpSession) run() {
 	t := s.table
 	defer func() {
 		s.stop()
+		if s.globalReserved {
+			<-udpSessionSlots
+		}
 		t.mu.Lock()
 		if t.sessions[s.source] == s {
 			delete(t.sessions, s.source)
 		}
 		t.mu.Unlock()
 	}()
+	if err := s.validate(); err != nil {
+		return
+	}
 	dialCtx, cancel := context.WithTimeout(s.ctx, t.cfg.DialTimeout)
 	remote, err := dialTracked(t.server, dialCtx, t.dial, "udp", t.cfg.Target)
 	cancel()
@@ -223,19 +250,10 @@ func (s *udpSession) run() {
 		case <-s.ctx.Done():
 			return
 		case packet := <-s.queue:
-			if err := s.validate(); err != nil {
+			if err := s.sendPacket(remote, packet); err != nil {
 				return
 			}
-			if !s.touch() {
-				return
-			}
-			if err := remote.SetWriteDeadline(time.Now().Add(t.cfg.WriteTimeout)); err != nil {
-				return
-			}
-			n, err := remote.Write(packet)
-			if err != nil || n != len(packet) {
-				return
-			}
+
 		}
 	}
 }
@@ -284,4 +302,50 @@ func (s *udpSession) readRemote(remote net.Conn) {
 			return
 		}
 	}
+}
+
+func normalizeUDPConfig(cfg *UDPConfig) error {
+	if cfg.IdleTimeout < 0 || cfg.MaxSessions < 0 || cfg.QueueSize < 0 {
+		return errors.New("UDP limits must be positive")
+	}
+	if cfg.IdleTimeout == 0 {
+		cfg.IdleTimeout = DefaultUDPIdleTimeout
+	}
+	if cfg.MaxSessions == 0 {
+		cfg.MaxSessions = defaultMaxUDPSessions
+	}
+	if cfg.QueueSize == 0 {
+		cfg.QueueSize = defaultUDPQueueSize
+	}
+	if cfg.MaxSessions > defaultMaxUDPSessions || cfg.QueueSize > defaultUDPQueueSize {
+		return errors.New("UDP limits exceed maximum")
+	}
+	var err error
+	cfg.DialTimeout, err = normalizeTimeout(cfg.DialTimeout)
+	if err != nil {
+		return err
+	}
+	cfg.WriteTimeout, err = normalizeTimeout(cfg.WriteTimeout)
+	return err
+}
+
+func (s *udpSession) sendPacket(remote net.Conn, packet []byte) error {
+	defer s.table.releaseBytes(len(packet))
+	if err := s.validate(); err != nil {
+		return err
+	}
+	if !s.touch() {
+		return context.Canceled
+	}
+	if err := remote.SetWriteDeadline(time.Now().Add(s.table.cfg.WriteTimeout)); err != nil {
+		return err
+	}
+	n, err := remote.Write(packet)
+	if err != nil {
+		return err
+	}
+	if n != len(packet) {
+		return errors.New("incomplete datagram write")
+	}
+	return nil
 }
