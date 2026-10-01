@@ -116,7 +116,13 @@ func TestStopJSONNamedRoutingAndNoProcess(t *testing.T) {
 			}
 		})
 	}
-	installRequest(t, func(context.Context, string, string, any) error { return os.ErrNotExist })
+	// Use the native missing-file errno: Windows IPC intentionally recognizes
+	// ERROR_FILE_NOT_FOUND/ERROR_PATH_NOT_FOUND rather than a generic sentinel.
+	_, missing := os.Open(filepath.Join(t.TempDir(), "missing"))
+	if missing == nil {
+		t.Fatal("missing-file fixture unexpectedly exists")
+	}
+	installRequest(t, func(context.Context, string, string, any) error { return missing })
 	var out bytes.Buffer
 	if e := run(t.Context(), []string{"--lang", "ja", "--state-dir", t.TempDir(), "stop", "--json"}, strings.NewReader(""), &out); e != nil || !json.Valid(out.Bytes()) {
 		t.Fatal(e, out.String())
