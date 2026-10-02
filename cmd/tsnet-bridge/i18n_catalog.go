@@ -2,6 +2,13 @@ package main
 
 // Exact strings and anchored format templates. Captured user values stay unchanged.
 var japaneseCatalog = map[string]string{
+
+	"could not prepare UTF-8 terminal input: %w": "端末を UTF-8 入力用に準備できませんでした。コマンドのフラグ指定または別の UTF-8 対応端末を使ってください: %w",
+
+	"Input is not valid UTF-8. Use a UTF-8 terminal and enter the value again, or q to cancel.": "入力の文字コードが UTF-8 ではありません。UTF-8 対応の端末で入力し直すか、q でキャンセルしてください",
+	"Input contains terminal control characters. Enter plain text, or q to cancel.":             "入力に端末の制御文字が含まれています。文字を入力し直すか、q でキャンセルしてください",
+	"Terminal cannot display QR colors. Use the private link instead.":                          "この端末では QR の色を表示できません。代わりに非公開リンクを使ってください",
+
 	"Language is automatic; --lang ja|en|auto before COMMAND overrides it.":                            "言語は自動選択します。切り替える場合はコマンドの前に --lang ja|en|auto を指定します",
 	"Edit: e ports/lifetime, p peers, u purpose, r name; back returns to peers; q cancels.":            "編集: e ポート・有効期間 / p 相手 / u 用途 / r 名前。back で相手選択へ戻り、q でキャンセルします",
 	"Choose y to save, an edit option, or q to cancel.":                                                "保存する場合は y、編集する場合は編集項目、キャンセルする場合は q を入力してください",

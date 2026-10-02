@@ -20,7 +20,8 @@ import (
 )
 
 type Status struct {
-	Rules []RuleStatus `json:"rules,omitempty"`
+	Discovery string       `json:"discovery,omitempty"`
+	Rules     []RuleStatus `json:"rules,omitempty"`
 
 	State     string    `json:"state"`
 	Reason    string    `json:"reason"`
@@ -41,22 +42,23 @@ type result struct {
 	err   error
 }
 type Service struct {
-	Dir      string
-	Config   config.Config
-	Node     identity.Backend
-	mu       sync.RWMutex
-	status   Status
-	authURL  string
-	runCtx   context.Context
-	commands chan command
-	forwards []*transport.Server
-	p        *policy.Policy
-	rules    *ruleManager
+	Dir              string
+	Config           config.Config
+	Node             identity.Backend
+	mu               sync.RWMutex
+	status           Status
+	authURL          string
+	runCtx           context.Context
+	commands         chan command
+	forwards         []*transport.Server
+	p                *policy.Policy
+	rules            *ruleManager
+	discovery        *localDiscovery
+	discoveryQueries chan struct{}
 }
 
 func (s *Service) set(state, reason, backend string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.status.State = state
 	s.status.Reason = reason
 	s.status.Backend = backend
@@ -75,6 +77,8 @@ func (s *Service) set(state, reason, backend string) {
 	for _, f := range s.forwards {
 		s.status.Listeners = append(s.status.Listeners, f.Addr().String())
 	}
+	s.mu.Unlock()
+	s.publishDiscovery()
 }
 func (s *Service) Status() Status {
 	s.mu.RLock()
@@ -94,6 +98,7 @@ func (s *Service) Run(ctx context.Context) (err error) {
 	}
 	defer lock.Close()
 	s.runCtx = ctx
+	s.discoveryQueries = make(chan struct{}, 1)
 	if s.Config.Version == 2 {
 		s.rules = newRuleManager(s)
 	}
@@ -112,6 +117,7 @@ func (s *Service) Run(ctx context.Context) (err error) {
 		return errors.New("node startup failed; state retained")
 	}
 	defer s.closeForwards()
+	defer s.closeDiscovery()
 	rules := []policy.Rule{{Host: s.Config.IDHost, Port: s.Config.IDPort - 1, Network: "tcp"}, {Host: s.Config.IDHost, Port: s.Config.IDPort, Network: "tcp"}, {Host: s.Config.RelayHost, Port: s.Config.RelayPort, Network: "tcp"}}
 	if s.Config.Mode == "forward" {
 		rules = append(rules, policy.Rule{Host: s.Config.IDHost, Port: s.Config.IDPort, Network: "udp"})
@@ -159,6 +165,9 @@ func (s *Service) Run(ctx context.Context) (err error) {
 	}
 }
 func (s *Service) handle(ctx context.Context, name string) (any, error) {
+	if name == "services" || strings.HasPrefix(name, "services:") {
+		return s.discoverServices(ctx, strings.TrimPrefix(strings.TrimPrefix(name, "services"), ":"))
+	}
 	if name == "status" {
 		return s.Status(), nil
 	}
@@ -257,6 +266,9 @@ func (s *Service) check(ctx context.Context) bool {
 		s.authURL = st.AuthURL
 		s.mu.Unlock()
 		ok := s.rules.check(check, st, e)
+		if e == nil && st.Snapshot.Running {
+			s.refreshDiscoveryListener(st)
+		}
 		if e != nil {
 			s.set("recovering", "Cannot read node status; forwarding is closed", "")
 		} else if !st.Snapshot.Running {

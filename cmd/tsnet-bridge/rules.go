@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -32,7 +31,7 @@ var request = control.Call
 var checkPort = probePort
 var runTaskProcess = func(ctx context.Context, argv []string, in io.Reader, out io.Writer) error {
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	command.Stdin = in
+	command.Stdin = unwrapProcessInput(in)
 	command.Stdout = unwrapLocaleWriter(out)
 	command.Stderr = unwrapLocaleWriter(out)
 	command.WaitDelay = 2 * time.Second
@@ -43,40 +42,6 @@ func flags(name string, out io.Writer) *flag.FlagSet {
 	f := flag.NewFlagSet(name, flag.ContinueOnError)
 	f.SetOutput(out)
 	return f
-}
-
-type prompts struct {
-	scanner *bufio.Scanner
-	out     io.Writer
-}
-
-func newPrompts(in io.Reader, out io.Writer) *prompts { return &prompts{bufio.NewScanner(in), out} }
-func (p *prompts) ask(message string) (string, error) {
-	fmt.Fprint(p.out, message)
-	if !p.scanner.Scan() {
-		if err := p.scanner.Err(); err != nil {
-			return "", err
-		}
-		return "", errors.New("canceled; no changes made")
-	}
-	answer := strings.TrimSpace(p.scanner.Text())
-	if cancelInput(answer) {
-		return "", errors.New("canceled; no changes made")
-	}
-	return answer, nil
-}
-func (p *prompts) confirm(message string, yes bool) error {
-	if yes {
-		return nil
-	}
-	answer, err := p.ask(message + " [y/N]: ")
-	if err != nil {
-		return err
-	}
-	if !affirmativeInput(answer) {
-		return errors.New("canceled; no changes made")
-	}
-	return nil
 }
 
 func initRules(dir string, args []string, out io.Writer) error {
@@ -253,6 +218,13 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 		command = "share"
 	}
 	f := flags(command, out)
+	manual, noDiscovery, discoverable := false, false, false
+	if direction == "forward" {
+		f.BoolVar(&manual, "manual", false, "advanced: choose a peer and service port manually")
+	} else {
+		f.BoolVar(&noDiscovery, "no-discovery", false, "do not announce service metadata to allowed peers")
+		f.BoolVar(&discoverable, "discoverable", false, "allow service discovery with --confirm after reviewing metadata scope")
+	}
 	peer := f.String("peer", "", "current peer name, ID, number; comma-separated for share")
 	purpose := f.String("purpose", "", "web, ssh, db, ai or custom")
 	name := f.String("name", "", "saved rule name")
@@ -271,8 +243,11 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	if discoverable && noDiscovery {
+		return errors.New("choose either --discoverable or --no-discovery")
+	}
 	if f.NArg() == 1 {
-		if *peer != "" || *purpose != "" || *name != "" || *port != 0 || *listen != 0 || *network != "tcp" || *loopback != "127.0.0.1" || *saveOnly || *replace {
+		if *peer != "" || *purpose != "" || *name != "" || *port != 0 || *listen != 0 || *network != "tcp" || *loopback != "127.0.0.1" || *saveOnly || *replace || manual || noDiscovery || discoverable {
 			return errors.New("saved-rule start accepts only --ttl and --confirm; omit the name to configure a new rule")
 		}
 		c, e := config.Load(dir)
@@ -303,39 +278,62 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 	if c.Version != 2 {
 		return errors.New("this command requires a version 2 profile; preview migrate or init a separate --state-dir")
 	}
-	peers, err := currentPeers(ctx, dir)
-	if err != nil {
-		return err
-	}
-	if len(peers) == 0 {
-		return errors.New("no eligible current peers; check tailnet sign-in and permissions")
-	}
 	p := newPrompts(in, out)
-	selected, err := choosePeersPrompt(peers, *peer, direction == "share", p)
-	if err != nil {
-		return err
-	}
-	if *purpose == "" {
-		*purpose, selected, err = choosePurposePrompt(peers, selected, direction == "share", "web", p)
+	var peers []policy.Peer
+	var selected []config.PeerRef
+	var discovered *app.DiscoveredService
+	// Explicit remote-setting flags retain the advanced, backward-compatible
+	// path. Local preferences alone do not bypass service discovery.
+	f.Visit(func(flag *flag.Flag) {
+		if flag.Name == "peer" || flag.Name == "purpose" || flag.Name == "port" || flag.Name == "network" {
+			manual = true
+		}
+	})
+	if direction == "forward" && !manual {
+		discovered, err = chooseServicePrompt(ctx, dir, p)
 		if err != nil {
 			return err
 		}
 	}
-	tmpl, err := templateFor(*purpose)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, tmpl.note)
-	if *port == 0 {
-		*port = tmpl.port
-		if tmpl.port == 0 || !*yes {
-			message := "Service port: "
-			if tmpl.port != 0 {
-				message = fmt.Sprintf("Service port [%d]: ", tmpl.port)
-			}
-			*port, err = promptPort(p, message, tmpl.port, false, nil)
+	var tmpl purposeTemplate
+	if discovered != nil {
+		selected = []config.PeerRef{{ID: discovered.PeerID, Host: discovered.PeerHost}}
+		*purpose, *network, *port = discovered.Purpose, discovered.Network, discovered.Port
+		tmpl, _ = templateFor(*purpose)
+	} else {
+		peers, err = currentPeers(ctx, dir)
+		if err != nil {
+			return err
+		}
+		if len(peers) == 0 {
+			return errors.New("no eligible current peers; check tailnet sign-in and permissions")
+		}
+		selected, err = choosePeersPrompt(peers, *peer, direction == "share", p)
+		if err != nil {
+			return err
+		}
+		if *purpose == "" {
+			*purpose, selected, err = choosePurposePrompt(peers, selected, direction == "share", "web", p)
 			if err != nil {
 				return err
+			}
+		}
+		tmpl, err = templateFor(*purpose)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, tmpl.note)
+		if *port == 0 {
+			*port = tmpl.port
+			if tmpl.port == 0 || !*yes {
+				message := "Service port: "
+				if tmpl.port != 0 {
+					message = fmt.Sprintf("Service port [%d]: ", tmpl.port)
+				}
+				*port, err = promptPort(p, message, tmpl.port, false, nil)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -362,6 +360,7 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 	if direction == "share" {
 		r.TargetHost = *loopback
 		r.AllowedPeers = selected
+		r.Discoverable = !noDiscovery && (!*yes || discoverable)
 	} else {
 		r.TargetHost = selected[0].Host
 		r.PeerID = selected[0].ID
@@ -412,20 +411,55 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 		if direction == "share" {
 			fmt.Fprintln(out, "Remote peers will reach this local service. Localhost-only trust is insufficient: enable app authentication. Stopping transport does not cancel remote jobs.")
 		}
+		if discovered != nil {
+			fmt.Fprintf(out, "Selected sharing observation checked: %s; sharing expires: %s. Application behavior remains unverified.\n", discovered.CheckedAt.Format(time.RFC3339), discovered.ExpiresAt.Format(time.RFC3339))
+		}
 		if *yes {
+			if err = revalidateService(ctx, dir, discovered); err != nil {
+				return err
+			}
 			break
 		}
 		action := "Save and start?"
 		if *saveOnly {
 			action = "Save disabled without connecting?"
 		}
-		fmt.Fprintln(out, "Edit: e ports/lifetime, p peers, u purpose, r name; back returns to peers; q cancels.")
+		if discovered != nil {
+			fmt.Fprintln(out, "Edit: e local port, s service, m manual, r name; back returns to services; q cancels.")
+		} else {
+			fmt.Fprintln(out, "Edit: e ports/lifetime, p peers, u purpose, r name; back returns to peers; q cancels.")
+		}
 		answer, e := p.ask(action + " [y/e(edit)/N]: ")
 		if e != nil {
 			return e
 		}
 		if affirmativeInput(answer) {
-			break
+			if err = revalidateService(ctx, dir, discovered); err == nil {
+				break
+			}
+			fmt.Fprintln(out, err)
+			// A stale selection never silently becomes a manual connection.
+			answer = "s"
+		}
+		if discovered != nil {
+			handled, e := editDiscoveredRule(ctx, dir, answer, &r, &discovered, p)
+			if e != nil {
+				return e
+			}
+			if handled {
+				if err = r.Validate(); err != nil {
+					return err
+				}
+				// The manual branch may need a fresh peer list for later edits.
+				if discovered == nil {
+					selected = []config.PeerRef{{ID: r.PeerID, Host: r.TargetHost}}
+					peers, err = currentPeers(ctx, dir)
+					if err != nil {
+						return err
+					}
+				}
+				continue
+			}
 		}
 		switch strings.ToLower(answer) {
 		case "p", "peer", "peers", "back", "戻る", "相手":
@@ -497,6 +531,9 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 	if *saveOnly {
 		return nil
 	}
+	if err = revalidateService(ctx, dir, discovered); err != nil {
+		return fmt.Errorf("rule saved disabled; %w", err)
+	}
 	s, err := ruleRequest(ctx, dir, app.RuleCommand{Action: "start", ExpectedRules: config.RulesDigest([]config.Rule{r}), Names: []string{r.Name}, TTLSeconds: int64(*ttl / time.Second)})
 	if err != nil {
 		return err
@@ -547,6 +584,11 @@ func printRulePreview(out io.Writer, r config.Rule, ttl time.Duration) {
 		for _, p := range r.AllowedPeers {
 			fmt.Fprintf(out, "Allowed peer: %s (%s)\n", p.Host, p.ID)
 		}
+		if r.Discoverable {
+			fmt.Fprintln(out, "Service discovery: while sharing, only allowed peers may read purpose, protocol, shared port and expiry. Rule names and local targets are not announced. Disable with --no-discovery.")
+		} else {
+			fmt.Fprintln(out, "Service discovery: disabled. Peers can configure this service manually.")
+		}
 	}
 	if ttl > 0 {
 		fmt.Fprintln(out, "Lifetime:", ttl)
@@ -563,9 +605,15 @@ func ruleRequest(ctx context.Context, dir string, cmd app.RuleCommand) (app.Stat
 	return s, err
 }
 func saveRule(ctx context.Context, dir string, r config.Rule, replace bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A live service owns the process lock and serializes saves with runtime starts.
 	if running(ctx, dir) {
 		_, err := ruleRequest(ctx, dir, app.RuleCommand{Action: "save", Rule: &r, Replace: replace})
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	lock, err := config.AcquireLock(dir)
@@ -592,6 +640,9 @@ func saveRule(ctx context.Context, dir string, r config.Rule, replace bool) erro
 	}
 	if !found {
 		c.Rules = append(c.Rules, r)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return config.Save(dir, c)
 }

@@ -2,7 +2,9 @@
 
 [English](README.en.md) · **[名前付き接続の使い方](docs/GENERIC.ja.md)** · [実験的な RustDesk 手順](docs/VERIFICATION.md)
 
-**相手を選ぶ → 用途を選ぶ → 内容を確認してつなぐ。** tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。`0.2.0-alpha.1` では名前付きの TCP/UDP 接続と、相手・サービス・期限を限定した共有を使います。日本語・英語は OS／実行環境のロケールから自動選択します。
+**このノードに共有されたサービスを選ぶ → 確認してつなぐ。** tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。現在のソースは、名前付き TCP/UDP 接続と相手・サービス・期限を限定した共有に、サービスから選ぶ探索を追加しています。日本語・英語は OS／実行環境のロケールから自動選択します。
+
+**探索は現在のソースの機能で、公開済み `0.2.0-alpha.1` のバイナリには含まれません。** 新しい操作は[ソースからの導入手順](docs/GENERIC.ja.md#1-最初の一度だけ)を使います。以下の配布結果は記載したソースだけの証拠です。探索の公開・実 tailnet 受入の完了は意味しません。
 
 OS 全体の VPN・経路・DNS は変更しません。管理者権限なしでの導入・利用を目指す設計ですが、接続先の権限やアクセス許可は必要です。Windows 標準ユーザーでの実認証は未確認です。
 
@@ -17,7 +19,7 @@ OS 全体の VPN・経路・DNS は変更しません。管理者権限なしで
 
 公開・実導入の詳しい証拠と、未実施の実機試験は[配布記録](docs/DISTRIBUTION.md)・[検証報告](docs/VERIFICATION.en.md)で分けて示しています。
 
-## 最短の導入と接続
+## 公開済み 0.2.0-alpha.1 の導入
 
 Linux x64/ARM64、macOS Apple Silicon (ARM64)、Windows x64 が対象です。Intel Mac・Windows ARM64 は今回の配布対象に含みません。CI の OS は最小対応 OS や Windows 標準ユーザー動作の保証ではありません。
 
@@ -37,19 +39,24 @@ mise exec -- tsnet-bridge connect
 
 `prerelease=true` と完全な版番号を指定し、`latest` は使いません。mise 2026.9.18 の完全な版指定は24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままにします。Packslip の署名は OS コード署名・公証や実アプリの動作保証とは別です。OS のセキュリティ警告で止まったら、回避せず中断してください。
 
-## 普段の使い方
+## 現在のソースでの普段の使い方
+
+先に[手順](docs/GENERIC.ja.md#1-最初の一度だけ)に沿ってソースをビルドします。以下は `bin/tsnet-bridge`（Windows は `bin/tsnet-bridge.exe`）を使います。旧公開版では相手・用途から選ぶ従来の操作になります。
 
 ```sh
-mise exec -- tsnet-bridge connect            # 相手のサービスを使う
-mise exec -- tsnet-bridge share              # 相手・サービス・期限を限定して渡す
-mise exec -- tsnet-bridge settings           # アプリへ入力する接続先を表示
-mise exec -- tsnet-bridge status
-mise exec -- tsnet-bridge doctor
-mise exec -- tsnet-bridge stop               # ノードを停止し、ログイン情報を保持
+bin/tsnet-bridge connect            # 相手のサービスを使う
+bin/tsnet-bridge share              # 相手・サービス・期限を限定して渡す
+bin/tsnet-bridge settings           # アプリへ入力する接続先を表示
+bin/tsnet-bridge status
+bin/tsnet-bridge doctor
+bin/tsnet-bridge stop               # ノードを停止し、ログイン情報を保持
 ```
 
 保存した接続は `connect web-demo`、個別停止は `stop web-demo` のように名前で操作します。名前は自分で保存したものへ置き換えます。共有は明示した loopback サービスだけを、選択した相手に必要な間だけ提供します。アプリ側の認証も必要です。期限・停止は既存通信も閉じますが、渡したデータの回収や遠隔ジョブの取消はできません。
 
+- このノードに許可された共有を新しい認証済み応答から選び、相手・用途・通信方式・ポートを自動入力
+- 通常の Tailscale・旧 bridge・既知の接続先は `connect --manual`。探索結果はアプリの正常動作を保証しない
+- 新しい対話式共有では最小限の探索情報を確認。`share --no-discovery` で無効化し、既存設定は自動で公開しない
 - Web・SSH/SFTP・DB・AI API の用途候補と、複数の名前付き TCP/UDP 接続
 - 相手 ID 固定、共有の期限、グループ単位の開始・停止と部分失敗の巻き戻し
 - ルール別 JSON、準備待機、タスク所有者・リースによる後片付け

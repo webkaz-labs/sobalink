@@ -1,10 +1,12 @@
-# 相手を選んでつなぐ・必要な間だけ渡す
+# 共有サービスからつなぐ・必要な間だけ渡す
 
-`0.2.0-alpha.1` 向けの名前付き接続ガイドです。`0.1.0-alpha.2` にはこの機能はありません。従来の RustDesk 専用設定は実験的な別手順として残しています。[旧版の RustDesk 手順](VERIFICATION.md) · [English](GENERIC.en.md)
+このガイドは、未公開のサービス探索を含む現在のソース向けです。公開済み `0.2.0-alpha.1` は名前付き接続に対応しますが、相手・用途から選ぶ従来の操作です。`0.1.0-alpha.2` は旧手順だけに対応します。従来の RustDesk 設定も実験的な別手順として保持しています。[旧版の RustDesk 手順](VERIFICATION.md) · [English](GENERIC.en.md)
 
 **[0.2.0-alpha.1 は公開済み](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1)です。** [対象ソースの通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666)と[公開・4対象の mise 実導入](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369)が全成功しました。日英表示・OS 言語フォールバック・JSON の完全一致も確認しています。実機での認証・アプリ受入は未完了です。[詳しい配布記録](DISTRIBUTION.md)
 
-**普段は「相手 → 用途 → 内容を確認」の順で進めます。** JSON の編集、相手の IP や識別子の手入力は不要です。Web・SSH/SFTP・DB・AI API はポートの候補を用意し、違うサービスは `custom` または詳細指定で使います。候補はサービスが存在するという保証ではありません。
+**普段は「共有されたサービス → 内容を確認 → 接続」の順で進めます。** このノードに許可された有効な共有を、新しい認証済み応答から選びます。相手・用途・通信方式・共有ポートは自動入力され、JSON 編集・相手 ID の入力・ポートの推測は不要です。通常の Tailscale サービス、旧 bridge、既知の接続先には `connect --manual` で相手・用途・ポートを選びます。共有を渡す相手の一覧には、サービスを公開していない相手も含め、現在の条件を満たす全ピアが表示されます。
+
+上の公開版の結果は、新しいソースや探索の検証結果ではありません。以下はソースからビルドした `bin/tsnet-bridge`（Windows は `bin/tsnet-bridge.exe`）を使います。[今回の確認範囲](VERIFICATION.md#service-discovery-current-source)も参照してください。
 
 管理者権限なしで導入・利用することを目指す設計です。OS の VPN・経路・DNS を変更せず、通常のユーザー権限で動く単体アプリとして、選んだ通信だけをつなぎます。接続先の管理権限やアクセス許可を不要にするものではありません。`0.2.0-alpha.1` の Linux 非 root オフライン導入も確認済みですが、Windows 標準ユーザーの実認証、実 tailnet の ACL・新機能、スマートフォンの QR 認証、実アプリ、OS ログイン・スリープ復帰は未確認です。
 
@@ -13,25 +15,27 @@
 基本はロケール自動判定です。日本語のロケールでは日本語、その他・不明なロケールでは英語を表示します。優先順は `LC_ALL` → `LC_MESSAGES` → `LANG`。これらが未設定なら、Windows はユーザーの UI 言語、Mac は優先言語を確認します。言語を手動で選ぶ場合だけ、コマンドの前へ指定します。
 
 ```sh
-mise exec -- tsnet-bridge --lang ja help
-mise exec -- tsnet-bridge --lang en help
-mise exec -- tsnet-bridge --lang auto help
+bin/tsnet-bridge --lang ja help
+bin/tsnet-bridge --lang en help
+bin/tsnet-bridge --lang auto help
 ```
 
 `TSNET_BRIDGE_LANG=ja` / `en` / `auto` による指定も可能です。コマンド名・フラグ名・機械向け JSON は同じです。接続名・相手・実際の入力値は翻訳しません。接続とグループの名前には日本語も使えます。確認では `y` / `はい`、編集は `e` / `編集`、戻るは `back` / `戻る`、取消は `q` / `キャンセル` が使えます。
 
+UTF-8 のターミナルを使います。Linux の行入力では、質問中だけ UTF-8 単位のバックスペースを有効にし、終了時に元の端末設定へ戻します。不正な UTF-8 や端末制御文字は保存せず、入力し直すよう案内します。矢印キー編集や全角文字を画面上で消す見え方は端末に依存し、全面的な raw-mode 入力編集は追加していません。個々のターミナル・IME の組み合わせは実機確認が必要です。
+
 ## 1. 最初の一度だけ
 
-[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)で `v0.2.0-alpha.1` が Pre-release として公開され、`packslip.sigstore.json` と対象の配布物がそろっていることを確認してから実行してください。未公開・ファイル不足の場合は先へ進みません。対象は Linux x64/ARM64、Mac ARM64、Windows x64 です。確認対象の mise は 2026.9.18 です。
+現在のソースを取得した場所で、[mise](https://mise.jdx.dev/getting-started.html) から固定済みのツールチェーンを使ってビルドし、初期設定・認証を行います。
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
-mise exec -- tsnet-bridge version
-mise exec -- tsnet-bridge init
-mise exec -- tsnet-bridge login
+mise install
+mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
+bin/tsnet-bridge init
+bin/tsnet-bridge login
 ```
 
-`version` の期待値は `tsnet-bridge 0.2.0-alpha.1` です。完全な版番号の指定を保ち、`latest` に変えません。mise 2026.9.18 の完全指定は経過時間フィルターの対象外ですが、署名・識別・ダイジェストの検証は有効なままにします。OS のセキュリティ警告で止まったら、回避せず中断してください。
+Windows は出力先を `-o bin/tsnet-bridge.exe` にし、以後もその実行ファイルを使います。開発用ビルドは署名付き配布物とは別です。OS のセキュリティ警告で止まったら、回避せず中断してください。旧公開版を導入する場合は [README の版固定手順](../README.md#公開済み-020-alpha1-の導入)を使います。その版にはサービス探索や新しい探索フラグはありません。
 
 - `init` は空の設定を保存するだけ。ネットワークへ接続しません
 - `login` はノードを開始し、正規の Tailscale 認証ページを案内します。既存 Tailscale アプリとは別のノードです。参加先と追加権限を自分で確認してください
@@ -48,26 +52,30 @@ mise exec -- tsnet-bridge login
 
 [Tailscale 公式の QR 認証手順](https://tailscale.com/docs/features/access-control/device-management/how-to/set-up-qr-code)と同じ考え方で、**認証されるのは bridge のノード**です。スマートフォンを追加する操作とは別です。アカウントのログイン・追加認証やノード承認が必要なら省略しません。この bridge と実際のスマートフォンを使う一連の操作は、実機確認が残っています。
 
-QR は正規の認証 URL から端末内だけで生成し、外部の QR 作成サービスへ送りません。QR と URL はノード参加に使える非公開情報です。スクリーンショット・画面録画・共有ターミナル・ログ転送を避け、使い終わったら私的な画面から片付けてください。`--qr` はファイルやパイプへのリダイレクトを拒否します。必要な幅がないと QR を描かず、必要な列数とリンク方式を案内します。読み取りにくい場合は窓を広げるか `--qr-format large`、またはリンク方式を使います。
+QR は正規の認証 URL から端末内だけで生成し、外部の QR 作成サービスへ送りません。QR と URL はノード参加に使える非公開情報です。スクリーンショット・画面録画・共有ターミナル・ログ転送を避け、使い終わったら私的な画面から片付けてください。`--qr` はファイルやパイプへのリダイレクトを拒否します。必要な幅がないと QR を描かず、必要な列数とリンク方式を案内します。読み取りにくい場合は窓を広げるか `--qr-format large`、またはリンク方式を使います。Windows では QR 描画中だけ対応する ANSI/VT 色出力を有効にし、元の設定へ戻します。有効にできない端末では非公開リンクを案内します。Windows の実端末での読み取り確認は残っています。
 
 表示は「待機中」「認証完了」「ノード承認待ち」を区別します。標準の待機は 5 分で、必要なら `--timeout 10m`。待機時間は認証リンクの有効期限とは別です。有効期限切れなら `login` を再実行し、現在表示される QR／リンクを確認します。上流側が既存リンクを返す場合もあり、再実行だけで必ず再発行・失効するとは限りません。リンクのサーバー側の期限は推測して表示しません。Ctrl+C は待機の中止だけで、既に表示したリンクの失効やノード停止にはなりません。ノードを止めるには `stop` を使います。
 
 ## 2. 相手のサービスを使う
 
 ```sh
-mise exec -- tsnet-bridge connect
+bin/tsnet-bridge connect
 ```
 
-1. 現在の相手の一覧から番号を選ぶ
-2. 用途を選ぶ。`web` / `ssh` / `db` / `ai` / `custom`
-3. 表示された相手・実際の接続先・ローカル側の入口を確認して開始。確認画面の `e` でポート・有効期間、`p` で相手、`u` で用途、`r` で名前を編集し、全体を確認し直せる
+1. 共有サービスを番号で選ぶ。一覧には相手・用途・TCP/UDP と共有ポート・確認時刻・共有の終了時刻を表示する
+2. 接続名とローカル側の入口を確認する
+3. 実際のローカル接続先と相手側のサービスを確認して開始する
 
-サービスポートとルール名は提案値をそのまま Enter で使えます。相手・用途・ポート・名前・有効期間の入力間違いは、その場で直せます。用途や確認画面で `back` または `戻る` を入力すると相手選びへ戻ります。どの質問でも `q` または `キャンセル` で保存せず終了できます。以後はその短い名前だけで再開できます。例の `web-demo` は、自分が保存した名前に置き換えます。
+相手・用途・通信方式・共有ポートは、選んだサービスの組み合わせを維持します。確認画面の `e` はローカルポートだけの編集、`s`／`back` はサービス選択へ戻る、`m` は明示的な手動設定への切替、`r` は名前の変更です。サービス一覧での `r` は一覧の更新です。どの質問でも `q`／`キャンセル` で保存せず終了できます。探索結果の有効期間は最大15秒で、共有期限も超えません。保存前と開始前に再確認し、変更・停止・期限切れ・許可の取消があれば選び直します。保存後の最終確認で失敗した場合、ルールは未開始のまま保存されます。表示する期限は共有 TTL とタスクの現在のリースの早い方です。同じ許可・サービスの通常のリース更新は再確認して継続でき、別の接続先へ付け替えません。
+
+一覧は新しい共有情報を確認したもので、アプリの正常動作を保証しません。ノードのオンライン表示・TCP 接続成功・待受の `ready` だけでは、アプリの成功と判断しません。見つからなくてもサービス停止とは限りません。提供側が探索可能な共有を開始し、この bridge ノードを許可しているか確認して更新します。探索が未対応・遮断・確認不能なら、一覧の `m` または `connect --manual` で既知の接続先を指定できます。
+
+以後は保存した短い名前で再開できます。`connect NAME`／`start NAME` は保存した相手 ID とポートを使い、新しい探索結果を確認したとは表示しません。探索を保存・開始前に再確認するのは、サービス一覧から新しく設定する場合です。例の `web-demo` は、自分が保存した名前に置き換えます。
 
 ```sh
-mise exec -- tsnet-bridge connect web-demo
-mise exec -- tsnet-bridge settings
-mise exec -- tsnet-bridge stop web-demo
+bin/tsnet-bridge connect web-demo
+bin/tsnet-bridge settings
+bin/tsnet-bridge stop web-demo
 ```
 
 `settings` の接続先をアプリへコピーします。「ローカル側の入口」は SOCKS のプロキシ欄に入れる値ではありません。SSH の案内はホスト鍵確認を残します。HTTPS の証明書名・SNI、ブラウザーの origin・Cookie・CORS は単に localhost へ変えるだけでは整わない場合があります。検証を無効にして解決しないでください。
@@ -75,13 +83,15 @@ mise exec -- tsnet-bridge stop web-demo
 同じ番号のポートを最初に提案します。SSH の 22 など権限が必要なローカル番号や使用中の番号には、代替案を見せて確認します。**無言の変更・昇格はしません。** 相手のサービスは 1〜65535、こちらのローカル待受は 1024〜65535 に指定できます。RustDesk の固定ポート条件は別です。
 
 <details>
-<summary>詳細を指定したいとき</summary>
+<summary>手動設定・詳細を指定したいとき</summary>
+
+`connect --manual` は現在の相手・用途・実際のポートを選びます。従来の `--peer`・`--purpose`・`--port`・`--network` を指定した場合も、この手動設定になります。用途候補はサービスの存在を保証しません。確認画面の `e` はポート・有効期間、`p`／`back` は相手、`u` は用途、`r` は名前の編集です。入力間違いはその場で直せます。
 
 ```sh
 # demo は現在の一覧に実在する相手名へ置き換える
-mise exec -- tsnet-bridge connect --peer demo --purpose web --port 8080 --name web-demo
-mise exec -- tsnet-bridge connect --peer demo --purpose ssh --listen-port 2222 --name ssh-demo
-mise exec -- tsnet-bridge connect --peer demo --purpose custom --network udp --port 9000 --name udp-demo
+bin/tsnet-bridge connect --peer demo --purpose web --port 8080 --name web-demo
+bin/tsnet-bridge connect --peer demo --purpose ssh --listen-port 2222 --name ssh-demo
+bin/tsnet-bridge connect --peer demo --purpose custom --network udp --port 9000 --name udp-demo
 ```
 
 保存だけなら `--save-only`。既存の名前の置換は、停止して内容を見直したうえで `--replace` を指定します。同じ表示名で別の端末へ置き換わっても、保存済み接続は勝手に付け替えません。再度、現在の相手を選び直してください。
@@ -93,7 +103,7 @@ mise exec -- tsnet-bridge connect --peer demo --purpose custom --network udp --p
 渡すアプリを先に通常の方法で起動し、そのアプリの認証を有効にします。
 
 ```sh
-mise exec -- tsnet-bridge share
+bin/tsnet-bridge share
 ```
 
 1. 接続を許可する相手を選ぶ。複数は番号をカンマで区切る
@@ -103,17 +113,21 @@ mise exec -- tsnet-bridge share
 明示した `127.0.0.1` または `::1` のサービスだけを、bridge ノードの tailnet アドレスで受け付けます。共有先のアプリは自分側の localhost ではなく、表示された **提供側ノードの tailnet アドレス**へ接続します。HTTPS 等のアプリ設定は別です。
 
 ```sh
-mise exec -- tsnet-bridge shares
-mise exec -- tsnet-bridge stop api-demo
-mise exec -- tsnet-bridge stop-shares
+bin/tsnet-bridge shares
+bin/tsnet-bridge stop api-demo
+bin/tsnet-bridge stop-shares
 ```
+
+新しい対話式共有では、探索情報を有効にする範囲を確認画面に表示します。受け取れるのは、その共有で許可した相手だけです。内容は用途・通信方式・共有ポート・終了時刻・意味を持たない識別子・`application: unverified` に限定し、ルール名・ローカル接続先やポート・所有者・パス・自由記述は送りません。新規設定で `share --no-discovery` を指定すると無効になります。従来の `--confirm` を使うスクリプトでは、明示的に `--discoverable` を追加しない限り無効のままです。両フラグの併用はできません。保存済みルールは設定を維持し、`discoverable` がない旧プロフィールも無効のままです。保存済み共有の設定を変える場合は、停止して `--replace` で内容を見直します。
+
+探索は、探索可能な共有が有効な間だけ、提供側の組込み tailnet ノードの TCP `54543`、`/.well-known/tsnet-bridge/services/v1` を読み取ります。tailnet ACL では探索ポートと、別途選んだ TCP/UDP の共有サービスポートをそれぞれ許可する必要があります。一方の許可は他方の許可を意味しません。探索が遮断されても手動設定は残ります。中央の登録サーバー・公開/LAN の探索待受・アプリポートの全探索はありません。1回の読み取りは最大128ピア・同時4件・各2秒・全体8秒で制限し、制限に達した場合は表示します。結果は保存しません。
 
 確認中に相手・サービス・グループ内容が変わると、開始せず再確認を求めます。開始済みの期限を変える場合は、停止して新しい期限で開始し直します。既に開始中で相手・サービス・所有者・期限条件が同じなら、再確認せず現在の状態を表示するだけです。元の終了時刻は延ばしません。
 
 共有には 1 秒〜24 時間の期限が必要です。保存済み共有の再開例:
 
 ```sh
-mise exec -- tsnet-bridge share --ttl 30m api-demo
+bin/tsnet-bridge share --ttl 30m api-demo
 ```
 
 TCP と UDP の両方に対応します。詳細は `--network udp`、IPv6 のローカルサービスは `--loopback ::1` を指定します。LAN・公開 IP・任意のホスト名への中継、全サービスの一括公開はしません。
@@ -125,9 +139,9 @@ TCP と UDP の両方に対応します。詳細は `--network udp`、IPv6 の�
 必要なルールだけをグループへ保存します。グループ保存だけでは通信を開始しません。
 
 ```sh
-mise exec -- tsnet-bridge group save dev web-demo ssh-demo
-mise exec -- tsnet-bridge group start dev
-mise exec -- tsnet-bridge group stop dev
+bin/tsnet-bridge group save dev web-demo ssh-demo
+bin/tsnet-bridge group start dev
+bin/tsnet-bridge group stop dev
 ```
 
 開始の途中で失敗すると、今回新しく開始した分だけを戻します。他の作業が使っていた接続は止めません。共有を含むグループは `group start --ttl 30m dev` のように期限を指定し、共有内容も確認します。
@@ -135,10 +149,10 @@ mise exec -- tsnet-bridge group stop dev
 ## 5. 状態・診断・終了
 
 ```sh
-mise exec -- tsnet-bridge status
-mise exec -- tsnet-bridge doctor
-mise exec -- tsnet-bridge status --json
-mise exec -- tsnet-bridge stop
+bin/tsnet-bridge status
+bin/tsnet-bridge doctor
+bin/tsnet-bridge status --json
+bin/tsnet-bridge stop
 ```
 
 | 表示 | 次にすること |
@@ -159,8 +173,8 @@ JSON はルールごとの方向・相手・実待受・理由コード・期限
 <summary>自動処理から使う</summary>
 
 ```sh
-mise exec -- tsnet-bridge wait-ready --timeout 30s web-demo
-mise exec -- tsnet-bridge task --rules web-demo --timeout 30s -- curl http://127.0.0.1:8080/
+bin/tsnet-bridge wait-ready --timeout 30s web-demo
+bin/tsnet-bridge task --rules web-demo --timeout 30s -- curl http://127.0.0.1:8080/
 ```
 
 `task` は自分の所有者 ID で開始し、準備待機後に指定コマンドを直接実行します。終了・エラー・取消時に自分が始めたルールだけを止めます。30 秒のリースを 10 秒ごとに更新し、呼出元が強制終了しても最後のリースから失効します。別タスクの接続を再利用・停止しません。共有には `--ttl` と共有内容の確認が必要です。
@@ -185,9 +199,9 @@ mise exec -- tsnet-bridge task --rules web-demo --timeout 30s -- curl http://127
 <summary>希望したときだけ自動起動する</summary>
 
 ```sh
-mise exec -- tsnet-bridge autostart enable
-mise exec -- tsnet-bridge autostart enable --apply
-mise exec -- tsnet-bridge autostart disable --apply
+bin/tsnet-bridge autostart enable
+bin/tsnet-bridge autostart enable --apply
+bin/tsnet-bridge autostart disable --apply
 ```
 
 最初のコマンドは変更内容の表示だけです。適用は自分のユーザーのログイン時起動に限定します。Linux は user systemd、Mac は LaunchAgents、Windows は最小権限のログオンタスクを使います。**起動するのはルール未開始の v2 ノードだけ**。共有・転送の自動再開や継続共有の承認を兼ねません。自動起動解除は、既に起動中のノードの停止とは別です。
@@ -198,4 +212,4 @@ OS の実ログインによる登録・解除・実認証は未検証です。�
 
 ## どこまで確認したか
 
-対象ソース `236bd8e217f213a93b667f3d8d0509811d4f5464` には、名前付きルール・グループ、送受信の TCP/UDP、相手 ID 固定、期限・タスクリース、状態 JSON、準備待機、希望制のユーザー登録が含まれます。4環境の実パッケージで、OS 言語フォールバック・日英表示・JSON の完全一致を確認しました。公開版の mise 実導入でも同じオフライン確認に成功しました。ローカル／模擬試験や配布検証は、実 tailnet・実アプリ・OS のログイン／スリープ試験を代替しません。現在の証拠と未確認範囲は [日本語の検証概要](VERIFICATION.md#current-verification)と[詳しい検証報告](VERIFICATION.en.md)で確認できます。
+公開済み `0.2.0-alpha.1` のソース `236bd8e217f213a93b667f3d8d0509811d4f5464` には、名前付きルール・グループ、送受信の TCP/UDP、相手 ID 固定、期限・タスクリース、状態 JSON、準備待機、希望制のユーザー登録が含まれます。4環境の実パッケージで、OS 言語フォールバック・日英表示・JSON の完全一致を確認しました。公開版の mise 実導入でも同じオフライン確認に成功しました。ローカル／模擬試験や配布検証は、実 tailnet・実アプリ・OS のログイン／スリープ試験を代替しません。現在の証拠と未確認範囲は [日本語の検証概要](VERIFICATION.md#current-verification)と[詳しい検証報告](VERIFICATION.en.md)で確認できます。

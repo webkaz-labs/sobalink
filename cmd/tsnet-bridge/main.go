@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,7 +27,7 @@ var version = "0.0.0-dev"
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if e := run(ctx, os.Args[1:], os.Stdin, os.Stdout); e != nil {
+	if e := run(ctx, os.Args[1:], newProcessInput(ctx, os.Stdin), os.Stdout); e != nil {
 		fmt.Fprintln(os.Stderr, "tsnet-bridge:", e)
 		os.Exit(1)
 	}
@@ -233,7 +232,8 @@ Basic named-rule workflow (version 2):
   init                     Save an idle profile; no networking or enrollment
   login                    Browser sign-in; --qr for phone, --link for private URL
   peers                    Choose from current tailnet peers; --json available
-  connect                  Choose peer -> purpose -> preview -> start
+  connect                  Choose shared service -> preview -> start
+  connect --manual         Advanced peer, purpose and port configuration
   share                    Choose peers -> local service -> lifetime -> confirm
   connect/share --save-only Save disabled; never connects or shares
   rules                    List saved rules; --json available
@@ -290,14 +290,7 @@ func setup(dir string, args []string, in io.Reader, out io.Writer) error {
 	if _, e := os.Lstat(filepath.Join(dir, "profile.json")); e == nil {
 		return errors.New("profile already exists; stop the tool and edit the profile deliberately (keep relay ports consistent)")
 	}
-	scan := bufio.NewScanner(in)
-	ask := func(prompt string) (string, error) {
-		fmt.Fprint(out, prompt)
-		if !scan.Scan() {
-			return "", errors.New("setup canceled; pass --id-host and --key for noninteractive setup")
-		}
-		return strings.TrimSpace(scan.Text()), scan.Err()
-	}
+	ask := newPrompts(in, out).ask
 	var e error
 	if *host == "" {
 		*host, e = ask("Tailnet ID-server name or IP: ")
@@ -362,7 +355,7 @@ func settings(dir string, args []string, out io.Writer) error {
 		return e
 	}
 	if c.Version == 2 {
-		return ruleSettings(c, out)
+		return ruleSettings(c, out, dir)
 	}
 	fmt.Fprintln(out, "Back up the existing RustDesk server and proxy settings before changing them.")
 	if c.Mode == "forward" {
@@ -450,6 +443,9 @@ func printStatus(out io.Writer, s app.Status, j bool, profileDirs ...string) err
 		}
 	}
 	fmt.Fprintf(out, "%s: %s\nTailnet: %s\n", s.State, s.Reason, s.Backend)
+	if s.Discovery == "unavailable" {
+		fmt.Fprintln(out, "Service discovery is unavailable for this node. Sharing may still work with manual configuration; check the discovery listener and tailnet permissions.")
+	}
 	if s.Mode != "rules" {
 		fmt.Fprintln(out, "RustDesk screen/control:", s.RustDesk)
 	}

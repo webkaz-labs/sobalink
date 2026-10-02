@@ -21,6 +21,9 @@ const (
 )
 
 type Rule struct {
+	// Discoverable publishes minimal service metadata only to currently allowed peers.
+	// Older profiles omit it and remain private.
+	Discoverable bool      `json:"discoverable,omitempty"`
 	Name         string    `json:"name"`
 	Purpose      string    `json:"purpose"`
 	Direction    string    `json:"direction"`
@@ -75,6 +78,9 @@ func (r Rule) Validate() error {
 	}
 	switch r.Direction {
 	case "forward":
+		if r.Discoverable {
+			return errors.New("only share rules may advertise discovery metadata")
+		}
 		if r.ListenPort < 1024 || r.ListenPort > 65535 {
 			return errors.New("forward listen port must be in 1024..65535")
 		}

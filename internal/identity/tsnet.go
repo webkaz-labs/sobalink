@@ -162,3 +162,20 @@ func (n *Node) ListenPacket(network, address string) (net.PacketConn, error) {
 	}
 	return n.s.ListenPacket(network, address)
 }
+
+// DiscoveryIdentity resolves an accepted tailnet connection using the local
+// API on every request. The caller still must validate its pinned share scope.
+type DiscoveryIdentity interface {
+	WhoIs(context.Context, netip.AddrPort) (string, error)
+}
+
+func (n *Node) WhoIs(ctx context.Context, remote netip.AddrPort) (string, error) {
+	if n.client == nil || !config.TailnetIP(remote.Addr()) || remote.Port() == 0 {
+		return "", errors.New("current tailnet caller unavailable")
+	}
+	who, err := n.client.WhoIs(ctx, remote.String())
+	if err != nil || who == nil || who.Node == nil || !config.ValidPeerID(string(who.Node.StableID)) {
+		return "", errors.New("current tailnet caller unavailable")
+	}
+	return string(who.Node.StableID), nil
+}

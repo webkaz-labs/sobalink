@@ -13,6 +13,7 @@ First time:  init -> login -> connect
   share               Offer one local service to selected peers, with expiry
 
 Everyday:
+  connect             Choose a service shared with this node
   connect NAME        Start a saved connection
   status              See what is ready and what needs attention
   settings            Show endpoints to copy into your apps
@@ -35,8 +36,8 @@ func commandHelp(command string, out io.Writer) error {
 	entries := map[string]string{
 		"init":        "init [--hostname NAME]\nSave an idle profile without networking. Example: tsnet-bridge init",
 		"login":       "login [--qr | --link | --no-browser] [--qr-format small|large] [--timeout 5m]\nBrowser by default; phone QR and manual private link are alternatives. Never share sign-in links.\nExample: tsnet-bridge login --qr",
-		"connect":     "connect [NAME] or connect [--peer PEER --purpose web|ssh|db|ai|custom]\nOptional: --name NAME --port PORT --listen-port PORT --network tcp|udp --save-only --replace --confirm\nWithout a saved name, choose peer, purpose and service port, then review. Use e to edit before saving.\nExample: tsnet-bridge connect web-demo",
-		"share":       "share [NAME] [--ttl 30m] or share [--peer PEER --purpose PURPOSE]\nOptional: --port PORT --listen-port PORT --network tcp|udp --loopback 127.0.0.1|::1 --save-only --replace --confirm\nReview service, allowed peers and lifetime. App authentication remains required.\nExample: tsnet-bridge share --ttl 30m api-demo",
+		"connect":     "connect [NAME] or connect [--manual --peer PEER --purpose web|ssh|db|ai|custom]\nOptional: --name NAME --port PORT --listen-port PORT --network tcp|udp --save-only --replace --confirm\nChoose a recently confirmed share; peer, purpose, protocol and port are filled in. Application behavior remains unverified.\nUse --manual or remote-setting flags for ordinary Tailscale services and older bridges. Refresh/reselect if a share changes.\nExample: tsnet-bridge connect web-demo",
+		"share":       "share [NAME] [--ttl 30m] or share [--peer PEER --purpose PURPOSE]\nOptional: --port PORT --listen-port PORT --network tcp|udp --loopback 127.0.0.1|::1 --save-only --replace --confirm --no-discovery --discoverable\nReview service, allowed peers and lifetime. App authentication remains required.\nInteractive shares announce only purpose, protocol, shared port and expiry to allowed peers; --no-discovery opts out.\nWith --confirm, discovery stays disabled unless --discoverable is explicit. Existing saved shares retain their setting.\nExample: tsnet-bridge share --ttl 30m api-demo",
 		"status":      "status [--json]\nShow per-rule state and next actions. JSON is the stable machine-readable interface.",
 		"doctor":      "doctor [--json]\nRecheck current peer identities and TCP reachability; application success is separate.",
 		"settings":    "settings [--show-secrets]\nDisplay application endpoints. --show-secrets applies only to legacy SOCKS credentials in a private terminal.",

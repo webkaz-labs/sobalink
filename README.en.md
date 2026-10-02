@@ -2,7 +2,9 @@
 
 [日本語](README.md) · **[Named connection guide](docs/GENERIC.en.md)** · [Experimental RustDesk acceptance](docs/VERIFICATION.en.md#legacy-rustdesk-acceptance-procedure)
 
-**Choose a peer → choose a purpose → review and connect.** An application-scoped tailnet bridge built with Go and embedded tsnet. `0.2.0-alpha.1` provides named TCP/UDP connections and sharing limited to explicit peers, services and lifetimes. Japanese and English are selected automatically from the OS/runtime locale.
+**Choose a service shared with this node → review → connect.** An application-scoped tailnet bridge built with Go and embedded tsnet. The current source adds service-first discovery to named TCP/UDP connections and sharing limited to explicit peers, services and lifetimes. Japanese and English are selected automatically from the OS/runtime locale.
+
+**Discovery is a current-source feature, not part of the published `0.2.0-alpha.1` binary.** Use the [source-build guide](docs/GENERIC.en.md#first-use) for the new flow. The release results below apply only to their recorded source; discovery has no release or real-tailnet acceptance claim.
 
 It does not change system-wide VPN, routing or DNS settings. It targets ordinary-user installation and operation; destination permissions still apply and real Windows standard-user enrollment remains unverified.
 
@@ -17,7 +19,7 @@ It does not change system-wide VPN, routing or DNS settings. It targets ordinary
 
 [Distribution](docs/DISTRIBUTION.md) and [verification](docs/VERIFICATION.en.md) separate these results from unperformed real-device acceptance.
 
-## Install and connect
+## Install the published 0.2.0-alpha.1 release
 
 Targets: Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS and Windows ARM64 are not included. CI runner versions do not establish minimum OS support or Windows standard-user operation.
 
@@ -37,19 +39,24 @@ Existing profiles are never overwritten. Follow [migration or separate-profile g
 
 Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. Exact pins are exempt from mise 2026.9.18's default 24-hour discovery cutoff. Keep signature, identity and digest checks enabled. Packslip does not establish OS code signing/notarization or application compatibility. Stop at OS security warnings instead of bypassing them.
 
-## Everyday use
+## Everyday use with the current source
+
+Build the current source first, using the [guide](docs/GENERIC.en.md#first-use). These examples use `bin/tsnet-bridge` (`bin/tsnet-bridge.exe` on Windows); the older release retains its peer/purpose flow.
 
 ```sh
-mise exec -- tsnet-bridge connect            # Use a peer's service
-mise exec -- tsnet-bridge share              # Review explicit peers, service and lifetime
-mise exec -- tsnet-bridge settings           # Display endpoints for the application
-mise exec -- tsnet-bridge status
-mise exec -- tsnet-bridge doctor
-mise exec -- tsnet-bridge stop               # Stop the node, retaining saved login
+bin/tsnet-bridge connect            # Use a peer's service
+bin/tsnet-bridge share              # Review explicit peers, service and lifetime
+bin/tsnet-bridge settings           # Display endpoints for the application
+bin/tsnet-bridge status
+bin/tsnet-bridge doctor
+bin/tsnet-bridge stop               # Stop the node, retaining saved login
 ```
 
 Resume a saved connection with `connect web-demo`, or stop only that rule with `stop web-demo`; replace the example with your saved name. Sharing exposes only the selected numeric-loopback service to the selected peers for the chosen lifetime. Application authentication is still required. Stop/expiry closes existing traffic but cannot retract data or cancel an already running remote job.
 
+- Fresh authenticated shares permitted to this node, with peer, purpose, protocol and port filled in automatically
+- `connect --manual` for ordinary Tailscale services, older bridges or known endpoints; no discovery result proves application health
+- New interactive shares preview minimal discovery metadata; `share --no-discovery` disables it, and older profiles stay private by default
 - Multiple named TCP/UDP connections with Web, SSH/SFTP, database and AI API purpose presets
 - Pinned peer identities, share TTLs, grouped start/stop and partial-start rollback
 - Per-rule JSON, readiness waits, task ownership and expiring cleanup leases

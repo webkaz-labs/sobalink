@@ -2,9 +2,27 @@
 
 [日本語の検証概要・旧 RustDesk 手順](VERIFICATION.md) · [Named connection guide](GENERIC.en.md) · [English README](../README.en.md)
 
-Updated 2026-10-01. **The exact-source automated tests for `0.2.0-alpha.1` passed on all four native targets. Public distribution and actual mise installation are recorded separately below. Real enrollment and application acceptance remain incomplete; this is an experimental testing prerelease.**
+Updated 2026-10-02. **The exact-source automated tests for `0.2.0-alpha.1` passed on all four native targets. Public distribution and actual mise installation are recorded separately below. Real enrollment and application acceptance remain incomplete; this is an experimental testing prerelease.**
 
-## 0.2.0-alpha.1: current source and release evidence
+## Service discovery: current source
+
+The service-first picker and optional peer-scoped metadata described in the [guide](GENERIC.en.md) are newer than the published `0.2.0-alpha.1` source below. The historical four-target CI, package, signature and mise-install results do not verify these changes. No new release, final native-CI or real-device acceptance result is claimed here.
+
+A scoped Linux x64 check with Go 1.27.1 passed the input/QR/locale race regressions and CLI vet. Real Linux pseudo-terminals exercised Japanese backspace, output-failure/cancellation restoration, and Japanese/English setup interrupted with Ctrl+C; the interrupted setup exited without creating a profile or credentials and restored terminal settings. This is local PTY evidence, not a test of every terminal/IME or native Windows QR output. Windows QR behavior still needs native execution, and no real sign-in was performed.
+
+A separate current-source Linux build passed offline command checks for Japanese/English/automatic-language help, initialization, saved settings/rules, local export/import, idle-autostart previews, locale-independent rule JSON, discovery/manual flag parsing and cancellation. Runtime shares/status/stop checks were blocked by the local sandbox’s Unix-socket syscall restriction, so they are not counted as passed. All three Mermaid diagrams parsed and all 130 relative Markdown links/anchors resolved.
+
+Review and automated verification for the complete change must cover:
+
+- Service-first selection, autofilled peer/purpose/protocol/shared port, local-port alternatives, refresh/back/manual/cancel and stale selection before save/start, in Japanese and English
+- Ordinary Tailscale/old-bridge manual paths, existing flags and profiles, all-eligible-peer sharing recipients, explicit metadata previews, interactive opt-out and scripted opt-in
+- Strict minimal DTO, untrusted/malformed HTTP, wrong identity/source mapping, per-caller share filtering, start-time pins, expiry/stop/revocation, listener lifecycle, bounded timeouts and no OS-route fallback
+- Honest confirmed/unsupported/unavailable states and application-unverified labeling; no health inference from peer online status or a TCP handshake
+- `init`, browser/link/QR login, named and grouped start/reconnect/stop, save/import/export, idle autostart planning, locale/help and unchanged existing machine fields
+
+Remaining actual acceptance includes two enrolled nodes with distinct allowed/denied callers, separate discovery/service-port ACL denial, sharing expiry and identity changes, application use, phone QR, Windows standard-user enrollment and native OS login/suspend/network changes. Local mocks and offline checks cannot satisfy these gates.
+
+## 0.2.0-alpha.1: published-source and release evidence
 
 Source [`236bd8e217f213a93b667f3d8d0509811d4f5464`](https://github.com/webkaz-labs/tsnet-bridge/commit/236bd8e217f213a93b667f3d8d0509811d4f5464) adds named forward and inbound TCP/UDP rules, pinned peer selection, presets, grouped start/stop with partial-start rollback, TTL and task leases, per-rule JSON, wait-ready, local migration/import/export, and opt-in idle-node user startup. Human output defaults to automatic Japanese/English locale selection. [Current guide](GENERIC.en.md)
 
@@ -29,7 +47,7 @@ These successful distribution and offline checks do not establish real enrollmen
 
 ### Coverage and limits
 
-Current source tests and recorded local review cover:
+Tests and recorded review for the published source above cover:
 
 - Japanese/English onboarding, help, confirmations, status, errors and next actions; locale precedence/overrides, preserved user values and machine JSON
 - In-place typing retries, edit/back/cancel, narrow-terminal QR fallback, interrupted and repeated operations, and unchanged scope/expiry on repeated active starts

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -241,5 +242,28 @@ func TestLoginApprovalPendingDoesNotRestartAuthentication(t *testing.T) {
 	var out bytes.Buffer
 	if e := loginWithOptions(t.Context(), "unused", &out, loginOptions{Timeout: time.Minute}); e != nil || !strings.Contains(out.String(), "needs approval") {
 		t.Fatal(e)
+	}
+}
+
+func TestQRDisplaySetupFailureWritesNoEscapeOrCode(t *testing.T) {
+	old := prepareLoginQRDisplay
+	t.Cleanup(func() { prepareLoginQRDisplay = old })
+	setupErr := errors.New("Terminal cannot display QR colors. Use the private link instead.")
+	prepareLoginQRDisplay = func(io.Writer) (func(), error) { return nil, setupErr }
+	var out bytes.Buffer
+	if err := renderLoginQR(&out, sampleAuthURL, "small"); !errors.Is(err, setupErr) || out.Len() != 0 {
+		t.Fatalf("unsupported terminal received QR data: err %v, bytes %d", err, out.Len())
+	}
+}
+
+func TestQRDisplayModeRestoredAfterOutputFailure(t *testing.T) {
+	old := prepareLoginQRDisplay
+	t.Cleanup(func() { prepareLoginQRDisplay = old })
+	for _, writer := range []io.Writer{promptFailWriter{io.ErrClosedPipe}, shortLocaleWriter{}} {
+		restored := false
+		prepareLoginQRDisplay = func(io.Writer) (func(), error) { return func() { restored = true }, nil }
+		if err := renderLoginQR(writer, sampleAuthURL, "small"); err == nil || !restored {
+			t.Fatalf("QR write failure did not restore display: err %v, restored %v", err, restored)
+		}
 	}
 }
