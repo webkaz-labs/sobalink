@@ -164,7 +164,7 @@ class WorkflowCachePolicy(unittest.TestCase):
                     step = self.step(workflow, "native", needle)
                     self.assertNotIn("        if:", step)
                     self.assertNotIn("cache-hit", step)
-        self.assertIn("python -m unittest discover -s .github/scripts -p 'test_release_validation.py' -v", self.job("ci", "native"))
+        self.assertIn("python -m unittest discover -s .github/scripts -p 'test_*.py' -v", self.job("ci", "native"))
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
