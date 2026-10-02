@@ -60,9 +60,12 @@ Resume a saved connection with `connect web-demo`, or stop only that rule with `
 - Multiple named TCP/UDP connections with Web, SSH/SFTP, database and AI API purpose presets
 - Pinned peer identities, share TTLs, grouped start/stop and partial-start rollback
 - Per-rule JSON, readiness waits, task ownership and expiring cleanup leases
+- Up/Down selection, Left/Right text editing, typed numbers/names and comma-separated sharing peers; explicit confirmation still controls saving/starting
 - In-place input retries, edit/back/cancel, and repeat actions that preserve reviewed scope and expiry
 - Browser, locally generated terminal QR, and private manual-link sign-in guidance
 - Optional user-level autostart of an idle node, never active forwards or shares
+
+For a discoverable share, the provider keeps the application and signed-in bridge running, starts an unexpired share allowing this node, and reviews discovery metadata. First-time provider setup is `init` → `login` → `share`; skip `init` for an existing profile. Ordinary services already exposed by a Tailscale peer need no remote bridge: use `connect --manual`. Presets are editable port examples, including local AI API port `11434`, not automatic application setup. [Provider requirements and presets](docs/GENERIC.en.md#what-the-service-provider-needs)
 
 No language flag is needed normally. Override only when desired with `--lang ja`, `en` or `auto` before the command. Command names, user values and machine JSON are not translated. [Full bilingual, authentication, connection and sharing guide](docs/GENERIC.en.md)
 

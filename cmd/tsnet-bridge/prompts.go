@@ -12,10 +12,11 @@ import (
 )
 
 type prompts struct {
-	ctx     context.Context
-	in      io.Reader
-	scanner *bufio.Scanner
-	out     io.Writer
+	ctx               context.Context
+	in                io.Reader
+	scanner           *bufio.Scanner
+	out               io.Writer
+	terminalHintShown bool
 }
 
 func newPrompts(in io.Reader, out io.Writer) *prompts {
@@ -27,8 +28,21 @@ func newPrompts(in io.Reader, out io.Writer) *prompts {
 }
 
 func (p *prompts) readLine(message string) (string, error) {
+	if p.choiceTerminal() {
+		return p.readTerminalLine(message, nil, "")
+	}
+	return p.readPlainLine(message)
+}
+
+func (p *prompts) readPlainLine(message string) (string, error) {
 	if err := p.ctx.Err(); err != nil {
 		return "", err
+	}
+	if _, _, tty := promptTerminalFiles(p.in, p.out); tty && !p.terminalHintShown {
+		if _, err := fmt.Fprintln(p.out, "Arrow-key editing is unavailable in this terminal. Type an answer and press Enter."); err != nil {
+			return "", err
+		}
+		p.terminalHintShown = true
 	}
 	restore, err := preparePromptInput(p.in)
 	if err != nil {
@@ -54,9 +68,17 @@ func (p *prompts) readLine(message string) (string, error) {
 	}
 	return p.scanner.Text(), nil
 }
-func (p *prompts) ask(message string) (string, error) {
+func (p *prompts) ask(message string) (string, error) { return p.askChoice(message, nil, "") }
+
+func (p *prompts) askChoice(message string, choices []promptChoice, current string) (string, error) {
 	for {
-		line, err := p.readLine(message)
+		var line string
+		var err error
+		if p.choiceTerminal() {
+			line, err = p.readTerminalLine(message, choices, current)
+		} else {
+			line, err = p.readPlainLine(message)
+		}
 		if err != nil {
 			return "", err
 		}

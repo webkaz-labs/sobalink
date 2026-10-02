@@ -313,7 +313,7 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 			return err
 		}
 		if *purpose == "" {
-			*purpose, selected, err = choosePurposePrompt(peers, selected, direction == "share", "web", p)
+			*purpose, selected, err = choosePurposePrompt(peers, selected, direction == "share", "web", p, *network)
 			if err != nil {
 				return err
 			}
@@ -473,7 +473,7 @@ func configureRule(ctx context.Context, dir, direction string, args []string, in
 				r.TargetHost, r.PeerID = selected[0].Host, selected[0].ID
 			}
 		case "u", "purpose", "用途":
-			r.Purpose, selected, e = choosePurposePrompt(peers, selected, direction == "share", r.Purpose, p)
+			r.Purpose, selected, e = choosePurposePrompt(peers, selected, direction == "share", r.Purpose, p, r.Network)
 			if e != nil {
 				return e
 			}
@@ -1177,12 +1177,18 @@ func choosePeersPrompt(peers []policy.Peer, input string, multiple bool, p *prom
 	if input != "" {
 		return selectPeers(peers, input, multiple)
 	}
+	choices := make([]promptChoice, 0, len(peers)+1)
 	for i, v := range peers {
 		h, _ := peerHost(v)
 		fmt.Fprintf(p.out, "%d. %s\n", i+1, h)
+		choices = append(choices, promptChoice{Value: strconv.Itoa(i + 1), Label: fmt.Sprintf("%d. %s", i+1, h)})
+	}
+	choices = append(choices, promptChoice{Value: "q", Label: "Cancel (q)"})
+	if multiple && p.choiceTerminal() {
+		fmt.Fprintln(p.out, "Arrow keys choose one peer. To share with several peers, type their numbers or names separated by commas.")
 	}
 	for {
-		value, e := p.ask("Choose peer (number/name; comma-separated for share, q to cancel): ")
+		value, e := p.askChoice("Choose peer (number/name; comma-separated for share, q to cancel): ", choices, "")
 		if e != nil {
 			return nil, e
 		}
@@ -1299,10 +1305,19 @@ func promptLifetime(p *prompts, message string, current time.Duration, allowZero
 	}
 }
 
-func choosePurposePrompt(peers []policy.Peer, selected []config.PeerRef, multiple bool, current string, p *prompts) (string, []config.PeerRef, error) {
+func choosePurposePrompt(peers []policy.Peer, selected []config.PeerRef, multiple bool, current string, p *prompts, network ...string) (string, []config.PeerRef, error) {
+	protocol := "tcp"
+	if len(network) > 0 && network[0] != "" {
+		protocol = network[0]
+	}
 	for {
-		fmt.Fprintln(p.out, "Purpose: 1 web / 2 ssh / 3 db / 4 ai / 5 custom")
-		value, err := p.ask(fmt.Sprintf("Purpose [%s] (back to peers, q to cancel): ", current))
+		fmt.Fprintln(p.out, "Purpose presets suggest editable ports; they do not configure applications or select a protocol.")
+		fmt.Fprintf(p.out, "Protocol: %s (default tcp; set with --network tcp|udp).\n", protocol)
+		for i, choice := range purposePromptChoices()[:len(templates)] {
+			fmt.Fprintf(p.out, "%d. ", i+1)
+			fmt.Fprintln(p.out, choice.Label)
+		}
+		value, err := p.askChoice(fmt.Sprintf("Purpose [%s] (back to peers, q to cancel): ", current), purposePromptChoices(), current)
 		if err != nil {
 			return "", selected, err
 		}
@@ -1324,5 +1339,18 @@ func choosePurposePrompt(peers []policy.Peer, selected []config.PeerRef, multipl
 			continue
 		}
 		return value, selected, nil
+	}
+}
+
+// Values remain language-independent; only fixed presentation labels translate.
+func purposePromptChoices() []promptChoice {
+	return []promptChoice{
+		{Value: "web", Label: "Web (web) | port 8080 | HTTP service example"},
+		{Value: "ssh", Label: "SSH / file transfer (ssh) | port 22 | SSH/SFTP"},
+		{Value: "db", Label: "Database (db) | port 5432 | PostgreSQL example"},
+		{Value: "ai", Label: "AI API (ai) | port 11434 | local AI API example"},
+		{Value: "custom", Label: "Other (custom) | enter the actual service port"},
+		{Value: "back", Label: "Back to peers (back)"},
+		{Value: "q", Label: "Cancel (q)"},
 	}
 }

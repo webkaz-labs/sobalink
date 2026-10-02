@@ -22,7 +22,7 @@ bin/tsnet-bridge --lang auto help
 
 `TSNET_BRIDGE_LANG=ja`, `en` or `auto` is also supported. Command/flag names and complete machine JSON remain unchanged. Endpoints, identifiers and user values are not translated. Rule/group names may use Japanese letters as well as other letters/digits, hyphens and underscores. English and Japanese confirmation/edit/back/cancel inputs are accepted.
 
-Use a UTF-8 terminal. On Linux canonical terminals, prompts temporarily enable UTF-8-aware backspace and restore the original terminal mode afterwards. Malformed UTF-8 and terminal control sequences are rejected with a retry instead of being saved. Arrow-key editing and visual erasure of wide glyphs still depend on the terminal; no full-screen/raw-mode editor is included. The exact terminal and IME combinations remain an acceptance check.
+Use a UTF-8 terminal. In supported interactive terminals, Up/Down highlights one peer, purpose or service; Enter chooses it. Left/Right moves within typed text. Numbers, names and control words still work; type comma-separated peer numbers or names to share with several peers. Arrow navigation alone never confirms saving or starting. Redirected input/output keeps plain line prompts without terminal controls. Malformed UTF-8 and unsupported control sequences are rejected instead of being saved, and terminal settings are restored after prompting. Exact terminal, IME and native-platform combinations remain an acceptance check.
 
 ## First use
 
@@ -57,13 +57,29 @@ Waiting, connected and device-approval-pending states are distinct. The default 
 bin/tsnet-bridge connect
 ```
 
-1. Select a shared service by number. The list shows the peer, purpose, TCP/UDP shared port, check time and sharing expiry
+1. Select a shared service with Up/Down and Enter, or type its number. The list shows the peer, purpose, TCP/UDP shared port, check time and sharing expiry
 2. Accept or edit the local rule name and proposed local port
 3. Review the actual local endpoint and remote service, then start
 
-The selected remote peer, purpose, protocol and shared port stay together. At review, `e` edits only the local port, `s` or `back` returns to services, `m` switches deliberately to manual configuration and `r` changes the name. `r` at the service picker refreshes instead. `q`/`cancel` cancels without saving. Observations are usable for at most 15 seconds, never beyond sharing expiry. Selection is rechecked before save and again before start; a changed, stopped, expired or newly denied share requires a fresh choice. If the final check fails after save, the rule remains saved but disabled. Advertised expiry is the earlier of the share TTL and a task’s current lease. Normal lease renewal can keep the same grant/service selectable after rechecking; it does not retarget the connection.
+The selected remote peer, purpose, protocol and shared port stay together. At review, `e` edits only the local port, `s` or `back` returns to services, `m` switches deliberately to manual configuration and `r` changes the name. `r` at the service picker refreshes instead. `q`/`cancel` cancels without saving. Observations are usable for at most 15 seconds, never beyond sharing expiry. If an observation ages while you read the list, the same grant is rechecked when selected; an unchanged service with fresh, valid metadata needs no extra selection. Selection is rechecked before save and again before start; a changed, stopped, expired or newly denied share requires a fresh choice. If the final check fails after save, the rule remains saved but disabled. Advertised expiry is the earlier of the share TTL and a task’s current lease. Normal lease renewal can keep the same grant/service selectable after rechecking; it does not retarget the connection.
 
 The list confirms recent sharing metadata, not application health. A peer being online, a TCP handshake or a `ready` listener cannot establish an application's success. No result does not prove the remote service is stopped. Refresh after checking that the provider started a discoverable share and allowed this bridge node. If discovery is unsupported, blocked or unavailable, use `m` or `connect --manual` for a known service.
+
+### What the service provider needs
+
+For a bridge-published share, the provider runs both the actual local application and a signed-in bridge node. A started, unexpired share must explicitly allow the receiving bridge node. Discovery must also be enabled: review the new interactive share preview, or deliberately add `--discoverable` when using `--confirm`. Tailnet policy must allow the discovery port and actual shared service port separately.
+
+On the provider, after building the current source:
+
+```sh
+bin/tsnet-bridge init
+bin/tsnet-bridge login
+bin/tsnet-bridge share
+```
+
+Run `init` only once; skip it when a profile already exists. Start the local application with authentication before `share`, then choose the receiver, actual service port and lifetime, and review before starting. Keep the application and bridge running. The receiver refreshes `connect` after the provider starts sharing. An empty list or timeout does not establish that a bridge is missing or the peer is offline.
+
+An ordinary service already listening on a Tailscale peer does **not** need a bridge on that peer. Use `connect --manual` with its known peer, actual service port and TCP/UDP transport; the service listener, tailnet policy and application authentication must permit access.
 
 Same-port forwarding is preferred. Privileged or occupied local ports produce an alternative that requires confirmation; no silent renumbering or elevation occurs. Forward local ports are 1024..65535, destination service ports 1..65535. Existing RustDesk fixed-port rules remain separate.
 
@@ -78,6 +94,18 @@ Replace `web-demo` with your saved name. `connect NAME` and `start NAME` reuse t
 <details>
 <summary>Manual configuration and advanced connection details</summary>
 
+Purpose presets only suggest editable port numbers; they do not install/configure applications or choose TCP/UDP:
+
+| Purpose | Example and suggested port |
+| --- | --- |
+| `web` | HTTP service, `8080` |
+| `ssh` | SSH/SFTP, `22` |
+| `db` | PostgreSQL example, `5432`; other databases may differ |
+| `ai` | Local AI API example, `11434`; other AI services may differ |
+| `custom` | Enter the actual service port |
+
+The picker shows the selected transport. It defaults to TCP; pass `--network udp` for a UDP service. Every suggested port can be changed. Discovery instead takes the provider's actual shared port and transport, with no preset guessing. The final review distinguishes the local loopback entry point from the remote tailnet endpoint, or the shared tailnet listener from its local loopback target.
+
 `connect --manual` selects a current peer, purpose and actual port. Existing `--peer`, `--purpose`, `--port` or `--network` flags also choose this path. Purpose presets are suggestions, not evidence that the service exists. Here `e` edits ports/lifetime, `p`/`back` returns to peers, `u` changes purpose and `r` changes the name. Typing mistakes can be retried in place.
 
 ```sh
@@ -86,6 +114,8 @@ bin/tsnet-bridge connect --peer demo --purpose web --port 8080 --name web-demo
 bin/tsnet-bridge connect --peer demo --purpose ssh --listen-port 2222 --name ssh-demo
 bin/tsnet-bridge connect --peer demo --purpose custom --network udp --port 9000 --name udp-demo
 ```
+
+Input troubleshooting: redirected streams or `TERM=dumb` use plain number/name/CSV line input. If `TEA_TRACE` is set, unset that debugging variable before retrying; interactive input refuses it to prevent input logs, and does not save prompt history.
 
 </details>
 

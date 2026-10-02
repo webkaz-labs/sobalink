@@ -75,6 +75,7 @@ func currentServices(ctx context.Context, dir, peerID string) (app.ServiceCatalo
 
 // A nil selection means that the user explicitly chose the manual path.
 func chooseServicePrompt(ctx context.Context, dir string, p *prompts) (*app.DiscoveredService, error) {
+	hintShown := false
 	for {
 		fmt.Fprintln(p.out, "Checking services shared with this node...")
 		catalog, err := currentServices(ctx, dir, "")
@@ -87,8 +88,12 @@ func chooseServicePrompt(ctx context.Context, dir string, p *prompts) (*app.Disc
 		} else {
 			printServiceCatalog(p.out, catalog)
 		}
+		if !hintShown && (err != nil || len(catalog.Services) == 0) {
+			printServiceSetupHint(p.out, commandPrefix(dir))
+			hintShown = true
+		}
 		for {
-			answer, err := p.ask("Choose service number, r refresh, m manual, or q cancel: ")
+			answer, err := p.askChoice("Choose service number, r refresh, m manual, or q cancel: ", servicePromptChoices(catalog), "")
 			if err != nil {
 				return nil, err
 			}
@@ -105,6 +110,15 @@ func chooseServicePrompt(ctx context.Context, dir string, p *prompts) (*app.Disc
 				}
 				selected := catalog.Services[n-1]
 				if !selectableService(selected, time.Now()) {
+					// Reading the list can outlast its short observation lifetime.
+					// Refresh only this exact grant; never silently select a changed
+					// endpoint, a new grant or an unavailable share.
+					if err := revalidateService(ctx, dir, &selected); err == nil {
+						return &selected, nil
+					}
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
 					fmt.Fprintln(p.out, "This sharing observation is stale or expired. Refreshing the service list; choose again.")
 					break
 				}
@@ -113,6 +127,31 @@ func chooseServicePrompt(ctx context.Context, dir string, p *prompts) (*app.Disc
 			break
 		}
 	}
+}
+
+func servicePromptChoices(catalog app.ServiceCatalog) []promptChoice {
+	choices := make([]promptChoice, 0, len(catalog.Services)+3)
+	for i, service := range catalog.Services {
+		choices = append(choices, promptChoice{
+			Value: strconv.Itoa(i + 1),
+			Label: fmt.Sprintf("%d. %s | %s | %s:%d", i+1, service.PeerHost, service.Purpose, service.Network, service.Port),
+		})
+	}
+	return append(choices,
+		promptChoice{Value: "r", Label: "Refresh services (r)"},
+		promptChoice{Value: "m", Label: "Manual configuration (m)"},
+		promptChoice{Value: "q", Label: "Cancel (q)"},
+	)
+}
+
+func printServiceSetupHint(out io.Writer, localCommand string) {
+	fmt.Fprintln(out, "On the provider: keep the application and signed-in bridge running, with an active, unexpired share allowing this node.")
+	fmt.Fprintln(out, "Provider setup (skip init if a profile exists):")
+	fmt.Fprintln(out, "  tsnet-bridge init")
+	fmt.Fprintln(out, "  tsnet-bridge login")
+	fmt.Fprintln(out, "  tsnet-bridge share")
+	fmt.Fprintln(out, "Review the peer, service, lifetime and discovery scope. With --confirm, discovery requires explicit --discoverable.")
+	fmt.Fprintf(out, "For an ordinary Tailscale service, no remote bridge is required. Use %s connect --manual with its known peer and port.\n", localCommand)
 }
 
 func printServiceCatalog(out io.Writer, catalog app.ServiceCatalog) {
@@ -212,7 +251,7 @@ func editDiscoveredRule(ctx context.Context, dir, answer string, r *config.Rule,
 	if err != nil {
 		return true, err
 	}
-	purpose, refs, err := choosePurposePrompt(peers, refs, false, r.Purpose, p)
+	purpose, refs, err := choosePurposePrompt(peers, refs, false, r.Purpose, p, r.Network)
 	if err != nil {
 		return true, err
 	}
