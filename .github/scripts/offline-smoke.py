@@ -138,7 +138,8 @@ def check_web(ui, binary):
     if metadata.is_file():
         import hashlib
         for asset in json.loads(metadata.read_text(encoding="utf-8"))["frontend"]["assets"]:
-            assert hashlib.sha256(request("/" + asset["path"])).hexdigest() == asset["sha256"], "embedded frontend differs from build inventory"
+            route = "/" if asset["path"] == "index.html" else "/" + asset["path"]
+            assert hashlib.sha256(request(route)).hexdigest() == asset["sha256"], "embedded frontend differs from build inventory"
     request("/api/state", status=401)
     request("/api/state", headers={"Host": "attacker.example"}, status=403)
     request("/api/session", {"code": ui["code"]}, status=403)

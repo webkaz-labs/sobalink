@@ -96,7 +96,7 @@ await page.screenshot({ path: `${output}/conversation-en-mobile.png`, fullPage: 
 assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'English mobile must not overflow horizontally')
 await page.setViewportSize({ width: 1440, height: 960 })
 await page.getByRole('button', { name: 'Preferences', exact: true }).click()
-await page.getByLabel('Language', { exact: true }).selectOption('ja')
+await page.getByRole('dialog').getByRole('combobox', { name: 'Language', exact: true }).selectOption('ja')
 await page.getByRole('button', { name: 'ダーク', exact: true }).click()
 await page.getByRole('button', { name: '閉じる', exact: true }).click()
 await page.screenshot({ path: `${output}/conversation-ja-dark-desktop.png`, fullPage: true })
