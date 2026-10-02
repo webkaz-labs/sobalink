@@ -110,7 +110,7 @@ def release_state(version, commit, required=False, published=False):
         require(release["tag_name"] == tag and release["target_commitish"] in (commit, "main"), "release source differs from tested_commit")
         require(release["prerelease"] is True, "only prereleases may be created or resumed")
         require(release["draft"] is (not published), "published releases are immutable; choose a new version")
-        require("<!-- tsnet-bridge-source:" + commit + " -->" in release["body"], "release lacks the exact source marker")
+        require("<!-- sobalink-source:" + commit + " -->" in release["body"], "release lacks the exact source marker")
     if release is not None:
         require(len(release["assets"]) == len({a["name"] for a in release["assets"]}), "duplicate remote assets")
         require({a["name"] for a in release["assets"]} <= filenames(version) | {"packslip.sigstore.json"}, "unexpected remote assets; manual review required")
@@ -120,7 +120,7 @@ def release_state(version, commit, required=False, published=False):
 def filenames(version):
     result = {"packslip.toml", "SHA256SUMS"}
     for target in TARGETS:
-        stem = "tsnet-bridge-" + version + "-" + target
+        stem = "sobalink-" + version + "-" + target
         result.update(stem + suffix for suffix in ((".zip" if target.startswith("windows-") else ".tar.gz"), ".cdx.json", ".build.json", ".notices.json"))
     return result
 
@@ -151,15 +151,19 @@ def check_assets(root, version, commit, bundle=False):
     for name, digest in checksums.items():
         require(sha256(root / name) == digest, "checksum mismatch: " + name)
     for target in TARGETS:
-        stem = "tsnet-bridge-" + version + "-" + target
+        stem = "sobalink-" + version + "-" + target
         meta = json.loads((root / (stem + ".build.json")).read_text(encoding="utf-8"))
-        require(meta["project"] == PROJECT and meta["version"] == version and meta["source_commit"] == commit and meta["target"] == target, "incorrect build identity: " + target)
+        require(meta["product"] == "sobalink" and meta["project"] == PROJECT and meta["version"] == version and meta["source_commit"] == commit and meta["target"] == target, "incorrect build identity: " + target)
+        require(meta["build_tags"] == "ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy", "unexpected network build tags")
         require(meta["go_version"] == "go1.27.1" and meta["cgo_enabled"] is False and meta["trimpath"] is True and meta["buildvcs"] is False, "unexpected build settings")
+        require(meta["frontend"]["node_version"] == "24.19.0" and meta["frontend"]["npm_version"] == "11.9.0", "unexpected frontend toolchain")
+        require(re.fullmatch(r"[0-9a-f]{64}", meta["frontend"]["lock_sha256"]) is not None, "missing frontend lock digest")
+        require(bool(meta["frontend"]["assets"]), "missing embedded frontend inventory")
         bom = json.loads((root / (stem + ".cdx.json")).read_text(encoding="utf-8"))
         require(bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5", "invalid SBOM")
         notices = json.loads((root / (stem + ".notices.json")).read_text(encoding="utf-8"))
-        require(bool(notices["modules"]), "empty dependency notices")
-        for module in notices["modules"] + [notices["go_standard_library"]]:
+        require(bool(notices["modules"]) and bool(notices["frontend_modules"]), "empty dependency notices")
+        for module in notices["modules"] + notices["frontend_modules"] + [notices["go_standard_library"]]:
             require(bool(module["notices"]), "missing module license notices")
     print("Verified four native targets, source identity, SBOMs, notices, and all distribution checksums")
 
@@ -185,12 +189,12 @@ def check_bundle(root, version, commit):
     url_base = "https://" + PROJECT + "/releases/download/v" + version + "/"
     for target in TARGETS:
         target_os, target_arch = target.split("-")
-        stem = "tsnet-bridge-" + version + "-" + target
+        stem = "sobalink-" + version + "-" + target
         name = stem + (".zip" if target_os == "windows" else ".tar.gz")
         artifact = next(a for a in artifacts if a["name"] == name)
         require(artifact["os"] == target_os and artifact["arch"] == {"amd64": "x86_64", "arm64": "aarch64"}[target_arch], "wrong signed native platform")
         require(artifact["format"] == ("zip" if target_os == "windows" else "tar.gz"), "wrong signed archive format")
-        require(artifact["bin"] == ["bin/tsnet-bridge" + (".exe" if target_os == "windows" else "")], "wrong signed executable path")
+        require(artifact["bin"] == ["bin/soba" + (".exe" if target_os == "windows" else "")], "wrong signed executable path")
         # Packslip 1.4.0 normalizes libc=any to an absent libc constraint.
         require(artifact.get("libc") is None, "unexpected signed libc restriction")
         require(artifact["url"] == url_base + name and artifact["size"] == (root / name).stat().st_size, "wrong signed artifact download")

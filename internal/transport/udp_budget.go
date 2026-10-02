@@ -11,6 +11,45 @@ const maxTotalUDPSessions = 512
 var udpMemory = byteBudget{limit: maxTotalUDPQueuedBytes}
 var udpSessionSlots = make(chan struct{}, maxTotalUDPSessions)
 
+// UDPBudget bounds one policy across all of its materialized UDP ports. Its
+// zero value is usable; NewUDPBudget makes the shared ownership explicit.
+// Per-table and process-wide limits continue to apply independently.
+type UDPBudget struct {
+	mu                    sync.Mutex
+	sessions, queuedBytes int
+}
+
+func NewUDPBudget() *UDPBudget { return &UDPBudget{} }
+
+func (b *UDPBudget) reserveSession() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.sessions >= defaultMaxUDPSessions {
+		return false
+	}
+	b.sessions++
+	return true
+}
+func (b *UDPBudget) releaseSession() { b.mu.Lock(); b.sessions--; b.mu.Unlock() }
+func (b *UDPBudget) reserveBytes(n int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n < 0 || n > maxUDPQueuedBytes-b.queuedBytes {
+		return false
+	}
+	b.queuedBytes += n
+	return true
+}
+func (b *UDPBudget) releaseBytes(n int) { b.mu.Lock(); b.queuedBytes -= n; b.mu.Unlock() }
+
+// Usage returns a consistent snapshot of this policy's held mapping slots and
+// queued (including in-flight write) payload bytes.
+func (b *UDPBudget) Usage() (sessions, queuedBytes int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessions, b.queuedBytes
+}
+
 type byteBudget struct {
 	mu          sync.Mutex
 	used, limit int
@@ -33,7 +72,13 @@ func (t *udpTable) reserveBytes(n int) bool {
 	if n < 0 || n > maxUDPQueuedBytes-t.queuedBytes {
 		return false
 	}
+	if t.cfg.Budget != nil && !t.cfg.Budget.reserveBytes(n) {
+		return false
+	}
 	if !udpMemory.reserve(n) {
+		if t.cfg.Budget != nil {
+			t.cfg.Budget.releaseBytes(n)
+		}
 		return false
 	}
 	t.queuedBytes += n
@@ -43,5 +88,8 @@ func (t *udpTable) releaseBytes(n int) {
 	t.bytesMu.Lock()
 	t.queuedBytes -= n
 	udpMemory.release(n)
+	if t.cfg.Budget != nil {
+		t.cfg.Budget.releaseBytes(n)
+	}
 	t.bytesMu.Unlock()
 }

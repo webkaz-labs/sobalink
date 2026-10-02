@@ -1,60 +1,78 @@
-# Security
+# Security boundaries
 
-This is an experimental pre-release tool. No production-security or RustDesk compatibility claim is made.
+[日本語](docs/SECURITY.ja.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md)
 
-## Intended boundary
+sobalink is a local development draft. Its controls constrain this agent's management surface, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. Real network and browser acceptance remain incomplete; see the verification record before relying on a claim.
 
-- Outward forwarding and SOCKS listeners bind numeric loopback only
-- Explicit v2 shares bind only this embedded node’s tailnet address; their local targets are exactly 127.0.0.1 or ::1
-- Sharing requires pinned source peers and TTL, in addition to tailnet policy; localhost-only trust must not replace application authentication
-- SOCKS requires random username/password and accepts TCP CONNECT only
-- Fixed forwarding has no additional transport password: the application protocol cannot carry it
-- Starts are bound to the exact reviewed rule definitions; concurrent changes require a fresh review
-- Stop, expiry and observed peer-identity revocation cancel existing flows; process restart restores no v2 grants
-- Destinations must be explicitly configured, current tailnet peers and permitted ports
-- The identity adapter dials only the userspace netstack; it never falls back to OS DNS/routing
-- OS-backed locking prevents concurrent use of one state directory
-- IPC is private to the current user; Windows also checks the connected server process identity
-- Unix directories/files use 0700/0600; Windows uses protected current-user DACLs
+## Local management stays local
 
-State and SOCKS passwords are not encrypted at rest. Same-user processes and privileged users are outside the isolation boundary. Use a private profile directory on a local filesystem, narrowly scoped tailnet policy, and application authentication. Network-mounted or shared state directories are unsupported. A user who can alter the profile and issue control commands can authorize a different peer. Task owner IDs partition cleanup only; they are not authentication credentials.
+- The React UI and management API bind only to an OS-selected ephemeral TCP port on **exactly `127.0.0.1`**. There is no configurable wildcard, LAN, Tailnet or hostname bind
+- Requests require the exact printed Host and a loopback source. Origin and Fetch Metadata checks reject cross-origin management requests; mutations require the exact same Origin
+- The local terminal supplies a cryptographically random one-time code, valid for five minutes. The code is never embedded in a URL. Successful use consumes it; a fresh `soba ui` code replaces the previous unused code
+- The browser receives an HttpOnly, SameSite=Strict session cookie and uses a session-bound CSRF token for mutations. The UI uses in-memory session state and same-origin APIs
+- The loopback URL is HTTP. These local checks do not provide HTTPS transport to another device and must not be exposed by a proxy or a service share
+- Responses disable caching and framing and carry a restrictive content security policy. Production JavaScript, styles and fonts are embedded; there is no runtime CDN
+- Bounded requests, streams, headers and concurrency limit resource use. Failure to create a socket is a failure, not a reason to broaden the bind address
+- Local IPC is restricted to the owning OS user and dispatches to the same application core. A process already running as that user can still access their files and authority; these controls do not isolate a compromised local account
 
-## Optional peer-scoped service metadata
+The peer API is a different handler. A peer cannot use it to change networks, trust, receive paths, service grants, sessions, settings or arbitrary local files.
 
-The current source adds a read-only discovery endpoint; it is not part of the published `0.2.0-alpha.1` binary. A missing `discoverable` field means false, including existing profiles. New interactive shares preview discovery scope before confirmation, `--no-discovery` disables it, and existing `--confirm` scripts keep it disabled unless `--discoverable` is explicit. Saving/importing a discoverable rule does not start advertising it. Allowed recipients remain an explicit current-peer selection.
+## Explicit network and identity
 
-TCP 54543 at `/.well-known/tsnet-bridge/services/v1` listens only on the embedded node's current tailnet address while an opted-in share is active. It is not a public/LAN listener, local-control API or general proxy. Every request checks Tailscale `WhoIs` for the real socket source, current stable ID/source-IP mapping, each grant's start-time pins, allowed caller and unexpired lifetime. Headers are not identity evidence. A valid tailnet caller can receive only its own permitted current shares; no service entries are returned for other callers. The fixed endpoint's existence and an empty response may still reveal that a bridge discovery endpoint is running to a peer permitted by tailnet policy.
+A new profile selects no network. Existing Tailnet mode enrolls a separate embedded tsnet node through the official interactive flow; it does not import a system Tailscale session, edit OS routes/DNS, create a kernel tunnel or install a privileged service.
 
-Only protocol version, opaque service ID, fixed purpose, TCP/UDP network, shared port, expiry and `application: unverified` leave the provider. Rule names, local target address/port, owner, path, allowed-peer list and free-form context do not. Service metadata remains information shared with approved recipients, not a secret-storage mechanism. Do not opt in if those recipients should not learn that metadata.
+Outbound service connections use the embedded userspace stack and current peer identity. The application does not fall back to ordinary OS service dialing or OS DNS resolution when a permitted peer is unavailable. Application target authorization, Tailnet grants/ACLs and application credentials remain separate controls.
 
-Discovery permission and service-port permission are separate. Tailnet ACLs must allow the chosen caller to reach TCP 54543 for discovery and independently allow its selected application port/protocol. The bridge never changes tailnet ACLs to make discovery work. A blocked or unsupported endpoint preserves manual connection to a known service, subject to the same service authorization.
+Tailcat mode is unavailable in the initial snapshot and remains under integration. Its intended production boundary uses one explicit numeric relay endpoint and a TLS certificate SHA-256 pin. It rejects peer capabilities that name a different relay, public relay-map defaults and DNS bootstrap. Required build tags omit port mapping, captive-portal probing and system-proxy support; unsupported proxy and backend override environments fail closed.
 
-Reads are bounded to 128 current peers, four concurrent requests, two seconds per peer and eight seconds overall, without application-port scanning, a central registry or disk cache. Metadata observations expire locally after at most 15 seconds and are rechecked before saving/starting. HTTP admission, sizes, counts and timeouts are bounded; redirects and connection reuse are disabled. All client traffic stays identity-pinned and netstack-only. These bounds are not denial-of-service immunity. A confirmed observation proves neither application health nor completion of a remote action.
+That Tailcat boundary permits peer direct traffic, encrypted payload through the selected trusted relay, and HTTPS/ICMP latency diagnostics to the selected relay endpoint. It does **not** claim strict LAN-only traffic, zero external contact or an egress sandbox. A self-hosted or explicitly trusted relay is a deliberate choice; no arbitrary public fallback is authorized. See [the integration gate](docs/VERIFICATION.en.md#tailcat-gate).
 
-## Authentication and diagnostics
+Backend selection is explicit and process-scoped. A mode switch is not an automatic recovery mechanism. Direct, relayed and reconnecting are different observations; unknown path evidence must stay unknown. Neither a direct/relay transition nor restarting a backend guarantees survival of an existing TCP session.
 
-Enrollment is interactive through the official Tailscale control plane. The program does not accept auth keys, OAuth client secrets, or workload tokens from flags/profile/environment. The CLI retrieves private sign-in URLs over protected IPC and displays them only for the explicit login command, never in status or startup stdout/stderr. Before tsnet construction, the process-wide upstream logtail kill switch disables new buffer writes, including automatic auth-URL messages. Old files from earlier versions may remain and must stay private. The browser opener and terminal QR accept only HTTPS authorization paths at login.tailscale.com. QR is generated in memory only for an explicit login command and refuses file/pipe redirection; it is as sensitive as the authorization URL. Terminal scrollback/screenshots can still retain it. Neither local wait timeout nor Ctrl+C is claimed to revoke the server link.
+Display names and addresses are not durable identity. Incoming identity is derived from the authenticated transport, then checked against current state. Peer removal, address reassignment, expiry or trust revocation must invalidate the relevant authorization. Tailcat pairing capabilities, pre-shared keys, invitation tokens and private state must never appear in status, logs, discovery or distributed examples.
 
-Application analytics are absent. The adapter sets Tailscale's `TS_NO_LOGS_NO_SUPPORT` knob before starting tsnet to disable upstream diagnostic upload; ordinary Tailscale control, coordination, relay, DNS/bootstrap, and connection traffic still occurs. User/backend log callbacks suppress console output. The upstream logtail kill switch also prevents new buffered diagnostic entries; upstream may still create empty buffer/configuration files. Existing private files and identity state remain sensitive and are not automatically deleted. This is not an offline tool and does not promise to hide node metadata from the tailnet administrator or Tailscale service.
+## Trust and receiving
 
-Do not publish state, profile data, private login URLs, SOCKS credentials, or startup logs without inspecting them. A future diagnostic bundle must redact and provide a preview; no automatic upload mechanism is included.
+Trust for messages/file offers binds an exact verified peer. Service sharing is a separate grant. The receiving peer must authorize the sender; one device's trust selection cannot grant authority on another device.
 
-## Resource bounds and lifetimes
+- Each incoming batch requires explicit receiver acceptance by default
+- Optional autosave binds the exact trusted identity, current trust generation and an explicit absolute destination. It is persisted only through a successful private configuration write
+- Autosave can accept future batches while enabled. Pause, disable and revoke are available; trust renewal or an identity change does not revive an earlier generation's grant
+- Neither acceptance nor autosave permits overwriting existing files, automatic opening, execution, shell evaluation or clipboard synchronization
+- Receiver destinations stay local. Peers provide portable relative paths, never trusted local absolute paths
+- The receiver rejects traversal, absolute/drive/device paths, ambiguous separators/names, symlinks, reparse points and unsupported file types. It does not preserve executable attributes
+- A file is finalized only after its size and SHA-256 match the accepted manifest. Exclusive creation and a unique final name prevent existing-file replacement. Temporary files and source paths are not exposed through the peer API
+- Metadata, file/batch size, hierarchy, outstanding offers, storage reservations and concurrent transfers are bounded. The product currently caps a batch at 256 entries and 1 GiB
+- Browser upload progress describes local staging. Remote acceptance and saved acknowledgement are separate states
 
-TCP/SOCKS admission is bounded at 128 connections per listener and 512 process-wide. UDP allows at most 256 mappings per rule and 512 process-wide. Queued UDP payload is limited to 1 MiB per rule and 16 MiB process-wide, in addition to the 64-packet per-source queue. Excess traffic is dropped; these controls are not bandwidth fairness or denial-of-service immunity. Read buffers, upstream stack memory and fixed metadata are additional overhead.
+Retry is a whole-file operation for unfinished files in the current session. A saved file acknowledgement is idempotent while that batch exists. There is no partial-byte resume or durable restart-resume journal. After restart, a new offer may produce a uniquely named duplicate; users must review previously saved output.
 
-Sharing expires after at most 24 hours. Independent grant cancellation and per-I/O guards use elapsed-time and wall-clock checks; exact physical suspend scheduling is not guaranteed. Repeating an identical start retains the original expiry; changing an active TTL/lease requires stop and a reviewed restart. A task’s abandoned lease expires without relying on caller cleanup. TTL closes transport only, never guarantees remote-job cancellation.
+Cancellation, expiry and revocation close tracked work. They do not delete successfully saved files, retract sent content or cancel jobs launched inside a remote application. Forgetting history does not delete received files.
 
-## Limitations
+## Service sharing and discovery
 
-Revocation depends on current control-plane knowledge. UDP validates before forwarding datagrams, and health checks close stale active flows; already transmitted bytes cannot be recalled. Tailscale ACL enforcement remains authoritative. Fixed forwarding distorts application-visible source/NAT information, and its RustDesk interoperability has not passed real end-to-end acceptance.
+A share requires a current embedded-node address, an exact numeric loopback target, explicit protocol and port ranges, 1–32 current peer IDs and an expiry of at most 24 hours. No wildcard audience, subnet route, arbitrary LAN gateway or internet forwarder is implicit.
 
-A successful build or mocked test is not evidence of standard-user Windows enrollment, OS-level sandbox behavior, or signed/notarized distribution. Unsigned development binaries may trigger platform warnings. Do not bypass an OS security warning merely because CI passed.
+TCP shares use one compact fallback dispatcher and same-port mapping: shared port N targets loopback port N. They do not allocate an OS listener for every port in a range. UDP shares and local connection listeners do require individual resources and share a total 64-listener cap. Local connection ports must be 1024–65535. Conflicts and exhausted capacity fail without silently remapping or widening permission.
 
-## Reporting
+**A range grants future use of all effective ports for its lifetime.** An application started later inside that range becomes reachable to the permitted peers. Narrow the range and use explicit exclusions. The discovery endpoint `54543`, peer API `54544`, pairing endpoint `54545`, current local management/control endpoints and backend-internal endpoints are not general service-share targets. Reserved endpoints cannot be made shareable by selecting a larger range.
 
-Report reproducible issues through the repository's security reporting feature when available. Otherwise open a minimal issue asking for a private reporting channel, without secrets, identity state, passwords, or exploitable sensitive details. Do not post sensitive diagnostics publicly.
+Every accepted stream is authorized against current identity, scope and expiry before dialing its loopback target. Stop, expiry and revocation invalidate tracked connections. Saved definitions do not automatically reactivate after restart; starting again requires an explicit action and lifetime.
 
-## Dependency changes
+Discovery is opt-in metadata for current, authorized, unexpired shares. It must not expose unapproved peers, local destinations, filesystem paths or credentials. Discovery results are revalidated before use and always label application health as unverified. An ordinary Tailnet service can be connected manually without sobalink on the target.
 
-Go and Tailscale are pinned. The netstack-only adapter relies on an unstable upstream API; review it and rerun policy, lifecycle, and native tests before upgrading. CI never enrolls a node or uses real tailnet secrets. Ordinary CI does not publish releases. The separately dispatched prerelease workflow can publish explicitly requested testing releases, using short-lived GitHub OIDC signing and genuine build attestations without a persistent signing key. Packslip signatures do not replace OS code signing or real application acceptance.
+Keep the target application's authentication, TLS/SNI, SSH host-key checks and origin controls. Local forwards may be used by other local processes; loopback is not per-process authentication. A remotely accessible application may see the bridge's loopback connection, so it must not treat that source as sufficient authorization.
+
+## Private state and diagnostics
+
+The private state directory contains node identity, trust and local configuration. Do not sync or publish it, use it as a shared attachment, or include it in packages. Backups inherit its sensitivity. A new state directory is a new identity, with separate enrollment and trust decisions.
+
+Logs, issue reports, screenshots, sample configuration, README examples and distribution metadata must use generic fixtures. Remove codes, auth URLs, peer capabilities, private keys, local paths, private endpoints and unrelated personal context. Production packaging rejects provenance gaps and includes dependency notices rather than copying runtime state.
+
+There is no automatic application launch, remote command execution, arbitrary shell endpoint, OS-wide traffic interception or clipboard watcher. This does not prevent a separately authorized remote application from running a job; control and cancellation of that job remain the application's responsibility.
+
+## Verification and disclosure
+
+Retain native Linux x64/ARM64, macOS ARM64 and Windows x64 race tests, vet, frontend tests and actual packaged-binary checks. Signed artifacts, provenance and repeatable builds are separate from OS code signing/notarization and real-device acceptance. Do not disable signature, identity, digest or OS security checks to make an installation pass.
+
+Report security issues privately through the repository's available private reporting mechanism; do not put credentials or a working exploit against a private endpoint in a public issue. If private reporting is unavailable, ask for a private channel before sharing sensitive details. There is no claim of a completed external security audit or stable support for this draft.

@@ -1,112 +1,114 @@
-# Architecture and compatibility
+# sobalink architecture
 
-## Scope
+[日本語ガイド](GENERIC.ja.md) · [English guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-The same Go CLI runs as an unprivileged foreground or detached process on Linux, macOS, and Windows. It embeds a separate Tailscale identity. It never configures an OS TUN, global proxy, OS DNS, subnet router, exit node, or system-wide startup service. Optional user-level registration starts only an idle v2 node; `run --idle` rejects legacy automatic-forwarding profiles.
+The local development draft combines an embedded React UI and a Go agent. Human interaction and agent CLI requests share one application boundary. A peer can exchange authorized messages, batches and service metadata; it cannot operate the local administration API.
 
-Legacy forwarding modes share a small policy layer:
+```mermaid
+flowchart LR
+    U["Browser on this device"] --> W["127.0.0.1 ephemeral Web API"]
+    C["soba CLI"] --> I["Owner-only local IPC"]
+    W --> K["Shared Go core"]
+    I --> K
+    K --> P["Identity and permission checks"]
+    P --> N["Explicit network backend"]
+    N --> R["Authenticated peer API"]
+    P --> F["Bounded file receiver"]
+    P --> S["Scoped service dispatcher"]
+    S --> L["Exact local loopback service"]
+```
 
-- Fixed profile: TCP ID-port minus one, TCP/UDP ID-port, TCP relay-port
-- SOCKS profile: authenticated SOCKS5 CONNECT only, restricted to the configured TCP peers/ports
+## Source map
 
-Outward and legacy application listeners bind IPv4 loopback. Restricted inbound listeners bind the embedded node’s explicit tailnet address. Control commands (64 KiB request / 256 KiB response bounds, 16 concurrent handlers) use a 0600 Unix socket inside a 0700 directory, or a Windows current-user-only named pipe. The Windows client verifies the server process user before sending commands, preventing another user from impersonating a server by pre-creating its predictable name. Local control is not an HTTP endpoint.
+| Source | Responsibility |
+| --- | --- |
+| `cmd/soba` | Locale selection, foreground lifecycle, local command interface |
+| `web` | React source, pinned npm lockfile, generated assets embedded with Go |
+| `internal/webui` | Exact loopback management listener, code/session/Origin/CSRF checks |
+| `internal/control` | Owner-restricted Unix socket or Windows named pipe |
+| `internal/core` | Shared commands, current state, profile, trust, peers, transfers and service grants |
+| `internal/identity` | Embedded tsnet adapter and current Tailnet identity |
+| Tailcat integration work | Trusted-relay adapter and pairing are excluded from the initial snapshot; the integration gate remains open |
+| `internal/transfer` | Manifest validation, receive policy, bounded streaming, storage and whole-file retry |
+| `internal/ranges` | Compact range/exclusion sets, immutable plans and TCP fallback admission |
+| `internal/policy`, `internal/transport` | Current-identity authorization, forwarding and bounded TCP/UDP lifetimes |
+| `internal/distribution` | Deterministic package layout, source/dependency metadata, frontend assets and notices |
 
-## Named rules and restricted inbound connections
+The legacy `cmd/tsnet-bridge` implementation may remain in the tree. It does not define the new UI, CLI or profile compatibility contract. Product names and executable names change independently of the current repository/module locator.
 
-Version 2 persists named TCP/UDP rules and groups. Every save/import disables rules; startup and restart never reconstruct runtime grants. A start request carries a digest of the exact reviewed rule definitions; the daemon compares the current atomic selection before changing state. A group start is transactional for newly started members. Other owners' active listeners are preserved. Peer IDs are pinned in saved forward rules and inbound source lists, preventing same-name replacement from retargeting a connection.
+## Network boundaries
 
-Forward listeners stay numeric IPv4 loopback; remote service ports span 1..65535 independently from unprivileged local ports 1024..65535. Inbound listeners use only `tsnet.Server.Listen` / `ListenPacket` on an explicitly current self tailnet address. Local targets are exactly `127.0.0.1` or `::1`. The OS dialer is used only for that explicitly selected loopback service, never for outward tailnet traffic.
+The application selects one backend explicitly. A new profile selects none. A saved selected backend may reconnect when the agent starts; that does not restart service grants or transfer progress. Runtime switching cannot silently exchange backend identities or continue an existing TCP session.
 
-Incoming source addresses are checked against current, nonexpired peer IDs and their start-time numeric mapping. Even an address reassigned to another allowed peer cannot inherit the previous stream/datagram mapping. TCP authorization is checked around data I/O and by a periodic watcher; UDP checks both directions. Listener/flow shutdown and application authentication warnings accompany sharing. Limits are 128 streams per listener / 512 process-wide, 256 UDP source mappings per rule / 512 process-wide, and 64 queued packets per source. UDP queued payload has additional 1 MiB per-rule / 16 MiB process-wide budgets, reserved before copying and released on send, error or close. Read buffers and upstream stack overhead are separate from queue budgets.
+Existing Tailnet mode uses a separate embedded tsnet node. Enrollment uses the official interactive login flow. Current peer identity, Tailnet grants/ACLs and the application grant are checked independently. Service dialing uses the embedded stack instead of an OS-network fallback. OS routes and DNS remain outside this product's management surface.
 
-Every share requires a TTL of at most 24 hours. Grant guards check both monotonic elapsed time and wall-clock expiry before data forwarding. An independent grant canceler closes existing streams and mappings even while the manager is busy; per-I/O guards reject post-expiry traffic. A daemon pass updates observed status. Restart cannot revive a grant. Identical repeated starts retain the original expiry; changed TTL/lease values require explicit stop and a reviewed restart. A task has its own cleanup owner and renewable short lease. `task` renews a 30-second lease every 10 seconds and stops only its rules on command exit; absent renewals expire. This is not an OS security boundary or remote-job cancellation.
+Tailcat mode is unavailable in the initial snapshot and remains under integration. The stock adapter uses an explicit numeric relay endpoint with a TLS certificate SHA-256 pin and matching peer capabilities. It has no default public relay map or DNS bootstrap. Build tags `ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy` exclude port mapping, captive-portal probes and system-proxy fallback; proxy/unsupported backend environment overrides are rejected.
 
-A common connection outage closes listeners while preserving the original grant within its lifetime. Recovery checks the same pinned identities. Observed identity disappearance/change latches a terminal failure requiring explicit restart. Per-rule state/JSON distinguishes listener readiness and TCP diagnostic reachability from unverified application behavior. No application request is replayed.
+The selected relay may be self-hosted or another endpoint explicitly trusted by the user. Its permitted traffic includes encrypted relayed payloads and HTTPS/ICMP diagnostics to that same endpoint, plus peer direct traffic. This boundary is not strict LAN isolation or zero external traffic. Pairing key ownership, durable acknowledgement, UDP multiplexing and native continuity tests must pass before claiming a working end-to-end Tailcat mode. [Current gate](VERIFICATION.en.md#tailcat-gate)
 
-## Service-first discovery (current source)
+```mermaid
+flowchart TD
+    A["Explicit network selection"] --> B["Existing Tailnet"]
+    A --> C["Tailcat with selected trusted relay"]
+    B --> D["Current authenticated peer identity"]
+    C --> E["Explicit pairing and verified peer key"]
+    D --> F["Transfer or service grant"]
+    E --> F
+    F --> G["Direct or encrypted relay path when observed"]
+    G --> H["Application result checked separately"]
+```
 
-Interactive `connect` first selects an active service that the provider explicitly permits to the caller, rather than inferring services from peer presence or purpose presets. The selected peer, purpose, network and shared port are one observation. The local picker attaches its own receipt time, expires observations after 15 seconds or the grant's earlier expiry, and rechecks the chosen provider before save and before start. Catalogs are never persisted. Advertised expiry is the earlier of share TTL and current task lease; normal renewal of the same grant can be accepted after revalidation without selecting another endpoint. Saved forward rules retain their pinned peer/endpoint behavior and do not claim a fresh discovery observation; discovery is not an additional authorization grant, and manual configuration remains available for ordinary Tailscale services, old bridges and known endpoints.
+Direct and Relay are path observations; Reconnecting is a lifecycle state. Unknown means the backend has not supplied reliable path evidence. A route can change inside a backend, but the product makes no established-TCP preservation promise. An unavailable backend does not trigger automatic exchange to another mode.
 
-A share's `discoverable` field defaults to false when absent. New interactive sharing previews minimal metadata and enables it only with confirmation; `--no-discovery` opts out. Existing `--confirm` scripts do not opt in unless `--discoverable` is explicit. Saved rules and imports preserve the field but remain disabled until explicitly started. Sharing-recipient selection uses all current eligible peers, not only peers that publish services.
+## Management and peer surfaces
 
-An opted-in, ready share permits a read-only listener on the embedded node's current explicit tailnet address, TCP 54543, at `/.well-known/tsnet-bridge/services/v1`. No discovery listener is needed for idle, legacy-only or non-discoverable sharing. Removing the last eligible active share closes it. Listener failure leaves the application's share independent and is reported as unavailable. Discovery and application traffic require separate tailnet policy permissions.
+The management listener is always `127.0.0.1:0` at allocation and then the exact resulting host/port. It serves embedded assets and `/api` only. A separately delivered one-time terminal code creates a session; mutating requests require the matching Origin and session CSRF token. URL-based secrets, wildcard listening and remote administration are excluded.
 
-For every HTTP request, the provider authenticates the actual source socket with current `WhoIs`, verifies the stable node ID and numeric source address against the current nonexpired peer snapshot, then checks each share's allowed peers, start-time address-to-ID pins, live listener and active lifetime. No request header supplies identity. A successful current peer identity alone is not permission to see another peer's share. A known caller with no permitted current shares receives an empty catalog. Stopped, expired, revoked and replaced grants cannot supply selectable metadata.
+The current UI contract is [web/API.md](../web/API.md), backed by TypeScript in `web/src/api.ts`. The UI cannot make its own trust decision authoritative: Go validates identity, expiry, range, receive policy and path safety on every relevant operation. Request IDs deduplicate repeated commands within bounded process-local history; they do not claim durable transaction recovery.
 
-The strict remote DTO contains only a protocol version and services with an opaque per-grant identifier that is never persisted, fixed purpose token, TCP/UDP network, shared port, expiry and `application: unverified`. It excludes rule names, local targets/ports, owners, allowed-peer lists, paths and arbitrary descriptions. The client adds peer identity/name from its own current snapshot and a local check time; those are not remotely supplied display strings. Unknown fields and invalid/bounded values are rejected. The endpoint accepts GET only, has no control actions, cannot proxy arbitrary destinations, sends `Cache-Control: no-store`, and does not use redirects or HTTP connection reuse.
+The peer API has separate routes for hello, explicit messages, transfer offers/status/content and minimal service discovery. Transport-derived identity is rechecked against current peer state. Peer routes do not accept local management commands, filesystem destinations or arbitrary URLs. Reserved endpoints are discovery `54543`, peer API `54544` and pairing `54545`; local management/control and backend-internal endpoints are also excluded from generic service sharing.
 
-Discovery is a bounded, explicit read of one fixed endpoint, with no central server, background scan, port-range scan or persisted cache. Each read considers at most 128 current peers, uses four workers, allows two seconds per peer and eight seconds overall, and reports truncation. Discovery queries use the same pinned netstack-only policy and revalidate provider identity after reading. The HTTP server bounds admission to 16 connections, timeouts, header/response sizes and service counts; it never uses OS DNS/routing for outbound discovery.
+## Trust, batches and storage
 
-`confirmed` means a valid authenticated response, possibly with no services. `unsupported` requires an explicit unsupported endpoint/version response. Timeout, refusal, denied access, malformed data and other failures are `unavailable`; they do not establish that a peer is offline, an old bridge or a stopped application. Neither NodeOnline, a successful TCP dial, a discovery response nor transport `ready` establishes application health. The common UI keeps manual configuration available with that distinction.
+Trust, pairing, autosave and service sharing are distinct scopes. A display name never supplies identity. A receive policy binds an exact peer and trust generation to an absolute local destination. Revocation closes work and invalidates the previous generation. Persisted receive policy becomes effective only after its atomic configuration write succeeds.
 
-These current-source changes are separate from the published `0.2.0-alpha.1` evidence. Real tailnet, application, phone QR and OS lifecycle acceptance remain unverified.
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: Valid offer from trusted peer
+    Pending --> Accepted: Batch consent or exact autosave grant
+    Pending --> Rejected: Receiver declines
+    Accepted --> Receiving: Stream a file
+    Receiving --> Completed: All files verified and saved
+    Receiving --> Partial: An unfinished file fails
+    Partial --> Receiving: Retry unfinished whole files
+    Pending --> Cancelled: Cancel or revoke
+    Accepted --> Cancelled: Cancel or revoke
+    Receiving --> Cancelled: Cancel or revoke
+    Partial --> Cancelled: Cancel or revoke
+```
 
-## Login presentation
+A manifest includes relative paths, kinds, sizes and SHA-256 values. Directories explicitly represent empty folders. The receiver bounds metadata, path depth, reservations, outstanding batches and concurrent file streams, rejects unsafe paths/links and creates files without overwrite. Final acknowledgement follows size/hash verification and save completion. Completed-file acknowledgements are idempotent while their batch exists.
 
-The explicit login command supports local browser launch, a private copyable URL, or locally generated terminal QR for a trusted phone. Only the official HTTPS login.tailscale.com authorization URL is accepted. QR generation uses the same pinned skip2/go-qrcode version as Tailscale, with no remote image service or saved QR file. Redirected QR output is rejected. Login completion and machine approval remain distinct; local wait timeout is not advertised as server-side link expiry. The process-wide upstream logtail kill switch runs before tsnet construction to prevent auth URLs entering new disk-buffered diagnostics, in addition to disabling upload and quiet callbacks. Existing buffers are retained privately rather than automatically erased. No alternative authentication credentials or automatic approval are introduced.
+The current core limits each batch to 256 entries and 1 GiB. Browser uploads stage into private local storage before offering a batch to the peer. Local upload progress, remote acceptance, file saving, partial completion and completed delivery remain separate states. No automatic file opening, execution or clipboard synchronization follows receipt.
 
-## Identity and fail-closed policy
+Retry starts each unfinished file again from byte zero. There is no byte-offset resume, durable progress journal or restart resume. Saved data survives cancellation and process shutdown; active batch state does not. A new batch after restart may create unique-name duplicates, which the user must review.
 
-A generated generic node name avoids automatically copying OS account or host names. The profile, SOCKS credentials, tsnet state, and startup log have separate files. Unix flock / Windows LockFileEx prevents simultaneous owners. Failed state reads preserve the state; there is no automatic delete/reset or repeated identity creation.
+## Compact service plans
 
-Peer names are resolved exclusively from the current tsnet peer snapshot. Short names must be unambiguous; FQDNs and numeric tailnet addresses are accepted. A request must map to a configured peer, network, and port. Public/LAN/loopback destinations, the Tailscale DNS service address, arbitrary DNS, and subnet routes are rejected.
+TCP sharing uses a compact inclusive range/exclusion plan with one userspace fallback dispatcher. Shared port N maps to the same exact loopback port N. A broad range is a real future grant: applications started later on effective ports are reachable to its permitted peers until expiry.
 
-The pinned adapter calls only tsnet's initialized netstack TCP/UDP functions. It deliberately does not call `Server.Dial` / `UserDial`: their normal routing logic can select the system network when a peer disappears between validation and dialing. The adapter uses the explicitly unstable `Server.Sys()` API, isolated under `internal/identity`; upgrades require regression tests and a source review.
+Plans require 1–32 current peer IDs, a current embedded-node address, a specific protocol, a valid range and an explicit lifetime of 1 second–24 hours. System reservations and active internal endpoints are removed from effective scope. Overlap, collision, stale identity and exhausted capacity fail before an unsafe plan becomes usable.
 
-Active flows pin the peer identity and numeric endpoint. UDP validates that identity before sending and before delivering datagrams. Health checks revalidate existing TCP/UDP flows and close changed/revoked identities. This complements Tailscale ACL enforcement; control-plane propagation and existing-session behavior are not instantaneous guarantees.
+UDP shares and local connection listeners require per-port resources and share a total 64-listener budget. TCP shares do not consume one listener per covered port. Client connections may explicitly remap sorted effective remote ports to consecutive local ports, but shares retain same-port targets. Each accepted flow checks current identity, grant and deadline before loopback dialing.
 
-## UDP forwarding
+Discovered services carry bounded metadata only for eligible peers and unexpired active shares. A selected observation is revalidated before connecting. Ordinary Tailnet services can be connected manually without a peer sobalink API. All service state labels application health `unverified`.
 
-A mapping is keyed by the local application's UDP source socket. It maintains one connected upstream UDP socket until idle expiry, error, revocation, or shutdown. A dedicated receive loop forwards replies and later asynchronous server messages to the same source. Bounded mapping counts and queues limit resource use. Production idle timeout defaults to five minutes; regular registration traffic keeps mappings alive. A new local source address/port receives a new mapping. If a restarted application reuses the same source tuple, it may reuse the existing mapping until expiry or shutdown.
+Expiry, stop and peer revocation close tracked flows. They do not cancel a remote application job, retrieve delivered content or extend a deadline. Saved definitions are inert after restart until explicitly started.
 
-Fixed forwarding cannot add SOCKS authentication without changing the application protocol. Other local processes can reach loopback ports. Restrict tailnet policy and require application authentication.
+## Evidence and release boundary
 
-## Startup and recovery
+Unit tests and mock backends establish specific logic properties. A DOM test checks component behavior. A real local browser checks rendering and navigation. Native socket tests check OS behavior. Two real peers establish enrollment, delivery and path behavior. None substitutes for another.
 
-Setup validates a strict versioned profile, checks fixed local ports, and atomically saves it without networking. Start acquires the OS lock, exposes protected IPC, starts tsnet, waits for authentication and peer visibility, checks allowed TCP ports, then binds forwarding listeners. Partial listener startup rolls back all listeners.
+The current execution environment denies required socket creation with `operation not permitted`, so complete native and actual-browser acceptance remain open. Preserve the four native OS/architecture CI targets, a Go-backed browser acceptance path, exact-source results and separate live-network testing. Cross-compilation is not native execution.
 
-Health checks distinguish login required, machine approval, peer policy, server reachability, and bind failures. Forwarding closes when health fails. Checks retry with increasing intervals, bounded jitter, and a 30-second cap, without deleting login state. Extended sleep/network-change measurements remain follow-up work.
-
-Stop retains login. Reconnect recreates forwarding using the existing node and login state; it does not claim to restart tsnet itself. Logout closes forwarding first and calls the upstream logout API. Failure reports local stop with server-side logout unconfirmed. Node deletion is separate.
-
-IPC shutdown stops admission, gives an in-flight response a 200 ms drain window,
-then cancels handlers and closes connections outside the registry lock. Native
-listener/connection closure runs concurrently, within a five-second total wait
-budget. An incomplete join returns `ErrShutdownTimeout` with the pending stages;
-cleanup may continue in the background, and the service exit propagates the error.
-This is an IPC wait policy, not a real-time OS scheduling guarantee or a bound on
-upstream tsnet shutdown. Virtual-time tests check exact policy boundaries; real
-named-pipe/Unix-socket tests use readiness barriers and diagnostic watchdogs.
-
-The Windows listener also handles go-winio 0.6.2's lost-close-notification path:
-an unexpected accept error during shutdown triggers exactly one additional close
-notification. Accept errors before shutdown and the upstream's exact closed
-sentinel do not trigger recovery. The original error remains observable and the same total
-shutdown budget still applies; protected pipe permissions are unchanged.
-
-The CLI never treats TCP reachability as a successful RustDesk session. Status has separate `rustdesk: unverified`. There is no claimed direct/DERP status without a measured per-peer observation.
-
-## RustDesk proof requirements
-
-RustDesk 1.4.9 proxy mode switches endpoint registration to TCP. OSS server 1.1.16 returns `NOT_SUPPORT` for TCP `RegisterPk`. Other TCP messages are supported; the incompatibility is registration, not every TCP operation.
-
-The experimental fixed profile keeps normal UDP registration by leaving the application's proxy blank. ID port P forwards TCP/UDP to hbbs:21116, P-1 forwards TCP to hbbs:21115, and relay port R forwards TCP to hbbr:21117.
-
-A relay address is sent to the opposite peer, so all participating endpoints must use the same loopback R. Arbitrarily changing each endpoint's port or mixing ordinary tailnet and loopback profiles cannot be assumed compatible. hbbs may rewrite relay addresses. `/r` selects relay mode but does not establish zero direct probes, correct NAT classification, or successful remote control.
-
-Required real proof: distinct tsnet identities, cold registration, idle registration, both control directions, screen/input, relay-address propagation, direct/DERP conditions, process restart, application restart, and port-conflict recovery. Local fake tests do not satisfy this gate.
-
-## Primary sources
-
-- [tsnet overview](https://tailscale.com/docs/features/tsnet)
-- [Tailscale 1.102.5 release](https://github.com/tailscale/tailscale/releases/tag/v1.102.5)
-- [Pinned netstack selection and dials](https://github.com/tailscale/tailscale/blob/v1.102.5/tsnet/tsnet.go)
-- [UserDial routing and system fallback](https://github.com/tailscale/tailscale/blob/v1.102.5/net/tsdial/tsdial.go#L587-L616)
-- [RustDesk 1.4.9 TCP registration](https://github.com/rustdesk/rustdesk/blob/1.4.9/src/rendezvous_mediator.rs#L481-L492)
-- [OSS server TCP RegisterPk unsupported](https://github.com/rustdesk/rustdesk-server/blob/73523b31cfd25d77dee862e6fc9f5e1fb5e485ef/src/rendezvous_server.rs#L548-L555)
-- [UDP registration address refresh](https://github.com/rustdesk/rustdesk-server/blob/1.1.16/src/rendezvous_server.rs#L564-L581)
-- [Relay address selection](https://github.com/rustdesk/rustdesk/blob/1.4.9/src/rendezvous_mediator.rs#L825-L833)
-- [Received relay address handling](https://github.com/rustdesk/rustdesk/blob/1.4.9/src/client.rs#L536-L560)
-- [Server relay-address rewrite](https://github.com/rustdesk/rustdesk-server/blob/1.1.16/src/rendezvous_server.rs#L507-L525)
-- [Force-relay FAQ](https://github.com/rustdesk/rustdesk/wiki/FAQ#force-relay)
-- [Windows tsnet non-admin issue](https://github.com/tailscale/tailscale/issues/20031)
+Production packages embed generated frontend assets and include the pinned dependency inventory, copied notices, build metadata and SBOM. Repeatability, signature/provenance verification and actual installed-binary checks remain publication gates. No new release is claimed from this local draft. [Distribution](DISTRIBUTION.md) · [Verification](VERIFICATION.en.md)

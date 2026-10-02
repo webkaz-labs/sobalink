@@ -11,7 +11,7 @@ import zipfile
 
 archive = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
-with tempfile.TemporaryDirectory(prefix="tsnet-bridge-smoke-") as tmp:
+with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
     root = pathlib.Path(tmp)
 
     def destination(name):
@@ -41,10 +41,11 @@ with tempfile.TemporaryDirectory(prefix="tsnet-bridge-smoke-") as tmp:
                         target.write_bytes(source.read())
                 else:
                     raise ValueError("package contains a special file")
-    share = root / "share" / "tsnet-bridge"
+    share = root / "share" / "sobalink"
     build = json.loads((share / "build.json").read_text(encoding="utf-8"))
     binary = destination(build["binary"]["path"])
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == build["binary"]["sha256"]
+    assert build["product"] == "sobalink"
     assert build["version"] == version
     assert (share / "LICENSE").is_file()
     assert (share / "README.md").is_file()
@@ -52,8 +53,8 @@ with tempfile.TemporaryDirectory(prefix="tsnet-bridge-smoke-") as tmp:
     bom = json.loads((share / "bom.cdx.json").read_text(encoding="utf-8"))
     assert bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5"
     notices = json.loads((share / "third-party-notices.json").read_text(encoding="utf-8"))
-    assert notices["modules"], "no target dependencies recorded"
-    for module in notices["modules"] + [notices["go_standard_library"]]:
+    assert notices["modules"] and notices["frontend_modules"], "no target dependencies recorded"
+    for module in notices["modules"] + notices["frontend_modules"] + [notices["go_standard_library"]]:
         assert module["notices"], "missing notices"
         for entry in module["notices"]:
             notice = share / entry["path"]

@@ -18,6 +18,7 @@ type Peer struct {
 	DNSName string       `json:"dns_name"`
 	IPs     []netip.Addr `json:"ips"`
 	Expired bool         `json:"expired"`
+	Online  bool         `json:"online"`
 }
 type Snapshot struct {
 	Running bool

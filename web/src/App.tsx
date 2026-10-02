@@ -1,0 +1,105 @@
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import * as api from './api'
+import { detectLocale, errorText, networkLabel, timestamp, translator, type Translate } from './i18n'
+import { useServer, type Server } from './useServer'
+import { Badge, Button, ErrorBanner, Icon, IconButton, Logo } from './components/ui'
+import { AutosaveDialog, NetworkDialog, Preferences, ServiceDialog } from './components/Dialogs'
+import { Conversation, type DraftBatch } from './components/Conversation'
+
+function preference<T extends string>(key: string, choices: readonly T[], fallback: T): T {
+  try { const value = localStorage.getItem(`sobalink.${key}`); return choices.includes(value as T) ? value as T : fallback } catch { return fallback }
+}
+function storePreference(key: string, value: string) { try { localStorage.setItem(`sobalink.${key}`, value) } catch { /* Storage may be disabled. In-memory preferences still work. */ } }
+function Avatar({ peer, large = false }: { peer: api.Peer; large?: boolean }) {
+  return <span className={`avatar ${large ? 'avatar-large' : ''}`}><Icon name="monitor" size={large ? 25 : 21} /><i className={peer.online ? 'online-dot' : 'offline-dot'} /></span>
+}
+function Login({ t, server }: { t: Translate; server: Server }) {
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const pending = useRef(false)
+  const controller = useRef<AbortController | null>(null)
+  useEffect(() => () => controller.current?.abort(), [])
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!code.trim() || pending.current) return
+    pending.current = true; setBusy(true); setError(null)
+    const request = new AbortController(); controller.current = request
+    try { await api.login(code.trim(), request.signal); setCode(''); await server.refresh(true) }
+    catch (value) { if (!request.signal.aborted) setError(value) }
+    finally { pending.current = false; if (!request.signal.aborted) setBusy(false) }
+  }
+  return <main className="welcome-layout"><section className="welcome-story"><div className="welcome-kicker"><span />sobalink</div><h1>{t('appTagline')}</h1><div className="welcome-art" aria-hidden="true"><span className="art-device art-device-one"><Icon name="monitor" size={42} /></span><div className="art-connection"><span /><span /><span /></div><span className="art-device art-device-two"><Icon name="folder" size={42} /></span><span className="art-spark">✦</span></div><div className="welcome-features">{([{ icon: 'message', title: 'introMessages', hint: 'introMessagesHint' }, { icon: 'folder', title: 'introFiles', hint: 'introFilesHint' }, { icon: 'link', title: 'introServices', hint: 'introServicesHint' }] as const).map(item => <div key={item.title}><Icon name={item.icon} /><span><strong>{t(item.title)}</strong><small>{t(item.hint)}</small></span></div>)}</div></section><section className="login-panel"><div className="login-lock"><Icon name="lock" size={23} /></div><h2>{t('localAccess')}</h2><p className="muted">{t('localAccessHint')}</p>{(error != null || server.error != null) && <><ErrorBanner message={errorText(error || server.error, t)} t={t} />{server.error != null && <Button onClick={() => server.refresh(true)}>{t('refresh')}</Button>}</>}
+    <form onSubmit={submit} className="form-stack"><label className="field">{t('accessCode')}<input type="password" value={code} onChange={event => setCode(event.target.value)} autoComplete="off" spellCheck={false} autoFocus required aria-describedby="code-help" maxLength={256} /></label><p id="code-help" className="small muted">{t('codeHint')}</p><Button type="submit" variant="primary" busy={busy} disabled={!code.trim()}>{t('unlock')}<Icon name="arrow" /></Button></form><div className="login-note"><Icon name="shield" /><p>{t('loginSecurity')}</p></div></section></main>
+}
+function ServiceRows({ peer, state, t, locale, server }: { peer: api.Peer; state: api.State; t: Translate; locale: api.Locale; server: Server }) {
+  const services = [...state.services, ...state.shares].filter(service => service.peerId === peer.id || service.peerIds?.includes(peer.id))
+  return <div className="service-rows">{services.length === 0 && <p className="small muted">{t('noServices')}</p>}{services.map(service => <article className="service-row" key={service.id}><div className="flex items-center justify-between gap-2"><strong>{service.name}</strong><Badge tone={service.status === 'active' ? 'green' : service.status === 'failed' ? 'red' : 'neutral'}>{t(service.status)}</Badge></div><p className="code-value">{service.endpoint || `${service.network.toUpperCase()} ${service.ports || service.remotePort || ''}`}</p><p className="small muted">{t('appUnverified')}</p>{service.expiresAt && <p className="small muted">{t('expiresAt')}: <time dateTime={service.expiresAt}>{new Date(service.expiresAt).toLocaleString(locale)}</time></p>}{service.error && <p className="field-error">{service.error}</p>}{['active', 'reconnecting'].includes(service.status) && <Button variant="ghost" busy={server.busy.has(`service:${service.id}`)} onClick={() => server.run('service.stop', { id: service.id }, `service:${service.id}`)}><Icon name="stop" size={13} />{t('stop')}</Button>}</article>)}</div>
+}
+function Details({ peer, state, t, server, locale, close, autosave, service }: { peer: api.Peer; state: api.State; t: Translate; server: Server; locale: api.Locale; close: () => void; autosave: () => void; service: (value: 'connect' | 'share') => void }) {
+  const receive = peer.autosave
+  const panel = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null
+    panel.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    return () => { if (before?.isConnected) before.focus() }
+  }, [])
+  return <aside ref={panel} className="details-panel" aria-label={t('details')}><div className="details-heading"><h2>{t('details')}</h2><IconButton icon="close" label={t('closeDetails')} onClick={close} /></div><div className="details-identity"><Avatar peer={peer} large /><h3>{peer.name}</h3><p>{t(peer.bridge ? 'bridgePeer' : 'ordinaryPeer')}</p><Badge tone={peer.verified ? 'green' : 'amber'}><Icon name="shield" size={12} />{t(peer.verified ? 'verified' : 'unverified')}</Badge></div>
+    <section className="details-section"><h3>{t('connection')}</h3><dl className="details-list"><dt>{t('networks')}</dt><dd>{peer.networks.map(network => t(network)).join(' · ') || '—'}</dd><dt>{t('connection')}</dt><dd>{t(peer.online ? 'online' : 'offline')} · {t(peer.path || 'unknown')}</dd>{peer.address && <><dt>{t('address')}</dt><dd className="code-value">{peer.address}</dd></>}</dl><Button className="full-width" onClick={() => server.run('peer.reconnect', { peerId: peer.id }, `reconnect:${peer.id}`)} busy={server.busy.has(`reconnect:${peer.id}`)}><Icon name="refresh" size={15} />{t('reconnect')}</Button></section>
+    {peer.bridge && <section className="details-section"><h3>{t('identity')}</h3><p className="small muted">{t('trustHint')}</p>{peer.fingerprint && <details className="fingerprint"><summary>{t('fingerprint')}</summary><p className="code-value">{peer.fingerprint}</p></details>}<Button className="full-width" variant={peer.trusted ? 'secondary' : 'primary'} disabled={!peer.verified || server.stale} busy={server.busy.has(`trust:${peer.id}`)} onClick={() => server.run('peer.trust', { peerId: peer.id, trusted: !peer.trusted }, `trust:${peer.id}`)}><Icon name="shield" size={15} />{t(peer.trusted ? 'revokeTrust' : 'trustDevice')}</Button></section>}
+    {(peer.bridge || peer.trusted || receive?.paused) && <section className="details-section"><div className="flex justify-between items-center"><h3>{t('autosave')}</h3><Badge tone={receive?.enabled && !receive.paused ? 'green' : 'neutral'}>{t(receive?.enabled ? receive.paused ? 'paused' : 'enabled' : 'off')}</Badge></div><p className="small muted">{t('autosaveHint')}</p>{receive?.directory && <p className="directory-path code-value">{receive.directory}</p>}{(receive?.enabled || receive?.paused) ? <><p className="small muted">{t('pauseScope')}</p><div className="flex flex-wrap gap-2"><Button disabled={Boolean(receive.paused && (!peer.trusted || !peer.verified || server.stale))} busy={server.busy.has(`autosave:${peer.id}`)} onClick={() => server.run('peer.autosave', { peerId: peer.id, directory: receive.directory || '', enabled: receive.enabled, paused: !receive.paused }, `autosave:${peer.id}`)}>{t(receive.paused ? 'resumePeer' : 'pausePeer')}</Button><Button variant="ghost" busy={server.busy.has(`autosave:${peer.id}`)} onClick={() => server.run('peer.autosave', { peerId: peer.id, directory: receive.directory || '', enabled: false, paused: receive.paused }, `autosave:${peer.id}`)}>{t('revoke')}</Button></div></> : <Button className="full-width" disabled={!peer.trusted || !peer.verified || server.stale} onClick={autosave}><Icon name="download" size={15} />{t('enableAutosave')}</Button>}</section>}
+    <section className="details-section"><h3>{t('services')}</h3><div className="service-buttons"><Button disabled={!peer.networks.includes('tailnet') || server.stale} onClick={() => service('connect')}><Icon name="link" size={15} />{t('connectService')}</Button><Button disabled={!peer.networks.includes('tailnet') || server.stale} onClick={() => service('share')}><Icon name="upload" size={15} />{t('shareService')}</Button></div><ServiceRows peer={peer} state={state} t={t} locale={locale} server={server} /></section>
+  </aside>
+}
+type Dialog = 'preferences' | 'network' | 'autosave' | 'connect' | 'share' | null
+export function App() {
+  const server = useServer()
+  const [localePreference, setLocalePreference] = useState<'auto' | api.Locale>(() => preference('locale', ['auto', 'en', 'ja'], 'auto'))
+  const [theme, setTheme] = useState<api.Theme>(() => preference('theme', ['system', 'light', 'dark'], 'system'))
+  const backendPreferencesLoaded = useRef(false)
+  const hadLocalLocale = useRef(preference('locale', ['auto', 'en', 'ja'], '') !== '')
+  const hadLocalTheme = useRef(preference('theme', ['system', 'light', 'dark'], '') !== '')
+  const [systemLocale, setSystemLocale] = useState(detectLocale)
+  const locale = localePreference === 'auto' ? systemLocale : localePreference
+  const t = useMemo(() => translator(locale), [locale])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [batches, setBatches] = useState<Record<string, DraftBatch | undefined>>({})
+  const [selectedId, setSelectedId] = useState<string | null>(() => typeof history.state?.sobalinkPeer === 'string' ? history.state.sobalinkPeer : null)
+  const navigatePeer = (id: string | null) => { if (id !== selectedId) history.pushState({ ...history.state, sobalinkPeer: id }, ''); setSelectedId(id) }
+  useEffect(() => { const back = () => { setSelectedId(typeof history.state?.sobalinkPeer === 'string' ? history.state.sobalinkPeer : null); setDetails(false); setDialog(null) }; window.addEventListener('popstate', back); return () => window.removeEventListener('popstate', back) }, [])
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<'all' | api.Network>('all')
+  const [details, setDetails] = useState(false)
+  const [dialog, setDialog] = useState<Dialog>(null)
+  const state = server.state
+  const activeNetworks = state?.self.networks || (state?.settings?.network && state.settings.network !== 'none' ? [state.settings.network] : [])
+  const networkStatus = (state?.self.status || '').toLowerCase()
+  const networkReady = ['running', 'online', 'ready'].includes(networkStatus)
+  useEffect(() => {
+    if (!state || backendPreferencesLoaded.current) return
+    backendPreferencesLoaded.current = true
+    if (!hadLocalLocale.current && state.settings?.locale && ['auto', 'en', 'ja'].includes(state.settings.locale)) setLocalePreference(state.settings.locale)
+    if (!hadLocalTheme.current && state.settings?.theme && ['system', 'light', 'dark'].includes(state.settings.theme)) setTheme(state.settings.theme)
+  }, [state])
+  const peer = state?.peers.find(item => item.id === selectedId)
+  useEffect(() => {
+    if (state && selectedId && !peer) { setSelectedId(null); setDetails(false); setDialog(null) }
+  }, [state, selectedId, peer])
+  const visiblePeers = state?.peers.filter(item => (filter === 'all' || item.networks.includes(filter)) && item.name.toLocaleLowerCase(locale).includes(query.toLocaleLowerCase(locale))) || []
+  useEffect(() => { document.documentElement.lang = locale; storePreference('locale', localePreference) }, [locale, localePreference])
+  useEffect(() => { document.documentElement.dataset.theme = theme; storePreference('theme', theme) }, [theme])
+  useEffect(() => { const change = () => setSystemLocale(detectLocale()); window.addEventListener('languagechange', change); return () => window.removeEventListener('languagechange', change) }, [])
+  useEffect(() => { if (server.auth === 'locked') { setSelectedId(null); setDialog(null); setDrafts({}); setBatches({}) } }, [server.auth])
+  const openDialog = (value: Dialog) => { server.setError(null); setDialog(value) }
+  return <div className="app-shell"><header className="app-header"><Logo /><span className="header-tagline">{t('appTagline')}</span><div className="header-actions">{state && <div className="self-status" title={networkLabel(state.self.status, t)}><span className={`status-dot ${!server.stale && networkReady ? 'is-online' : ''}`} /><span>{state.self.name}</span></div>}<button className="locale-toggle" type="button" onClick={() => setLocalePreference(locale === 'ja' ? 'en' : 'ja')} aria-label={t('language')}>{locale === 'ja' ? 'EN' : '日本語'}</button><IconButton icon="settings" label={t('settings')} onClick={() => openDialog('preferences')} /></div></header>
+    {server.auth === 'checking' && <main className="loading-screen"><span className="spinner" /><p>{t('checking')}</p>{server.error != null && <><ErrorBanner message={errorText(server.error, t)} t={t} /><Button onClick={() => server.refresh(true)}><Icon name="refresh" />{t('retry')}</Button></>}</main>}
+    {server.auth === 'locked' && <Login t={t} server={server} />}
+    {server.auth === 'ready' && state && <main className={`workspace ${selectedId ? 'device-selected' : ''} ${details && peer ? 'has-details' : ''}`}><nav className="device-sidebar" aria-label={t('devices')}><div className="sidebar-top"><div className="sidebar-title"><h1>{t('devices')}</h1><span className="count-pill">{state.peers.length}</span><IconButton icon="plus" label={t('addDevice')} onClick={() => openDialog('network')} /></div><label className="search-field"><Icon name="search" size={16} /><input type="search" placeholder={t('searchDevices')} aria-label={t('searchDevices')} value={query} onChange={event => setQuery(event.target.value)} /></label><div className="segmented network-filter" aria-label={t('networks')}>{(['all', 'lan', 'tailnet'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(value === 'lan' ? 'nearby' : value)}</button>)}</div></div>
+      <div className="device-list">{visiblePeers.length ? visiblePeers.map(item => <button type="button" key={item.id} className={`device-row ${item.id === selectedId ? 'selected' : ''}`} aria-current={item.id === selectedId ? 'true' : undefined} onClick={() => { navigatePeer(item.id); server.setError(null) }}><Avatar peer={item} /><span className="device-copy"><strong>{item.name}</strong><small><span>{item.networks.map(network => t(network)).join(' · ')}</span><span>·</span><span>{t(item.online ? item.path || 'unknown' : 'offline')}</span></small><span className={`device-permission ${item.trusted && item.verified ? 'is-trusted' : ''}`}><Icon name={item.trusted && item.verified ? 'shield' : 'monitor'} size={11} />{t(!item.bridge ? 'ordinaryPeer' : item.trusted && item.verified ? 'trusted' : 'notTrusted')}</span></span><Icon name="chevron" size={14} /></button>) : <div className="sidebar-empty"><Icon name="monitor" size={28} /><strong>{t(state.peers.length ? 'noMatches' : 'noDevices')}</strong><p>{t(state.peers.length ? 'noMatchesHint' : 'noDevicesHint')}</p>{!state.peers.length && <Button onClick={() => openDialog('network')}>{t('addDevice')}</Button>}</div>}</div><div className="sidebar-footer"><button type="button" onClick={() => openDialog('network')}><Icon name="globe" size={15} /><span>{activeNetworks.length ? activeNetworks.map(network => t(network)).join(' · ') : t('disabledNetwork')}</span><Icon name="chevron" size={13} /></button><span>{server.updatedAt && `${t('lastUpdated')} ${timestamp(server.updatedAt.toISOString(), locale)}`}</span></div>
+    </nav><section className="main-panel"><div className="main-alerts">{state.self.error && <div className="stale-banner" role="status"><Icon name="info" /><span>{state.self.error}</span><Button onClick={() => openDialog('network')}>{t('addDevice')}</Button></div>}{server.stale && <div className="stale-banner" role="status"><Icon name="alert" /><span>{t('stale')}</span><Button onClick={() => server.refresh(true)}>{t('refresh')}</Button></div>}{server.error != null && !dialog && <ErrorBanner message={errorText(server.error, t)} onDismiss={() => server.setError(null)} t={t} />}</div>{peer ? <><header className="conversation-header"><IconButton className="mobile-back" icon="back" label={t('back')} onClick={() => { navigatePeer(null); setDetails(false) }} /><Avatar peer={peer} /><div className="grow"><h2>{peer.name}</h2><p><span className={`status-dot ${peer.online ? 'is-online' : ''}`} />{t(peer.online ? 'online' : 'offline')}<span>·</span>{t(peer.path || 'unknown')}{peer.trusted && peer.verified && <Icon name="shield" size={13} />}</p></div><Button className="connect-header" disabled={!peer.networks.includes('tailnet') || server.stale} onClick={() => openDialog('connect')}><Icon name="link" size={15} />{t('connectService')}</Button><IconButton icon="info" label={t(details ? 'closeDetails' : 'openDetails')} aria-expanded={details} onClick={() => setDetails(value => !value)} /></header><Conversation drafts={drafts} setDrafts={setDrafts} batches={batches} setBatches={setBatches} peer={peer} state={state} t={t} locale={locale} server={server} onTrust={() => void server.run('peer.trust', { peerId: peer.id, trusted: true }, `trust:${peer.id}`)} /></> : <div className="main-empty"><div className="empty-network" aria-hidden="true"><span><Icon name="monitor" size={36} /></span><i /><span><Icon name="message" size={31} /></span></div><span className="eyebrow">sobalink</span><h2>{t('selectDevice')}</h2><p>{t('selectDeviceHint')}</p><Button onClick={() => openDialog('network')}><Icon name="plus" size={16} />{t('addDevice')}</Button></div>}</section>{details && peer && <Details peer={peer} state={state} t={t} locale={locale} server={server} close={() => setDetails(false)} autosave={() => openDialog('autosave')} service={openDialog} />}</main>}
+    {dialog === 'preferences' && <Preferences server={server} t={t} onClose={() => setDialog(null)} locale={localePreference} theme={theme} setLocale={setLocalePreference} setTheme={setTheme} />}
+    {dialog === 'network' && <NetworkDialog t={t} onClose={() => setDialog(null)} server={server} />}
+    {dialog === 'autosave' && peer && <AutosaveDialog t={t} onClose={() => setDialog(null)} server={server} peer={peer} />}
+    {(dialog === 'connect' || dialog === 'share') && peer && state && <ServiceDialog onStarted={() => { setDialog(null); setDetails(true) }} key={`${peer.id}:${dialog}`} t={t} onClose={() => setDialog(null)} server={server} peer={peer} mode={dialog} state={state} />}
+  </div>
+}

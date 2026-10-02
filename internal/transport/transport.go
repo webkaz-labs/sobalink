@@ -24,6 +24,18 @@ const maxTotalConnections = 512
 
 var connectionSlots = make(chan struct{}, maxTotalConnections)
 
+// AdmitTCP shares the process budget with virtual range handlers. A successful
+// reservation must be released once the accepted handler finishes.
+func AdmitTCP() (func(), bool) {
+	select {
+	case connectionSlots <- struct{}{}:
+		var once sync.Once
+		return func() { once.Do(func() { <-connectionSlots }) }, true
+	default:
+		return nil, false
+	}
+}
+
 // Server owns its listener, accepted connections, and remote connections.
 // Close and context cancellation shut down all of them; Wait joins all workers.
 type Server struct {

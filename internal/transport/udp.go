@@ -24,6 +24,10 @@ type UDPConfig struct {
 	WriteTimeout time.Duration
 	MaxSessions  int
 	QueueSize    int
+	// Budget optionally shares the 256-session and 1 MiB queued-data limits
+	// across every materialized port belonging to one policy. Reuse the same
+	// pointer for those ports; independent policies may use separate budgets.
+	Budget *UDPBudget
 	// Validate optionally rechecks current destination authorization before
 	// forwarding each datagram in either direction. It must be concurrency-safe
 	// and honor its context. Any error closes that source's session.
@@ -52,6 +56,7 @@ type udpTable struct {
 
 type udpSession struct {
 	globalReserved bool
+	sharedBudget   *UDPBudget
 	table          *udpTable
 	source         netip.AddrPort
 	ctx            context.Context
@@ -120,8 +125,13 @@ func (t *udpTable) readLocal() {
 				t.mu.Unlock()
 				continue
 			}
+			if t.cfg.Budget != nil && !t.cfg.Budget.reserveSession() {
+				<-udpSessionSlots
+				t.mu.Unlock()
+				continue
+			}
 			ctx, cancel := context.WithCancel(t.server.ctx)
-			session = &udpSession{globalReserved: true, table: t, source: source, ctx: ctx, cancel: cancel, queue: make(chan []byte, t.cfg.QueueSize), lastActive: time.Now()}
+			session = &udpSession{globalReserved: true, sharedBudget: t.cfg.Budget, table: t, source: source, ctx: ctx, cancel: cancel, queue: make(chan []byte, t.cfg.QueueSize), lastActive: time.Now()}
 			t.sessions[source] = session
 			t.server.wg.Add(1)
 			go func() { defer t.server.wg.Done(); session.run() }()
@@ -219,6 +229,9 @@ func (s *udpSession) run() {
 		s.stop()
 		if s.globalReserved {
 			<-udpSessionSlots
+		}
+		if s.sharedBudget != nil {
+			s.sharedBudget.releaseSession()
 		}
 		t.mu.Lock()
 		if t.sessions[s.source] == s {

@@ -83,6 +83,19 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("check_locales(binary)", offline)
         self.assertIn("native locale fallback mismatch", offline)
 
+    def test_ci_frontend_and_packaged_product_are_verified(self):
+        # Sobalink release-workflow preparation is a separate integration.
+        # Normal CI must already validate the complete packaged product.
+        native = self.job("ci", "native")
+        self.assertIn("node-version: '24.19.0'", native)
+        self.assertIn("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", native)
+        self.assertLess(native.index("python .github/scripts/check-frontend.py"), native.index("go test -race"))
+        self.assertIn("dist/sobalink-$", native)
+        frontend = (pathlib.Path(__file__).parent / "check-frontend.py").read_text(encoding="utf-8")
+        self.assertEqual(frontend.count('run("ci", "--no-audit", "--no-fund")'), 2)
+        self.assertIn('assert first == inventory()', frontend)
+        self.assertIn('assert first == checked_in', frontend)
+
     def test_cache_keys_include_exact_runner_toolchain_manifests_and_source(self):
         prefix = "trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-"
         suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-"
@@ -301,7 +314,7 @@ class ReleaseGuards(unittest.TestCase):
 
     def draft(self):
         self.tag = copy.deepcopy(self.ref)
-        self.release = {"id": 1, "tag_name": "v" + VERSION, "target_commitish": COMMIT, "prerelease": True, "draft": True, "body": "<!-- tsnet-bridge-source:" + COMMIT + " -->", "assets": []}
+        self.release = {"id": 1, "tag_name": "v" + VERSION, "target_commitish": COMMIT, "prerelease": True, "draft": True, "body": "<!-- sobalink-source:" + COMMIT + " -->", "assets": []}
 
     def test_accept_exact_main_and_successful_ci(self):
         self.assertEqual(self.gate()["id"], 10)
@@ -425,10 +438,10 @@ class ArtifactGuards(unittest.TestCase):
         for name in checks.filenames(VERSION):
             (self.root / name).write_bytes(b"fixture content\n")
         for target in checks.TARGETS:
-            stem = "tsnet-bridge-" + VERSION + "-" + target
-            self.write(stem + ".build.json", {"project": checks.PROJECT, "version": VERSION, "source_commit": COMMIT, "target": target, "go_version": "go1.27.1", "cgo_enabled": False, "trimpath": True, "buildvcs": False})
+            stem = "sobalink-" + VERSION + "-" + target
+            self.write(stem + ".build.json", {"project": checks.PROJECT, "product":"sobalink", "frontend":{"node_version":"24.19.0","npm_version":"11.9.0","lock_sha256":"f"*64,"assets":[{"path":"index.html","sha256":"e"*64}]}, "version": VERSION, "source_commit": COMMIT, "target": target, "go_version": "go1.27.1", "build_tags":"ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy", "cgo_enabled": False, "trimpath": True, "buildvcs": False})
             self.write(stem + ".cdx.json", {"bomFormat": "CycloneDX", "specVersion": "1.5"})
-            self.write(stem + ".notices.json", {"modules": [{"notices": [{"path": "licenses/example/LICENSE"}]}], "go_standard_library": {"notices": [{"path": "licenses/go/LICENSE"}]}})
+            self.write(stem + ".notices.json", {"frontend_modules":[{"notices":[{"path":"licenses/npm/example/LICENSE"}]}], "modules": [{"notices": [{"path": "licenses/example/LICENSE"}]}], "go_standard_library": {"notices": [{"path": "licenses/go/LICENSE"}]}})
         self.checksums()
 
     def write(self, name, value):
@@ -497,9 +510,9 @@ class ArtifactGuards(unittest.TestCase):
         artifacts, resources = [], []
         for target in checks.TARGETS:
             target_os, arch = target.split("-")
-            stem = "tsnet-bridge-" + VERSION + "-" + target
+            stem = "sobalink-" + VERSION + "-" + target
             name = stem + (".zip" if target_os == "windows" else ".tar.gz")
-            artifacts.append({"name": name, "format": "zip" if target_os == "windows" else "tar.gz", "bin": ["bin/tsnet-bridge" + (".exe" if target_os == "windows" else "")], "os": target_os, "arch": {"arm64": "aarch64", "amd64": "x86_64"}[arch], "url": prefix + name, "size": (self.root / name).stat().st_size, "provenance": ["https://api.github.com/repos/" + checks.REPOSITORY + "/attestations/sha256:" + checks.sha256(self.root / name)]})
+            artifacts.append({"name": name, "format": "zip" if target_os == "windows" else "tar.gz", "bin": ["bin/soba" + (".exe" if target_os == "windows" else "")], "os": target_os, "arch": {"arm64": "aarch64", "amd64": "x86_64"}[arch], "url": prefix + name, "size": (self.root / name).stat().st_size, "provenance": ["https://api.github.com/repos/" + checks.REPOSITORY + "/attestations/sha256:" + checks.sha256(self.root / name)]})
             resources.append({"kind": "sbom", "format": "cyclonedx", "artifact": name, "asset": stem + ".cdx.json", "url": prefix + stem + ".cdx.json"})
         return {"_type": "https://in-toto.io/Statement/v1", "predicateType": "https://packslip.dev/release/v1", "subject": [{"name": name, "digest": {"sha256": checks.sha256(self.root / name)}} for name in sorted(checks.filenames(VERSION)) if name.endswith((".tar.gz", ".zip", ".cdx.json"))], "predicate": {"project": checks.PROJECT, "version": VERSION, "source": {"repo": "https://" + checks.PROJECT, "commit": COMMIT, "tag": "v" + VERSION}, "identity": {"scheme": "sigstore-oidc", "key_id": checks.IDENTITY, "issuer": checks.ISSUER}, "artifacts": artifacts, "resources": resources}}
 

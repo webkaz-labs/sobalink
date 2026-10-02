@@ -222,6 +222,11 @@ func mockTool(t *testing.T) (*Tool, *int) {
 	for _, name := range []string{"LICENSE", "README.md", "README.en.md", "SECURITY.md", "go.mod", "go.sum"} {
 		writeFixture(t, filepath.Join(root, name), name)
 	}
+	writeFixture(t, filepath.Join(root, "web", "package.json"), `{"name":"fixture","dependencies":{"react":"1.0.0"}}`)
+	writeFixture(t, filepath.Join(root, "web", "package-lock.json"), `{"lockfileVersion":3,"packages":{"node_modules/react":{"version":"1.0.0","integrity":"sha512-fixture"}}}`)
+	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "package.json"), `{"name":"react","version":"1.0.0"}`)
+	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "LICENSE"), "React license")
+	writeFixture(t, filepath.Join(root, "web", "dist", "index.html"), "<!doctype html><html></html>")
 	goRoot := filepath.Join(root, "toolchain")
 	writeFixture(t, filepath.Join(goRoot, "LICENSE"), "Go license")
 	builds := new(int)
@@ -236,6 +241,11 @@ func mockTool(t *testing.T) (*Tool, *int) {
 		}
 		if reflect.DeepEqual(args, []string{"env", "GOROOT"}) {
 			return []byte(goRoot), nil
+		}
+		if args[0] == "build" || args[0] == "list" {
+			if len(args) < 3 || args[1] != "-tags" || args[2] != BuildTags || args[len(args)-1] != "./cmd/soba" {
+				t.Fatalf("unsafe or wrong product build: %v", args)
+			}
 		}
 		if args[0] == "build" {
 			*builds++
@@ -273,7 +283,7 @@ func TestBuildDeterministicAndManifestComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := string(readFixture(t, filepath.Join(tool.Root, "dist", "packslip.toml")))
-	for _, want := range []string{"arch = \"x86_64\"", "arch = \"aarch64\"", "bin/tsnet-bridge.exe", "libc = \"any\"", "format = \"zip\"", commit} {
+	for _, want := range []string{"arch = \"x86_64\"", "arch = \"aarch64\"", "bin/soba.exe", "libc = \"any\"", "format = \"zip\"", commit} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("manifest missing %s", want)
 		}
