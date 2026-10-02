@@ -8,7 +8,7 @@
 
 [利用ガイド](GENERIC.ja.md)のサービス選択と相手限定の探索情報は、下記の公開済み `0.2.0-alpha.1` より新しいソースの変更です。旧公開版の4環境 CI・パッケージ・署名・mise 実導入の結果を、今回の変更の証拠にしません。新しい公開・実機受入の成功は、ここでは主張しません。
 
-2026-10-02、[変更 `30738200` のネイティブ CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36985473069) は Linux x64/ARM64・macOS ARM64・Windows x64 と、全体のチェックサム／Packslip 試験を含む全5ジョブが成功しました。PR 統合コミット `d7c5105a` とブランチ先頭のソースツリーは `7ff58b9f734128aca5c67201b25b9aee929ec7cf` で一致します。4環境で全 race 試験、実 IPC の反復、vet、整形、Python 54試験、ネイティブパッケージとオフラインの言語・JSON 確認を実行しました。POSIX の3環境では配布パッケージの PTY 78件も成功しました。macOS の比較失敗は、別の Python 単独 raw／復元試験でカーネルの一時的な PENDIN フラグと特定しました。保留中の端末処理が終わった後は全項目が完全一致し、設定項目の除外はしていません。Windows Console／ConPTY の表示入力は未確認です。
+2026-10-02、[変更 `30738200` のネイティブ CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36985473069) は Linux x64/ARM64・macOS ARM64・Windows x64 と、全体のチェックサム／Packslip 試験を含む全5ジョブが成功しました。PR 統合コミット `d7c5105a` とブランチ側の変更 `30738200` のソースツリーは `7ff58b9f734128aca5c67201b25b9aee929ec7cf` で一致します。4環境で全 race 試験、実 IPC の反復、vet、整形、Python 54試験、ネイティブパッケージとオフラインの言語・JSON 確認を実行しました。POSIX の3環境では配布パッケージの PTY 78件も成功しました。macOS の比較失敗は、別の Python 単独 raw／復元試験でカーネルの一時的な PENDIN フラグと特定しました。保留中の端末処理が終わった後は全項目が完全一致し、設定項目の除外はしていません。Windows Console／ConPTY の表示入力は未確認です。
 
 4環境の CI パッケージを別途ダウンロードし、配布物のダイジェスト、バイナリのハッシュ、ソース情報、SBOM、ライセンス、同梱文書の一致を確認しました。取得した Linux x64 パッケージでもオフライン試験と PTY 78件を再度通しました。開発用の生成物であり、新たな公開版の署名・mise 実導入の証拠ではありません。その後の文書のみの更新結果は [PR #1](https://github.com/webkaz-labs/tsnet-bridge/pull/1) で区別します。
 
