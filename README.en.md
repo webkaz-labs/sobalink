@@ -2,13 +2,19 @@
 
 [日本語](README.md) · **[Named connection guide](docs/GENERIC.en.md)** · [Experimental RustDesk acceptance](docs/VERIFICATION.en.md#legacy-rustdesk-acceptance-procedure)
 
-**Choose a peer → choose a purpose → review and connect.** An application-scoped tailnet bridge built with Go and embedded tsnet. `0.2.0-alpha.1` provides named TCP/UDP connections and sharing limited to explicit peers, services and lifetimes. Japanese and English are selected automatically from the OS/runtime locale.
+**Choose a service shared with this node → review → connect.** An application-scoped tailnet bridge built with Go and embedded tsnet. The current source adds service-first discovery to named TCP/UDP connections and sharing limited to explicit peers, services and lifetimes. Japanese and English are selected automatically from the OS/runtime locale.
+
+**This guide targets the `0.2.0-alpha.2` testing prerelease.** It includes service-first discovery, arrow-key selection/text editing, and clearer purpose presets and provider requirements. Use the installation steps below only after confirming that version and its signed assets are public; before publication, use a [source build](#security-and-development). The published `0.2.0-alpha.1` binary does not include these discovery/editor changes. Historical distribution results do not establish publication, installation or real-tailnet acceptance for the new version.
 
 It does not change system-wide VPN, routing or DNS settings. It targets ordinary-user installation and operation; destination permissions still apply and real Windows standard-user enrollment remains unverified.
 
 > **Experimental acceptance-testing prerelease.** Exact-source native tests and package checks passed on four targets. Real enrollment, phone QR authentication, actual tailnet ACLs and applications, OS login/sleep behavior, and RustDesk bidirectional screen/input remain unverified. `ready` describes connection readiness, not application success. [Evidence and remaining limits](docs/VERIFICATION.en.md)
 
-## 0.2.0-alpha.1 verification status
+## 0.2.0-alpha.2 verification scope
+
+[Ordinary CI for revision `ca9ad204`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36988386403) in [PR #1](https://github.com/webkaz-labs/tsnet-bridge/pull/1) passed all five jobs. That run predates release-preparation documentation. Check the Verification Actions run linked from the matching version on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases) for final merged-source CI, signed publication, public-asset verification and actual mise installation on the four targets. Real tailnet/application acceptance, actual IME/font combinations and Windows Console/ConPTY visual input remain unverified.
+
+### Published 0.2.0-alpha.1 record
 
 - [Published testing prerelease](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1): 2026-10-01 at 19:11:08 UTC, with 19 assets
 - [Exact-source CI for `236bd8e`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666): all five jobs passed. [Release workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369): all 15 jobs passed
@@ -17,27 +23,29 @@ It does not change system-wide VPN, routing or DNS settings. It targets ordinary
 
 [Distribution](docs/DISTRIBUTION.md) and [verification](docs/VERIFICATION.en.md) separate these results from unperformed real-device acceptance.
 
-## Install and connect
+## Install 0.2.0-alpha.2 after publication
 
 Targets: Linux x64/ARM64, macOS Apple Silicon (ARM64), and Windows x64. Intel macOS and Windows ARM64 are not included. CI runner versions do not establish minimum OS support or Windows standard-user operation.
 
-Before installing, confirm `v0.2.0-alpha.1` is marked **Pre-release** on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases), with `packslip.sigstore.json` and the target archive present. Stop if publication or assets are missing. The verification version of [mise](https://mise.jdx.dev/getting-started.html) is **2026.9.18**. These commands work in PowerShell, macOS and Linux; no Go compiler or manual extraction is needed:
+Before installing, confirm `v0.2.0-alpha.2` is marked **Pre-release** on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases), with `packslip.sigstore.json` and the target archive present. Stop if publication or assets are missing. The verification version of [mise](https://mise.jdx.dev/getting-started.html) is **2026.9.18**. These commands work in PowerShell, macOS and Linux; no Go compiler or manual extraction is needed:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.2"
 mise exec -- tsnet-bridge version
 mise exec -- tsnet-bridge init
 mise exec -- tsnet-bridge login
 mise exec -- tsnet-bridge connect
 ```
 
-Require `tsnet-bridge 0.2.0-alpha.1`. `init` saves an idle profile without networking. `login` starts a separate node from any installed Tailscale app and presents the official sign-in flow. Review the account, tailnet and permissions. `connect` asks for a current peer and purpose, then shows the actual endpoints for review. No JSON editing or RustDesk key is needed.
+Require `tsnet-bridge 0.2.0-alpha.2`. `init` saves an idle profile without networking. `login` starts a separate node from any installed Tailscale app and presents the official sign-in flow. Review the account, tailnet and permissions. `connect` asks for a service shared with this node, then shows the actual endpoints for review. No JSON editing or RustDesk key is needed.
 
 Existing profiles are never overwritten. Follow [migration or separate-profile guidance](docs/GENERIC.en.md#migration-local-exportimport-optional-startup); a separate profile uses the global `--state-dir PATH` before every command.
 
 Explicitly opt into prereleases and pin the complete version; do not substitute `latest`. Exact pins are exempt from mise 2026.9.18's default 24-hour discovery cutoff. Keep signature, identity and digest checks enabled. Packslip does not establish OS code signing/notarization or application compatibility. Stop at OS security warnings instead of bypassing them.
 
-## Everyday use
+## Everyday use with 0.2.0-alpha.2
+
+Confirm publication and install the version above first. For a source build, replace `mise exec -- tsnet-bridge` with the executable's path. The older release retains its peer/purpose flow.
 
 ```sh
 mise exec -- tsnet-bridge connect            # Use a peer's service
@@ -50,12 +58,18 @@ mise exec -- tsnet-bridge stop               # Stop the node, retaining saved lo
 
 Resume a saved connection with `connect web-demo`, or stop only that rule with `stop web-demo`; replace the example with your saved name. Sharing exposes only the selected numeric-loopback service to the selected peers for the chosen lifetime. Application authentication is still required. Stop/expiry closes existing traffic but cannot retract data or cancel an already running remote job.
 
+- Fresh authenticated shares permitted to this node, with peer, purpose, protocol and port filled in automatically
+- `connect --manual` for ordinary Tailscale services, older bridges or known endpoints; no discovery result proves application health
+- New interactive shares preview minimal discovery metadata; `share --no-discovery` disables it, and older profiles stay private by default
 - Multiple named TCP/UDP connections with Web, SSH/SFTP, database and AI API purpose presets
 - Pinned peer identities, share TTLs, grouped start/stop and partial-start rollback
 - Per-rule JSON, readiness waits, task ownership and expiring cleanup leases
+- Up/Down selection, Left/Right text editing, typed numbers/names and comma-separated sharing peers; explicit confirmation still controls saving/starting
 - In-place input retries, edit/back/cancel, and repeat actions that preserve reviewed scope and expiry
 - Browser, locally generated terminal QR, and private manual-link sign-in guidance
 - Optional user-level autostart of an idle node, never active forwards or shares
+
+For a discoverable share, the provider keeps the application and signed-in bridge running, starts an unexpired share allowing this node, and reviews discovery metadata. First-time provider setup is `init` → `login` → `share`; skip `init` for an existing profile. Ordinary services already exposed by a Tailscale peer need no remote bridge: use `connect --manual`. Presets are editable port examples, including local AI API port `11434`, not automatic application setup. [Provider requirements and presets](docs/GENERIC.en.md#what-the-service-provider-needs)
 
 No language flag is needed normally. Override only when desired with `--lang ja`, `en` or `auto` before the command. Command names, user values and machine JSON are not translated. [Full bilingual, authentication, connection and sharing guide](docs/GENERIC.en.md)
 

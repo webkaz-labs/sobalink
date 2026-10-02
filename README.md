@@ -2,13 +2,19 @@
 
 [English](README.en.md) · **[名前付き接続の使い方](docs/GENERIC.ja.md)** · [実験的な RustDesk 手順](docs/VERIFICATION.md)
 
-**相手を選ぶ → 用途を選ぶ → 内容を確認してつなぐ。** tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。`0.2.0-alpha.1` では名前付きの TCP/UDP 接続と、相手・サービス・期限を限定した共有を使います。日本語・英語は OS／実行環境のロケールから自動選択します。
+**このノードに共有されたサービスを選ぶ → 確認してつなぐ。** tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。現在のソースは、名前付き TCP/UDP 接続と相手・サービス・期限を限定した共有に、サービスから選ぶ探索を追加しています。日本語・英語は OS／実行環境のロケールから自動選択します。
+
+**この手順は検証用プレリリース `0.2.0-alpha.2` 向けです。** サービスから選ぶ探索、矢印キーによる選択・文字編集、用途候補と提供側の条件の案内を含みます。以下の導入は、該当版と署名付き配布物の公開を確認してから行ってください。公開前は[ソースビルド](#安全性と開発)で試せます。公開済み `0.2.0-alpha.1` にはこの探索・編集操作は含まれません。過去の配布結果を新しい版の公開・実導入・実 tailnet 受入の証拠にはしません。
 
 OS 全体の VPN・経路・DNS は変更しません。管理者権限なしでの導入・利用を目指す設計ですが、接続先の権限やアクセス許可は必要です。Windows 標準ユーザーでの実認証は未確認です。
 
 > **実験段階の検証用プレリリースです。** 対象ソースの4環境ネイティブ試験とパッケージ確認は成功しました。実 tailnet への参加、スマートフォン QR 認証、実際の ACL・アプリ、OS ログイン／スリープ、RustDesk の双方向画面・入力は未検証です。`ready` は通信の準備を表し、アプリの成功を保証しません。[確認済みと未確認の範囲](docs/VERIFICATION.en.md)
 
-## 0.2.0-alpha.1 の確認状況
+## 0.2.0-alpha.2 の確認範囲
+
+[PR #1](https://github.com/webkaz-labs/tsnet-bridge/pull/1) の [変更 `ca9ad204` の通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36988386403) は全5ジョブ成功しました。これは公開準備文書の更新前の結果です。統合後の確定ソースに対する CI、署名付き公開・公開物検証・4対象の mise 実導入の結果は、[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)の該当版に記載された Verification の Actions 実行で確認してください。実 tailnet・実アプリ、実際の IME・フォントの組み合わせ、Windows Console／ConPTY の表示入力も未確認です。
+
+### 公開済み 0.2.0-alpha.1 の記録
 
 - [検証用プレリリースを公開済み](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1)。2026-10-01 19:11:08 UTC、19配布物
 - [対象ソース `236bd8e` の通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666)は全5ジョブ成功。[公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369)も全15ジョブ成功
@@ -17,27 +23,29 @@ OS 全体の VPN・経路・DNS は変更しません。管理者権限なしで
 
 公開・実導入の詳しい証拠と、未実施の実機試験は[配布記録](docs/DISTRIBUTION.md)・[検証報告](docs/VERIFICATION.en.md)で分けて示しています。
 
-## 最短の導入と接続
+## 0.2.0-alpha.2 の導入（公開確認後）
 
 Linux x64/ARM64、macOS Apple Silicon (ARM64)、Windows x64 が対象です。Intel Mac・Windows ARM64 は今回の配布対象に含みません。CI の OS は最小対応 OS や Windows 標準ユーザー動作の保証ではありません。
 
-[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)で `v0.2.0-alpha.1` が **Pre-release** として公開され、`packslip.sigstore.json` と対象の配布物がそろっていることを確認してから実行してください。未公開・ファイル不足なら先へ進みません。確認対象の [mise](https://mise.jdx.dev/getting-started.html) は **2026.9.18**。PowerShell、Mac、Linux で同じコマンドを使い、Go や手動展開は不要です。
+[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)で `v0.2.0-alpha.2` が **Pre-release** として公開され、`packslip.sigstore.json` と対象の配布物がそろっていることを確認してから実行してください。未公開・ファイル不足なら先へ進みません。確認対象の [mise](https://mise.jdx.dev/getting-started.html) は **2026.9.18**。PowerShell、Mac、Linux で同じコマンドを使い、Go や手動展開は不要です。
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.2"
 mise exec -- tsnet-bridge version
 mise exec -- tsnet-bridge init
 mise exec -- tsnet-bridge login
 mise exec -- tsnet-bridge connect
 ```
 
-`version` で `tsnet-bridge 0.2.0-alpha.1` を確認します。`init` は空の設定の保存だけで、接続や共有を始めません。`login` は既存の Tailscale アプリと別のノードを開始し、正規の認証ページを案内します。参加先と権限を確認してください。`connect` では現在の相手と用途を選び、実際の接続先を確認します。JSON 編集や RustDesk 公開鍵は不要です。
+`version` で `tsnet-bridge 0.2.0-alpha.2` を確認します。`init` は空の設定の保存だけで、接続や共有を始めません。`login` は既存の Tailscale アプリと別のノードを開始し、正規の認証ページを案内します。参加先と権限を確認してください。`connect` ではこのノードに共有されたサービスを選び、実際の接続先を確認します。JSON 編集や RustDesk 公開鍵は不要です。
 
 既存プロフィールは上書きしません。[移行・別プロフィールの手順](docs/GENERIC.ja.md#既存設定と持ち運び)を確認し、別の保存場所を使う場合は全コマンドの前に `--state-dir PATH` を指定します。
 
 `prerelease=true` と完全な版番号を指定し、`latest` は使いません。mise 2026.9.18 の完全な版指定は24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままにします。Packslip の署名は OS コード署名・公証や実アプリの動作保証とは別です。OS のセキュリティ警告で止まったら、回避せず中断してください。
 
-## 普段の使い方
+## 0.2.0-alpha.2 での普段の使い方
+
+公開を確認して上記の版を導入してから使います。ソースビルドの場合は `mise exec -- tsnet-bridge` を実行ファイルのパスへ置き換えます。旧公開版では相手・用途から選ぶ従来の操作になります。
 
 ```sh
 mise exec -- tsnet-bridge connect            # 相手のサービスを使う
@@ -50,12 +58,18 @@ mise exec -- tsnet-bridge stop               # ノードを停止し、ログイ
 
 保存した接続は `connect web-demo`、個別停止は `stop web-demo` のように名前で操作します。名前は自分で保存したものへ置き換えます。共有は明示した loopback サービスだけを、選択した相手に必要な間だけ提供します。アプリ側の認証も必要です。期限・停止は既存通信も閉じますが、渡したデータの回収や遠隔ジョブの取消はできません。
 
+- このノードに許可された共有を新しい認証済み応答から選び、相手・用途・通信方式・ポートを自動入力
+- 通常の Tailscale・旧 bridge・既知の接続先は `connect --manual`。探索結果はアプリの正常動作を保証しない
+- 新しい対話式共有では最小限の探索情報を確認。`share --no-discovery` で無効化し、既存設定は自動で公開しない
 - Web・SSH/SFTP・DB・AI API の用途候補と、複数の名前付き TCP/UDP 接続
 - 相手 ID 固定、共有の期限、グループ単位の開始・停止と部分失敗の巻き戻し
 - ルール別 JSON、準備待機、タスク所有者・リースによる後片付け
+- ↑↓ で候補選択、←→ で文字編集。番号・名前や、共有先のカンマ区切り入力も使え、保存・開始は別途明示的に確認
 - 入力間違いの再試行、編集・戻る・取消。同じ開始操作で意図せず範囲や期限を変えない
 - ブラウザー・端末内生成 QR・非公開リンクによる認証案内
 - 希望制のユーザー単位自動起動。起動するのはルール未開始のノードだけ
+
+探索できる共有には、提供側のアプリとサインイン済み bridge の実行、このノードを許可した期限内の共有、探索情報の確認が必要です。提供側の初回は `init` → `login` → `share`。設定済みなら `init` は省略します。通常の Tailscale ピアで公開済みのサービスには相手側の bridge は不要で、`connect --manual` を使います。用途候補はローカル AI API の `11434` など、変更できるポートの例であり、アプリの自動設定ではありません。[相手側の条件と用途候補](docs/GENERIC.ja.md#サービスを提供する相手側に必要なもの)
 
 通常は言語指定不要です。必要なときだけコマンドの前に `--lang ja` / `en` / `auto` を指定します。コマンド名・入力値・機械向け JSON は翻訳しません。[日英表示・認証・接続・共有の詳しい手順](docs/GENERIC.ja.md)
 

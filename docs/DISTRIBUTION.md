@@ -1,6 +1,12 @@
 # Distribution and verification
 
-## Current release: 0.2.0-alpha.1 testing prerelease
+## Testing prerelease: 0.2.0-alpha.2
+
+`0.2.0-alpha.2` includes service-first discovery of peer-scoped active shares, arrow-key selection/text editing, and clearer purpose-preset and service-provider guidance. [PR #1](https://github.com/webkaz-labs/tsnet-bridge/pull/1) revision `ca9ad20482e023aa0d0eaa2b6ac888954e2363a2` passed [all five ordinary CI jobs](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36988386403). That run predates release-preparation documentation. Final merged-source CI, signed publication, independent public verification and four-target actual mise installation are separate gates: check the Verification Actions run linked from the matching version on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases) for their results.
+
+The installation pin below targets this version **only after public release and signed assets are confirmed**. Historical release evidence below does not verify this version. Real tailnet/application acceptance, actual IME/font combinations and Windows Console/ConPTY visual input remain unverified.
+
+## Published release record: 0.2.0-alpha.1
 
 `0.2.0-alpha.1` adds the [named connection and time-limited sharing workflow](GENERIC.en.md), with automatic Japanese/English locale selection. It is an **experimental acceptance-testing prerelease**, not a supported stable product.
 
@@ -66,23 +72,23 @@ mise exec -- go build -trimpath -o bin/tsnet-bridge.exe ./cmd/tsnet-bridge
 
 ## Install the testing prerelease through mise
 
-With mise **2026.9.18**, use these commands in PowerShell and Unix shells only after `v0.2.0-alpha.1` is published with the signed bundle and target archive. Stop if publication or required assets cannot be confirmed:
+With mise **2026.9.18**, use these commands in PowerShell and Unix shells only after `v0.2.0-alpha.2` is published with the signed bundle and target archive. Stop if publication or required assets cannot be confirmed:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.2"
 mise exec -- tsnet-bridge version
 ```
 
-Expected application version: `tsnet-bridge 0.2.0-alpha.1`. The explicit
+Expected application version: `tsnet-bridge 0.2.0-alpha.2`. The explicit
 `prerelease=true` option opts into prerelease selection; the complete version pins
-the tested release. Do not use `latest`. Packslip selects the native archive and
+the requested version. Do not use `latest`. Packslip selects the native archive and
 executable, including `.exe` on Windows. Go is not required for end users. After confirming the version, follow [init → login → connect](GENERIC.en.md#first-use), with automatic Japanese/English selection. Existing profiles require deliberate migration or a separate state directory; installation alone does not change the profile.
 
 mise's default `minimum_release_age` is 24 hours for discovery/fuzzy selection.
 **Exact version pins and lockfile selections are exempt in mise 2026.9.18**, so
 this exact prerelease can be installed immediately after publication. Signature,
 identity, digest, size, and platform checks remain active. No age override or
-signature bypass is used by the release installation workflow. The completed native installation jobs used that configured policy. See the
+signature bypass is used by the release installation workflow. The historical completed native installation jobs used that configured policy; the `0.2.0-alpha.2` installation result must be checked separately. See the
 [pinned setting semantics](https://github.com/jdx/mise/blob/v2026.9.18/settings.toml#L1855-L1908)
 and [exact-pin implementation](https://github.com/jdx/mise/blob/v2026.9.18/src/backend/packslip.rs#L726-L735).
 

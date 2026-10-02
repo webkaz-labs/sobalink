@@ -38,7 +38,7 @@ func TestWizardRetriesEditsAndCancelsWithoutSideEffects(t *testing.T) {
 	// Invalid peer, valid peer, invalid purpose, default purpose, edited service,
 	// default name, edit review, service/listen changes, and final approval.
 	input := "0\n1\nwrong\n\n8123\n\ne\n8124\n18124\ny\n"
-	if e := configureRule(t.Context(), d, "forward", []string{"--save-only"}, strings.NewReader(input), &out); e != nil {
+	if e := configureRule(t.Context(), d, "forward", []string{"--manual", "--save-only"}, strings.NewReader(input), &out); e != nil {
 		t.Fatal(e, out.String())
 	}
 	c, e := config.Load(d)

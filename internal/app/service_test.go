@@ -45,25 +45,12 @@ func appFixture(t *testing.T) (*Service, *fakeNode, context.CancelFunc) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	// Find a free consecutive TCP ID pair and a distinct relay port. No fixed test ports.
-	for i := 0; i < 100; i++ {
-		l, e := net.Listen("tcp4", "127.0.0.1:0")
-		if e != nil {
-			t.Fatal(e)
-		}
-		p := l.Addr().(*net.TCPAddr).Port
-		l.Close()
-		if p < 1025 || p > 65532 {
-			continue
-		}
-		c.LocalIDPort = p
-		c.LocalRelayPort = p + 2
-		if Preflight(c) == nil {
-			break
-		}
-		if i == 99 {
-			t.Fatal("no test ports")
-		}
+	c.LocalIDPort, c.LocalRelayPort, e = allocateFixturePorts(100, bindFixturePort)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = Preflight(c); e != nil {
+		t.Fatalf("allocated fixture ports ID=%d relay=%d: %v", c.LocalIDPort, c.LocalRelayPort, e)
 	}
 	n := &fakeNode{state: identity.State{Backend: "Running", Snapshot: policy.Snapshot{Running: true, Peers: []policy.Peer{{ID: "peer-1", DNSName: "server.example.ts.net", IPs: []netip.Addr{netip.MustParseAddr("100.64.1.2")}}}}}}
 	ctx, cancel := context.WithCancel(context.Background())

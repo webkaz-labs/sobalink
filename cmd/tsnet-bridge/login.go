@@ -21,6 +21,7 @@ type loginOptions struct {
 }
 
 var launchLoginBrowser = openBrowser
+var prepareLoginQRDisplay = prepareQRDisplay
 
 func parseLoginOptions(args []string, out io.Writer) (loginOptions, error) {
 	opts := loginOptions{Timeout: 5 * time.Minute, QRFormat: "small"}
@@ -86,6 +87,11 @@ func renderLoginQR(out io.Writer, url, format string) error {
 	if width, err := loginTerminalWidth(out); err == nil && width > 0 && columns > width {
 		return fmt.Errorf("QR needs %d columns; terminal has %d. Widen it or use the private link", columns, width)
 	}
+	restore, e := prepareLoginQRDisplay(out)
+	if e != nil {
+		return e
+	}
+	defer restore()
 	var b strings.Builder
 	step := 2
 	if format == "large" {
@@ -117,7 +123,10 @@ func renderLoginQR(out io.Writer, url, format string) error {
 		}
 		b.WriteString("\x1b[0m\n")
 	}
-	_, e = io.WriteString(out, b.String())
+	n, e := io.WriteString(out, b.String())
+	if e == nil && n != b.Len() {
+		return io.ErrShortWrite
+	}
 	return e
 }
 func loginWithOptions(ctx context.Context, dir string, out io.Writer, opts loginOptions) error {

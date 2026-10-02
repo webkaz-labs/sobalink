@@ -18,10 +18,16 @@ import (
 	"github.com/webkaz-labs/tsnet-bridge/internal/config"
 )
 
-func ruleSettings(c config.Config, out io.Writer) error {
+func ruleSettings(c config.Config, out io.Writer, dir string) error {
+	fmt.Fprintf(out, "Saved configuration. Check running state with: %s status\n", commandPrefix(dir))
 	for _, r := range c.Rules {
-		fmt.Fprintf(out, "%s (%s, saved disabled):\n", r.Name, r.Purpose)
+		fmt.Fprintf(out, "%s (%s, saved configuration):\n", r.Name, r.Purpose)
 		if r.Direction == "share" {
+			if r.Discoverable {
+				fmt.Fprintln(out, "  Service discovery: enabled while sharing (allowed peers only).")
+			} else {
+				fmt.Fprintln(out, "  Service discovery: disabled.")
+			}
 			fmt.Fprintf(out, "  Remote peers connect to this node's tailnet address, port %d (%s).\n  Local target: %s\n", r.ListenPort, r.Network, config.Address(r.TargetHost, r.TargetPort))
 			for _, p := range r.AllowedPeers {
 				fmt.Fprintf(out, "  Allowed peer: %s (%s)\n", p.Host, p.ID)

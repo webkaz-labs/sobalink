@@ -307,7 +307,7 @@ func TestLocaleCatalogFormatParity(t *testing.T) {
 // This keeps future literal errors in owned CLI/config/runtime code from silently
 // falling back to English. OS/library diagnostics remain verbatim by design.
 func TestLocaleCatalogCoversLiteralErrors(t *testing.T) {
-	paths := []string{"main.go", "rules.go", "profiles.go", "login.go", "help.go"}
+	paths := []string{"main.go", "rules.go", "services.go", "profiles.go", "login.go", "help.go", "prompts.go", "qr_terminal_windows.go", "qr_terminal_other.go", "prompt_terminal_linux.go", "prompt_terminal_other.go", "terminal_editor.go", "terminal_editor_windows.go", "terminal_editor_other.go", "terminal_editor_flush_linux.go", "terminal_editor_flush_darwin.go", "terminal_editor_flush_windows.go", "terminal_editor_flush_other.go"}
 	for _, dir := range []string{"../../internal/config", "../../internal/app", "../../internal/autostart"} {
 		files, e := filepath.Glob(filepath.Join(dir, "*.go"))
 		if e != nil {

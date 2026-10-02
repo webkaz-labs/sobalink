@@ -259,3 +259,38 @@ func TestNamedShareJSONRemainsStructured(t *testing.T) {
 		t.Fatal("JSON polluted by preview", e, out.String())
 	}
 }
+
+func TestRuleSettingsDistinguishesSavedStateAndDiscovery(t *testing.T) {
+	forward := testRule("web")
+	share := testRule("advertised")
+	share.Direction, share.PeerID, share.TargetHost = "share", "", "127.0.0.1"
+	share.AllowedPeers = []config.PeerRef{{ID: "node-server", Host: "server.example.ts.net"}}
+	share.Discoverable = true
+	private := share
+	private.Name, private.Discoverable = "manual-share", false
+	d := saveRules(t, forward, share, private)
+	// Settings reads the saved definition only, so it must not label a rule
+	// stopped/disabled or claim a runtime result without checking status.
+	installRequest(t, func(context.Context, string, string, any) error {
+		t.Fatal("settings unexpectedly queried runtime")
+		return nil
+	})
+	for _, lang := range []string{"en", "ja"} {
+		var out bytes.Buffer
+		if err := run(t.Context(), []string{"--lang", lang, "--state-dir", d, "settings"}, strings.NewReader(""), &out); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), commandPrefix(d)+" status") || strings.Contains(out.String(), "saved disabled") || strings.Contains(out.String(), "保存のみ・無効") {
+			t.Fatal(out.String())
+		}
+		wants := []string{"saved configuration", "enabled while sharing (allowed peers only)", "Service discovery: disabled"}
+		if lang == "ja" {
+			wants = []string{"保存済みの設定", "共有中に有効（許可した相手のみ）", "サービス発見: 無効"}
+		}
+		for _, want := range wants {
+			if !strings.Contains(out.String(), want) {
+				t.Fatal(want, out.String())
+			}
+		}
+	}
+}

@@ -2,9 +2,37 @@
 
 [日本語の検証概要・旧 RustDesk 手順](VERIFICATION.md) · [Named connection guide](GENERIC.en.md) · [English README](../README.en.md)
 
-Updated 2026-10-01. **The exact-source automated tests for `0.2.0-alpha.1` passed on all four native targets. Public distribution and actual mise installation are recorded separately below. Real enrollment and application acceptance remain incomplete; this is an experimental testing prerelease.**
+Updated 2026-10-02. **This report covers the `0.2.0-alpha.2` service-discovery/editor source. Its CI evidence is recorded below; final merged-source CI, signed publication, public verification and native mise-installation results belong to the Verification Actions run linked from the matching version on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases). The published `0.2.0-alpha.1` evidence remains historical. Real enrollment and application acceptance are incomplete.**
 
-## 0.2.0-alpha.1: current source and release evidence
+## Service discovery: current source
+
+The service-first picker and optional peer-scoped metadata described in the [guide](GENERIC.en.md) are newer than the published `0.2.0-alpha.1` source below. The historical four-target CI, package, signature and mise-install results do not verify these changes. They are included in `0.2.0-alpha.2`; no new release or real-device acceptance result is claimed here.
+
+The later [ordinary CI run for PR #1 revision `ca9ad204`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36988386403) passed all five jobs. This predates final release-preparation documentation and does not establish CI for the eventual merged source, signed publication or actual installation of `0.2.0-alpha.2`.
+
+[Native CI for revision `30738200`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36985473069) passed all five jobs on 2026-10-02: Linux x64/ARM64, macOS ARM64, Windows x64, and combined checksum/Packslip fixture verification. Its PR integration commit `d7c5105a` has the same source tree `7ff58b9f734128aca5c67201b25b9aee929ec7cf` as branch revision `30738200`. All four ran the full race suite, repeated native IPC, vet, formatting, 54 Python tests and native package/offline locale/JSON checks. The three POSIX targets also passed all 78 packaged PTY cases. A macOS-only comparison failure was traced to the kernel’s temporary PENDIN flag by a separate Python raw/restore baseline; every field matches exactly after pending line-discipline work settles, with no ignored settings. Windows Console/ConPTY visual input and actual IME/font combinations remain unverified.
+
+Independent downloads of all four CI packages matched their artifact digests, binary hashes, source identity, SBOMs, license notices and bundled documents. The downloaded Linux x64 package also passed the offline and 78-case PTY smoke again. These are development artifacts, not a new signed public release or mise-install result. Later documentation-only revisions are tracked separately by [PR #1](https://github.com/webkaz-labs/tsnet-bridge/pull/1).
+
+A scoped Linux x64 check with Go 1.27.1 passed the input/QR/locale race regressions and CLI vet. Real Linux pseudo-terminals exercised Japanese backspace, output-failure/cancellation restoration, and Japanese/English setup interrupted with Ctrl+C; the interrupted setup exited without creating a profile or credentials and restored terminal settings. This is local PTY evidence, not a test of every terminal/IME or native Windows QR output. Windows QR behavior still needs native execution, and no real sign-in was performed.
+
+The arrow-key editor was additionally checked on real Linux x64 PTYs in Japanese and English at 30, 40 and 80 columns. Twelve independently VT-emulated screen sessions with negotiated grapheme-width support, plus six explicitly unsupported legacy-width sessions, verified Up/Down highlights, Left/Right cursor editing, Japanese insertion, combining-character/ZWJ grapheme display and deletion, Home/End/Delete/Backspace, long-input horizontal viewports and retained accepted answers. Seventy-eight actual-CLI offline smoke cases passed editing, bounded paste, cancellation and terminal-setting restoration, including rejection of pasted answers spilling into the next question. A repeated-prompt regression completed 36 prompts under the race detector without blocked input-scanner goroutines; queued input could not change an accepted answer. The independent screen-buffer sessions are Linux terminal-rendering results; native package results are recorded above. Neither establishes every-terminal/IME acceptance, sign-in or application verification.
+
+Focused Linux x64 race regressions also cover typed peer/CSV selection, purpose defaults/back/cancel, service blank-input rejection, refresh/manual/cancel paths, Japanese/English preset explanations and provider requirements, and local-profile-preserving next actions. Fake-clock race tests also verify that an aged selection refreshes only the same unchanged grant; changed identity/endpoint/protocol/purpose, replacement grants, shortened expiry, stale responses, denial and failure still require reselection. CLI vet passed. These checks preserve explicit save/start confirmation and do not establish real provider availability, enrollment or application health.
+
+A separate current-source Linux build passed offline command checks for Japanese/English/automatic-language help, initialization, saved settings/rules, local export/import, idle-autostart previews, locale-independent rule JSON, discovery/manual flag parsing and cancellation. Runtime shares/status/stop checks were blocked by the local sandbox’s Unix-socket syscall restriction, so that local attempt is not counted as passed; the native CI above separately passed the full service/control IPC tests. All three Mermaid diagrams parsed and all 132 relative Markdown links/anchors resolved.
+
+Review and automated verification cover the following behaviors (with mocked identity/application state where noted above):
+
+- Service-first selection, autofilled peer/purpose/protocol/shared port, local-port alternatives, refresh/back/manual/cancel and stale selection before save/start, in Japanese and English
+- Ordinary Tailscale/old-bridge manual paths, existing flags and profiles, all-eligible-peer sharing recipients, explicit metadata previews, interactive opt-out and scripted opt-in
+- Strict minimal DTO, untrusted/malformed HTTP, wrong identity/source mapping, per-caller share filtering, start-time pins, expiry/stop/revocation, listener lifecycle, bounded timeouts and no OS-route fallback
+- Honest confirmed/unsupported/unavailable states and application-unverified labeling; no health inference from peer online status or a TCP handshake
+- `init`, browser/link/QR login, named and grouped start/reconnect/stop, save/import/export, idle autostart planning, locale/help and unchanged existing machine fields
+
+Remaining actual acceptance includes two enrolled nodes with distinct allowed/denied callers, separate discovery/service-port ACL denial, sharing expiry and identity changes, application use, phone QR, Windows standard-user enrollment and native OS login/suspend/network changes. Local mocks and offline checks cannot satisfy these gates.
+
+## 0.2.0-alpha.1: published-source and release evidence
 
 Source [`236bd8e217f213a93b667f3d8d0509811d4f5464`](https://github.com/webkaz-labs/tsnet-bridge/commit/236bd8e217f213a93b667f3d8d0509811d4f5464) adds named forward and inbound TCP/UDP rules, pinned peer selection, presets, grouped start/stop with partial-start rollback, TTL and task leases, per-rule JSON, wait-ready, local migration/import/export, and opt-in idle-node user startup. Human output defaults to automatic Japanese/English locale selection. [Current guide](GENERIC.en.md)
 
@@ -29,7 +57,7 @@ These successful distribution and offline checks do not establish real enrollmen
 
 ### Coverage and limits
 
-Current source tests and recorded local review cover:
+Tests and recorded review for the published source above cover:
 
 - Japanese/English onboarding, help, confirmations, status, errors and next actions; locale precedence/overrides, preserved user values and machine JSON
 - In-place typing retries, edit/back/cancel, narrow-terminal QR fallback, interrupted and repeated operations, and unchanged scope/expiry on repeated active starts
@@ -87,7 +115,7 @@ All five native jobs passed:
 
 Each job ran race-enabled tests, native local IPC/lifecycle checks, vet, formatting checks, two repeatable package builds, archive/notices/SBOM validation, and execution of the packaged binary's help/version commands. The aggregate Packslip 1.4.0 job signed a disposable example-identity fixture and verified all five archives plus five scoped SBOM resources. Test signing keys/bundles were removed, not published.
 
-The run's development artifacts are historical CI outputs, not the current installation path. Use the version-specific [distribution record](DISTRIBUTION.md) and [named connection guide](GENERIC.en.md) for `0.2.0-alpha.1`. The legacy procedure below remains pinned to `0.1.0-alpha.2`. Installation verification and real tailnet/application acceptance are separate results.
+The run's development artifacts are historical CI outputs, not the current installation path. Use the version-specific [distribution record](DISTRIBUTION.md) and [named connection guide](GENERIC.en.md) for `0.2.0-alpha.2`. The legacy procedure below remains pinned to `0.1.0-alpha.2`. Installation verification and real tailnet/application acceptance are separate results.
 
 The current prerelease matrix is four targets: macOS ARM64, Windows x64, and
 Linux x64/ARM64. The five-target results above are historical; Intel macOS is
@@ -125,7 +153,7 @@ The current production `run` command is not an offline initialization test: tsne
 
 ## Legacy RustDesk acceptance procedure
 
-The following is the experimental `0.1.0-alpha.2` fixed-forwarding procedure, preserved for reproducible historical comparison. For new named connections and scoped shares use [the 0.2.0-alpha.1 guide](GENERIC.en.md). This procedure is not a passed result and does not cover the new generic workflow. It needs a reachable configured hbbs/hbbr server, its public key, a standard-user Windows session, and a macOS session for the initial bidirectional test. Linux controller/controlled roles need separate acceptance afterward.
+The following is the experimental `0.1.0-alpha.2` fixed-forwarding procedure, preserved for reproducible historical comparison. For new named connections and scoped shares use [the 0.2.0-alpha.2 guide](GENERIC.en.md). This procedure is not a passed result and does not cover the new generic workflow. It needs a reachable configured hbbs/hbbr server, its public key, a standard-user Windows session, and a macOS session for the initial bidirectional test. Linux controller/controlled roles need separate acceptance afterward.
 
 1. Use mise 2026.9.18 in a normal, non-elevated terminal. Both PowerShell and
    Unix shells accept:
@@ -175,8 +203,10 @@ Remote testing requires access to the chosen test endpoints and approval for eac
 
 ## Required before a supported release
 
-The following real-device checks remain open for `0.2.0-alpha.1`. Distribution completion is a separate gate recorded above; it must not close these items.
+The following real-device checks remain open for `0.2.0-alpha.2` as well as the published `0.2.0-alpha.1`. Version-specific distribution results are a separate gate; neither distribution completion nor automated checks close these items.
 
+- [ ] Service-first discovery between enrolled nodes, allowed/denied callers, separate discovery/service-port ACLs, stale or changed grants, expiry and revocation
+- [ ] Actual Japanese/English terminal rendering with IMEs and fonts, including Windows Console/ConPTY input, cancellation and mode restoration
 - [ ] Browser/manual-link/phone-QR enrollment on actual devices, with MFA and node approval where required
 - [ ] Named TCP/UDP forward and scoped inbound shares against real tailnet ACLs, including denied peers, identity changes, stop and TTL expiry
 - [ ] SSH/SFTP, HTTP/HTTPS, database, AI/API and applicable HTTP MCP clients with normal authentication and certificate/host-key checks

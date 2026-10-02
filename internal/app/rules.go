@@ -106,6 +106,8 @@ func (l *lifetime) renew(d time.Duration) error {
 }
 
 type ruleRuntime struct {
+	discoveryID              string
+	discoveryPins            map[netip.Addr]string
 	ttlSeconds, leaseSeconds int64
 	config                   config.Rule
 	status                   RuleStatus
@@ -239,6 +241,9 @@ func (m *ruleManager) selectRules(q RuleCommand) ([]*ruleRuntime, error) {
 	return out, nil
 }
 func (m *ruleManager) command(ctx context.Context, q RuleCommand) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	switch q.Action {
 	case "save":
 		if q.Rule == nil {
@@ -335,6 +340,8 @@ func (m *ruleManager) command(ctx context.Context, q RuleCommand) (any, error) {
 			}
 			now := time.Now()
 			r.life = &lifetime{}
+			r.discoveryID = ""
+			r.discoveryPins = nil
 			r.ttlSeconds = q.TTLSeconds
 			r.status.TTLSeconds = q.TTLSeconds
 			r.status.LeaseSeconds = q.LeaseSeconds
@@ -473,7 +480,16 @@ func (m *ruleManager) start(ctx context.Context, r *ruleRuntime, st identity.Sta
 		}
 		address := config.Address(self.String(), cfg.ListenPort)
 		target := config.Address(cfg.TargetHost, cfg.TargetPort)
-		pinned := pinAllowedSources(st.Snapshot, cfg.AllowedPeers)
+		// Keep the original address/identity grant through automatic recovery.
+		// New addresses require another explicit start, not a wider reconnect.
+		if r.discoveryPins == nil {
+			r.discoveryPins = pinAllowedSources(st.Snapshot, cfg.AllowedPeers)
+		}
+		pinned := r.discoveryPins
+		if discoveryPinsRevoked(st.Snapshot, pinned) {
+			r.life.fail("peer-identity-changed")
+			return errIdentity
+		}
 		authorize := func(c context.Context, source netip.AddrPort) error {
 			if err := r.life.check(); err != nil {
 				return err
@@ -529,6 +545,9 @@ func (m *ruleManager) start(ctx context.Context, r *ruleRuntime, st identity.Sta
 	r.status.Reason = "Listener ready; application behavior remains unverified"
 	r.status.ListenAddress = server.Addr().String()
 	r.status.CheckedAt = time.Now().UTC()
+	if cfg.Direction == "share" && cfg.Discoverable {
+		m.s.ensureDiscovery(st)
+	}
 	return nil
 }
 func validateAllowed(s policy.Snapshot, allowed []config.PeerRef) error {

@@ -87,7 +87,7 @@ jobs:
           test "$(go env GOOS)" = '${{ matrix.goos }}'
           test "$(go env GOARCH)" = '${{ matrix.goarch }}'
           go mod verify
-          python -m unittest discover -s .github/scripts -p 'test_release_validation.py' -v
+          python -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail
