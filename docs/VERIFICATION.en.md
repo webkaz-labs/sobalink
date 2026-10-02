@@ -2,13 +2,15 @@
 
 [日本語の検証概要・旧 RustDesk 手順](VERIFICATION.md) · [Named connection guide](GENERIC.en.md) · [English README](../README.en.md)
 
-Updated 2026-10-02. **The exact-source automated tests for `0.2.0-alpha.1` passed on all four native targets. Public distribution and actual mise installation are recorded separately below. Real enrollment and application acceptance remain incomplete; this is an experimental testing prerelease.**
+Updated 2026-10-02. **This report covers the `0.2.0-alpha.2` service-discovery/editor source. Its CI evidence is recorded below; final merged-source CI, signed publication, public verification and native mise-installation results belong to the Verification Actions run linked from the matching version on [Releases](https://github.com/webkaz-labs/tsnet-bridge/releases). The published `0.2.0-alpha.1` evidence remains historical. Real enrollment and application acceptance are incomplete.**
 
 ## Service discovery: current source
 
-The service-first picker and optional peer-scoped metadata described in the [guide](GENERIC.en.md) are newer than the published `0.2.0-alpha.1` source below. The historical four-target CI, package, signature and mise-install results do not verify these changes. No new release or real-device acceptance result is claimed here.
+The service-first picker and optional peer-scoped metadata described in the [guide](GENERIC.en.md) are newer than the published `0.2.0-alpha.1` source below. The historical four-target CI, package, signature and mise-install results do not verify these changes. They are included in `0.2.0-alpha.2`; no new release or real-device acceptance result is claimed here.
 
-[Native CI for revision `30738200`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36985473069) passed all five jobs on 2026-10-02: Linux x64/ARM64, macOS ARM64, Windows x64, and combined checksum/Packslip fixture verification. Its PR integration commit `d7c5105a` has the same source tree `7ff58b9f734128aca5c67201b25b9aee929ec7cf` as branch revision `30738200`. All four ran the full race suite, repeated native IPC, vet, formatting, 54 Python tests and native package/offline locale/JSON checks. The three POSIX targets also passed all 78 packaged PTY cases. A macOS-only comparison failure was traced to the kernel’s temporary PENDIN flag by a separate Python raw/restore baseline; every field matches exactly after pending line-discipline work settles, with no ignored settings. Windows Console/ConPTY visual input remains unverified.
+The later [ordinary CI run for PR #1 revision `ca9ad204`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36988386403) passed all five jobs. This predates final release-preparation documentation and does not establish CI for the eventual merged source, signed publication or actual installation of `0.2.0-alpha.2`.
+
+[Native CI for revision `30738200`](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36985473069) passed all five jobs on 2026-10-02: Linux x64/ARM64, macOS ARM64, Windows x64, and combined checksum/Packslip fixture verification. Its PR integration commit `d7c5105a` has the same source tree `7ff58b9f734128aca5c67201b25b9aee929ec7cf` as branch revision `30738200`. All four ran the full race suite, repeated native IPC, vet, formatting, 54 Python tests and native package/offline locale/JSON checks. The three POSIX targets also passed all 78 packaged PTY cases. A macOS-only comparison failure was traced to the kernel’s temporary PENDIN flag by a separate Python raw/restore baseline; every field matches exactly after pending line-discipline work settles, with no ignored settings. Windows Console/ConPTY visual input and actual IME/font combinations remain unverified.
 
 Independent downloads of all four CI packages matched their artifact digests, binary hashes, source identity, SBOMs, license notices and bundled documents. The downloaded Linux x64 package also passed the offline and 78-case PTY smoke again. These are development artifacts, not a new signed public release or mise-install result. Later documentation-only revisions are tracked separately by [PR #1](https://github.com/webkaz-labs/tsnet-bridge/pull/1).
 
@@ -113,7 +115,7 @@ All five native jobs passed:
 
 Each job ran race-enabled tests, native local IPC/lifecycle checks, vet, formatting checks, two repeatable package builds, archive/notices/SBOM validation, and execution of the packaged binary's help/version commands. The aggregate Packslip 1.4.0 job signed a disposable example-identity fixture and verified all five archives plus five scoped SBOM resources. Test signing keys/bundles were removed, not published.
 
-The run's development artifacts are historical CI outputs, not the current installation path. Use the version-specific [distribution record](DISTRIBUTION.md) and [named connection guide](GENERIC.en.md) for `0.2.0-alpha.1`. The legacy procedure below remains pinned to `0.1.0-alpha.2`. Installation verification and real tailnet/application acceptance are separate results.
+The run's development artifacts are historical CI outputs, not the current installation path. Use the version-specific [distribution record](DISTRIBUTION.md) and [named connection guide](GENERIC.en.md) for `0.2.0-alpha.2`. The legacy procedure below remains pinned to `0.1.0-alpha.2`. Installation verification and real tailnet/application acceptance are separate results.
 
 The current prerelease matrix is four targets: macOS ARM64, Windows x64, and
 Linux x64/ARM64. The five-target results above are historical; Intel macOS is
@@ -151,7 +153,7 @@ The current production `run` command is not an offline initialization test: tsne
 
 ## Legacy RustDesk acceptance procedure
 
-The following is the experimental `0.1.0-alpha.2` fixed-forwarding procedure, preserved for reproducible historical comparison. For new named connections and scoped shares use [the 0.2.0-alpha.1 guide](GENERIC.en.md). This procedure is not a passed result and does not cover the new generic workflow. It needs a reachable configured hbbs/hbbr server, its public key, a standard-user Windows session, and a macOS session for the initial bidirectional test. Linux controller/controlled roles need separate acceptance afterward.
+The following is the experimental `0.1.0-alpha.2` fixed-forwarding procedure, preserved for reproducible historical comparison. For new named connections and scoped shares use [the 0.2.0-alpha.2 guide](GENERIC.en.md). This procedure is not a passed result and does not cover the new generic workflow. It needs a reachable configured hbbs/hbbr server, its public key, a standard-user Windows session, and a macOS session for the initial bidirectional test. Linux controller/controlled roles need separate acceptance afterward.
 
 1. Use mise 2026.9.18 in a normal, non-elevated terminal. Both PowerShell and
    Unix shells accept:
@@ -201,8 +203,10 @@ Remote testing requires access to the chosen test endpoints and approval for eac
 
 ## Required before a supported release
 
-The following real-device checks remain open for `0.2.0-alpha.1`. Distribution completion is a separate gate recorded above; it must not close these items.
+The following real-device checks remain open for `0.2.0-alpha.2` as well as the published `0.2.0-alpha.1`. Version-specific distribution results are a separate gate; neither distribution completion nor automated checks close these items.
 
+- [ ] Service-first discovery between enrolled nodes, allowed/denied callers, separate discovery/service-port ACLs, stale or changed grants, expiry and revocation
+- [ ] Actual Japanese/English terminal rendering with IMEs and fonts, including Windows Console/ConPTY input, cancellation and mode restoration
 - [ ] Browser/manual-link/phone-QR enrollment on actual devices, with MFA and node approval where required
 - [ ] Named TCP/UDP forward and scoped inbound shares against real tailnet ACLs, including denied peers, identity changes, stop and TTL expiry
 - [ ] SSH/SFTP, HTTP/HTTPS, database, AI/API and applicable HTTP MCP clients with normal authentication and certificate/host-key checks

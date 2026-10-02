@@ -1,12 +1,12 @@
 # Named connections and time-limited sharing
 
-This guide describes the current source, including unreleased service discovery. The published `0.2.0-alpha.1` binary has named connections but retains the peer/purpose wizard; `0.1.0-alpha.2` has only the legacy workflow. Legacy RustDesk profiles remain supported as an experimental separate workflow. [日本語](GENERIC.ja.md) · [Verification](VERIFICATION.en.md)
+This guide targets the `0.2.0-alpha.2` testing prerelease, including service-first discovery and arrow-key editing. Publication and signed assets must be confirmed before installation. The published `0.2.0-alpha.1` binary has named connections but retains the peer/purpose wizard; `0.1.0-alpha.2` has only the legacy workflow. Legacy RustDesk profiles remain supported as an experimental separate workflow. [日本語](GENERIC.ja.md) · [Verification](VERIFICATION.en.md)
 
 **[0.2.0-alpha.1 is published](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1).** [Exact-source CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666) and the [complete release/native mise-install workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369) passed, including Japanese/English output, OS-locale fallback and exact JSON checks on all four targets. Real enrollment and application acceptance remain incomplete. [Detailed distribution record](DISTRIBUTION.md)
 
 The common path is **shared service → review → connect**. Only fresh authenticated responses describing active shares permitted to this node are selectable. Peer, purpose, protocol and shared port are filled in; no JSON editing, peer-ID typing or guessing the remote port is required. `connect --manual` keeps the peer/purpose/port path for ordinary Tailscale services, older bridges and known endpoints. Sharing recipients are still chosen from all current eligible peers, including peers that publish no services.
 
-The release results above do not verify this newer source or its discovery feature. The commands below use a source-built `bin/tsnet-bridge`; on Windows use `bin/tsnet-bridge.exe`. See [current-source verification scope](VERIFICATION.en.md#service-discovery-current-source).
+The historical release results above do not verify this version or its discovery feature. Commands below use the exact-pin installation described under [First use](#first-use), after publication is confirmed. A source-build alternative is available there. See [version-specific verification scope](VERIFICATION.en.md#service-discovery-current-source).
 
 The design targets ordinary-user installation and operation without OS VPN, route or DNS changes. This does not remove authorization requirements for the tailnet or destination service. An additional isolated non-root Linux offline installation passed for `0.2.0-alpha.1`. Real enrollment, Windows standard-user authentication, actual tailnet ACLs and applications, phone QR authentication and OS sleep/login behavior remain unverified for the new version.
 
@@ -15,27 +15,32 @@ The design targets ordinary-user installation and operation without OS VPN, rout
 Language selection is automatic: Japanese locales use Japanese, otherwise English is the safe fallback. The order is `LC_ALL`, `LC_MESSAGES`, then `LANG`; when unset, Windows reads the current user's UI language and macOS reads the first preferred language. Override only when desired:
 
 ```sh
-bin/tsnet-bridge --lang ja help
-bin/tsnet-bridge --lang en help
-bin/tsnet-bridge --lang auto help
+mise exec -- tsnet-bridge --lang ja help
+mise exec -- tsnet-bridge --lang en help
+mise exec -- tsnet-bridge --lang auto help
 ```
 
 `TSNET_BRIDGE_LANG=ja`, `en` or `auto` is also supported. Command/flag names and complete machine JSON remain unchanged. Endpoints, identifiers and user values are not translated. Rule/group names may use Japanese letters as well as other letters/digits, hyphens and underscores. English and Japanese confirmation/edit/back/cancel inputs are accepted.
 
-Use a UTF-8 terminal. In supported interactive terminals, Up/Down highlights one peer, purpose or service; Enter chooses it. Left/Right moves within typed text. Numbers, names and control words still work; type comma-separated peer numbers or names to share with several peers. Arrow navigation alone never confirms saving or starting. Redirected input/output keeps plain line prompts without terminal controls. Malformed UTF-8 and unsupported control sequences are rejected instead of being saved, and terminal settings are restored after prompting. Exact terminal, IME and native-platform combinations remain an acceptance check.
+Use a UTF-8 terminal. In supported interactive terminals, Up/Down highlights one peer, purpose or service; Enter chooses it. Left/Right moves within typed text. Numbers, names and control words still work; type comma-separated peer numbers or names to share with several peers. Arrow navigation alone never confirms saving or starting. Redirected input/output keeps plain line prompts without terminal controls. Malformed UTF-8 and unsupported control sequences are rejected instead of being saved, and terminal settings are restored after prompting. Actual IME/font combinations and Windows Console/ConPTY visual input remain unverified; POSIX PTY tests do not replace those checks.
 
 ## First use
 
-From a current source checkout with [mise](https://mise.jdx.dev/getting-started.html), build with the pinned toolchain, then initialize and sign in:
+First confirm `v0.2.0-alpha.2` is public as a **Pre-release**, with `packslip.sigstore.json` and the target archive, using the [README installation checks](../README.en.md#install-020-alpha2-after-publication). Stop if the release or required assets are missing. With [mise](https://mise.jdx.dev/getting-started.html) **2026.9.18**, run in PowerShell, macOS or Linux:
 
 ```sh
-mise install
-mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
-bin/tsnet-bridge init
-bin/tsnet-bridge login
+mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.2"
+mise exec -- tsnet-bridge version
 ```
 
-On Windows, build with `-o bin/tsnet-bridge.exe` and use that executable. These are development binaries, separate from signed release artifacts. Stop at OS security warnings instead of bypassing them. To install the older published release, use the [version-pinned README procedure](../README.en.md#install-the-published-020-alpha1-release); that binary does not provide service discovery or the new discovery flags.
+Require `tsnet-bridge 0.2.0-alpha.2` before continuing:
+
+```sh
+mise exec -- tsnet-bridge init
+mise exec -- tsnet-bridge login
+```
+
+For a source build before publication, use the [development commands](../README.en.md#security-and-development), then replace `mise exec -- tsnet-bridge` throughout this guide with `bin/tsnet-bridge` (`bin/tsnet-bridge.exe` on Windows). A development binary is separate from signed release artifacts. Stop at OS security warnings instead of bypassing them.
 
 `init` writes an idle profile without networking. `login` starts a separate embedded node and presents the official private sign-in URL. Review the account, tailnet and node authorization yourself; never share login URLs, secrets or credentials. Existing profiles are never silently overwritten. Use `login --no-browser` for manual browser opening.
 
@@ -54,7 +59,7 @@ Waiting, connected and device-approval-pending states are distinct. The default 
 ## Use a peer's service
 
 ```sh
-bin/tsnet-bridge connect
+mise exec -- tsnet-bridge connect
 ```
 
 1. Select a shared service with Up/Down and Enter, or type its number. The list shows the peer, purpose, TCP/UDP shared port, check time and sharing expiry
@@ -69,12 +74,12 @@ The list confirms recent sharing metadata, not application health. A peer being 
 
 For a bridge-published share, the provider runs both the actual local application and a signed-in bridge node. A started, unexpired share must explicitly allow the receiving bridge node. Discovery must also be enabled: review the new interactive share preview, or deliberately add `--discoverable` when using `--confirm`. Tailnet policy must allow the discovery port and actual shared service port separately.
 
-On the provider, after building the current source:
+On the provider, after installing the same version (or building the same source):
 
 ```sh
-bin/tsnet-bridge init
-bin/tsnet-bridge login
-bin/tsnet-bridge share
+mise exec -- tsnet-bridge init
+mise exec -- tsnet-bridge login
+mise exec -- tsnet-bridge share
 ```
 
 Run `init` only once; skip it when a profile already exists. Start the local application with authentication before `share`, then choose the receiver, actual service port and lifetime, and review before starting. Keep the application and bridge running. The receiver refreshes `connect` after the provider starts sharing. An empty list or timeout does not establish that a bridge is missing or the peer is offline.
@@ -84,9 +89,9 @@ An ordinary service already listening on a Tailscale peer does **not** need a br
 Same-port forwarding is preferred. Privileged or occupied local ports produce an alternative that requires confirmation; no silent renumbering or elevation occurs. Forward local ports are 1024..65535, destination service ports 1..65535. Existing RustDesk fixed-port rules remain separate.
 
 ```sh
-bin/tsnet-bridge connect web-demo
-bin/tsnet-bridge settings
-bin/tsnet-bridge stop web-demo
+mise exec -- tsnet-bridge connect web-demo
+mise exec -- tsnet-bridge settings
+mise exec -- tsnet-bridge stop web-demo
 ```
 
 Replace `web-demo` with your saved name. `connect NAME` and `start NAME` reuse the saved pinned peer and port; they do not claim a fresh discovery observation. A new service-picker configuration is the path that revalidates discovery before save/start. Copy the displayed service endpoint into the application, not its SOCKS field. TLS names/SNI, origin/Cookie/CORS and SSH host-key checks remain application concerns. Never disable verification. Saving with `--save-only` does not connect. Replacing a saved rule requires stopping it and explicitly selecting `--replace`. A different node with the same display name is never silently substituted for a saved peer; select the current peer again.
@@ -110,9 +115,9 @@ The picker shows the selected transport. It defaults to TCP; pass `--network udp
 
 ```sh
 # Replace demo with a peer currently shown in your list
-bin/tsnet-bridge connect --peer demo --purpose web --port 8080 --name web-demo
-bin/tsnet-bridge connect --peer demo --purpose ssh --listen-port 2222 --name ssh-demo
-bin/tsnet-bridge connect --peer demo --purpose custom --network udp --port 9000 --name udp-demo
+mise exec -- tsnet-bridge connect --peer demo --purpose web --port 8080 --name web-demo
+mise exec -- tsnet-bridge connect --peer demo --purpose ssh --listen-port 2222 --name ssh-demo
+mise exec -- tsnet-bridge connect --peer demo --purpose custom --network udp --port 9000 --name udp-demo
 ```
 
 Input troubleshooting: redirected streams or `TERM=dumb` use plain number/name/CSV line input. If `TEA_TRACE` is set, unset that debugging variable before retrying; interactive input refuses it to prevent input logs, and does not save prompt history.
@@ -124,10 +129,10 @@ Input troubleshooting: redirected streams or `TERM=dumb` use plain number/name/C
 Start the application with appropriate authentication, then:
 
 ```sh
-bin/tsnet-bridge share
-bin/tsnet-bridge shares
-bin/tsnet-bridge stop api-demo
-bin/tsnet-bridge stop-shares
+mise exec -- tsnet-bridge share
+mise exec -- tsnet-bridge shares
+mise exec -- tsnet-bridge stop api-demo
+mise exec -- tsnet-bridge stop-shares
 ```
 
 Select explicitly allowed current peers, service and lifetime. Only an exact numeric `127.0.0.1` or `::1` target is allowed. TCP and UDP are supported; use `--network udp` for UDP or `--loopback ::1` for an IPv6 local service. LAN/public IPs, arbitrary hostnames and blanket sharing are rejected. The receiving app connects to the provider bridge node's displayed tailnet address, not its own localhost. Tailnet ACLs and per-rule pinned-peer authorization both apply.
@@ -143,13 +148,13 @@ Saved shares require a fresh explicit lifetime, for example `share --ttl 30m api
 ## Groups, status and task cleanup
 
 ```sh
-bin/tsnet-bridge group save dev web-demo ssh-demo
-bin/tsnet-bridge group start dev
-bin/tsnet-bridge group stop dev
-bin/tsnet-bridge status --json
-bin/tsnet-bridge doctor
-bin/tsnet-bridge wait-ready --timeout 30s web-demo
-bin/tsnet-bridge task --rules web-demo --timeout 30s -- curl http://127.0.0.1:8080/
+mise exec -- tsnet-bridge group save dev web-demo ssh-demo
+mise exec -- tsnet-bridge group start dev
+mise exec -- tsnet-bridge group stop dev
+mise exec -- tsnet-bridge status --json
+mise exec -- tsnet-bridge doctor
+mise exec -- tsnet-bridge wait-ready --timeout 30s web-demo
+mise exec -- tsnet-bridge task --rules web-demo --timeout 30s -- curl http://127.0.0.1:8080/
 ```
 
 Group startup rolls back only newly started members if a member fails. Shares within groups require `--ttl` and review. Rule status includes direction, endpoints, selected identities, owner, reason code, checked time and expiry.
