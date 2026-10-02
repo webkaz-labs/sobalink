@@ -34,7 +34,7 @@ python -m unittest discover -s .github/scripts -p 'test_*.py' -v
 python .github/scripts/check-frontend.py
 ```
 
-The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. The local cloud environment can deny required sockets; that blocked result is separate from the successful [baseline native/browser CI](https://github.com/webkaz-labs/sobalink/actions/runs/37036882061) at `278a6e17`. New LAN native and new UI checks require results for their own source.
+The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. The local cloud environment can deny required sockets; that blocked result is separate from the successful [six-job native/browser CI](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076) at `14ee61f8`, including stock LAN loopback-relay acceptance on all four targets. New UI/Core checks require results for their own source.
 
 ## Native targets
 
@@ -99,7 +99,7 @@ Trusted-main Go caches bind runner, OS, architecture, toolchain, dependency mani
 
 ## LAN native acceptance
 
-The source now includes a stock Tailcat two-peer test using a loopback TLS DERP fixture, no external relay and no UDP underlay. It is designed to test denied keys, bidirectional TCP held for 130 seconds across a real two-minute relay lease, UDP, revocation and cleanup. The harness is prepared but has not run yet. The restricted test topology is not a production promise of zero external traffic or general TCP continuity. Run the opt-in test on a native environment with socket support and no unsupported proxy/Tailscale environment overrides. The extra `lanlink_integration` and `ts_omit_udptransport` tags are for this isolated fixture only; ordinary production builds retain direct UDP support:
+The source now includes a stock Tailcat two-peer test using a loopback TLS DERP fixture, no external relay and no UDP underlay. It passed denied-key admission, bidirectional TCP held for 130 seconds across a real two-minute relay lease, UDP, active revocation and cleanup on all four native targets at `14ee61f8` in [run 37042721076](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). The newer Core and font/graph browser checks are prepared but await their own exact-source run. The restricted test topology is not a production promise of zero external traffic or general TCP continuity. Run the opt-in test on a native environment with socket support and no unsupported proxy/Tailscale environment overrides. The extra `lanlink_integration` and `ts_omit_udptransport` tags are for this isolated fixture only; ordinary production builds retain direct UDP support:
 
 ```sh
 SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport -count=1 -v -timeout=5m ./internal/lanlink -run '^TestTrustedRelayTwoPeerIntegration$'

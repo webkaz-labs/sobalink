@@ -2,7 +2,15 @@
 
 [日本語](LAN.ja.md) · [Main guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#tailcat-gate)
 
-The adapter and shared Core/CLI now implement explicit relay setup, recipient-bound invitations, pairing and durable revocation. The dedicated LAN setup UI and connection graph are still being integrated. Local logic/race checks and static review have passed; the stock two-peer native relay test is prepared but has not run. These instructions describe the implemented command contract, not a completed live-network acceptance result.
+The local LAN setup UI, graph and shared Core/CLI implement explicit relay setup, recipient-bound invitations, pairing and durable revocation. At `14ee61f8`, [all four native targets passed](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076) the real stock Tailcat loopback-relay scenario, including 130-second existing TCP across a real two-minute lease, bidirectional TCP/UDP, denied keys, revoke and cleanup. The newer UI has 117 passing local tests, strict TypeScript and two byte-identical builds; its actual-font/graph browser checks and new Core integration execution are pending on the next exact CI. Actual devices, direct LAN/WAN and sleep/wake remain unverified.
+
+## Use the local UI
+
+Open Network setup and choose LAN. Create or display this device's public identity, enter the trusted numeric relay endpoint and certificate pin, then activate it. The UI configures an existing relay; use the host command below to start an embedded relay. Invite the exact recipient key or paste a received invitation, review the target, and join. Pairing success leaves application trust off until explicitly approved.
+
+Copying an invitation is explicit. Dismissing setup retains an outstanding invitation only in memory so it can still be canceled; consumed invitations lose their copy/cancel actions. Pause and revoke show their affected peer and scope before submission. For a running-backend change, stop and restart with `soba start --offline`, then return to setup.
+
+The local SVG graph and its narrow-screen list show self-to-peer state only. Click a device or edge to open its existing details and permission controls. Japanese body text is configured at 15 px with secondary text at 13 px; actual Chromium font/metric evidence for this revision remains pending.
 
 ## Choose the relay explicitly
 
@@ -87,11 +95,18 @@ soba command lan.cancel --json-file ./private-invitation.json
 
 | Result | Next action |
 | --- | --- |
+| `lan_environment_proxy` | Remove unsupported proxy variables for this process, then restart LAN |
+| `lan_environment_override` | Remove unsupported Tailscale overrides for this process, then restart LAN |
+| `lan_relay_mismatch` | Compare the selected numeric endpoint and exact certificate pin with the invitation |
+| `lan_certificate_expired` | Check the clock; otherwise use offline management to revoke old pairs and reconfigure the relay |
+| `network_restart_required` | Stop the agent, run `soba start --offline`, then change the network, name or relay |
 | `lan_cancel_invite_first` | Cancel the invitation you issued to this peer before joining the peer's invitation |
 | `lan_pair_reply_uncertain` | Do not retry blindly. The other side may have committed; inspect and revoke its completed pair before creating a fresh invitation |
 | `lan_remote_paired_local_save` | The other side saved the pair but this side did not. Revoke the remote approval before retrying |
 | `lan_revoke_not_persisted` | LAN has stopped because durable revocation could not be confirmed. Repair private-state storage before restarting |
 | Expired, canceled or invalid invitation | Verify the intended identity and selected relay, then issue a fresh invitation if still wanted |
+
+Network failures also expose the stable `self.errorCode` in state. The UI localizes known recovery codes and keeps the unchanged technical explanation separate.
 
 An uncertain reply is not success or proof that neither side changed. Reissuing the same command is not a safe substitute for inspecting both sides.
 
@@ -117,4 +132,4 @@ The mode permits direct peer traffic, encrypted payload through the selected rel
 
 The embedded relay authenticates a sealed HTTPS bootstrap before admitting the invited transport role. Unknown keys have no blanket exception. Its two-minute relay connection lease rechecks admission; a previously admitted relay session can persist for up to two minutes after removal, or about four minutes from initial bootstrap when temporary admission overlaps a lease. Application authorization and tracked application flows are revoked immediately.
 
-Path state remains Unknown until measured. A saved pairing is not evidence of contact. The upcoming graph shows this device and observed peers only; it must not invent a full mesh, bandwidth or direct/relay paths. Direct/relay changes, sleep/wake and reconnection do not guarantee existing TCP continuity. The pending native fixture tests one loopback relay scenario across a lease boundary, not real LAN/WAN/NAT migration or a production zero-egress policy.
+Path state remains Unknown until measured. A saved pairing is not evidence of contact. The graph shows this device and observed peers only; it must not invent a full mesh, bandwidth or direct/relay paths. Direct/relay changes, sleep/wake and reconnection do not guarantee existing TCP continuity. The successful native fixture establishes one loopback relay scenario across a lease boundary, not real LAN/WAN/NAT migration or a production zero-egress policy.

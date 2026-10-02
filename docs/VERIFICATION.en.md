@@ -2,27 +2,28 @@
 
 [日本語](VERIFICATION.md) · [User guide](GENERIC.en.md) · [Distribution](DISTRIBUTION.md)
 
-**sobalink is an unreleased development draft.** Repository renaming and a successful draft-PR workflow do not create a signed release. The new LAN adapter and Core/CLI implementation are present; dedicated LAN UI and the connection graph are still being integrated.
+**sobalink is an unreleased development draft.** The LAN adapter, Core/CLI, dedicated setup UI and local SVG connection graph are implemented. Verified native results and the newer locally integrated UI/Core changes have different source boundaries.
 
-## Verified baseline
+## Verified native snapshot
 
-[PR #2](https://github.com/webkaz-labs/sobalink/pull/2), commit `278a6e17`, passed [all six jobs in run 37036882061](https://github.com/webkaz-labs/sobalink/actions/runs/37036882061): four native target/package jobs, the actual Go-backed Chromium browser job, and the manifest job. Browser checks covered Japanese/English desktop and mobile layouts, with screenshot evidence from that build.
+[PR #2](https://github.com/webkaz-labs/sobalink/pull/2), exact commit `14ee61f87b0bb339f69eb133021e15f624b90fcd`, passed [all six jobs in run 37042721076](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). All four native platforms passed the real stock Tailcat loopback TLS DERP test: 130 seconds of existing TCP across an actual two-minute relay lease, bidirectional TCP/UDP, denied-key admission, active revocation and cleanup. Native package jobs, the baseline Go-backed Chromium browser job and manifest job also passed.
 
-That result establishes the baseline Web/Tailnet/transfer/service implementation's automated checks. It does not establish real Tailnet enrollment, actual remote application health, or the later LAN code and new UI. Preserve that source boundary when reading CI history.
+These are real native CI processes using isolated loopback peers. They are not tests on actual user devices, direct LAN/WAN paths, sleep/wake or a published release. The older baseline browser coverage must not be represented as acceptance of UI changes added afterward.
 
-## Evidence categories for the new snapshot
+## New locally integrated snapshot
 
 | Category | Recorded result and limit |
 | --- | --- |
-| LAN adapter | Separate static reviews and 38 local adapter tests passed, with repeated race checks; TLS pin/redirect checks use real TLS over in-memory connections |
-| LAN Core | 18 Core, 2 transfer-manager and 1 Web API cases passed locally, alongside race/vet and full compilation |
-| Secret CLI payloads | File/stdin input and offline-start recovery are implemented; focused command race tests passed |
-| Stock two-peer Tailcat | Native loopback TLS DERP harness is prepared and compiled, but its actual run is pending |
-| LAN setup UI and graph | Being integrated separately; baseline screenshots do not verify these new controls |
-| Real network/application acceptance | Real Tailnet/LAN enrollment, application behavior, network changes and sleep/wake remain unverified |
-| Signed publication | No new version has been assigned; release preparation and signed publication remain pending |
+| LAN setup and graph | Integrated locally, including pairing, confirmation flows and offline mode-switch recovery |
+| Frontend | 117 tests and strict TypeScript passed; two production builds were byte-identical |
+| Japanese typography | Source sets body text to 15 px and secondary text to 13 px; actual Chromium font/glyph/metric checks are prepared, not yet executed for this revision |
+| Browser screenshots | New desktop/mobile graph and detail-view capture is prepared; execution awaits the next exact CI |
+| Core integration | Real Core text/file/share/revoke integration is prepared; execution awaits the next exact CI |
+| Recovery contract | Five additional stable network recovery codes and `self.errorCode` are implemented, alongside existing pairing/revocation codes |
+| Actual-device acceptance | Real device setup, direct LAN/WAN/NAT changes, application compatibility and sleep/wake remain unverified |
+| Signed publication | No new version is assigned; release preparation and signed publication remain pending |
 
-Local socket restrictions (`operation not permitted`) prevent a local live-network result in this execution environment. They do not invalidate the successful baseline native/browser CI, and local logic tests do not substitute for the pending stock integration run. Every new committed snapshot needs its own affected checks and CI evidence.
+Local socket restrictions remain separate from the successful native CI. A local logic test is not a substitute for a prepared but unexecuted integration test. Bind every later result and screenshot to the exact source that produced it.
 
 ## Required native and browser checks
 
@@ -55,11 +56,11 @@ The adapter and Core/CLI now cover explicit relay selection, distinct server/cli
 
 Source dependencies use Tailscale `v1.104.0` and Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`, which supplies the required identity and revocation APIs. That pin and successful compilation are not evidence of working native pairing.
 
-The opt-in native harness uses real stock Tailcat/WireGuard and a TLS-pinned loopback DERP fixture. It is designed to reject invalid invitations and unknown keys, exchange bidirectional TCP/UDP, hold established TCP for 130 seconds across a real two-minute relay lease and require observed DERP re-admission, then test revoke and cleanup. Its build omits UDP underlay and uses no external relay. **This harness has not run yet.** Do not label the lease-continuity scenario successful until its exact-source CI passes.
+The opt-in native harness passed on all four targets at `14ee61f87b0bb339f69eb133021e15f624b90fcd` in [run 37042721076](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). It uses real stock Tailcat/WireGuard and a TLS-pinned loopback DERP fixture, rejects invalid invitations and unknown keys, exchanges bidirectional TCP/UDP, holds existing TCP for 130 seconds across an actual two-minute relay lease with observed DERP re-admission, and verifies active revoke and cleanup. This fixture omits UDP underlay and uses no external relay.
 
-Even a successful fixture result would not establish real direct UDP, LAN/WAN/NAT migration, cross-relay migration, throughput or general established-TCP preservation. The fixture's loopback-only restrictions are not a production zero-egress promise. Production permits peer direct traffic plus encrypted payload and HTTPS/ICMP diagnostics to the explicit trusted relay endpoint.
+This successful fixture result does not establish real direct UDP, LAN/WAN/NAT migration, cross-relay migration, throughput or general established-TCP preservation. The fixture's loopback-only restrictions are not a production zero-egress promise. Production permits peer direct traffic plus encrypted payload and HTTPS/ICMP diagnostics to the explicit trusted relay endpoint.
 
-Verify no default public relay map/DNS bootstrap, required omission tags, rejected mismatched capabilities and unsupported proxy/backend overrides. Unknown paths remain Unknown. The upcoming graph must use actual self-to-peer observations and must not invent peer-to-peer links or rates.
+Verify no default public relay map/DNS bootstrap, required omission tags, rejected mismatched capabilities and unsupported proxy/backend overrides. Unknown paths remain Unknown. The integrated graph uses actual self-to-peer observations and must not invent peer-to-peer links or rates.
 
 Application revoke closes its authorization and flows immediately. The embedded relay's two-minute connection lease is a separate boundary: an admitted session can remain until lease expiry, or about four minutes from initial bootstrap if temporary role admission overlaps a lease. Test both application closure and later relay re-admission rejection; do not equate them.
 

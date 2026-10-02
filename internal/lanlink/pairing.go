@@ -77,8 +77,11 @@ func (n *Node) IssueInvitation(ctx context.Context, recipient Peer, hostName str
 }
 func (n *Node) CancelInvitation(token string) { n.cfg.Trust.CancelInvite(token) }
 func (n *Node) PairInvitation(ctx context.Context, inv Invitation) error {
-	if inv.Version != pairingVersion || inv.RecipientKey != n.PublicKey() || inv.Relay != n.cfg.Relay || !deadline.Active(time.Now(), inv.Expires) {
+	if inv.Version != pairingVersion || inv.RecipientKey != n.PublicKey() || !deadline.Active(time.Now(), inv.Expires) {
 		return ErrInvite
+	}
+	if inv.Relay != n.cfg.Relay {
+		return ErrRelayMismatch
 	}
 	return n.pair(ctx, inv.Host, inv.Token, inv.EmbeddedRelay)
 }

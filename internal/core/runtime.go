@@ -104,7 +104,7 @@ func (c *Core) startNetwork(ctx context.Context) error {
 		n, e = c.factory(c.dir, p.Settings.Hostname)
 	}
 	if e != nil {
-		return e
+		return codedLANError(e)
 	}
 	// Both engines can change process-global netstack settings during Start,
 	// including a Start that later fails. A failed attempt must not permit a
@@ -120,6 +120,7 @@ func (c *Core) startNetwork(ctx context.Context) error {
 	c.node = n
 	c.networkState = "starting"
 	c.networkError = ""
+	c.networkErrorCode = ""
 	c.mu.Unlock()
 	return nil
 }
@@ -148,12 +149,16 @@ func (c *Core) maintain() {
 			if e != nil {
 				c.networkState = "unavailable"
 				c.networkError = "Network status is unavailable; retry the connection"
+				if c.networkFatal == "" {
+					c.networkErrorCode = ""
+				}
 				if c.networkFatal != "" {
 					c.networkState, c.networkError = "error", c.networkFatal
 				}
 			} else {
 				c.networkState = st.Backend
 				c.networkError = ""
+				c.networkErrorCode = ""
 			}
 			ps := c.peerServer
 			c.mu.Unlock()
@@ -179,7 +184,7 @@ func (c *Core) maintain() {
 func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 	p := c.profileCopy()
 	c.mu.RLock()
-	state, reason := c.networkState, c.networkError
+	state, reason, reasonCode := c.networkState, c.networkError, c.networkErrorCode
 	messages := append([]Message(nil), c.messages...)
 	confirmed := map[string]time.Time{}
 	for id, t := range c.confirmed {
@@ -246,7 +251,7 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			services = append(services, v)
 		}
 	}
-	return map[string]any{"version": c.version, "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "services": services, "shares": shares, "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "lan": c.lanStatus()}, nil
+	return map[string]any{"version": c.version, "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "services": services, "shares": shares, "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "lan": c.lanStatus()}, nil
 }
 
 func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
@@ -301,10 +306,10 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		attemptedMode, attemptedName := c.attemptedNetwork, c.attemptedHostname
 		c.mu.RUnlock()
 		if attemptedMode != "" && (v.Mode != attemptedMode || (v.Hostname != "" && v.Hostname != attemptedName)) {
-			return nil, errors.New("stop soba before changing the active network or node name")
+			return nil, &lanCommandError{"network_restart_required", "stop soba, then start with --offline before changing the active network or node name"}
 		}
 		if c.nodeCopy() != nil && (v.Mode != p.Settings.Network || (v.Hostname != "" && v.Hostname != p.Settings.Hostname)) {
-			return nil, errors.New("stop soba before changing the active network or node name")
+			return nil, &lanCommandError{"network_restart_required", "stop soba, then start with --offline before changing the active network or node name"}
 		}
 		p.Settings.Network = v.Mode
 		if v.Hostname != "" {
@@ -315,7 +320,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		}
 		if v.Mode == "lan" {
 			if e := c.configureLAN(v.LAN); e != nil {
-				return nil, e
+				return nil, codedLANError(e)
 			}
 		}
 		if e := c.saveProfile(p); e != nil {

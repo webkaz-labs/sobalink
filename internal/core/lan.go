@@ -33,6 +33,27 @@ type lanCommandError struct{ code, message string }
 func (e *lanCommandError) Error() string     { return e.message }
 func (e *lanCommandError) ErrorCode() string { return e.code }
 
+func networkErrorCode(err error) string {
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) {
+		return coded.ErrorCode()
+	}
+	return ""
+}
+
+func codedLANError(err error) error {
+	switch {
+	case errors.Is(err, lanlink.ErrProxyEnvironment):
+		return &lanCommandError{"lan_environment_proxy", "remove proxy environment variables for this process, then start LAN again"}
+	case errors.Is(err, lanlink.ErrEnvironmentOverride):
+		return &lanCommandError{"lan_environment_override", "remove Tailscale environment overrides for this process, then start LAN again"}
+	case errors.Is(err, lanlink.ErrRelayMismatch):
+		return &lanCommandError{"lan_relay_mismatch", "review the selected numeric relay address and exact certificate pin against the invitation"}
+	default:
+		return err
+	}
+}
+
 // LANSelection is public configuration. A relay is always an explicit numeric
 // endpoint and certificate pin; no public relay map or fallback is selected.
 type LANSelection struct {
@@ -133,7 +154,7 @@ func savedLANRelay(s lanState) (lanlink.TrustedRelay, error) {
 	}
 	if s.Selection.Kind == "host" {
 		if _, err := s.RelayIdentity.Endpoint(relay.Address); err != nil {
-			return lanlink.TrustedRelay{}, errors.New("saved relay certificate is expired or not yet valid; revoke saved pairs and configure the local relay again")
+			return lanlink.TrustedRelay{}, &lanCommandError{"lan_certificate_expired", "saved relay certificate is expired or not yet valid; check the clock, or revoke saved pairs and configure the local relay again"}
 		}
 	}
 	return relay, nil
@@ -171,11 +192,11 @@ func storedLANRelay(s lanState) (lanlink.TrustedRelay, error) {
 		}
 		parsed, err := x509.ParseCertificate(cert.Certificate[0])
 		if err != nil || parsed.VerifyHostname(ap.Addr().String()) != nil {
-			return lanlink.TrustedRelay{}, errors.New("saved relay certificate does not match the chosen address")
+			return lanlink.TrustedRelay{}, codedLANError(lanlink.ErrRelayMismatch)
 		}
 		hash := sha256.Sum256(parsed.Raw)
 		if hex.EncodeToString(hash[:]) != relay.CertificateSHA256 {
-			return lanlink.TrustedRelay{}, errors.New("saved relay identity does not match the selected certificate")
+			return lanlink.TrustedRelay{}, codedLANError(lanlink.ErrRelayMismatch)
 		}
 	default:
 		return lanlink.TrustedRelay{}, errors.New("choose relay or host LAN setup")
@@ -278,7 +299,7 @@ func (c *Core) configureLAN(selection *LANSelection) error {
 			}
 		}
 		if c.nodeCopy() != nil {
-			return errors.New("restart soba before changing the selected relay")
+			return &lanCommandError{"network_restart_required", "stop soba, then start with --offline before changing the selected relay"}
 		}
 		if len(state.Remotes) != 0 {
 			return errors.New("revoke current LAN pairs before changing the selected relay")
@@ -577,7 +598,7 @@ func (c *Core) lanCommand(ctx context.Context, name string, raw json.RawMessage)
 			return nil, c.revokeLANPeer(node, input.PeerID)
 		}
 		if active != nil {
-			return nil, errors.New("stop soba and start with --offline before changing saved LAN pairs")
+			return nil, &lanCommandError{"network_restart_required", "stop soba and start with --offline before changing saved LAN pairs"}
 		}
 		if store := c.lanStoreCopy(); store != nil {
 			return nil, c.revokeLANPeer(offlineLANRevoker{store}, input.PeerID)
@@ -634,6 +655,9 @@ func (c *Core) lanCommand(ctx context.Context, name string, raw json.RawMessage)
 		pairCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		if err := node.PairInvitation(pairCtx, invitation); err != nil {
+			if errors.Is(err, lanlink.ErrRelayMismatch) {
+				return nil, codedLANError(err)
+			}
 			if errors.Is(err, lanlink.ErrCancelInviteFirst) {
 				return nil, &lanCommandError{"lan_cancel_invite_first", "cancel the invitation you issued before joining this peer's invitation"}
 			}
@@ -722,6 +746,7 @@ func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
 		c.networkState = "error"
 		c.networkError = "LAN stopped because durable revocation could not be confirmed; repair private state before restarting"
 		c.networkFatal = c.networkError
+		c.networkErrorCode = "lan_revoke_not_persisted"
 		c.mu.Unlock()
 		return &lanCommandError{"lan_revoke_not_persisted", "LAN stopped; durable revocation could not be confirmed. Repair private state before restarting"}
 	}

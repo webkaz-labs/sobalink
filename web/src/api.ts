@@ -61,7 +61,7 @@ export interface Service {
 }
 export interface State {
   csrfToken: string
-  self: { name: string; status: string; error?: string; receiveDirectory?: string; networks?: Network[] }
+  self: { name: string; status: string; error?: string; errorCode?: string; receiveDirectory?: string; networks?: Network[] }
   peers: Peer[]
   messages: Message[]
   transfers: Transfer[]
@@ -69,6 +69,7 @@ export interface State {
   shares: Service[]
   availableServices?: Service[]
   reservedPorts?: number[]
+  lan?: { configured: boolean; publicKey?: string; relay?: { kind: 'relay' | 'host'; address: string; certificateSHA256?: string }; pairingReady: boolean; path: 'unknown' | 'direct' | 'relay' }
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }
 }
 export interface CommandResult { ok: boolean; result?: { authUrl?: string; [key: string]: unknown } }
@@ -98,8 +99,13 @@ export interface CommandPayloads {
   'service.connect': ServicePayload
   'service.share': ServicePayload
   'service.stop': { id: string }
-  'network.configure': { mode: 'none' | Network; hostname?: string }
+  'network.configure': { mode: 'none' | Network; hostname?: string; lan?: { kind: 'relay'; address: string; certificateSHA256: string } }
   'network.login': Record<string, never>
+  'lan.identity': Record<string, never>
+  'lan.invite': { recipientPublicKey: string; name: string; ttlSeconds: 300 }
+  'lan.cancel': { invitation: string }
+  'lan.join': { invitation: string }
+  'lan.revoke': { peerId: string }
   'settings.update': { locale?: 'auto' | Locale; theme?: Theme; receiveDirectory?: string }
 }
 export type CommandName = keyof CommandPayloads
@@ -194,3 +200,7 @@ export function upload(peerId: string, selection: UploadSelection, id: string, o
 }
 
 export function canExchange(peer: Peer) { return peer.online && peer.verified && peer.trusted && peer.bridge && !peer.autosave?.paused }
+export function canUseServices(peer: Peer, state: State) {
+  if (peer.networks.includes('lan')) return state.settings?.network === 'lan' && Boolean(state.lan?.configured && state.lan?.pairingReady)
+  return peer.networks.includes('tailnet')
+}

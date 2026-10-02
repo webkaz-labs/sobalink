@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } f
 import type { Translate } from '../i18n'
 
 const paths = {
+  copy: 'M9 9h12v12H9zM15 9V3H3v12h6',
   arrow: 'M5 12h14m-6-6 6 6-6 6', back: 'M19 12H5m6-6-6 6 6 6', check: 'm5 12 4 4L19 6', close: 'm6 6 12 12M6 18 18 6',
   plus: 'M12 5v14M5 12h14', search: 'm21 21-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
   monitor: 'M3 4h18v13H3zM8 21h8M12 17v4', message: 'M21 11a8 8 0 0 1-8 8H7l-5 3V11a9 9 0 0 1 19 0Z',
@@ -19,6 +20,11 @@ const paths = {
   alert: 'm12 3 10 18H2L12 3ZM12 9v5M12 17h.01', moon: 'M20 14A9 9 0 0 1 10 3a9 9 0 1 0 10 11Z',
   sun: 'M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM12 1v2m0 18v2M1 12h2m18 0h2M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2',
 } as const
+export function useAlive() {
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  return alive
+}
 export type IconName = keyof typeof paths
 export function Icon({ name, size = 18, className = '' }: { name: IconName; size?: number; className?: string }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}><path d={paths[name]} /></svg>
@@ -32,10 +38,10 @@ export function IconButton({ icon, label, ...props }: ButtonHTMLAttributes<HTMLB
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'green' | 'amber' | 'purple' | 'red' }) {
   return <span className={`badge badge-${tone}`}>{children}</span>
 }
-export function ErrorBanner({ message, onDismiss, t }: { message: string; onDismiss?: () => void; t: Translate }) {
+export function ErrorBanner({ message, detail, onDismiss, t }: { message: string; detail?: string; onDismiss?: () => void; t: Translate }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => { ref.current?.focus() }, [message])
-  return <div className="error-banner" role="alert" tabIndex={-1} ref={ref}><Icon name="alert" /><span>{message}</span>{onDismiss && <IconButton icon="close" label={t('close')} onClick={onDismiss} />}</div>
+  return <div className="error-banner" role="alert" tabIndex={-1} ref={ref}><Icon name="alert" /><div className="error-copy"><p>{message}</p>{detail && <details><summary>{t('technicalDetails')}</summary><p>{detail}</p></details>}</div>{onDismiss && <IconButton icon="close" label={t('close')} onClick={onDismiss} />}</div>
 }
 export function Modal({ title, children, onClose, t, wide = false }: { title: string; children: ReactNode; onClose: () => void; t: Translate; wide?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null)

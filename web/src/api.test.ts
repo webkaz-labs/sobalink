@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError, canExchange, command, getState, safeAuthURL, setCSRFToken, type Peer } from './api'
-import { detectLocale, en, ja } from './i18n'
+import { detectLocale, en, ja, errorText, errorDetail, translator } from './i18n'
 
 describe('local API boundary', () => {
   it('sends cookie-bound, CSRF-protected commands with an explicit request identity', async () => {
@@ -41,4 +41,20 @@ describe('locale coverage', () => {
     expect(detectLocale([])).toBe('en')
   })
   it('has matching human-interface keys', () => { expect(Object.keys(ja).sort()).toEqual(Object.keys(en).sort()) })
+})
+
+
+describe('localized recovery', () => {
+  it.each(['lan_environment_proxy', 'lan_environment_override', 'lan_relay_mismatch', 'lan_certificate_expired', 'network_restart_required', 'lan_cancel_invite_first', 'lan_pair_reply_uncertain', 'lan_remote_paired_local_save', 'lan_revoke_not_persisted'])('gives a Japanese next step for %s while retaining technical details separately', code => {
+    const error = new ApiError(code, 'Synthetic backend diagnostic')
+    expect(errorText(error, translator('ja'))).toMatch(/[ぁ-んァ-ヶ一-龠]/)
+    expect(errorText(error, translator('ja'))).not.toContain(error.message)
+    expect(errorDetail(error, translator('ja'))).toBe(error.message)
+    expect(errorText(error, translator('en'))).not.toContain('Synthetic')
+  })
+  it('keeps unknown backend text secondary to localized failure guidance', () => {
+    const error = new ApiError('future_failure', 'Synthetic detail')
+    expect(errorText(error, translator('ja'))).toBe(ja.request_failed)
+    expect(errorDetail(error, translator('ja'))).toBe(error.message)
+  })
 })

@@ -1,0 +1,68 @@
+.network-graph { container-type: inline-size; flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 25px 24px; color: var(--text); font-size: 14px; line-height: 1.5; }
+.network-graph button { font-size: 14px; line-height: 1.5; }
+.network-graph-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.network-graph-header h2 { font-size: 22px; letter-spacing: -.35px; }
+.network-graph-header p { margin-top: 7px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.network-graph-legend { display: flex; flex-wrap: wrap; gap: 12px 22px; margin: 22px 0 18px; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
+.network-graph-legend li { display: flex; align-items: center; gap: 7px; }
+.network-graph-key { display: inline-block; width: 9px; height: 9px; flex: none; border-radius: 50%; }
+.network-graph-key.known { border: 1px solid var(--muted); border-radius: 2px; }
+.network-graph-key.online { background: var(--green); }
+.network-graph-key.offline { border: 1px solid var(--muted); }
+.network-graph-key.ready { border: 2px solid var(--primary); }
+.network-graph-key.transferring { color: var(--primary-text); font-size: 17px; width: 17px; height: 17px; line-height: 14px; font-weight: 700; }
+.network-graph-diagram { overflow: auto; max-height: 570px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 12px; }
+/* Keep SVG text at its declared size or larger; narrow panels use the list below. */
+.network-graph-diagram > svg { display: block; width: 100%; min-width: 860px; height: auto; }
+.network-graph-line { stroke: var(--border); stroke-width: 2; fill: none; }
+.network-graph-line.has-transfer { stroke: var(--primary); stroke-dasharray: 5 5; }
+.network-graph-arrow { stroke: var(--primary); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.network-graph-node, .network-graph-edge { display: flex; width: 100%; height: 100%; flex-direction: column; text-align: left; justify-content: center; gap: 7px; padding: 12px 15px; border: 1px solid var(--border); border-radius: 11px; color: var(--text); background: var(--surface); }
+.network-graph-node:hover, .network-graph-edge:hover, .network-graph-list-peer:hover { background: var(--surface-hover); }
+.network-graph-node:focus-visible, .network-graph-edge:focus-visible { outline: 3px solid var(--primary); outline-offset: -4px; }
+.network-graph-node.is-ready { border-color: var(--primary); }
+.network-graph-node.is-selected, .network-graph-list-peer.is-selected { box-shadow: inset 0 0 0 2px var(--primary); background: var(--primary-soft); }
+.network-graph-node strong { font-size: 16px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.network-graph-node-kind { color: var(--muted); font-size: 13px; font-weight: 500; }
+.network-graph-node-meta { display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; color: var(--muted); font-size: 13px; min-width: 0; }
+.network-graph-networks { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.network-graph-local-status { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.network-graph-app { color: var(--muted); font-size: 13px; }
+.network-graph-app.is-ready { color: var(--primary-text); }
+.network-graph-self { background: var(--primary-soft); border-color: var(--primary); }
+.network-graph-edge { background: var(--surface-subtle); align-items: center; text-align: center; border-color: transparent; border-radius: 9px; gap: 7px; padding: 10px 8px; overflow-wrap: anywhere; }
+.network-graph-path { color: var(--text); font-size: 14px; font-weight: 600; }
+.network-graph-listeners { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.network-graph-transfer { display: block; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.network-graph-edge.has-transfer .network-graph-transfer, .network-graph-transfer.has-transfer { color: var(--primary-text); font-weight: 600; }
+.network-graph-list { display: none; }
+.network-graph-list > .network-graph-self { min-height: 140px; height: auto; }
+.network-graph-list > ul { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.network-graph-list-peer { width: 100%; display: flex; flex-direction: column; gap: 8px; background: var(--surface); color: var(--text); text-align: left; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.network-graph-list-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; }
+.network-graph-list-title strong { font-size: 16px; overflow-wrap: anywhere; }
+.network-graph-list-state { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+.network-graph[data-view="list"] .network-graph-list { display: block; }
+.network-graph[data-view="list"] .network-graph-diagram { display: none; }
+.network-graph-empty { text-align: center; padding: 22px 12px; }
+.network-graph-empty h3 { font-size: 16px; }
+.network-graph-empty p { font-size: 14px; color: var(--muted); line-height: 1.5; margin-top: 8px; }
+.network-graph-footer { padding-top: 15px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.network-graph-footer details { margin-top: 6px; }
+.network-graph-footer summary { display: list-item; width: fit-content; }
+.network-graph-footer details p { margin-top: 8px; max-width: 76ch; }
+@container (max-width: 859px) {
+  .network-graph-diagram { display: none; }
+  .network-graph-list, .network-graph[data-view="diagram"] .network-graph-list { display: block; }
+  .network-graph-view-toggle { display: none; }
+  .network-graph-legend { gap: 10px 16px; }
+}
+@media (max-width: 600px) {
+  .network-graph { padding: 20px 16px; }
+  .network-graph-diagram { display: none; }
+  .network-graph-list { display: block; }
+  .network-graph-view-toggle { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .network-graph button { transition: none; }
+}

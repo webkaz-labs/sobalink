@@ -13,6 +13,12 @@ import (
 	"tailscale.com/types/key"
 )
 
+var (
+	ErrProxyEnvironment    = errors.New("proxy environment is unsupported in trusted relay mode")
+	ErrEnvironmentOverride = errors.New("Tailscale environment overrides are unsupported in trusted relay mode")
+	ErrRelayMismatch       = errors.New("selected relay endpoint or certificate does not match")
+)
+
 // TrustedRelay selects exactly one numeric endpoint and its TLS certificate.
 // This mode allows peer direct traffic and diagnostics to this relay; it is not
 // a promise of zero external traffic or a LAN-only egress sandbox.
@@ -27,7 +33,7 @@ func (r TrustedRelay) Validate() error {
 		return errors.New("explicit numeric unicast relay endpoint required")
 	}
 	if !validKey(r.CertificateSHA256) {
-		return errors.New("relay certificate SHA-256 pin required")
+		return ErrRelayMismatch
 	}
 	return nil
 }
@@ -86,10 +92,10 @@ func validateEnvironment(env []string) error {
 		}
 		u := strings.ToUpper(k)
 		if u == "HTTP_PROXY" || u == "HTTPS_PROXY" || u == "ALL_PROXY" || u == "TS_PROXY" {
-			return errors.New("proxy environment is unsupported in trusted relay mode")
+			return ErrProxyEnvironment
 		}
 		if strings.HasPrefix(u, "TS_") && u != "TS_NO_LOGS_NO_SUPPORT" {
-			return errors.New("Tailscale environment overrides are unsupported in trusted relay mode")
+			return ErrEnvironmentOverride
 		}
 	}
 	return nil
@@ -124,15 +130,15 @@ func validateRemote(r PeerOffer, relay TrustedRelay) (netip.Addr, error) {
 		return netip.Addr{}, ErrUntrusted
 	}
 	if ci.RegionID != 0 || len(ci.Region) != 1 || ci.Region[0] == nil {
-		return netip.Addr{}, errors.New("peer capability must embed the selected relay")
+		return netip.Addr{}, ErrRelayMismatch
 	}
 	got := ci.Region[0]
 	want := relay.region()
 	if got.RegionID != 1 || len(got.Nodes) != 1 || got.Nodes[0] == nil {
-		return netip.Addr{}, errors.New("unexpected relay region")
+		return netip.Addr{}, ErrRelayMismatch
 	}
 	if !reflect.DeepEqual(got, want) {
-		return netip.Addr{}, errors.New("peer relay does not match the exact trusted region shape")
+		return netip.Addr{}, ErrRelayMismatch
 	}
 
 	return overlayAddress(ci.ServerPublic.NodePublic), nil

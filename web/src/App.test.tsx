@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import type { State } from './api'
+import * as api from './api'
 
 const state: State = {
   csrfToken: 'test-csrf', self: { name: 'This device', status: 'online', networks: ['tailnet'] },
@@ -196,4 +197,82 @@ describe('explicit and interrupted flows', () => {
     expect(await screen.findByRole('textbox', { name: 'Local access code' }).catch(() => screen.getByLabelText('Local access code'))).toBeInTheDocument()
     expect(screen.queryByDisplayValue('Private draft')).not.toBeInTheDocument()
   })
+  it('reviews pause impact and allows cancel before discarding outgoing staging', async () => {
+    const { requests } = setup({ ...state, peers: [{ ...state.peers[0], autosave: { enabled: true, paused: false, directory: '/tmp/received' } }] })
+    render(<App />); await openStudio()
+    await userEvent.click(screen.getByRole('button', { name: 'Open device details' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Pause messages and files' }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText(/select them again after resuming/)).toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(requests).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Pause messages and files' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Pause messages and files' }))
+    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'peer.autosave', payload: { peerId: 'peer-a', paused: true } }))
+  })
+  it('reviews the exact LAN pairing target and supports offline revoke', async () => {
+    const { requests } = setup({ ...state, peers: [{ ...state.peers[1], online: false, verified: false, bridge: false }] })
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: /Notebook/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Open device details' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke LAN pairing' }))
+    expect(within(screen.getByRole('dialog')).getByText('peer-b')).toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    expect(requests).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke LAN pairing' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Revoke LAN pairing' }))
+    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'lan.revoke', payload: { peerId: 'peer-b' } }))
+  })
+  it('opens local details from the map without issuing a command', async () => {
+    const { requests } = setup(); render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Network map' }))
+    await userEvent.click(screen.getAllByRole('button', { name: /^Open device: Studio;/ })[0])
+    expect(screen.getByRole('complementary', { name: 'Device details' })).toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+    await userEvent.click(screen.getByRole('button', { name: 'Open conversation' }))
+    expect(screen.getByRole('textbox', { name: 'Write a message…' })).toBeInTheDocument()
+  })
+
+  it('keeps an explicit upload alive across map and device-list navigation', async () => {
+    setup()
+    let signal!: AbortSignal
+    let finish!: (result: api.CommandResult) => void
+    const upload = vi.spyOn(api, 'upload').mockImplementation((_peer, _files, _request, _progress, nextSignal) => {
+      signal = nextSignal
+      return new Promise(resolve => { finish = resolve })
+    })
+    const { container } = render(<App />); await openStudio()
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] } })
+    await userEvent.click(await screen.findByRole('button', { name: 'Send batch' }))
+    expect(upload).toHaveBeenCalledTimes(1)
+    await userEvent.click(screen.getByRole('button', { name: 'Network map' }))
+    expect(signal.aborted).toBe(false)
+    expect(container.querySelector('.background-upload')).toHaveTextContent('Studio')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Back to devices' })[0])
+    expect(signal.aborted).toBe(false)
+    await act(async () => { finish({ ok: true }) })
+    expect(container.querySelector('.background-upload')).not.toBeInTheDocument()
+  })
+
+  it.each(['idle', 'offline'])('allows saved Tailnet to change to LAN from management-only %s state', async status => {
+    const { requests } = setup({ ...state, self: { ...state.self, status }, settings: { network: 'tailnet' } })
+    render(<App />)
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    await userEvent.click(screen.getByRole('radio', { name: /^LAN/ }))
+    expect(screen.getByRole('button', { name: 'Create device identity' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Relay address', { exact: false })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Activate selected relay' })).toBeEnabled()
+    expect(requests).toHaveLength(0)
+  })
+  it('allows saved LAN to activate Tailnet after an offline restart', async () => {
+    const { requests } = setup({ ...state, self: { ...state.self, status: 'idle', name: 'notebook' }, settings: { network: 'lan' } })
+    render(<App />)
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    await userEvent.click(screen.getByRole('radio', { name: /^Tailnet/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Activate' }))
+    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'network.configure', payload: { mode: 'tailnet', hostname: 'notebook' } }))
+  })
+
 })

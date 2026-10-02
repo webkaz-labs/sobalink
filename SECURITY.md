@@ -2,7 +2,7 @@
 
 [日本語](docs/SECURITY.ja.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md)
 
-sobalink is a development draft. Its controls constrain this agent's management surface, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. The baseline native/browser CI passed at the recorded commit; newer LAN integration and real-network acceptance remain separate. See the verification record before relying on a claim.
+sobalink is a development draft. Its controls constrain this agent's management surface, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. Native loopback-relay and baseline browser CI passed at the recorded commit; newer UI/Core checks and actual-device acceptance remain separate. See the verification record before relying on a claim.
 
 ## Local management stays local
 
@@ -23,7 +23,7 @@ A new profile selects no network. Existing Tailnet mode enrolls a separate embed
 
 Outbound service connections use the embedded userspace stack and current peer identity. The application does not fall back to ordinary OS service dialing or OS DNS resolution when a permitted peer is unavailable. Application target authorization, Tailnet grants/ACLs and application credentials remain separate controls.
 
-Tailcat mode is implemented in the adapter and shared Core/CLI; the dedicated UI and stock two-peer native acceptance are pending. It uses one explicit numeric relay endpoint and a TLS certificate SHA-256 pin. It rejects peer capabilities that name a different relay, public relay-map defaults and DNS bootstrap. Required build tags omit port mapping, captive-portal probing and system-proxy support; unsupported proxy and backend override environments fail closed.
+Tailcat mode is implemented in the adapter and shared Core/CLI; the dedicated UI is integrated locally. Stock loopback-relay acceptance passed on all four native targets at `14ee61f8`; the newer UI checks await their own CI. It uses one explicit numeric relay endpoint and a TLS certificate SHA-256 pin. It rejects peer capabilities that name a different relay, public relay-map defaults and DNS bootstrap. Required build tags omit port mapping, captive-portal probing and system-proxy support; unsupported proxy and backend override environments fail closed.
 
 That Tailcat boundary permits peer direct traffic, encrypted payload through the selected trusted relay, and HTTPS/ICMP latency diagnostics to the selected relay endpoint. It does **not** claim strict LAN-only traffic, zero external contact or an egress sandbox. A self-hosted or explicitly trusted relay is a deliberate choice; no arbitrary public fallback is authorized. See [the integration gate](docs/VERIFICATION.en.md#tailcat-gate).
 

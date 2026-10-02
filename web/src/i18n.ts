@@ -1,6 +1,6 @@
 import type { Locale } from './api'
 export const en = {
-  appTagline: 'A little closer, wherever you are.', devices: 'Devices', all: 'All', nearby: 'Nearby', tailnet: 'Tailnet', lan: 'LAN',
+  appTagline: 'A little closer, wherever you are.', devices: 'Devices', all: 'All', nearby: 'LAN', tailnet: 'Tailnet', lan: 'LAN',
   searchDevices: 'Find a device', addDevice: 'Set up network', settings: 'Preferences', back: 'Back to devices',
   language: 'Language', automatic: 'Automatic', appearance: 'Appearance', system: 'System', light: 'Light', dark: 'Dark',
   online: 'Online', offline: 'Offline', verified: 'Identity verified', unverified: 'Identity unverified', trusted: 'Trusted here',
@@ -10,7 +10,7 @@ export const en = {
   selectDeviceHint: 'Choose a device on the left. Messages, files, and shared services stay together in one place.',
   chooseNetwork: 'Choose how to connect', networkHint: 'Activate only the network you want to use. Each device grants its own communication permissions.',
   tailnetHint: 'Reach devices on your Tailscale network, including ordinary Tailscale services.',
-  lanHint: 'Find nearby sobalink devices and pair with their verified identity.', disabledNetwork: 'No network active',
+  lanHint: 'Connect without an account using device identities and a relay you select. Direct connections may be used when available.', disabledNetwork: 'No network active',
   activate: 'Activate', disconnect: 'Disconnect network', deviceName: 'This device name', signInTailscale: 'Sign in to Tailscale',
   continueSignIn: 'Continue sign-in', signInLinkHint: 'Open the official sign-in page. This page refreshes after you finish.',
   localAccess: 'Your private connection space', localAccessHint: 'Enter the local access code shown by sobalink to open this device’s controls.',
@@ -71,10 +71,21 @@ export const en = {
   reconnecting: 'Reconnecting', networkReady: 'Network ready', starting: 'Starting', loginRequired: 'Sign-in required', nameHint: '1–64 letters, digits, hyphens or underscores; start with a letter or digit', hostnameHint: 'Letters, digits and hyphens; start with a letter or digit (up to 63 characters)', reservedPorts: 'Ports 54543–54545 and reported internal ports are always excluded. The backend confirms the final scope.', csrf: 'The local session token changed. Refresh the page, then retry.', local_only: 'Open the exact local address printed by sobalink.', origin: 'Open this page directly using the local address printed by sobalink.', busy: 'sobalink is busy. Wait a moment and refresh.',
   peerPaused: 'Messages and file transfers with this device are paused. Resume to send or receive again.', pauseScope: 'Pause stops messages and file transfers in both directions for this device. Existing service connections are separate.', pausePeer: 'Pause messages and files', resumePeer: 'Resume messages and files', samePortShare: 'Shared ports map to the same ports on this device’s loopback address.',
   serviceUnavailable: 'This service is no longer advertised. Choose another service or review its ports manually.', serviceUnavailableChoice: 'Selected service is unavailable',
+  deviceIdentity: 'This device’s public ID', createIdentity: 'Create device identity', publicId: 'Public ID', publicIdHint: 'Send this public ID to the device that will invite you. Private identity keys stay on this device.',
+  copyPublicId: 'Copy public ID', copy: 'Copy', copied: 'Copied', copyFailed: 'Copy was unavailable. Select the value and copy it manually.',
+  trustedRelay: 'Selected relay', relayAddress: 'Relay address', relayAddressHint: 'A numeric IP address and port, for example 192.0.2.10:443 or [2001:db8::10]:443', certificatePin: 'Relay certificate fingerprint (SHA-256)', certificateHint: 'Get this 64-character fingerprint from the relay operator. It must match the relay you intend to use.',
+  relayScope: 'Connect through the selected relay and paired devices. Connection checks also contact that relay.', relayHostedHere: 'Relay hosted on this device', activateRelay: 'Activate selected relay', relayRequired: 'Select and activate a trusted relay before pairing.', relayInvalid: 'Enter a numeric IP address with a port from 1 to 65535.', pinInvalid: 'Enter a 64-character hexadecimal certificate fingerprint.',
+  pairDevice: 'Pair a device', inviteDevice: 'Invite a device', joinDevice: 'Join an invitation', recipientPublicId: 'Recipient’s public ID', recipientName: 'Recipient’s device name', recipientNamePlaceholder: 'A name to recognize the device', publicIdInvalid: 'Enter a 64-character hexadecimal public ID.',
+  createInvitation: 'Create a 5-minute invitation', invitationReady: 'Invitation ready', copyInvitation: 'Copy invitation', cancelInvitation: 'Cancel invitation', invitationScope: 'This invitation works only for the specified device and relay. Share it only with that device.', invitationExpiry: 'The invitation expires after 5 minutes. Cancel it to revoke access sooner.',
+  invitation: 'Invitation', invitationPlaceholder: 'Paste the invitation from the other device', invitationHint: 'The invitation contains a private pairing token. It is used only for this pairing request and is not stored in this browser.', join: 'Pair with this device', joinBeforeTrust: 'Pairing verifies the device identity. Allow communication separately to enable messages and files. Automatic receiving stays off.', paired: 'Device paired', viewDevice: 'View device', invitationTooLarge: 'This invitation is too large. Copy the complete invitation directly from the other device.',
+  cancelOwnInvite: 'Cancel the invitation you issued before joining another one.', pairing: 'LAN pairing', revokePairing: 'Revoke LAN pairing', revokePairingHint: 'Stop this device’s app access, service connections and pairing. Pair again to reconnect. Existing relay sessions can remain for up to 2 minutes after revocation.',
+  lanDevice: 'Paired LAN device', appNotConfirmed: 'A recent sobalink response has not been confirmed. Check that sobalink is running on the other device, then reconnect. Manual service connections remain available.',
+  lan_cancel_invite_first: 'Cancel your invitation to this device before joining its invitation.', lan_pair_reply_uncertain: 'The pairing reply was not received. The other device may already have accepted it. Check its pairing state before trying again.', lan_remote_paired_local_save: 'The other device saved the pairing, but this device could not save it. Revoke the pairing on the other device before trying again.', lan_revoke_not_persisted: 'Communication has stopped, but permanent revocation could not be confirmed. Do not restart using the old pairing state; resolve the save error first.',
+  serviceUnconfirmed: 'sobalink service not confirmed', pauseImpact: 'This stops messages and file offers for this device. Current outgoing batches are cancelled and their local staging copies are removed. Original files stay in place; select them again after resuming.', pausedBatches: 'Outgoing batches affected', inputTips: 'Input tips', networkView: 'Network map', openConversation: 'Open conversation', switchToEnglish: 'Switch to English', switchToJapanese: 'Switch to Japanese', changeRelay: 'Relay settings', item: 'item', lan_environment_proxy: 'LAN mode rejected proxy environment settings. Remove the listed proxy settings before restarting sobalink.', lan_environment_override: 'LAN mode rejected network override settings. Remove the listed overrides before restarting sobalink.', lan_relay_mismatch: 'The relay identity does not match. Confirm the selected address and certificate fingerprint with the relay operator or invitation sender, then correct the selection and restart.', lan_certificate_expired: 'The selected relay certificate has expired. Ask the relay operator to renew it, verify the new fingerprint, then update the selection and restart.', network_restart_required: 'Stop sobalink before changing the network, relay or device name, then restart with the new selection. Transfers and service connections will stop.', networkUnavailable: 'Network unavailable', technicalDetails: 'Technical details', networkProblem: 'The network is not ready. Open network setup to review the reason and next step.', command_failed: 'The action could not finish. Review the details, correct the setting, then retry.', inviteAnother: 'Invite another device', recipientNameTooLong: 'Use a device name within 80 UTF-8 bytes (about 26 Japanese characters).', invitationUsed: 'This device is paired. Cancelling an invitation does not undo an established pair.', networkRestart: 'To stop or change the active network, stop sobalink, then restart with the selected mode. Current transfers and service connections will stop.', networkSwitchRestart: 'Restart sobalink before changing the active network.', relayNotReady: 'Pairing is not ready',
 } as const
 export type TextKey = keyof typeof en
 export const ja: Record<TextKey, string> = {
-  appTagline: '離れていても、すぐそばに。', devices: 'デバイス', all: 'すべて', nearby: '近く', tailnet: 'Tailnet', lan: 'LAN',
+  appTagline: '離れていても、すぐそばに。', devices: 'デバイス', all: 'すべて', nearby: 'LAN', tailnet: 'Tailnet', lan: 'LAN',
   searchDevices: 'デバイスを検索', addDevice: 'ネットワークを設定', settings: '表示設定', back: 'デバイス一覧へ',
   language: '言語', automatic: '自動', appearance: '外観', system: 'システム', light: 'ライト', dark: 'ダーク',
   online: 'オンライン', offline: 'オフライン', verified: '接続先の識別情報を確認済み', unverified: '識別情報が未確認', trusted: 'この端末で許可済み',
@@ -84,7 +95,7 @@ export const ja: Record<TextKey, string> = {
   selectDeviceHint: '左の一覧からデバイスを選ぶと、メッセージ、ファイル、共有サービスをひとつの場所で確認できます。',
   chooseNetwork: '接続方法を選択', networkHint: '使うネットワークだけを有効にします。通信の許可はそれぞれのデバイスで行います。',
   tailnetHint: 'Tailscale ネットワークのデバイスや、通常の Tailscale サービスに接続します。',
-  lanHint: '近くの sobalink デバイスを見つけ、識別情報を確認してペアリングします。', disabledNetwork: 'ネットワーク未接続',
+  lanHint: 'アカウントなしで、デバイスの識別情報と選んだリレーを使って接続します。利用できる場合は直接つながります。', disabledNetwork: 'ネットワーク未接続',
   activate: '有効にする', disconnect: 'ネットワークを切断', deviceName: 'このデバイスの名前', signInTailscale: 'Tailscale にサインイン',
   continueSignIn: 'サインインに進む', signInLinkHint: '公式のサインインページを開きます。完了後、この画面の状態が更新されます。',
   localAccess: 'あなたの接続スペース', localAccessHint: 'sobalink に表示されたローカルアクセスコードを入力すると、このデバイスを操作できます。',
@@ -142,9 +153,20 @@ export const ja: Record<TextKey, string> = {
   lastUpdated: '更新', preferencesHint: '言語と外観はすぐに反映されます。「保存」で受信フォルダーと一緒にこのデバイスへ保存できます。', selectionChanged: '選択中のデバイスが変わりました。送信先を確認してください。',
   allNetworks: 'すべてのネットワーク', closeDetails: '詳細を閉じる', openDetails: '詳細を表示', byteUnit: 'B',
   availableServices: '利用できるサービス', manualPorts: 'ポートを手動で入力', useService: 'このサービスを使う', forgetTransfer: '履歴から削除', forgetHint: '保存したファイルは残ります。', destinationHint: 'このバッチの保存先として、このデバイスにある既存のフォルダーを指定してください。', settingsSaved: '設定を保存しました',
-  reconnecting: '再接続中', networkReady: 'ネットワーク接続済み', starting: '起動中', loginRequired: 'サインインが必要', nameHint: '文字・数字で始まる1〜64文字（ハイフン・アンダースコアも使用可）', hostnameHint: '文字・数字で始まる63文字以内（ハイフンも使用可）', reservedPorts: '54543〜54545番と内部通信用のポートは常に除外します。最終的な範囲はバックエンドが確定します。', csrf: 'ローカルセッションの情報が更新されました。画面を再読み込みしてやり直してください。', local_only: 'sobalink に表示されたローカルアドレスをそのまま開いてください。', origin: 'sobalink に表示されたローカルアドレスから直接この画面を開いてください。', busy: 'sobalink は処理中です。少し待ってから更新してください。',
+  reconnecting: '再接続中', networkReady: 'ネットワーク利用準備完了', starting: '起動中', loginRequired: 'サインインが必要', nameHint: '文字・数字で始まる1〜64文字（ハイフン・アンダースコアも使用可）', hostnameHint: '文字・数字で始まる63文字以内（ハイフンも使用可）', reservedPorts: '54543〜54545番と内部通信用のポートは常に除外します。最終的な範囲はバックエンドが確定します。', csrf: 'ローカルセッションの情報が更新されました。画面を再読み込みしてやり直してください。', local_only: 'sobalink に表示されたローカルアドレスをそのまま開いてください。', origin: 'sobalink に表示されたローカルアドレスから直接この画面を開いてください。', busy: 'sobalink は処理中です。少し待ってから更新してください。',
   peerPaused: 'この相手とのメッセージとファイル転送を一時停止しています。送受信するには再開してください。', pauseScope: '一時停止すると、この相手とのメッセージとファイル転送を双方向で止めます。サービスの接続は別に管理します。', pausePeer: 'メッセージとファイルを停止', resumePeer: 'メッセージとファイルを再開', samePortShare: '共有ポートは、このデバイスのループバックアドレスの同じ番号のポートにつながります。',
   serviceUnavailable: 'このサービスの公開情報は利用できなくなりました。別のサービスを選ぶか、ポートを手動で確認してください。', serviceUnavailableChoice: '選択したサービスは利用できません',
+  deviceIdentity: 'このデバイスの公開ID', createIdentity: 'デバイスの識別情報を作成', publicId: '公開ID', publicIdHint: '招待してくれる相手に、この公開IDを伝えてください。秘密の識別鍵はこのデバイスに保管します。',
+  copyPublicId: '公開IDをコピー', copy: 'コピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした。内容を選択して手動でコピーしてください。',
+  trustedRelay: '選択したリレー', relayAddress: 'リレーのアドレス', relayAddressHint: 'IPアドレスとポート番号。例: 192.0.2.10:443 または [2001:db8::10]:443', certificatePin: 'リレーの証明書フィンガープリント（SHA-256）', certificateHint: 'リレーの運用者から64文字のフィンガープリントを受け取り、接続したいリレーと一致することを確認してください。',
+  relayScope: '選択したリレーとペアリングしたデバイスへ接続します。選択したリレーへの接続診断も行います。', relayHostedHere: 'このデバイスで動くリレー', activateRelay: '選択したリレーを有効にする', relayRequired: 'ペアリングする前に、信頼するリレーを選んで有効にしてください。', relayInvalid: 'IPアドレスと1〜65535のポート番号を入力してください。', pinInvalid: '証明書フィンガープリントを64文字の16進数で入力してください。',
+  pairDevice: 'デバイスをペアリング', inviteDevice: 'デバイスを招待', joinDevice: '招待に参加', recipientPublicId: '招待する相手の公開ID', recipientName: '相手のデバイス名', recipientNamePlaceholder: '相手を見分けるための名前', publicIdInvalid: '公開IDを64文字の16進数で入力してください。',
+  createInvitation: '5分間有効な招待を作成', invitationReady: '招待を作成しました', copyInvitation: '招待をコピー', cancelInvitation: '招待を取り消す', invitationScope: 'この招待は指定したデバイスとリレーだけで使えます。その相手にだけ渡してください。', invitationExpiry: '招待は5分で失効します。早く無効にするには、招待を取り消してください。',
+  invitation: '招待', invitationPlaceholder: '相手のデバイスから受け取った招待を貼り付け', invitationHint: '招待には秘密のペアリング用トークンが含まれます。今回の要求にだけ使い、このブラウザーには保存しません。', join: 'このデバイスとペアリング', joinBeforeTrust: 'ペアリングではデバイスの識別情報を確認します。メッセージとファイルには、別途「通信を許可」が必要です。自動受信は無効のままです。', paired: 'デバイスをペアリングしました', viewDevice: 'デバイスを表示', invitationTooLarge: '招待が大きすぎます。相手のデバイスから招待の全体を直接コピーしてください。',
+  cancelOwnInvite: '自分が作成した招待を取り消してから、別の招待に参加してください。', pairing: 'LANのペアリング', revokePairing: 'LANのペアリングを解除', revokePairingHint: 'この相手のアプリ利用、サービス接続、ペアリングを停止します。再接続にはペアリングが必要です。既存のリレーセッションは解除後も最大2分残る場合があります。',
+  lanDevice: 'ペアリング済みのLANデバイス', appNotConfirmed: 'この相手からの最近の sobalink 応答は未確認です。相手で sobalink が起動していることを確認して再接続してください。サービスへの手動接続は利用できます。',
+  lan_cancel_invite_first: 'この相手に自分が発行した招待を取り消してから、相手の招待に参加してください。', lan_pair_reply_uncertain: 'ペアリングの返答が届きませんでした。相手では承認済みの可能性があります。相手の状態を確認してから再試行してください。', lan_remote_paired_local_save: '相手はペアリングを保存しましたが、このデバイスでは保存できませんでした。相手側のペアリングを解除してから再試行してください。', lan_revoke_not_persisted: '通信は停止しましたが、永続的な解除は確認できません。古いペアリング状態で再起動せず、保存の問題を解消してください。',
+  serviceUnconfirmed: 'sobalinkサービスが未確認', pauseImpact: 'この相手とのメッセージとファイルの申し出を停止します。送信中のバッチは中止し、準備用のコピーを削除します。元のファイルは残ります。再開後はファイルを選び直してください。', pausedBatches: '影響する送信バッチ', inputTips: '入力のヒント', networkView: 'ネットワーク図', openConversation: '会話を開く', switchToEnglish: '英語に切り替え', switchToJapanese: '日本語に切り替え', changeRelay: 'リレーの設定', item: '項目', lan_environment_proxy: 'LANモードではプロキシの環境設定を使えません。詳細にあるプロキシ設定を外してから sobalink を再起動してください。', lan_environment_override: 'LANモードではネットワークを上書きする環境設定を使えません。詳細にある設定を外してから sobalink を再起動してください。', lan_relay_mismatch: 'リレーの識別情報が一致しません。運用者または招待の送信元にアドレスと証明書フィンガープリントを確認し、正しい設定で再起動してください。', lan_certificate_expired: '選択したリレーの証明書が期限切れです。運用者に更新を依頼し、新しいフィンガープリントを確認してから設定を更新し、再起動してください。', network_restart_required: 'ネットワーク・リレー・デバイス名を変更するには、sobalink を停止し、新しい設定で起動し直してください。送信中のファイルとサービス接続も停止します。', networkUnavailable: 'ネットワークを利用できません', technicalDetails: '技術的な詳細', networkProblem: 'ネットワークの準備が完了していません。接続設定で原因と次の操作を確認してください。', command_failed: '操作を完了できませんでした。詳細を確認して設定を直し、再試行してください。', inviteAnother: '別のデバイスを招待', recipientNameTooLong: 'デバイス名は80バイト以内にしてください（日本語は約26文字）。', invitationUsed: 'この相手とのペアリングが完了しました。招待の取消では、成立済みのペアリングは解除されません。', networkRestart: '利用中のネットワークを停止・変更するには、sobalink を停止し、使うモードで起動し直してください。送信中のファイルとサービス接続も停止します。', networkSwitchRestart: '利用中のネットワークを変更するには、sobalink の再起動が必要です。', relayNotReady: 'ペアリングは未準備',
 }
 export function detectLocale(languages: readonly string[] = navigator.languages): Locale {
   for (const language of languages) {
@@ -160,7 +182,8 @@ export function networkLabel(status: string, t: Translate) {
   if (['running', 'online', 'ready'].includes(value)) return t('networkReady')
   if (['needslogin', 'needs-login', 'needsmachineauth'].includes(value)) return t('loginRequired')
   if (['starting', 'connecting'].includes(value)) return t('starting')
-  if (['none', 'stopped', 'idle', ''].includes(value)) return t('disabledNetwork')
+  if (['none', 'stopped', 'idle', 'offline', ''].includes(value)) return t('disabledNetwork')
+  if (['error', 'unavailable'].includes(value)) return t('networkUnavailable')
   return status
 }
 export function bytes(value: number, locale: Locale) {
@@ -174,6 +197,9 @@ export function timestamp(value: string, locale: Locale) {
 }
 export function errorText(error: unknown, t: Translate) {
   const object = error as { code?: string; message?: string }
-  if (object?.message && object.code && ['upload_failed', 'request_failed', 'invalid_response', 'unavailable'].includes(object.code)) return `${t(object.code as TextKey)} ${object.message}`
-  return object?.code && object.code in en ? t(object.code as TextKey) : object?.message || t('request_failed')
+  return object?.code && object.code in en ? t(object.code as TextKey) : t('request_failed')
+}
+export function errorDetail(error: unknown, t: Translate) {
+  const object = error as { message?: string }
+  return object?.message && object.message !== errorText(error, t) ? object.message : undefined
 }

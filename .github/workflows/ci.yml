@@ -108,7 +108,7 @@ jobs:
             printf 'Go files need gofmt (check checkout line endings):\n%s\n' "$unformatted" >&2
             exit 1
           fi
-      - name: Verify stock Tailcat over an isolated loopback relay
+      - name: Verify paired transport and Core applications over an isolated relay
         timeout-minutes: 10
         run: |
           set -euo pipefail
@@ -125,7 +125,8 @@ jobs:
           subprocess.run([
               "go", "test", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^TestTrustedRelayTwoPeerIntegration$", "-timeout=5m", "./internal/lanlink",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/core",
           ], env=env, check=True, timeout=9 * 60)
           PY
       - name: Build native package and smoke archive contents
@@ -293,11 +294,13 @@ jobs:
           done
           test -s "$session"
           SOBA_E2E_SESSION_FILE="$session" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
-      - name: Preserve only sanitized UI screenshots
+      - name: Preserve sanitized UI screenshots and typography measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: soba-browser-screenshots
-          path: ${{ runner.temp }}/soba-screenshots/*.png
+          path: |
+            ${{ runner.temp }}/soba-screenshots/*.png
+            ${{ runner.temp }}/soba-screenshots/typography-ja-*.json
           if-no-files-found: warn
           retention-days: 14

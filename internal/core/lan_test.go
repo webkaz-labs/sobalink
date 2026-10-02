@@ -420,6 +420,7 @@ func TestLANPairingRecoveryCodesPreserveUncertainty(t *testing.T) {
 		{lanlink.ErrCancelInviteFirst, "lan_cancel_invite_first"},
 		{errors.Join(lanlink.ErrPairReplyUncertain, context.DeadlineExceeded), "lan_pair_reply_uncertain"},
 		{lanlink.ErrRemotePairedLocalSave, "lan_remote_paired_local_save"},
+		{lanlink.ErrRelayMismatch, "lan_relay_mismatch"},
 	} {
 		fake.pairError = tc.cause
 		_, err := command(c, randomID(), "lan.join", map[string]any{"invitation": "{}"})
@@ -617,8 +618,8 @@ func TestExpiredHostCertificateCanLoadForExplicitRecovery(t *testing.T) {
 	if err := store.save(state); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := savedLANRelay(state); err == nil {
-		t.Fatal("expired certificate accepted for network startup")
+	if _, err := savedLANRelay(state); networkErrorCode(err) != "lan_certificate_expired" {
+		t.Fatal("expired certificate did not provide actionable startup recovery")
 	}
 	if _, err := readLANStore(store.path); err != nil {
 		t.Fatalf("expired state blocked recovery loading: %v", err)
@@ -632,6 +633,47 @@ func TestExpiredHostCertificateCanLoadForExplicitRecovery(t *testing.T) {
 	}
 	if _, err := savedLANRelay(repaired); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLANEnvironmentRecoveryCodesAppearInStartupStatus(t *testing.T) {
+	if lanlink.ValidateBuild() != nil {
+		t.Skip("LAN build features are disabled")
+	}
+	for _, tc := range []struct{ name, variable, value, code string }{
+		{"proxy", "HTTP_PROXY", "http://127.0.0.1:9", "lan_environment_proxy"},
+		{"override", "TS_AUTHKEY", "test-not-a-credential", "lan_environment_override"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+				t.Setenv(name, "")
+			}
+			t.Setenv(tc.variable, tc.value)
+			c := openLANTestCore(t)
+			if err := c.configureLAN(testLANSelection()); err != nil {
+				t.Fatal(err)
+			}
+			p := c.profileCopy()
+			p.Settings.Network = "lan"
+			if err := c.saveProfile(p); err != nil {
+				t.Fatal(err)
+			}
+			_ = c.Close()
+			// Constructor environment checks fail before any Start or socket.
+			reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			status, err := reopened.Snapshot(context.Background())
+			if err != nil || status["self"].(map[string]any)["errorCode"] != tc.code || reopened.nodeCopy() != nil {
+				t.Fatalf("startup recovery code missing: %v", err)
+			}
+			encoded, _ := json.Marshal(status)
+			if strings.Contains(string(encoded), tc.value) {
+				t.Fatal("environment value leaked into status")
+			}
+		})
 	}
 }
 

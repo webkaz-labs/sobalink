@@ -6,7 +6,7 @@
 
 **This is a development draft of sobalink, with no assigned release version.** The repository and Go module are now `github.com/webkaz-labs/sobalink`. Existing `tsnet-bridge` releases retain their historical signatures and do not establish availability of these new features. [Distribution and legacy releases](docs/DISTRIBUTION.md)
 
-The baseline commit `278a6e17` passed [all six CI jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37036882061): four native targets, the Go-backed Chromium UI checks in Japanese/English desktop/mobile layouts, and the package-manifest check. The newer Tailcat LAN Core/CLI code has passed local logic/race checks, but its stock two-peer relay test has not run yet. LAN setup UI and the connection graph are still being integrated. Listener readiness and discovery never prove application health. [Exact verification scope](docs/VERIFICATION.en.md)
+Commit `14ee61f8` passed [all six CI jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). All four native platforms passed the real stock Tailcat loopback-relay test: existing TCP across a two-minute lease for 130 seconds, bidirectional TCP/UDP, denied-key admission, active revoke and cleanup. Native packages, the baseline browser checks and manifest also passed. The newer LAN setup UI, SVG graph and recovery controls are integrated locally, with 117 frontend tests, strict TypeScript and two byte-identical builds passing; their new font/graph browser checks and Core integration run await the next exact CI. This does not verify actual devices, direct LAN/WAN paths, sleep/wake or a release. [Exact verification scope](docs/VERIFICATION.en.md)
 
 ## Get started
 
@@ -22,7 +22,7 @@ go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpa
 On Windows, build with `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba` and run `./bin/soba.exe`. Node is not required to run the resulting binary.
 
 1. Open the printed `http://127.0.0.1:PORT` in a browser on the same device, then enter the one-time code shown in the terminal. The code is never part of the URL. Run `soba ui` in another terminal to issue a new code
-2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. Tailcat LAN uses an explicit trusted relay and pairing through the current Core/CLI; see the [LAN guide](docs/LAN.en.md) while its UI is being integrated
+2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. Tailcat LAN setup is available in the local UI and CLI, using an explicit trusted relay and pairing. See the [LAN guide](docs/LAN.en.md)
 3. Review the peer's current identity and trust the peers whose messages and transfer offers you want to receive. Send text explicitly; review images, multiple files and folders as a batch before sending
 4. The receiver normally chooses a directory and accepts each batch. Autosave requires an explicit choice of backend, trusted peer, current trust generation and destination
 5. Review the peer, ports and lifetime before sharing or connecting a service. Stop an individual service, revoke trust, or run `soba stop` when finished
@@ -61,7 +61,7 @@ soba status
 soba stop
 ```
 
-Replace `PEER_ID` with a current peer. The provider must run and authorize access to the actual service. Language is selected automatically; override with `soba --locale ja ...` or `en`. Machine JSON field names and user values stay unchanged. Tailnet and transfer workflows do not require editing configuration JSON. LAN setup currently uses explicit local command payloads; its dedicated UI is pending.
+Replace `PEER_ID` with a current peer. The provider must run and authorize access to the actual service. Language is selected automatically; override with `soba --locale ja ...` or `en`. Machine JSON field names and user values stay unchanged. Tailnet and transfer workflows do not require editing configuration JSON. LAN setup also has dedicated local controls; CLI payloads remain available for automation and embedded-relay hosting.
 
 ## Development and verification
 

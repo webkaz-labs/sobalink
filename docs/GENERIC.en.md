@@ -37,7 +37,7 @@ A fresh profile starts with no network selected. UI preferences, trust and servi
 | Choice | Setup | Important boundary |
 | --- | --- | --- |
 | Existing Tailnet | Activate the embedded node, then use the official interactive Tailscale sign-in flow | It is a separate node in the chosen Tailnet; the OS Tailscale app's session is not imported |
-| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Core/CLI implemented; dedicated UI and native two-peer acceptance pending. No arbitrary public fallback or zero-external-traffic claim |
+| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI implemented; stock loopback-relay acceptance passed at the recorded commit. New UI browser acceptance is pending. No arbitrary public fallback or zero-external-traffic claim |
 | No network | Leave the agent local | No peer transfer or service connection |
 
 For the Tailnet path:
@@ -50,7 +50,7 @@ soba peers
 
 Review the returned official sign-in URL and complete enrollment. Treat enrollment URLs as secrets. The tool does not accept an auth key in command arguments, and it does not change OS routes or DNS. Tailnet policy and service authentication still apply.
 
-Selecting a mode is explicit. Stop the agent and use `soba start --offline` to open management without reconnecting the saved network when changing modes or repairing saved LAN state. An existing TCP session does not transfer between Tailnet and Tailcat. The current Core/CLI supports explicit relay selection and pairing; follow the [LAN guide](LAN.en.md). Its dedicated UI and real stock two-peer acceptance are still pending.
+Selecting a mode is explicit. Stop the agent and use `soba start --offline` to open management without reconnecting the saved network when changing modes or repairing saved LAN state. An existing TCP session does not transfer between Tailnet and Tailcat. The local UI and CLI support explicit relay selection and pairing; follow the [LAN guide](LAN.en.md). The recorded native loopback-relay test passed; the integrated UI changes await their own browser CI.
 
 Tailcat's permitted traffic includes direct peer traffic, encrypted payload via the explicitly selected relay, and HTTPS/ICMP diagnostics to that relay endpoint. A relay may be self-hosted or another endpoint explicitly trusted by the user. This is not a LAN egress sandbox. [Transport detail](ARCHITECTURE.md#network-boundaries)
 

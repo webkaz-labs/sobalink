@@ -6,7 +6,7 @@
 
 **sobalink の開発版で、リリース番号は未確定です。** リポジトリと Go モジュールは `github.com/webkaz-labs/sobalink` になりました。旧 `tsnet-bridge` の署名は当時の識別情報を保持し、その公開物に新機能が含まれるとは扱いません。[配布方針と旧版の区別](docs/DISTRIBUTION.md)
 
-基準コミット `278a6e17` は [CI 全6ジョブ](https://github.com/webkaz-labs/sobalink/actions/runs/37036882061)に合格しました。4対象のネイティブ試験、Go 本体と Chromium による日英・デスクトップ／狭い画面の確認、パッケージのマニフェスト確認です。その後の Tailcat LAN の共通処理・CLI はローカルの単体・race 試験に合格していますが、stock 実装で2台をつなぐ中継試験は未実行です。LAN 設定画面と接続図も統合中です。通信準備や探索はアプリの正常性を保証しません。[確認範囲](docs/VERIFICATION.md)
+コミット `14ee61f8` は [CI 全6ジョブ](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076)に合格しました。4対象すべてで stock Tailcat の loopback 中継を使い、実際の2分リースをまたぐ130秒の既存 TCP、双方向 TCP/UDP、不許可鍵、稼働中の解除・片付けを確認しました。パッケージ・従来の画面・マニフェストも合格です。その後の LAN 設定画面・SVG 接続図・復旧操作はローカルへ統合済みで、画面117試験、厳密な TypeScript 検査、同一バイトの2回ビルドが通りました。新しいフォント・接続図のブラウザー検査と Core 統合試験は次の正確なソースの CI を待ちます。実端末・direct LAN/WAN・スリープ・リリースの確認とは別です。[確認範囲](docs/VERIFICATION.md)
 
 ## まず使う
 
@@ -22,7 +22,7 @@ go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpa
 Windows のビルドは `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba`、起動は `./bin/soba.exe` です。導入後の実行に Node は不要です。
 
 1. 表示された `http://127.0.0.1:ポート` を同じ端末のブラウザーで開き、端末に表示された一回用コードを入力します。コードは URL に含みません。再発行は別の端末ウィンドウで `soba ui`
-2. ネットワークを選びます。既存の Tailnet を利用する場合は、sobalink の独立ノードを公式の Tailscale 認証ページで参加させます。Tailcat LAN は明示した信頼できる中継先とペアリングを使います。現在は共通処理・CLI から設定し、専用画面は統合中です。[LAN 手順](docs/LAN.ja.md)
+2. ネットワークを選びます。既存の Tailnet を利用する場合は、sobalink の独立ノードを公式の Tailscale 認証ページで参加させます。Tailcat LAN は明示した信頼できる中継先とペアリングを使います。ローカル画面と CLI から設定できます。[LAN 手順](docs/LAN.ja.md)
 3. 相手の現在の識別情報を確認し、文字や転送申込みを受け入れる相手を信頼します。文字は送信操作で送り、画像・複数ファイル・フォルダーは内容を確認して一括送信します
 4. 受信側は原則として一括ごとに保存先を決めて承認します。自動保存は、特定のバックエンド・信頼済み相手・信頼の世代・保存先を指定した場合だけ有効です
 5. サービスは相手・ポート・期限を確認して共有または接続し、使い終わったら個別停止、信頼取消、または `soba stop` で終了します
@@ -61,7 +61,7 @@ soba status
 soba stop
 ```
 
-`PEER_ID` は現在の相手に置き換えます。共有元では対象アプリの起動と認証が必要です。言語は自動選択し、`soba --locale ja ...` / `en` で切り替えられます。JSON の項目名と利用者の値は翻訳しません。Tailnet と転送の通常操作に設定 JSON の編集は不要です。LAN の設定は現在、ローカルコマンドの明示した payload を使います。
+`PEER_ID` は現在の相手に置き換えます。共有元では対象アプリの起動と認証が必要です。言語は自動選択し、`soba --locale ja ...` / `en` で切り替えられます。JSON の項目名と利用者の値は翻訳しません。Tailnet と転送の通常操作に設定 JSON の編集は不要です。LAN も専用画面から設定でき、自動処理や組込み中継の起動には CLI の payload を使えます。
 
 ## 開発と検証
 

@@ -92,6 +92,7 @@ type Core struct {
 	ctx                        context.Context
 	cancel                     context.CancelFunc
 	networkState, networkError string
+	networkErrorCode           string
 	networkFatal               string
 	attemptedNetwork           string
 	attemptedHostname          string
@@ -201,6 +202,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 			c.mu.Lock()
 			c.networkState = "error"
 			c.networkError = err.Error()
+			c.networkErrorCode = networkErrorCode(err)
 			c.mu.Unlock()
 		}
 	}

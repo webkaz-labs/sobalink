@@ -69,9 +69,10 @@ export function useServer() {
     uncertain.current.set(key, { signature, requestId })
     try {
       const result = await api.command(name, payload, requestId)
-      if (epoch !== authEpoch.current) return undefined
+      if (!live.current || epoch !== authEpoch.current) return undefined
       uncertain.current.delete(key)
-      if (live.current) await refresh(true)
+      await refresh(true)
+      if (!live.current || epoch !== authEpoch.current) return undefined
       return result
     } catch (value) {
       if (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code)) uncertain.current.delete(key)
