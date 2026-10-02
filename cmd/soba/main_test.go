@@ -5,19 +5,54 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/control"
-	"github.com/webkaz-labs/tsnet-bridge/internal/webui"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/control"
+	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
+func TestPrivateCommandPayloadSources(t *testing.T) {
+	data := `{"invitation":"fixture-secret-marker","number":9007199254740993}`
+	path := filepath.Join(t.TempDir(), "payload.json")
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"lan.join", data}, {"lan.join", "--json-file", path}, {"lan.join", "--stdin"}} {
+		got, err := commandPayload(context.Background(), args, strings.NewReader(data), false)
+		if err != nil || string(got) != data {
+			t.Fatal("private payload was not preserved")
+		}
+	}
+	for _, value := range []string{`{"invitation":"fixture-secret-marker"`, strings.Repeat(" ", 49<<10) + "{}"} {
+		_, err := commandPayload(context.Background(), []string{"lan.join", "--stdin"}, strings.NewReader(value), false)
+		if err == nil || strings.Contains(err.Error(), "fixture-secret-marker") {
+			t.Fatal("invalid payload leaked or was accepted")
+		}
+	}
+	r, w := io.Pipe()
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := commandPayload(ctx, []string{"lan.join", "--stdin"}, r, false); done <- err }()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal("cancelled input was accepted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled input did not stop")
+	}
+}
+
 func TestHelpAndVersionAreOffline(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"version"}, {"--version"}, {"setup", "--help"}, {"share", "--help"}, {"connect", "-h"}, {"help", "message"}} {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"version"}, {"--version"}, {"setup", "--help"}, {"share", "--help"}, {"connect", "-h"}, {"help", "message"}, {"start", "--offline", "--help"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "absent")
 			var out bytes.Buffer

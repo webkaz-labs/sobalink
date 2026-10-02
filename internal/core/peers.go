@@ -17,10 +17,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/httpbound"
-	"github.com/webkaz-labs/tsnet-bridge/internal/identity"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/httpbound"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
 type peerServer struct {
@@ -219,9 +219,13 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
+		if c.closing || c.ctx.Err() != nil || r.Context().Err() != nil {
+			peerFailure(w, 403)
+			return
+		}
 		currentTrust := false
 		for _, current := range c.profile.Peers {
-			if current.ID == t.ID && current.Generation == t.Generation && !current.Paused {
+			if current.ID == t.ID && current.Network == t.Network && current.Network == c.profile.Settings.Network && current.Generation == t.Generation && !current.Paused {
 				currentTrust = true
 				break
 			}

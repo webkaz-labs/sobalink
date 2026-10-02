@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/discovery"
-	"github.com/webkaz-labs/tsnet-bridge/internal/identity"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/discovery"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 )
 
 // DiscoveryTTL limits how long a caller may offer a previously observed share.

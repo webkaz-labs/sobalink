@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 
-REPOSITORY = "webkaz-labs/tsnet-bridge"
+REPOSITORY = "webkaz-labs/sobalink"
 PROJECT = "github.com/" + REPOSITORY
 WORKFLOW = ".github/workflows/prerelease.yml"
 IDENTITY = "https://github.com/" + REPOSITORY + "/" + WORKFLOW + "@refs/heads/main"

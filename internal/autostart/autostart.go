@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
 type Plan struct {

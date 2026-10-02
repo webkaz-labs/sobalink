@@ -2,7 +2,7 @@
 
 [日本語ガイド](GENERIC.ja.md) · [English guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-The local development draft combines an embedded React UI and a Go agent. Human interaction and agent CLI requests share one application boundary. A peer can exchange authorized messages, batches and service metadata; it cannot operate the local administration API.
+The development draft combines an embedded React UI and a Go agent. Human interaction and agent CLI requests share one application boundary. A peer can exchange authorized messages, batches and service metadata; it cannot operate the local administration API.
 
 ```mermaid
 flowchart LR
@@ -28,13 +28,13 @@ flowchart LR
 | `internal/control` | Owner-restricted Unix socket or Windows named pipe |
 | `internal/core` | Shared commands, current state, profile, trust, peers, transfers and service grants |
 | `internal/identity` | Embedded tsnet adapter and current Tailnet identity |
-| Tailcat integration work | Trusted-relay adapter and pairing are excluded from the initial snapshot; the integration gate remains open |
+| `internal/lanlink`, `internal/core/lan.go` | Tailcat adapter, explicit relay setup, pairing, protected state and offline recovery; stock native acceptance remains open |
 | `internal/transfer` | Manifest validation, receive policy, bounded streaming, storage and whole-file retry |
 | `internal/ranges` | Compact range/exclusion sets, immutable plans and TCP fallback admission |
 | `internal/policy`, `internal/transport` | Current-identity authorization, forwarding and bounded TCP/UDP lifetimes |
 | `internal/distribution` | Deterministic package layout, source/dependency metadata, frontend assets and notices |
 
-The legacy `cmd/tsnet-bridge` implementation may remain in the tree. It does not define the new UI, CLI or profile compatibility contract. Product names and executable names change independently of the current repository/module locator.
+The legacy `cmd/tsnet-bridge` implementation may remain in the tree. It does not define the new UI, CLI or profile compatibility contract. The repository and module are now `github.com/webkaz-labs/sobalink`; earlier release signatures retain their historical identities.
 
 ## Network boundaries
 
@@ -42,9 +42,9 @@ The application selects one backend explicitly. A new profile selects none. A sa
 
 Existing Tailnet mode uses a separate embedded tsnet node. Enrollment uses the official interactive login flow. Current peer identity, Tailnet grants/ACLs and the application grant are checked independently. Service dialing uses the embedded stack instead of an OS-network fallback. OS routes and DNS remain outside this product's management surface.
 
-Tailcat mode is unavailable in the initial snapshot and remains under integration. The stock adapter uses an explicit numeric relay endpoint with a TLS certificate SHA-256 pin and matching peer capabilities. It has no default public relay map or DNS bootstrap. Build tags `ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy` exclude port mapping, captive-portal probes and system-proxy fallback; proxy/unsupported backend environment overrides are rejected.
+The Tailcat adapter and Core/CLI commands are implemented. Dedicated LAN UI and the connection graph are still being integrated; live stock two-peer acceptance has not run. The stock adapter uses an explicit numeric relay endpoint with a TLS certificate SHA-256 pin and matching peer capabilities. It has no default public relay map or DNS bootstrap. Build tags `ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy` exclude port mapping, captive-portal probes and system-proxy fallback; proxy/unsupported backend environment overrides are rejected.
 
-The selected relay may be self-hosted or another endpoint explicitly trusted by the user. Its permitted traffic includes encrypted relayed payloads and HTTPS/ICMP diagnostics to that same endpoint, plus peer direct traffic. This boundary is not strict LAN isolation or zero external traffic. Pairing key ownership, durable acknowledgement, UDP multiplexing and native continuity tests must pass before claiming a working end-to-end Tailcat mode. [Current gate](VERIFICATION.en.md#tailcat-gate)
+The selected relay may be self-hosted or another endpoint explicitly trusted by the user. Its permitted traffic includes encrypted relayed payloads and HTTPS/ICMP diagnostics to that same endpoint, plus peer direct traffic. This boundary is not strict LAN isolation or zero external traffic. Independent static review and local logic/race tests cover pairing key ownership, durable acknowledgement and UDP multiplexing. The new stock Tailcat loopback-relay continuity test still requires a native run before claiming a working end-to-end path. [Current gate](VERIFICATION.en.md#tailcat-gate)
 
 ```mermaid
 flowchart TD
@@ -70,7 +70,7 @@ The peer API has separate routes for hello, explicit messages, transfer offers/s
 
 ## Trust, batches and storage
 
-Trust, pairing, autosave and service sharing are distinct scopes. A display name never supplies identity. A receive policy binds an exact peer and trust generation to an absolute local destination. Revocation closes work and invalidates the previous generation. Persisted receive policy becomes effective only after its atomic configuration write succeeds.
+Trust, pairing, autosave and service sharing are distinct scopes. LAN invitations last 1–600 seconds and are bound to one recipient key. Sealed bootstrap authorizes only the verified transport role; server and client role keys stay distinct. Atomic private-state persistence precedes pairing success. See the [LAN command and recovery guide](LAN.en.md). A display name never supplies identity. A receive policy binds a backend, exact peer and trust generation to an absolute local destination. Revocation closes work and invalidates the previous generation. Persisted receive policy becomes effective only after its atomic configuration write succeeds.
 
 ```mermaid
 stateDiagram-v2
@@ -93,6 +93,10 @@ The current core limits each batch to 256 entries and 1 GiB. Browser uploads sta
 
 Retry starts each unfinished file again from byte zero. There is no byte-offset resume, durable progress journal or restart resume. Saved data survives cancellation and process shutdown; active batch state does not. A new batch after restart may create unique-name duplicates, which the user must review.
 
+The embedded relay forces a fresh admission check through a two-minute connection lease. Removed relay sessions may remain for that lease, and temporary bootstrap admission plus a lease can last about four minutes from initial bootstrap. Application revocation closes its own flows immediately. A test intended to hold bidirectional TCP for 130 seconds across a lease rollover is not evidence until it actually passes.
+
+Peer Pause stops messages/files and cancels active sends; resuming requires reselecting those files. It does not revoke separate service grants. `soba start --offline` opens management without reconnecting a saved backend, so pairing state can be revoked or repaired after startup failure.
+
 ## Compact service plans
 
 TCP sharing uses a compact inclusive range/exclusion plan with one userspace fallback dispatcher. Shared port N maps to the same exact loopback port N. A broad range is a real future grant: applications started later on effective ports are reachable to its permitted peers until expiry.
@@ -105,10 +109,14 @@ Discovered services carry bounded metadata only for eligible peers and unexpired
 
 Expiry, stop and peer revocation close tracked flows. They do not cancel a remote application job, retrieve delivered content or extend a deadline. Saved definitions are inert after restart until explicitly started.
 
+## Connection graph scope
+
+The lightweight SVG connection view is under integration. It depicts this device and its known peers from actual state observations, with observed contact and trust kept separate from path type. It must not invent peer-to-peer full-mesh links, rates or direct/relay telemetry. A missing observation is Unknown, and saved pairing metadata is not proof that a peer is online.
+
 ## Evidence and release boundary
 
 Unit tests and mock backends establish specific logic properties. A DOM test checks component behavior. A real local browser checks rendering and navigation. Native socket tests check OS behavior. Two real peers establish enrollment, delivery and path behavior. None substitutes for another.
 
-The current execution environment denies required socket creation with `operation not permitted`, so complete native and actual-browser acceptance remain open. Preserve the four native OS/architecture CI targets, a Go-backed browser acceptance path, exact-source results and separate live-network testing. Cross-compilation is not native execution.
+Baseline `278a6e17` passed [all six jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37036882061), including four native targets and actual Go-backed Chromium desktop/mobile checks in Japanese and English. New LAN code has local race/vet/compile results but its stock two-peer native harness has not run. The local socket restriction remains separate from successful native CI. New UI and LAN acceptance must bind to their own exact commit. Cross-compilation is not native execution.
 
 Production packages embed generated frontend assets and include the pinned dependency inventory, copied notices, build metadata and SBOM. Repeatability, signature/provenance verification and actual installed-binary checks remain publication gates. No new release is claimed from this local draft. [Distribution](DISTRIBUTION.md) · [Verification](VERIFICATION.en.md)

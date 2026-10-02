@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/control"
-	"github.com/webkaz-labs/tsnet-bridge/internal/core"
-	"github.com/webkaz-labs/tsnet-bridge/internal/webui"
-	assets "github.com/webkaz-labs/tsnet-bridge/web"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/control"
+	"github.com/webkaz-labs/sobalink/internal/core"
+	"github.com/webkaz-labs/sobalink/internal/webui"
+	assets "github.com/webkaz-labs/sobalink/web"
 	"golang.org/x/term"
 )
 
@@ -124,15 +124,21 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 		}
 	}
 	if command == "start" {
-		if len(args) > 0 {
-			return usageError(ja, "[--state-dir DIR] start")
+		startFlags := flag.NewFlagSet("start", flag.ContinueOnError)
+		startFlags.SetOutput(out)
+		offline := startFlags.Bool("offline", false, text(ja, "open local management without starting the saved network", "保存済みのネットワークを開始せず、ローカル管理画面を開く"))
+		if e := startFlags.Parse(args); e != nil {
+			return e
+		}
+		if len(startFlags.Args()) > 0 {
+			return usageError(ja, "[--state-dir DIR] start [--offline]")
 		}
 		lock, e := config.AcquireLock(dir)
 		if e != nil {
 			return e
 		}
 		defer func() { err = errors.Join(err, lock.Close()) }()
-		app, e := core.Open(ctx, core.Options{Directory: dir, Version: version})
+		app, e := core.Open(ctx, core.Options{Directory: dir, Version: version, SkipNetworkStart: *offline})
 		if e != nil {
 			return e
 		}
@@ -306,12 +312,9 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 		}
 		return request("service.stop", map[string]string{"id": args[0]})
 	case "command":
-		if len(args) != 2 {
-			return usageError(ja, "command NAME JSON_PAYLOAD")
-		}
-		payload := json.RawMessage(args[1])
-		if !json.Valid(payload) {
-			return errors.New(text(ja, "Invalid JSON payload", "JSONの形式が正しくありません"))
+		payload, e := commandPayload(ctx, args, os.Stdin, ja)
+		if e != nil {
+			return e
 		}
 		return request(args[0], payload)
 	default:
@@ -320,12 +323,73 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 }
 
 var commandUsage = map[string]string{
-	"start": "start", "status": "status", "peers": "peers", "ui": "ui", "stop": "stop",
+	"start": "start [--offline]", "status": "status", "peers": "peers", "ui": "ui", "stop": "stop",
 	"login": "login", "trust": "trust PEER_ID", "revoke": "revoke PEER_ID",
 	"message": "message PEER_ID TEXT", "send": "send PEER_ID PATH...",
 	"accept": "accept TRANSFER_ID DIRECTORY", "cancel": "cancel TRANSFER_ID",
 	"retry": "retry TRANSFER_ID", "forget": "forget TRANSFER_ID",
-	"stop-service": "stop-service SERVICE_ID", "command": "command NAME JSON_PAYLOAD",
+	"stop-service": "stop-service SERVICE_ID", "command": "command NAME JSON_PAYLOAD | command NAME --json-file PATH | command NAME --stdin",
+}
+
+func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool) (json.RawMessage, error) {
+	const limit = 48 << 10
+	if len(args) < 2 {
+		return nil, usageError(ja, commandUsage["command"])
+	}
+	var reader io.Reader
+	var owned io.Closer
+	switch {
+	case len(args) == 2 && args[1] == "--stdin":
+		if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+			return nil, errors.New(text(ja, "Use a pipe, --json-file, or the local Web UI for private payloads", "機密の入力にはパイプ、--json-file、またはローカル画面を使ってください"))
+		}
+		reader = stdin
+	case len(args) == 3 && args[1] == "--json-file":
+		info, e := os.Lstat(args[2])
+		if e != nil || !info.Mode().IsRegular() || info.Size() > limit {
+			return nil, errors.New(text(ja, "JSON input must be a regular file of at most 48 KiB", "JSON入力は48KiB以下の通常ファイルを指定してください"))
+		}
+		f, e := os.Open(args[2])
+		if e != nil {
+			return nil, errors.New(text(ja, "Could not open the JSON input file", "JSON入力ファイルを開けませんでした"))
+		}
+		opened, e := f.Stat()
+		if e != nil || !os.SameFile(info, opened) {
+			f.Close()
+			return nil, errors.New(text(ja, "JSON input file changed while opening", "JSON入力ファイルが読込み中に変わりました"))
+		}
+		reader = f
+		owned = f
+	case len(args) == 2 && !strings.HasPrefix(args[1], "--"):
+		reader = strings.NewReader(args[1])
+	default:
+		return nil, usageError(ja, commandUsage["command"])
+	}
+	if owned != nil {
+		defer owned.Close()
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	stop := func() bool { return false }
+	if closer, ok := reader.(io.Closer); ok {
+		stop = context.AfterFunc(ctx, func() { _ = closer.Close() })
+	}
+	defer stop()
+	data, e := io.ReadAll(io.LimitReader(reader, limit+1))
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if e != nil {
+		return nil, errors.New(text(ja, "Could not read JSON input", "JSON入力を読み込めませんでした"))
+	}
+	if len(data) > limit {
+		return nil, errors.New(text(ja, "JSON payload exceeds 48 KiB", "JSON入力が48KiBを超えています"))
+	}
+	if !json.Valid(data) {
+		return nil, errors.New(text(ja, "Invalid JSON payload", "JSONの形式が正しくありません"))
+	}
+	return json.RawMessage(data), nil
 }
 
 func usageError(ja bool, usage string) error {
@@ -364,6 +428,7 @@ func parseFlags(f *flag.FlagSet, args []string, ja bool) error {
 const helpEN = `sobalink — nearby devices, one connection
 
   soba                         Start the local Web UI and agent
+  soba start --offline         Open settings without starting the saved network
   soba ui                      Get the local URL and a fresh one-time code
   soba status                  Show machine-readable state
   soba setup --network tailnet Activate the existing Tailscale connection
@@ -379,6 +444,7 @@ const helpEN = `sobalink — nearby devices, one connection
 Global options: --state-dir DIR --locale auto|ja|en (before the command)
 Advanced: command NAME JSON_PAYLOAD, revoke PEER_ID, stop-service ID,
 cancel ID, retry ID (whole unfinished files), forget ID (history only)
+For private invitations: command NAME --json-file PATH or --stdin (pipe only)
 
 The Web UI and CLI use the same permission checks. The target application
 must already be running; ordinary Tailscale service targets need no sobalink.
@@ -386,6 +452,7 @@ Files are never automatically opened or executed. Saving is receiver-approved.`
 const helpJA = `sobalink — 離れた端末を、そばに
 
   soba                         ローカル画面と本体を起動
+  soba start --offline         保存済みネットワークを開始せず設定画面を開く
   soba ui                      画面URLと新しい一回用コードを表示
   soba status                  状態を機械向けJSONで表示
   soba setup --network tailnet 既存のTailscale接続を有効化
@@ -401,6 +468,7 @@ const helpJA = `sobalink — 離れた端末を、そばに
 共通指定: --state-dir DIR --locale auto|ja|en（コマンドより前）
 詳細操作: command NAME JSON_PAYLOAD、revoke PEER_ID、stop-service ID、
 cancel ID、retry ID（未完了ファイルを先頭から）、forget ID（履歴のみ）
+機密の招待入力: command NAME --json-file PATH または --stdin（パイプ入力）
 
 画面とCLIは同じ許可判定を使います。接続先では対象アプリの起動が必要です。
 通常のTailscale接続先ではsobalinkは不要です。

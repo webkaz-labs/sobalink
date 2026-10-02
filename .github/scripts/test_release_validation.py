@@ -49,7 +49,7 @@ class WorkflowAttestationPolicy(unittest.TestCase):
 
 class WorkflowCachePolicy(unittest.TestCase):
     CACHE_PIN = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
-    MAIN_GUARD = "github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+    MAIN_GUARD = "github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
     CACHE_PATHS = "\n".join(("          path: |", "            ${{ steps.go-cache-info.outputs.gomodcache }}", "            ${{ steps.go-cache-info.outputs.gocache }}"))
 
     def workflow(self, name):

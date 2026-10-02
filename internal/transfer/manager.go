@@ -77,6 +77,78 @@ func NewManager(options Options) (*Manager, error) {
 func (m *Manager) BindPeer(peer Peer) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.validatePeerBindingLocked(peer); err != nil {
+		return err
+	}
+	previous, found := m.peers[peer.ID]
+	if found && peer == previous.peer {
+		return nil
+	}
+	if found {
+		m.cancelPeerLocked(peer.ID)
+	}
+	active := 0
+	if previous != nil {
+		active = previous.active
+	}
+	m.peers[peer.ID] = &peerState{peer: peer, active: active}
+	if p, ok := m.policies[peer.ID]; ok && p.Peer != peer {
+		delete(m.policies, peer.ID)
+		return m.savePoliciesLocked(m.policies)
+	}
+	return nil
+}
+
+// ValidatePeerBinding checks the same admission preconditions as BindPeer
+// without publishing receiver state. A caller doing durable approval first must
+// serialize its binding mutations and Close across validation and publication.
+func (m *Manager) ValidatePeerBinding(peer Peer) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.validatePeerBindingLocked(peer)
+}
+
+// ResetBindings changes the local trust scope before a transport starts. It
+// preserves the PolicyStore unchanged and refuses to discard any batch state.
+// The full replacement is validated before either bindings or policies change.
+func (m *Manager) ResetBindings(peers []Peer, policies []ReceivePolicy) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	if m.active != 0 || len(m.batches) != 0 {
+		return ErrState
+	}
+	if len(peers) > m.limits.MaxPeers || len(policies) > m.limits.MaxPeers {
+		return ErrLimit
+	}
+	nextPeers := make(map[string]*peerState, len(peers))
+	for _, peer := range peers {
+		if !validPeer(peer) {
+			return ErrUnknownPeer
+		}
+		if nextPeers[peer.ID] != nil {
+			return ErrConflict
+		}
+		nextPeers[peer.ID] = &peerState{peer: peer}
+	}
+	nextPolicies := make(map[string]ReceivePolicy, len(policies))
+	for _, policy := range policies {
+		peer := nextPeers[policy.Peer.ID]
+		if !validPeer(policy.Peer) || !validDestination(policy.Destination) || peer == nil || peer.peer != policy.Peer {
+			return ErrPeerChanged
+		}
+		if _, exists := nextPolicies[policy.Peer.ID]; exists {
+			return ErrConflict
+		}
+		nextPolicies[policy.Peer.ID] = policy
+	}
+	m.peers, m.policies = nextPeers, nextPolicies
+	return nil
+}
+
+func (m *Manager) validatePeerBindingLocked(peer Peer) error {
 	if m.closed {
 		return ErrClosed
 	}
@@ -96,18 +168,6 @@ func (m *Manager) BindPeer(peer Peer) error {
 	}
 	if p, ok := m.policies[peer.ID]; ok && peer.Generation < p.Peer.Generation {
 		return ErrPeerChanged
-	}
-	if found {
-		m.cancelPeerLocked(peer.ID)
-	}
-	active := 0
-	if previous != nil {
-		active = previous.active
-	}
-	m.peers[peer.ID] = &peerState{peer: peer, active: active}
-	if p, ok := m.policies[peer.ID]; ok && p.Peer != peer {
-		delete(m.policies, peer.ID)
-		return m.savePoliciesLocked(m.policies)
 	}
 	return nil
 }

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/app"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/app"
+	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
 // Service discovery confirms an authenticated sharing observation, never the

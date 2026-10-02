@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transfer"
-	"github.com/webkaz-labs/tsnet-bridge/internal/webui"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
 func (c *Core) StartWeb(assets fs.FS) (string, string, error) {
@@ -80,16 +80,38 @@ func (c *Core) startNetwork(ctx context.Context) error {
 		return nil
 	}
 	p := c.profileCopy()
-	if p.Settings.Network == "lan" {
-		return errors.New("LAN pairing is not enabled in this draft; device-key verification is still under test")
-	}
-	if p.Settings.Network != "tailnet" {
+	if p.Settings.Network != "tailnet" && p.Settings.Network != "lan" {
 		return errors.New("choose a network before connecting")
 	}
-	n, e := c.factory(c.dir, p.Settings.Hostname)
+	if c.attemptedNetwork == "" && c.transferNetwork != p.Settings.Network {
+		if err := c.resetTransferNetwork(p); err != nil {
+			return err
+		}
+	}
+	var n NetworkBackend
+	var e error
+	if p.Settings.Network == "lan" {
+		store := c.lanStoreCopy()
+		if store == nil {
+			return errors.New("explicit LAN setup is required before connecting")
+		}
+		factory := c.lanFactory
+		if factory == nil {
+			factory = c.newLANBackend
+		}
+		n, e = factory(store)
+	} else {
+		n, e = c.factory(c.dir, p.Settings.Hostname)
+	}
 	if e != nil {
 		return e
 	}
+	// Both engines can change process-global netstack settings during Start,
+	// including a Start that later fails. A failed attempt must not permit a
+	// different engine or node identity to initialize in this process.
+	c.mu.Lock()
+	c.attemptedNetwork, c.attemptedHostname = p.Settings.Network, p.Settings.Hostname
+	c.mu.Unlock()
 	if e = n.Start(); e != nil {
 		_ = n.Close()
 		return errors.New("could not start network; private identity state was retained")
@@ -126,6 +148,9 @@ func (c *Core) maintain() {
 			if e != nil {
 				c.networkState = "unavailable"
 				c.networkError = "Network status is unavailable; retry the connection"
+				if c.networkFatal != "" {
+					c.networkState, c.networkError = "error", c.networkFatal
+				}
 			} else {
 				c.networkState = st.Backend
 				c.networkError = ""
@@ -162,6 +187,7 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 	}
 	c.mu.RUnlock()
 	peers := []map[string]any{}
+	networkRead := false
 	reservedPorts := []uint16{54543, 54544, 54545}
 	c.mu.RLock()
 	if c.web != nil {
@@ -169,7 +195,14 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 	}
 	c.mu.RUnlock()
 	if st, e := c.current(ctx); e == nil {
+		networkRead = true
 		reservedPorts = append(reservedPorts, st.ReservedPorts...)
+		lanNames := map[string]string{}
+		if node, ok := c.nodeCopy().(lanNetworkBackend); ok {
+			for _, peer := range node.PublicPeers() {
+				lanNames[peer.Key] = peer.Name
+			}
+		}
 		for _, peer := range st.Snapshot.Peers {
 			if peer.Expired || peer.ID == "" {
 				continue
@@ -180,11 +213,25 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 				address = peer.IPs[0].String()
 			}
 			name := strings.TrimSuffix(peer.DNSName, ".")
+			if publicName := lanNames[peer.ID]; publicName != "" {
+				name = publicName
+			}
 			if name == "" {
 				name = peer.ID
 			}
 			bridge := time.Since(confirmed[peer.ID]) < 15*time.Second
 			peers = append(peers, map[string]any{"id": peer.ID, "name": name, "networks": []string{p.Settings.Network}, "online": peer.Online || bridge, "verified": st.Snapshot.Running, "trusted": ok, "path": "unknown", "bridge": bridge, "address": address, "fingerprint": peer.ID, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
+		}
+	}
+	if !networkRead && p.Settings.Network == "lan" {
+		// Offline management must still let the user revoke saved pairings
+		// after an address/certificate/startup failure. Saved identity metadata
+		// is not current verification or an online/reachability claim.
+		if saved := c.lanStoreCopy(); saved != nil {
+			for _, peer := range saved.copy().Trust.Peers {
+				trusted, ok := c.trust(peer.Key)
+				peers = append(peers, map[string]any{"id": peer.Key, "name": peer.Name, "networks": []string{"lan"}, "online": false, "verified": false, "trusted": ok, "path": "unknown", "bridge": false, "address": "", "fingerprint": peer.Key, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
+			}
 		}
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i]["name"].(string) < peers[j]["name"].(string) })
@@ -199,7 +246,7 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			services = append(services, v)
 		}
 	}
-	return map[string]any{"version": c.version, "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "services": services, "shares": shares, "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings}, nil
+	return map[string]any{"version": c.version, "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "services": services, "shares": shares, "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "lan": c.lanStatus()}, nil
 }
 
 func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
@@ -232,20 +279,29 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 
 func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 	switch cmd.Name {
+	case "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
+		return c.lanCommand(ctx, cmd.Name, cmd.Payload)
 	case "network.configure":
 		var v struct {
-			Mode     string `json:"mode"`
-			Hostname string `json:"hostname"`
+			Mode     string        `json:"mode"`
+			Hostname string        `json:"hostname"`
+			LAN      *LANSelection `json:"lan,omitempty"`
 		}
 		if e := decodePayload(cmd.Payload, &v); e != nil {
 			return nil, e
 		}
 		p := c.profileCopy()
-		if v.Mode == "lan" {
-			return nil, errors.New("LAN pairing is not enabled in this draft; device-key verification is still under test")
+		if v.Mode != "tailnet" && v.Mode != "lan" && v.Mode != "none" {
+			return nil, errors.New("choose tailnet, lan or none")
 		}
-		if v.Mode != "tailnet" && v.Mode != "none" {
-			return nil, errors.New("choose tailnet or none")
+		if v.Mode != "lan" && v.LAN != nil {
+			return nil, errors.New("LAN relay settings require LAN mode")
+		}
+		c.mu.RLock()
+		attemptedMode, attemptedName := c.attemptedNetwork, c.attemptedHostname
+		c.mu.RUnlock()
+		if attemptedMode != "" && (v.Mode != attemptedMode || (v.Hostname != "" && v.Hostname != attemptedName)) {
+			return nil, errors.New("stop soba before changing the active network or node name")
 		}
 		if c.nodeCopy() != nil && (v.Mode != p.Settings.Network || (v.Hostname != "" && v.Hostname != p.Settings.Hostname)) {
 			return nil, errors.New("stop soba before changing the active network or node name")
@@ -254,13 +310,21 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if v.Hostname != "" {
 			p.Settings.Hostname = v.Hostname
 		}
+		if e := validateProfile(p); e != nil {
+			return nil, e
+		}
+		if v.Mode == "lan" {
+			if e := c.configureLAN(v.LAN); e != nil {
+				return nil, e
+			}
+		}
 		if e := c.saveProfile(p); e != nil {
 			return nil, e
 		}
 		c.mu.Lock()
 		c.profile = p
 		c.mu.Unlock()
-		if v.Mode == "tailnet" {
+		if v.Mode == "tailnet" || v.Mode == "lan" {
 			return nil, c.startNetwork(ctx)
 		}
 		return nil, nil
@@ -303,27 +367,41 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		old, had := c.trust(v.PeerID)
 		if had == v.Trusted {
 			if !v.Trusted {
-				c.revokePeer(v.PeerID)
+				c.stopPeerServices(v.PeerID)
 			}
 			return nil, nil
 		}
 		if v.Trusted {
+			for _, existing := range p.Peers {
+				if existing.ID == v.PeerID && existing.Network != p.Settings.Network {
+					return nil, errors.New("this peer ID belongs to an approval in another network; switch to that network to review it first")
+				}
+			}
 			if len(p.Peers) >= 128 {
 				return nil, errors.New("trusted peer capacity reached")
 			}
-			g := uint64(time.Now().UnixNano())
-			if g == 0 {
-				g = 1
+			if c.trustGeneration == ^uint64(0) {
+				return nil, errors.New("peer approval generation is exhausted")
 			}
+			c.trustGeneration++
+			g := c.trustGeneration
 			p.Peers = append(p.Peers, Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: g})
 		} else {
 			filtered := p.Peers[:0]
 			for _, t := range p.Peers {
-				if t.ID != v.PeerID {
+				if t.ID != v.PeerID || t.Network != p.Settings.Network {
 					filtered = append(filtered, t)
 				}
 			}
 			p.Peers = filtered
+		}
+		if v.Trusted {
+			// Preflight is read-only: no receiver binding exists until the
+			// profile is durable. All binding mutations and Close share c.op.
+			t := p.Peers[len(p.Peers)-1]
+			if e := c.transfers.ValidatePeerBinding(transfer.Peer{ID: t.ID, Generation: t.Generation}); e != nil {
+				return nil, e
+			}
 		}
 		if e := c.saveProfile(p); e != nil {
 			return nil, e
@@ -461,12 +539,18 @@ func (c *Core) revokePeer(id string) {
 	_ = c.transfers.RevokePeer(id)
 	c.stopPeerServices(id)
 	c.mu.Lock()
+	ps := c.peerServer
+	delete(c.confirmed, id)
+	delete(c.discovered, id)
 	for _, b := range c.outgoing {
 		if b.PeerID == id {
 			b.stop()
 		}
 	}
 	c.mu.Unlock()
+	if ps != nil {
+		ps.revoke(id)
+	}
 }
 
 // Keep profile utilities reused by command-only integrations in one boundary.

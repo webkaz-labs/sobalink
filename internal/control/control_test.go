@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
 // Native IPC checks exercise actual named pipes/Unix sockets. This watchdog is

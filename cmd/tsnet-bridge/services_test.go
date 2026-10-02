@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/app"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/app"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 )
 
 func sharedService() app.DiscoveredService {

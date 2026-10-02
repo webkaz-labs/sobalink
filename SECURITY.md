@@ -2,7 +2,7 @@
 
 [日本語](docs/SECURITY.ja.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md)
 
-sobalink is a local development draft. Its controls constrain this agent's management surface, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. Real network and browser acceptance remain incomplete; see the verification record before relying on a claim.
+sobalink is a development draft. Its controls constrain this agent's management surface, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. The baseline native/browser CI passed at the recorded commit; newer LAN integration and real-network acceptance remain separate. See the verification record before relying on a claim.
 
 ## Local management stays local
 
@@ -23,7 +23,7 @@ A new profile selects no network. Existing Tailnet mode enrolls a separate embed
 
 Outbound service connections use the embedded userspace stack and current peer identity. The application does not fall back to ordinary OS service dialing or OS DNS resolution when a permitted peer is unavailable. Application target authorization, Tailnet grants/ACLs and application credentials remain separate controls.
 
-Tailcat mode is unavailable in the initial snapshot and remains under integration. Its intended production boundary uses one explicit numeric relay endpoint and a TLS certificate SHA-256 pin. It rejects peer capabilities that name a different relay, public relay-map defaults and DNS bootstrap. Required build tags omit port mapping, captive-portal probing and system-proxy support; unsupported proxy and backend override environments fail closed.
+Tailcat mode is implemented in the adapter and shared Core/CLI; the dedicated UI and stock two-peer native acceptance are pending. It uses one explicit numeric relay endpoint and a TLS certificate SHA-256 pin. It rejects peer capabilities that name a different relay, public relay-map defaults and DNS bootstrap. Required build tags omit port mapping, captive-portal probing and system-proxy support; unsupported proxy and backend override environments fail closed.
 
 That Tailcat boundary permits peer direct traffic, encrypted payload through the selected trusted relay, and HTTPS/ICMP latency diagnostics to the selected relay endpoint. It does **not** claim strict LAN-only traffic, zero external contact or an egress sandbox. A self-hosted or explicitly trusted relay is a deliberate choice; no arbitrary public fallback is authorized. See [the integration gate](docs/VERIFICATION.en.md#tailcat-gate).
 
@@ -31,13 +31,23 @@ Backend selection is explicit and process-scoped. A mode switch is not an automa
 
 Display names and addresses are not durable identity. Incoming identity is derived from the authenticated transport, then checked against current state. Peer removal, address reassignment, expiry or trust revocation must invalidate the relevant authorization. Tailcat pairing capabilities, pre-shared keys, invitation tokens and private state must never appear in status, logs, discovery or distributed examples.
 
+### LAN pairing and relay admission
+
+A pairing invitation is scoped to one recipient public key and lasts 1–600 seconds. The embedded relay uses a sealed HTTPS bootstrap to verify the invited server identity and one-time token before temporarily admitting the required transport role; unknown keys receive no blanket exception. Server/client transport role keys are distinct and bound to the paired identity. Secret pairing state is saved atomically before success is acknowledged. Pairing does not grant application trust or autosave.
+
+Application revocation closes authorization and tracked flows immediately. The embedded relay separately rechecks admission through a two-minute connection lease: an already admitted relay session can remain for up to two minutes after removal, or up to about four minutes from an initial bootstrap when temporary role admission and an existing lease overlap. This residual relay session is not permission to reopen application flows. External relay admission policy remains that relay operator's responsibility.
+
+Secret command payloads use bounded `--json-file` or non-terminal `--stdin` input rather than literal arguments. Protect the input file and explicit invitation-creation response; parsing errors do not echo the payload.
+
+An uncertain pairing reply is not automatically retried; the other side may already have committed. Check and revoke that peer there before creating a new invitation. If remote pairing succeeded but the local save failed, revoke the remote approval first. A failed durable revocation stops the LAN backend rather than reporting success. `soba start --offline` keeps local management available for repair without starting the saved backend.
+
 ## Trust and receiving
 
-Trust for messages/file offers binds an exact verified peer. Service sharing is a separate grant. The receiving peer must authorize the sender; one device's trust selection cannot grant authority on another device.
+Trust for messages/file offers binds an exact verified peer in the selected backend. Service sharing is a separate grant. The receiving peer must authorize the sender; one device's trust selection cannot grant authority on another device.
 
 - Each incoming batch requires explicit receiver acceptance by default
-- Optional autosave binds the exact trusted identity, current trust generation and an explicit absolute destination. It is persisted only through a successful private configuration write
-- Autosave can accept future batches while enabled. Pause, disable and revoke are available; trust renewal or an identity change does not revive an earlier generation's grant
+- Optional autosave binds the backend, exact trusted identity, current trust generation and an explicit absolute destination. It is persisted only through a successful private configuration write
+- Autosave can accept future batches while enabled. Disabling it restores batch consent. Peer Pause blocks messages/files and cancels active sends, which require reselecting files after unpausing; separate service grants are unaffected. Trust renewal or an identity change does not revive an earlier generation's grant
 - Neither acceptance nor autosave permits overwriting existing files, automatic opening, execution, shell evaluation or clipboard synchronization
 - Receiver destinations stay local. Peers provide portable relative paths, never trusted local absolute paths
 - The receiver rejects traversal, absolute/drive/device paths, ambiguous separators/names, symlinks, reparse points and unsupported file types. It does not preserve executable attributes

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
-	"github.com/webkaz-labs/tsnet-bridge/internal/app"
+	"github.com/webkaz-labs/sobalink/internal/app"
 )
 
 const sampleAuthURL = "https://login.tailscale.com/a/example-not-a-real-login"

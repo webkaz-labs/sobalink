@@ -2,7 +2,7 @@
 
 [日本語](DEVELOPMENT_PRINCIPLES.ja.md) · [User guide](GENERIC.en.md) · [Architecture](ARCHITECTURE.md)
 
-**Make common goals take few steps, with detail available when needed.** Apply these principles to implementation, review and documentation. They govern the current CLI and any future graphical interface.
+**Make common goals take few steps, with detail available when needed.** Apply these principles to implementation, review and documentation. They govern both the CLI and local Web UI.
 
 ## First-class Japanese and English
 

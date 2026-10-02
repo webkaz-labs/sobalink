@@ -27,7 +27,7 @@ env:
 
 jobs:
   gate:
-    if: github.event.repository.private == false && github.repository == 'webkaz-labs/tsnet-bridge'
+    if: github.event.repository.private == false && github.repository == 'webkaz-labs/sobalink'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -288,7 +288,7 @@ jobs:
           packslip-version: '1.4.0'
           artifacts: dist/*.tar.gz dist/*.zip dist/*.cdx.json
           manifest: dist/packslip.toml
-          project: github.com/webkaz-labs/tsnet-bridge
+          project: github.com/webkaz-labs/sobalink
           version: ${{ needs.gate.outputs.version }}
           tag: ${{ needs.gate.outputs.tag }}
           commit: ${{ needs.gate.outputs.commit }}

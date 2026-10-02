@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/autostart"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/autostart"
+	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
 func ruleSettings(c config.Config, out io.Writer, dir string) error {

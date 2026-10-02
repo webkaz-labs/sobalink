@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/webkaz-labs/sobalink/internal/deadline"
 	"net"
 	"net/netip"
 	"slices"
@@ -12,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/identity"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
-	"github.com/webkaz-labs/tsnet-bridge/internal/ranges"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transport"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/ranges"
+	"github.com/webkaz-labs/sobalink/internal/transport"
 )
 
 type activeService struct {
@@ -46,7 +47,7 @@ type RemoteService struct {
 }
 
 func validateRemote(s RemoteService) error {
-	if !config.ValidPeerID(s.ID) || (s.Network != "tcp" && s.Network != "udp") || s.Application != "unverified" || !time.Now().Before(s.ExpiresAt) || s.ExpiresAt.After(time.Now().Add(24*time.Hour)) {
+	if !config.ValidPeerID(s.ID) || (s.Network != "tcp" && s.Network != "udp") || s.Application != "unverified" || !deadline.Active(time.Now(), s.ExpiresAt) || s.ExpiresAt.After(time.Now().Add(24*time.Hour)) {
 		return errors.New("invalid service metadata")
 	}
 	_, e := ranges.Parse(s.Ports)
@@ -94,7 +95,10 @@ func (c *Core) ensureRanges() error {
 	return nil
 }
 func (a *activeService) guard() error {
-	if !a.ready.Load() || (a.online != nil && !a.online.Load()) || a.ctx.Err() != nil || !time.Now().Before(a.expires) {
+	return a.guardAt(time.Now())
+}
+func (a *activeService) guardAt(now time.Time) error {
+	if !a.ready.Load() || (a.online != nil && !a.online.Load()) || a.ctx.Err() != nil || !deadline.Active(now, a.expires) {
 		return errors.New("service permission is inactive or expired")
 	}
 	return nil
@@ -353,7 +357,7 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			active.servers = append(active.servers, server)
 		}
 	}
-	if ctx.Err() != nil || lifetime.Err() != nil || !time.Now().Before(active.expires) {
+	if ctx.Err() != nil || lifetime.Err() != nil || !deadline.Active(time.Now(), active.expires) {
 		return rollback(errors.New("start was cancelled or expired"))
 	}
 	c.mu.Lock()
@@ -439,7 +443,7 @@ func (c *Core) stopServiceIDs(ids []string) {
 			a.cancel()
 			stopped = append(stopped, a)
 			delete(c.active, id)
-			if !time.Now().Before(a.expires) {
+			if !deadline.Active(time.Now(), a.expires) {
 				c.serviceStates[id] = "expired"
 			} else {
 				c.serviceStates[id] = "stopped"
@@ -490,7 +494,7 @@ func (c *Core) expireServices() {
 	c.mu.RLock()
 	var ids []string
 	for id, a := range c.active {
-		if !time.Now().Before(a.expires) {
+		if !deadline.Active(time.Now(), a.expires) {
 			ids = append(ids, id)
 		}
 	}
@@ -605,7 +609,7 @@ func (c *Core) discoveredViews() []map[string]any {
 			continue
 		}
 		for _, s := range services {
-			if time.Now().Before(s.ExpiresAt) {
+			if deadline.Active(time.Now(), s.ExpiresAt) {
 				out = append(out, map[string]any{"id": s.ID, "name": s.Network + " " + s.Ports, "peerId": id, "network": s.Network, "ports": s.Ports, "expiresAt": s.ExpiresAt, "status": "active", "application": "unverified"})
 			}
 		}

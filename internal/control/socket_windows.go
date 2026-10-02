@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/Microsoft/go-winio"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/config"
 	"golang.org/x/sys/windows"
 	"net"
 	"path/filepath"

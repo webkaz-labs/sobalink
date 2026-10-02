@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-const Project = "github.com/webkaz-labs/tsnet-bridge"
+const Project = "github.com/webkaz-labs/sobalink"
 const Product = "sobalink"
 const Executable = "soba"
 const BuildTags = "ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"

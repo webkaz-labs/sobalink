@@ -3,6 +3,7 @@ package ranges
 import (
 	"context"
 	"errors"
+	"github.com/webkaz-labs/sobalink/internal/deadline"
 	"io"
 	"net"
 	"net/netip"
@@ -241,6 +242,9 @@ func (e *Engine) RevokeIDs(ids []string) int {
 }
 
 func validFlow(s *snapshot, p *permit, src, dst netip.AddrPort) bool {
+	return validFlowAt(time.Now(), s, p, src, dst)
+}
+func validFlowAt(now time.Time, s *snapshot, p *permit, src, dst netip.AddrPort) bool {
 	if s == nil || p.revoked.Load() || src.Port() == 0 || dst.Port() == 0 || !tailnetIP(src.Addr()) || !tailnetIP(dst.Addr()) {
 		return false
 	}
@@ -248,7 +252,7 @@ func validFlow(s *snapshot, p *permit, src, dst netip.AddrPort) bool {
 		return false
 	}
 	r := p.rule
-	return r.policy.Network == "tcp" && r.policy.Address == dst.Addr() && time.Now().Before(r.policy.ExpiresAt) && r.effective.Contains(dst.Port())
+	return r.policy.Network == "tcp" && r.policy.Address == dst.Addr() && deadline.Active(now, r.policy.ExpiresAt) && r.effective.Contains(dst.Port())
 }
 
 func (e *Engine) Handle(src, dst netip.AddrPort) (func(net.Conn), bool) {

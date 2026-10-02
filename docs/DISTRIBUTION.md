@@ -2,7 +2,7 @@
 
 [日本語の概要](../README.md) · [English overview](../README.en.md) · [Verification](VERIFICATION.en.md)
 
-**sobalink is a local development draft, with executable `soba` and no assigned public release version.** No command here installs a published sobalink release. The current repository locator and Go module remain `github.com/webkaz-labs/tsnet-bridge`; a product rename does not imply a repository rename, new tag or publication.
+**sobalink is a development draft, with executable `soba` and no assigned public release version.** No command here installs a published sobalink release. The repository locator and Go module are `github.com/webkaz-labs/sobalink`. Renaming the repository does not create a release or alter the signatures of earlier artifacts.
 
 The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the earlier CLI. Their CI, signatures and installation results do not verify this draft, its embedded UI, file protocol or Tailcat adapter. [Legacy releases](https://github.com/webkaz-labs/tsnet-bridge/releases)
 
@@ -34,7 +34,7 @@ python -m unittest discover -s .github/scripts -p 'test_*.py' -v
 python .github/scripts/check-frontend.py
 ```
 
-The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. This cloud environment currently denies sockets needed by native tests and browser acceptance; do not convert that failure into a full pass.
+The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. The local cloud environment can deny required sockets; that blocked result is separate from the successful [baseline native/browser CI](https://github.com/webkaz-labs/sobalink/actions/runs/37036882061) at `278a6e17`. New LAN native and new UI checks require results for their own source.
 
 ## Native targets
 
@@ -97,6 +97,14 @@ The CycloneDX SBOM and notice index preserve module/package provenance and copie
 
 Trusted-main Go caches bind runner, OS, architecture, toolchain, dependency manifests and source commit. Only successful canonical main CI saves that namespace. Prerelease restores the exact tested-commit key without fallback or saving. Cache misses build normally; caching never skips tests, package reproduction or signature checks.
 
+## LAN native acceptance
+
+The source now includes a stock Tailcat two-peer test using a loopback TLS DERP fixture, no external relay and no UDP underlay. It is designed to test denied keys, bidirectional TCP held for 130 seconds across a real two-minute relay lease, UDP, revocation and cleanup. The harness is prepared but has not run yet. The restricted test topology is not a production promise of zero external traffic or general TCP continuity. Run the opt-in test on a native environment with socket support and no unsupported proxy/Tailscale environment overrides. The extra `lanlink_integration` and `ts_omit_udptransport` tags are for this isolated fixture only; ordinary production builds retain direct UDP support:
+
+```sh
+SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport -count=1 -v -timeout=5m ./internal/lanlink -run '^TestTrustedRelayTwoPeerIntegration$'
+```
+
 ## Publication gates
 
 Publication is separate from local implementation. A future authorized release must:
@@ -112,9 +120,9 @@ Publication is separate from local implementation. A future authorized release m
 
 A release must have the signed `packslip.sigstore.json` and all matching assets; a tag or archive alone is insufficient. Ordinary CI's disposable offline signing fixture is not a release and must not be accepted as production identity.
 
-The current release workflow identity remains `https://github.com/webkaz-labs/tsnet-bridge/.github/workflows/prerelease.yml@refs/heads/main`, with issuer `https://token.actions.githubusercontent.com`. Packslip/mise do not themselves establish linked GitHub build provenance: the workflow separately verifies it with the repository, source, workflow, ref and runner restrictions.
+Future sobalink release verification uses `https://github.com/webkaz-labs/sobalink/.github/workflows/prerelease.yml@refs/heads/main`, with issuer `https://token.actions.githubusercontent.com`. Earlier tsnet-bridge signatures retain their original project and workflow identities; they are not rewritten. The separate sobalink release-workflow preparation remains pending. Packslip/mise do not themselves establish linked GitHub build provenance: the workflow separately verifies it with the repository, source, workflow, ref and runner restrictions.
 
-No new sobalink install pin is supplied before an actual release exists. Any eventual repository rename or workflow-identity change requires a deliberate review of signing, package source URLs and verification expectations. OS warnings must be resolved through supported signing/distribution work, not bypassed.
+No new sobalink install pin is supplied before an actual release exists. The repository rename has completed; release frontend/product preparation and verification under the new workflow identity remain pending. Historical artifacts must still be checked against their original identities. OS warnings must be resolved through supported signing/distribution work, not bypassed.
 
 ## Updating a development build
 

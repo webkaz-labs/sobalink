@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
 func transferLimits() transfer.Limits {

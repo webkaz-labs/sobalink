@@ -16,11 +16,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/identity"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transfer"
-	"github.com/webkaz-labs/tsnet-bridge/internal/webui"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
 const PeerPort = 54544
@@ -79,6 +79,7 @@ type NodeFactory func(string, string) (NetworkBackend, error)
 type Options struct {
 	Directory, Version string
 	NodeFactory        NodeFactory
+	SkipNetworkStart   bool
 }
 
 type Core struct {
@@ -91,6 +92,11 @@ type Core struct {
 	ctx                        context.Context
 	cancel                     context.CancelFunc
 	networkState, networkError string
+	networkFatal               string
+	attemptedNetwork           string
+	attemptedHostname          string
+	trustGeneration            uint64
+	transferNetwork            string
 	networkReady               atomic.Bool
 	peerServer                 *peerServer
 	transfers                  *transfer.Manager
@@ -107,6 +113,8 @@ type Core struct {
 	closing                    bool
 	closeOnce                  sync.Once
 	closeErr                   error
+	lan                        *lanStore
+	lanFactory                 func(*lanStore) (lanNetworkBackend, error)
 }
 type requestResult struct {
 	signature string
@@ -146,13 +154,33 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if c.factory == nil {
 		c.factory = func(dir, name string) (NetworkBackend, error) { return identity.New(dir, name) }
 	}
+	lan, err := readLANStore(filepath.Join(opts.Directory, "lan.json"))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	c.lan = lan
+	if err := c.reconcileLANTrust(); err != nil {
+		cancel()
+		return nil, err
+	}
+	p = c.profileCopy()
+	for _, peer := range p.Peers {
+		if peer.Generation > c.trustGeneration {
+			c.trustGeneration = peer.Generation
+		}
+	}
 	m, err := transfer.NewManager(transfer.Options{Limits: transferLimits(), PolicyStore: receiveStore{c}})
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	c.transfers = m
+	c.transferNetwork = p.Settings.Network
 	for _, peer := range p.Peers {
+		if peer.Network != p.Settings.Network {
+			continue
+		}
 		if err := c.bindTransferPeer(peer); err != nil {
 			m.Close()
 			cancel()
@@ -168,7 +196,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	go c.maintain()
 	// Explicit saved network choice permits reconnect; no saved service grant
 	// or transfer is restarted or renewed after process restart.
-	if p.Settings.Network == "tailnet" {
+	if !opts.SkipNetworkStart && (p.Settings.Network == "tailnet" || p.Settings.Network == "lan") {
 		if err := c.startNetwork(ctx); err != nil {
 			c.mu.Lock()
 			c.networkState = "error"
@@ -200,7 +228,7 @@ func validateProfile(p Profile) error {
 	}
 	seen := map[string]bool{}
 	for _, p := range p.Peers {
-		if !config.ValidPeerID(p.ID) || p.Generation == 0 || seen[p.ID] || len(p.Name) > 253 {
+		if !config.ValidPeerID(p.ID) || p.Generation == 0 || seen[p.ID] || len(p.Name) > 253 || (p.Network != "tailnet" && p.Network != "lan") {
 			return errors.New("invalid trusted peer")
 		}
 		seen[p.ID] = true
@@ -233,7 +261,7 @@ func (c *Core) trust(id string) (Trust, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, p := range c.profile.Peers {
-		if p.ID == id {
+		if p.ID == id && p.Network == c.profile.Settings.Network {
 			return p, true
 		}
 	}
@@ -301,13 +329,26 @@ func (c *Core) close() error {
 }
 
 func (c *Core) current(ctx context.Context) (identity.State, error) {
+	if err := ctx.Err(); err != nil {
+		return identity.State{}, err
+	}
+	if err := c.ctx.Err(); err != nil {
+		return identity.State{}, err
+	}
 	node := c.nodeCopy()
 	if node == nil {
 		return identity.State{}, errors.New("choose and activate a network first")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	return node.State(ctx)
+	state, err := node.State(ctx)
+	if ctx.Err() != nil {
+		return identity.State{}, ctx.Err()
+	}
+	if c.ctx.Err() != nil {
+		return identity.State{}, c.ctx.Err()
+	}
+	return state, err
 }
 func (c *Core) currentPeer(ctx context.Context, id string) (policy.Peer, error) {
 	st, e := c.current(ctx)
@@ -323,6 +364,12 @@ func (c *Core) currentPeer(ctx context.Context, id string) (policy.Peer, error) 
 }
 
 func (c *Core) authenticated(ctx context.Context, source netip.AddrPort) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := c.ctx.Err(); err != nil {
+		return "", err
+	}
 	n := c.nodeCopy()
 	if n == nil {
 		return "", errors.New("network unavailable")
@@ -330,7 +377,7 @@ func (c *Core) authenticated(ctx context.Context, source netip.AddrPort) (string
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	id, e := n.WhoIs(ctx, source)
-	if e != nil {
+	if e != nil || ctx.Err() != nil || c.ctx.Err() != nil {
 		return "", errors.New("current peer identity unavailable")
 	}
 	peer, e := c.currentPeer(ctx, id)

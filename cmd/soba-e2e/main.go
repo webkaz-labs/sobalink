@@ -20,12 +20,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/core"
-	"github.com/webkaz-labs/tsnet-bridge/internal/identity"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
-	"github.com/webkaz-labs/tsnet-bridge/internal/webui"
-	assets "github.com/webkaz-labs/tsnet-bridge/web"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/core"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/webui"
+	assets "github.com/webkaz-labs/sobalink/web"
 )
 
 type network struct {

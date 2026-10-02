@@ -70,7 +70,7 @@ jobs:
       # GitHub's branch scope and the release gate exclude PR and branch caches.
       - name: Restore trusted main Go caches
         id: go-cache
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -80,7 +80,7 @@ jobs:
           # Reuse only identical runner, toolchain, and dependency manifests.
           restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-
       - name: Report Go cache result
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
           CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
@@ -108,6 +108,26 @@ jobs:
             printf 'Go files need gofmt (check checkout line endings):\n%s\n' "$unformatted" >&2
             exit 1
           fi
+      - name: Verify stock Tailcat over an isolated loopback relay
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+
+          # Only this child test process receives a clean backend environment.
+          # The test compiles out OS UDP and refuses non-loopback listeners.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
+              "-run=^TestTrustedRelayTwoPeerIntegration$", "-timeout=5m", "./internal/lanlink",
+          ], env=env, check=True, timeout=9 * 60)
+          PY
       - name: Build native package and smoke archive contents
         run: |
           set -euo pipefail
@@ -131,7 +151,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Save Go caches after all native checks pass on main
-        if: success() && github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit != 'true'
+        if: success() && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -162,7 +182,7 @@ jobs:
       # GitHub's branch scope and the release gate exclude PR and branch caches.
       - name: Restore trusted main Go caches
         id: go-cache
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -170,7 +190,7 @@ jobs:
             ${{ steps.go-cache-info.outputs.gocache }}
           key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
       - name: Report Go cache result and require an exact source key
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
           CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}

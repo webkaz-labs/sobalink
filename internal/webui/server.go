@@ -9,7 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/webkaz-labs/tsnet-bridge/internal/httpbound"
+	"github.com/webkaz-labs/sobalink/internal/httpbound"
 	"io"
 	"io/fs"
 	"net"
@@ -128,6 +128,25 @@ func jsonReply(w http.ResponseWriter, status int, value any) {
 func fail(w http.ResponseWriter, status int, code, message string) {
 	jsonReply(w, status, map[string]string{"code": code, "error": message})
 }
+
+// Error codes are stable local API identifiers, never arbitrary payload data.
+// The human message stays separate so clients can offer localized recovery.
+func commandErrorCode(err error) string {
+	var coded interface{ ErrorCode() string }
+	if !errors.As(err, &coded) {
+		return "command_failed"
+	}
+	code := coded.ErrorCode()
+	if len(code) == 0 || len(code) > 64 {
+		return "command_failed"
+	}
+	for _, r := range code {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return "command_failed"
+		}
+	}
+	return code
+}
 func decode(w http.ResponseWriter, r *http.Request, limit int64, v any) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("JSON content type required")
@@ -221,7 +240,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			result, err := s.backend.Command(r.Context(), cmd)
 			if err != nil {
-				fail(w, 400, "command_failed", err.Error())
+				fail(w, 400, commandErrorCode(err), err.Error())
 				return
 			}
 			jsonReply(w, 200, map[string]any{"ok": true, "result": result})

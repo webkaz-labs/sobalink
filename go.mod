@@ -1,4 +1,4 @@
-module github.com/webkaz-labs/tsnet-bridge
+module github.com/webkaz-labs/sobalink
 
 go 1.27.1
 
@@ -10,6 +10,7 @@ require (
 	github.com/muesli/cancelreader v0.2.2
 	github.com/rivo/uniseg v0.4.7
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	github.com/tailscale/tailcat v0.7.1-0.20260929145319-b4dc28e8aa89
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	tailscale.com v1.104.0
@@ -20,6 +21,7 @@ require (
 	github.com/akutz/memconn v0.1.0 // indirect
 	github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
+	github.com/axiomhq/hyperloglog v0.2.6 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
@@ -30,9 +32,11 @@ require (
 	github.com/creachadair/msync v0.10.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca // indirect
+	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/gaissmai/bart v0.29.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect
+	github.com/go4org/hashtriemap v0.0.0-20260925222741-44e5305f85d9 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect
@@ -40,6 +44,7 @@ require (
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/jsimonetti/rtnetlink v1.4.2 // indirect
+	github.com/kamstrup/intmap v0.5.2 // indirect
 	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
@@ -55,7 +60,6 @@ require (
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f // indirect
 	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc // indirect
-	github.com/tailscale/tailcat v0.7.1-0.20260929145319-b4dc28e8aa89 // indirect
 	github.com/tailscale/web-client-prebuilt v0.0.0-20260917222731-e0ed2d0d0fea // indirect
 	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226 // indirect
 	github.com/u-root/u-root v0.16.0 // indirect

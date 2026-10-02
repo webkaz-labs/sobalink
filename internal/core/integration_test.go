@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/identity"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transfer"
-	"github.com/webkaz-labs/tsnet-bridge/internal/webui"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
 func TestReviewedShareMappingAndClearingReceiveDefault(t *testing.T) {

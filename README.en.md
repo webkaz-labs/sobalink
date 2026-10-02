@@ -4,9 +4,9 @@
 
 **Nearby devices, one connection.** Start `soba`, choose a peer in its local Web UI, and send text, images, files or folders. Share selected TCP/UDP services with explicit peers for a limited time. The React UI is embedded in the Go agent; the UI and CLI use the same authorization checks.
 
-**This is a local development draft of the new sobalink product. No public version or release number has been assigned.** Existing `tsnet-bridge` releases do not establish availability of the UI and transfer features described here. The repository and Go module identifiers remain unchanged. [Distribution and legacy releases](docs/DISTRIBUTION.md)
+**This is a development draft of sobalink, with no assigned release version.** The repository and Go module are now `github.com/webkaz-labs/sobalink`. Existing `tsnet-bridge` releases retain their historical signatures and do not establish availability of these new features. [Distribution and legacy releases](docs/DISTRIBUTION.md)
 
-Unit and mock tests are separate from real enrollment, network and browser acceptance. Socket creation in the current execution environment fails with `operation not permitted`; complete native tests, real-browser acceptance and real-network acceptance are not complete. Tailcat is unavailable in the initial development snapshot; its integration and live communication are still being verified. Listener readiness and discovery never prove application health.
+The baseline commit `278a6e17` passed [all six CI jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37036882061): four native targets, the Go-backed Chromium UI checks in Japanese/English desktop/mobile layouts, and the package-manifest check. The newer Tailcat LAN Core/CLI code has passed local logic/race checks, but its stock two-peer relay test has not run yet. LAN setup UI and the connection graph are still being integrated. Listener readiness and discovery never prove application health. [Exact verification scope](docs/VERIFICATION.en.md)
 
 ## Get started
 
@@ -22,9 +22,9 @@ go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpa
 On Windows, build with `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba` and run `./bin/soba.exe`. Node is not required to run the resulting binary.
 
 1. Open the printed `http://127.0.0.1:PORT` in a browser on the same device, then enter the one-time code shown in the terminal. The code is never part of the URL. Run `soba ui` in another terminal to issue a new code
-2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. The Tailcat path uses an explicitly trusted relay and pairing; its integration is still being verified
+2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. Tailcat LAN uses an explicit trusted relay and pairing through the current Core/CLI; see the [LAN guide](docs/LAN.en.md) while its UI is being integrated
 3. Review the peer's current identity and trust the peers whose messages and transfer offers you want to receive. Send text explicitly; review images, multiple files and folders as a batch before sending
-4. The receiver normally chooses a directory and accepts each batch. Autosave requires an explicit choice of trusted peer, current trust generation and destination
+4. The receiver normally chooses a directory and accepts each batch. Autosave requires an explicit choice of backend, trusted peer, current trust generation and destination
 5. Review the peer, ports and lifetime before sharing or connecting a service. Stop an individual service, revoke trust, or run `soba stop` when finished
 
 Examples use `soba` as an executable on PATH. Substitute `./bin/soba`, or `./bin/soba.exe` on Windows, for a source build. Keep its starting terminal open. A fresh profile has no selected network and starts no enrollment or sharing. [Complete UI and CLI guide](docs/GENERIC.en.md)
@@ -61,7 +61,7 @@ soba status
 soba stop
 ```
 
-Replace `PEER_ID` with a current peer. The provider must run and authorize access to the actual service. Language is selected automatically; override with `soba --locale ja ...` or `en`. Machine JSON field names and user values stay unchanged. Normal use does not require editing configuration JSON.
+Replace `PEER_ID` with a current peer. The provider must run and authorize access to the actual service. Language is selected automatically; override with `soba --locale ja ...` or `en`. Machine JSON field names and user values stay unchanged. Tailnet and transfer workflows do not require editing configuration JSON. LAN setup currently uses explicit local command payloads; its dedicated UI is pending.
 
 ## Development and verification
 

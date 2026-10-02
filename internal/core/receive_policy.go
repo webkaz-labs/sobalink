@@ -2,7 +2,7 @@ package core
 
 import (
 	"errors"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
 // The receiver publishes auto-accept only after this atomic profile commit.
@@ -11,8 +11,9 @@ type receiveStore struct{ core *Core }
 
 func (s receiveStore) LoadPolicies() ([]transfer.ReceivePolicy, error) {
 	var out []transfer.ReceivePolicy
-	for _, p := range s.core.profileCopy().Peers {
-		if p.Autosave {
+	profile := s.core.profileCopy()
+	for _, p := range profile.Peers {
+		if p.Network == profile.Settings.Network && p.Autosave {
 			out = append(out, transfer.ReceivePolicy{Peer: transfer.Peer{ID: p.ID, Generation: p.Generation}, Destination: p.Directory, AutoAccept: true})
 		}
 	}
@@ -21,12 +22,14 @@ func (s receiveStore) LoadPolicies() ([]transfer.ReceivePolicy, error) {
 func (s receiveStore) SavePolicies(policies []transfer.ReceivePolicy) error {
 	p := s.core.profileCopy()
 	for i := range p.Peers {
-		p.Peers[i].Autosave = false
+		if p.Peers[i].Network == p.Settings.Network {
+			p.Peers[i].Autosave = false
+		}
 	}
 	for _, policy := range policies {
 		found := false
 		for i := range p.Peers {
-			if p.Peers[i].ID == policy.Peer.ID && p.Peers[i].Generation == policy.Peer.Generation {
+			if p.Peers[i].Network == p.Settings.Network && p.Peers[i].ID == policy.Peer.ID && p.Peers[i].Generation == policy.Peer.Generation {
 				p.Peers[i].Autosave = policy.AutoAccept
 				p.Peers[i].Directory = policy.Destination
 				found = true
@@ -43,5 +46,40 @@ func (s receiveStore) SavePolicies(policies []transfer.ReceivePolicy) error {
 	s.core.mu.Lock()
 	s.core.profile = p
 	s.core.mu.Unlock()
+	return nil
+}
+
+// Called under c.op before the first backend construction, when an offline
+// session explicitly selects another trust namespace. No pointer replacement or
+// persistence occurs here; the profile retains inactive-network approvals.
+func (c *Core) resetTransferNetwork(profile Profile) error {
+	if c.attemptedNetwork != "" || c.nodeCopy() != nil {
+		return errors.New("restart with --offline before changing the receive trust scope")
+	}
+	var peers []transfer.Peer
+	var policies []transfer.ReceivePolicy
+	var paused []string
+	for _, p := range profile.Peers {
+		if p.Network != profile.Settings.Network {
+			continue
+		}
+		peer := transfer.Peer{ID: p.ID, Generation: p.Generation}
+		peers = append(peers, peer)
+		if p.Autosave {
+			policies = append(policies, transfer.ReceivePolicy{Peer: peer, Destination: p.Directory, AutoAccept: true})
+		}
+		if p.Paused {
+			paused = append(paused, p.ID)
+		}
+	}
+	if err := c.transfers.ResetBindings(peers, policies); err != nil {
+		return errors.New("receive state cannot switch while transfers exist; stop soba and start with --offline")
+	}
+	for _, id := range paused {
+		if err := c.transfers.PausePeer(id, true); err != nil {
+			return err
+		}
+	}
+	c.transferNetwork = profile.Settings.Network
 	return nil
 }

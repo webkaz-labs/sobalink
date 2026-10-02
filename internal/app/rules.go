@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/identity"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
-	"github.com/webkaz-labs/tsnet-bridge/internal/transport"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/deadline"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/transport"
 	"io"
 	"net"
 	"net/netip"
@@ -64,8 +65,8 @@ type lifetime struct {
 	cancel         context.CancelFunc
 }
 
-func deadlinePassed(now, deadline time.Time) bool {
-	return !deadline.IsZero() && (!now.Before(deadline) || !now.UTC().Before(deadline.UTC()))
+func deadlinePassed(now, until time.Time) bool {
+	return deadline.Passed(now, until)
 }
 func (l *lifetime) check() error {
 	l.mu.RLock()

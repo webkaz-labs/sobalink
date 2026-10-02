@@ -4,8 +4,8 @@ package identity
 import (
 	"context"
 	"errors"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 	"net"
 	"net/netip"
 	"net/url"

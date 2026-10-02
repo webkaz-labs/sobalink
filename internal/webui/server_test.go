@@ -3,6 +3,8 @@ package webui
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,9 +16,10 @@ import (
 )
 
 type testBackend struct {
-	commands atomic.Int32
-	uploads  atomic.Int32
-	reads    atomic.Int32
+	commands     atomic.Int32
+	uploads      atomic.Int32
+	reads        atomic.Int32
+	commandError error
 }
 
 func (b *testBackend) Snapshot(context.Context) (map[string]any, error) {
@@ -25,7 +28,40 @@ func (b *testBackend) Snapshot(context.Context) (map[string]any, error) {
 }
 func (b *testBackend) Command(context.Context, Command) (any, error) {
 	b.commands.Add(1)
+	if b.commandError != nil {
+		return nil, b.commandError
+	}
 	return map[string]bool{"accepted": true}, nil
+}
+
+type testCommandError string
+
+func (e testCommandError) Error() string     { return "safe recovery message" }
+func (e testCommandError) ErrorCode() string { return string(e) }
+
+func TestCommandErrorCodesSupportBoundedRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{errors.New("ordinary failure"), "command_failed"},
+		{fmt.Errorf("wrapped: %w", testCommandError("lan_pair_reply_uncertain")), "lan_pair_reply_uncertain"},
+		{testCommandError("lan_revoke_not_persisted"), "lan_revoke_not_persisted"},
+		{testCommandError("secret?token=value"), "command_failed"},
+		{testCommandError(strings.Repeat("a", 65)), "command_failed"},
+		{testCommandError(""), "command_failed"},
+	} {
+		s, backend := testServer(t)
+		backend.commandError = tc.err
+		cookie, csrf := signIn(t, s)
+		response := serve(s, request(s, "POST", "/api/command", `{"requestId":"test","name":"lan.join","payload":{}}`, cookie, csrf))
+		var result struct {
+			Code string `json:"code"`
+		}
+		if response.Code != http.StatusBadRequest || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Code != tc.want {
+			t.Fatalf("wrong command error: %d %s", response.Code, response.Body.String())
+		}
+	}
 }
 func (b *testBackend) Upload(w http.ResponseWriter, _ *http.Request) {
 	b.uploads.Add(1)

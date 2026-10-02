@@ -2,7 +2,7 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-This guide describes the local sobalink development draft and its `soba` executable. It is not an installation guide for the legacy `tsnet-bridge` releases. The local Web UI is the normal workflow; CLI commands are useful for repeated actions and automation. Both use the same Go authorization and storage boundaries.
+This guide describes the sobalink development draft and its `soba` executable. It is not an installation guide for the legacy `tsnet-bridge` releases. The local Web UI is the normal workflow; CLI commands are useful for repeated actions and automation. Both use the same Go authorization and storage boundaries.
 
 ## Start and open the local UI
 
@@ -37,7 +37,7 @@ A fresh profile starts with no network selected. UI preferences, trust and servi
 | Choice | Setup | Important boundary |
 | --- | --- | --- |
 | Existing Tailnet | Activate the embedded node, then use the official interactive Tailscale sign-in flow | It is a separate node in the chosen Tailnet; the OS Tailscale app's session is not imported |
-| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Integration is in progress; arbitrary public fallback and a strict zero-external-traffic claim are excluded |
+| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Core/CLI implemented; dedicated UI and native two-peer acceptance pending. No arbitrary public fallback or zero-external-traffic claim |
 | No network | Leave the agent local | No peer transfer or service connection |
 
 For the Tailnet path:
@@ -50,7 +50,7 @@ soba peers
 
 Review the returned official sign-in URL and complete enrollment. Treat enrollment URLs as secrets. The tool does not accept an auth key in command arguments, and it does not change OS routes or DNS. Tailnet policy and service authentication still apply.
 
-Selecting a mode is explicit. Backend changes require stopping the agent; do not expect an existing TCP session to transfer between Tailnet and Tailcat. Tailcat is unavailable in the initial snapshot; setup and pairing controls are still being integrated, so no unverified copy-and-paste pairing command is prescribed here. Follow the available UI and `soba setup --help`; an unavailable-mode error means that path is not ready.
+Selecting a mode is explicit. Stop the agent and use `soba start --offline` to open management without reconnecting the saved network when changing modes or repairing saved LAN state. An existing TCP session does not transfer between Tailnet and Tailcat. The current Core/CLI supports explicit relay selection and pairing; follow the [LAN guide](LAN.en.md). Its dedicated UI and real stock two-peer acceptance are still pending.
 
 Tailcat's permitted traffic includes direct peer traffic, encrypted payload via the explicitly selected relay, and HTTPS/ICMP diagnostics to that relay endpoint. A relay may be self-hosted or another endpoint explicitly trusted by the user. This is not a LAN egress sandbox. [Transport detail](ARCHITECTURE.md#network-boundaries)
 
@@ -111,9 +111,9 @@ Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Canceling o
 
 ### Opt into autosave for one peer
 
-In that peer's settings, select an absolute directory and explicitly enable autosave. The permission binds the exact verified peer, its current trust generation and that directory. It does not apply to peers with the same display name. Persisted autosave is loaded only for its matching trusted identity; it can accept future batches without a new per-batch approval while enabled.
+In that peer's settings, select an absolute directory and explicitly enable autosave. The permission binds the selected backend, exact verified peer, its current trust generation and that directory. It does not apply to peers with the same display name. Persisted autosave is loaded only for its matching trusted identity; it can accept future batches without a new per-batch approval while enabled.
 
-Pause or disable autosave from the peer controls. A peer pause also pauses its transfers. Changing the destination is another explicit choice. Revocation or an identity change invalidates the old grant; review and enable it again if needed. Autosave never enables overwrite, automatic opening, execution or clipboard sync.
+Disable autosave to restore per-batch acceptance. Peer Pause blocks messages and files and cancels active sends; after unpausing, select the files again for a new batch. It does not stop separately granted services. Changing the destination is another explicit choice. Revocation or an identity change invalidates the old grant; review and enable it again if needed. Autosave never enables overwrite, automatic opening, execution or clipboard sync.
 
 ### Retry and cleanup
 
@@ -190,9 +190,11 @@ soba revoke PEER_ID
 soba stop
 ```
 
-Use current IDs from state. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
+Use current IDs from state. `soba revoke PEER_ID` removes application trust; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
 No released sobalink upgrade path exists yet. For a new development build, stop the process, keep a private backup of state if needed, rebuild the frontend and binary from the intended source, run `soba version`, then inspect state before explicitly restarting services. Keep backups private because they contain identity and peer information. A fresh state directory requires its own enrollment and trust decisions. Legacy `tsnet-bridge` commands and configuration are not compatibility requirements for this new product.
+
+Saved-network startup failure can be recovered with `soba start --offline`. It keeps local management available, labels saved peers unverified/offline, and allows explicit pair revocation or relay reconfiguration without starting that network.
 
 ## Language, automation and troubleshooting
 
@@ -206,7 +208,7 @@ soba --state-dir ./sample-state status
 
 Language follows `LC_ALL`, `LC_MESSAGES`, `LANG`, then the OS preference; Japanese uses Japanese messages and other locales fall back to English. The UI has language and theme controls. Command names, IDs, endpoint values and machine JSON are stable across languages. CLI status and action responses use JSON rather than interactive prompts.
 
-Advanced `soba command NAME JSON_PAYLOAD` sends a typed request through the same local core; it is not a bypass of trust, CSRF/session boundaries or filesystem policy. [API contract](../web/API.md)
+Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For invitations or other secret payloads, use `soba command NAME --json-file PATH` or pipe a JSON object into `soba command NAME --stdin` (48 KiB maximum); do not put secrets in literal arguments. Each sends a typed request through the same local core; it is not a bypass of trust, CSRF/session boundaries or filesystem policy. [API contract](../web/API.md)
 
 | Problem | Next action |
 | --- | --- |
@@ -216,7 +218,7 @@ Advanced `soba command NAME JSON_PAYLOAD` sends a typed request through the same
 | Partial transfer | Keep both agents running and retry the unfinished files; after a restart, create a new batch |
 | Service not discovered | Check explicit share scope and expiry, or use a manual connection to a known service |
 | Local port conflict or listener cap | Stop an unused connection, narrow the ports, or explicitly select another local starting port |
-| Socket operation not permitted | Run in an environment that permits the required listeners; a mock test cannot establish live connectivity |
+| Socket operation not permitted | Run native/socket checks in an environment that permits listeners; baseline CI passed, but a local mock result does not establish live LAN connectivity |
 | Unknown route or reconnect | Inspect current state and retry the app connection; do not assume a relay or uninterrupted TCP |
 
 Report errors with secrets, local identity state, pairing capabilities and private endpoints removed. [Acceptance gates](VERIFICATION.en.md) distinguish source checks from real-device results.
