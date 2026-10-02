@@ -61,10 +61,7 @@ func TestLANIdentityIsExplicitPrivateAndStable(t *testing.T) {
 	if next := mustCommand(t, c, "lan.identity", map[string]any{}).(map[string]string)["publicKey"]; next != key {
 		t.Fatal("repeat setup rotated identity")
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm()&0077 != 0 {
-		t.Fatalf("state is not private: %v", err)
-	}
+	assertLANStatePrivate(t, path)
 	loaded, err := readLANStore(path)
 	if err != nil || loaded.copy().Identity.PublicKey() != key {
 		t.Fatalf("identity did not survive private reload: %v", err)

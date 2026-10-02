@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -141,13 +142,12 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 	// Exercise DERP's real admission controller with an uninvited key.
 	mon := netmon.NewStatic()
 	closers = append(closers, mon)
-	stranger, err := derphttp.NewClient(unknown, "https://"+endpoint.String()+"/derp", logger.Discard, mon)
-	if err != nil {
-		t.Fatal("construct denied-key DERP client")
-	}
+	// The region API applies CertName's pin after tlsdial.Config builds the
+	// transport config. Never install pin verification on Client.TLSConfig:
+	// derphttp wraps that base config and rejects its InsecureSkipVerify flag.
+	stranger := newPinnedDERPTestClient(unknown, relayConfig, mon)
 	closers = append(closers, stranger)
-	stranger.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS13, ServerName: endpoint.Addr().String()}
-	tlsdial.SetConfigExpectedCertHash(stranger.TLSConfig, relayConfig.CertificateSHA256)
+	var err error
 	attempt, stopAttempt := context.WithTimeout(ctx, 10*time.Second)
 	stopSocket := context.AfterFunc(attempt, func() { stranger.Close() })
 	// Connect can finish before asynchronous DERP admission; Recv must reject.
@@ -333,4 +333,67 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 	}
 	// Only generic evidence is logged: never print errors that may contain peer capabilities.
 	t.Logf("stock loopback DERP: bidirectional TCP/UDP, denied-key admission, active revocation, clean stop; %d ordered rounds across a real two-minute lease", frames)
+}
+
+func newPinnedDERPTestClient(private key.NodePrivate, relay TrustedRelay, mon *netmon.Monitor) *derphttp.Client {
+	return derphttp.NewRegionClient(private, logger.Discard, mon, relay.region)
+}
+
+// This regression has no OS sockets. It checks that our DERP client leaves the
+// base TLS config untouched and that the official region pin accepts only the
+// selected certificate over a real in-memory TLS handshake. Real derphttp
+// wiring is exercised by TestTrustedRelayTwoPeerIntegration in native CI.
+func TestDERPRegionPinTLSNoSocket(t *testing.T) {
+	ip := netip.MustParseAddr("127.0.0.1")
+	identity, err := GenerateRelayIdentity(ip)
+	if err != nil {
+		t.Fatal("generate ephemeral relay certificate")
+	}
+	cert, _, err := identity.Certificate(ip)
+	if err != nil {
+		t.Fatal("read ephemeral certificate")
+	}
+	relay, err := identity.Endpoint(netip.AddrPortFrom(ip, 54546))
+	if err != nil {
+		t.Fatal("construct relay endpoint")
+	}
+	mon := netmon.NewStatic()
+	defer mon.Close()
+	for _, correct := range []bool{true, false} {
+		selected := relay
+		if !correct {
+			selected.CertificateSHA256 = strings.Repeat("0", 64)
+		}
+		client := newPinnedDERPTestClient(key.NewNode(), selected, mon)
+		if client.TLSConfig != nil {
+			client.Close()
+			t.Fatal("DERP base TLS config must remain untouched")
+		}
+		node := selected.region().Nodes[0]
+		pin, ok := strings.CutPrefix(node.CertName, "sha256-raw:")
+		if !ok || node.InsecureForTests {
+			client.Close()
+			t.Fatal("region must require a certificate pin")
+		}
+		cfg := tlsdial.Config(nil, client.TLSConfig)
+		cfg.ServerName = node.HostName
+		tlsdial.SetConfigExpectedCertHash(cfg, pin)
+		left, right := net.Pipe()
+		left.SetDeadline(time.Now().Add(3 * time.Second))
+		right.SetDeadline(time.Now().Add(3 * time.Second))
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			server := tls.Server(right, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}})
+			server.Handshake()
+			right.Close()
+		}()
+		err = tls.Client(left, cfg).Handshake()
+		left.Close()
+		<-done
+		client.Close()
+		if (err == nil) != correct {
+			t.Fatal("TLS pin acceptance did not match selected certificate")
+		}
+	}
 }
