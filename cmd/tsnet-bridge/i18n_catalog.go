@@ -374,6 +374,7 @@ var japaneseCatalog = map[string]string{
 	"state path must be a real directory":                                                                           "設定の保存場所には実体のあるフォルダーが必要です",
 	"lock must not be a symlink":                                                                                    "ロックファイルにシンボリックリンクは使えません",
 	"another tsnet-bridge process owns this profile":                                                                "別の tsnet-bridge プロセスがこの設定を使用しています",
+	"another sobalink process owns this profile":                                                                    "別の sobalink プロセスがこの設定を使用しています",
 	"lease already expired; start explicitly":                                                                       "利用期限が切れています。明示的に開始し直してください",
 	"Saved only; start explicitly":                                                                                  "保存のみです。使う接続を明示的に開始してください",
 	"Select a saved connection to start":                                                                            "開始する保存済み接続を選んでください",

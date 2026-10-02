@@ -77,8 +77,16 @@ assert.equal(await page.getByRole('dialog').count(), 0, 'Escape closes the nativ
 assert.equal(await page.getByRole('button', { name: 'Connect to a service', exact: true }).evaluate(el => el === document.activeElement), true, 'dialog restores focus')
 if (session) {
   await input.fill('Browser check: explicit send')
+  const acknowledgement = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/api/command' &&
+    response.request().method() === 'POST' &&
+    response.request().postDataJSON()?.name === 'message.send')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await page.getByText('Browser check: explicit send', { exact: true }).waitFor()
+  const accepted = await acknowledgement
+  assert.equal(accepted.status(), 200, 'the real message command must be acknowledged')
+  assert.equal((await accepted.json()).ok, true, 'the real message command must succeed')
+  await page.locator('.timeline .message-bubble p').filter({ hasText: /^Browser check: explicit send$/ }).waitFor()
+  await page.waitForFunction(() => document.querySelector('.composer textarea')?.value === '', null, { timeout: 10000 })
   assert.equal(commands.filter(item => item.name === 'message.send').length, 1, 'explicit send must issue one real command')
   assert.equal(await input.inputValue(), '', 'acknowledged send clears its draft')
   await input.fill('Browser draft')
