@@ -20,8 +20,14 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
+const transferManifestMetadataBytes = 256 << 10
+
+// A JSON character can expand to six bytes (for example, & becomes \u0026).
+// The conservative metadata estimate also includes ample per-entry framing.
+const transferManifestJSONBytes = 6 * transferManifestMetadataBytes
+
 func transferLimits() transfer.Limits {
-	return transfer.Limits{MaxEntries: 256, MaxManifestBytes: 128 << 10, MaxFileBytes: 1 << 30, MaxBatchBytes: 1 << 30, MaxReservedBytes: 4 << 30, MaxBatches: 32, MaxMetadataBytes: 1 << 20}
+	return transfer.Limits{MaxEntries: 256, MaxManifestBytes: transferManifestMetadataBytes, MaxFileBytes: 1 << 30, MaxBatchBytes: 1 << 30, MaxReservedBytes: 4 << 30, MaxBatches: 32, MaxMetadataBytes: 1 << 20}
 }
 
 // wireBatch deliberately excludes local destination paths and trust state.
@@ -49,27 +55,117 @@ type outgoingBatch struct {
 	Created      time.Time
 	cancel       context.CancelFunc
 	running      bool
+	staging      bool
+	reserved     int64 // Payload bytes retained or reserved, independent of history.
 }
 
 func (b *outgoingBatch) stop() {
 	b.mu.Lock()
-	cancel := b.cancel
+	defer b.mu.Unlock()
+	if b.cancel != nil {
+		b.cancel()
+	}
+	if !b.running && !b.staging && b.State != "completed" {
+		b.State = "cancelled"
+		if err := b.releaseSpoolLocked(); err != nil {
+			b.Error = "could not remove staged files; clear this transfer to retry cleanup"
+		}
+	}
+}
+
+// Keep the reservation until removal succeeds. Failed retryable batches retain
+// their spool and reservation; terminal history with a released spool does not.
+func (b *outgoingBatch) releaseSpoolLocked() error {
+	if b.Spool != "" {
+		if err := os.RemoveAll(b.Spool); err != nil {
+			return err
+		}
+		b.Spool = ""
+	}
+	b.reserved = 0
+	return nil
+}
+
+var (
+	errOutgoingHistory = errors.New("transfer history is full; finish or clear existing transfers")
+	errOutgoingStaging = errors.New("outgoing staging capacity reached")
+)
+
+// Both browser and CLI staging use the same atomic admission. Existing IDs are
+// returned to the caller for idempotency validation without consuming capacity.
+func (c *Core) reserveOutgoing(ctx context.Context, b *outgoingBatch, lim transfer.Limits) (*outgoingBatch, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if c.closing || c.ctx.Err() != nil {
+		return nil, errors.New("application is stopping")
+	}
+	if existing := c.outgoing[b.ID]; existing != nil {
+		return existing, nil
+	}
+	if len(c.outgoing) >= lim.MaxBatches {
+		return nil, errOutgoingHistory
+	}
+	var total, reserved int64
+	for _, entry := range b.Manifest.Entries {
+		total += entry.Size
+	}
+	for _, other := range c.outgoing {
+		other.mu.Lock()
+		reserved += other.reserved
+		other.mu.Unlock()
+	}
+	if total > lim.MaxReservedBytes || reserved > lim.MaxReservedBytes-total {
+		return nil, errOutgoingStaging
+	}
+	b.reserved = total
+	b.staging = true
+	c.outgoing[b.ID] = b
+	return nil, nil
+}
+
+// A failed staging attempt has no retryable manifest. If cleanup itself fails,
+// retain the record and capacity so those bytes cannot become unaccounted for.
+func (c *Core) discardOutgoing(b *outgoingBatch) {
+	b.mu.Lock()
+	if b.cancel != nil {
+		b.cancel()
+	}
+	err := b.releaseSpoolLocked()
+	b.staging = false
+	if err != nil {
+		b.State = "cancelled"
+		b.Error = "could not remove staged files; clear this transfer to retry cleanup"
+	}
 	b.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if err == nil {
+		c.mu.Lock()
+		if c.outgoing[b.ID] == b {
+			delete(c.outgoing, b.ID)
+		}
+		c.mu.Unlock()
 	}
 }
 
 func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
+	c.upload(w, r, transferLimits())
+}
+
+func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limits) {
 	done, err := c.beginWork()
 	if err != nil {
 		reply(w, 503, map[string]string{"error": err.Error()})
 		return
 	}
 	defer done()
-	stopBody := context.AfterFunc(c.ctx, func() { _ = r.Body.Close() })
+	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxBatchBytes+6*lim.MaxManifestBytes+(256<<10))
+	body := r.Body
+	stopBody := context.AfterFunc(c.ctx, func() { _ = body.Close() })
 	defer stopBody()
-	r.Body = http.MaxBytesReader(w, r.Body, (1<<30)+(256<<10))
+	stopRequestBody := context.AfterFunc(r.Context(), func() { _ = body.Close() })
+	defer stopRequestBody()
 	reader, e := r.MultipartReader()
 	if e != nil {
 		reply(w, 400, map[string]string{"error": "invalid multipart upload"})
@@ -109,7 +205,7 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 		reply(w, 409, map[string]string{"error": e.Error()})
 		return
 	}
-	manifestJSON, e := readField("manifest", 128<<10)
+	manifestJSON, e := readField("manifest", 6*lim.MaxManifestBytes)
 	if e != nil {
 		reply(w, 400, map[string]string{"error": e.Error()})
 		return
@@ -137,14 +233,28 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 		total += s.Size
 	}
-	if e := transfer.ValidateManifest(manifest, transferLimits()); e != nil {
-		reply(w, 400, map[string]string{"error": "invalid or conflicting file paths"})
+	if e := transfer.ValidateManifest(manifest, lim); e != nil {
+		reason := "invalid or conflicting file paths"
+		if errors.Is(e, transfer.ErrMetadataLimit) {
+			reason = "transfer manifest metadata budget exceeded"
+		} else if errors.Is(e, transfer.ErrLimit) {
+			reason = "transfer entry, depth or size limit exceeded"
+		}
+		reply(w, 400, map[string]string{"error": reason})
 		return
 	}
 	// Reserve staging capacity before reading payload bytes. The reservation is
 	// represented by the entry even while HTTP staging is still in progress.
-	c.mu.Lock()
-	if existing := c.outgoing[id]; existing != nil {
+	life, cancel := context.WithCancel(c.ctx)
+	b := &outgoingBatch{ID: id, PeerID: peerID, Generation: trust.Generation, Manifest: manifest, Files: map[string]string{}, State: "queued", Created: time.Now().UTC(), cancel: cancel}
+	existing, e := c.reserveOutgoing(r.Context(), b, lim)
+	if e != nil {
+		cancel()
+		reply(w, 409, map[string]string{"error": e.Error()})
+		return
+	}
+	if existing != nil {
+		cancel()
 		existing.mu.Lock()
 		same := existing.PeerID == peerID && existing.Generation == trust.Generation && len(existing.Manifest.Entries) == len(manifest.Entries)
 		for i, entry := range manifest.Entries {
@@ -156,7 +266,6 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 		state := existing.State
 		existing.mu.Unlock()
-		c.mu.Unlock()
 		if !same {
 			reply(w, 409, map[string]string{"error": "upload request ID belongs to a different selection"})
 			return
@@ -166,41 +275,16 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"ok": true, "result": map[string]string{"id": id, "status": state}})
 		return
 	}
-	if len(c.outgoing) >= 32 {
-		c.mu.Unlock()
-		reply(w, 409, map[string]string{"error": "transfer history is full; finish or clear existing transfers"})
-		return
-	}
-	var staged int64
-	for _, b := range c.outgoing {
-		b.mu.Lock()
-		for _, entry := range b.Manifest.Entries {
-			staged += entry.Size
-		}
-		b.mu.Unlock()
-	}
-	if staged > 4<<30-total {
-		c.mu.Unlock()
-		reply(w, 409, map[string]string{"error": "outgoing staging capacity reached"})
-		return
-	}
-	ctx, cancel := context.WithCancel(c.ctx)
-	b := &outgoingBatch{ID: id, PeerID: peerID, Generation: trust.Generation, Manifest: manifest, Files: map[string]string{}, State: "queued", Created: time.Now().UTC(), cancel: cancel}
-	c.outgoing[id] = b
-	c.mu.Unlock()
+	ctx, finishStaging := context.WithCancel(r.Context())
+	defer finishStaging()
+	stopLifetime := context.AfterFunc(life, finishStaging)
+	defer stopLifetime()
+	stopCancelledBody := context.AfterFunc(ctx, func() { _ = body.Close() })
+	defer stopCancelledBody()
 	stagedOK := false
 	defer func() {
 		if !stagedOK {
-			cancel()
-			c.mu.Lock()
-			delete(c.outgoing, id)
-			c.mu.Unlock()
-			b.mu.Lock()
-			spool := b.Spool
-			b.mu.Unlock()
-			if spool != "" {
-				_ = os.RemoveAll(spool)
-			}
+			c.discardOutgoing(b)
 		}
 	}()
 	spoolRoot := filepath.Join(c.dir, "outgoing")
@@ -221,6 +305,10 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i, entry := range manifest.Entries {
+		if ctx.Err() != nil || r.Context().Err() != nil {
+			reply(w, 400, map[string]string{"error": "upload was interrupted"})
+			return
+		}
 		if entry.Kind != transfer.File {
 			continue
 		}
@@ -251,7 +339,7 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hash := sha256.New()
-		n, copyErr := io.CopyBuffer(io.MultiWriter(f, hash), io.LimitReader(part, entry.Size+1), make([]byte, 32<<10))
+		n, copyErr := copyStaging(ctx, io.MultiWriter(f, hash), part, entry.Size)
 		closeErr := f.Close()
 		_ = part.Close()
 		if copyErr != nil || closeErr != nil || n != entry.Size || r.Context().Err() != nil || ctx.Err() != nil {
@@ -270,11 +358,15 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 		reply(w, 400, map[string]string{"error": "unexpected extra upload data"})
 		return
 	}
-	if e := transfer.ValidateManifest(b.Manifest, transferLimits()); e != nil {
+	if e := transfer.ValidateManifest(b.Manifest, lim); e != nil {
 		reply(w, 400, map[string]string{"error": "invalid transfer manifest"})
 		return
 	}
-	if err := c.runOutgoing(ctx, b); err != nil {
+	if ctx.Err() != nil || r.Context().Err() != nil {
+		reply(w, 400, map[string]string{"error": "upload was interrupted"})
+		return
+	}
+	if err := c.runStagedOutgoing(life, ctx, b); err != nil {
 		reply(w, 503, map[string]string{"error": err.Error()})
 		return
 	}
@@ -283,23 +375,37 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) runOutgoing(ctx context.Context, b *outgoingBatch) error {
+	return c.runStagedOutgoing(ctx, ctx, b)
+}
+
+func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch) error {
 	done, err := c.beginWork()
 	if err != nil {
 		return err
 	}
 	b.mu.Lock()
+	if err := staging.Err(); err != nil {
+		b.mu.Unlock()
+		done()
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		b.mu.Unlock()
+		done()
+		return err
+	}
 	if b.running {
 		b.mu.Unlock()
 		done()
 		return nil
 	}
 	b.running = true
+	b.staging = false
 	b.State = "awaiting-acceptance"
 	b.Error = ""
 	b.mu.Unlock()
 	go func() {
 		defer done()
-		defer func() { b.mu.Lock(); b.running = false; b.mu.Unlock() }()
 		err := c.deliver(ctx, b)
 		b.mu.Lock()
 		if err != nil {
@@ -312,15 +418,20 @@ func (c *Core) runOutgoing(ctx context.Context, b *outgoingBatch) error {
 			}
 		}
 		finished := b.State == "completed" || b.State == "cancelled"
-		spool := b.Spool
-		b.mu.Unlock()
-		if finished && spool != "" {
-			_ = os.RemoveAll(spool)
+		if finished {
+			if cleanupErr := b.releaseSpoolLocked(); cleanupErr != nil {
+				b.Error = "could not remove staged files; clear this transfer to retry cleanup"
+			}
 		}
+		b.running = false
+		b.mu.Unlock()
 	}()
 	return nil
 }
 func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	peer, ok := c.trust(b.PeerID)
 	if !ok || peer.Generation != b.Generation || peer.Paused {
 		return errors.New("peer permission changed")
@@ -457,21 +568,19 @@ func (c *Core) transferCommand(ctx context.Context, name string, raw json.RawMes
 			out.mu.Unlock()
 			return nil, c.runOutgoing(ctx, out)
 		case "transfer.forget":
+			c.mu.Lock()
+			defer c.mu.Unlock()
 			out.mu.Lock()
-			if out.running || !(out.State == "completed" || out.State == "cancelled" || out.State == "failed" || out.State == "declined") {
-				out.mu.Unlock()
+			defer out.mu.Unlock()
+			if out.running || out.staging || !(out.State == "completed" || out.State == "cancelled" || out.State == "failed" || out.State == "declined") {
 				return nil, errors.New("cancel or finish the transfer before clearing it")
 			}
-			spool := out.Spool
-			out.mu.Unlock()
-			if spool != "" {
-				if e := os.RemoveAll(spool); e != nil {
-					return nil, e
-				}
+			if e := out.releaseSpoolLocked(); e != nil {
+				return nil, e
 			}
-			c.mu.Lock()
-			delete(c.outgoing, out.ID)
-			c.mu.Unlock()
+			if c.outgoing[out.ID] == out {
+				delete(c.outgoing, out.ID)
+			}
 			return nil, nil
 		default:
 			return nil, errors.New("this operation is only for received transfers")
@@ -542,19 +651,54 @@ func (c *Core) transferViews() []map[string]any {
 
 // File selection from the agent CLI uses the same staging and manifest protocol.
 func (c *Core) SendPaths(ctx context.Context, peerID string, paths []string) (any, error) {
+	return c.sendPaths(ctx, peerID, paths, transferLimits())
+}
+
+func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim transfer.Limits) (any, error) {
 	done, err := c.beginWork()
 	if err != nil {
 		return nil, err
 	}
 	defer done()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	t, ok := c.trust(peerID)
 	if !ok || t.Paused {
 		return nil, errors.New("approve this exact peer first")
 	}
-	manifest, sources, e := transfer.BuildManifest(randomID(), paths, transferLimits())
+	life, cancel := context.WithCancel(c.ctx)
+	stageCtx, finishStaging := context.WithCancel(ctx)
+	defer finishStaging()
+	stopLifetime := context.AfterFunc(life, finishStaging)
+	defer stopLifetime()
+	plan, e := transfer.PlanSources(stageCtx, randomID(), paths, lim)
+	if e != nil {
+		cancel()
+		return nil, e
+	}
+	planned := plan.Manifest()
+	b := &outgoingBatch{ID: planned.ID, PeerID: peerID, Generation: t.Generation, Manifest: planned, Files: map[string]string{}, Created: time.Now().UTC(), State: "queued", cancel: cancel}
+	if existing, e := c.reserveOutgoing(stageCtx, b, lim); e != nil || existing != nil {
+		cancel()
+		if e != nil {
+			return nil, e
+		}
+		return nil, errors.New("transfer request ID already exists")
+	}
+	stagedOK := false
+	defer func() {
+		if !stagedOK {
+			c.discardOutgoing(b)
+		}
+	}()
+	manifest, sources, e := plan.Hash(stageCtx)
 	if e != nil {
 		return nil, e
 	}
+	b.mu.Lock()
+	b.Manifest = manifest
+	b.mu.Unlock()
 	spoolRoot := filepath.Join(c.dir, "outgoing")
 	if e := config.SecureDir(spoolRoot); e != nil {
 		return nil, e
@@ -563,29 +707,20 @@ func (c *Core) SendPaths(ctx context.Context, peerID string, paths []string) (an
 	if e != nil {
 		return nil, e
 	}
-	ok = false
-	defer func() {
-		if !ok {
-			_ = os.RemoveAll(spool)
-		}
-	}()
+	b.mu.Lock()
+	b.Spool = spool
+	b.mu.Unlock()
 	if e := config.Protect(spool, true); e != nil {
 		return nil, e
 	}
 	files := map[string]string{}
 	for _, source := range sources {
-		original, e := os.Lstat(source.LocalPath)
-		if e != nil || !original.Mode().IsRegular() {
-			return nil, errors.New("selected file changed")
+		if err := stageCtx.Err(); err != nil {
+			return nil, err
 		}
-		from, e := os.Open(source.LocalPath)
+		from, e := source.Open()
 		if e != nil {
 			return nil, e
-		}
-		opened, e := from.Stat()
-		if e != nil || !os.SameFile(original, opened) {
-			from.Close()
-			return nil, errors.New("selected file changed")
 		}
 		target := filepath.Join(spool, source.EntryID)
 		to, e := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -601,30 +736,65 @@ func (c *Core) SendPaths(ctx context.Context, peerID string, paths []string) (an
 			}
 		}
 		hash := sha256.New()
-		n, e := io.CopyBuffer(io.MultiWriter(to, hash), io.LimitReader(from, entry.Size+1), make([]byte, 32<<10))
+		n, e := copyStaging(stageCtx, io.MultiWriter(to, hash), from, entry.Size)
 		from.Close()
 		closeErr := to.Close()
+		if err := stageCtx.Err(); err != nil {
+			return nil, err
+		}
 		if e != nil || closeErr != nil || n != entry.Size || hex.EncodeToString(hash.Sum(nil)) != entry.SHA256 {
 			return nil, errors.New("selected file changed while staging")
 		}
 		files[source.EntryID] = target
 	}
-	life, cancel := context.WithCancel(c.ctx)
-	b := &outgoingBatch{ID: manifest.ID, PeerID: peerID, Generation: t.Generation, Manifest: manifest, Files: files, Spool: spool, Created: time.Now().UTC(), State: "queued", cancel: cancel}
-	c.mu.Lock()
-	if len(c.outgoing) >= 32 {
-		c.mu.Unlock()
-		cancel()
-		return nil, errors.New("transfer history capacity reached")
+	b.mu.Lock()
+	b.Files = files
+	b.mu.Unlock()
+	if err := stageCtx.Err(); err != nil {
+		return nil, err
 	}
-	c.outgoing[b.ID] = b
-	c.mu.Unlock()
-	if e := c.runOutgoing(life, b); e != nil {
-		c.mu.Lock()
-		delete(c.outgoing, b.ID)
-		c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if e := c.runStagedOutgoing(life, stageCtx, b); e != nil {
 		return nil, e
 	}
-	ok = true
+	stagedOK = true
 	return map[string]string{"id": b.ID}, nil
+}
+
+type stagingContextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+// Probe excess input without writing beyond the admitted disk reservation.
+func copyStaging(ctx context.Context, dst io.Writer, src io.Reader, size int64) (int64, error) {
+	r := stagingContextReader{ctx, src}
+	n, err := io.CopyBuffer(dst, io.LimitReader(r, size), make([]byte, 32<<10))
+	if err != nil {
+		return n, err
+	}
+	if n != size {
+		return n, transfer.ErrIntegrity
+	}
+	var extra [1]byte
+	if count, err := io.ReadFull(r, extra[:]); count != 0 || err != io.EOF {
+		if err != nil {
+			return n, err
+		}
+		return n, transfer.ErrIntegrity
+	}
+	return n, nil
+}
+
+func (r stagingContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.r.Read(p)
+	if cancelled := r.ctx.Err(); cancelled != nil {
+		return n, cancelled
+	}
+	return n, err
 }

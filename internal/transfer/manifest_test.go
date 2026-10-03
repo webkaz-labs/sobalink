@@ -99,6 +99,9 @@ func TestManifestEnforcesMetadataAndByteLimits(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := ValidateManifest(m, limits)
+			if errors.Is(err, ErrMetadataLimit) != (name == "metadata") {
+				t.Fatalf("incorrect metadata error classification: %v", err)
+			}
 			if name == "path bytes" {
 				if !errors.Is(err, ErrUnsafePath) {
 					t.Fatalf("error = %v, want unsafe path", err)

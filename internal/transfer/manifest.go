@@ -106,7 +106,7 @@ func validateManifest(manifest Manifest, lim Limits) (int64, error) {
 		return 0, ErrLimit
 	}
 	if metadataSize(manifest) > lim.MaxManifestBytes {
-		return 0, ErrLimit
+		return 0, ErrMetadataLimit
 	}
 	ids, names, full := map[string]bool{}, map[string]string{}, map[string]Kind{}
 	var total int64

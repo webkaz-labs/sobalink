@@ -44,7 +44,7 @@ func StartSOCKS(ctx context.Context, cfg SOCKSConfig, dial Dialer) (*Server, err
 	if err != nil {
 		return nil, err
 	}
-	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", cfg.ListenAddress)
+	l, err := (&net.ListenConfig{}).Listen(ctx, loopbackNetwork("tcp", cfg.ListenAddress), cfg.ListenAddress)
 	if err != nil {
 		return nil, err
 	}

@@ -122,14 +122,23 @@ func validateListenAddress(address string) error {
 		return fmt.Errorf("invalid listener address: %w", err)
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || !ip.Is4() || !ip.IsLoopback() {
-		return errors.New("listener must use a literal IPv4 loopback address")
+	if err != nil || (ip != netip.MustParseAddr("127.0.0.1") && ip != netip.IPv6Loopback()) {
+		return errors.New("listener must use exactly 127.0.0.1 or ::1")
 	}
 	p, err := strconv.Atoi(port)
 	if err != nil || p < 0 || p > 65535 {
 		return errors.New("invalid listener port")
 	}
 	return nil
+}
+
+// loopbackNetwork is used only after exact numeric listener validation.
+func loopbackNetwork(network, address string) string {
+	host, _, _ := net.SplitHostPort(address)
+	if host == "::1" {
+		return network + "6"
+	}
+	return network + "4"
 }
 
 func normalizeTimeout(t time.Duration) (time.Duration, error) {

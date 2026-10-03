@@ -7,12 +7,14 @@ package transfer
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
 var (
 	ErrInvalidManifest = errors.New("invalid transfer manifest")
 	ErrLimit           = errors.New("transfer limit exceeded")
+	ErrMetadataLimit   = fmt.Errorf("%w: manifest metadata budget exceeded", ErrLimit)
 	ErrUnknownPeer     = errors.New("peer identity is not bound")
 	ErrPeerChanged     = errors.New("peer identity generation changed")
 	ErrPeerPaused      = errors.New("peer transfers are paused")

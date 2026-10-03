@@ -21,3 +21,19 @@ func TestServicePermissionRejectsExactAndMissingExpiry(t *testing.T) {
 		t.Fatal("missing expiry enabled an unbounded service permission")
 	}
 }
+
+func TestUntilStoppedCannotAuthorizeInboundOrContradictoryPermission(t *testing.T) {
+	for _, spec := range []ServiceSpec{
+		{Direction: "share", Lifetime: "until-stopped"},
+		{Direction: "forward", Lifetime: "until-stopped", TTLSeconds: 1},
+		{Direction: "forward", Lifetime: "invalid"},
+		{Direction: "forward", Lifetime: "finite"},
+		{Direction: "forward"},
+	} {
+		service := &activeService{spec: spec, ctx: context.Background()}
+		service.ready.Store(true)
+		if service.guard() == nil {
+			t.Fatalf("invalid missing-expiry permission became unbounded: %+v", spec)
+		}
+	}
+}

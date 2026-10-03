@@ -10,13 +10,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview --host 127.0.0.1",
-    "test:browser": "node scripts/browser-smoke.mjs"
+    "test:browser": "playwright test --config=playwright.config.mjs",
+    "test:browser:safety": "node --test browser/fixture-safety.test.mjs"
   },
   "dependencies": {
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",

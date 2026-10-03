@@ -83,7 +83,7 @@ func StartUDP(ctx context.Context, cfg UDPConfig, dial Dialer) (*Server, error) 
 	if err := normalizeUDPConfig(&cfg); err != nil {
 		return nil, err
 	}
-	localPacket, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp4", cfg.ListenAddress)
+	localPacket, err := (&net.ListenConfig{}).ListenPacket(ctx, loopbackNetwork("udp", cfg.ListenAddress), cfg.ListenAddress)
 	if err != nil {
 		return nil, err
 	}

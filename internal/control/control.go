@@ -10,6 +10,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 )
 
 type Request struct {
@@ -49,7 +51,7 @@ type Handler func(context.Context, string) (any, error)
 
 const (
 	responseDrainTimeout = 200 * time.Millisecond
-	maxRequestBytes      = 64 << 10
+	maxRequestBytes      = messageframe.ControlRequestBytes
 	// Local status includes bounded multi-batch metadata and saved destinations,
 	// so it needs more room than a command request. File bodies never use IPC.
 	maxResponseBytes = 16 << 20
@@ -119,9 +121,15 @@ func serveListener(parent context.Context, ln net.Listener, h Handler) *Server {
 				defer c.Close()
 				_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 				var r Request
-				d := json.NewDecoder(io.LimitReader(c, maxRequestBytes))
+				limited := &io.LimitedReader{R: c, N: int64(maxRequestBytes) + 1}
+				d := json.NewDecoder(limited)
 				d.DisallowUnknownFields()
-				if e := d.Decode(&r); e != nil {
+				err := d.Decode(&r)
+				if limited.N == 0 || len(r.Command) > messageframe.CommandBytes {
+					_ = json.NewEncoder(c).Encode(Response{Error: "local command exceeds its JSON envelope limit; shorten the text or reduce the command payload", Code: "request_too_large"})
+					return
+				}
+				if err != nil {
 					return
 				}
 				callCtx, stop := context.WithTimeout(ctx, 15*time.Second)
@@ -258,8 +266,8 @@ func Call(ctx context.Context, dir, command string, v any) error {
 	if err != nil {
 		return err
 	}
-	if len(encoded)+1 > maxRequestBytes {
-		return errors.New("control request exceeds 64 KiB")
+	if len(command) > messageframe.CommandBytes || len(encoded)+1 > maxRequestBytes {
+		return &RemoteError{Code: "request_too_large", Message: "local command exceeds its JSON envelope limit; shorten the text or reduce the command payload"}
 	}
 	c, e := dial(ctx, dir)
 	if e != nil {

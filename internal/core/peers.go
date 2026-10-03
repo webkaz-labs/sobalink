@@ -20,6 +20,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/httpbound"
 	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
@@ -141,17 +142,28 @@ func readJSON(r *http.Request, limit int64, v any) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("JSON required")
 	}
-	d := json.NewDecoder(io.LimitReader(r.Body, limit+1))
+	limited := &io.LimitedReader{R: r.Body, N: limit + 1}
+	d := json.NewDecoder(limited)
 	d.DisallowUnknownFields()
-	if e := d.Decode(v); e != nil {
+	e := d.Decode(v)
+	if limited.N == 0 {
+		return errPeerRequestTooLarge
+	}
+	if e != nil {
 		return e
 	}
 	var extra any
-	if d.Decode(&extra) != io.EOF {
+	e = d.Decode(&extra)
+	if limited.N == 0 {
+		return errPeerRequestTooLarge
+	}
+	if e != io.EOF {
 		return errors.New("trailing request data")
 	}
 	return nil
 }
+
+var errPeerRequestTooLarge = errors.New("peer request exceeds its JSON envelope limit")
 
 func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 	select {
@@ -209,7 +221,20 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 			ID   string `json:"id"`
 			Text string `json:"text"`
 		}
-		if readJSON(r, 20<<10, &msg) != nil || !config.ValidPeerID(msg.ID) || !validText(msg.Text) {
+		err := readJSON(r, int64(messageframe.PeerRequestBytes), &msg)
+		if errors.Is(err, errPeerRequestTooLarge) {
+			reply(w, http.StatusRequestEntityTooLarge, map[string]string{"code": "request_too_large", "error": "message request is too large; shorten the text or reduce JSON padding"})
+			return
+		}
+		if err != nil || !config.ValidPeerID(msg.ID) {
+			peerFailure(w, 400)
+			return
+		}
+		if len(msg.Text) > messageframe.TextBytes {
+			reply(w, http.StatusRequestEntityTooLarge, map[string]string{"code": "message_too_large", "error": "message exceeds 16384 UTF-8 bytes; shorten the text and retry"})
+			return
+		}
+		if !validText(msg.Text) {
 			peerFailure(w, 400)
 			return
 		}
@@ -246,13 +271,13 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		}
 		message := Message{ID: msg.ID, PeerID: peerID, Text: msg.Text, Direction: "incoming", CreatedAt: time.Now().UTC(), Status: "received"}
 		if e := c.appendMessageLocked(message); e != nil {
-			peerFailure(w, 507)
+			reply(w, http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": "message could not be saved; check free storage and private state permissions"})
 			return
 		}
 		reply(w, 200, map[string]string{"id": message.ID, "status": "received"})
 	case r.Method == "POST" && r.URL.Path == "/v1/offers":
 		var manifest transfer.Manifest
-		if readJSON(r, 128<<10, &manifest) != nil {
+		if readJSON(r, int64(transferManifestJSONBytes), &manifest) != nil {
 			peerFailure(w, 400)
 			return
 		}
@@ -344,6 +369,14 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if path == "/v1/messages" {
+			switch resp.StatusCode {
+			case http.StatusRequestEntityTooLarge:
+				return &localCommandError{"message_peer_too_large", "peer refused the message size; shorten the text and retry"}
+			case http.StatusInsufficientStorage:
+				return &localCommandError{"message_peer_storage_unavailable", "peer could not save the message; check its free storage and private state permissions before retrying"}
+			}
+		}
 		return fmt.Errorf("peer refused this action (HTTP %d); check approval and receive settings", resp.StatusCode)
 	}
 	if out == nil {
@@ -434,11 +467,66 @@ func (c *Core) refreshPeers(st identity.State) {
 }
 
 func validText(text string) bool {
-	return len(strings.TrimSpace(text)) > 0 && len(text) <= 16<<10 && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
+	return len(strings.TrimSpace(text)) > 0 && len(text) <= messageframe.TextBytes && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
 }
+
+// The ordinary configuration limit stays at 64 KiB. Retention can keep one
+// message even when its escaped text exceeds the 48 KiB history target, so the
+// private history file needs room for that message and its bounded metadata.
+// The old 64 KiB allowance preserves readable legacy indented history files.
+const maxMessageHistoryBytes = max(64<<10, 6*messageframe.TextBytes+2*messageframe.IDBytes+len(`[{"id":"","peerId":"","direction":"outgoing","text":"","createdAt":"2006-01-02T15:04:05.999999999+00:00","status":"received"}]`)+1)
+
+func readMessageHistory(path string, history *[]Message) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("message history must be a regular file, not a symlink")
+	}
+	if info.Size() > int64(maxMessageHistoryBytes) {
+		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	limited := &io.LimitedReader{R: f, N: int64(maxMessageHistoryBytes) + 1}
+	d := json.NewDecoder(limited)
+	d.DisallowUnknownFields()
+	err = d.Decode(history)
+	if limited.N == 0 {
+		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+	}
+	if err != nil {
+		return err
+	}
+	var extra any
+	err = d.Decode(&extra)
+	if limited.N == 0 {
+		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+	}
+	if err != io.EOF {
+		return errors.New("unexpected data after message history")
+	}
+	return nil
+}
+
+func writeMessageHistory(path string, history []Message) error {
+	b, err := json.Marshal(history)
+	if err != nil {
+		return err
+	}
+	if len(b)+1 > maxMessageHistoryBytes {
+		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+	}
+	return config.AtomicWrite(path, append(b, '\n'))
+}
+
 func (c *Core) loadMessages() error {
 	var history []Message
-	if e := config.ReadJSON(filepath.Join(c.dir, "messages.json"), &history); e != nil {
+	if e := readMessageHistory(filepath.Join(c.dir, "messages.json"), &history); e != nil {
 		if errors.Is(e, os.ErrNotExist) {
 			return nil
 		}
@@ -448,7 +536,9 @@ func (c *Core) loadMessages() error {
 		return errors.New("message history exceeds limit")
 	}
 	for _, m := range history {
-		if !validText(m.Text) || !config.ValidPeerID(m.PeerID) || !config.ValidPeerID(m.ID) {
+		if !validText(m.Text) || !config.ValidPeerID(m.PeerID) || !config.ValidPeerID(m.ID) ||
+			(m.Direction != "incoming" && m.Direction != "outgoing") ||
+			(m.Status != "pending" && m.Status != "received" && m.Status != "sent" && m.Status != "failed") {
 			return errors.New("invalid message history")
 		}
 	}
@@ -468,7 +558,7 @@ func (c *Core) appendMessageLocked(m Message) error {
 		}
 		next = next[1:]
 	}
-	if e := config.WriteJSON(filepath.Join(c.dir, "messages.json"), next); e != nil {
+	if e := writeMessageHistory(filepath.Join(c.dir, "messages.json"), next); e != nil {
 		return e
 	}
 	c.messages = next
@@ -481,6 +571,9 @@ func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any
 	}
 	if e := decodePayload(raw, &v); e != nil {
 		return nil, e
+	}
+	if len(v.Text) > messageframe.TextBytes {
+		return nil, &localCommandError{"message_too_large", "message exceeds 16384 UTF-8 bytes; shorten the text and retry"}
 	}
 	if !validText(v.Text) {
 		return nil, errors.New("message must contain 1..16384 UTF-8 bytes")
@@ -509,7 +602,11 @@ func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any
 	saveErr := c.appendMessageLocked(msg)
 	c.mu.Unlock()
 	if saveErr != nil {
-		return nil, saveErr
+		message := "local message history could not be saved; check free storage and private state permissions, and check the receiver before retrying"
+		if msg.Status == "sent" {
+			message = "peer acknowledged receipt, but local message history could not be saved; check free storage and private state permissions; do not resend the delivered message"
+		}
+		return msg, fmt.Errorf("%w: %v", &localCommandError{"message_history_unavailable", message}, saveErr)
 	}
 	return msg, e
 }

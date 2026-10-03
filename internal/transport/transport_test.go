@@ -58,7 +58,7 @@ func TestRejectNonLoopbackListeners(t *testing.T) {
 		t.Error("unexpected dial")
 		return nil, errors.New("unexpected")
 	}
-	for _, address := range []string{":0", "0.0.0.0:0", "localhost:0", "192.0.2.1:0", "[::1]:0", "[::ffff:127.0.0.1]:0", "127.0.0.1:-1", "127.0.0.1:65536", "127.0.0.1:http"} {
+	for _, address := range []string{":0", "0.0.0.0:0", "localhost:0", "192.0.2.1:0", "127.0.0.2:0", "[::]:0", "[::ffff:127.0.0.1]:0", "127.0.0.1:-1", "127.0.0.1:65536", "127.0.0.1:http"} {
 		t.Run(address, func(t *testing.T) {
 			if s, err := StartTCP(context.Background(), TCPConfig{ListenAddress: address, Target: "example.test:80"}, dial); err == nil {
 				s.Close()

@@ -5,6 +5,8 @@ import { StrictMode } from 'react'
 import { App } from './App'
 import type { ServiceConfigResult, State } from './api'
 import * as api from './api'
+import { translator } from './i18n'
+import { lanTranslator } from './lan-i18n'
 
 const state: State = {
   csrfToken: 'test-csrf', self: { name: 'This device', status: 'online', networks: ['tailnet'] },
@@ -290,6 +292,36 @@ describe('explicit and interrupted flows', () => {
     await userEvent.click(within(review).getByRole('button', { name: 'Cancel' }))
     expect(screen.getByRole('button', { name: 'Stop sobalink' })).toBeInTheDocument()
     expect(requests).toHaveLength(0)
+  })
+
+  it.each([
+    { locale: 'en', status: 'idle' },
+    { locale: 'en', status: 'offline' },
+    { locale: 'ja', status: 'idle' },
+    { locale: 'ja', status: 'offline' },
+  ] as const)('reviews and cancels whole-app Stop before network setup in $locale/$status', async ({ locale, status }) => {
+    localStorage.setItem('sobalink.locale', locale)
+    const t = translator(locale)
+    const lt = lanTranslator(locale)
+    const { requests } = setup({ ...state, self: { ...state.self, status, networks: [] }, peers: [], settings: { network: 'none' } })
+    render(<App />)
+    await userEvent.click((await screen.findAllByRole('button', { name: t('addDevice') }))[0])
+    expect(screen.queryByText(t('networkRestart'))).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('signInTailscale') })).toBeDisabled()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const stop = screen.getByRole('button', { name: lt('stopApplication') })
+      expect(stop).toBeEnabled()
+      await userEvent.click(stop)
+      const review = screen.getByRole('region', { name: lt('stopReview') })
+      expect(review).toHaveFocus()
+      expect(review).toHaveTextContent(lt('stopImpact'))
+      expect(within(review).getByRole('button', { name: lt('confirmStop') })).toBeEnabled()
+      expect(requests).toHaveLength(0)
+      await userEvent.click(within(review).getByRole('button', { name: t('cancel') }))
+      expect(screen.queryByRole('region', { name: lt('stopReview') })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: lt('stopApplication') })).toBeEnabled()
+      expect(requests).toHaveLength(0)
+    }
   })
 
   it('keeps a network name draft when setup closes without activating', async () => {

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 )
 
 type testBackend struct {
@@ -289,13 +291,16 @@ func TestManagementOneTimeCodeIsAtomicAndAttemptsBounded(t *testing.T) {
 func TestManagementRejectsMalformedAndOversizedJSON(t *testing.T) {
 	s, b := testServer(t)
 	cookie, csrf := signIn(t, s)
-	for _, body := range []string{
-		`{"requestId":"one","name":"settings.update","payload":{},"unexpected":true}`,
-		`{"requestId":"one","name":"settings.update","payload":{}} {}`,
-		`{"requestId":"","name":"settings.update","payload":{}}`,
-		`{"requestId":"one","name":"settings.update","payload":{"value":"` + strings.Repeat("x", 64<<10) + `"}}`,
+	for _, tc := range []struct {
+		body   string
+		status int
+	}{
+		{`{"requestId":"one","name":"settings.update","payload":{},"unexpected":true}`, http.StatusBadRequest},
+		{`{"requestId":"one","name":"settings.update","payload":{}} {}`, http.StatusBadRequest},
+		{`{"requestId":"","name":"settings.update","payload":{}}`, http.StatusBadRequest},
+		{`{"requestId":"one","name":"settings.update","payload":{"value":"` + strings.Repeat("x", messageframe.CommandBytes) + `"}}`, http.StatusRequestEntityTooLarge},
 	} {
-		if w := serve(s, request(s, "POST", "/api/command", body, cookie, csrf)); w.Code != http.StatusBadRequest {
+		if w := serve(s, request(s, "POST", "/api/command", tc.body, cookie, csrf)); w.Code != tc.status {
 			t.Fatalf("malformed body accepted: %d", w.Code)
 		}
 	}

@@ -244,7 +244,7 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run() error {
+func run() (runErr error) {
 	file := flag.String("session-file", "", "private output file read by the browser test")
 	scenario := flag.String("scenario", "studio", "browser fixture: studio or offline")
 	flag.Parse()
@@ -275,7 +275,7 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	defer a.Close()
+	defer func() { runErr = errors.Join(runErr, a.Close()) }()
 	receiveDir := filepath.Join(dir, "received")
 	if e := os.Mkdir(receiveDir, 0700); e != nil {
 		return e
@@ -288,7 +288,7 @@ func run() error {
 		if e != nil {
 			return e
 		}
-		defer b.Close()
+		defer func() { runErr = errors.Join(runErr, b.Close()) }()
 		for _, item := range []struct {
 			app        *core.Core
 			name, peer string
@@ -358,7 +358,7 @@ func run() error {
 	defer func() {
 		closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
-		_ = server.Close(closeCtx)
+		runErr = errors.Join(runErr, server.Close(closeCtx))
 	}()
 	managementPort.Store(uint32(server.Port()))
 	code, e := server.IssueCode()

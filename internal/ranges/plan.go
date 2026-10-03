@@ -15,17 +15,18 @@ var (
 	reserved, _ = NewSet([]Interval{{DiscoveryPort, PairingPort}})
 )
 
-// Policy shares the same service port on one exact embedded-node address and
-// one numeric loopback address. No hostname, wildcard or port offset is allowed.
+// Policy shares ports on one exact embedded-node address and numeric loopback.
+// TargetPort optionally maps a single exposed port to a different local port.
 type Policy struct {
-	ID        string
-	Network   string
-	Address   netip.Addr
-	Ports     Set
-	Exclude   Set
-	Loopback  netip.Addr
-	PeerIDs   []string
-	ExpiresAt time.Time
+	ID         string
+	Network    string
+	Address    netip.Addr
+	Ports      Set
+	Exclude    Set
+	Loopback   netip.Addr
+	TargetPort uint16
+	PeerIDs    []string
+	ExpiresAt  time.Time
 }
 
 type compiledPolicy struct {
@@ -126,6 +127,9 @@ func BuildPlan(selfIPs []netip.Addr, policies []Policy) (*Plan, error) {
 		if err != nil {
 			return nil, err
 		}
+		if rule.TargetPort != 0 && (effective.Count() != 1 || reserved.Contains(rule.TargetPort)) {
+			return nil, errors.New("mapped sharing requires one exposed port and a non-reserved target port")
+		}
 		if effective.Empty() {
 			return nil, fmt.Errorf("policy %q has no effective service ports", rule.ID)
 		}
@@ -210,7 +214,7 @@ func (p *Plan) ExpandMaterialized(ids []string, limit int) (map[string][]uint16,
 
 func equalPolicies(a, b compiledPolicy) bool {
 	x, y := a.policy, b.policy
-	if x.ID != y.ID || x.Network != y.Network || x.Address != y.Address || x.Loopback != y.Loopback || !x.ExpiresAt.Equal(y.ExpiresAt) || !equalSets(x.Ports, y.Ports) || !equalSets(x.Exclude, y.Exclude) || len(x.PeerIDs) != len(y.PeerIDs) {
+	if x.ID != y.ID || x.Network != y.Network || x.Address != y.Address || x.Loopback != y.Loopback || x.TargetPort != y.TargetPort || !x.ExpiresAt.Equal(y.ExpiresAt) || !equalSets(x.Ports, y.Ports) || !equalSets(x.Exclude, y.Exclude) || len(x.PeerIDs) != len(y.PeerIDs) {
 		return false
 	}
 	for i := range x.PeerIDs {

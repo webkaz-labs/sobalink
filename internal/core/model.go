@@ -57,6 +57,8 @@ type ServiceSpec struct {
 	Ports        string   `json:"ports"`
 	ExcludePorts string   `json:"excludePorts,omitempty"`
 	LocalPort    int      `json:"localPort,omitempty"`
+	LoopbackHost string   `json:"loopbackHost,omitempty"`
+	Lifetime     string   `json:"lifetime,omitempty"`
 	PeerID       string   `json:"peerId,omitempty"`
 	PeerIDs      []string `json:"peerIds,omitempty"`
 	TTLSeconds   int      `json:"ttlSeconds"`
@@ -239,6 +241,18 @@ func validateProfile(p Profile) error {
 		seen[p.ID] = true
 		if p.Autosave && (!filepath.IsAbs(p.Directory) || p.Directory == "") {
 			return errors.New("autosave requires an absolute destination")
+		}
+	}
+	for _, service := range p.Services {
+		// Positive legacy TTLs remain finite without rewriting saved records or
+		// changing their revision merely because the profile was reopened.
+		if service.Lifetime != "" {
+			if _, err := serviceLifetime(service.Lifetime, service.TTLSeconds, service.Direction); err != nil {
+				return err
+			}
+		}
+		if _, err := serviceLoopback(service.LoopbackHost); err != nil {
+			return err
 		}
 	}
 	return nil

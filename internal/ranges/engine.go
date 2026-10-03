@@ -35,7 +35,8 @@ type Limits struct{ Global, PerPolicy, PerPeer int }
 type Options struct {
 	Authorize Authorizer
 	// DialLoopback receives only 127.0.0.1 or ::1 and the requested service
-	// port. Nil uses a numeric-only OS loopback dial, never an outward dial.
+	// port or explicitly mapped TargetPort. Nil uses a numeric-only OS
+	// loopback dial, never an outward dial.
 	DialLoopback LoopbackDialer
 	// AdmitTCP integrates with a process-wide budget shared by other TCP
 	// transports. It must be nonblocking and return an idempotent release.
@@ -398,7 +399,11 @@ func (e *Engine) serve(p *permit, src, dst netip.AddrPort, client net.Conn) {
 	if err != nil || !e.bindPeer(f, peer) {
 		return
 	}
-	target := netip.AddrPortFrom(p.rule.policy.Loopback, dst.Port())
+	targetPort := dst.Port()
+	if p.rule.policy.TargetPort != 0 {
+		targetPort = p.rule.policy.TargetPort
+	}
+	target := netip.AddrPortFrom(p.rule.policy.Loopback, targetPort)
 	if f.permitted() != nil {
 		return
 	}

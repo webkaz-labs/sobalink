@@ -23,18 +23,19 @@ import (
 )
 
 type activeService struct {
-	spec      ServiceSpec
-	expires   time.Time
-	ctx       context.Context
-	cancel    context.CancelFunc
-	ready     atomic.Bool
-	online    *atomic.Bool
-	servers   []*transport.Server
-	policies  []*policy.Policy
-	address   netip.Addr
-	effective ranges.Set
-	reserved  ranges.Set
-	error     string
+	spec            ServiceSpec
+	expires         time.Time
+	ctx             context.Context
+	cancel          context.CancelFunc
+	ready           atomic.Bool
+	online          *atomic.Bool
+	servers         []*transport.Server
+	policies        []*policy.Policy
+	transportCancel context.CancelFunc
+	address         netip.Addr
+	effective       ranges.Set
+	reserved        ranges.Set
+	error           string
 }
 type rangeState struct {
 	engine     *ranges.Engine
@@ -96,7 +97,13 @@ func validateRemote(s RemoteService) error {
 
 func (c *Core) ensureRanges() error {
 	if c.rangeState != nil {
-		return nil
+		select {
+		case <-c.rangeState.engine.Done():
+			c.rangeState.unregister()
+			c.rangeState = nil
+		default:
+			return nil
+		}
 	}
 	n, ok := c.nodeCopy().(interface {
 		RegisterTCPFallback(func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)) (func(), error)
@@ -138,10 +145,50 @@ func (a *activeService) guard() error {
 	return a.guardAt(time.Now())
 }
 func (a *activeService) guardAt(now time.Time) error {
-	if !a.ready.Load() || (a.online != nil && !a.online.Load()) || a.ctx.Err() != nil || !deadline.Active(now, a.expires) {
+	if !a.ready.Load() || (a.online != nil && !a.online.Load()) || !a.permissionActiveAt(now) {
 		return errors.New("service permission is inactive or expired")
 	}
 	return nil
+}
+
+// A missing deadline remains invalid unless this exact outbound permission was
+// explicitly started with until-stopped. Other grants keep deadline.Active's
+// fail-closed semantics.
+func (a *activeService) permissionActiveAt(now time.Time) bool {
+	if a.ctx == nil || a.ctx.Err() != nil {
+		return false
+	}
+	if a.spec.Lifetime == "until-stopped" {
+		return a.spec.Direction == "forward" && a.spec.TTLSeconds == 0 && a.expires.IsZero()
+	}
+	return (a.spec.Lifetime == "" || a.spec.Lifetime == "finite") && deadline.Active(now, a.expires)
+}
+
+func serviceLifetime(mode string, ttl int, direction string) (string, error) {
+	if mode == "" && ttl > 0 {
+		mode = "finite"
+	}
+	switch mode {
+	case "finite":
+		if ttl >= 1 && ttl <= 86400 {
+			return mode, nil
+		}
+	case "until-stopped":
+		if direction == "forward" && ttl == 0 {
+			return mode, nil
+		}
+	}
+	return "", errors.New("choose a finite lifetime of 1..86400 seconds, or explicit until-stopped for an outbound connection")
+}
+
+func serviceLoopback(host string) (string, error) {
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if host != "127.0.0.1" && host != "::1" {
+		return "", errors.New("loopback host must be exactly 127.0.0.1 or ::1")
+	}
+	return host, nil
 }
 
 func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.RawMessage) (any, error) {
@@ -153,6 +200,8 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		Ports        string   `json:"ports"`
 		ExcludePorts string   `json:"excludePorts"`
 		LocalPort    int      `json:"localPort"`
+		LoopbackHost string   `json:"loopbackHost"`
+		Lifetime     string   `json:"lifetime"`
 		RemotePort   int      `json:"remotePort"`
 		TTLSeconds   int      `json:"ttlSeconds"`
 		Purpose      string   `json:"purpose"`
@@ -174,8 +223,21 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	if in.Network != "tcp" && in.Network != "udp" {
 		return nil, errors.New("choose TCP or UDP")
 	}
-	if in.TTLSeconds < 1 || in.TTLSeconds > 86400 {
-		return nil, errors.New("permission lifetime must be 1 second to 24 hours")
+	direction := "forward"
+	if name == "service.share" {
+		direction = "share"
+	}
+	var e error
+	in.Lifetime, e = serviceLifetime(in.Lifetime, in.TTLSeconds, direction)
+	if e != nil {
+		return nil, e
+	}
+	in.LoopbackHost, e = serviceLoopback(in.LoopbackHost)
+	if e != nil {
+		return nil, e
+	}
+	if in.LocalPort < 0 || in.LocalPort > 65535 {
+		return nil, errors.New("local port must be 1..65535, or omitted for same-port mapping")
 	}
 	ports, e := ranges.Parse(in.Ports)
 	if e != nil {
@@ -192,12 +254,10 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	if e != nil || effective.Empty() {
 		return nil, errors.New("no ports remain after exclusions")
 	}
-	direction := "forward"
-	if name == "service.share" {
-		if in.LocalPort != 0 {
-			return nil, errors.New("shares use the same local and shared port; localPort is only supported for connections")
+	if direction == "share" {
+		if in.LocalPort != 0 && effective.Count() != 1 {
+			return nil, errors.New("a mapped share requires exactly one exposed port; omit localPort for same-port ranges")
 		}
-		direction = "share"
 		reserved, _ := ranges.Parse("54543-54545")
 		effective, e = effective.Excluding(reserved)
 		if e != nil || effective.Empty() {
@@ -246,7 +306,7 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			return nil, &localCommandError{"service_name_conflict", "a saved service already uses this name; choose a new name or explicitly review that service for replacement"}
 		}
 	}
-	spec := ServiceSpec{ID: id, Backend: p.Settings.Network, Name: in.Name, Direction: direction, Network: in.Network, Ports: ports.String(), ExcludePorts: exclude.String(), LocalPort: in.LocalPort, PeerID: in.PeerID, PeerIDs: in.PeerIDs, TTLSeconds: in.TTLSeconds, Purpose: in.Purpose, Discoverable: in.Discoverable, ServiceID: in.ServiceID}
+	spec := ServiceSpec{ID: id, Backend: p.Settings.Network, Name: in.Name, Direction: direction, Network: in.Network, Ports: ports.String(), ExcludePorts: exclude.String(), LocalPort: in.LocalPort, LoopbackHost: in.LoopbackHost, Lifetime: in.Lifetime, PeerID: in.PeerID, PeerIDs: in.PeerIDs, TTLSeconds: in.TTLSeconds, Purpose: in.Purpose, Discoverable: in.Discoverable, ServiceID: in.ServiceID}
 	st, e := c.current(ctx)
 	if e != nil || !st.Snapshot.Running || len(st.IPs) == 0 {
 		return nil, errors.New("connect the selected network before starting a service")
@@ -264,9 +324,13 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			intervals = append(intervals, ranges.Interval{First: port, Last: port})
 		}
 		c.mu.RUnlock()
+		intervals = append(intervals, ranges.Interval{First: 54543, Last: 54545})
 		backendReserved, e = ranges.NewSet(intervals)
 		if e != nil {
 			return nil, e
+		}
+		if in.LocalPort != 0 && backendReserved.Contains(uint16(in.LocalPort)) {
+			return nil, errors.New("mapped local target is reserved by the application or network backend")
 		}
 		effective, e = effective.Excluding(backendReserved)
 		if e != nil || effective.Empty() {
@@ -343,8 +407,10 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		}
 	}
 	lifetime, cancel := context.WithCancel(c.ctx)
-	active := &activeService{spec: spec, expires: time.Now().Add(time.Duration(in.TTLSeconds) * time.Second), ctx: lifetime, cancel: cancel, address: self, effective: effective, online: &c.networkReady, reserved: backendReserved}
-	udpBudget := transport.NewUDPBudget()
+	active := &activeService{spec: spec, ctx: lifetime, cancel: cancel, address: self, effective: effective, online: &c.networkReady, reserved: backendReserved}
+	if spec.Lifetime == "finite" {
+		active.expires = time.Now().Add(time.Duration(spec.TTLSeconds) * time.Second)
+	}
 	// Validate the complete compact plan before saving or opening any listener.
 	if direction == "share" {
 		if _, e := c.rangePlan(st.IPs, active); e != nil {
@@ -368,96 +434,138 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	}
 	c.mu.Lock()
 	c.profile = p
+	c.active[spec.ID] = active
+	delete(c.serviceStates, spec.ID)
 	c.mu.Unlock()
-	rollback := func(err error) (any, error) {
-		active.ready.Store(false)
-		cancel()
-		for _, s := range active.servers {
-			_ = s.Close()
-		}
+	if err := c.startServiceTransport(ctx, st, active); err != nil {
+		active.cancel()
 		c.mu.Lock()
+		delete(c.active, spec.ID)
 		c.serviceStates[spec.ID] = "failed"
 		c.mu.Unlock()
 		return nil, fmt.Errorf("saved but not started: %w", err)
 	}
-	if direction == "forward" {
-		peer, _ := c.currentPeer(ctx, in.PeerID)
+	return c.serviceView(active), nil
+}
+
+// Transport recreation uses the existing permission context and expiry. It
+// never starts saved definitions or converts a revoked grant into a new one.
+// Service mutations are serialized by c.op; resource slices use c.mu for views.
+func (c *Core) startServiceTransport(ctx context.Context, st identity.State, active *activeService) error {
+	if !active.permissionActiveAt(time.Now()) || ctx.Err() != nil {
+		return errors.New("service permission is inactive or expired")
+	}
+	spec := active.spec
+	loopback, err := serviceLoopback(spec.LoopbackHost)
+	if err != nil {
+		return err
+	}
+	lifetime, cancel := context.WithCancel(active.ctx)
+	var servers []*transport.Server
+	var policies []*policy.Policy
+	rollback := func(err error) error {
+		active.ready.Store(false)
+		cancel()
+		for _, server := range servers {
+			_ = server.Close()
+		}
+		c.mu.Lock()
+		active.error = err.Error()
+		c.mu.Unlock()
+		return err
+	}
+	udpBudget := transport.NewUDPBudget()
+	if spec.Direction == "forward" || spec.Network == "udp" {
+		expanded, err := active.effective.Expand(64)
+		if err != nil {
+			return rollback(err)
+		}
 		for i, port := range expanded {
 			local := int(port)
-			if in.LocalPort != 0 {
-				local = in.LocalPort + i
+			if spec.LocalPort != 0 {
+				local = spec.LocalPort + i
 			}
-			targetHost := peer.DNSName
-			if targetHost == "" {
-				targetHost = peer.IPs[0].String()
-			}
-			target := config.Address(targetHost, int(port))
-			node := c.nodeCopy()
-			pol := &policy.Policy{Rules: []policy.Rule{{PeerID: peer.ID, Host: targetHost, Port: int(port), Network: in.Network}}, Guard: active.guard, Source: func(ctx context.Context) (policy.Snapshot, error) { s, e := c.current(ctx); return s.Snapshot, e }, DialIP: node.DialIP}
-			active.policies = append(active.policies, pol)
 			var server *transport.Server
-			if in.Network == "tcp" {
-				server, e = transport.StartTCP(lifetime, transport.TCPConfig{ListenAddress: config.Loopback(local), Target: target}, pol.Dial)
+			if spec.Direction == "forward" {
+				peer, err := c.currentPeer(ctx, spec.PeerID)
+				if err != nil || len(peer.IPs) == 0 {
+					return rollback(errors.New("peer has no current service address"))
+				}
+				targetHost := peer.DNSName
+				if targetHost == "" {
+					targetHost = peer.IPs[0].String()
+				}
+				target := config.Address(targetHost, int(port))
+				node := c.nodeCopy()
+				pol := &policy.Policy{Rules: []policy.Rule{{PeerID: peer.ID, Host: targetHost, Port: int(port), Network: spec.Network}}, Guard: active.guard, Source: func(ctx context.Context) (policy.Snapshot, error) { s, e := c.current(ctx); return s.Snapshot, e }, DialIP: node.DialIP}
+				policies = append(policies, pol)
+				if spec.Network == "tcp" {
+					server, err = transport.StartTCP(lifetime, transport.TCPConfig{ListenAddress: config.Address(loopback, local), Target: target}, pol.Dial)
+				} else {
+					server, err = transport.StartUDP(lifetime, transport.UDPConfig{ListenAddress: config.Address(loopback, local), Target: target, Validate: pol.Validate, Budget: udpBudget}, pol.Dial)
+				}
+				if err != nil {
+					return rollback(fmt.Errorf("local port %d is unavailable; select a different starting port or narrower range", local))
+				}
 			} else {
-				server, e = transport.StartUDP(lifetime, transport.UDPConfig{ListenAddress: config.Loopback(local), Target: target, Validate: pol.Validate, Budget: udpBudget}, pol.Dial)
-			}
-			if e != nil {
-				return rollback(fmt.Errorf("local port %d is unavailable; select a different starting port or narrower range", local))
-			}
-			active.servers = append(active.servers, server)
-		}
-	} else if in.Network == "udp" {
-		for _, port := range expanded {
-			packet, e := c.nodeCopy().ListenPacket("udp", config.Address(self.String(), int(port)))
-			if e != nil {
-				return rollback(e)
-			}
-			authorize := func(ctx context.Context, source netip.AddrPort) error {
-				id, e := c.authenticated(ctx, source)
-				if e != nil {
-					return e
+				packet, err := c.nodeCopy().ListenPacket("udp", config.Address(active.address.String(), int(port)))
+				if err != nil {
+					return rollback(err)
 				}
-				if !slices.Contains(spec.PeerIDs, id) {
-					return errors.New("peer not allowed")
+				authorize := func(ctx context.Context, source netip.AddrPort) error {
+					id, err := c.authenticated(ctx, source)
+					if err != nil {
+						return err
+					}
+					if !slices.Contains(spec.PeerIDs, id) {
+						return errors.New("peer not allowed")
+					}
+					return active.guard()
 				}
-				return active.guard()
+				server, err = transport.StartInboundUDP(lifetime, transport.UDPConfig{Target: config.Address(loopback, local), Budget: udpBudget}, packet, authorize, active.guard)
+				if err != nil {
+					packet.Close()
+					return rollback(err)
+				}
 			}
-			server, e := transport.StartInboundUDP(lifetime, transport.UDPConfig{Target: config.Loopback(int(port)), Budget: udpBudget}, packet, authorize, active.guard)
-			if e != nil {
-				packet.Close()
-				return rollback(e)
-			}
-			active.servers = append(active.servers, server)
+			servers = append(servers, server)
 		}
 	}
-	if ctx.Err() != nil || lifetime.Err() != nil || !deadline.Active(time.Now(), active.expires) {
+	if ctx.Err() != nil || !active.permissionActiveAt(time.Now()) {
 		return rollback(errors.New("start was cancelled or expired"))
 	}
 	c.mu.Lock()
-	c.active[spec.ID] = active
-	delete(c.serviceStates, spec.ID)
-	c.mu.Unlock()
+	active.servers, active.policies, active.transportCancel = servers, policies, cancel
+	active.error = ""
 	active.ready.Store(true)
-	if direction == "share" && in.Network == "tcp" {
-		plan, e := c.rangePlan(st.IPs, nil)
-		if e == nil {
-			e = c.rangeState.engine.Apply(plan)
+	c.mu.Unlock()
+	if spec.Direction == "share" && spec.Network == "tcp" {
+		err = c.ensureRanges()
+		if err == nil {
+			var plan *ranges.Plan
+			plan, err = c.rangePlan(st.IPs, nil)
+			if err == nil {
+				err = c.rangeState.engine.Apply(plan)
+			}
 		}
-		if e != nil {
-			c.mu.Lock()
-			delete(c.active, spec.ID)
-			c.mu.Unlock()
-			return rollback(e)
+		if err != nil {
+			c.suspendServiceTransport(active)
+			return rollback(err)
 		}
 	}
-	return c.serviceView(active), nil
+	return nil
+}
+
+func serviceLoopbackAddr(spec ServiceSpec) netip.Addr {
+	host, _ := serviceLoopback(spec.LoopbackHost)
+	return netip.MustParseAddr(host)
 }
 
 func (c *Core) rangePlan(ips []netip.Addr, extra *activeService) (*ranges.Plan, error) {
 	c.mu.RLock()
 	var entries []*activeService
 	for _, a := range c.active {
-		if a.spec.Direction == "share" && a.guard() == nil {
+		if a.spec.Direction == "share" && a.permissionActiveAt(time.Now()) {
 			entries = append(entries, a)
 		}
 	}
@@ -483,7 +591,7 @@ func (c *Core) rangePlan(ips []netip.Addr, extra *activeService) (*ranges.Plan, 
 		if e != nil {
 			return nil, e
 		}
-		policies = append(policies, ranges.Policy{ID: a.spec.ID, Network: a.spec.Network, Address: a.address, Ports: ports, Exclude: exclude, Loopback: netip.MustParseAddr("127.0.0.1"), PeerIDs: a.spec.PeerIDs, ExpiresAt: a.expires})
+		policies = append(policies, ranges.Policy{ID: a.spec.ID, Network: a.spec.Network, Address: a.address, Ports: ports, Exclude: exclude, Loopback: serviceLoopbackAddr(a.spec), TargetPort: uint16(a.spec.LocalPort), PeerIDs: a.spec.PeerIDs, ExpiresAt: a.expires})
 	}
 	return ranges.BuildPlan(ips, policies)
 }
@@ -492,7 +600,9 @@ func (c *Core) materializedCount() int {
 	defer c.mu.RUnlock()
 	n := 0
 	for _, a := range c.active {
-		n += len(a.servers)
+		if a.spec.Direction == "forward" || a.spec.Network == "udp" {
+			n += int(a.effective.Count())
+		}
 	}
 	return n
 }
@@ -512,11 +622,12 @@ func (c *Core) stopServiceIDs(ids []string) {
 	var stopped []*activeService
 	for _, id := range ids {
 		if a := c.active[id]; a != nil {
+			expired := !a.permissionActiveAt(time.Now())
 			a.ready.Store(false)
 			a.cancel()
 			stopped = append(stopped, a)
 			delete(c.active, id)
-			if !deadline.Active(time.Now(), a.expires) {
+			if expired {
 				c.serviceStates[id] = "expired"
 			} else {
 				c.serviceStates[id] = "stopped"
@@ -534,6 +645,21 @@ func (c *Core) stopServiceIDs(ids []string) {
 		}
 	}
 }
+
+// reserveServicePort closes shares that could expose a newly created local
+// control endpoint, including mappings whose exposed port differs from it.
+func (c *Core) reserveServicePort(network string, port uint16) {
+	c.mu.RLock()
+	var conflicts []string
+	for id, active := range c.active {
+		if active.spec.Direction == "share" && active.spec.Network == network && (active.effective.Contains(port) || active.spec.LocalPort == int(port)) {
+			conflicts = append(conflicts, id)
+		}
+	}
+	c.mu.RUnlock()
+	c.stopServiceIDs(conflicts)
+}
+
 func (c *Core) stopAllServices() {
 	c.mu.RLock()
 	var ids []string
@@ -567,13 +693,30 @@ func (c *Core) expireServices() {
 	c.mu.RLock()
 	var ids []string
 	for id, a := range c.active {
-		if !deadline.Active(time.Now(), a.expires) {
+		if !a.permissionActiveAt(time.Now()) {
 			ids = append(ids, id)
 		}
 	}
 	c.mu.RUnlock()
 	c.stopServiceIDs(ids)
 }
+func (c *Core) suspendServiceTransport(a *activeService) {
+	a.ready.Store(false)
+	if c.rangeState != nil && a.spec.Direction == "share" && a.spec.Network == "tcp" {
+		c.rangeState.engine.RevokeIDs([]string{a.spec.ID})
+	}
+	c.mu.Lock()
+	cancel, servers := a.transportCancel, a.servers
+	a.transportCancel, a.servers, a.policies = nil, nil, nil
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	for _, server := range servers {
+		_ = server.Close()
+	}
+}
+
 func (c *Core) suspendServices() {
 	c.mu.RLock()
 	var all []*activeService
@@ -581,18 +724,92 @@ func (c *Core) suspendServices() {
 		all = append(all, a)
 	}
 	c.mu.RUnlock()
-	ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
-	defer cancel()
+	// Disable every grant before draining individual transports.
 	for _, a := range all {
-		for _, p := range a.policies {
-			_ = p.RevalidateActive(ctx)
-		}
+		a.ready.Store(false)
 	}
-	if c.rangeState != nil {
-		_ = c.rangeState.engine.Revalidate(ctx)
+	for _, a := range all {
+		c.suspendServiceTransport(a)
 	}
 }
+
+func (c *Core) serviceTransportReady(a *activeService) bool {
+	if !a.ready.Load() {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, server := range a.servers {
+		select {
+		case <-server.Done():
+			return false
+		default:
+		}
+	}
+	if a.spec.Direction == "share" && a.spec.Network == "tcp" {
+		if c.rangeState == nil {
+			return false
+		}
+		select {
+		case <-c.rangeState.engine.Done():
+			return false
+		default:
+		}
+	}
+	return true
+}
+
+// Reconnect resets existing transport resources only. Ordinary peer services
+// do not need a sobalink hello endpoint for their local forwards to recover.
+func (c *Core) reconnectPeerServices(ctx context.Context, id string) error {
+	st, err := c.current(ctx)
+	if err != nil || !st.Snapshot.Running {
+		return errors.New("network is not connected")
+	}
+	if _, err := c.currentPeer(ctx, id); err != nil {
+		return err
+	}
+	c.networkReady.Store(true)
+	c.expireServices()
+	c.revalidateServiceScopes(st, false)
+	c.mu.RLock()
+	var selected []*activeService
+	for _, active := range c.active {
+		if active.spec.PeerID == id || slices.Contains(active.spec.PeerIDs, id) {
+			selected = append(selected, active)
+		}
+	}
+	c.mu.RUnlock()
+	if len(selected) == 0 {
+		return c.probePeer(ctx, id)
+	}
+	var recover []*activeService
+	for _, active := range selected {
+		// Resetting a healthy shared listener would interrupt other allowed
+		// peers. Only its own transport failure authorizes shared recovery.
+		if active.spec.Direction == "forward" || !c.serviceTransportReady(active) {
+			active.ready.Store(false)
+			recover = append(recover, active)
+		}
+	}
+	var failures []error
+	for _, active := range recover {
+		c.suspendServiceTransport(active)
+		if err := c.startServiceTransport(ctx, st, active); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	// Refresh app capabilities too, without requiring an ordinary service
+	// peer to run a sobalink API. Probe success never renews a service grant.
+	_ = c.probePeer(ctx, id)
+	return errors.Join(failures...)
+}
+
 func (c *Core) revalidateServices(st identity.State) {
+	c.revalidateServiceScopes(st, true)
+}
+
+func (c *Core) revalidateServiceScopes(st identity.State, recoverTransport bool) {
 	ids := map[string]bool{}
 	for _, p := range st.Snapshot.Peers {
 		if !p.Expired {
@@ -613,7 +830,7 @@ func (c *Core) revalidateServices(st identity.State) {
 		}
 		if a.spec.Direction == "share" {
 			for _, port := range st.ReservedPorts {
-				if a.effective.Contains(port) {
+				if a.effective.Contains(port) || a.spec.LocalPort == int(port) {
 					valid = false
 				}
 			}
@@ -625,6 +842,13 @@ func (c *Core) revalidateServices(st identity.State) {
 	c.mu.RUnlock()
 	c.stopServiceIDs(revoke)
 	for _, a := range active {
+		if !a.permissionActiveAt(time.Now()) {
+			continue
+		}
+		if recoverTransport && !c.serviceTransportReady(a) {
+			c.suspendServiceTransport(a)
+			_ = c.startServiceTransport(c.ctx, st, a)
+		}
 		for _, p := range a.policies {
 			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Second)
 			_ = p.RevalidateActive(ctx)
@@ -636,14 +860,31 @@ func (c *Core) serviceView(a *activeService) map[string]any {
 	endpoint := ""
 	if len(a.servers) > 0 {
 		endpoint = a.servers[0].Addr().String()
+	} else if a.spec.Direction == "forward" {
+		port := a.spec.LocalPort
+		if port == 0 {
+			intervals := a.effective.Intervals()
+			if len(intervals) > 0 {
+				port = int(intervals[0].First)
+			}
+		}
+		host, _ := serviceLoopback(a.spec.LoopbackHost)
+		endpoint = config.Address(host, port)
 	} else if a.address.IsValid() {
-		endpoint = a.address.String() + ":" + a.effective.String()
+		endpoint = net.JoinHostPort(a.address.String(), a.effective.String())
 	}
 	state := "active"
-	if !c.networkReady.Load() {
+	if !c.networkReady.Load() || !a.ready.Load() {
 		state = "reconnecting"
 	}
-	return map[string]any{"id": a.spec.ID, "name": a.spec.Name, "peerId": a.spec.PeerID, "peerIds": a.spec.PeerIDs, "network": a.spec.Network, "ports": a.effective.String(), "localPort": a.spec.LocalPort, "endpoint": endpoint, "expiresAt": a.expires, "status": state, "application": "unverified", "direction": a.spec.Direction}
+	if a.error != "" {
+		state = "failed"
+	}
+	var expiresAt any
+	if !a.expires.IsZero() {
+		expiresAt = a.expires
+	}
+	return map[string]any{"id": a.spec.ID, "name": a.spec.Name, "peerId": a.spec.PeerID, "peerIds": a.spec.PeerIDs, "network": a.spec.Network, "ports": a.effective.String(), "localPort": a.spec.LocalPort, "loopbackHost": a.spec.LoopbackHost, "lifetime": a.spec.Lifetime, "ttlSeconds": a.spec.TTLSeconds, "error": a.error, "endpoint": endpoint, "expiresAt": expiresAt, "status": state, "application": "unverified", "direction": a.spec.Direction}
 }
 func (c *Core) serviceViews() []map[string]any {
 	c.mu.RLock()
@@ -657,7 +898,7 @@ func (c *Core) serviceViews() []map[string]any {
 			if state == "" {
 				state = "saved"
 			}
-			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "peerId": s.PeerID, "peerIds": s.PeerIDs, "network": s.Network, "ports": s.Ports, "localPort": s.LocalPort, "status": state, "application": "unverified", "direction": s.Direction})
+			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "peerId": s.PeerID, "peerIds": s.PeerIDs, "network": s.Network, "ports": s.Ports, "localPort": s.LocalPort, "loopbackHost": s.LoopbackHost, "lifetime": s.Lifetime, "ttlSeconds": s.TTLSeconds, "status": state, "application": "unverified", "direction": s.Direction})
 		}
 	}
 	return out

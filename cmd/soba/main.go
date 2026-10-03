@@ -18,6 +18,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/control"
 	"github.com/webkaz-labs/sobalink/internal/core"
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 	assets "github.com/webkaz-labs/sobalink/web"
 	"golang.org/x/term"
@@ -333,9 +334,14 @@ var commandUsage = map[string]string{
 }
 
 func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool) (json.RawMessage, error) {
-	const limit = 48 << 10
 	if len(args) < 2 {
 		return nil, usageError(ja, commandUsage["command"])
+	}
+	limit := int64(48 << 10)
+	if args[0] == "message.send" {
+		// Preserve the decoded text policy even when valid JSON escaping expands
+		// it beyond the smaller private-invitation input allowance.
+		limit = int64(messageframe.CommandBytes)
 	}
 	var reader io.Reader
 	var owned io.Closer
@@ -348,7 +354,7 @@ func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool
 	case len(args) == 3 && args[1] == "--json-file":
 		info, e := os.Lstat(args[2])
 		if e != nil || !info.Mode().IsRegular() || info.Size() > limit {
-			return nil, errors.New(text(ja, "JSON input must be a regular file of at most 48 KiB", "JSON入力は48KiB以下の通常ファイルを指定してください"))
+			return nil, fmt.Errorf(text(ja, "JSON input must be a regular file of at most %d bytes", "JSON入力は%dバイト以下の通常ファイルを指定してください"), limit)
 		}
 		f, e := os.Open(args[2])
 		if e != nil {
@@ -384,8 +390,8 @@ func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool
 	if e != nil {
 		return nil, errors.New(text(ja, "Could not read JSON input", "JSON入力を読み込めませんでした"))
 	}
-	if len(data) > limit {
-		return nil, errors.New(text(ja, "JSON payload exceeds 48 KiB", "JSON入力が48KiBを超えています"))
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf(text(ja, "JSON payload exceeds the %d-byte input limit", "JSON入力が上限の%dバイトを超えています"), limit)
 	}
 	if !json.Valid(data) {
 		return nil, errors.New(text(ja, "Invalid JSON payload", "JSONの形式が正しくありません"))

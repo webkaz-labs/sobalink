@@ -30,9 +30,9 @@ import (
 
 func TestReviewedShareMappingAndClearingReceiveDefault(t *testing.T) {
 	p := newCorePair(t)
-	_, err := command(p.a, randomID(), "service.share", map[string]any{"name": "mapped", "network": "tcp", "ports": "8080", "localPort": 9000, "peerIds": []string{"peer-b"}, "ttlSeconds": 60})
-	if err == nil || len(p.a.profileCopy().Services) != 0 {
-		t.Fatal("unsupported share mapping was accepted or saved")
+	value := mustCommand(t, p.a, "service.share", map[string]any{"name": "mapped", "network": "tcp", "ports": "8080", "localPort": 9000, "peerIds": []string{"peer-b"}, "ttlSeconds": 60}).(map[string]any)
+	if value["localPort"] != 9000 || len(p.a.profileCopy().Services) != 1 {
+		t.Fatal("explicit share mapping was not preserved")
 	}
 	dir := t.TempDir()
 	mustCommand(t, p.a, "settings.update", map[string]string{"receiveDirectory": dir})

@@ -33,15 +33,7 @@ func (c *Core) StartWeb(assets fs.FS) (string, string, error) {
 		c.mu.Lock()
 		c.web = web
 		c.mu.Unlock()
-		c.mu.RLock()
-		var conflicts []string
-		for id, a := range c.active {
-			if a.spec.Direction == "share" && a.spec.Network == "tcp" && a.effective.Contains(web.Port()) {
-				conflicts = append(conflicts, id)
-			}
-		}
-		c.mu.RUnlock()
-		c.stopServiceIDs(conflicts)
+		c.reserveServicePort("tcp", web.Port())
 	}
 	code, e := web.IssueCode()
 	return web.URL(), code, e
@@ -512,7 +504,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if e := decodePayload(cmd.Payload, &v); e != nil {
 			return nil, e
 		}
-		return nil, c.probePeer(ctx, v.PeerID)
+		return nil, c.reconnectPeerServices(ctx, v.PeerID)
 	case "settings.update":
 		var v struct {
 			Locale           string  `json:"locale"`

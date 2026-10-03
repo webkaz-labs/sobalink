@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/webkaz-labs/sobalink/internal/httpbound"
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"io"
 	"io/fs"
 	"net"
@@ -155,14 +156,24 @@ func decode(w http.ResponseWriter, r *http.Request, limit int64, v any) error {
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return errCommandTooLarge
+		}
 		return errors.New("invalid request")
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return errCommandTooLarge
+		}
 		return errors.New("unexpected request data")
 	}
 	return nil
 }
+
+var errCommandTooLarge = errors.New("local command exceeds its JSON envelope limit; shorten the text or reduce the command payload")
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -230,11 +241,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, 200, state)
 		case r.URL.Path == "/api/command" && r.Method == "POST":
 			var cmd Command
-			if err := decode(w, r, 64<<10, &cmd); err != nil {
+			if err := decode(w, r, int64(messageframe.CommandBytes), &cmd); err != nil {
+				if errors.Is(err, errCommandTooLarge) {
+					fail(w, http.StatusRequestEntityTooLarge, "request_too_large", err.Error())
+					return
+				}
 				fail(w, 400, "invalid", err.Error())
 				return
 			}
-			if len(cmd.RequestID) < 1 || len(cmd.RequestID) > 128 || len(cmd.Name) > 64 {
+			if len(cmd.RequestID) < 1 || len(cmd.RequestID) > messageframe.RequestIDBytes || len(cmd.Name) > messageframe.CommandNameBytes {
 				fail(w, 400, "invalid", "A bounded request ID and command are required")
 				return
 			}

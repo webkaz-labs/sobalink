@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,83 @@ import (
 	"strings"
 	"testing"
 )
+
+type cancelAfterSourceChecks struct {
+	context.Context
+	cancel    context.CancelFunc
+	remaining int
+}
+
+func (c *cancelAfterSourceChecks) Err() error {
+	c.remaining--
+	if c.remaining <= 0 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func sourceCheckContext(checks int) context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &cancelAfterSourceChecks{Context: ctx, cancel: cancel, remaining: checks}
+}
+
+func TestSourcePlanningPrecedesPayloadReads(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "note.txt")
+	if err := os.WriteFile(source, []byte("payload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanSources(context.Background(), "batch", []string{source}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := plan.Manifest()
+	if len(manifest.Entries) != 1 || manifest.Entries[0].Size != 7 {
+		t.Fatalf("incorrect admission metadata: %+v", manifest)
+	}
+	// Mutating an admission copy must not change the data subsequently hashed.
+	manifest.Entries[0].Path = "changed.txt"
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	if manifest, sources, err := plan.Hash(context.Background()); !errors.Is(err, os.ErrNotExist) || len(manifest.Entries) != 0 || len(sources) != 0 {
+		t.Fatalf("hashing did not defer its payload read: %+v, %+v, %v", manifest, sources, err)
+	}
+	if plan.Manifest().Entries[0].Path != "note.txt" {
+		t.Fatal("admission metadata mutated the source plan")
+	}
+}
+
+func TestSourcePlanningAndHashingHonorCancellation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "selection")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("note-%d", i)), []byte("payload"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if plan, err := PlanSources(sourceCheckContext(5), "batch", []string{root}, Limits{}); !errors.Is(err, context.Canceled) || plan != nil {
+		t.Fatalf("cancelled directory enumeration = %+v, %v", plan, err)
+	}
+	source := filepath.Join(t.TempDir(), "payload.txt")
+	if err := os.WriteFile(source, []byte(strings.Repeat("x", streamBufferBytes*2)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanSources(context.Background(), "batch", []string{source}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest, sources, err := plan.Hash(sourceCheckContext(4)); !errors.Is(err, context.Canceled) || len(manifest.Entries) != 0 || len(sources) != 0 {
+		t.Fatalf("cancelled hashing returned partial data: %+v, %+v, %v", manifest, sources, err)
+	}
+	if err := os.WriteFile(source, []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := plan.Hash(context.Background()); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("source changed after planning = %v", err)
+	}
+}
 
 func TestBuildManifestTraversesDirectoriesAndKeepsSourcePathsPrivate(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "selection")
@@ -100,6 +178,9 @@ func TestBuildManifestRejectsCollidingSelectionsAndBounds(t *testing.T) {
 	}
 	if _, _, err := BuildManifest("batch", []string{first}, Limits{MaxFileBytes: 6}); !errors.Is(err, ErrLimit) {
 		t.Fatalf("oversized source = %v", err)
+	}
+	if _, _, err := BuildManifest("batch", []string{first}, Limits{MaxManifestBytes: 1000}); !errors.Is(err, ErrMetadataLimit) || !errors.Is(err, ErrLimit) {
+		t.Fatalf("source metadata budget error = %v", err)
 	}
 	if _, _, err := BuildManifest("batch", nil, Limits{}); !errors.Is(err, ErrInvalidManifest) {
 		t.Fatalf("empty selection = %v", err)

@@ -13,7 +13,7 @@ type TCPConfig struct {
 	DialTimeout   time.Duration
 }
 
-// StartTCP binds a literal IPv4 loopback address and forwards streams to Target.
+// StartTCP binds an exact numeric loopback address and forwards streams to Target.
 func StartTCP(ctx context.Context, cfg TCPConfig, dial Dialer) (*Server, error) {
 	if err := validateListenAddress(cfg.ListenAddress); err != nil {
 		return nil, err
@@ -28,7 +28,7 @@ func StartTCP(ctx context.Context, cfg TCPConfig, dial Dialer) (*Server, error) 
 	if err != nil {
 		return nil, err
 	}
-	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", cfg.ListenAddress)
+	l, err := (&net.ListenConfig{}).Listen(ctx, loopbackNetwork("tcp", cfg.ListenAddress), cfg.ListenAddress)
 	if err != nil {
 		return nil, err
 	}
