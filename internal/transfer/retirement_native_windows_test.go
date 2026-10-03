@@ -6,12 +6,104 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"golang.org/x/sys/windows"
 )
+
+// The batch root is protected before stage creation. The stage inherits its
+// sole current-user ACE; accountingPrivate instead requires a protected index.
+func assertWindowsReceiveDirectoryDACL(t *testing.T, f *os.File, inherited bool) {
+	t.Helper()
+	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal("receive directory GetSecurityInfo", err)
+	}
+	sidText, err := config.UserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := windows.StringToSid(sidText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !checkWindowsReceiveDirectoryDACL(t, sd, current, inherited) {
+		t.Errorf("receive directory lacks exclusive same-user full access (inherited=%t)", inherited)
+	}
+}
+
+func checkWindowsReceiveDirectoryDACL(t *testing.T, sd *windows.SECURITY_DESCRIPTOR, current *windows.SID, inherited bool) bool {
+	t.Helper()
+	defer runtime.KeepAlive(sd)
+	control, revision, controlErr := sd.Control()
+	acl, defaulted, aclErr := sd.DACL()
+	t.Logf("receive DACL inherited=%t control=%#x revision=%d controlErr=%v defaulted=%t null=%t aclErr=%v", inherited, control, revision, controlErr, defaulted, acl == nil, aclErr)
+	if controlErr != nil || aclErr != nil || acl == nil {
+		return false
+	}
+	t.Logf("receive ACL ACEs=%d", acl.AceCount)
+	if acl.AceCount != 1 {
+		return false
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(acl, 0, &ace); err != nil {
+		t.Log("receive GetAce", err)
+		return false
+	}
+	sameUser := ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE && (*windows.SID)(unsafe.Pointer(&ace.SidStart)).Equals(current)
+	t.Logf("receive ACE type=%#x flags=%#x size=%d mask=%#x sameUser=%t", ace.Header.AceType, ace.Header.AceFlags, ace.Header.AceSize, ace.Mask, sameUser)
+	flags := byte(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	if inherited {
+		flags |= windows.INHERITED_ACE
+	}
+	protected := control&windows.SE_DACL_PROTECTED != 0
+	return protected == !inherited && sameUser && ace.Header.AceFlags == flags && (ace.Mask&windows.GENERIC_ALL != 0 || ace.Mask&0x001f01ff == 0x001f01ff)
+}
+
+func TestWindowsRetirementReceiveDirectoryDACL(t *testing.T) {
+	// Synthetic SID and descriptors exercise the evidence assertion without
+	// touching a user's ACL or printing any account identifiers.
+	const sid = "S-1-5-21-1-2-3-1001"
+	current, err := windows.StringToSid(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, sddl      string
+		inherited, want bool
+	}{
+		{"protected-root", "D:P(A;OICI;FA;;;%s)", false, true},
+		{"inherited-stage", "D:(A;OICIID;FA;;;%s)", true, true},
+		{"unprotected-root", "D:(A;OICI;FA;;;%s)", false, false},
+		{"protected-stage", "D:P(A;OICIID;FA;;;%s)", true, false},
+		{"noninherited-stage", "D:(A;OICI;FA;;;%s)", true, false},
+		{"foreign-user", "D:(A;OICIID;FA;;;WD)", true, false},
+		{"extra-user", "D:(A;OICIID;FA;;;%s)(A;OICIID;FR;;;WD)", true, false},
+		{"inherit-only", "D:(A;OICIIOID;FA;;;%s)", true, false},
+		{"no-child-inheritance", "D:(A;ID;FA;;;%s)", true, false},
+		{"read-only", "D:(A;OICIID;FR;;;%s)", true, false},
+		{"deny-ACE", "D:(D;OICIID;FA;;;%s)", true, false},
+		{"empty-DACL", "D:", true, false},
+		{"null-DACL", "D:NO_ACCESS_CONTROL", true, false},
+		{"absent-DACL", "O:WD", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sddl := strings.ReplaceAll(tc.sddl, "%s", sid)
+			sd, err := windows.SecurityDescriptorFromString(sddl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := checkWindowsReceiveDirectoryDACL(t, sd, current, tc.inherited); got != tc.want {
+				t.Fatalf("private receive DACL=%t, want %t", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestWindowsRetirementDirectoryBarrierNative(t *testing.T) {
 	path := t.TempDir()
@@ -152,14 +244,20 @@ func TestWindowsRetirementSavedPartialCleanup(t *testing.T) {
 		}
 		t.Logf("prior partial actually written: bytes=%d integrity failure then checked empty-stage inventory", len("complete"))
 		r := m.accounting.Roots[len(m.accounting.Roots)-1]
+		owned, err := os.Open(r.OwnedRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertWindowsReceiveDirectoryDACL(t, owned, false)
+		if err := owned.Close(); err != nil {
+			t.Error(err)
+		}
 		stage, err := os.Open(filepath.Join(r.OwnedRoot, r.Stage))
 		if err != nil {
 			t.Fatal(err)
 		}
 		names, readErr := stage.Readdirnames(-1)
-		if !accountingPrivate(stage, nil) {
-			t.Error("private stage lacks actual protected same-user DACL")
-		}
+		assertWindowsReceiveDirectoryDACL(t, stage, true)
 		if err := stage.Close(); err != nil {
 			t.Error(err)
 		}

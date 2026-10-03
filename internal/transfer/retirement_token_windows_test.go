@@ -16,18 +16,47 @@ import (
 // missing evidence look like an ordinary-user result.
 func probeToken(t *testing.T, label string, token windows.Token) (bool, error) {
 	t.Helper()
+	luids, err := probePrivilegeLUIDs()
+	if err != nil {
+		return false, fmt.Errorf("token %s: %w", label, err)
+	}
+	return probeTokenWithLUIDs(t, label, token, luids)
+}
+
+type probePrivilegeIDs struct {
+	backup, restore, notify windows.LUID
+}
+
+func probePrivilegeLUIDs() (probePrivilegeIDs, error) {
+	var luids probePrivilegeIDs
+	for name, luid := range map[string]*windows.LUID{
+		"SeBackupPrivilege": &luids.backup, "SeRestorePrivilege": &luids.restore, "SeChangeNotifyPrivilege": &luids.notify,
+	} {
+		p, err := windows.UTF16PtrFromString(name)
+		if err != nil {
+			return luids, fmt.Errorf("privilege name %s: %w", name, err)
+		}
+		if err := windows.LookupPrivilegeValue(nil, p, luid); err != nil {
+			return luids, fmt.Errorf("LookupPrivilegeValue(%s): %w", name, err)
+		}
+	}
+	return luids, nil
+}
+
+func probeTokenWithLUIDs(t *testing.T, label string, token windows.Token, luids probePrivilegeIDs) (bool, error) {
+	t.Helper()
 	var elevated, elevationType, size uint32
 	for class, value := range map[uint32]*uint32{windows.TokenElevation: &elevated, windows.TokenElevationType: &elevationType} {
 		if err := windows.GetTokenInformation(token, class, (*byte)(unsafe.Pointer(value)), 4, &size); err != nil {
-			return false, err
+			return false, fmt.Errorf("token %s GetTokenInformation(class=%d): %w", label, class, err)
 		}
 		if size != 4 {
-			return false, fmt.Errorf("token class %d size=%d", class, size)
+			return false, fmt.Errorf("token %s GetTokenInformation(class=%d) size=%d, want 4", label, class, size)
 		}
 	}
 	groups, err := token.GetTokenGroups()
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("token %s GetTokenGroups: %w", label, err)
 	}
 	admin := false
 	for _, g := range groups.AllGroups() {
@@ -42,41 +71,45 @@ func probeToken(t *testing.T, label string, token windows.Token) (bool, error) {
 			admin = true
 		}
 	}
-	// TokenPrivileges is variable-sized; bounded storage is enough for the
-	// measured returned size and errors do not turn into 'no privileges'.
-	var needed uint32
-	err = windows.GetTokenInformation(token, windows.TokenPrivileges, nil, 0, &needed)
-	if err != windows.ERROR_INSUFFICIENT_BUFFER || needed < 4 || needed > 64*1024 {
-		return false, fmt.Errorf("token privileges size=%d: %v", needed, err)
-	}
-	data := make([]byte, needed)
-	if err := windows.GetTokenInformation(token, windows.TokenPrivileges, &data[0], needed, &needed); err != nil {
-		return false, err
-	}
-	privs := (*windows.Tokenprivileges)(unsafe.Pointer(&data[0]))
-	if uint64(privs.PrivilegeCount)*uint64(unsafe.Sizeof(windows.LUIDAndAttributes{}))+uint64(unsafe.Offsetof(privs.Privileges)) > uint64(len(data)) {
-		return false, fmt.Errorf("invalid privilege count")
-	}
-	var backup, restore windows.LUID
-	for name, luid := range map[string]*windows.LUID{"SeBackupPrivilege": &backup, "SeRestorePrivilege": &restore} {
-		p, err := windows.UTF16PtrFromString(name)
-		if err != nil {
-			return false, err
-		}
-		if err := windows.LookupPrivilegeValue(nil, p, luid); err != nil {
-			return false, err
-		}
+	privs, err := probeTokenPrivileges(token)
+	if err != nil {
+		return false, fmt.Errorf("token %s: %w", label, err)
 	}
 	power := false
-	for _, p := range privs.AllPrivileges() {
-		t.Logf("token %s privilege LUID=%#x:%#x attributes=%#x backup=%t restore=%t", label, p.Luid.HighPart, p.Luid.LowPart, p.Attributes, p.Luid == backup, p.Luid == restore)
-		if p.Attributes&windows.SE_PRIVILEGE_ENABLED != 0 && (p.Luid == backup || p.Luid == restore) {
+	for _, p := range privs {
+		t.Logf("token %s privilege LUID=%#x:%#x attributes=%#x backup=%t restore=%t", label, p.Luid.HighPart, p.Luid.LowPart, p.Attributes, p.Luid == luids.backup, p.Luid == luids.restore)
+		if p.Attributes&windows.SE_PRIVILEGE_ENABLED != 0 && (p.Luid == luids.backup || p.Luid == luids.restore) {
 			power = true
 		}
 	}
 	t.Logf("token %s elevation=%d elevationType=%d enabledAdmin=%t enabledBackupRestore=%t", label, elevated, elevationType, admin, power)
-	runtime.KeepAlive(data)
 	return elevated == 0 && !admin && !power, nil
+}
+
+// TokenPrivileges is variable-sized; keep the query bounded and distinguish
+// query failures from an actual empty privilege list.
+func probeTokenPrivileges(token windows.Token) ([]windows.LUIDAndAttributes, error) {
+	var needed uint32
+	err := windows.GetTokenInformation(token, windows.TokenPrivileges, nil, 0, &needed)
+	if err != windows.ERROR_INSUFFICIENT_BUFFER || needed < 4 || needed > 64*1024 {
+		return nil, fmt.Errorf("GetTokenInformation(TokenPrivileges, size): size=%d: %v", needed, err)
+	}
+	data := make([]byte, needed)
+	if err := windows.GetTokenInformation(token, windows.TokenPrivileges, &data[0], uint32(len(data)), &needed); err != nil {
+		return nil, fmt.Errorf("GetTokenInformation(TokenPrivileges, data): %w", err)
+	}
+	if needed < 4 || uint64(needed) > uint64(len(data)) {
+		return nil, fmt.Errorf("GetTokenInformation(TokenPrivileges, data): returned size=%d, buffer=%d", needed, len(data))
+	}
+	count := *(*uint32)(unsafe.Pointer(&data[0]))
+	const offset = unsafe.Offsetof(windows.Tokenprivileges{}.Privileges)
+	if uint64(count)*uint64(unsafe.Sizeof(windows.LUIDAndAttributes{}))+uint64(offset) > uint64(needed) {
+		return nil, fmt.Errorf("GetTokenInformation(TokenPrivileges, data): invalid privilege count=%d, size=%d", count, needed)
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	return unsafe.Slice((*windows.LUIDAndAttributes)(unsafe.Pointer(&data[offset])), count), nil
 }
 
 func hasAdminRID(sid string) bool {
@@ -128,28 +161,45 @@ func probeRestrictedIO(t *testing.T, profile, destination string) {
 	err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &existing)
 	if err == nil {
 		if err := existing.Close(); err != nil {
-			t.Error(err)
+			t.Errorf("existing thread token Close: %v", err)
 		}
 		t.Error("ordinary-user dimension PENDING: thread already impersonating")
 		return
 	}
 	if err != windows.ERROR_NO_TOKEN {
-		t.Errorf("ordinary-user dimension PENDING: thread query: %v", err)
+		t.Errorf("ordinary-user dimension PENDING: initial OpenThreadToken(OpenAsSelf=true): %v", err)
 		return
 	}
 	var original windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &original); err != nil {
-		t.Errorf("ordinary-user dimension PENDING: %v", err)
+		t.Errorf("ordinary-user dimension PENDING: OpenProcessToken: %v", err)
 		return
 	}
 	defer func() {
 		if err := original.Close(); err != nil {
-			t.Error(err)
+			t.Errorf("original token Close: %v", err)
 		}
 	}()
+	// Resolve privilege identifiers before impersonation: their lookup must not
+	// require authority that the effective restricted token is intended to lack.
+	luids, err := probePrivilegeLUIDs()
+	if err != nil {
+		t.Errorf("ordinary-user dimension PENDING: original context: %v", err)
+		return
+	}
+	originalUser, err := original.GetTokenUser()
+	if err != nil {
+		t.Errorf("same-user restriction not established: original GetTokenUser: %v", err)
+		return
+	}
+	originalSID := originalUser.User.Sid.String()
+	if originalSID == "" {
+		t.Error("same-user restriction not established: original user SID conversion failed")
+		return
+	}
 	groups, err := original.GetTokenGroups()
 	if err != nil {
-		t.Errorf("ordinary-user dimension PENDING: %v", err)
+		t.Errorf("ordinary-user dimension PENDING: original GetTokenGroups: %v", err)
 		return
 	}
 	var deny []windows.SIDAndAttributes
@@ -164,7 +214,7 @@ func probeRestrictedIO(t *testing.T, profile, destination string) {
 	}
 	proc := windows.NewLazySystemDLL("advapi32.dll").NewProc("CreateRestrictedToken")
 	if err := proc.Find(); err != nil {
-		t.Errorf("ordinary-user dimension PENDING: %v", err)
+		t.Errorf("ordinary-user dimension PENDING: resolve CreateRestrictedToken: %v", err)
 		return
 	}
 	var restricted windows.Token
@@ -179,17 +229,17 @@ func probeRestrictedIO(t *testing.T, profile, destination string) {
 	}
 	defer func() {
 		if err := restricted.Close(); err != nil {
-			t.Error(err)
+			t.Errorf("restricted token Close: %v", err)
 		}
 	}()
 	var impersonation windows.Token
 	if err := windows.DuplicateTokenEx(restricted, windows.TOKEN_QUERY|windows.TOKEN_IMPERSONATE, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &impersonation); err != nil {
-		t.Errorf("ordinary-user dimension PENDING: %v", err)
+		t.Errorf("ordinary-user dimension PENDING: DuplicateTokenEx: %v", err)
 		return
 	}
 	defer func() {
 		if err := impersonation.Close(); err != nil {
-			t.Error(err)
+			t.Errorf("impersonation token Close: %v", err)
 		}
 	}()
 	if err := windows.SetThreadToken(nil, impersonation); err != nil {
@@ -204,68 +254,59 @@ func probeRestrictedIO(t *testing.T, profile, destination string) {
 			t.Errorf("RevertToSelf FAILED: %v; locked thread will be retired", err)
 		}
 	}()
-	effective := windows.GetCurrentThreadEffectiveToken()
+	// OpenAsSelf uses the process context only for opening a query handle; the
+	// handle still refers to this thread's actual impersonation token. No process
+	// token fallback or revert is allowed while measuring restricted IO.
+	var effective windows.Token
+	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &effective); err != nil {
+		t.Errorf("ordinary-user dimension PENDING: effective OpenThreadToken(OpenAsSelf=true): %v", err)
+		return
+	}
+	defer func() {
+		if err := effective.Close(); err != nil {
+			t.Errorf("effective token Close: %v", err)
+		}
+	}()
 	u, err := effective.GetTokenUser()
 	if err != nil {
-		t.Error(err)
+		t.Errorf("same-user restriction not established: effective GetTokenUser: %v", err)
 		return
 	}
-	originalUser, err := original.GetTokenUser()
-	if err != nil {
-		t.Errorf("same-user restriction not established: %v", err)
-		return
-	}
-	effectiveSID, originalSID := u.User.Sid.String(), originalUser.User.Sid.String()
-	if effectiveSID == "" || originalSID == "" || effectiveSID != originalSID {
+	effectiveSID := u.User.Sid.String()
+	if effectiveSID == "" || effectiveSID != originalSID {
 		t.Error("same-user restriction not established: SID conversion failed or user differs")
 		return
 	}
-	_, err = probeToken(t, "restricted-thread", effective)
+	t.Logf("token restricted-thread user=%s originalUser=%s sameUser=true", effectiveSID, originalSID)
+	_, err = probeTokenWithLUIDs(t, "restricted-thread", effective, luids)
 	if err != nil {
 		t.Errorf("ordinary-user dimension PENDING: %v", err)
 		return
 	}
 	actualGroups, err := effective.GetTokenGroups()
 	if err != nil {
-		t.Error(err)
+		t.Errorf("effective GetTokenGroups restriction check: %v", err)
 		return
 	}
 	for _, g := range actualGroups.AllGroups() {
 		if g.Attributes&windows.SE_GROUP_ENABLED != 0 && g.Attributes&windows.SE_GROUP_INTEGRITY == 0 {
-			t.Error("restricted token retained enabled group authority")
+			t.Errorf("restricted token retained enabled group authority: SID=%s attributes=%#x", g.Sid.String(), g.Attributes)
 			return
 		}
 	}
 	// Verify all enabled privileges, not only backup/restore, are absent except
 	// change-notify. probeToken already emits the numeric privilege matrix.
-	var notify windows.LUID
-	p, _ := windows.UTF16PtrFromString("SeChangeNotifyPrivilege")
-	if err := windows.LookupPrivilegeValue(nil, p, &notify); err != nil {
-		t.Error(err)
+	privs, err := probeTokenPrivileges(effective)
+	if err != nil {
+		t.Errorf("effective privilege restriction check: %v", err)
 		return
 	}
-	var size uint32
-	if err := windows.GetTokenInformation(effective, windows.TokenPrivileges, nil, 0, &size); err != windows.ERROR_INSUFFICIENT_BUFFER || size < 4 || size > 64*1024 {
-		t.Error("restricted privilege query failed")
-		return
-	}
-	data := make([]byte, size)
-	if err := windows.GetTokenInformation(effective, windows.TokenPrivileges, &data[0], size, &size); err != nil {
-		t.Error(err)
-		return
-	}
-	privs := (*windows.Tokenprivileges)(unsafe.Pointer(&data[0]))
-	if uint64(privs.PrivilegeCount)*uint64(unsafe.Sizeof(windows.LUIDAndAttributes{}))+uint64(unsafe.Offsetof(privs.Privileges)) > uint64(len(data)) {
-		t.Error("invalid restricted privilege count")
-		return
-	}
-	for _, p := range privs.AllPrivileges() {
-		if p.Attributes&windows.SE_PRIVILEGE_ENABLED != 0 && p.Luid != notify {
-			t.Error("restricted token retained enabled privilege")
+	for _, p := range privs {
+		if p.Attributes&windows.SE_PRIVILEGE_ENABLED != 0 && p.Luid != luids.notify {
+			t.Errorf("restricted token retained enabled privilege: LUID=%#x:%#x attributes=%#x", p.Luid.HighPart, p.Luid.LowPart, p.Attributes)
 			return
 		}
 	}
-	runtime.KeepAlive(data)
 	t.Log("ordinary-rights exact-IO dimension: verified same-user thread token, all non-integrity enabled groups denied, all enabled privileges removed except change-notify; elevated process is NOT an ordinary-user process run")
 	// Synchronous calls stay on this thread. Manager's goroutines are measured
 	// separately on the process token, never relabeled as restricted execution.
