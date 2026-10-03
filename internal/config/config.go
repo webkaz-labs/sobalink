@@ -152,15 +152,26 @@ func ReadJSON(path string, v any) error {
 	return nil
 }
 func Save(dir string, c Config) error {
+	return SaveWith(dir, c, AtomicWrite)
+}
+
+// SaveWith validates and normalizes a profile before passing its encoded file
+// to the supplied writer. The default Save path uses the production atomic writer.
+func SaveWith(dir string, c Config, write func(string, []byte) error) error {
 	if e := c.Validate(); e != nil {
 		return e
 	}
 	if c.Version == 2 {
 		c = c.Disabled()
 	}
-	return WriteJSON(filepath.Join(dir, "profile.json"), c)
+	return WriteJSONWith(write, filepath.Join(dir, "profile.json"), c)
 }
 func WriteJSON(path string, v any) error {
+	return WriteJSONWith(AtomicWrite, path, v)
+}
+
+// WriteJSONWith retains the JSON envelope when a caller supplies its persistence boundary.
+func WriteJSONWith(write func(string, []byte) error, path string, v any) error {
 	b, e := json.MarshalIndent(v, "", "  ")
 	if e != nil {
 		return e
@@ -168,18 +179,22 @@ func WriteJSON(path string, v any) error {
 	if len(b)+1 > 64<<10 {
 		return errors.New("JSON exceeds 64 KiB limit; reduce rules or peer scope before saving")
 	}
-	return AtomicWrite(path, append(b, '\n'))
+	return write(path, append(b, '\n'))
 }
 func AtomicWrite(path string, b []byte) error {
-	if e := SecureDir(filepath.Dir(path)); e != nil {
-		return e
-	}
-	return atomicWriteFile(path, b)
+	return AtomicWritePrivate(path, b)
 }
 
 // AtomicWritePrivate writes a private file while preserving permissions of an
 // existing parent directory, for exports and per-user startup registrations.
+// A nil error confirms publication durability; ErrAtomicCommitted means the
+// file was replaced but durability is uncertain. Inspect before retrying.
 func AtomicWritePrivate(path string, b []byte) error {
+	var err error
+	path, err = atomicDestination(path)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -194,30 +209,5 @@ func AtomicWritePrivate(path string, b []byte) error {
 	return atomicWriteFile(path, b)
 }
 func atomicWriteFile(path string, b []byte) error {
-	if info, e := os.Lstat(path); e == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
-		return errors.New("refusing non-regular destination")
-	}
-	f, e := os.CreateTemp(filepath.Dir(path), ".write-*")
-	if e != nil {
-		return e
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if e = f.Chmod(0600); e == nil {
-		e = Protect(tmp, false)
-	}
-	if e == nil {
-		_, e = f.Write(b)
-	}
-	if e == nil {
-		e = f.Sync()
-	}
-	ce := f.Close()
-	if e != nil {
-		return e
-	}
-	if ce != nil {
-		return ce
-	}
-	return replace(tmp, path)
+	return atomicWriteOwned(path, b, nil)
 }

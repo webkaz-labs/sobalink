@@ -37,13 +37,14 @@ type Settings struct {
 	ReceiveDirectory string `json:"receiveDirectory"`
 }
 type Trust struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Network    string `json:"network"`
-	Generation uint64 `json:"generation"`
-	Autosave   bool   `json:"autosave"`
-	Directory  string `json:"directory,omitempty"`
-	Paused     bool   `json:"paused"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Network         string `json:"network"`
+	Generation      uint64 `json:"generation"`
+	Autosave        bool   `json:"autosave"`
+	Directory       string `json:"directory,omitempty"`
+	Paused          bool   `json:"paused"`
+	RevocationEpoch string `json:"revocationEpoch,omitempty"`
 }
 type Profile struct {
 	Version  int            `json:"version"`
@@ -102,6 +103,7 @@ type Core struct {
 	mu                         sync.RWMutex
 	op                         sync.Mutex
 	dir, version               string
+	atomicWrite                func(string, []byte) error
 	profile                    Profile
 	capacity                   capacity.Policy
 	resources                  *transport.Controller
@@ -121,6 +123,7 @@ type Core struct {
 	transfers                  *transfer.Manager
 	diskSpace                  *diskspace.Guard
 	messages                   []Message
+	messageHistoryUncertain    bool // protected by mu; cleared only by a successful whole-history save
 	outgoing                   map[string]*outgoingBatch
 	orphanSpoolBytes           int64
 	orphanSpoolEntries         int64
@@ -128,6 +131,8 @@ type Core struct {
 	confirmed                  map[string]time.Time
 	refreshMu                  sync.Mutex
 	refreshCursor              string
+	refreshAdmissionCursor     string
+	peerRefreshRetries         *peerRefreshScheduler
 	discovered                 map[string][]RemoteService
 	discoveryObservations      map[string]DiscoveryObservation
 	active                     map[string]*activeService
@@ -194,13 +199,19 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	c := &Core{dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
+	c := &Core{dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
 	c.capacity = limits
+	for _, peer := range p.Peers {
+		if peer.Generation > c.trustGeneration {
+			c.trustGeneration = peer.Generation
+		}
+	}
 	if err := c.loadStartup(opts.SkipNetworkStart); err != nil {
 		cancel()
 		return nil, err
 	}
 	c.inventoryOutgoingSpool()
+	p = c.profileCopy()
 	if err := c.writeProfile(p); err != nil {
 		cancel()
 		return nil, err
@@ -220,11 +231,6 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		return nil, err
 	}
 	p = c.profileCopy()
-	for _, peer := range p.Peers {
-		if peer.Generation > c.trustGeneration {
-			c.trustGeneration = peer.Generation
-		}
-	}
 	m, err := transfer.NewManager(transfer.Options{Limits: receiveTransferLimits(limits), PolicyStore: receiveStore{c}})
 	if err != nil {
 		cancel()

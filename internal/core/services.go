@@ -521,9 +521,17 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	if !replaced {
 		p.Services = append(p.Services, spec)
 	}
-	if e := c.saveProfile(p); e != nil {
+	saveErr := c.saveProfile(p)
+	if !atomicPublished(saveErr) {
 		cancel()
-		return nil, e
+		return nil, saveErr
+	}
+	if saveErr != nil {
+		c.mu.Lock()
+		c.profile = p
+		c.mu.Unlock()
+		cancel()
+		return nil, saveErr
 	}
 	c.mu.Lock()
 	c.profile = p

@@ -32,11 +32,7 @@ func TestInitMetadataOnlyRepeatAndDryRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, entry := range entries {
-			if entry.Name() != "sobalink.json" && entry.Name() != "process.lock" {
-				t.Fatal("unexpected initialized state", entry.Name())
-			}
-		}
+		assertOnlyOwnedProfileMetadata(t, dir, entries)
 		before, _ := os.ReadFile(filepath.Join(dir, "sobalink.json"))
 		result, err = call("init", "--json")
 		if err != nil || !strings.Contains(result, `"state":"exists"`) {

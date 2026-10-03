@@ -273,13 +273,19 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 					peerFailure(w, 409)
 					return
 				}
+				if c.messageHistoryUncertain {
+					if err := c.saveMessageHistoryLocked(c.messages); err != nil {
+						reply(w, http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, true).Error()})
+						return
+					}
+				}
 				reply(w, 200, map[string]string{"id": m.ID, "status": "received"})
 				return
 			}
 		}
 		message := Message{ID: msg.ID, PeerID: peerID, Text: msg.Text, Direction: "incoming", CreatedAt: time.Now().UTC(), Status: "received"}
 		if e := c.appendMessageLocked(message); e != nil {
-			reply(w, http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": "message could not be saved; check free storage and private state permissions"})
+			reply(w, http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(e, errors.Is(e, config.ErrAtomicCommitted)).Error()})
 			return
 		}
 		reply(w, 200, map[string]string{"id": message.ID, "status": "received"})
@@ -409,7 +415,7 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 			case http.StatusRequestEntityTooLarge:
 				return &localCommandError{"message_peer_too_large", "peer refused the message size; shorten the text and retry"}
 			case http.StatusInsufficientStorage:
-				return &localCommandError{"message_peer_storage_unavailable", "peer could not save the message; check its free storage and private state permissions before retrying"}
+				return &localCommandError{"message_peer_storage_unavailable", "peer could not confirm message history durability; check the receiver's history, free storage and private state permissions before retrying; do not blindly resend with a new message ID"}
 			}
 		}
 		return fmt.Errorf("peer refused this action (HTTP %d); check approval and receive settings", resp.StatusCode)
@@ -460,10 +466,42 @@ func (c *Core) peerJSON(ctx context.Context, id, method, path string, input, out
 	return c.peerRequest(ctx, id, method, path, body, "application/json", out)
 }
 
+type peerRefreshAdmissionContext struct {
+	scheduler *peerRefreshScheduler
+	ticket    *peerRefreshTicket
+}
+
+type peerRefreshAdmissionKey struct{}
+
 func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
+	callerCtx := ctx
+	var discovered []RemoteService
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	defer func() { c.recordDiscoveryObservation(id, probeErr) }()
+	defer func() {
+		if _, err := c.currentPeer(callerCtx, id); callerCtx.Err() == nil && err == nil {
+			publish := func() {
+				if probeErr == nil {
+					c.mu.Lock()
+					c.confirmed[id] = time.Now()
+					c.discovered[id] = discovered
+					c.mu.Unlock()
+				}
+				c.recordDiscoveryObservation(id, probeErr)
+			}
+			if admission, ok := callerCtx.Value(peerRefreshAdmissionKey{}).(peerRefreshAdmissionContext); ok {
+				admission.scheduler.publish(admission.ticket, publish)
+				return
+			}
+			publish()
+			c.mu.RLock()
+			retries := c.peerRefreshRetries
+			c.mu.RUnlock()
+			if probeErr == nil && retries != nil {
+				retries.forget(id)
+			}
+		}
+	}()
 	var hello struct {
 		Protocol     int      `json:"protocol"`
 		Product      string   `json:"product"`
@@ -481,10 +519,7 @@ func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
 			if err != nil {
 				return err
 			}
-			c.mu.Lock()
-			c.confirmed[id] = time.Now()
-			c.discovered[id] = services
-			c.mu.Unlock()
+			discovered = services
 			return nil
 		}
 	}
@@ -503,22 +538,27 @@ func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
 			return err
 		}
 	}
-	c.mu.Lock()
-	c.confirmed[id] = time.Now()
-	c.discovered[id] = services.Services
-	c.mu.Unlock()
+	discovered = services.Services
 	return nil
 }
 func (c *Core) refreshPeers(st identity.State) {
 	ctx, cancel := context.WithTimeout(c.ctx, 8*time.Second)
 	defer cancel()
-	c.refreshPeerBatch(ctx, st, c.probePeer)
+	c.refreshPeerBatchClock(ctx, st, c.probePeer, time.Now, true)
 }
 
 // The batch and concurrency limits bound one refresh pass, not peer eligibility.
 // Sorted IDs and a persistent cursor ensure later peers also get examined when
 // earlier probes consume the time budget. Only examined candidates advance it.
 func (c *Core) refreshPeerBatch(ctx context.Context, st identity.State, probe func(context.Context, string) error) {
+	c.refreshPeerBatchClock(ctx, st, probe, time.Now, false)
+}
+
+func (c *Core) refreshPeerBatchWithBackoff(ctx context.Context, st identity.State, probe func(context.Context, string) error, now time.Time) {
+	c.refreshPeerBatchClock(ctx, st, probe, func() time.Time { return now }, true)
+}
+
+func (c *Core) refreshPeerBatchClock(ctx context.Context, st identity.State, probe func(context.Context, string) error, now func() time.Time, background bool) {
 	if !c.refreshMu.TryLock() {
 		return
 	}
@@ -531,12 +571,38 @@ func (c *Core) refreshPeerBatch(ctx context.Context, st identity.State, probe fu
 	}
 	sort.Strings(ids)
 	ids = slices.Compact(ids)
+	var retries *peerRefreshScheduler
+	if background {
+		c.mu.Lock()
+		if c.peerRefreshRetries == nil {
+			c.peerRefreshRetries = newPeerRefreshScheduler()
+		}
+		retries = c.peerRefreshRetries
+		c.mu.Unlock()
+		active := make(map[string]struct{}, len(ids))
+		for _, id := range ids {
+			active[id] = struct{}{}
+		}
+		retries.prune(active, now())
+		retries.beginBatch()
+	}
+	isPresent := func(id string) bool {
+		index := sort.SearchStrings(ids, id)
+		return index < len(ids) && ids[index] == id
+	}
 	c.mu.Lock()
 	for id := range c.discoveryObservations {
-		index := sort.SearchStrings(ids, id)
-		if index == len(ids) || ids[index] != id {
+		if !isPresent(id) {
 			delete(c.discoveryObservations, id)
+		}
+	}
+	for id := range c.confirmed {
+		if !isPresent(id) {
 			delete(c.confirmed, id)
+		}
+	}
+	for id := range c.discovered {
+		if !isPresent(id) {
 			delete(c.discovered, id)
 		}
 	}
@@ -551,19 +617,56 @@ func (c *Core) refreshPeerBatch(ctx context.Context, st identity.State, probe fu
 	if start == len(ids) {
 		start = 0
 	}
+	type refreshCandidate struct {
+		id        string
+		admission bool
+	}
+	candidates := make([]refreshCandidate, 0, min(128, len(ids)))
+	selected := make(map[string]struct{}, min(128, len(ids)))
+	if background && retries.full() {
+		admissionStart := sort.SearchStrings(ids, c.refreshAdmissionCursor)
+		if admissionStart < len(ids) && ids[admissionStart] == c.refreshAdmissionCursor {
+			admissionStart++
+		}
+		if admissionStart == len(ids) {
+			admissionStart = 0
+		}
+		for i := 0; i < len(ids) && len(candidates) < peerRefreshOverflowPerBatch; i++ {
+			id := ids[(admissionStart+i)%len(ids)]
+			if retries.cached(id) {
+				continue
+			}
+			candidates = append(candidates, refreshCandidate{id: id, admission: true})
+			selected[id] = struct{}{}
+		}
+	}
 	slots := make(chan struct{}, 4)
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	for examined := 0; examined < min(128, len(ids)); examined++ {
+	for examined := 0; examined < len(ids) && len(candidates) < min(128, len(ids)); examined++ {
+		id := ids[(start+examined)%len(ids)]
+		if _, exists := selected[id]; !exists {
+			candidates = append(candidates, refreshCandidate{id: id})
+			selected[id] = struct{}{}
+		}
+	}
+	for _, candidate := range candidates {
 		if ctx.Err() != nil {
 			return
 		}
-		id := ids[(start+examined)%len(ids)]
+		id := candidate.id
+		advance := func() {
+			if candidate.admission {
+				c.refreshAdmissionCursor = id
+			} else {
+				c.refreshCursor = id
+			}
+		}
 		c.mu.RLock()
-		recent := time.Since(c.confirmed[id]) < 8*time.Second
+		recent := now().Sub(c.confirmed[id]) < 8*time.Second && !c.confirmed[id].IsZero()
 		c.mu.RUnlock()
 		if recent {
-			c.refreshCursor = id
+			advance()
 			continue
 		}
 		select {
@@ -575,9 +678,33 @@ func (c *Core) refreshPeerBatch(ctx context.Context, st identity.State, probe fu
 			<-slots
 			return
 		}
-		c.refreshCursor = id
+		var ticket *peerRefreshTicket
+		if background {
+			ticket = retries.admit(id, now())
+			if ticket == nil {
+				<-slots
+				advance()
+				continue
+			}
+		}
+		advance()
 		wg.Add(1)
-		go func() { defer wg.Done(); defer func() { <-slots }(); _ = probe(ctx, id) }()
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			probeCtx := ctx
+			if background {
+				probeCtx = context.WithValue(ctx, peerRefreshAdmissionKey{}, peerRefreshAdmissionContext{retries, ticket})
+			}
+			err := probe(probeCtx, id)
+			if background {
+				if ctx.Err() == nil {
+					retries.complete(ticket, now(), err == nil)
+				} else {
+					retries.cancel(ticket)
+				}
+			}
+		}()
 	}
 }
 
@@ -627,6 +754,10 @@ func readMessageHistory(path string, limit int64, history *[]Message) error {
 }
 
 func writeMessageHistory(path string, limit int64, history []Message) error {
+	return writeMessageHistoryWith(config.AtomicWrite, path, limit, history)
+}
+
+func writeMessageHistoryWith(write func(string, []byte) error, path string, limit int64, history []Message) error {
 	b, err := json.Marshal(history)
 	if err != nil {
 		return err
@@ -634,7 +765,7 @@ func writeMessageHistory(path string, limit int64, history []Message) error {
 	if int64(len(b))+1 > limit {
 		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
 	}
-	return config.AtomicWrite(path, append(b, '\n'))
+	return write(path, append(b, '\n'))
 }
 
 func (c *Core) loadMessages() error {
@@ -659,11 +790,11 @@ func (c *Core) appendMessageLocked(m Message) error {
 	next := append(append([]Message(nil), c.messages...), m)
 	// Retention choices are cleanup recommendations, never permission to erase
 	// older records while accepting a message or applying a different policy.
-	if e := writeMessageHistory(filepath.Join(c.dir, "messages.json"), c.messageHistoryStorageBytesLocked(), next); e != nil {
-		return e
+	saveErr := c.saveMessageHistoryLocked(next)
+	if atomicPublished(saveErr) {
+		c.messages = next
 	}
-	c.messages = next
-	return nil
+	return saveErr
 }
 
 func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -708,7 +839,10 @@ func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any
 		if msg.Status == "sent" {
 			message = "peer acknowledged receipt, but local message history could not be saved; check free storage and private state permissions; do not resend the delivered message"
 		}
-		return msg, fmt.Errorf("%w: %v", &localCommandError{"message_history_unavailable", message}, saveErr)
+		if errors.Is(saveErr, config.ErrAtomicCommitted) {
+			message = "local message history was replaced, but durability could not be confirmed; inspect history and the receiver before retrying; do not resend a delivered message"
+		}
+		return msg, privateAtomicError(&localCommandError{"message_history_unavailable", message}, saveErr)
 	}
 	return msg, e
 }

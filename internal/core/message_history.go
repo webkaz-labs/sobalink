@@ -4,9 +4,34 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/config"
 )
+
+const receivedHistoryUncertain = "message was received and history was replaced, but durability could not be confirmed; check the receiver's history and private state, and retry only with the same message ID; do not resend with a new ID"
+
+func messageHistoryError(err error, receivedUncertain bool) error {
+	message := "message could not be saved; check free storage and private state permissions"
+	if receivedUncertain {
+		message = receivedHistoryUncertain
+		// A failed reconciliation cannot erase the earlier published outcome.
+		err = errors.Join(config.ErrAtomicCommitted, err)
+	}
+	return privateAtomicError(&localCommandError{"message_history_unavailable", message}, err)
+}
+
+// All history writers share this state, including cleanup and same-ID replay.
+// Unpublished failures leave the previous publication's uncertainty intact.
+func (c *Core) saveMessageHistoryLocked(history []Message) error {
+	err := writeMessageHistoryWith(c.writeAtomic, filepath.Join(c.dir, "messages.json"), c.messageHistoryStorageBytesLocked(), history)
+	if atomicPublished(err) {
+		c.messageHistoryUncertain = err != nil
+	}
+	return err
+}
 
 func (c *Core) messageHistoryStorageBytesLocked() int64 {
 	return policyOrDefault(c.capacity).Number("resources", "messageStorageBytes")
@@ -83,11 +108,12 @@ func (c *Core) messageHistoryCommand(name string, raw json.RawMessage) (any, err
 	if remaining == nil {
 		remaining = []Message{}
 	}
-	if err := writeMessageHistory(filepath.Join(c.dir, "messages.json"), c.messageHistoryStorageBytesLocked(), remaining); err != nil {
-		return nil, err
+	saveErr := c.saveMessageHistoryLocked(remaining)
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	c.messages = remaining
-	return view, nil
+	return view, saveErr
 }
 
 func historyMessageKey(m Message) string { return m.Direction + ":" + m.PeerID + ":" + m.ID }

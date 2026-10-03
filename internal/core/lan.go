@@ -77,6 +77,7 @@ type lanState struct {
 type lanStore struct {
 	mu     sync.Mutex
 	path   string
+	write  func(string, []byte) error
 	state  lanState
 	limits atomic.Pointer[lanStoreLimits]
 }
@@ -252,10 +253,20 @@ func (s *lanStore) saveLocked(next lanState) error {
 	if int64(len(data))+1 > limits.bytes {
 		return &lanCommandError{"lan_state_capacity", fmt.Sprintf("private LAN state needs %d bytes; raise the %d-byte lanStateBytes budget before saving", len(data)+1, limits.bytes)}
 	}
-	if err := config.AtomicWrite(s.path, append(data, '\n')); err != nil {
-		return errors.New("could not save private LAN state; check its directory permissions and available space")
+	write := s.write
+	if write == nil {
+		write = config.AtomicWrite
 	}
-	s.state = cloneLANState(next)
+	saveErr := write(s.path, append(data, '\n'))
+	if atomicPublished(saveErr) {
+		s.state = cloneLANState(next)
+	}
+	if errors.Is(saveErr, config.ErrAtomicCommitted) {
+		return fmt.Errorf("private LAN state was replaced, but durability could not be confirmed; inspect private state before retrying: %w", config.ErrAtomicCommitted)
+	}
+	if saveErr != nil {
+		return privateAtomicError(errors.New("could not save private LAN state; check its directory permissions and available space"), saveErr)
+	}
 	return nil
 }
 
@@ -284,16 +295,17 @@ func (c *Core) ensureLANIdentity() (*lanStore, error) {
 	if saved := c.lanStoreCopy(); saved != nil {
 		return saved, nil
 	}
-	s := &lanStore{path: filepath.Join(c.dir, "lan.json")}
+	s := &lanStore{path: filepath.Join(c.dir, "lan.json"), write: c.writeAtomic}
 	s.limits.Store(selectedLANLimits(c.capacityPolicy()))
 	initial := lanState{Version: 1, Identity: lanlink.GenerateIdentity(), Trust: lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{}}, Remotes: []lanlink.RemotePeer{}}
-	if err := s.save(initial); err != nil {
-		return nil, err
+	saveErr := s.save(initial)
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	c.mu.Lock()
 	c.lan = s
 	c.mu.Unlock()
-	return s, nil
+	return s, saveErr
 }
 
 func (c *Core) configureLAN(selection *LANSelection) error {
@@ -358,18 +370,19 @@ func (c *Core) configureLAN(selection *LANSelection) error {
 		return errors.New("choose relay or host LAN setup")
 	}
 	if saved == nil {
-		saved = &lanStore{path: filepath.Join(c.dir, "lan.json"), state: lanState{Version: 1, Identity: lanlink.GenerateIdentity(), Trust: lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{}}, Remotes: []lanlink.RemotePeer{}}}
+		saved = &lanStore{path: filepath.Join(c.dir, "lan.json"), write: c.writeAtomic, state: lanState{Version: 1, Identity: lanlink.GenerateIdentity(), Trust: lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{}}, Remotes: []lanlink.RemotePeer{}}}
 		saved.limits.Store(selectedLANLimits(c.capacityPolicy()))
 	}
 	next := saved.copy()
 	next.Selection, next.RelayIdentity = &choice, relayIdentity
-	if err := saved.save(next); err != nil {
-		return err
+	saveErr := saved.save(next)
+	if !atomicPublished(saveErr) {
+		return saveErr
 	}
 	c.mu.Lock()
 	c.lan = saved
 	c.mu.Unlock()
-	return nil
+	return saveErr
 }
 
 type lanNetworkBackend interface {
@@ -722,6 +735,9 @@ func (c *Core) lanCommand(ctx context.Context, name string, raw json.RawMessage)
 		pairCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		if err := node.PairInvitation(pairCtx, invitation); err != nil {
+			if errors.Is(err, config.ErrAtomicRecovery) && !errors.Is(err, lanlink.ErrRemotePairedLocalSave) {
+				return nil, privateAtomicError(errors.New("LAN pairing is paused because private state needs recovery; stop this device and inspect its saved approval before restarting or reopening pairing"), err)
+			}
 			var capacityError *lanlink.PeerCapacityError
 			if errors.As(err, &capacityError) && !errors.Is(err, lanlink.ErrRemotePairedLocalSave) {
 				return nil, capacityError
@@ -736,7 +752,11 @@ func (c *Core) lanCommand(ctx context.Context, name string, raw json.RawMessage)
 				return nil, &lanCommandError{"lan_pair_reply_uncertain", "pairing reply was not received; check and revoke any completed pair on the other device before creating a new invitation"}
 			}
 			if errors.Is(err, lanlink.ErrRemotePairedLocalSave) {
-				return nil, &lanCommandError{"lan_remote_paired_local_save", "the other device paired, but the local save failed; revoke that pair on the other device before retrying"}
+				message := "the other device paired, but the local save was not written; inspect local saved approvals and revoke that pair on the other device before retrying"
+				if errors.Is(err, config.ErrAtomicCommitted) {
+					message = "the other device paired and local state was replaced, but durability could not be confirmed; pairing is paused; stop this device, inspect its saved approval before restarting, and reconcile or revoke the pair on both devices before retrying"
+				}
+				return nil, privateAtomicError(&lanCommandError{"lan_remote_paired_local_save", message}, err)
 			}
 			return nil, errors.New("pairing did not complete; check the invitation, selected relay and both devices")
 		}
@@ -784,8 +804,9 @@ func (r offlineLANRevoker) Revoke(id string) error {
 }
 
 func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
-	if err := c.revokeStartupPeer(id); err != nil {
-		return err
+	revocationErr := c.revokeStartupPeer(id)
+	if revocationErr != nil && !errors.Is(revocationErr, config.ErrAtomicCommitted) {
+		return revocationErr
 	}
 	p := c.profileCopy()
 	peers := p.Peers[:0]
@@ -805,14 +826,14 @@ func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
 	delete(c.confirmed, id)
 	delete(c.discovered, id)
 	c.mu.Unlock()
-	if removedAppTrust {
+	if removedAppTrust || revocationErr != nil {
 		c.revokePeer(id)
 	} else {
 		c.stopPeerServices(id)
 	}
 	profileErr := c.saveProfile(p)
 	transportErr := node.Revoke(id)
-	if profileErr != nil || transportErr != nil {
+	if revocationErr != nil || profileErr != nil || transportErr != nil {
 		_ = node.Close()
 		c.networkReady.Store(false)
 		c.stopAllServices()
@@ -822,7 +843,8 @@ func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
 		c.networkFatal = c.networkError
 		c.networkErrorCode = "lan_revoke_not_persisted"
 		c.mu.Unlock()
-		return &lanCommandError{"lan_revoke_not_persisted", "LAN stopped; durable revocation could not be confirmed. Repair private state before restarting"}
+		outcome := &lanCommandError{"lan_revoke_not_persisted", "LAN stopped; durable revocation could not be confirmed. Repair private state before restarting"}
+		return privateAtomicError(outcome, errors.Join(revocationErr, profileErr, transportErr))
 	}
 	return nil
 }
@@ -848,13 +870,14 @@ func (c *Core) reconcileLANTrust() error {
 		return nil
 	}
 	p.Peers = peers
-	if err := c.saveProfile(p); err != nil {
+	saveErr := c.saveProfile(p)
+	if !atomicPublished(saveErr) {
 		return errors.New("could not remove stale LAN application trust; repair private state before restarting")
 	}
 	c.mu.Lock()
 	c.profile = p
 	c.mu.Unlock()
-	return nil
+	return saveErr
 }
 
 var _ NetworkBackend = (*lanBackend)(nil)

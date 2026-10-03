@@ -334,8 +334,9 @@ func (c *Core) clientHelperCommand(ctx context.Context, name string, raw json.Ra
 		if review.Saved {
 			return review, nil
 		}
-		if err := c.saveProfile(next); err != nil {
-			return nil, err
+		saveErr := c.saveProfile(next)
+		if !atomicPublished(saveErr) {
+			return nil, saveErr
 		}
 		c.mu.Lock()
 		c.profile = next
@@ -345,7 +346,7 @@ func (c *Core) clientHelperCommand(ctx context.Context, name string, raw json.Ra
 			review.ClientSettings.Roles[i].Status = "saved"
 			review.ClientSettings.Roles[i].ListenerReady = false
 		}
-		return review, nil
+		return review, saveErr
 	case "rustdesk.settings":
 		var in struct {
 			Group string `json:"group"`

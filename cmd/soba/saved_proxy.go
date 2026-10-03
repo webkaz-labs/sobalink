@@ -16,6 +16,10 @@ func privateProxyCommand(name string) bool {
 	return name == "proxy.start" || name == "proxy.save" || name == "proxy.generate"
 }
 func savedProxyCLI(ctx context.Context, args []string, dir string, ja, dryRun bool, out io.Writer, stdin io.Reader, query commandQuery, request actionRequest) (bool, error) {
+	return savedProxyCLIWithWriter(ctx, args, dir, ja, dryRun, out, stdin, query, request, config.AtomicWritePrivate)
+}
+
+func savedProxyCLIWithWriter(ctx context.Context, args []string, dir string, ja, dryRun bool, out io.Writer, stdin io.Reader, query commandQuery, request actionRequest, write func(string, []byte) error) (bool, error) {
 	if len(args) == 0 {
 		return false, nil
 	}
@@ -84,7 +88,10 @@ func savedProxyCLI(ctx context.Context, args []string, dir string, ja, dryRun bo
 	if err != nil {
 		return true, errors.New("private credential encoding failed")
 	}
-	if err := config.AtomicWritePrivate(target, append(data, '\n')); err != nil {
+	if err := write(target, append(data, '\n')); err != nil {
+		if errors.Is(err, config.ErrAtomicCommitted) {
+			return true, fmt.Errorf("%s: %w", text(ja, "Private credential file was replaced, but durability is uncertain; inspect it before retrying", "認証情報の非公開ファイルは置換されましたが、永続化を確認できません。再実行する前にファイルを確認してください"), config.ErrAtomicCommitted)
+		}
 		return true, errors.New(text(ja, "Could not write the private credential file; check its directory and permissions", "認証情報の非公開ファイルを書き込めませんでした。保存先と権限を確認してください"))
 	}
 	_, err = fmt.Fprintln(out, text(ja, "Credentials written to the selected private file", "指定した非公開ファイルに認証情報を保存しました"))

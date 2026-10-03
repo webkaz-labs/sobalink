@@ -14,8 +14,23 @@ import (
 )
 
 func testNode() *Node {
-	return &Node{cfg: NodeConfig{Identity: GenerateIdentity(), Relay: TrustedRelay{netip.MustParseAddrPort("127.0.0.1:54446"), strings.Repeat("a", 64)}, Trust: NewBook(), Persist: func(Snapshot, []RemotePeer) error { return nil }}, clients: make(map[string]*remoteClient), admissions: make(map[string]time.Time), revoked: make(map[string]uint64), attempts: make(map[string]map[*pairAttempt]struct{}), server: &tailcat.Server{}}
+	return &Node{cfg: NodeConfig{Identity: GenerateIdentity(), Relay: TrustedRelay{netip.MustParseAddrPort("127.0.0.1:54446"), strings.Repeat("a", 64)}, Trust: NewBook(), Persist: func(Snapshot, []RemotePeer) error { return nil }}, clients: make(map[string]*remoteClient), admissions: make(map[string]time.Time), attempts: make(map[string]map[*pairAttempt]struct{}), server: &tailcat.Server{}}
 }
+
+func registeredPairAttemptFixture(t *testing.T, n *Node, peer string) *pairAttempt {
+	t.Helper()
+	_, cancel := context.WithCancel(context.Background())
+	attempt := &pairAttempt{peer: peer, cancel: cancel}
+	n.mu.Lock()
+	if n.attempts[peer] == nil {
+		n.attempts[peer] = make(map[*pairAttempt]struct{})
+	}
+	n.attempts[peer][attempt] = struct{}{}
+	n.mu.Unlock()
+	t.Cleanup(func() { n.retirePairAttempt(peer, attempt) })
+	return attempt
+}
+
 func pairFixture(t *testing.T) (*Node, *Node, Invitation, key.NodePrivate, []byte, []byte, pairRequest) {
 	t.Helper()
 	host, client := testNode(), testNode()
@@ -44,14 +59,14 @@ func TestAuthenticatedRoleBindingRoundTrip(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	reply, e := client.readReply(replyFrame, inv.Host, req, plain)
+	_, e = client.readReply(replyFrame, inv.Host, req, plain)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: hostRole, IncomingClientKey: req.RoleKey}, req.Token, 0); e != nil {
+	if e = host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: hostRole, IncomingClientKey: req.RoleKey}, req.Token, nil); e != nil {
 		t.Fatal(e)
 	}
-	if e = client.commitPair(context.Background(), RemotePeer{Peer: inv.Host.Peer, Address: inv.Host.Address, ClientPrivate: clientRole, IncomingClientKey: reply.RoleKey}, "", 0); e != nil {
+	if e = client.acceptPairReply(context.Background(), replyFrame, inv.Host, req, plain, clientRole, registeredPairAttemptFixture(t, client, host.PublicKey())); e != nil {
 		t.Fatal(e)
 	}
 	if canonical, ok := host.canonicalPeer(req.RoleKey); !ok || canonical != client.PublicKey() {
@@ -136,7 +151,7 @@ func TestPersistFailureDoesNotPublishApproval(t *testing.T) {
 		return errors.New("simulated save failure")
 	}
 	record := RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: key.NewNode(), IncomingClientKey: req.RoleKey}
-	if host.commitPair(context.Background(), record, req.Token, 0) == nil {
+	if host.commitPair(context.Background(), record, req.Token, nil) == nil {
 		t.Fatal("save failure hidden")
 	}
 	if calls != 1 || len(host.RemoteSnapshot()) != 0 {
@@ -151,12 +166,21 @@ func TestPersistFailureDoesNotPublishApproval(t *testing.T) {
 }
 func TestRevokeRaceRejectsLatePairCommit(t *testing.T) {
 	host, client, inv, role, _, _, _ := pairFixture(t)
+	attemptCtx, attemptCancel := context.WithCancel(context.Background())
+	attempt := &pairAttempt{peer: inv.Host.Peer.Key, cancel: attemptCancel}
+	client.mu.Lock()
+	client.attempts[inv.Host.Peer.Key] = map[*pairAttempt]struct{}{attempt: {}}
+	client.mu.Unlock()
 	if e := client.Revoke(host.PublicKey()); e != nil {
 		t.Fatal(e)
 	}
 	record := RemotePeer{Peer: inv.Host.Peer, Address: inv.Host.Address, ClientPrivate: role, IncomingClientKey: keyString(key.NewNode().Public())}
-	if e := client.commitPair(context.Background(), record, "", 0); !errors.Is(e, ErrUntrusted) {
+	if e := client.commitPair(context.Background(), record, "", attempt); !errors.Is(e, ErrUntrusted) {
 		t.Fatal("late pair re-approved revoked device", e)
+	}
+	client.retirePairAttempt(inv.Host.Peer.Key, attempt)
+	if err := attemptCtx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatal("revocation did not cancel the in-flight attempt", err)
 	}
 }
 func TestExplicitRelayValidationAndNoDefaultMap(t *testing.T) {
@@ -253,15 +277,15 @@ func TestRoleNamespaceAndRevocationEpoch(t *testing.T) {
 	record := RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: key.NewNode(), IncomingClientKey: req.RoleKey}
 	bad := record
 	bad.IncomingClientKey = host.PublicKey()
-	if host.commitPair(context.Background(), bad, req.Token, 0) == nil {
+	if host.commitPair(context.Background(), bad, req.Token, nil) == nil {
 		t.Fatal("local server key used as incoming role")
 	}
 	bad = record
 	bad.IncomingClientKey = keyString(bad.ClientPrivate.Public())
-	if host.commitPair(context.Background(), bad, req.Token, 0) == nil {
+	if host.commitPair(context.Background(), bad, req.Token, nil) == nil {
 		t.Fatal("same inbound/outbound role accepted")
 	}
-	if e = host.commitPair(context.Background(), record, req.Token, 0); e != nil {
+	if e = host.commitPair(context.Background(), record, req.Token, nil); e != nil {
 		t.Fatal(e)
 	}
 	id, epoch, ok := host.resolveRole(req.RoleKey)
@@ -274,7 +298,7 @@ func TestRoleNamespaceAndRevocationEpoch(t *testing.T) {
 	replacement := record
 	replacement.ClientPrivate = key.NewNode()
 	replacement.IncomingClientKey = keyString(key.NewNode().Public())
-	if e = host.commitPair(context.Background(), replacement, "", host.revoked[client.PublicKey()]); e != nil {
+	if e = host.commitPair(context.Background(), replacement, "", registeredPairAttemptFixture(t, host, client.PublicKey())); e != nil {
 		t.Fatal(e)
 	}
 	oldFlow := newFakeDatagrams(12345)
@@ -297,7 +321,7 @@ func TestPostACKLocalSaveFailureIsExplicit(t *testing.T) {
 		t.Fatal(e)
 	}
 	hostRole := key.NewNode()
-	if e = host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: hostRole, IncomingClientKey: req.RoleKey}, req.Token, 0); e != nil {
+	if e = host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: hostRole, IncomingClientKey: req.RoleKey}, req.Token, nil); e != nil {
 		t.Fatal(e)
 	}
 	reply, e := host.makeReply(req, plain, hostRole)
@@ -305,7 +329,7 @@ func TestPostACKLocalSaveFailureIsExplicit(t *testing.T) {
 		t.Fatal(e)
 	}
 	client.cfg.Persist = func(Snapshot, []RemotePeer) error { return errors.New("disk error") }
-	if e = client.acceptPairReply(context.Background(), reply, inv.Host, req, plain, role, 0); !errors.Is(e, ErrRemotePairedLocalSave) {
+	if e = client.acceptPairReply(context.Background(), reply, inv.Host, req, plain, role, registeredPairAttemptFixture(t, client, host.PublicKey())); !errors.Is(e, ErrRemotePairedLocalSave) {
 		t.Fatal(e)
 	}
 	if _, e = client.cfg.Trust.Epoch(host.PublicKey()); e == nil {
@@ -334,7 +358,7 @@ func TestSuccessfulPairPromotesExistingClientObject(t *testing.T) {
 		t.Fatal(e)
 	}
 	live := &tailcat.Client{Key: role, Server: inv.Host.Address}
-	if e = client.acceptPairReply(context.Background(), reply, inv.Host, req, plain, role, 0, live); e != nil {
+	if e = client.acceptPairReply(context.Background(), reply, inv.Host, req, plain, role, registeredPairAttemptFixture(t, client, host.PublicKey()), live); e != nil {
 		t.Fatal(e)
 	}
 	r, e := client.client(host.PublicKey())
@@ -355,10 +379,65 @@ func TestExpiredTransportAdmissionCannotCommitPair(t *testing.T) {
 	host.mu.Lock()
 	host.admissions[req.RoleKey] = time.Now().Add(-time.Second)
 	host.mu.Unlock()
-	if e = host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: key.NewNode(), IncomingClientKey: req.RoleKey}, req.Token, 0); !errors.Is(e, ErrUntrusted) {
+	if e = host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: key.NewNode(), IncomingClientKey: req.RoleKey}, req.Token, nil); !errors.Is(e, ErrUntrusted) {
 		t.Fatal("expired transport committed", e)
 	}
 	if _, e = host.cfg.Trust.Epoch(peer.Key); e == nil {
 		t.Fatal("expired transport gained trust")
+	}
+}
+
+func TestInboundPairCommitValidatesInvitationWithoutOutgoingAttempt(t *testing.T) {
+	for _, state := range []string{"valid", "wrong-token", "canceled", "expired", "wrong-peer", "wrong-relay"} {
+		t.Run(state, func(t *testing.T) {
+			host, client, _, role, frame, _, _ := pairFixture(t)
+			req, peer, _, err := host.readRequest(frame, keyString(role.Public()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := req.Token
+			switch state {
+			case "wrong-token":
+				token = strings.Repeat("0", 43)
+			case "canceled":
+				host.CancelInvitation(token)
+			case "expired", "wrong-peer", "wrong-relay":
+				host.cfg.Trust.mu.Lock()
+				for hash, invitation := range host.cfg.Trust.invites {
+					switch state {
+					case "expired":
+						invitation.expires = time.Now().Add(-time.Second)
+					case "wrong-peer":
+						invitation.peer.Key = GenerateIdentity().PublicKey()
+					case "wrong-relay":
+						invitation.relay = netip.MustParseAddrPort("127.0.0.2:54446")
+					}
+					host.cfg.Trust.invites[hash] = invitation
+				}
+				host.cfg.Trust.mu.Unlock()
+			}
+			calls := 0
+			host.cfg.Persist = func(Snapshot, []RemotePeer) error { calls++; return nil }
+			record := RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: key.NewNode(), IncomingClientKey: req.RoleKey}
+			err = host.commitPair(context.Background(), record, token, nil)
+			if state == "valid" {
+				if err != nil || calls != 1 {
+					t.Fatalf("valid inbound invitation required outgoing attempt: err=%v, saves=%d", err, calls)
+				}
+				if _, err := host.cfg.Trust.Epoch(client.PublicKey()); err != nil {
+					t.Fatal("valid inbound invitation did not activate trust", err)
+				}
+			} else {
+				if !errors.Is(err, ErrInvite) {
+					t.Fatalf("%s invitation: got %v, want ErrInvite", state, err)
+				}
+				if calls != 0 || len(host.RemoteSnapshot()) != 0 || len(host.cfg.Trust.Snapshot().Peers) != 0 {
+					t.Fatal("invalid inbound invitation persisted or activated trust")
+				}
+			}
+			if len(host.attempts) != 0 {
+				t.Fatal("inbound commit created outgoing attempt registrations")
+			}
+		})
 	}
 }
