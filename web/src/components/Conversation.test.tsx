@@ -338,7 +338,8 @@ describe.each(['en', 'ja'] as const)('reviewed outgoing discard (%s)', locale =>
   const close = locale === 'ja' ? '閉じる' : 'Close'
   const retry = locale === 'ja' ? '転送を再試行' : 'Retry transfer'
 
-  it.each(['failed', 'declined'] as const)('reviews and cancels %s copies before committing the exact batch', async status => {
+  it('reviews and cancels failed copies before committing the exact batch', async () => {
+    const status = 'failed' as const
     localStorage.setItem('sobalink.locale', locale)
     const state = withOffer()
     state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status }
@@ -372,6 +373,23 @@ describe.each(['en', 'ja'] as const)('reviewed outgoing discard (%s)', locale =>
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: copy.discardConfirm }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(requests).toEqual([{ requestId: expect.any(String), name: 'transfer.forget', payload: { transferId: 'batch-one' } }])
+  })
+})
+
+describe.each(['en', 'ja'] as const)('declined outgoing history (%s)', locale => {
+  it('offers no retry and clears history without a stale sending-copy review', async () => {
+    localStorage.setItem('sobalink.locale', locale)
+    const state = withOffer()
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'declined' }
+    const { requests } = setup(state)
+    render(<App />); await openPeer()
+    const card = screen.getByRole('article', { name: /Notes/ })
+    expect(within(card).getByText(locale === 'ja' ? '辞退済み' : 'Declined')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: /^(Retry transfer|転送を再試行)$/ })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: (locale === 'ja' ? transferJapanese : transferEnglish).discardBatch })).not.toBeInTheDocument()
+    await userEvent.click(within(card).getByRole('button', { name: locale === 'ja' ? '履歴から削除' : 'Remove from history' }))
+    await waitFor(() => expect(requests).toEqual([{ requestId: expect.any(String), name: 'transfer.forget', payload: { transferId: 'batch-one' } }]))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
 

@@ -214,7 +214,7 @@ soba accept TRANSFER_ID ./received
 
 The CLI resolves relative paths from its working directory. Choose an appropriate destination on the receiving host; on Windows, quote a path such as `C:\Downloads\sobalink`. Files with an existing name are saved under a unique name without replacing the existing file. The receiver checks the declared size and SHA-256 before finalizing a file. Empty folders are preserved when present in the manifest. File permissions are restricted; executable attributes and links are not imported.
 
-Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Canceling or revoking does not delete already saved files or retrieve data already sent.
+Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Once the sender confirms receiver rejection or cancellation, the batch is terminal: its sending copies are removed and staging capacity is released. It cannot be retried; choose the files again to offer a new batch. A temporary communication failure remains retryable and retains its sending copies. If cleanup fails, the capacity stays reserved until cleanup succeeds. Canceling or revoking does not delete already saved files or retrieve data already sent.
 
 ### Opt into autosave for one peer
 

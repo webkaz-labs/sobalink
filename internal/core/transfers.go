@@ -69,7 +69,9 @@ func (b *outgoingBatch) stop() {
 		b.cancel()
 	}
 	if !b.running && !b.staging && b.State != "completed" {
-		b.State = "cancelled"
+		if b.State != "declined" {
+			b.State = "cancelled"
+		}
 		if err := b.releaseSpoolLocked(); err != nil {
 			b.Error = "could not remove staged files; clear this transfer to retry cleanup"
 		}
@@ -90,8 +92,9 @@ func (b *outgoingBatch) releaseSpoolLocked() error {
 }
 
 var (
-	errOutgoingHistory = errors.New("transfer history is full; finish or clear existing transfers")
-	errOutgoingStaging = errors.New("outgoing staging capacity reached")
+	errOutgoingHistory  = errors.New("transfer history is full; finish or clear existing transfers")
+	errOutgoingStaging  = errors.New("outgoing staging capacity reached")
+	errReceiverDeclined = errors.New("receiver declined or cancelled this batch")
 )
 
 // Both browser and CLI staging use the same atomic admission. Existing IDs are
@@ -453,12 +456,15 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 			if ctx.Err() != nil {
 				b.State = "cancelled"
 				b.Error = "Transfer cancelled. Already saved files remain on the receiver."
+			} else if errors.Is(err, errReceiverDeclined) {
+				b.State = "declined"
+				b.Error = err.Error()
 			} else {
 				b.State = "failed"
 				b.Error = err.Error()
 			}
 		}
-		finished := b.State == "completed" || b.State == "cancelled"
+		finished := b.State == "completed" || b.State == "cancelled" || b.State == "declined"
 		if finished {
 			if cleanupErr := b.releaseSpoolLocked(); cleanupErr != nil {
 				b.Error = "could not remove staged files; clear this transfer to retry cleanup"
@@ -484,6 +490,9 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	if e != nil {
 		return e
 	}
+	if remote.ID != b.ID {
+		return errors.New("peer returned a different transfer ID")
+	}
 	waitCtx, finishWait := c.operationContext(ctx, "receiveWaitSeconds")
 	defer finishWait()
 	for remote.State == transfer.Pending {
@@ -493,20 +502,18 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 		case <-time.After(time.Second):
 		}
 		call, cancel = context.WithTimeout(waitCtx, 8*time.Second)
+		remote = wireBatch{}
 		e = c.peerJSON(call, b.PeerID, "GET", "/v1/batches/"+b.ID, nil, &remote)
 		cancel()
 		if e != nil {
 			return e
 		}
-	}
-	if remote.ID != b.ID {
-		return errors.New("peer returned a different transfer ID")
+		if remote.ID != b.ID {
+			return errors.New("peer returned a different transfer ID")
+		}
 	}
 	if remote.State == transfer.Cancelled || remote.State == transfer.Rejected {
-		b.mu.Lock()
-		b.State = "declined"
-		b.mu.Unlock()
-		return errors.New("receiver declined or cancelled this batch")
+		return errReceiverDeclined
 	}
 	b.mu.Lock()
 	b.State = "transferring"
@@ -529,10 +536,17 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 		}
 		if failed {
 			call, cancel = context.WithTimeout(ctx, 8*time.Second)
+			remote = wireBatch{}
 			e = c.peerJSON(call, b.PeerID, "POST", "/v1/batches/"+b.ID+"/retry/"+entry.ID, nil, &remote)
 			cancel()
 			if e != nil {
-				return e
+				return c.outgoingRequestFailure(ctx, b, e)
+			}
+			if remote.ID != b.ID {
+				return errors.New("peer returned a different transfer ID")
+			}
+			if remote.State == transfer.Cancelled || remote.State == transfer.Rejected {
+				return errReceiverDeclined
 			}
 		}
 		peer, ok := c.trust(b.PeerID)
@@ -549,7 +563,7 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 		cancel()
 		f.Close()
 		if e != nil {
-			return e
+			return c.outgoingRequestFailure(ctx, b, e)
 		}
 		if ack.BatchID != b.ID || ack.FileID != entry.ID || ack.Size != entry.Size || ack.SHA256 != entry.SHA256 {
 			return errors.New("receiver save confirmation did not match the file")
@@ -562,12 +576,19 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	b.State = "saving"
 	b.mu.Unlock()
 	call, cancel = context.WithTimeout(ctx, 8*time.Second)
+	remote = wireBatch{}
 	e = c.peerJSON(call, b.PeerID, "GET", "/v1/batches/"+b.ID, nil, &remote)
 	cancel()
 	if e != nil {
 		return e
 	}
-	if remote.ID != b.ID || remote.State != transfer.Completed {
+	if remote.ID != b.ID {
+		return errors.New("peer returned a different transfer ID")
+	}
+	if remote.State == transfer.Cancelled || remote.State == transfer.Rejected {
+		return errReceiverDeclined
+	}
+	if remote.State != transfer.Completed {
 		return errors.New("receiver has not confirmed the complete batch")
 	}
 	b.mu.Lock()
@@ -575,6 +596,29 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	b.Completed = remote.CompletedBytes
 	b.mu.Unlock()
 	return nil
+}
+
+// A failed file request can mean the receiver cancelled during transmission.
+// Release retry data only after an authenticated status confirms that exact
+// batch is terminal; an unavailable or nonterminal peer keeps the original error.
+func (c *Core) outgoingRequestFailure(ctx context.Context, b *outgoingBatch, cause error) error {
+	if ctx.Err() != nil {
+		return cause
+	}
+	call, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	var remote wireBatch
+	if err := c.peerJSON(call, b.PeerID, "GET", "/v1/batches/"+b.ID, nil, &remote); err != nil {
+		return cause
+	}
+	peer, ok := c.trust(b.PeerID)
+	if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused {
+		return cause
+	}
+	if remote.ID == b.ID && (remote.State == transfer.Cancelled || remote.State == transfer.Rejected) {
+		return errReceiverDeclined
+	}
+	return cause
 }
 
 func (c *Core) transferCommand(ctx context.Context, name string, raw json.RawMessage) (any, error) {

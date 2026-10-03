@@ -21,7 +21,7 @@ function TransferCard({ transfer, peer, t, locale, server, destination, setDesti
   const configuredDirectory = server.state?.settings?.receiveDirectory || server.state?.self.receiveDirectory || ''
   const [editingDestination, setEditingDestination] = useState(false)
   const [reviewingDiscard, setReviewingDiscard] = useState(false)
-  const discardsSendingCopies = !incoming && ['failed', 'declined'].includes(transfer.status)
+  const discardsSendingCopies = !incoming && transfer.status === 'failed'
   useEffect(() => { setReviewingDiscard(false) }, [transfer.id, transfer.direction, transfer.status])
   const selectedDestination = destination ?? configuredDirectory
   const action = (name: 'transfer.accept' | 'transfer.decline' | 'transfer.cancel' | 'transfer.retry' | 'transfer.forget') => server.run(name, { transferId: transfer.id, ...(name === 'transfer.accept' ? { destination: selectedDestination.trim() } : {}) }, `transfer:${transfer.id}`)
