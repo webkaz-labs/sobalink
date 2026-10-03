@@ -136,7 +136,7 @@ Parent-directory inventory is nonrecursive and bounded to 4096 entries, includin
 
 Atomic private-state replacement can publish a new file while durability remains uncertain. Saved-state owners reconcile memory to that file and report the uncertainty; an error does not imply rollback. A new service start with uncertain persistence stops before activation. Saved startup approvals must match current revocation epochs and require explicit renewal after revocation. Incoming-message retry uses the same ID and reconciles uncertain history before durable acknowledgement; ordinary duplicates skip history I/O. Public errors preserve machine types and redact private paths.
 
-Process-exit and restart tests establish recovery/control-flow behavior, not power-loss durability. Native Windows receiver retirement-directory barrier behavior remains pending validation, as do final combined-source native and real-device gates; see [remaining acceptance](ROADMAP.ja.md). The retirement guard does not itself prove staging ownership.
+Native Windows acceptance requires real directory barriers and receive/cancel/reopen behavior on the tested filesystem. Restricted same-user synchronous I/O does not establish proof for an unelevated ordinary-user process; process-exit and restart tests establish recovery/control-flow behavior, not power-loss durability. The retirement guard does not itself prove staging ownership; see [remaining acceptance](ROADMAP.ja.md).
 
 ## Connection graph scope
 
