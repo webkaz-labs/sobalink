@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -33,8 +34,11 @@ func probeToken(t *testing.T, label string, token windows.Token) (bool, error) {
 		// Include built-in administrators, backup operators, power users and
 		// domain administrator/enterprise administrator groups.
 		s := g.Sid.String()
+		if s == "" {
+			return false, fmt.Errorf("token %s group SID conversion failed", label)
+		}
 		t.Logf("token %s group=%s attributes=%#x", label, s, g.Attributes)
-		if g.Attributes&windows.SE_GROUP_ENABLED != 0 && (s == "S-1-5-32-544" || s == "S-1-5-32-547" || s == "S-1-5-32-551" || hasAdminRID(g.Sid)) {
+		if g.Attributes&windows.SE_GROUP_ENABLED != 0 && (s == "S-1-5-32-544" || s == "S-1-5-32-547" || s == "S-1-5-32-551" || hasAdminRID(s)) {
 			admin = true
 		}
 	}
@@ -75,16 +79,39 @@ func probeToken(t *testing.T, label string, token windows.Token) (bool, error) {
 	return elevated == 0 && !admin && !power, nil
 }
 
-func hasAdminRID(sid *windows.SID) bool {
-	if sid.SubAuthorityCount() < 2 {
-		return false
-	}
+func hasAdminRID(sid string) bool {
 	// Domain SIDs begin S-1-5-21; these well-known RIDs convey admin rights.
-	if sid.SubAuthority(0) != 21 {
+	// Use the canonical SID string: x/sys SubAuthority accessors return native
+	// interior pointers through uintptr, which fails under race/checkptr.
+	if !strings.HasPrefix(sid, "S-1-5-21-") {
 		return false
 	}
-	rid := sid.SubAuthority(uint32(sid.SubAuthorityCount()) - 1)
-	return rid == 512 || rid == 518 || rid == 519
+	rid := sid[strings.LastIndexByte(sid, '-')+1:]
+	return rid == "512" || rid == "518" || rid == "519"
+}
+
+func TestHasAdminRID(t *testing.T) {
+	for _, tc := range []struct {
+		sid  string
+		want bool
+	}{
+		{"S-1-5-21-1643835476-1616584234-1346609752-513", false},
+		{"S-1-5-21-1643835476-1616584234-1346609752-512", true},
+		{"S-1-5-21-1643835476-1616584234-1346609752-518", true},
+		{"S-1-5-21-1643835476-1616584234-1346609752-519", true},
+		{"S-1-5-21-1643835476-1616584234-1346609752-1512", false},
+		{"S-1-5-32-544", false},
+		{"S-1-5-32-512", false},
+		{"S-1-16-21-512", false},
+		{"S-1-5-21", false},
+		{"", false},
+	} {
+		t.Run(tc.sid, func(t *testing.T) {
+			if got := hasAdminRID(tc.sid); got != tc.want {
+				t.Errorf("hasAdminRID(%q) = %t, want %t", tc.sid, got, tc.want)
+			}
+		})
+	}
 }
 
 func probeRestrictedIO(t *testing.T, profile, destination string) {
@@ -184,8 +211,13 @@ func probeRestrictedIO(t *testing.T, profile, destination string) {
 		return
 	}
 	originalUser, err := original.GetTokenUser()
-	if err != nil || u.User.Sid.String() != originalUser.User.Sid.String() {
+	if err != nil {
 		t.Errorf("same-user restriction not established: %v", err)
+		return
+	}
+	effectiveSID, originalSID := u.User.Sid.String(), originalUser.User.Sid.String()
+	if effectiveSID == "" || originalSID == "" || effectiveSID != originalSID {
+		t.Error("same-user restriction not established: SID conversion failed or user differs")
 		return
 	}
 	_, err = probeToken(t, "restricted-thread", effective)
