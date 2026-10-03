@@ -1,0 +1,99 @@
+name: Source-built relay traffic observation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/relay-traffic.yml
+      - .github/fixtures/relay-traffic/**
+      - .github/scripts/measure-relay-traffic.py
+      - .github/scripts/test_measure_relay_traffic.py
+      - docs/RELAY_TRAFFIC_MEASUREMENT.en.md
+      - docs/RELAY_TRAFFIC_MEASUREMENT.ja.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-traffic-observation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly
+  RELEASE_SOURCE: 8e6cbb00d60757f701d7d453adb92590cc5d2544
+
+jobs:
+  isolated-relay-linux-amd64:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate aggregate schema and privacy without sockets
+        run: python -m unittest discover -s .github/scripts -p 'test_measure_relay_traffic.py' -v
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: 8e6cbb00d60757f701d7d453adb92590cc5d2544
+          path: released-source
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Locate exact native compilation caches
+        id: go-cache-info
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      # Read the exact already-tested main cache only; this job never saves one.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: trusted-main-go-v1-Linux-X64-ubuntu-24.04-go1.27.1-${{ hashFiles('released-source/go.mod', 'released-source/go.sum') }}-8e6cbb00d60757f701d7d453adb92590cc5d2544
+      - name: Check pure counter arithmetic and race safety
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .github/fixtures/relay-traffic/*.go)"
+          GOFLAGS= GO111MODULE=off go test -race .github/fixtures/relay-traffic/counters.go .github/fixtures/relay-traffic/counters_test.go
+      - name: Compile exact released source with test-only instrumentation
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          test "$(git -C released-source rev-parse HEAD)" = "$RELEASE_SOURCE"
+          git -C released-source diff --exit-code
+          cp .github/fixtures/relay-traffic/counters.go released-source/internal/lanlink/traffic_observation_counter_test.go
+          cp .github/fixtures/relay-traffic/counters_test.go released-source/internal/lanlink/traffic_observation_counter_unit_test.go
+          cp .github/fixtures/relay-traffic/integration_test.go released-source/internal/lanlink/traffic_observation_test.go
+          cd released-source
+          go mod verify > /dev/null
+          go test -c \
+            -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport \
+            -o "$RUNNER_TEMP/sobalink-relay-traffic.test" ./internal/lanlink
+      - name: Measure bounded synthetic relay traffic
+        timeout-minutes: 12
+        run: |
+          python .github/scripts/measure-relay-traffic.py \
+            --binary "$RUNNER_TEMP/sobalink-relay-traffic.test" \
+            --source released-source --fixtures .github/fixtures/relay-traffic \
+            --report "$RUNNER_TEMP/sobalink-relay-traffic-reports/relay-only-linux-amd64.json"
+      - name: Preserve only validated aggregate relay counters
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: source-built-relay-only-linux-amd64-traffic
+          path: ${{ runner.temp }}/sobalink-relay-traffic-reports/relay-only-linux-amd64.json
+          if-no-files-found: warn
+          retention-days: 14

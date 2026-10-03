@@ -2,17 +2,21 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-This guide describes the sobalink development draft and its `soba` executable. It is not an installation guide for the legacy `tsnet-bridge` releases. The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed.
+This guide covers the signed [sobalink 0.3.0-alpha.1 prerelease](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.1) and its `soba` executable. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37118184346) verified public signatures and actual installation on Linux x64/ARM64, macOS ARM64 and Windows x64. This is experimental software; real-device enrollment, application compatibility, native IME and OS sign-in/suspend remain separate checks. Legacy `tsnet-bridge` releases use different commands and configuration. The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed.
 
 [Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
 ## Start and open the local UI
 
-[Build this checkout](DISTRIBUTION.md#build-this-checkout), then run:
+With mise **2026.9.18**, install and select the explicitly pinned signed prerelease, verify the version, then start it:
 
 ```sh
-soba
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise exec -- soba version
+mise exec -- soba
 ```
+
+`mise use -g` changes the globally selected version. Keep signature and identity checks enabled. The examples below use `soba` directly when mise is activated; otherwise prefix each command with `mise exec --`. A [source build](DISTRIBUTION.md#build-this-checkout) is also available; use its `./bin/soba` executable (`./bin/soba.exe` on Windows).
 
 `soba start` is equivalent. It runs in the foreground. Keep that terminal open; Ctrl+C closes its active connections and shares. From another terminal:
 
@@ -267,7 +271,17 @@ soba stop
 
 Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
-No released sobalink upgrade path exists yet. For a new development build, stop the process, keep a private backup of state if needed, rebuild the frontend and binary from the intended source, run `soba version` and `soba start --offline` to inspect retained settings, then restart normally and explicitly restart the services you want. See `soba help upgrade` for the short workflow. Keep backups private because they contain identity and peer information. A fresh state directory requires its own enrollment and trust decisions. Legacy `tsnet-bridge` commands and configuration are not compatibility requirements for this new product.
+Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Review the chosen release and its successful verification before changing the version pin; do not assume prerelease state is compatible with every upgrade or downgrade. The current verified pin is:
+
+```sh
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise exec -- soba version
+mise exec -- soba start --offline
+```
+
+Inspect retained settings and startup approvals in the local UI, then stop this offline instance before starting normally. Explicit outbound startup approvals may run again; inbound shares require a separate start. Keep the same `--state-dir` in every command when using a custom directory. Source-build users can rebuild the frontend and executable from a reviewed source instead. The `soba help upgrade` text embedded in 0.3.0-alpha.1 still describes the source-build route; the signed-install instructions above apply to the published prerelease.
+
+Legacy `tsnet-bridge` 0.2.x commands and configuration are incompatible with sobalink, and there is no automatic migration of that schema. Keep the old state separately and use a sobalink state directory. A fresh directory requires its own enrollment and trust decisions.
 
 Saved-network startup failure can be recovered with `soba start --offline`. It keeps local management available, labels saved peers unverified/offline, and allows explicit pair revocation or relay reconfiguration without starting that network.
 
