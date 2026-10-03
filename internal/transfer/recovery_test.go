@@ -253,12 +253,16 @@ func TestReceiveAccountingBudgetsAndCancellation(t *testing.T) {
 	options := crashOptions(dir)
 	options.Context = ctx
 	m, err := NewManager(options)
+	if !errors.Is(err, context.Canceled) || m != nil {
+		t.Fatalf("cancelled startup published a manager: %v %v", m, err)
+	}
+	m, err = NewManager(crashOptions(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	if m.ReceiveRecovery().State != "blocked" {
-		t.Fatal("cancelled inventory published a partial result")
+	if view := m.ReceiveRecovery(); view.ReservedBytes == nil || *view.ReservedBytes != 7 {
+		t.Fatalf("cancelled inventory changed retained accounting: %+v", view)
 	}
 }
 
@@ -326,6 +330,95 @@ func TestReceiveAccountingLegacyReviewIsExplicitAndDurable(t *testing.T) {
 	defer m.Close()
 	if m.ReceiveRecovery().State != "ready" {
 		t.Fatal("explicit review did not persist")
+	}
+}
+
+type cancellationDuringMissingLoadStore struct {
+	FileReceiveAccountingStore
+	loads          int
+	callerCancel   context.CancelFunc
+	lifetimeCancel context.CancelFunc
+}
+
+func (s *cancellationDuringMissingLoadStore) LoadReceiveAccounting() (ReceiveAccounting, error) {
+	s.loads++
+	if s.loads == 2 {
+		s.callerCancel()
+		s.lifetimeCancel()
+	}
+	return s.FileReceiveAccountingStore.LoadReceiveAccounting()
+}
+
+type dualRecoveryContext struct {
+	context.Context
+	caller, lifetime context.Context
+}
+
+func (ctx dualRecoveryContext) Err() error {
+	if err := ctx.caller.Err(); err != nil {
+		return err
+	}
+	if err := ctx.lifetime.Err(); err != nil {
+		return err
+	}
+	return ctx.Context.Err()
+}
+
+func TestLegacyReviewCancellationDuringMissingLoadDoesNotInitializeIndex(t *testing.T) {
+	dir := t.TempDir()
+	caller, cancelCaller := context.WithCancel(context.Background())
+	lifetime, cancelLifetime := context.WithCancel(context.Background())
+	store := &cancellationDuringMissingLoadStore{
+		FileReceiveAccountingStore: FileReceiveAccountingStore{Path: filepath.Join(dir, "receive-accounting.json")},
+		callerCancel:               cancelCaller, lifetimeCancel: cancelLifetime,
+	}
+	options := Options{AccountingStore: store, ExistingState: true}
+	m, err := NewManager(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := m.ConfirmReceiveRecovery(dualRecoveryContext{Context: caller, caller: caller, lifetime: lifetime}, true)
+	if err == nil || view.Applied {
+		t.Fatalf("cancelled review applied: %+v %v", view, err)
+	}
+	if _, err := os.Stat(store.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled review initialized index: %v", err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewManager(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if recovery := restarted.ReceiveRecovery(); recovery.Code != "legacy_review_required" || recovery.State != "blocked" {
+		t.Fatalf("restart lost legacy review gate: %+v", recovery)
+	}
+}
+
+type cancelStartupLoadStore struct {
+	FileReceiveAccountingStore
+	cancel context.CancelFunc
+}
+
+func (s cancelStartupLoadStore) LoadReceiveAccounting() (ReceiveAccounting, error) {
+	s.cancel()
+	return s.FileReceiveAccountingStore.LoadReceiveAccounting()
+}
+
+func TestCancelledStartupLoadDoesNotInitializeAccountingIndex(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	store := cancelStartupLoadStore{
+		FileReceiveAccountingStore: FileReceiveAccountingStore{Path: filepath.Join(dir, "receive-accounting.json")},
+		cancel:                     cancel,
+	}
+	if _, err := NewManager(Options{Context: ctx, AccountingStore: store}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled startup load error = %v", err)
+	}
+	if _, err := os.Stat(store.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled startup initialized index: %v", err)
 	}
 }
 

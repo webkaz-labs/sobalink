@@ -24,10 +24,6 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		return FileAck{}, ErrState
 	}
 	m.mu.Lock()
-	if m.recoveryCode != "" {
-		m.mu.Unlock()
-		return FileAck{}, ErrReceiveRecovery
-	}
 	p, err := m.checkPeerLocked(peer)
 	if err != nil {
 		m.mu.Unlock()
@@ -56,6 +52,10 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		ack := savedAck(b, f)
 		m.mu.Unlock()
 		return ack, nil
+	}
+	if m.recoveryCode != "" {
+		m.mu.Unlock()
+		return FileAck{}, ErrReceiveRecovery
 	}
 	if terminal(b.value.State) || b.value.State == Pending || f.State != FilePending || b.root == nil {
 		m.mu.Unlock()

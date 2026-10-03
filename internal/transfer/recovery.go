@@ -59,13 +59,17 @@ func (m *Manager) ConfirmReceiveRecovery(ctx context.Context, reviewed bool) (Re
 			return m.recoveryViewLocked(false), ErrReceiveRecovery
 		}
 		m.policySavePending = false
+		if err := ctx.Err(); err != nil {
+			return m.recoveryViewLocked(false), err
+		}
 	}
 	state, err := m.accountingStore.LoadReceiveAccounting()
-	if m.recoveryCode == "legacy_review_required" && errors.Is(err, os.ErrNotExist) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return m.recoveryViewLocked(false), ctxErr
+	}
+	initializeLegacy := m.recoveryCode == "legacy_review_required" && errors.Is(err, os.ErrNotExist)
+	if initializeLegacy {
 		state = ReceiveAccounting{Version: 1}
-		if err = m.accountingStore.SaveReceiveAccounting(state); err != nil {
-			return m.recoveryViewLocked(false), ErrReceiveRecovery
-		}
 	} else if err != nil {
 		return m.recoveryViewLocked(false), ErrReceiveRecovery
 	}
@@ -73,9 +77,15 @@ func (m *Manager) ConfirmReceiveRecovery(ctx context.Context, reviewed bool) (Re
 	if err != nil {
 		return m.recoveryViewLocked(false), ErrReceiveRecovery
 	}
-	if len(next.Roots) != len(state.Roots) {
+	if initializeLegacy || len(next.Roots) != len(state.Roots) {
+		if err := ctx.Err(); err != nil {
+			return m.recoveryViewLocked(false), err
+		}
 		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
 			return m.recoveryViewLocked(false), ErrReceiveRecovery
+		}
+		if err := ctx.Err(); err != nil {
+			return m.recoveryViewLocked(false), err
 		}
 	}
 	if err := ctx.Err(); err != nil {

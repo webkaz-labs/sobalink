@@ -75,8 +75,14 @@ func NewManager(options Options) (*Manager, error) {
 			startupCtx = context.Background()
 		}
 		state, loadErr := m.accountingStore.LoadReceiveAccounting()
+		if err := startupCtx.Err(); err != nil {
+			return nil, err
+		}
 		if errors.Is(loadErr, os.ErrNotExist) && !options.ExistingState {
 			loadErr = m.accountingStore.SaveReceiveAccounting(m.accounting)
+			if err := startupCtx.Err(); err != nil {
+				return nil, err
+			}
 			state = m.accounting
 		} else if errors.Is(loadErr, os.ErrNotExist) {
 			m.recoveryCode = "legacy_review_required"
@@ -309,9 +315,6 @@ func (m *Manager) checkPeerIdentityLocked(peer Peer) (*peerState, error) {
 func (m *Manager) Offer(peer Peer, manifest Manifest) (Batch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.recoveryCode != "" {
-		return Batch{}, ErrReceiveRecovery
-	}
 	if _, err := m.checkPeerLocked(peer); err != nil {
 		return Batch{}, err
 	}
@@ -320,6 +323,9 @@ func (m *Manager) Offer(peer Peer, manifest Manifest) (Batch, error) {
 			return Batch{}, ErrConflict
 		}
 		return snapshot(existing), nil
+	}
+	if m.recoveryCode != "" {
+		return Batch{}, ErrReceiveRecovery
 	}
 	// Serialize validation as well as reservation: concurrent offers cannot
 	// multiply temporary normalization/tree-validation allocations unboundedly.

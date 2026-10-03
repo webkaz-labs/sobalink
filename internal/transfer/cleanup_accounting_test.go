@@ -15,6 +15,71 @@ type accountingFailureStore struct {
 	fail bool
 }
 
+type saveThenFailAccountingStore struct {
+	FileReceiveAccountingStore
+	saves int
+}
+
+func (s *saveThenFailAccountingStore) SaveReceiveAccounting(state ReceiveAccounting) error {
+	s.saves++
+	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(state); err != nil {
+		return err
+	}
+	if s.saves == 3 {
+		return errors.New("response lost after accounting save")
+	}
+	return nil
+}
+
+func TestReceiveAccountingRetirementFailurePreservesIdempotentRetries(t *testing.T) {
+	dir := t.TempDir()
+	store := &saveThenFailAccountingStore{FileReceiveAccountingStore: FileReceiveAccountingStore{Path: filepath.Join(dir, "receive-accounting.json")}}
+	m, peer := testManager(t, Options{AccountingStore: store})
+	manifest := testManifest("saved", testEntry("file", "payload", "payload"))
+	if _, err := m.Offer(peer, manifest); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, "receive")
+	if err := os.Mkdir(destination, 0700); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := m.Accept(manifest.ID, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := testManifest("pending", testEntry("next", "next", "next"))
+	if _, err := m.Offer(peer, pending); err != nil {
+		t.Fatal(err)
+	}
+	firstAck, err := m.ReceiveFile(context.Background(), peer, manifest.ID, "file", strings.NewReader("payload"))
+	if err != nil || firstAck.FileID != "file" {
+		t.Fatalf("saved payload result: %+v %v", firstAck, err)
+	}
+	if view := m.ReceiveRecovery(); view.Code != "index_unavailable" {
+		t.Fatalf("retirement failure did not block receiving: %+v", view)
+	}
+	if duplicate, err := m.Offer(peer, manifest); err != nil || duplicate.ID != manifest.ID {
+		t.Fatalf("identical offer retry = %+v, %v", duplicate, err)
+	}
+	ack, err := m.ReceiveFile(context.Background(), peer, manifest.ID, "file", unreadableReader{t})
+	if err != nil || ack != (FileAck{BatchID: manifest.ID, FileID: "file", StoredName: "payload", Size: 7, SHA256: testEntry("file", "payload", "payload").SHA256}) {
+		t.Fatalf("saved ACK retry = %+v, %v", ack, err)
+	}
+	if _, err := m.Offer(peer, testManifest("new", testEntry("new-file", "new", "x"))); !errors.Is(err, ErrReceiveRecovery) {
+		t.Fatalf("new offer escaped recovery gate: %v", err)
+	}
+	if _, err := m.ReceiveFile(context.Background(), peer, pending.ID, "next", unreadableReader{t}); !errors.Is(err, ErrReceiveRecovery) {
+		t.Fatalf("new payload escaped recovery gate: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(accepted.Destination, "payload")); err != nil || string(data) != "payload" {
+		t.Fatalf("saved output lost: %q %v", data, err)
+	}
+	state, err := store.LoadReceiveAccounting()
+	if err != nil || len(state.Roots) != 0 {
+		t.Fatalf("fixture did not persist retirement before lost response: %+v %v", state, err)
+	}
+}
+
 func (s *accountingFailureStore) SaveReceiveAccounting(state ReceiveAccounting) error {
 	if s.fail {
 		return errors.New("private-path/secret-token")
