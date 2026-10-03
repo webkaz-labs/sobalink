@@ -245,14 +245,15 @@ func (c *Core) saveDefinition(raw json.RawMessage) (any, error) {
 	} else {
 		p.Services[index] = spec
 	}
-	if err := c.saveProfile(p); err != nil {
-		return nil, err
+	saveErr := c.saveProfile(p)
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	c.mu.Lock()
 	c.profile = p
 	delete(c.serviceStates, spec.ID)
 	c.mu.Unlock()
-	return SavedServiceConfiguration{Configuration: spec, Revision: serviceRevision(spec), Active: false}, nil
+	return SavedServiceConfiguration{Configuration: spec, Revision: serviceRevision(spec), Active: false}, saveErr
 }
 
 func (c *Core) deleteDefinition(raw json.RawMessage) (any, error) {
@@ -297,9 +298,10 @@ func (c *Core) deleteDefinition(raw json.RawMessage) (any, error) {
 	}
 	p.Services = slices.Delete(p.Services, index, index+1)
 	p.Groups = groups
-	// Persist first: a failed disk write leaves the live permission untouched.
-	if err := c.saveProfile(p); err != nil {
-		return nil, err
+	// Persist first: an uncommitted failure leaves the live permission untouched.
+	saveErr := c.saveProfile(p)
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	c.stopServiceIDs([]string{in.ID})
 	c.mu.Lock()
@@ -308,7 +310,7 @@ func (c *Core) deleteDefinition(raw json.RawMessage) (any, error) {
 	delete(c.serviceFailures, in.ID)
 	delete(c.serviceDiagnostics, in.ID)
 	c.mu.Unlock()
-	return map[string]any{"id": in.ID, "deleted": true, "stopped": active}, nil
+	return map[string]any{"id": in.ID, "deleted": true, "stopped": active}, saveErr
 }
 
 func (c *Core) profileDefinitionsCommand(name string, raw json.RawMessage) (any, error) {
@@ -393,8 +395,9 @@ func (c *Core) profileDefinitionsCommand(name string, raw json.RawMessage) (any,
 	if active {
 		return nil, &localCommandError{"service_active", "stop active services before replacing saved definitions"}
 	}
-	if err := c.saveProfile(next); err != nil {
-		return nil, err
+	saveErr := c.saveProfile(next)
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	c.mu.Lock()
 	c.profile = next
@@ -403,7 +406,7 @@ func (c *Core) profileDefinitionsCommand(name string, raw json.RawMessage) (any,
 	c.serviceDiagnostics = map[string]ServiceDiagnostic{}
 	c.mu.Unlock()
 	view["applied"] = true
-	return view, nil
+	return view, saveErr
 }
 
 func (c *Core) groupCommand(name string, raw json.RawMessage) (any, error) {
@@ -441,11 +444,12 @@ func (c *Core) groupCommand(name string, raw json.RawMessage) (any, error) {
 	} else {
 		p.Groups[index] = in.Group
 	}
-	if err := c.saveProfile(p); err != nil {
-		return nil, err
+	saveErr := c.saveProfile(p)
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	c.mu.Lock()
 	c.profile = p
 	c.mu.Unlock()
-	return map[string]any{"group": in.Group, "revision": definitionsRevision(p), "active": false}, nil
+	return map[string]any{"group": in.Group, "revision": definitionsRevision(p), "active": false}, saveErr
 }

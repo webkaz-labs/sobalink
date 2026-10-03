@@ -56,7 +56,7 @@ func (c *Core) revokeStartupPeer(id string) error {
 	next.Revocations[id] = fmt.Sprintf("%016x:%s", counter+1, randomID())
 	// The journal is authoritative on reopen and is written before app trust.
 	persistErr := c.writePrivateSettings("startup-revocations.json", next.Revocations)
-	if persistErr != nil {
+	if persistErr != nil && !errors.Is(persistErr, config.ErrAtomicCommitted) {
 		// A separate atomic store is a best-effort durable fallback. Neither
 		// failure rolls back the in-memory revocation or keeps live work running.
 		_ = c.writePrivateSettings("startup.json", next)
@@ -80,7 +80,7 @@ func (c *Core) revokeStartupPeer(id string) error {
 		c.networkError = "Durable startup revocation could not be confirmed; repair private state before restarting"
 		c.networkErrorCode = "startup_revocation_unconfirmed"
 		c.mu.Unlock()
-		return &localCommandError{"startup_revocation_unconfirmed", "outbound work stopped; durable startup revocation could not be confirmed. Repair private state before restarting"}
+		return errors.Join(&localCommandError{"startup_revocation_unconfirmed", "outbound work stopped; durable startup revocation could not be confirmed. Repair private state before restarting"}, persistErr)
 	}
 	return nil
 }

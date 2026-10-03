@@ -57,8 +57,12 @@ func (c *Core) writePrivateSettings(name string, value any) error {
 	if int64(len(b))+1 > c.limit("resources", "profileBytes") {
 		return &localCommandError{"profile_capacity", "private settings exceed the configured profileBytes budget"}
 	}
-	if err := config.AtomicWrite(filepath.Join(c.dir, name), append(b, '\n')); err != nil {
-		return &localCommandError{"private_settings_unavailable", "private settings could not be saved; check the private state directory"}
+	if err := c.writeAtomic(filepath.Join(c.dir, name), append(b, '\n')); err != nil {
+		message := "private settings could not be saved; check the private state directory"
+		if errors.Is(err, config.ErrAtomicCommitted) {
+			message = "private settings were replaced, but durability could not be confirmed; inspect private state before retrying"
+		}
+		return privateAtomicError(&localCommandError{"private_settings_unavailable", message}, err)
 	}
 	return nil
 }
@@ -103,7 +107,17 @@ func (c *Core) loadStartupSettings(suppressed, protect bool) error {
 			store.Revocations[id] = epoch
 		}
 	}
+	c.mu.Lock()
 	c.startup = store
+	// The journal is authoritative even if a later profile write never ran.
+	// Only an explicit approval under the current epoch can restore authority.
+	peers := c.profile.Peers[:0]
+	for _, peer := range c.profile.Peers {
+		if peer.RevocationEpoch == store.Revocations[peer.ID] {
+			peers = append(peers, peer)
+		}
+	}
+	c.profile.Peers = peers
 	c.startupSuppressed = suppressed
 	c.startupPending = map[string]string{}
 	c.startupStates = map[string]string{}
@@ -114,6 +128,7 @@ func (c *Core) loadStartupSettings(suppressed, protect bool) error {
 			}
 		}
 	}
+	c.mu.Unlock()
 	return c.loadSavedProxySettings(suppressed, protect)
 }
 func startupEntryValid(p Profile, entry StartupEntry) bool {
@@ -191,15 +206,16 @@ func (c *Core) startupCommand(ctx context.Context, name string, raw json.RawMess
 			return nil, &localCommandError{"startup_not_found", "saved startup selection no longer exists"}
 		}
 		next.Entries[index].Enabled = false
-		if err := c.writePrivateSettings("startup.json", next); err != nil {
-			return nil, err
+		saveErr := c.writePrivateSettings("startup.json", next)
+		if !atomicPublished(saveErr) {
+			return nil, saveErr
 		}
 		c.mu.Lock()
 		c.startup = next
 		delete(c.startupPending, in.Name)
 		c.startupStates[in.Name] = "disabled"
 		c.mu.Unlock()
-		return c.startupView(), nil
+		return c.startupView(), saveErr
 	}
 	var in startupSelection
 	if err := decodePayload(raw, &in); err != nil {
@@ -233,15 +249,16 @@ func (c *Core) startupCommand(ctx context.Context, name string, raw json.RawMess
 	} else {
 		next.Entries[index] = entry
 	}
-	if err := c.writePrivateSettings("startup.json", next); err != nil {
-		return nil, err
+	saveErr := c.writePrivateSettings("startup.json", next)
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	c.mu.Lock()
 	c.startup = next
 	delete(c.startupPending, entry.Name)
 	c.startupStates[entry.Name] = "saved"
 	c.mu.Unlock()
-	return c.startupView(), nil
+	return c.startupView(), saveErr
 }
 
 // runStartup is called under c.op only after network readiness. Each approval is

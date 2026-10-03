@@ -158,6 +158,10 @@ type Runner func(context.Context, string, ...string) error
 // Apply performs only the already displayed per-user registration plan.
 // No elevation, login, enrollment or immediate service start is requested.
 func Apply(ctx context.Context, p Plan, run Runner) error {
+	return apply(ctx, p, run, config.AtomicWritePrivate)
+}
+
+func apply(ctx context.Context, p Plan, run Runner, write func(string, []byte) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -193,7 +197,10 @@ func Apply(ctx context.Context, p Plan, run Runner) error {
 		} else if !os.IsNotExist(err) {
 			return err
 		}
-		if err := config.AtomicWritePrivate(p.Path, []byte(p.Content)); err != nil {
+		if err := write(p.Path, []byte(p.Content)); err != nil {
+			if errors.Is(err, config.ErrAtomicCommitted) {
+				return fmt.Errorf("planned file was replaced at %s, but durability is uncertain; registration was not run; inspect the file before retrying: %w", p.Path, err)
+			}
 			return err
 		}
 		for _, command := range p.Commands {

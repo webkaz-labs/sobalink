@@ -462,12 +462,16 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 				return nil, codedLANError(e)
 			}
 		}
-		if e := c.saveProfile(p); e != nil {
-			return nil, e
+		saveErr := c.saveProfile(p)
+		if !atomicPublished(saveErr) {
+			return nil, saveErr
 		}
 		c.mu.Lock()
 		c.profile = p
 		c.mu.Unlock()
+		if saveErr != nil {
+			return nil, saveErr
+		}
 		if v.Mode == "tailnet" || v.Mode == "lan" {
 			err := c.startNetwork(ctx)
 			if err != nil {
@@ -499,18 +503,19 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if v.Trusted && e != nil {
 			return nil, e
 		}
+		var revocationErr error
 		if !v.Trusted {
-			if err := c.revokeStartupPeer(v.PeerID); err != nil {
-				return nil, err
+			revocationErr = c.revokeStartupPeer(v.PeerID)
+			if revocationErr != nil && !errors.Is(revocationErr, config.ErrAtomicCommitted) {
+				return nil, revocationErr
 			}
 		}
-		old, had := c.trust(v.PeerID)
+		_, had := c.trust(v.PeerID)
 		if had == v.Trusted {
 			if !v.Trusted {
-				c.stopPeerServices(v.PeerID)
-				c.stopPeerProxies(v.PeerID)
+				c.revokePeer(v.PeerID)
 			}
-			return nil, nil
+			return nil, revocationErr
 		}
 		if v.Trusted {
 			for _, existing := range p.Peers {
@@ -526,7 +531,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			}
 			c.trustGeneration++
 			g := c.trustGeneration
-			p.Peers = append(p.Peers, Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: g})
+			p.Peers = append(p.Peers, Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: g, RevocationEpoch: c.reviewPeerEpochs([]string{peer.ID})[peer.ID]})
 		} else {
 			filtered := p.Peers[:0]
 			for _, t := range p.Peers {
@@ -544,19 +549,31 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 				return nil, e
 			}
 		}
-		if e := c.saveProfile(p); e != nil {
-			return nil, e
+		if !v.Trusted {
+			// Journal publication closes authority before any fallible profile save.
+			c.mu.Lock()
+			c.profile = p
+			c.mu.Unlock()
+			c.revokePeer(v.PeerID)
+		}
+		saveErr := c.saveProfile(p)
+		if !atomicPublished(saveErr) {
+			if revocationErr != nil {
+				return nil, privateAtomicError(revocationErr, saveErr)
+			}
+			return nil, errors.Join(revocationErr, saveErr)
 		}
 		c.mu.Lock()
 		c.profile = p
 		c.mu.Unlock()
 		if v.Trusted {
 			t, _ := c.trust(v.PeerID)
-			return nil, c.bindTransferPeer(t)
+			return nil, errors.Join(saveErr, c.bindTransferPeer(t))
 		}
-		_ = old
-		c.revokePeer(v.PeerID)
-		return nil, nil
+		if revocationErr != nil {
+			return nil, privateAtomicError(revocationErr, saveErr)
+		}
+		return nil, saveErr
 	case "peer.autosave":
 		var v struct {
 			PeerID    string  `json:"peerId"`
@@ -596,8 +613,13 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if v.Enabled != nil || (v.Directory != nil && next.Autosave) {
 			policy = &transfer.ReceivePolicy{Peer: peer, Destination: next.Directory, AutoAccept: next.Autosave}
 		}
+		var saveErr error
 		if err := c.transfers.UpdateReceiveSettings(peer, policy, next.Paused, func(policies []transfer.ReceivePolicy) error {
-			return (receiveStore{c}).savePolicies(policies, &next)
+			saveErr = (receiveStore{c}).savePolicies(policies, &next)
+			if atomicPublished(saveErr) {
+				return nil
+			}
+			return saveErr
 		}); err != nil {
 			return nil, err
 		}
@@ -618,7 +640,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 				b.stop()
 			}
 		}
-		return nil, nil
+		return nil, saveErr
 	case "discovery.refresh":
 		return c.refreshDiscoveryCommand(ctx, cmd.Payload)
 	case "peer.reconnect":
@@ -651,13 +673,14 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			}
 			p.Settings.ReceiveDirectory = *v.ReceiveDirectory
 		}
-		if e := c.saveProfile(p); e != nil {
-			return nil, e
+		saveErr := c.saveProfile(p)
+		if !atomicPublished(saveErr) {
+			return nil, saveErr
 		}
 		c.mu.Lock()
 		c.profile = p
 		c.mu.Unlock()
-		return nil, nil
+		return nil, saveErr
 	case "message.history.preview", "message.history.cleanup":
 		return c.messageHistoryCommand(cmd.Name, cmd.Payload)
 	case "message.list", "transfer.list":
@@ -687,6 +710,12 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 }
 
 func (c *Core) revokePeer(id string) {
+	c.mu.RLock()
+	retries := c.peerRefreshRetries
+	c.mu.RUnlock()
+	if retries != nil {
+		retries.forget(id)
+	}
 	c.stopPeerProxies(id)
 	_ = c.transfers.RevokePeer(id)
 	c.stopPeerServices(id)
@@ -694,6 +723,7 @@ func (c *Core) revokePeer(id string) {
 	ps := c.peerServer
 	delete(c.confirmed, id)
 	delete(c.discovered, id)
+	delete(c.discoveryObservations, id)
 	for _, b := range c.outgoing {
 		if b.PeerID == id {
 			b.stop()

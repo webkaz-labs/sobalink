@@ -118,8 +118,9 @@ type ruleRuntime struct {
 	desired                  bool
 }
 type ruleManager struct {
-	s       *Service
-	entries map[string]*ruleRuntime
+	s           *Service
+	entries     map[string]*ruleRuntime
+	writeConfig func(string, []byte) error
 }
 
 func newRuleManager(s *Service) *ruleManager {
@@ -132,6 +133,33 @@ func newRuleManager(s *Service) *ruleManager {
 func newRuleRuntime(r config.Rule) *ruleRuntime {
 	return &ruleRuntime{config: r, status: RuleStatus{AllowedPeers: append([]config.PeerRef(nil), r.AllowedPeers...), Name: r.Name, Purpose: r.Purpose, Direction: r.Direction, Network: r.Network, State: "stopped", ReasonCode: "explicit-start-required", Reason: "Saved only; start explicitly", Target: config.Address(r.TargetHost, r.TargetPort), PeerID: r.PeerID, CheckedAt: time.Now().UTC(), Application: "unverified"}}
 }
+
+// saveConfig applies only configurations that were published. A committed
+// durability error still means the destination changed, but must be returned
+// unchanged so callers can report the uncertain durability to the user.
+func (m *ruleManager) saveConfig(next config.Config) error {
+	var err error
+	if m.writeConfig == nil {
+		err = config.Save(m.s.Dir, next)
+	} else {
+		err = config.SaveWith(m.s.Dir, next, m.writeConfig)
+	}
+	if err != nil && !errors.Is(err, config.ErrAtomicCommitted) {
+		return err
+	}
+
+	saved := next.Disabled()
+	m.s.Config = saved
+	for _, r := range saved.Rules {
+		if entry := m.entries[r.Name]; entry != nil {
+			entry.config = r
+			continue
+		}
+		m.entries[r.Name] = newRuleRuntime(r)
+	}
+	return err
+}
+
 func (m *ruleManager) statuses() []RuleStatus {
 	out := make([]RuleStatus, 0, len(m.entries))
 	for _, r := range m.entries {
@@ -271,11 +299,14 @@ func (m *ruleManager) command(ctx context.Context, q RuleCommand) (any, error) {
 		if !found {
 			next.Rules = append(next.Rules, r)
 		}
-		if e := config.Save(m.s.Dir, next); e != nil {
+		e := m.saveConfig(next)
+		if e != nil && !errors.Is(e, config.ErrAtomicCommitted) {
 			return nil, e
 		}
-		m.s.Config = next
 		m.entries[r.Name] = newRuleRuntime(r)
+		if e != nil {
+			return nil, e
+		}
 	case "group-save":
 		if q.GroupConfig == nil {
 			return nil, errors.New("group required")
@@ -296,10 +327,9 @@ func (m *ruleManager) command(ctx context.Context, q RuleCommand) (any, error) {
 		if !found {
 			next.Groups = append(next.Groups, *q.GroupConfig)
 		}
-		if e := config.Save(m.s.Dir, next); e != nil {
+		if e := m.saveConfig(next); e != nil {
 			return nil, e
 		}
-		m.s.Config = next
 	case "start":
 		m.expire()
 		if q.TTLSeconds < 0 || q.TTLSeconds > 86400 || q.LeaseSeconds < 0 || q.LeaseSeconds > 300 {

@@ -218,7 +218,7 @@ func TestRelayOldRolesNotReapprovedByCanonicalKeyReuse(t *testing.T) {
 	}
 	oldOutbound := key.NewNode()
 	old := RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: oldOutbound, IncomingClientKey: req.RoleKey}
-	if e = host.commitPair(context.Background(), old, req.Token, 0); e != nil {
+	if e = host.commitPair(context.Background(), old, req.Token, nil); e != nil {
 		t.Fatal(e)
 	}
 	if !host.AllowRelayKey(req.RoleKey) || !host.AllowRelayKey(keyString(oldOutbound.Public())) {
@@ -230,7 +230,7 @@ func TestRelayOldRolesNotReapprovedByCanonicalKeyReuse(t *testing.T) {
 	replacement := old
 	replacement.ClientPrivate = key.NewNode()
 	replacement.IncomingClientKey = keyString(key.NewNode().Public())
-	if e = host.commitPair(context.Background(), replacement, "", host.revoked[client.PublicKey()]); e != nil {
+	if e = host.commitPair(context.Background(), replacement, "", registeredPairAttemptFixture(t, host, client.PublicKey())); e != nil {
 		t.Fatal(e)
 	}
 	if host.AllowRelayKey(req.RoleKey) || host.AllowRelayKey(keyString(oldOutbound.Public())) {

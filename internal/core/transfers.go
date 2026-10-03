@@ -20,6 +20,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/diskspace"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
 const transferManifestMetadataBytes = 256 << 10
@@ -195,19 +196,29 @@ func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limits) {
+	c.uploadWithIdle(w, r, lim, 30*time.Second)
+}
+
+func (c *Core) uploadWithIdle(w http.ResponseWriter, r *http.Request, lim transfer.Limits, idle time.Duration) {
+	// The selection JSON and each multipart file header both repeat paths.
+	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxBatchBytes+2*transferJSONBytes(lim.MaxManifestBytes)+(256<<10))
+	body, e := webui.BoundBody(w, r, idle, true)
+	if e != nil {
+		reply(w, 503, map[string]string{"error": "upload read deadline unavailable"})
+		return
+	}
 	done, err := c.beginWork()
 	if err != nil {
+		_ = body.Finish(false)
 		reply(w, 503, map[string]string{"error": err.Error()})
 		return
 	}
 	defer done()
-	// The selection JSON and each multipart file header both repeat paths.
-	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxBatchBytes+2*transferJSONBytes(lim.MaxManifestBytes)+(256<<10))
-	body := r.Body
-	stopBody := context.AfterFunc(c.ctx, func() { _ = body.Close() })
-	defer stopBody()
-	stopRequestBody := context.AfterFunc(r.Context(), func() { _ = body.Close() })
-	defer stopRequestBody()
+	defer body.Finish(false)
+	if e = body.Watch(c.ctx); e != nil {
+		reply(w, 400, map[string]string{"error": "upload was interrupted"})
+		return
+	}
 	reader, e := r.MultipartReader()
 	if e != nil {
 		reply(w, 400, map[string]string{"error": "invalid multipart upload"})
@@ -218,7 +229,6 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		if e != nil {
 			return "", e
 		}
-		defer part.Close()
 		if part.FormName() != want || part.FileName() != "" {
 			return "", errors.New("upload fields are out of order")
 		}
@@ -319,16 +329,31 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 	}
 	ctx, finishStaging := c.operationContext(r.Context(), "stagingSeconds")
 	defer finishStaging()
-	stopLifetime := context.AfterFunc(life, finishStaging)
-	defer stopLifetime()
-	stopCancelledBody := context.AfterFunc(ctx, func() { _ = body.Close() })
-	defer stopCancelledBody()
+	lifetimeDone := make(chan struct{})
+	stopLifetime := context.AfterFunc(life, func() {
+		defer close(lifetimeDone)
+		finishStaging()
+	})
+	joinLifetime := sync.OnceFunc(func() {
+		if !stopLifetime() {
+			<-lifetimeDone
+		}
+	})
+	defer joinLifetime()
 	stagedOK := false
 	defer func() {
 		if !stagedOK {
 			c.discardOutgoing(b)
 		}
 	}()
+	// Both sources expire the socket directly, bypassing the HTTP body mutex.
+	if e = body.Watch(ctx); e == nil {
+		e = body.Watch(life)
+	}
+	if e != nil {
+		reply(w, 400, map[string]string{"error": "upload was interrupted"})
+		return
+	}
 	if e := c.checkStagingSpace(ctx); e != nil {
 		reply(w, http.StatusInsufficientStorage, map[string]string{"code": networkErrorCode(e), "error": e.Error()})
 		return
@@ -377,7 +402,6 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		}
 		_, params, e := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
 		if e != nil || part.FormName() != "files" || params["filename"] != entry.Path {
-			part.Close()
 			reason := "file order or path changed during upload"
 			if e != nil {
 				reason = "invalid multipart file disposition"
@@ -390,14 +414,12 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 			return
 		}
 		if e := c.checkStagingDirectory(ctx, b.Spool); e != nil {
-			part.Close()
 			replyDiskSpace(w, e)
 			return
 		}
 		filePath := filepath.Join(b.Spool, entry.ID)
 		f, e := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if e != nil {
-			part.Close()
 			if normalized := diskspace.NormalizeError(e); diskspace.IsCapacityError(normalized) {
 				replyDiskSpace(w, normalized)
 				return
@@ -408,7 +430,6 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		hash := sha256.New()
 		n, copyErr := copyStaging(ctx, io.MultiWriter(stagingDiskWriter{c, ctx, f}, hash), part, entry.Size)
 		closeErr := diskspace.NormalizeError(f.Close())
-		_ = part.Close()
 		if diskspace.IsCapacityError(closeErr) {
 			replyDiskSpace(w, closeErr)
 			return
@@ -426,10 +447,7 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		b.mu.Unlock()
 		b.Files[entry.ID] = filePath
 	}
-	if part, e := reader.NextPart(); e != io.EOF {
-		if part != nil {
-			part.Close()
-		}
+	if _, e := reader.NextPart(); e != io.EOF {
 		reply(w, 400, map[string]string{"error": "unexpected extra upload data"})
 		return
 	}
@@ -438,6 +456,17 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		return
 	}
 	if ctx.Err() != nil || r.Context().Err() != nil {
+		reply(w, 400, map[string]string{"error": "upload was interrupted"})
+		return
+	}
+	// Multipart EOF can precede HTTP EOF (including chunked trailers). Complete
+	// that framing while cancellation and the staging/idle deadlines still apply.
+	if _, e := io.Copy(io.Discard, r.Body); e != nil {
+		reply(w, 400, map[string]string{"error": "upload was interrupted"})
+		return
+	}
+	joinLifetime()
+	if e := body.Finish(true); e != nil {
 		reply(w, 400, map[string]string{"error": "upload was interrupted"})
 		return
 	}

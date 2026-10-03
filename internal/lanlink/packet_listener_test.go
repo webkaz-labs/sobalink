@@ -154,7 +154,7 @@ func TestFailedRevokeSaveDoesNotDeadlockQueuedPair(t *testing.T) {
 	go func() {
 		defer p.wg.Done()
 		close(queued)
-		commitDone <- host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: key.NewNode(), IncomingClientKey: req.RoleKey}, req.Token, 0)
+		commitDone <- host.commitPair(context.Background(), RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: key.NewNode(), IncomingClientKey: req.RoleKey}, req.Token, nil)
 	}()
 	select {
 	case e := <-revokeDone:

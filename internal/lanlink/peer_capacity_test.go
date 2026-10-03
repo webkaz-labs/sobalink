@@ -78,9 +78,11 @@ func TestPairCommitUsesLiveAdmissionAndRestoresManyDistinctRoles(t *testing.T) {
 		if i == 0 {
 			first = r
 		}
-		if err := node.commitPair(context.Background(), r, "", 0); err != nil {
+		attempt := registeredPairAttemptFixture(t, node, r.Peer.Key)
+		if err := node.commitPair(context.Background(), r, "", attempt); err != nil {
 			t.Fatalf("peer %d: %v", i, err)
 		}
+		node.retirePairAttempt(r.Peer.Key, attempt)
 	}
 	limit.Store(1)
 	restored := NewBookWithPeerLimit(limit.Load)
@@ -102,17 +104,18 @@ func TestPairCommitUsesLiveAdmissionAndRestoresManyDistinctRoles(t *testing.T) {
 	}
 	other := testNode()
 	newRemote := RemotePeer{Peer: Peer{other.PublicKey(), "next"}, Address: other.Address(), ClientPrivate: key.NewNode(), IncomingClientKey: keyString(key.NewNode().Public())}
+	attempt := registeredPairAttemptFixture(t, node, newRemote.Peer.Key)
 	var capacityError *PeerCapacityError
-	if err := node.commitPair(context.Background(), newRemote, "", 0); !errors.As(err, &capacityError) {
+	if err := node.commitPair(context.Background(), newRemote, "", attempt); !errors.As(err, &capacityError) {
 		t.Fatal("lowered policy admitted pairing", err)
 	}
 	limit.Store(130)
 	alias := newRemote
 	alias.IncomingClientKey = first.IncomingClientKey
-	if err := node.commitPair(context.Background(), alias, "", 0); err == nil {
+	if err := node.commitPair(context.Background(), alias, "", attempt); err == nil {
 		t.Fatal("raised policy allowed cross-peer role reuse")
 	}
-	if err := node.commitPair(context.Background(), newRemote, "", 0); err != nil {
+	if err := node.commitPair(context.Background(), newRemote, "", attempt); err != nil {
 		t.Fatal("live raise failed", err)
 	}
 }

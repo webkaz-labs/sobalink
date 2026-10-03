@@ -36,11 +36,7 @@ func TestOfflineDefinitionCLIWithoutAgentOrNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, file := range files {
-		if file.Name() != "sobalink.json" && file.Name() != "process.lock" {
-			t.Fatalf("offline edit materialized runtime/identity state: %s", file.Name())
-		}
-	}
+	assertOnlyOwnedProfileMetadata(t, dir, files)
 	if _, err := run("service", "show", saved.Configuration.ID); err != nil {
 		t.Fatal(err)
 	}

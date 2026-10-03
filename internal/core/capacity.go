@@ -92,7 +92,7 @@ func (c *Core) writeProfile(p Profile) error {
 	if int64(len(b))+1 > limit {
 		return &localCommandError{"profile_capacity", fmt.Sprintf("profile needs %d bytes; raise the %d-byte profile storage budget before saving", len(b)+1, limit)}
 	}
-	return config.AtomicWrite(filepath.Join(c.dir, "sobalink.json"), append(b, '\n'))
+	return c.writeAtomic(filepath.Join(c.dir, "sobalink.json"), append(b, '\n'))
 }
 
 func capacityRevision(p capacity.Policy, profile Profile) string {
@@ -275,7 +275,7 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 	// Incoming message append uses c.mu rather than the command lock. Hold it
 	// across the storage check and durable policy publication, so an append
 	// cannot become unreadable under a concurrently lowered storage budget.
-	if err := func() error {
+	saveErr := func() error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.closing || c.ctx != nil && c.ctx.Err() != nil {
@@ -287,14 +287,15 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 			return err
 		}
 		return c.applyLANCapacityLocked(in.Policy, func() error {
-			if err := config.WriteJSON(filepath.Join(c.dir, capacityPolicyFile), in.Policy); err != nil {
-				return err
+			err := config.WriteJSONWith(c.writeAtomic, filepath.Join(c.dir, capacityPolicyFile), in.Policy)
+			if atomicPublished(err) {
+				c.capacity = in.Policy.Clone()
 			}
-			c.capacity = in.Policy.Clone()
-			return nil
+			return err
 		})
-	}(); err != nil {
-		return nil, err
+	}()
+	if !atomicPublished(saveErr) {
+		return nil, saveErr
 	}
 	// Core command/Close serialization keeps the manager alive here. This
 	// changes admission only; occupied reservations remain accounted for.
@@ -303,10 +304,10 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 		if err := c.transfers.UpdateLimits(nextTransferLimits); err != nil {
-			return nil, err
+			return nil, errors.Join(saveErr, err)
 		}
 	}
-	return c.capacityView(), nil
+	return c.capacityView(), saveErr
 }
 
 func capacityJSONEqual(a, b capacity.Policy) bool {
