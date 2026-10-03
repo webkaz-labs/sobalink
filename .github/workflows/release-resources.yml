@@ -30,7 +30,6 @@ jobs:
       TESTED_COMMIT: 8e6cbb00d60757f701d7d453adb92590cc5d2544
       RELEASE_ID: '402473839'
       RELEASE_IDENTITY: https://github.com/webkaz-labs/sobalink/.github/workflows/prerelease.yml@refs/heads/main
-      MISE_DATA_DIR: ${{ runner.temp }}/sobalink-resource-mise
     defaults:
       run:
         shell: bash
@@ -38,6 +37,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Isolate package installation in runner temporary storage
+        run: echo "MISE_DATA_DIR=$RUNNER_TEMP/sobalink-resource-mise" >> "$GITHUB_ENV"
       - name: Verify measurement logic without sockets
         run: |
           set -euo pipefail
