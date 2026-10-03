@@ -1,0 +1,91 @@
+import { test, expect } from './fixtures.mjs'
+
+for (const locale of ['en', 'ja']) {
+  test(`${locale}: Tailnet logout review cancels and startup guidance stays read-only`, async ({ page, app }) => {
+    const ja = locale === 'ja'
+    await app.appearance(locale, ja ? 'dark' : 'light')
+    await page.locator('.sidebar-title button').click()
+    await page.getByRole('button', { name: ja ? 'Tailnet からログアウト' : 'Sign out of Tailnet', exact: true }).click()
+    await expect(page.locator('.logout-review')).toContainText(ja ? '本体が終了' : 'application then exits')
+    await app.capture(`logout-review-${locale}-desktop`)
+    await page.locator('.logout-review').getByRole('button', { name: ja ? 'キャンセル' : 'Cancel', exact: true }).click()
+    expect(await app.count('network.logout')).toBe(0)
+    await page.keyboard.press('Escape')
+    await page.locator('.app-header .header-actions button.icon-button').click()
+    await page.getByRole('button', { name: ja ? '起動とサインイン時の設定' : 'Startup and sign-in guide', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel(ja ? '起動方式' : 'Startup mode', { exact: true }).selectOption('offline')
+    await dialog.getByLabel(ja ? '登録操作' : 'Registration action', { exact: true }).selectOption('disable')
+    await expect(dialog.getByLabel(ja ? '1. 正確な登録内容を確認' : '1. Preview the exact plan', { exact: true })).toHaveValue('soba --state-dir "STATE_DIRECTORY" autostart disable --startup offline --json')
+    await expect(dialog).toContainText(ja ? 'この Web セッションでは取得できません' : 'not available from this Web session')
+    await page.setViewportSize({ width: 390, height: 844 })
+    await app.capture(`startup-guide-${locale}-390`)
+    await page.keyboard.press('Escape')
+    expect(await app.count('network.logout')).toBe(0)
+    expect(await app.count('network.configure')).toBe(0)
+  })
+}
+
+test.describe('offline saved definitions', () => {
+  test.use({ scenario: 'offline' })
+  for (const locale of ['en', 'ja']) {
+    test(`${locale}: create, edit, copy and reviewed delete work without a visible peer`, async ({ page, app }) => {
+      const ja = locale === 'ja'
+      await app.appearance(locale, ja ? 'dark' : 'light')
+      await page.getByRole('button', { name: ja ? '保存済みサービス' : 'Saved services', exact: true }).click()
+      await page.getByRole('button', { name: ja ? '接続定義を保存' : 'Save a connection', exact: true }).click()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByLabel(ja ? '接続の名前' : 'Connection name', { exact: true }).fill('offline-fixture')
+      await dialog.getByRole('combobox', { name: new RegExp(ja ? '保存するネットワーク' : 'Saved network') }).selectOption('tailnet')
+      await dialog.getByRole('textbox', { name: new RegExp(ja ? '正確な端末 ID' : 'Exact device IDs') }).fill('fixture-absent')
+      await dialog.getByLabel(ja ? 'ポート' : 'Ports', { exact: true }).fill('8080')
+      const review = ja ? '停止状態の定義を確認' : 'Review stopped definition'
+      const save = ja ? '確認した定義を保存' : 'Save reviewed definition'
+      await dialog.getByRole('button', { name: review, exact: true }).click()
+      await expect(dialog).toContainText('fixture-absent')
+      await app.capture(`offline-definition-review-${locale}-desktop`)
+      await dialog.getByRole('button', { name: save, exact: true }).click()
+      await app.expectState(state => state.services.some(service => service.name === 'offline-fixture' && service.status === 'saved'))
+      await page.getByRole('button', { name: ja ? '保存済み定義を編集' : 'Edit saved definition', exact: true }).click()
+      await dialog.getByLabel(ja ? 'ポート' : 'Ports', { exact: true }).fill('8081')
+      await dialog.getByRole('button', { name: review, exact: true }).click()
+      await dialog.getByRole('button', { name: save, exact: true }).click()
+      await app.expectState(state => state.services.some(service => service.name === 'offline-fixture' && service.ports === '8081' && service.status === 'saved'))
+      await page.getByRole('button', { name: ja ? '保存済み定義をコピー' : 'Copy saved definition', exact: true }).click()
+      await dialog.getByRole('button', { name: review, exact: true }).click()
+      await dialog.getByRole('button', { name: save, exact: true }).click()
+      await app.expectState(state => state.services.some(service => service.name === 'offline-fixture-2' && service.status === 'saved'))
+      const entry = page.locator('.definition-entry').filter({ hasText: 'offline-fixture-2' })
+      await entry.getByRole('button', { name: ja ? '定義を削除' : 'Remove definition', exact: true }).click()
+      await dialog.getByRole('button', { name: ja ? 'キャンセル' : 'Cancel', exact: true }).click()
+      expect(await app.count('service.delete')).toBe(0)
+      await entry.getByRole('button', { name: ja ? '定義を削除' : 'Remove definition', exact: true }).click()
+      await dialog.getByRole('button', { name: ja ? '確認したルールを削除' : 'Remove reviewed rule', exact: true }).click()
+      await app.expectState(state => !state.services.some(service => service.name === 'offline-fixture-2'))
+      expect(await app.count('service.connect')).toBe(0)
+      expect(await app.count('services.start')).toBe(0)
+      expect(await app.count('network.configure')).toBe(0)
+    })
+  }
+})
+
+test.describe('reviewed Tailnet logout', () => {
+  test.use({ expectShutdown: true })
+  test('one confirmed logout stops the fictional active service and exits the Go fixture', async ({ page, app }) => {
+    await app.openPeer('services')
+    await page.getByRole('button', { name: 'Connect to a service', exact: true }).click()
+    await page.locator('dialog input[required][maxlength="64"]').fill('logout-fixture-service')
+    await page.locator('dialog input[aria-describedby=port-help]').fill('8080')
+    await page.locator('dialog input[inputmode=numeric]').fill(String(app.localServicePort))
+    await page.locator('dialog button[type=submit]').click()
+    await app.expectState(state => state.services.some(service => service.name === 'logout-fixture-service' && service.status === 'active'))
+    await app.closeDetails()
+    await page.locator('.sidebar-title button').click()
+    await page.getByRole('button', { name: 'Sign out of Tailnet', exact: true }).click()
+    await expect(page.locator('.logout-review')).toContainText('Active services1')
+    await page.locator('.logout-review').getByRole('button', { name: 'Stop traffic and sign out', exact: true }).click()
+    await expect(page.locator('.logout-review [role=status]')).toContainText('The local backend acknowledged sign-out')
+    expect(await app.count('network.logout')).toBe(1)
+    await app.expectStopped()
+  })
+})

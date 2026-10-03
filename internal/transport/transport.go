@@ -19,22 +19,12 @@ import (
 type Dialer func(context.Context, string, string) (net.Conn, error)
 
 const defaultDialTimeout = 10 * time.Second
-const maxLocalConnections = 128
-const maxTotalConnections = 512
+const defaultTCPPerPolicy = 128
+const defaultTCPConnections = 512
 
-var connectionSlots = make(chan struct{}, maxTotalConnections)
-
-// AdmitTCP shares the process budget with virtual range handlers. A successful
-// reservation must be released once the accepted handler finishes.
-func AdmitTCP() (func(), bool) {
-	select {
-	case connectionSlots <- struct{}{}:
-		var once sync.Once
-		return func() { once.Do(func() { <-connectionSlots }) }, true
-	default:
-		return nil, false
-	}
-}
+// AdmitTCP shares the default aggregate budget with virtual range handlers.
+// Applications with their own configurable budget use Controller.AdmitTCP.
+func AdmitTCP() (func(), bool) { return defaultController.AdmitTCP("", "") }
 
 // Server owns its listener, accepted connections, and remote connections.
 // Close and context cancellation shut down all of them; Wait joins all workers.
@@ -154,37 +144,36 @@ func normalizeTimeout(t time.Duration) (time.Duration, error) {
 	return t, nil
 }
 
-func acceptConnections(s *Server, l net.Listener, handle func(net.Conn)) {
-	// This cap also includes unauthenticated SOCKS handshakes and pending dials.
-	slots := make(chan struct{}, maxLocalConnections)
+func acceptConnections(s *Server, l net.Listener, handle func(net.Conn), configs ...TCPConfig) {
+	var cfg TCPConfig
+	if len(configs) != 0 {
+		cfg = configs[0]
+	}
+	controller := controllerOrDefault(cfg.Controller)
+	policy := cfg.PolicyID
+	if policy == "" {
+		policy = fmt.Sprintf("listener:%p", s)
+	}
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			s.fail(err)
 			return
 		}
-		select {
-		case slots <- struct{}{}:
-		default:
+		// Pending dials and unauthenticated SOCKS handshakes hold their slots.
+		release, ok := controller.AdmitTCP(policy, cfg.PeerID)
+		if !ok {
 			_ = c.Close()
-			continue
-		}
-		select {
-		case connectionSlots <- struct{}{}:
-		default:
-			_ = c.Close()
-			<-slots
 			continue
 		}
 		if !s.track(c) {
-			<-connectionSlots
-			<-slots
+			release()
 			return
 		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			defer func() { <-slots; <-connectionSlots }()
+			defer release()
 			defer s.release(c)
 			handle(c)
 		}()

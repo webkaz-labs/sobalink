@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -173,12 +174,17 @@ func (c *Core) maintain() {
 					}
 				}
 				c.revalidateServices(st)
+				c.revalidateProxies(st)
 				c.refreshPeers(st)
+				c.runStartup(c.ctx)
 			} else {
 				c.suspendServices()
+				c.suspendSavedProxies()
+				c.stopAllProxies()
 			}
 		}
 		c.expireServices()
+		c.expireProxies()
 		c.op.Unlock()
 	}
 }
@@ -197,6 +203,9 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 	networkRead := false
 	reservedPorts := []uint16{54543, 54544, 54545}
 	c.mu.RLock()
+	for _, endpoint := range c.proxyReservedPorts() {
+		reservedPorts = append(reservedPorts, endpoint.Port())
+	}
 	if c.web != nil {
 		reservedPorts = append(reservedPorts, c.web.Port())
 	}
@@ -226,8 +235,8 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			if name == "" {
 				name = peer.ID
 			}
-			bridge := time.Since(confirmed[peer.ID]) < 15*time.Second
-			peers = append(peers, map[string]any{"id": peer.ID, "name": name, "networks": []string{p.Settings.Network}, "online": peer.Online || bridge, "verified": st.Snapshot.Running, "trusted": ok, "path": "unknown", "bridge": bridge, "address": address, "fingerprint": peer.ID, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
+			bridge := freshDiscoveryCheck(confirmed[peer.ID], time.Now())
+			peers = append(peers, map[string]any{"id": peer.ID, "name": name, "networks": []string{p.Settings.Network}, "online": peer.Online || bridge, "verified": st.Snapshot.Running, "trusted": ok, "path": "unknown", "bridge": bridge, "discovery": c.discoveryObservation(peer.ID), "address": address, "fingerprint": peer.ID, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
 		}
 	}
 	if !networkRead && p.Settings.Network == "lan" {
@@ -253,39 +262,125 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			services = append(services, v)
 		}
 	}
-	return map[string]any{"version": c.version, "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "services": services, "shares": shares, "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "lan": c.lanStatus()}, nil
+	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus()}, nil
 }
 
+// Command deduplicates requests independently of the mutation lock. Slow file
+// staging and task heartbeats must not hold up unrelated control operations.
 func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	if len(cmd.RequestID) < 1 || len(cmd.RequestID) > 128 {
 		return nil, errors.New("requestId is required")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Credential reveal is an explicit read, never retained in request history.
+	if cmd.Name == "proxy.reveal" {
+		return c.executeCommand(ctx, cmd)
+	}
 	digest := sha256.Sum256(append([]byte(cmd.Name+"\x00"), cmd.Payload...))
 	sig := hex.EncodeToString(digest[:])
-	c.op.Lock()
-	defer c.op.Unlock()
+	c.requestMu.Lock()
 	if previous, ok := c.requests[cmd.RequestID]; ok {
+		c.requestMu.Unlock()
 		if previous.signature != sig {
 			return nil, errors.New("request ID was already used for different content")
 		}
 		return previous.value, previous.err
 	}
+	if pending := c.inflightRequests[cmd.RequestID]; pending != nil {
+		c.requestMu.Unlock()
+		if pending.signature != sig {
+			return nil, errors.New("request ID was already used for different content")
+		}
+		select {
+		case <-pending.done:
+			return pending.result.value, pending.result.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if c.ctx.Err() != nil {
+		c.requestMu.Unlock()
 		return nil, errors.New("application is stopping")
 	}
-	value, err := c.command(ctx, cmd)
+	if c.inflightRequests == nil {
+		c.inflightRequests = make(map[string]*pendingRequest)
+	}
+	pending := &pendingRequest{signature: sig, done: make(chan struct{})}
+	c.inflightRequests[cmd.RequestID] = pending
+	c.requestMu.Unlock()
+
+	value, err := c.executeCommand(ctx, cmd)
+	// In particular, SendPaths has released its beginWork registration before
+	// publishing here. Close may hold c.op while joining that work.
+	c.requestMu.Lock()
+	if c.requests == nil {
+		c.requests = make(map[string]requestResult)
+	}
 	if len(c.requests) >= 256 {
 		for key := range c.requests {
 			delete(c.requests, key)
 			break
 		}
 	}
-	c.requests[cmd.RequestID] = requestResult{signature: sig, value: value, err: err}
+	result := requestResult{signature: sig, value: value, err: err}
+	c.requests[cmd.RequestID] = result
+	pending.result = result
+	delete(c.inflightRequests, cmd.RequestID)
+	close(pending.done)
+	c.requestMu.Unlock()
 	return value, err
+}
+
+func (c *Core) executeCommand(ctx context.Context, cmd webui.Command) (any, error) {
+	switch cmd.Name {
+	case "transfer.send", "services.renew", "application.stop":
+		// These operations provide their own atomic admission under c.mu and
+		// do not mutate the serialized profile or transport configuration.
+	default:
+		c.op.Lock()
+		defer c.op.Unlock()
+	}
+	// A caller may have timed out while waiting for another mutation. Never
+	// apply a queued edit after its caller has cancelled it.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if c.ctx.Err() != nil {
+		return nil, errors.New("application is stopping")
+	}
+	return c.command(ctx, cmd)
 }
 
 func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 	switch cmd.Name {
+	case "startup.list", "startup.preview", "startup.save", "startup.disable":
+		return c.startupCommand(ctx, cmd.Name, cmd.Payload)
+	case "proxy.save", "proxy.generate", "proxy.saved.list", "proxy.saved.start", "proxy.saved.delete", "proxy.saved.disable", "proxy.reveal":
+		return c.savedProxyCommand(ctx, cmd.Name, cmd.Payload)
+	case "rustdesk.preview", "rustdesk.save", "rustdesk.settings", "client.settings":
+		return c.clientHelperCommand(ctx, cmd.Name, cmd.Payload)
+	case "proxy.preview", "proxy.start", "proxy.stop", "proxy.list":
+		return c.proxyCommand(ctx, cmd.Name, cmd.Payload)
+	case "diagnostics.run":
+		return c.diagnoseCommand(ctx, cmd.Payload)
+	case "service.save":
+		return c.saveDefinition(cmd.Payload)
+	case "service.delete":
+		return c.deleteDefinition(cmd.Payload)
+	case "profile.export", "profile.import.preview", "profile.import":
+		return c.profileDefinitionsCommand(cmd.Name, cmd.Payload)
+	case "group.list", "group.save":
+		return c.groupCommand(cmd.Name, cmd.Payload)
+	case "service.selection", "services.start", "services.stop", "services.renew", "services.ready":
+		return c.selectionCommand(ctx, cmd.Name, cmd.Payload)
+	case "service.stop-shares":
+		return c.stopSharesCommand(cmd.Payload)
+	case "policy.config", "policy.preview", "policy.apply":
+		return c.capacityCommand(cmd.Name, cmd.Payload)
+	case "service.list":
+		return c.listServices(cmd.Payload)
 	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
 		return c.lanCommand(ctx, cmd.Name, cmd.Payload)
 	case "application.stop":
@@ -306,6 +401,9 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		p := c.profileCopy()
 		if v.Mode != "tailnet" && v.Mode != "lan" && v.Mode != "none" {
 			return nil, errors.New("choose tailnet, lan or none")
+		}
+		if err := validateCapacityBackend(v.Mode, c.capacityPolicy()); err != nil {
+			return nil, err
 		}
 		if v.Mode != "lan" && v.LAN != nil {
 			return nil, errors.New("LAN relay settings require LAN mode")
@@ -347,29 +445,14 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, err
 		}
 		return nil, nil
-	case "network.login":
-		n := c.nodeCopy()
-		if n == nil {
-			return nil, errors.New("activate a network first")
+	case "network.login", "network.login.status":
+		return c.loginCommand(ctx, cmd.Name == "network.login", cmd.Payload)
+	case "network.logout":
+		var input struct{}
+		if err := decodePayload(cmd.Payload, &input); err != nil {
+			return nil, err
 		}
-		if e := n.Login(ctx); e != nil {
-			return nil, errors.New("could not request interactive login")
-		}
-		for i := 0; i < 20; i++ {
-			st, e := c.current(ctx)
-			if e == nil && st.AuthURL != "" {
-				return map[string]string{"authUrl": st.AuthURL}, nil
-			}
-			if e == nil && st.Snapshot.Running {
-				return map[string]string{"state": "connected"}, nil
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-		return nil, errors.New("login link is not ready; retry login shortly")
+		return c.logoutTailnet(ctx)
 	case "peer.trust":
 		var v struct {
 			PeerID  string `json:"peerId"`
@@ -383,10 +466,16 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if v.Trusted && e != nil {
 			return nil, e
 		}
+		if !v.Trusted {
+			if err := c.revokeStartupPeer(v.PeerID); err != nil {
+				return nil, err
+			}
+		}
 		old, had := c.trust(v.PeerID)
 		if had == v.Trusted {
 			if !v.Trusted {
 				c.stopPeerServices(v.PeerID)
+				c.stopPeerProxies(v.PeerID)
 			}
 			return nil, nil
 		}
@@ -396,8 +485,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 					return nil, errors.New("this peer ID belongs to an approval in another network; switch to that network to review it first")
 				}
 			}
-			if len(p.Peers) >= 128 {
-				return nil, errors.New("trusted peer capacity reached")
+			if int64(len(p.Peers)) >= c.limit("logical", "trustedPeers") {
+				return nil, &localCommandError{"peer_capacity", "trusted peer limit reached; raise trustedPeers in capacity settings"}
 			}
 			if c.trustGeneration == ^uint64(0) {
 				return nil, errors.New("peer approval generation is exhausted")
@@ -497,6 +586,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			}
 		}
 		return nil, nil
+	case "discovery.refresh":
+		return c.refreshDiscoveryCommand(ctx, cmd.Payload)
 	case "peer.reconnect":
 		var v struct {
 			PeerID string `json:"peerId"`
@@ -534,6 +625,10 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		c.profile = p
 		c.mu.Unlock()
 		return nil, nil
+	case "message.history.preview", "message.history.cleanup":
+		return c.messageHistoryCommand(cmd.Name, cmd.Payload)
+	case "message.list", "transfer.list":
+		return c.listHistory(cmd.Name, cmd.Payload)
 	case "message.send":
 		return c.sendMessageCommand(ctx, cmd.Payload)
 	case "transfer.accept", "transfer.decline", "transfer.cancel", "transfer.retry", "transfer.forget":
@@ -559,6 +654,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 }
 
 func (c *Core) revokePeer(id string) {
+	c.stopPeerProxies(id)
 	_ = c.transfers.RevokePeer(id)
 	c.stopPeerServices(id)
 	c.mu.Lock()

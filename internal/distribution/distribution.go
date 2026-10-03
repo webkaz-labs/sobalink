@@ -227,14 +227,17 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 			return err
 		}
 	}
-	// Keep README links usable in the installed package by preserving docs.
-	docs, err := filepath.Glob(filepath.Join(t.Root, "docs", "*.md"))
-	if err != nil {
-		return err
-	}
-	for _, doc := range docs {
-		if err = copyFile(doc, filepath.Join(share, "docs", filepath.Base(doc))); err != nil {
+	// Preserve the relative layout used by guides, including their Web API
+	// and browser-acceptance references. Never collect runtime state or caches.
+	for _, directory := range []string{"docs", "web"} {
+		docs, err := filepath.Glob(filepath.Join(t.Root, directory, "*.md"))
+		if err != nil {
 			return err
+		}
+		for _, doc := range docs {
+			if err = copyFile(doc, filepath.Join(share, directory, filepath.Base(doc))); err != nil {
+				return err
+			}
 		}
 	}
 	binaryHash, err := fileHash(bin)

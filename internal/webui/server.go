@@ -13,6 +13,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"io"
 	"io/fs"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -241,7 +242,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			jsonReply(w, 200, state)
 		case r.URL.Path == "/api/command" && r.Method == "POST":
 			var cmd Command
-			if err := decode(w, r, int64(messageframe.CommandBytes), &cmd); err != nil {
+			limit := int64(messageframe.CommandBytes)
+			if bounded, ok := s.backend.(interface{ CommandRequestBytes() int64 }); ok {
+				limit = bounded.CommandRequestBytes()
+				if limit < 1 || limit >= math.MaxInt64 {
+					fail(w, 503, "unavailable", "Invalid local command budget")
+					return
+				}
+			}
+			if err := decode(w, r, limit, &cmd); err != nil {
 				if errors.Is(err, errCommandTooLarge) {
 					fail(w, http.StatusRequestEntityTooLarge, "request_too_large", err.Error())
 					return

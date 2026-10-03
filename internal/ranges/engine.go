@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	MaxPolicyConnections = 128
-	MaxGlobalConnections = 512
-	MaxPeerConnections   = 64
+	DefaultPolicyConnections = 128
+	DefaultGlobalConnections = 512
+	DefaultPeerConnections   = 64
 )
 
 // Request is the captured numeric flow scope. Authorize must resolve the
@@ -28,35 +28,71 @@ type Request struct {
 	Source, Destination netip.AddrPort
 	PeerID              string
 	ExpiresAt           time.Time
+	UntilRevoked        bool
 }
 type Authorizer func(context.Context, Request) (string, error)
 type LoopbackDialer func(context.Context, netip.AddrPort) (net.Conn, error)
-type Limits struct{ Global, PerPolicy, PerPeer int }
+type Limits struct{ Global, PerPolicy, PerPeer int64 }
 type Options struct {
 	Authorize Authorizer
+	// LocalGuard checks dynamic local permission (such as a renewable lease)
+	// before/after stream reads and before writes. It must be fast, perform no
+	// network I/O, and must not re-enter Engine. Handle never invokes it.
+	LocalGuard func(policyID string) error
 	// DialLoopback receives only 127.0.0.1 or ::1 and the requested service
 	// port or explicitly mapped TargetPort. Nil uses a numeric-only OS
 	// loopback dial, never an outward dial.
 	DialLoopback LoopbackDialer
 	// AdmitTCP integrates with a process-wide budget shared by other TCP
 	// transports. It must be nonblocking and return an idempotent release.
-	// Nil uses this package's shared process-wide 512-flow gate.
-	AdmitTCP           func() (release func(), ok bool)
+	// Nil shares this package's aggregate counter with the current global limit.
+	AdmitTCP func() (release func(), ok bool)
+	// AdmitPolicyTCP replaces AdmitTCP when supplied, sharing aggregate and
+	// policy reservations across virtual and materialized transports.
+	AdmitPolicyTCP func(policyID string) (release func(), ok bool)
+	// AdmitPeerTCP adds the current authenticated identity's shared budget.
+	AdmitPeerTCP func(peerID string) (release func(), ok bool)
+	// CurrentLimits is read only when admitting a flow or binding its initial
+	// identity. Lowering limits never cancels an existing authenticated flow.
+	CurrentLimits      func() Limits
 	Limits             Limits
 	DialTimeout        time.Duration
 	RevalidateInterval time.Duration
 }
 
-var processSlots = make(chan struct{}, MaxGlobalConnections)
+var processBudget struct {
+	sync.Mutex
+	active int64
+}
 
-func defaultAdmission() (func(), bool) {
-	select {
-	case processSlots <- struct{}{}:
-		var once sync.Once
-		return func() { once.Do(func() { <-processSlots }) }, true
-	default:
+func defaultAdmission(limit int64) (func(), bool) {
+	processBudget.Lock()
+	defer processBudget.Unlock()
+	if processBudget.active >= limit {
 		return nil, false
 	}
+	processBudget.active++
+	var once sync.Once
+	return func() { once.Do(func() { processBudget.Lock(); processBudget.active--; processBudget.Unlock() }) }, true
+}
+
+func normalizedLimits(l Limits) Limits {
+	if l.Global == 0 {
+		l.Global = DefaultGlobalConnections
+	}
+	if l.PerPolicy == 0 {
+		l.PerPolicy = DefaultPolicyConnections
+	}
+	if l.PerPeer == 0 {
+		l.PerPeer = DefaultPeerConnections
+	}
+	return l
+}
+func (e *Engine) limits() Limits {
+	if e.opts.CurrentLimits != nil {
+		return normalizedLimits(e.opts.CurrentLimits())
+	}
+	return e.opts.Limits
 }
 
 type permit struct {
@@ -78,6 +114,7 @@ type flow struct {
 	mu                  sync.Mutex
 	remote              net.Conn
 	release             func()
+	releasePeer         func()
 	done                chan struct{}
 }
 
@@ -118,22 +155,21 @@ func New(ctx context.Context, opts Options) (*Engine, error) {
 	if opts.RevalidateInterval < 0 || opts.RevalidateInterval > time.Second {
 		return nil, errors.New("revalidation interval must be positive and at most one second")
 	}
-	for _, item := range []struct {
-		value   *int
-		maximum int
-	}{{&opts.Limits.Global, MaxGlobalConnections}, {&opts.Limits.PerPolicy, MaxPolicyConnections}, {&opts.Limits.PerPeer, MaxPeerConnections}} {
-		if *item.value == 0 {
-			*item.value = item.maximum
-		}
-		if *item.value < 1 || *item.value > item.maximum {
-			return nil, errors.New("connection limit exceeds its allowed bound")
-		}
+	opts.Limits = normalizedLimits(opts.Limits)
+	if opts.Limits.Global < 1 || opts.Limits.PerPolicy < 1 || opts.Limits.PerPeer < 1 {
+		return nil, errors.New("connection limits must be positive")
 	}
 	if opts.DialLoopback == nil {
 		opts.DialLoopback = dialLoopback
 	}
 	if opts.AdmitTCP == nil {
-		opts.AdmitTCP = defaultAdmission
+		opts.AdmitTCP = func() (func(), bool) {
+			limits := opts.Limits
+			if opts.CurrentLimits != nil {
+				limits = normalizedLimits(opts.CurrentLimits())
+			}
+			return defaultAdmission(limits.Global)
+		}
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	e := &Engine{ctx: lifetime, cancel: cancel, opts: opts, active: make(map[*flow]struct{}), byPolicy: make(map[string]int), byPeer: make(map[string]int), bySource: make(map[netip.Addr]int), done: make(chan struct{})}
@@ -253,7 +289,8 @@ func validFlowAt(now time.Time, s *snapshot, p *permit, src, dst netip.AddrPort)
 		return false
 	}
 	r := p.rule
-	return r.policy.Network == "tcp" && r.policy.Address == dst.Addr() && deadline.Active(now, r.policy.ExpiresAt) && r.effective.Contains(dst.Port())
+	lifetimeActive := r.policy.UntilRevoked && r.policy.ExpiresAt.IsZero() || !r.policy.UntilRevoked && deadline.Active(now, r.policy.ExpiresAt)
+	return r.policy.Network == "tcp" && r.policy.Address == dst.Addr() && lifetimeActive && r.effective.Contains(dst.Port())
 }
 
 func (e *Engine) Handle(src, dst netip.AddrPort) (func(net.Conn), bool) {
@@ -274,19 +311,30 @@ func (e *Engine) Handle(src, dst netip.AddrPort) (func(net.Conn), bool) {
 }
 
 func (e *Engine) admit(p *permit, src, dst netip.AddrPort, client net.Conn) *flow {
+	limits := e.limits()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.closed || e.ctx.Err() != nil || !validFlow(e.current.Load(), p, src, dst) || len(e.active) >= e.opts.Limits.Global || e.byPolicy[p.rule.policy.ID] >= e.opts.Limits.PerPolicy || e.bySource[src.Addr()] >= e.opts.Limits.PerPeer {
+	if e.closed || e.ctx.Err() != nil || !validFlow(e.current.Load(), p, src, dst) || int64(len(e.active)) >= limits.Global || int64(e.byPolicy[p.rule.policy.ID]) >= limits.PerPolicy || int64(e.bySource[src.Addr()]) >= limits.PerPeer {
 		return nil
 	}
-	release, ok := e.opts.AdmitTCP()
+	var release func()
+	var ok bool
+	if e.opts.AdmitPolicyTCP != nil {
+		release, ok = e.opts.AdmitPolicyTCP(p.rule.policy.ID)
+	} else {
+		release, ok = e.opts.AdmitTCP()
+	}
 	if !ok {
 		return nil
 	}
 	if release == nil {
 		return nil
 	}
-	ctx, cancel := context.WithDeadline(e.ctx, p.rule.policy.ExpiresAt)
+	ctx, cancel := context.WithCancel(e.ctx)
+	if !p.rule.policy.UntilRevoked {
+		cancel()
+		ctx, cancel = context.WithDeadline(e.ctx, p.rule.policy.ExpiresAt)
+	}
 	f := &flow{engine: e, permit: p, source: src, destination: dst, ctx: ctx, cancel: cancel, client: client, release: release, done: make(chan struct{})}
 	e.active[f] = struct{}{}
 	e.byPolicy[p.rule.policy.ID]++
@@ -302,6 +350,9 @@ func (f *flow) permitted() error {
 	if !validFlow(f.engine.current.Load(), f.permit, f.source, f.destination) {
 		return errors.New("range flow is no longer permitted")
 	}
+	if guard := f.engine.opts.LocalGuard; guard != nil {
+		return guard(f.permit.rule.policy.ID)
+	}
 	return nil
 }
 
@@ -315,7 +366,7 @@ func (e *Engine) authorize(ctx context.Context, f *flow) (string, error) {
 	r := f.permit.rule.policy
 	check, cancel := context.WithTimeout(ctx, e.opts.DialTimeout)
 	defer cancel()
-	peer, err := e.opts.Authorize(check, Request{PolicyID: r.ID, Source: f.source, Destination: f.destination, PeerID: expected, ExpiresAt: r.ExpiresAt})
+	peer, err := e.opts.Authorize(check, Request{PolicyID: r.ID, Source: f.source, Destination: f.destination, PeerID: expected, ExpiresAt: r.ExpiresAt, UntilRevoked: r.UntilRevoked})
 	if err != nil {
 		return "", err
 	}
@@ -333,10 +384,18 @@ func (e *Engine) authorize(ctx context.Context, f *flow) (string, error) {
 }
 
 func (e *Engine) bindPeer(f *flow, peer string) bool {
+	limits := e.limits()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if f.permitted() != nil || e.byPeer[peer] >= e.opts.Limits.PerPeer {
+	if f.permitted() != nil || int64(e.byPeer[peer]) >= limits.PerPeer {
 		return false
+	}
+	if e.opts.AdmitPeerTCP != nil {
+		release, ok := e.opts.AdmitPeerTCP(peer)
+		if !ok || release == nil {
+			return false
+		}
+		f.releasePeer = release
 	}
 	f.peerID = peer
 	e.byPeer[peer]++
@@ -380,6 +439,9 @@ func (e *Engine) release(f *flow) {
 		decrement(e.byPeer, f.peerID)
 	}
 	e.mu.Unlock()
+	if f.releasePeer != nil {
+		f.releasePeer()
+	}
 	f.release()
 	close(f.done)
 	e.wg.Done()

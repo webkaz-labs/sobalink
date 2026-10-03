@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendSelection, DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES, fromClipboardImages, fromDrop, fromFiles, removeSelection, safePath } from './files'
+import { appendSelection, DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES, fromClipboardImages, fromDrop, fromFiles, removeSelection, safePath, validateSelection } from './files'
 import type { UploadSelection } from './api'
 
 describe('batch collection', () => {
@@ -63,12 +63,17 @@ describe('batch collection', () => {
     expect(current.entries).toEqual([{ path: 'one.txt', size: 4, kind: 'file' }])
     expect(current.files).toHaveLength(1)
   })
-  it('never allows server limits to raise the 256-entry or 1-GiB browser cap', () => {
+  it('honors increased effective limits without retaining the old browser ceilings', () => {
     const files = Array.from({ length: DEFAULT_MAX_FILES + 1 }, (_, index) => new File([], `file-${index}`))
-    expect(() => fromFiles(files, 1000)).toThrow('too_many_files')
+    expect(fromFiles(files, 1000).entries).toHaveLength(DEFAULT_MAX_FILES + 1)
     const file = new File([], 'large.bin')
     Object.defineProperty(file, 'size', { value: DEFAULT_MAX_BYTES + 1 })
-    expect(() => fromFiles([file], 1000, DEFAULT_MAX_BYTES * 2)).toThrow('too_large')
+    expect(fromFiles([file], 1000, DEFAULT_MAX_BYTES * 2).entries[0].size).toBe(DEFAULT_MAX_BYTES + 1)
+  })
+  it('checks the per-file budget separately from the batch budget', () => {
+    const selection = fromFiles([new File(['123456'], 'part.bin')], 20, 10)
+    expect(() => validateSelection(selection, 20, 10, 5)).toThrow('file_too_large')
+    expect(validateSelection(selection, 20, 10, 6)).toBe(selection)
   })
   it('numbers clipboard image collisions without renaming selected files or mutating image data', () => {
     const current = fromFiles([new File([], 'IMAGE.png'), new File([], 'image (2).png/child.txt')])
@@ -85,5 +90,59 @@ describe('batch collection', () => {
     const addition = fromClipboardImages([image], fromFiles([image]))
     expect(addition.entries[0].path.endsWith(' (2).png')).toBe(true)
     expect(new TextEncoder().encode(addition.entries[0].path).length).toBeLessThanOrEqual(255)
+  })
+  it('uses raised path choices for selection, append and later validation', () => {
+    const pathLimits = { pathDepth: 64, pathBytes: 8192 }
+    const path = `${`${'x'.repeat(240)}/`.repeat(20)}file`
+    expect(new TextEncoder().encode(path).length).toBeGreaterThan(4096)
+    expect(() => safePath(path)).toThrow('unsafe_path')
+    expect(safePath(path, pathLimits)).toBe(path)
+    const addition = fromFiles([new File([], path)], undefined, undefined, pathLimits)
+    const result = appendSelection(fromFiles([new File([], 'first')]), addition, undefined, undefined, pathLimits)
+    expect(result.entries.map(entry => entry.path)).toEqual(['first', path])
+    expect(validateSelection(result, undefined, undefined, undefined, pathLimits)).toBe(result)
+    expect(() => validateSelection(result, undefined, undefined, undefined, { pathDepth: 16, pathBytes: 8192 })).toThrow('unsafe_path')
+    expect(() => validateSelection(result, undefined, undefined, undefined, { pathDepth: 64, pathBytes: 4096 })).toThrow('unsafe_path')
+    expect(result.entries).toHaveLength(2)
+  })
+  it('rejects escapes and nonportable components with raised path choices', () => {
+    const pathLimits = { pathDepth: 100000, pathBytes: 100000 }
+    for (const path of ['../file', '/file', 'a/../file', 'a/zero\u0000byte', 'a/NUL', `a/${'x'.repeat(256)}`]) {
+      expect(() => safePath(path, pathLimits)).toThrow('unsafe_path')
+    }
+  })
+  it('preserves collision and hierarchy checks for deeply nested synthetic paths', () => {
+    const prefix = 'd/'.repeat(12000)
+    const pathLimits = { pathDepth: 13000, pathBytes: 30000 }
+    const selection = fromFiles([new File([], `${prefix}a`), new File([], `${prefix}b`)], undefined, undefined, pathLimits)
+    expect(selection.entries).toHaveLength(2)
+    for (const names of [[`${prefix}Leaf`, `${prefix}leaf`], [`${prefix}parent`, `${prefix}parent!`, `${prefix}parent/child`]]) {
+      expect(() => fromFiles(names.map(name => new File([], name)), undefined, undefined, pathLimits)).toThrow('duplicate_path')
+    }
+    const folders: UploadSelection = { entries: [{ path: 'parent', kind: 'directory', size: 0 }, { path: 'parent/sub', kind: 'directory', size: 0 }, { path: 'parent!', kind: 'file', size: 0 }, { path: 'parent/sub/child', kind: 'file', size: 0 }], files: [] }
+    expect(validateSelection(folders).entries.map(entry => entry.path)).toEqual(['parent!', 'parent/sub/child'])
+  })
+  it('uses the chosen depth for dropped folders without a separate fixed ceiling', async () => {
+    interface Directory { name: string; isDirectory: boolean; isFile: boolean; createReader: () => { readEntries: (success: (items: Directory[]) => void) => void } }
+    const directory = (child?: Directory): Directory => ({ name: child ? 'd' : 'empty', isDirectory: true, isFile: false, createReader: () => {
+      let read = false
+      return { readEntries: success => { success(!read && child ? [child] : []); read = true } }
+    } })
+    let root = directory()
+    for (let depth = 0; depth < 70; depth++) root = directory(root)
+    const data = { items: [{ kind: 'file', webkitGetAsEntry: () => root }], files: [] } as unknown as DataTransfer
+    const result = await fromDrop(data, undefined, undefined, { pathDepth: 80, pathBytes: 8192 })
+    expect(result.entries).toEqual([{ path: `${'d/'.repeat(70)}empty`, kind: 'directory', size: 0 }])
+    await expect(fromDrop(data, undefined, undefined, { pathDepth: 64, pathBytes: 8192 })).rejects.toThrow('unsafe_path')
+  })
+  it('passes path choices through drop fallback and clipboard renaming', async () => {
+    const pathLimits = { pathDepth: 64, pathBytes: 8192 }
+    const file = new File([], `${'d/'.repeat(20)}file`)
+    const result = await fromDrop({ items: [], files: [file] } as unknown as DataTransfer, undefined, undefined, pathLimits)
+    expect(result.entries[0].path).toBe(file.name)
+    const image = new File([], 'image.png')
+    const addition = fromClipboardImages([image], fromFiles([image]), undefined, undefined, { pathDepth: 1, pathBytes: 10 })
+    expect(addition.entries[0].path).toBe('im (2).png')
+    expect(new TextEncoder().encode(addition.entries[0].path).length).toBeLessThanOrEqual(10)
   })
 })

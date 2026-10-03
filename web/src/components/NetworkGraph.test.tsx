@@ -25,18 +25,19 @@ describe('network diagram evidence and interaction', () => {
       peer('Identity unknown', { verified: false }), peer('Service unknown', { bridge: false }),
     ] }) })} />)
     const graph = diagram()
-    expect(graph.getByRole('button', { name: /^Open device: Known offline;/ })).toHaveTextContent('Known deviceKnown offlineNetwork offlineTailnetApp offline')
-    expect(graph.getByRole('button', { name: /^Open device: Needs permission;/ })).toHaveTextContent('Network onlineTailnetPermission needed')
+    expect(graph.getByRole('button', { name: /^Open device: Known offline;/ })).toHaveTextContent('Known deviceKnown offlineOfflineApp offline')
+    expect(graph.getByRole('button', { name: /^Open device: Needs permission;/ })).toHaveTextContent('OnlinePermission needed')
     expect(graph.getByRole('button', { name: /^Open device: Ready;/ })).toHaveTextContent('Allowed here')
     expect(graph.getByRole('button', { name: /^Open device: Identity unknown;/ })).toHaveTextContent('Identity unverified')
     expect(graph.getByRole('button', { name: /^Open device: Service unknown;/ })).toHaveTextContent('sobalink service not confirmed')
-    expect(graph.getAllByText('No file transfer in progress')).toHaveLength(5)
+    expect(graph.queryByText('No file transfer in progress')).not.toBeInTheDocument()
+    expect(graph.getAllByRole('button', { name: /^Open connection:/ }).every(button => button.getAttribute('aria-label')?.includes('No file transfer in progress'))).toBe(true)
     expect(graph.queryByText(/Ordinary|not installed/i)).not.toBeInTheDocument()
   })
 
   it.each([
-    { locale: 'en' as const, group: 'Known connections from this device', open: /^Open device: Studio;/, online: 'Network online', unconfirmed: 'sobalink service not confirmed', ready: 'Allowed here', explanation: /Network online is reported by the network or an authenticated sobalink reply/ },
-    { locale: 'ja' as const, group: 'この端末から確認できる接続', open: /^デバイスを開く: Studio;/, online: 'ネットワーク上でオンライン', unconfirmed: 'sobalink サービス未確認', ready: 'この端末で許可', explanation: /ネットワーク側の状態通知または認証済みの sobalink 応答/ },
+    { locale: 'en' as const, group: 'Known connections from this device', open: /^Open device: Studio;/, online: 'Online', unconfirmed: 'sobalink service not confirmed', ready: 'Allowed here', explanation: /Network online is reported by the network or an authenticated sobalink reply/ },
+    { locale: 'ja' as const, group: 'この端末から確認できる接続', open: /^デバイスを開く: Studio;/, online: 'オンライン', unconfirmed: 'sobalink サービス未確認', ready: 'この端末で許可', explanation: /ネットワーク側の状態通知または認証済みの sobalink 応答/ },
   ])('does not treat network presence as a confirmed sobalink reply in $locale', ({ locale, group, open, online, unconfirmed, ready, explanation }) => {
     const { container } = render(<NetworkGraph {...props({ locale, state: state({ peers: [peer('Studio', { online: true, bridge: false })] }) })} />)
     const node = within(screen.getByRole('group', { name: group })).getByRole('button', { name: open })
@@ -63,11 +64,14 @@ describe('network diagram evidence and interaction', () => {
       messages: [{ id: 'message', peerId: 'Studio', direction: 'outgoing', text: 'Hello', status: 'sent', createdAt: '2026-10-02T10:00:00Z' }],
     }) })} />)
     const edge = diagram().getByRole('button', { name: /^Open connection: Local device — Studio;/ })
-    expect(edge).toHaveTextContent('Ready connection services: 1')
-    expect(edge).toHaveTextContent('Active sharing rules: 1')
-    expect(edge).toHaveTextContent('No file transfer in progress')
+    expect(edge).toHaveAccessibleName(/Ready connection services: 1/)
+    expect(edge).toHaveAccessibleName(/Active sharing rules: 1/)
+    expect(edge).not.toHaveTextContent('Ready connection services')
+    expect(diagram().getByText('Listeners 1 · Sharing rules 1')).toBeInTheDocument()
+    expect(diagram().getByText('Listeners 0 · Sharing rules 0')).toBeInTheDocument()
+    expect(edge).toHaveAccessibleName(/No file transfer in progress/)
     expect(edge).toHaveAccessibleName(/App paused/)
-    expect(diagram().getByRole('button', { name: /^Open connection: Local device — Other;/ })).toHaveTextContent('No active connections or sharing rules')
+    expect(diagram().getByRole('button', { name: /^Open connection: Local device — Other;/ })).toHaveAccessibleName(/No active connections or sharing rules/)
     expect(container.querySelectorAll('[data-direction]')).toHaveLength(0)
     expect(container.querySelectorAll('.has-transfer, animate, animateMotion')).toHaveLength(0)
     expect(screen.getByText(/Network traffic is not measured/)).toBeInTheDocument()
@@ -82,7 +86,8 @@ describe('network diagram evidence and interaction', () => {
       transfer({ id: 'unknown-peer', peerId: 'Not known' }),
     ] }) })} />)
     const edge = diagram().getByRole('button', { name: /^Open connection:/ })
-    expect(edge).toHaveTextContent('File transfer: Sending 30% · Receiving 50%')
+    expect(edge).toHaveAccessibleName(/File transfer: Sending 30% · Receiving 50%/)
+    expect(diagram().getByText('File transfer: Sending 30% · Receiving 50%')).toBeInTheDocument()
     expect(container.querySelectorAll('[data-direction="incoming"]')).toHaveLength(1)
     expect(container.querySelectorAll('[data-direction="outgoing"]')).toHaveLength(1)
     expect(container.querySelectorAll('g[data-peer-id]')).toHaveLength(1)
@@ -97,7 +102,7 @@ describe('network diagram evidence and interaction', () => {
 
   it.each([{ totalBytes: 0 }, { totalBytes: Number.NaN }, { completedBytes: -1 }, { completedBytes: 401 }])('labels invalid transfer progress as unknown (%j)', invalid => {
     render(<NetworkGraph {...props({ state: state({ transfers: [transfer(invalid)] }) })} />)
-    expect(diagram().getByRole('button', { name: /^Open connection:/ })).toHaveTextContent('Sending progress unknown')
+    expect(diagram().getByRole('button', { name: /^Open connection:/ })).toHaveAccessibleName(/Sending progress unknown/)
   })
 
   it('keeps unknown paths unknown even when LAN configuration mentions a relay', () => {
@@ -190,30 +195,35 @@ describe('network diagram evidence and interaction', () => {
         return compact ? rect(160, second ? 720 : 420, 72, 72) : rect(526, second ? 288 : 128, 72, 72)
       }
       if (this.classList.contains('network-graph-self')) return rect(120, 120, compact ? 260 : 160, 132)
-      if (this.classList.contains('network-graph-edge')) return compact ? rect(152, second ? 600 : 300, 248, 90) : rect(324, second ? 292 : 132, 170, 108)
+      if (this.classList.contains('network-graph-edge')) return compact ? rect(232, second ? 812 : 512, 130, 44) : rect(324, second ? 268 : 108, 130, 44)
+      if (this.classList.contains('network-graph-wire-slot')) return compact ? rect(0, 0, 0, 0) : rect(314, second ? 312 : 152, 170, 24)
       if (this.classList.contains('network-graph-node')) return compact ? rect(152, second ? 712 : 412, 248, 132) : rect(518, second ? 280 : 120, 202, 132)
       return rect(0, 0, 0, 0)
     })
     const { container, unmount } = render(<NetworkGraph {...props({ selectedPeerId: 'A', state: state({ peers: [peer('B'), peer('A')], transfers: [transfer({ peerId: 'A' })] }) })} />)
-    const lines = () => Array.from(container.querySelectorAll('.network-graph-line')).map(line => line.getAttribute('d'))
-    expect(lines()).toEqual([
-      'M 154 84 H 192 C 208 84, 208 86, 224 86 M 394 86 C 411 86, 411 64, 428 64',
-      'M 154 84 H 192 C 208 84, 208 246, 224 246 M 394 246 C 411 246, 411 224, 428 224',
-    ])
+    const lines = () => ['A', 'B'].map(peerId => container.querySelector(`g[data-peer-id="${peerId}"] .network-graph-line`)?.getAttribute('d'))
+    expect(lines()).toHaveLength(2)
+    expect(lines()[0]).toMatch(/^M 154 84 H 190 Q 200 84 200 74 V 74 Q 200 64 210 64 H 368 C 398 64, 398 64, 428 64$/)
+    expect(lines()[1]).toMatch(/^M 154 84 H 186 Q 200 84 200 98 V 210 Q 200 224 214 224 H 368 C 398 224, 398 224, 428 224$/)
+    // No second move command: route badges cannot break the device-to-device line.
+    expect(lines().every(line => line?.match(/M /g)?.length === 1)).toBe(true)
+    expect(container.querySelectorAll('.network-graph-terminal')).toHaveLength(4)
+    expect(container.querySelectorAll('.network-graph-junction')).toHaveLength(2)
     expect(container.querySelector('g[data-peer-id="A"]')).toHaveClass('is-selected')
     expect(diagram().getByRole('button', { name: /^Open connection: Local device — A;/ })).toHaveClass('is-selected')
-    expect(observe).toHaveBeenCalledTimes(6)
+    expect(observe).toHaveBeenCalledTimes(8)
     compact = true
     act(() => notifyResize())
     expect(lines()).toEqual([
-      'M 30 76 Q 20 76 20 88 V 235 Q 20 245 30 245 H 52 M 176 290 C 176 306, 96 306, 96 322',
-      'M 30 76 Q 20 76 20 88 V 535 Q 20 545 30 545 H 52 M 176 590 C 176 606, 96 606, 96 622',
+      'M 30 76 H 27 Q 24 76 24 79 V 353 Q 24 356 27 356 H 46 C 54 356, 54 356, 62 356',
+      'M 30 76 H 27 Q 24 76 24 79 V 653 Q 24 656 27 656 H 46 C 54 656, 54 656, 62 656',
     ])
-    expect(container.querySelector('[data-direction="outgoing"]')).toHaveAttribute('d', 'M 92 311 l 4 5 4 -5')
+    expect(container.querySelector('[data-direction="outgoing"]')).toHaveAttribute('d', 'M 48 351 l 6 5 -6 5')
     expect(container.querySelector('.network-graph')).toHaveAttribute('data-view', 'diagram')
     expect(screen.getByRole('button', { name: 'Show device list' })).toBeInTheDocument()
     expect(container.querySelector('.network-graph-list')).not.toBeInTheDocument()
-    expect(container.querySelectorAll('foreignObject, text, [style]')).toHaveLength(0)
+    expect(container.querySelectorAll('foreignObject, text')).toHaveLength(0)
+    expect(Array.from(container.querySelectorAll('[style]')).every(element => !element.getAttribute('style')?.includes('transform'))).toBe(true)
     expect(diagram().getAllByRole('button')).toHaveLength(5)
     unmount()
     expect(disconnect).toHaveBeenCalledOnce()
@@ -243,4 +253,115 @@ describe('network diagram evidence and interaction', () => {
     expect(screen.getByText(/通信量は計測していません/)).toBeInTheDocument()
     expect(within(screen.getByRole('group', { name: 'この端末から確認できる接続' })).getByRole('button', { name: /^デバイスを開く: Local device;/ })).toBeInTheDocument()
   })
+})
+
+it('uses route markers only for reported paths and documents dashed uncertainty without idle arrows', () => {
+  const { container } = render(<NetworkGraph {...props({ state: state({ peers: [peer('Direct', { path: 'direct' }), peer('Relay', { path: 'relay' }), peer('Unknown'), peer('Offline', { online: false, path: 'direct' })] }) })} />)
+  expect(container.querySelectorAll('.network-graph-line.is-reported')).toHaveLength(2)
+  expect(container.querySelectorAll('.network-graph-line.is-unconfirmed')).toHaveLength(2)
+  expect(container.querySelector('.network-graph-edge[data-path="unknown"] .network-graph-route-glyph')).not.toBeInTheDocument()
+  expect(container.querySelectorAll('.network-graph-edge[data-path="relay"] .network-graph-route-glyph rect')).toHaveLength(1)
+  expect(screen.getByText('Dashed: path unknown or device offline. Solid: reported path.')).toBeInTheDocument()
+  expect(container.querySelectorAll('[data-direction], animate, animateMotion')).toHaveLength(0)
+})
+it('keeps waiting offers visible while omitting empty transfer and listener summaries', () => {
+  render(<NetworkGraph {...props({ state: state({ transfers: [transfer({ status: 'offered' })] }) })} />)
+  const edge = diagram().getByRole('button', { name: /^Open connection:/ })
+  expect(edge).toHaveAccessibleName(/Transfers waiting: 1/)
+  expect(diagram().getByText('Transfers waiting: 1')).toBeInTheDocument()
+  expect(edge).not.toHaveTextContent('No active connections or sharing rules')
+  expect(edge).toHaveAccessibleName(/No active connections or sharing rules/)
+})
+
+
+it('coordinates an entire branch on node, route, and path hover or keyboard focus', async () => {
+  const handlers = props({ state: state({ peers: [peer('A'), peer('B')] }) })
+  const { container } = render(<NetworkGraph {...handlers} />)
+  const node = diagram().getByRole('button', { name: /^Open device: A;/ })
+  const edge = diagram().getByRole('button', { name: /^Open connection: Local device — A;/ })
+  const branch = container.querySelector('.network-graph-branch[data-peer-id="A"]')!
+  const path = container.querySelector('g[data-peer-id="A"]')!
+  await userEvent.hover(node)
+  expect(branch).toHaveClass('is-emphasized')
+  expect(path).toHaveClass('is-emphasized')
+  expect(path.parentElement?.lastElementChild).toBe(path)
+  expect(container.querySelector('g[data-peer-id="B"]')).not.toHaveClass('is-emphasized')
+  await userEvent.unhover(node)
+  expect(path).not.toHaveClass('is-emphasized')
+  act(() => edge.focus())
+  expect(path).toHaveClass('is-emphasized')
+  act(() => node.focus())
+  expect(path).toHaveClass('is-emphasized')
+  act(() => screen.getByRole('button', { name: 'Show device list' }).focus())
+  expect(path).not.toHaveClass('is-emphasized')
+  await userEvent.hover(path.querySelector('.network-graph-line-hit')!)
+  expect(branch).toHaveClass('is-emphasized')
+  await userEvent.click(path.querySelector('.network-graph-line-hit')!)
+  expect(handlers.onSelectPeer).toHaveBeenCalledExactlyOnceWith('A')
+})
+
+
+it.each([1180, 960, 375].flatMap(viewport => [3, 6, 12].map(count => ({ viewport, count }))))('reserves independent measured lanes for $count long Japanese names at $viewport', ({ viewport, count }) => {
+  const narrow = viewport === 375
+  const compact = viewport < 1180
+  const width = narrow ? 351 : compact ? 660 : 860
+  const rowHeight = narrow ? 310 : 180
+  const rowStart = compact ? 180 : 28
+  const rect = (x: number, y: number, width: number, height: number) => ({ x, y, left: x, top: y, right: x + width, bottom: y + height, width, height, toJSON: () => ({}) })
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const peerId = this.closest('.network-graph-branch')?.getAttribute('data-peer-id')
+    const index = peerId ? Number(peerId.slice(1)) : 0
+    const row = rowStart + index * rowHeight
+    if (this.classList.contains('network-graph-canvas')) return rect(0, 0, width, rowStart + count * rowHeight)
+    if (this.classList.contains('network-graph-self')) return compact ? rect(10, 16, width - 20, 120) : rect(24, 60, 152, 240)
+    if (this.classList.contains('network-graph-device-glyph')) {
+      if (this.closest('.network-graph-self')) return compact ? rect(18, 24, 96, 96) : rect(44, 80, 112, 112)
+      return narrow ? rect(46, row + 8, 72, 72) : rect(compact ? 308 : 548, row + 16, 80, 80)
+    }
+    if (this.classList.contains('network-graph-node')) return narrow ? rect(38, row, 303, 142) : rect(compact ? 300 : 540, row, compact ? 324 : 296, 150)
+    if (this.classList.contains('network-graph-edge')) return narrow ? rect(126, row + 150, 144, 44) : rect(compact ? 90 : 270, row, 144, 44)
+    if (this.classList.contains('network-graph-wire-slot')) return narrow ? rect(0, 0, 0, 0) : rect(compact ? 60 : 228, row + 44, 220, 24)
+    return rect(0, 0, 0, 0)
+  })
+  const peers = Array.from({ length: count }, (_, index) => peer(`p${index}`, { name: `制作スタジオの共有デバイス・長い表示名その${index + 1}`, path: index % 3 === 0 ? 'direct' : index % 3 === 1 ? 'relay' : 'unknown' }))
+  const { container } = render(<NetworkGraph {...props({ locale: 'ja', state: state({ peers }) })} />)
+  expect(container.querySelectorAll('.network-graph-line')).toHaveLength(count)
+  expect(container.querySelectorAll('.network-graph-edge')).toHaveLength(count)
+  const laneYs: number[] = []
+  peers.forEach((peer, index) => {
+    const group = container.querySelector(`g[data-peer-id="${peer.id}"]`)!
+    const line = group.querySelector('.network-graph-line')!.getAttribute('d')!
+    const y = rowStart + index * rowHeight + (narrow ? 44 : 56)
+    const x = narrow ? 48 : compact ? 310 : 550
+    expect(line.match(/M /g)).toHaveLength(1)
+    expect(line).not.toMatch(/NaN|Infinity|undefined/)
+    expect(line).toMatch(new RegExp(`, ${x} ${y}$`))
+    expect(Number(group.querySelector('.network-graph-junction')!.getAttribute('cy'))).toBe(y)
+    const finalCurve = line.split(' C ')[1].split(/[ ,]+/).map(Number)
+    const curveYs = finalCurve.filter((_, index) => index % 2 === 1)
+    expect(Math.max(...curveYs) - Math.min(...curveYs)).toBeLessThanOrEqual(24)
+    const annotation = group.querySelector('.network-graph-annotation')!.getAttribute('d')
+    if (narrow) expect(annotation).toBe('')
+    else expect(annotation).toBe(`M ${compact ? 162 : 342} ${y - 9} V ${y - 4}`)
+    laneYs.push(y)
+    expect(screen.getByRole('button', { name: new RegExp(`^デバイスを開く: ${peer.name};`) })).toHaveTextContent(peer.name)
+  })
+  expect(laneYs.every((y, index) => index === 0 || y - laneYs[index - 1] >= rowHeight)).toBe(true)
+  expect(container.querySelectorAll('foreignObject, text, [style]')).toHaveLength(0)
+})
+
+it.each(['en', 'ja'] as const)('shows factual lane counts and richer selected service details in %s', locale => {
+  const data = state({ peers: [peer('Studio'), peer('Other')],
+    services: [{ id: 'a', peerId: 'Studio', name: 'Web preview', network: 'tcp', status: 'active' }, { id: 'b', peerId: 'Studio', name: 'Saved rule', network: 'tcp', status: 'saved' }],
+    shares: [{ id: 'c', peerId: 'Studio', name: 'Local service', network: 'udp', status: 'active' }, { id: 'd', peerId: 'Other', name: 'Other scope', network: 'tcp', status: 'active' }],
+  })
+  const { container, rerender } = render(<NetworkGraph {...props({ locale, state: data })} />)
+  const lane = container.querySelector('.network-graph-branch[data-peer-id="Studio"]')!
+  expect(lane.querySelector('.network-graph-lane-meta')).toHaveTextContent(locale === 'ja' ? 'Tailnet接続待受 1 · 共有許可 1' : 'TailnetListeners 1 · Sharing rules 1')
+  expect(lane.querySelector('.network-graph-selected-facts')).not.toBeInTheDocument()
+  rerender(<NetworkGraph {...props({ locale, state: data, selectedPeerId: 'Studio' })} />)
+  const details = lane.querySelector('.network-graph-selected-facts')!
+  expect(details).toHaveTextContent('Web preview (TCP) · Local service (UDP)')
+  expect(details).not.toHaveTextContent(/Saved rule|Other scope/)
+  expect(container.querySelectorAll('[data-direction], animate, animateMotion')).toHaveLength(0)
 })

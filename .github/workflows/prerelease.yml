@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Prerelease version without v (for example 0.2.0-alpha.2)'
+        description: 'Prerelease version without v (for example 0.3.0-alpha.1)'
         required: true
         type: string
       tested_commit:
@@ -23,7 +23,7 @@ concurrency:
 env:
   GOTOOLCHAIN: local
   GOWORK: 'off'
-  GOFLAGS: -mod=readonly
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
 
 jobs:
   gate:
@@ -98,6 +98,14 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+      - name: Test and reproduce locked frontend assets
+        run: |
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          python .github/scripts/check-frontend.py
       - name: Locate Go module and compilation caches
         id: go-cache-info
         run: |
@@ -140,6 +148,27 @@ jobs:
           go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
           # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
           go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
+      - name: Verify paired transport and Core applications over an isolated relay
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+
+          # Only this child test process receives a clean backend environment.
+          # The test compiles out OS UDP and refuses non-loopback listeners.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/core",
+          ], env=env, check=True, timeout=9 * 60)
+          PY
       - name: Native vet and formatting
         run: |
           set -euo pipefail
@@ -158,7 +187,7 @@ jobs:
           cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS
           extension=tar.gz
           if [[ "$TARGET_OS" == windows ]]; then extension=zip; fi
-          python .github/scripts/smoke-package.py "dist/tsnet-bridge-$RELEASE_VERSION-$TARGET_OS-$TARGET_ARCH.$extension" "$RELEASE_VERSION" 2>&1 | tee logs/package-smoke.txt
+          python .github/scripts/smoke-package.py "dist/sobalink-$RELEASE_VERSION-$TARGET_OS-$TARGET_ARCH.$extension" "$RELEASE_VERSION" 2>&1 | tee logs/package-smoke.txt
           # The combined checksum inventory is generated after all four builds.
           rm dist/SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -380,23 +409,23 @@ jobs:
               post("git/refs", {"ref": "refs/tags/" + tag, "sha": commit})
           if release is None:
               notes = "\n".join([
-                  "実験的なプレリリースです。本番利用向けの安定版ではありません。",
-                  "このノードに共有されたサービスから選ぶ探索、矢印キーによる候補選択・文字編集、用途候補と提供側の条件の案内を追加しました。",
-                  "通常の Tailscale・旧 bridge には connect --manual を使います。探索情報は許可した相手だけに提供し、既存の共有は自動公開しません。保存・開始には明示的な確認が必要です。",
-                  "4環境でネイティブの race test、vet、同一入力での2回ビルドの一致、日英のオフライン smoke test を実施しています。POSIX 3環境では PTY 入力試験も実施しています。",
-                  "実 tailnet・ACL・アプリ、スマートフォン QR、Windows 標準ユーザー認証、実際の IME・フォント、Windows Console／ConPTY、OS ログイン・スリープ、RustDesk の双方向画面・入力は未検証です。",
-                  "公開後に4環境で実際の mise インストールを検証します。結果はこのリリースの Actions 実行で確認してください。",
+                  "実験的なプレリリースです。安定版ではありません。",
+                  "sobalink（コマンド soba）は端末間でサービス・ファイル・メッセージを扱うツールです。ローカルのWeb画面とCLIを備え、既存Tailnetと明示指定した信頼できる中継先を利用するペア接続に対応します。",
+                  "サービスの公開先・ポート・期限、ファイルの受信先と自動保存は明示的に選びます。保存済みサービスを起動時に自動公開しません。",
+                  "3種類のOS、4対象環境でネイティブのrace test・vet・同一入力2回ビルド・日英の配布物smoke testを実行しました。正確なソースに対するPlaywrightの実ブラウザー試験はリンク先のCIで確認できます。",
+                  "実機間のTailnet・ACL・アプリ互換性、スマートフォンQR、実際のIME・フォント、Windows Console／ConPTY、OSログイン・スリープは別途確認が必要です。模擬ピアと隔離されたループバック中継の試験は、実利用環境全体の保証ではありません。",
+                  "公開後に4対象環境で実際のmiseインストールと署名・来歴を検証します。結果はこのリリースのActions実行で確認してください。",
                   "",
-                  "Experimental prerelease; this is not a stable production release.",
-                  "Adds service-first discovery of shares allowed to this node, arrow-key selection/text editing, and clearer purpose presets and provider requirements.",
-                  "Use connect --manual for ordinary Tailscale services and older bridges. Discovery metadata is scoped to allowed peers; existing shares are not automatically announced. Saving and starting still require explicit confirmation.",
-                  "Native race tests, vet, matching repeated builds from identical inputs, and bilingual offline archive smoke tests run on all four targets. The three POSIX targets also run PTY input tests.",
-                  "Real tailnet/ACL/application use, phone QR, Windows standard-user enrollment, actual IME/font combinations, Windows Console/ConPTY, OS login/sleep, and RustDesk bidirectional screen/input remain unverified.",
-                  "Actual mise installation is checked on all four targets after publication; inspect the linked Actions run for its result.",
+                  "Experimental prerelease; this is not a stable release.",
+                  "sobalink, with the soba command, connects devices for services, files and messages through a local Web UI and CLI. It supports an existing Tailnet and explicit peer pairing through a selected trusted relay.",
+                  "Service recipients, ports and lifetimes, receiving destinations and automatic saving are explicit choices. Saved services are not automatically exposed on startup.",
+                  "Native race tests, vet, matching repeated builds and bilingual archive smoke tests ran on four targets across three operating systems. See the linked exact-source CI for Playwright browser acceptance.",
+                  "Real-device Tailnet/ACL/application compatibility, phone QR, actual IME/font combinations, Windows Console/ConPTY, OS login and suspend remain separate acceptance checks. Synthetic peers and an isolated loopback relay do not establish compatibility with every real environment.",
+                  "Actual mise installation and public signatures/provenance are checked on all four targets after publication; inspect this release's Actions run for the results.",
                   "",
                   "Verification: https://github.com/" + checks.REPOSITORY + "/actions/runs/" + os.environ["GITHUB_RUN_ID"],
                   "Source commit: " + commit,
-                  "<!-- tsnet-bridge-source:" + commit + " -->",
+                  "<!-- sobalink-source:" + commit + " -->",
               ])
               post("releases", {"tag_name": tag, "target_commitish": commit, "name": tag + " (experimental)", "body": notes, "draft": True, "prerelease": True, "make_latest": "false"})
           PY
@@ -530,8 +559,8 @@ jobs:
           mise --version 2>&1 | tee logs/mise-version.txt
           mise install "$tool" 2>&1 | tee logs/mise-install.txt
           mise use -g "$tool" 2>&1 | tee logs/mise-use-global.txt
-          mise exec -- tsnet-bridge version 2>&1 | tee logs/installed-version.txt
-          mise exec -- tsnet-bridge --help 2>&1 | tee logs/installed-help.txt
+          mise exec -- soba version 2>&1 | tee logs/installed-version.txt
+          mise exec -- soba --help 2>&1 | tee logs/installed-help.txt
           install_dir="$(mise where "$tool")"
           python tools/verify-installed.py "$install_dir" "$RELEASE_VERSION" "$TESTED_COMMIT" "$TARGET" 2>&1 | tee logs/installed-notices.txt
       - name: Preserve each native mise installation result even after failure

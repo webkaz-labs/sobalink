@@ -31,7 +31,9 @@ func (m *mockCLI) call(_ context.Context, _ string, raw string, result any) erro
 		if err := json.Unmarshal([]byte(raw), &command); err != nil {
 			return err
 		}
-		if command.Name == "service.config" {
+		if command.Name == "profile.export" {
+			response = map[string]any{"profile": map[string]any{"services": []savedService{m.saved.Configuration}}}
+		} else if command.Name == "service.config" {
 			response = m.saved
 			m.queries++
 		} else {
@@ -77,7 +79,7 @@ func TestMockServicePresetsPreviewAndUnusedNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := previewOf(t, out)
-	if payload["ports"] != "22" || payload["localPort"] != float64(2222) || payload["ttlSeconds"] != float64(3600) || payload["peerId"] != "peer-123" {
+	if payload["ports"] != "22" || payload["localPort"] != float64(2222) || payload["ttlSeconds"] != float64(0) || payload["lifetime"] != "until-stopped" || payload["peerId"] != "peer-123" {
 		t.Fatalf("bad safe preset: %v", payload)
 	}
 	if m.queries != 0 || len(m.commands) != 0 {
@@ -111,7 +113,6 @@ func TestMockInvalidServiceInputStopsBeforeIPC(t *testing.T) {
 		{"share", "--ports", "8000", "--peers", strings.Repeat("peer,", 33)},
 		{"share", "--preset", "unknown", "--peers", "peer"},
 		{"connect", "--ports", "22", "--peer", "peer"},
-		{"connect", "--ports", "8000-8070", "--peer", "peer"},
 		{"connect", "--ports", "8000-8010", "--peer", "peer", "--local-port", "65530"},
 		{"connect", "--preset", "ssh", "--peer", "peer", "--local-port", "100"},
 		{"share", "--ports", "8000", "--network", "udp", "--peers", "peer", "--ttl", "500ms"},

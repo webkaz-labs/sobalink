@@ -16,10 +16,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/transport"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
@@ -43,28 +45,30 @@ type Trust struct {
 	Paused     bool   `json:"paused"`
 }
 type Profile struct {
-	Version  int           `json:"version"`
-	Settings Settings      `json:"settings"`
-	Peers    []Trust       `json:"peers"`
-	Services []ServiceSpec `json:"services"`
+	Version  int            `json:"version"`
+	Settings Settings       `json:"settings"`
+	Peers    []Trust        `json:"peers"`
+	Services []ServiceSpec  `json:"services"`
+	Groups   []ServiceGroup `json:"groups,omitempty"`
 }
 type ServiceSpec struct {
-	ID           string   `json:"id"`
-	Backend      string   `json:"backend,omitempty"`
-	Name         string   `json:"name"`
-	Direction    string   `json:"direction"`
-	Network      string   `json:"network"`
-	Ports        string   `json:"ports"`
-	ExcludePorts string   `json:"excludePorts,omitempty"`
-	LocalPort    int      `json:"localPort,omitempty"`
-	LoopbackHost string   `json:"loopbackHost,omitempty"`
-	Lifetime     string   `json:"lifetime,omitempty"`
-	PeerID       string   `json:"peerId,omitempty"`
-	PeerIDs      []string `json:"peerIds,omitempty"`
-	TTLSeconds   int      `json:"ttlSeconds"`
-	Purpose      string   `json:"purpose"`
-	Discoverable bool     `json:"discoverable"`
-	ServiceID    string   `json:"serviceId,omitempty"`
+	ID              string   `json:"id"`
+	Backend         string   `json:"backend,omitempty"`
+	Name            string   `json:"name"`
+	Direction       string   `json:"direction"`
+	Network         string   `json:"network"`
+	Ports           string   `json:"ports"`
+	ExcludePorts    string   `json:"excludePorts,omitempty"`
+	LocalPort       int      `json:"localPort,omitempty"`
+	LoopbackHost    string   `json:"loopbackHost,omitempty"`
+	Lifetime        string   `json:"lifetime,omitempty"`
+	PeerID          string   `json:"peerId,omitempty"`
+	PeerIDs         []string `json:"peerIds,omitempty"`
+	TTLSeconds      int      `json:"ttlSeconds"`
+	Purpose         string   `json:"purpose"`
+	Discoverable    bool     `json:"discoverable"`
+	ServiceID       string   `json:"serviceId,omitempty"`
+	ServiceRevision string   `json:"serviceRevision,omitempty"`
 }
 type Message struct {
 	ID        string    `json:"id"`
@@ -87,10 +91,19 @@ type Options struct {
 }
 
 type Core struct {
+	startup                    startupStore
+	startupPending             map[string]string
+	startupStates              map[string]string
+	startupSuppressed          bool
+	savedProxies               savedProxyStore
+	savedProxyPending          map[string]string
+	savedProxyRuns             map[string]savedProxyRun
 	mu                         sync.RWMutex
 	op                         sync.Mutex
 	dir, version               string
 	profile                    Profile
+	capacity                   capacity.Policy
+	resources                  *transport.Controller
 	node                       NetworkBackend
 	factory                    NodeFactory
 	ctx                        context.Context
@@ -107,11 +120,25 @@ type Core struct {
 	transfers                  *transfer.Manager
 	messages                   []Message
 	outgoing                   map[string]*outgoingBatch
+	orphanSpoolBytes           int64
+	orphanSpoolEntries         int64
+	orphanSpoolError           string
 	confirmed                  map[string]time.Time
+	refreshMu                  sync.Mutex
+	refreshCursor              string
 	discovered                 map[string][]RemoteService
+	discoveryObservations      map[string]DiscoveryObservation
 	active                     map[string]*activeService
 	serviceStates              map[string]string
+	serviceFailures            map[string]serviceFailure
+	serviceDiagnostics         map[string]ServiceDiagnostic
+	proxies                    map[string]*activeProxy
+	proxyStart                 proxyStarter
+	diagnosticsDial            transport.Dialer
 	rangeState                 *rangeState
+	requestMu                  sync.Mutex
+	inflightRequests           map[string]*pendingRequest
+	planSources                sourcePlanner
 	requests                   map[string]requestResult
 	web                        *webui.Server
 	wg                         sync.WaitGroup
@@ -122,6 +149,12 @@ type Core struct {
 	lanFactory                 func(*lanStore) (lanNetworkBackend, error)
 	lanAddresses               func() ([]LANLocalAddress, error)
 }
+type pendingRequest struct {
+	signature string
+	done      chan struct{}
+	result    requestResult
+}
+
 type requestResult struct {
 	signature string
 	value     any
@@ -145,22 +178,36 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		return nil, err
 	}
 	p := Profile{Version: 1, Settings: Settings{Locale: "auto", Theme: "system", Network: "none", Hostname: "sobalink-" + randomID()[:8]}, Peers: []Trust{}, Services: []ServiceSpec{}}
-	if err := config.ReadJSON(filepath.Join(opts.Directory, "sobalink.json"), &p); err != nil && !errors.Is(err, os.ErrNotExist) {
+	limits, err := readCapacityPolicy(opts.Directory)
+	if err != nil {
+		return nil, err
+	}
+	if err := readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &p); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	if err := validateProfile(p); err != nil {
 		return nil, err
 	}
-	if err := config.WriteJSON(filepath.Join(opts.Directory, "sobalink.json"), p); err != nil {
+	if err := validateCapacityBackend(p.Settings.Network, limits); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
 	c := &Core{dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
+	c.capacity = limits
+	if err := c.loadStartup(opts.SkipNetworkStart); err != nil {
+		cancel()
+		return nil, err
+	}
+	c.inventoryOutgoingSpool()
+	if err := c.writeProfile(p); err != nil {
+		cancel()
+		return nil, err
+	}
 	c.factory = opts.NodeFactory
 	if c.factory == nil {
 		c.factory = func(dir, name string) (NetworkBackend, error) { return identity.New(dir, name) }
 	}
-	lan, err := readLANStore(filepath.Join(opts.Directory, "lan.json"))
+	lan, err := readLANStoreWithPolicy(filepath.Join(opts.Directory, "lan.json"), limits)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -176,7 +223,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 			c.trustGeneration = peer.Generation
 		}
 	}
-	m, err := transfer.NewManager(transfer.Options{Limits: transferLimits(), PolicyStore: receiveStore{c}})
+	m, err := transfer.NewManager(transfer.Options{Limits: receiveTransferLimits(limits), PolicyStore: receiveStore{c}})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -218,9 +265,6 @@ func validateProfile(p Profile) error {
 	if p.Version != 1 {
 		return errors.New("unsupported sobalink profile version")
 	}
-	if len(p.Peers) > 128 || len(p.Services) > 64 {
-		return errors.New("profile capacity exceeded")
-	}
 	if p.Settings.Network != "none" && p.Settings.Network != "tailnet" && p.Settings.Network != "lan" {
 		return errors.New("network must be none, tailnet or lan")
 	}
@@ -255,15 +299,26 @@ func validateProfile(p Profile) error {
 			return err
 		}
 	}
-	return nil
+	return validateGroups(p)
 }
 func (c *Core) saveProfile(p Profile) error {
 	if err := validateProfile(p); err != nil {
 		return err
 	}
-	return config.WriteJSON(filepath.Join(c.dir, "sobalink.json"), p)
+	old := c.profileCopy()
+	if err := c.validateGroupCapacity(p, old); err != nil {
+		return err
+	}
+	if len(p.Services) > len(old.Services) && int64(len(p.Services)) > c.limit("logical", "savedServices") {
+		return &localCommandError{"service_capacity", "saved service limit reached; raise savedServices in capacity settings"}
+	}
+	if len(p.Peers) > len(old.Peers) && int64(len(p.Peers)) > c.limit("logical", "trustedPeers") {
+		return &localCommandError{"peer_capacity", "trusted peer limit reached; raise trustedPeers in capacity settings"}
+	}
+	return c.writeProfile(p)
 }
 func cloneProfile(p Profile) Profile {
+	p.Groups = cloneGroups(p.Groups)
 	p.Peers = append([]Trust(nil), p.Peers...)
 	p.Services = append([]ServiceSpec(nil), p.Services...)
 	for i := range p.Services {
@@ -322,6 +377,7 @@ func (c *Core) close() error {
 	c.op.Lock()
 	defer c.op.Unlock()
 	c.stopAllServices()
+	c.stopAllProxies()
 	c.mu.Lock()
 	ps := c.peerServer
 	c.peerServer = nil
@@ -348,6 +404,12 @@ func (c *Core) close() error {
 }
 
 func (c *Core) current(ctx context.Context) (identity.State, error) {
+	c.mu.RLock()
+	closing := c.closing
+	c.mu.RUnlock()
+	if closing {
+		return identity.State{}, errors.New("application is stopping")
+	}
 	if err := ctx.Err(); err != nil {
 		return identity.State{}, err
 	}

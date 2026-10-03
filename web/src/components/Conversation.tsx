@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction, type DragEvent, type KeyboardEvent } from 'react'
 import * as api from '../api'
-import { appendSelection, DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES, fromClipboardImages, fromDrop, fromFiles, removeSelection, validateSelection } from '../files'
-import { bytes, timestamp, type Translate, type TextKey } from '../i18n'
+import { appendSelection, fromClipboardImages, fromDrop, fromFiles, removeSelection, validateSelection } from '../files'
+import { bytes, errorDetail, errorText, timestamp, type Translate, type TextKey } from '../i18n'
 import { transferTranslator } from '../transfer-i18n'
 import type { Server } from '../useServer'
-import { Badge, Button, Icon, IconButton } from './ui'
+import { Badge, Button, ErrorBanner, Icon, IconButton, Modal } from './ui'
 
 function TransferCard({ transfer, peer, t, locale, server, destination, setDestination }: { transfer: api.Transfer; peer: api.Peer; t: Translate; locale: api.Locale; server: Server; destination: string | undefined; setDestination: (value: string | undefined) => void }) {
   const ft = transferTranslator(locale)
@@ -20,8 +20,12 @@ function TransferCard({ transfer, peer, t, locale, server, destination, setDesti
   }
   const configuredDirectory = server.state?.settings?.receiveDirectory || server.state?.self.receiveDirectory || ''
   const [editingDestination, setEditingDestination] = useState(false)
+  const [reviewingDiscard, setReviewingDiscard] = useState(false)
+  const discardsSendingCopies = !incoming && ['failed', 'declined'].includes(transfer.status)
+  useEffect(() => { setReviewingDiscard(false) }, [transfer.id, transfer.direction, transfer.status])
   const selectedDestination = destination ?? configuredDirectory
   const action = (name: 'transfer.accept' | 'transfer.decline' | 'transfer.cancel' | 'transfer.retry' | 'transfer.forget') => server.run(name, { transferId: transfer.id, ...(name === 'transfer.accept' ? { destination: selectedDestination.trim() } : {}) }, `transfer:${transfer.id}`)
+  const discard = async () => { if (await action('transfer.forget')) setReviewingDiscard(false) }
   return <article className={`transfer-card ${incoming && offered ? 'incoming-offer' : ''}`} aria-label={`${transfer.name} · ${t(transfer.status)}`}>
     <div className="transfer-top"><div className="transfer-icon"><Icon name={incoming ? 'download' : 'upload'} size={22} /></div><div className="grow"><p className="eyebrow">{t(incoming ? offered ? 'incomingOffer' : 'incomingBatch' : 'outgoingOffer')}</p><h3>{transfer.name || `${entries.length} ${t(entries.length === 1 ? 'item' : 'items')}`}</h3><p className="small muted">{entries.length} {t(entries.length === 1 ? 'item' : 'items')}<span className="dot-separator">·</span>{bytes(transfer.totalBytes, locale)}</p></div><Badge tone={transfer.status === 'completed' ? 'green' : transfer.status === 'failed' ? 'red' : offered ? 'purple' : 'neutral'}>{t(transfer.status)}</Badge></div>
     {active && <div className="transfer-progress"><progress value={transfer.completedBytes} max={Math.max(1, transfer.totalBytes)} aria-label={t(transfer.status)} /><div><span>{bytes(transfer.completedBytes, locale)} / {bytes(transfer.totalBytes, locale)}</span><span>{Math.floor(progress)}%</span></div></div>}
@@ -30,7 +34,8 @@ function TransferCard({ transfer, peer, t, locale, server, destination, setDesti
     {incoming && offered && <><p className="small muted accept-hint">{t('acceptHint')}</p>{editingDestination || destination !== undefined || !configuredDirectory ? <div className="destination-field"><label className="field">{t('receiveDirectory')}<input value={selectedDestination} onChange={event => setDestination(event.target.value)} placeholder={t('directoryPlaceholder')} spellCheck={false} autoComplete="off" autoFocus={editingDestination} disabled={busy} /><small className="muted">{ft('batchDestinationHint')}</small></label>{configuredDirectory && <Button variant="ghost" disabled={busy} onClick={() => { setDestination(undefined); setEditingDestination(false) }}>{ft('useDefaultFolder')}</Button>}</div> : <div className="accept-destination"><p className="small muted">{t('receiveDirectory')}: <span className="code-value">{selectedDestination}</span></p><Button variant="ghost" disabled={busy} onClick={() => { setDestination(selectedDestination); setEditingDestination(true) }}>{ft('changeFolder')}</Button></div>}<div className="transfer-actions"><Button variant="ghost" onClick={() => action('transfer.decline')} disabled={busy}>{t('decline')}</Button><Button variant="primary" onClick={() => action('transfer.accept')} busy={busy} disabled={!api.canExchange(peer) || server.stale || !selectedDestination.trim()}><Icon name="download" size={16} />{t('acceptBatch')}</Button></div></>}
     {(active || (!incoming && offered)) && <div className="transfer-actions"><Button variant="ghost" onClick={() => action('transfer.cancel')} busy={busy}>{t('cancelTransfer')}</Button></div>}
     {transfer.status === 'failed' && <div className="transfer-actions"><Button onClick={() => action('transfer.retry')} busy={busy} disabled={!api.canExchange(peer) || server.stale}><Icon name="refresh" size={16} />{t('retryTransfer')}</Button></div>}
-    {['completed', 'cancelled', 'failed', 'declined'].includes(transfer.status) && <div className="forget-transfer"><small>{t('forgetHint')}</small><Button variant="ghost" busy={busy} onClick={() => action('transfer.forget')}>{t('forgetTransfer')}</Button></div>}
+    {['completed', 'cancelled', 'failed', 'declined'].includes(transfer.status) && <div className="forget-transfer"><small>{discardsSendingCopies ? ft('discardHint') : t('forgetHint')}</small><Button variant="ghost" busy={busy} onClick={() => { if (discardsSendingCopies) { server.setError(null); setReviewingDiscard(true) } else void action('transfer.forget') }}>{discardsSendingCopies ? ft('discardBatch') : t('forgetTransfer')}</Button></div>}
+    {reviewingDiscard && discardsSendingCopies && <Modal title={ft('discardTitle')} t={t} onClose={() => { if (!busy) setReviewingDiscard(false) }}><div className="target-pill"><Icon name="upload" /><strong>{transfer.name || `${entries.length} ${t(entries.length === 1 ? 'item' : 'items')}`}</strong><span>{peer.name}</span></div><p>{ft('discardImpact')}</p><p className="small muted">{ft('discardPreservedFiles')}</p>{server.error != null && <ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}<div className="modal-actions"><Button onClick={() => setReviewingDiscard(false)} disabled={busy}>{t('cancel')}</Button><Button variant="danger" busy={busy} onClick={() => void discard()}>{ft('discardConfirm')}</Button></div></Modal>}
   </article>
 }
 
@@ -58,8 +63,10 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
   stateRef.current = state
   const message = drafts[peer.id] || ''
   const batch = batches[peer.id]
-  const maxFiles = Math.min(state.settings?.maxFiles || DEFAULT_MAX_FILES, DEFAULT_MAX_FILES)
-  const maxBytes = Math.min(state.settings?.maxBatchBytes || DEFAULT_MAX_BYTES, DEFAULT_MAX_BYTES)
+  const budgets = api.exchangeBudgets(state)
+  const maxFiles = budgets.batchEntries
+  const maxBytes = budgets.batchBytes
+  const pathLimits = { pathDepth: budgets.pathDepth, pathBytes: budgets.pathBytes }
   const allowed = api.canExchange(peer) && !server.stale
   const sending = server.busy.has(`message:${peer.id}`)
   const messages = state.messages.filter(item => item.peerId === peer.id)
@@ -90,7 +97,7 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
   const setMessage = (value: string) => setDrafts(current => ({ ...current, [peer.id]: value }))
   const send = async () => {
     if (!allowed || !message.trim() || sending || pendingSend.current.has(peer.id)) return
-    if (api.messageByteLength(message) > api.MAX_MESSAGE_BYTES) { server.setError({ code: 'messageLimit' }); return }
+    if (api.messageByteLength(message) > budgets.messageBytes) { server.setError({ code: 'messageLimit' }); return }
     const target = peer.id
     const text = message
     nearBottom.current = true
@@ -123,12 +130,14 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
       if (!targetPeer || targetPeer.autosave?.paused || !targetPeer.verified || !targetPeer.trusted) return
       if (!addition.entries.length) { server.setError({ code: 'noSelection' }); return }
       const previous = batchesRef.current[target]
-      const selection = appendSelection(previous?.selection, addition, currentState.settings?.maxFiles || DEFAULT_MAX_FILES, currentState.settings?.maxBatchBytes || DEFAULT_MAX_BYTES)
+      const currentBudgets = api.exchangeBudgets(currentState)
+      const selection = appendSelection(previous?.selection, addition, currentBudgets.batchEntries, currentBudgets.batchBytes, currentBudgets)
+      validateSelection(selection, currentBudgets.batchEntries, currentBudgets.batchBytes, currentBudgets.fileBytes, currentBudgets)
       if (selection !== previous?.selection) updateBatch(target, { selection, requestId: api.requestID() })
     } catch (error) { if (generation === collectionGeneration.current) server.setError(error) }
     finally { if (generation === collectionGeneration.current) { collectingRef.current = false; setCollecting(false) } }
   }
-  const pickFiles = (list: FileList | File[] | null) => { if (!list?.length) return; const files = Array.from(list); void select(() => fromFiles(files, maxFiles, maxBytes)) }
+  const pickFiles = (list: FileList | File[] | null) => { if (!list?.length) return; const files = Array.from(list); void select(() => fromFiles(files, maxFiles, maxBytes, pathLimits)) }
   const removeEntry = (path: string) => {
     if (uploadController.current || collectingRef.current) return
     const previous = batchesRef.current[peer.id]
@@ -138,11 +147,11 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
   }
   const drop = (event: DragEvent) => {
     event.preventDefault(); dragDepth.current = 0; setDragging(false)
-    if (allowed && !uploadController.current && !collectingRef.current) void select(() => fromDrop(event.dataTransfer, maxFiles, maxBytes))
+    if (allowed && !uploadController.current && !collectingRef.current) void select(() => fromDrop(event.dataTransfer, maxFiles, maxBytes, pathLimits))
   }
   const sendBatch = async () => {
     if (!allowed || !batch || uploadController.current || collectingRef.current) return
-    try { validateSelection(batch.selection, maxFiles, maxBytes) } catch (error) { server.setError(error); return }
+    try { validateSelection(batch.selection, maxFiles, maxBytes, budgets.fileBytes, pathLimits) } catch (error) { server.setError(error); return }
     const target = peer.id
     const controller = new AbortController()
     uploadController.current = controller
@@ -174,7 +183,7 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
       {reason && <div className="peer-notice"><Icon name={reason === 'needsTrust' ? 'shield' : 'info'} /><p>{t(reason)}</p>{reason === 'needsTrust' && <Button variant="primary" onClick={onTrust} busy={server.busy.has(`trust:${peer.id}`)}>{t('trustDevice')}</Button>}{reason === 'peerPaused' && <Button disabled={!peer.verified || !peer.trusted || server.stale} busy={server.busy.has(`autosave:${peer.id}`)} onClick={() => server.run('peer.autosave', { peerId: peer.id, paused: false }, `autosave:${peer.id}`)}>{t('resume')}</Button>}</div>}
       {batch && <section className="batch-preview" aria-label={t('preview')}><div className="batch-heading"><div><p className="eyebrow">{t('preview')}</p><h3>{t('to')}: {peer.name}</h3></div><IconButton icon="close" label={t('cancel')} disabled={Boolean(uploading) || collecting} onClick={() => updateBatch(peer.id, undefined)} /></div><ul className="preview-files">{batch.selection.entries.map(entry => <li key={entry.path}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} size={15} /><span>{entry.path}</span><small>{entry.kind === 'file' ? bytes(entry.size, locale) : t('folders')}</small><IconButton icon="close" label={`${ft('removeEntry')}: ${entry.path}`} disabled={Boolean(uploading) || collecting} onClick={() => removeEntry(entry.path)} /></li>)}</ul><div className="batch-footer"><span>{batch.selection.entries.length} {t(batch.selection.entries.length === 1 ? 'item' : 'items')} · {bytes(batch.selection.entries.reduce((sum, item) => sum + item.size, 0), locale)}</span><Button variant="primary" onClick={sendBatch} disabled={!allowed || Boolean(uploading) || collecting}><Icon name="send" size={15} />{t('sendBatch')}</Button></div></section>}
       {uploading?.peerId === peer.id && <section className="upload-progress" aria-live="polite"><div><Icon name="upload" /><strong>{t('staging')}</strong><Button variant="ghost" onClick={() => uploadController.current?.abort()}>{t('cancel')}</Button></div><progress {...(uploading.total ? { value: uploading.loaded, max: uploading.total } : {})} aria-label={t('staging')} /><p className="small muted">{t('stagingHint')}</p></section>}
-      {peer.bridge && <><div className={`composer ${!allowed ? 'composer-disabled' : ''}`}><textarea ref={composerRef} value={message} onChange={event => setMessage(event.target.value)} onKeyDown={keyDown} onPaste={event => { const images = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (images.length && allowed && !uploadController.current && !collectingRef.current) { event.preventDefault(); void select(() => fromClipboardImages(images, batchesRef.current[peer.id]?.selection, maxFiles, maxBytes)) } }} placeholder={t('messagePlaceholder')} aria-label={t('messagePlaceholder')} aria-describedby="composer-hint" rows={2} disabled={!allowed} maxLength={16385} /><div className="composer-tools"><div className="flex items-center gap-1"><IconButton icon="clip" label={t('attach')} disabled={!allowed || collecting || Boolean(uploading)} onClick={() => filesRef.current?.click()} /><IconButton icon="folder" label={t('attachFolder')} disabled={!allowed || collecting || Boolean(uploading)} onClick={() => folderRef.current?.click()} />{collecting && <span className="small muted">{t('loading')}</span>}</div><Button variant="primary" className="send-button" aria-label={t('sendMessage')} disabled={!allowed || !message.trim()} busy={sending} onClick={send}>{t('send')}<Icon name="send" size={15} /></Button></div></div><div className="composer-hints"><span id="composer-hint">{t('composerHint')}</span><span title={`${t('batchLimit')}: ${maxFiles} ${t('items')} · ${bytes(maxBytes, locale)}`}>{maxFiles} {t('items')} / {bytes(maxBytes, locale)}</span></div><details className="input-help"><summary><Icon name="info" size={13} />{t('inputTips')}</summary><p>{t('pasteHint')}</p><p>{t('folderLimit')}</p></details><input hidden ref={filesRef} type="file" multiple aria-label={t('attach')} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /><input hidden ref={folderRef} type="file" multiple aria-label={t('attachFolder')} {...{ webkitdirectory: '', directory: '' }} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /></>}
+      {peer.bridge && <><div className={`composer ${!allowed ? 'composer-disabled' : ''}`}><textarea ref={composerRef} value={message} onChange={event => setMessage(event.target.value)} onKeyDown={keyDown} onPaste={event => { const images = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (images.length && allowed && !uploadController.current && !collectingRef.current) { event.preventDefault(); void select(() => fromClipboardImages(images, batchesRef.current[peer.id]?.selection, maxFiles, maxBytes, pathLimits)) } }} placeholder={t('messagePlaceholder')} aria-label={t('messagePlaceholder')} aria-describedby="composer-hint" rows={2} disabled={!allowed}  /><div className="composer-tools"><div className="flex items-center gap-1"><IconButton icon="clip" label={t('attach')} disabled={!allowed || collecting || Boolean(uploading)} onClick={() => filesRef.current?.click()} /><IconButton icon="folder" label={t('attachFolder')} disabled={!allowed || collecting || Boolean(uploading)} onClick={() => folderRef.current?.click()} />{collecting && <span className="small muted">{t('loading')}</span>}</div><Button variant="primary" className="send-button" aria-label={t('sendMessage')} disabled={!allowed || !message.trim()} busy={sending} onClick={send}>{t('send')}<Icon name="send" size={15} /></Button></div></div><div className="composer-hints"><span id="composer-hint">{t('composerHint')} · {t('effectiveMessageLimit')}: {bytes(budgets.messageBytes, locale)}</span><span title={`${t('batchLimit')}: ${maxFiles} ${t('items')} · ${bytes(maxBytes, locale)}`}>{maxFiles} {t('items')} / {bytes(maxBytes, locale)}</span></div><details className="input-help"><summary><Icon name="info" size={13} />{t('inputTips')}</summary><p>{t('pasteHint')}</p><p>{t('folderLimit')}</p><p>{t('effectiveMessageLimit')}: {bytes(budgets.messageBytes, locale)}</p><p>{t('effectiveFileLimit')}: {bytes(budgets.fileBytes, locale)}</p><p>{t('effectivePathLimit')}: {budgets.pathDepth} {t('pathLevels')} / {bytes(budgets.pathBytes, locale)}</p><p>{t('finiteResourceHint')}</p></details><input hidden ref={filesRef} type="file" multiple aria-label={t('attach')} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /><input hidden ref={folderRef} type="file" multiple aria-label={t('attachFolder')} {...{ webkitdirectory: '', directory: '' }} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /></>}
     </div>
   </div>
 }

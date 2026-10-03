@@ -46,15 +46,20 @@ func assertChannelClosed(t *testing.T, ch <-chan struct{}, message string) {
 
 func TestProcessStreamCapAndCleanup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		if len(connectionSlots) != 0 {
+		if defaultController.Usage().TCPConnections != 0 {
 			t.Fatal("existing stream slots")
 		}
-		for range maxTotalConnections - 1 {
-			connectionSlots <- struct{}{}
+		var reservations []func()
+		for range defaultTCPConnections - 1 {
+			release, ok := AdmitTCP()
+			if !ok {
+				t.Fatal("stream budget unavailable")
+			}
+			reservations = append(reservations, release)
 		}
 		defer func() {
-			for range maxTotalConnections - 1 {
-				<-connectionSlots
+			for _, release := range reservations {
+				release()
 			}
 		}()
 		listener := &pipeListener{queue: make(chan net.Conn, 2), done: make(chan struct{})}
@@ -72,7 +77,7 @@ func TestProcessStreamCapAndCleanup(t *testing.T) {
 			t.Fatal("stream cap not enforced")
 		}
 		closeServer(t, s)
-		if len(connectionSlots) != maxTotalConnections-1 {
+		if defaultController.Usage().TCPConnections != defaultTCPConnections-1 {
 			t.Fatal("stream slot leaked")
 		}
 	})

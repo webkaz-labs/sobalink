@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +40,7 @@ func TestServiceLifetimeRequiresExplicitOutboundNoExpiry(t *testing.T) {
 	}{
 		{"", 0, "service.connect"}, {"finite", 0, "service.connect"},
 		{"forever", 0, "service.connect"}, {"until-stopped", 1, "service.connect"},
-		{"until-stopped", 0, "service.share"}, {"finite", 86401, "service.share"},
+		{"until-stopped", 0, "service.share"}, {"until-revoked", 1, "service.share"},
 	} {
 		_, err := command(p.a, randomID(), test.command, map[string]any{"name": "invalid", "network": "tcp", "ports": "8080", "peerId": "peer-b", "peerIds": []string{"peer-b"}, "lifetime": test.mode, "ttlSeconds": test.ttl})
 		if err == nil || len(p.a.profileCopy().Services) != 0 {
@@ -95,8 +94,12 @@ func TestShareLoopbackMappingIsExactAndStaysPrivate(t *testing.T) {
 		t.Fatal("mapped compact share lost its target or allocated per-port listeners")
 	}
 	public, _ := json.Marshal(p.b.permittedServices("peer-a"))
-	for _, private := range []string{"9000", "::1", "localPort", "loopbackHost", "lifetime"} {
-		if strings.Contains(string(public), private) {
+	var metadata []map[string]any
+	if err := json.Unmarshal(public, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"localPort", "loopbackHost", "name", "peerIds"} {
+		if _, leaked := metadata[0][private]; leaked {
 			t.Fatalf("local mapping leaked in peer discovery: %s", public)
 		}
 	}

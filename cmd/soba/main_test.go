@@ -126,6 +126,10 @@ func TestPrivateIPCCommandPayloadsAndStableJSON(t *testing.T) {
 	}
 	requests := make(chan string, 32)
 	server, err := control.Serve(context.Background(), dir, func(_ context.Context, raw string) (any, error) {
+		var read webui.Command
+		if json.Unmarshal([]byte(raw), &read) == nil && read.Name == "profile.export" {
+			return map[string]any{"profile": map[string]any{"services": []any{}}}, nil
+		}
 		requests <- raw
 		return json.RawMessage(`{"number":9007199254740993,"value":"日本語"}`), nil
 	})
@@ -149,8 +153,8 @@ func TestPrivateIPCCommandPayloadsAndStableJSON(t *testing.T) {
 		{[]string{"retry", "batch"}, "transfer.retry", `{"transferId":"batch"}`},
 		{[]string{"forget", "batch"}, "transfer.forget", `{"transferId":"batch"}`},
 		{[]string{"stop-service", "service"}, "service.stop", `{"id":"service"}`},
-		{[]string{"share", "--name", "example", "--network", "udp", "--ports", "10000-10010", "--exclude", "10005", "--peers", "first, second", "--ttl", "2h", "--discoverable"}, "service.share", `{"name":"example","network":"udp","ports":"10000-10010","excludePorts":"10005","peerIds":["first","second"],"ttlSeconds":7200,"localPort":0,"purpose":"custom","discoverable":true}`},
-		{[]string{"connect", "--name", "example", "--ports", "80", "--peer", "peer", "--local-port", "8080"}, "service.connect", `{"name":"example","network":"tcp","ports":"80","excludePorts":"","peerId":"peer","ttlSeconds":3600,"localPort":8080,"purpose":"custom","discoverable":false}`},
+		{[]string{"share", "--name", "example", "--network", "udp", "--ports", "10000-10010", "--exclude", "10005", "--peers", "first, second", "--ttl", "2h", "--discoverable"}, "service.share", `{"name":"example","network":"udp","ports":"10000-10010","excludePorts":"10005","peerIds":["first","second"],"ttlSeconds":7200,"lifetime":"finite","loopbackHost":"127.0.0.1","localPort":0,"purpose":"custom","discoverable":true}`},
+		{[]string{"connect", "--name", "example", "--ports", "80", "--peer", "peer", "--local-port", "8080"}, "service.connect", `{"name":"example","network":"tcp","ports":"80","excludePorts":"","peerId":"peer","ttlSeconds":0,"lifetime":"until-stopped","loopbackHost":"127.0.0.1","localPort":8080,"purpose":"custom","discoverable":false}`},
 		{[]string{"command", "custom.action", `{"number":9007199254740993}`}, "custom.action", `{"number":9007199254740993}`},
 	}
 	for _, tt := range cases {
@@ -207,8 +211,15 @@ func TestPrivateIPCCommandPayloadsAndStableJSON(t *testing.T) {
 	}
 	for _, name := range []string{"status", "ui", "stop", "peers"} {
 		var out bytes.Buffer
-		if err := run(context.Background(), []string{"--state-dir", dir, name}, &out); err != nil {
+		args := []string{"--state-dir", dir, name}
+		if name != "ui" {
+			args = append(args, "--json")
+		}
+		if err := run(context.Background(), args, &out); err != nil {
 			t.Fatal(err)
+		}
+		if !json.Valid(out.Bytes()) {
+			t.Fatalf("%s did not retain machine JSON: %s", name, out.String())
 		}
 		expected := name
 		if name == "peers" {

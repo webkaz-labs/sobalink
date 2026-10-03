@@ -58,3 +58,19 @@ describe('localized recovery', () => {
     expect(errorDetail(error, translator('ja'))).toBe(error.message)
   })
 })
+
+describe('effective exchange budgets', () => {
+  it('honors selected limits above prior browser defaults and retains finite resource bounds', async () => {
+    const { exchangeBudgets } = await import('./api')
+    const state = { limits: { effective: { logical: { messageBytes: { mode: 'unlimited' }, batchEntries: { mode: 'unlimited' }, batchBytes: { mode: 'unlimited' }, fileBytes: { mode: 'limited', value: 2 ** 31 } }, resources: { messageTextBytes: { mode: 'limited', value: 65536 }, transferManifestBytes: { mode: 'limited', value: 1024 * 1024 }, transferSpoolBytes: { mode: 'limited', value: 2 ** 32 } } } } } as unknown as import('./api').State
+    expect(exchangeBudgets(state)).toEqual({ pathDepth: 16, pathBytes: 4096, messageBytes: 65536, batchEntries: 2048, batchBytes: 2 ** 32, fileBytes: 2 ** 31 })
+  })
+})
+
+it('derives unlimited path choices from the finite manifest budget', async () => {
+  const { exchangeBudgets } = await import('./api')
+  const state = { limits: { effective: { logical: { pathBytes: { mode: 'unlimited' }, pathDepth: { mode: 'unlimited' } }, resources: { transferManifestBytes: { mode: 'limited', value: 1024 } } } } } as unknown as import('./api').State
+  expect(exchangeBudgets(state)).toMatchObject({ pathBytes: 1024, pathDepth: 512 })
+  state.limits!.effective.logical!.pathDepth = { mode: 'limited', value: 3 }
+  expect(exchangeBudgets(state)).toMatchObject({ pathBytes: 1024, pathDepth: 3 })
+})

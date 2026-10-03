@@ -25,11 +25,18 @@ type Interval struct{ First, Last uint16 }
 
 // Set is an immutable normalized union of inclusive intervals. Its zero value
 // is empty. Constructors and accessors never retain or expose a mutable slice.
-type Set struct{ intervals []Interval }
+type Set struct {
+	intervals []Interval
+	limit     int64
+}
 
 // NewSet sorts and coalesces intervals without expanding them into ports.
 func NewSet(intervals []Interval) (Set, error) {
-	if len(intervals) > MaxIntervals {
+	return NewSetWithLimit(intervals, MaxIntervals)
+}
+
+func NewSetWithLimit(intervals []Interval, limit int64) (Set, error) {
+	if limit < 1 || int64(len(intervals)) > limit {
 		return Set{}, errors.New("too many port intervals")
 	}
 	out := append([]Interval(nil), intervals...)
@@ -52,17 +59,21 @@ func NewSet(intervals []Interval) (Set, error) {
 			n++
 		}
 	}
-	return Set{intervals: out[:n:n]}, nil
+	return Set{intervals: out[:n:n], limit: limit}, nil
 }
 
 // Parse accepts a scalar, a comma-separated list, or inclusive ranges, for
 // example "22,80,443,8000-8100". Whitespace around entries is ignored.
 func Parse(text string) (Set, error) {
-	if len(text) > MaxIntervals*12 {
+	return ParseWithLimit(text, MaxIntervals)
+}
+
+func ParseWithLimit(text string, limit int64) (Set, error) {
+	if limit < 1 || (limit <= int64(len(text))/12 && int64(len(text)) > limit*12) {
 		return Set{}, errors.New("port expression is too long")
 	}
 	parts := strings.Split(text, ",")
-	if len(parts) > MaxIntervals {
+	if int64(len(parts)) > limit {
 		return Set{}, errors.New("too many port intervals")
 	}
 	intervals := make([]Interval, 0, len(parts))
@@ -84,7 +95,7 @@ func Parse(text string) (Set, error) {
 		}
 		intervals = append(intervals, Interval{first, last})
 	}
-	return NewSet(intervals)
+	return NewSetWithLimit(intervals, limit)
 }
 
 func parsePort(text string) (uint16, error) {
@@ -133,6 +144,10 @@ func (s Set) String() string {
 // Excluding subtracts intervals, with work bounded by interval counts. It
 // returns an error if the normalized result would exceed the interval bound.
 func (s Set) Excluding(excluded Set) (Set, error) {
+	limit := s.limit
+	if limit == 0 {
+		limit = MaxIntervals
+	}
 	out := make([]Interval, 0, len(s.intervals))
 	for _, r := range s.intervals {
 		next, last := uint32(r.First), uint32(r.Last)
@@ -146,7 +161,7 @@ func (s Set) Excluding(excluded Set) (Set, error) {
 			if uint32(x.First) > next {
 				out = append(out, Interval{uint16(next), x.First - 1})
 			}
-			if len(out) > MaxIntervals {
+			if int64(len(out)) > limit {
 				return Set{}, errors.New("too many effective port intervals")
 			}
 			next = uint32(x.Last) + 1
@@ -157,11 +172,11 @@ func (s Set) Excluding(excluded Set) (Set, error) {
 		if next <= last {
 			out = append(out, Interval{uint16(next), uint16(last)})
 		}
-		if len(out) > MaxIntervals {
+		if int64(len(out)) > limit {
 			return Set{}, errors.New("too many effective port intervals")
 		}
 	}
-	return Set{intervals: out}, nil
+	return Set{intervals: out, limit: limit}, nil
 }
 
 func (s Set) Overlaps(other Set) bool {
@@ -186,7 +201,13 @@ func (s Set) Expand(limit int) ([]uint16, error) {
 	if limit < 1 || limit > MaxMaterializedListeners {
 		return nil, errors.New("materialized listener limit must be in 1..64")
 	}
-	if s.Count() > uint32(limit) {
+	return s.ExpandWithLimit(int64(limit))
+}
+
+// ExpandWithLimit receives an already-reserved finite resource allowance.
+// Port width bounds allocation even when the selected resource budget is large.
+func (s Set) ExpandWithLimit(limit int64) ([]uint16, error) {
+	if limit < 1 || int64(s.Count()) > limit {
 		return nil, errors.New("port range exceeds materialized listener limit")
 	}
 	ports := make([]uint16, 0, int(s.Count()))

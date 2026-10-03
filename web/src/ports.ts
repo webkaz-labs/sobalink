@@ -1,6 +1,6 @@
 export interface PortRange { start: number; end: number }
 export class PortError extends Error {
-  constructor(public code: 'invalid_ports' | 'too_many_ports' | 'invalid_mapping' | 'empty_ports') { super(code) }
+  constructor(public code: 'invalid_ports' | 'too_many_ports' | 'invalid_mapping' | 'empty_ports' | 'invalid_share_mapping') { super(code) }
 }
 export function parsePorts(value: string): PortRange[] {
   if (!value.trim()) throw new PortError('empty_ports')
@@ -30,8 +30,10 @@ export function subtractPorts(ranges: PortRange[], excluded: PortRange[]): PortR
   return result
 }
 export function formatPorts(ranges: PortRange[]) { return ranges.map(({ start, end }) => start === end ? `${start}` : `${start}-${end}`).join(', ') }
-export function previewPorts(value: string, exclusions: string, local: string, mode: 'connect' | 'share', reservedPorts: number[] = []) {
+export function previewPorts(value: string, exclusions: string, local: string, mode: 'connect' | 'share', reservedPorts: number[] = [], options: { protocol?: 'tcp' | 'udp'; maxListeners?: number } = {}) {
   const excluded = exclusions.trim() ? parsePorts(exclusions) : []
+  const selected = subtractPorts(parsePorts(value), excluded)
+  if (mode === 'share' && local.trim() && selected.reduce((sum, range) => sum + range.end - range.start + 1, 0) !== 1) throw new PortError('invalid_share_mapping')
   if (mode === 'share') {
     excluded.push({ start: 54543, end: 54545 })
     for (const port of reservedPorts) if (Number.isInteger(port) && port > 0 && port <= 65535) excluded.push({ start: port, end: port })
@@ -39,9 +41,11 @@ export function previewPorts(value: string, exclusions: string, local: string, m
   const ranges = subtractPorts(parsePorts(value), excluded)
   const count = ranges.reduce((sum, range) => sum + range.end - range.start + 1, 0)
   if (!count) throw new PortError('empty_ports')
-  if (mode === 'connect' && count > 64) throw new PortError('too_many_ports')
+  // Preserve the legacy bound only for snapshots without an effective budget.
+  if ((mode === 'connect' || options.protocol === 'udp') && count > (options.maxListeners ?? 64)) throw new PortError('too_many_ports')
   const localPort = local.trim() ? Number(local) : undefined
-  if (localPort !== undefined && (!/^\d+$/.test(local) || localPort < 1024 || localPort + count - 1 > 65535)) throw new PortError('invalid_mapping')
+  if (localPort !== undefined && (!/^\d+$/.test(local) || localPort < (mode === 'connect' ? 1024 : 1) || localPort + count - 1 > 65535)) throw new PortError('invalid_mapping')
+  if (mode === 'share' && localPort !== undefined && ([54543, 54544, 54545, ...reservedPorts].includes(localPort))) throw new PortError('invalid_share_mapping')
   if (mode === 'connect' && localPort === undefined && ranges.some(range => range.start < 1024)) throw new PortError('invalid_mapping')
   let offset = 0
   const mappings = ranges.map(range => {

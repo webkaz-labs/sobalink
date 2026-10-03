@@ -447,6 +447,7 @@ var japaneseCatalog = map[string]string{
 	"loopback UDP %d unavailable":                                                                                   "ローカルの UDP ポート %d を利用できません",
 	"invalid saved SOCKS credentials":                                                                               "保存された SOCKS 認証情報が正しくありません",
 	"autostart action must be enable or disable":                                                                    "自動起動の操作は enable または disable を指定してください",
+	"autostart startup mode must be saved or offline":                                                               "自動起動の方式は saved または offline を指定してください",
 	"autostart paths must be absolute, single-line paths":                                                           "自動起動のパスは改行を含まない絶対パスで指定してください",
 	"User-level registration only. Starts an idle version 2 node at a future sign-in; no rules or shares resume. Registration changes do not stop an already running node.": "ユーザー単位の登録だけを行います。次回以降のサインイン時にバージョン2の待機ノードを起動し、接続や共有は再開しません。登録の変更で、実行中のノードは停止しません",
 	"current Windows user SID is required":               "現在の Windows ユーザーの SID が必要です",

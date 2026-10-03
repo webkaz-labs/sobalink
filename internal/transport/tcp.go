@@ -8,9 +8,12 @@ import (
 )
 
 type TCPConfig struct {
-	ListenAddress string
-	Target        string
-	DialTimeout   time.Duration
+	// Controller shares live finite budgets across all ports and directions.
+	Controller       *Controller
+	PolicyID, PeerID string
+	ListenAddress    string
+	Target           string
+	DialTimeout      time.Duration
 }
 
 // StartTCP binds an exact numeric loopback address and forwards streams to Target.
@@ -35,7 +38,7 @@ func StartTCP(ctx context.Context, cfg TCPConfig, dial Dialer) (*Server, error) 
 	return startServer(ctx, l, l.Addr(), func(s *Server) {
 		acceptConnections(s, l, func(client net.Conn) {
 			serveTCP(s, client, cfg.Target, timeout, dial)
-		})
+		}, cfg)
 	}), nil
 }
 

@@ -107,8 +107,9 @@ type FileAck struct {
 }
 
 // Limits bound metadata, accepted storage reservations and streaming memory.
-// A zero field uses its default. Negative values and limits above the defaults
-// are rejected, keeping defaults as hard safety ceilings.
+// A zero field uses its default. Positive values may raise a default; callers
+// must supply finite metadata, reservation, and concurrency budgets. Defaults
+// are initial choices rather than hidden maximums.
 type Limits struct {
 	MaxBatches           int
 	MaxPeers             int

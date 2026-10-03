@@ -1,11 +1,11 @@
-import type { Network, Peer, ServiceConfigResult, ServicePayload, State } from './api'
+import type { CommandPayloads, Network, Peer, ServiceConfigResult, ServicePayload, ServiceLifetime, Service, State } from './api'
 
 export type ServiceMode = 'connect' | 'share'
 export interface SavedServiceAction { id: string; intent: 'copy' | 'edit' }
 export interface ServiceDraft {
   name: string; nameEdited: boolean; ports: string; exclusions: string; localPort: string
-  protocol: 'tcp' | 'udp'; ttl: number; purpose: string; discovery: boolean; peers: string[]
-  serviceId: string; backend: Network; legacyReviewed: boolean
+  protocol: 'tcp' | 'udp'; ttl: number; lifetime: ServiceLifetime; loopbackHost: '127.0.0.1' | '::1'; purpose: string; discovery: boolean; peers: string[]
+  serviceId: string; serviceRevision?: string; serviceCheckedAt?: string; serviceExpiresAt?: string | null; serviceLifetime?: ServiceLifetime; backend: Network; legacyReviewed: boolean
   source?: { id: string; revision: string; backend: Network | ''; intent: 'copy' | 'edit' }
 }
 export const currentBackend = (state: State): Network => state.settings?.network === 'lan' ? 'lan' : 'tailnet'
@@ -22,7 +22,7 @@ export function uniqueServiceName(base: string, state: State, omitId?: string) {
   }
 }
 export function newServiceDraft(peer: Peer, mode: ServiceMode, state: State): ServiceDraft {
-  return { name: uniqueServiceName(`${mode}-${peer.name}`, state), nameEdited: false, ports: '', exclusions: mode === 'share' ? '54543-54545' : '', localPort: '', protocol: 'tcp', ttl: 3600, purpose: 'generic', discovery: false, peers: [peer.id], serviceId: '', backend: currentBackend(state), legacyReviewed: false }
+  return { name: uniqueServiceName(`${mode}-${peer.name}`, state), nameEdited: false, ports: '', exclusions: mode === 'share' ? '54543-54545' : '', localPort: '', protocol: 'tcp', ttl: 3600, lifetime: mode === 'connect' ? 'until-stopped' : 'finite', loopbackHost: '127.0.0.1', purpose: 'generic', discovery: false, peers: [peer.id], serviceId: '', backend: currentBackend(state), legacyReviewed: false }
 }
 export function readServiceConfig(value: unknown, id: string, mode: ServiceMode): ServiceConfigResult {
   const record = value as ServiceConfigResult | undefined
@@ -30,11 +30,13 @@ export function readServiceConfig(value: unknown, id: string, mode: ServiceMode)
   if (!record || !config || config.id !== id || config.direction !== (mode === 'connect' ? 'forward' : 'share') ||
       !/^[0-9a-f]{64}$/.test(record.revision) || typeof record.active !== 'boolean' ||
       typeof config.name !== 'string' || !validServiceName(config.name) || !['tcp', 'udp'].includes(config.network) || typeof config.ports !== 'string' ||
-      !Number.isInteger(config.ttlSeconds) || config.ttlSeconds < 1 || config.ttlSeconds > 86400 ||
+      !validLifetime(config.lifetime || 'finite', config.ttlSeconds, mode) ||
       typeof config.purpose !== 'string' || typeof config.discoverable !== 'boolean' ||
+      (config.loopbackHost !== undefined && !['', '127.0.0.1', '::1'].includes(config.loopbackHost)) ||
       (config.backend !== undefined && !['', 'tailnet', 'lan'].includes(config.backend)) ||
       (config.excludePorts !== undefined && typeof config.excludePorts !== 'string') ||
       (config.serviceId !== undefined && typeof config.serviceId !== 'string') ||
+      (config.serviceRevision !== undefined && typeof config.serviceRevision !== 'string') ||
       (config.localPort !== undefined && (!Number.isInteger(config.localPort) || config.localPort < 0 || config.localPort > 65535)) ||
       (mode === 'connect' ? typeof config.peerId !== 'string' || !config.peerId : !Array.isArray(config.peerIds) || !config.peerIds.length || config.peerIds.some(peer => typeof peer !== 'string' || !peer))) {
     throw new Error('invalid_response')
@@ -46,12 +48,14 @@ export function draftFromConfig(record: ServiceConfigResult, action: SavedServic
   return {
     name: action.intent === 'copy' ? uniqueServiceName(c.name, state) : c.name, nameEdited: action.intent === 'edit',
     ports: c.ports, exclusions: c.excludePorts || '', localPort: c.localPort ? String(c.localPort) : '', protocol: c.network,
-    ttl: c.ttlSeconds, purpose: c.purpose, discovery: c.discoverable, peers: c.direction === 'forward' ? [c.peerId!] : [...c.peerIds!],
-    serviceId: c.serviceId || '', backend: c.backend || currentBackend(state), legacyReviewed: false,
+    ttl: c.ttlSeconds || 3600, lifetime: c.lifetime || 'finite', loopbackHost: c.loopbackHost || '127.0.0.1', purpose: c.purpose, discovery: c.discoverable, peers: c.direction === 'forward' ? [c.peerId!] : [...c.peerIds!],
+    serviceId: c.serviceId || '', serviceRevision: c.serviceRevision, backend: c.backend || currentBackend(state), legacyReviewed: false,
     source: { id: c.id, revision: record.revision, backend: c.backend || '', intent: action.intent },
   }
 }
 export function serviceDraftIssue(draft: ServiceDraft, state: State, mode: ServiceMode, loaded?: ServiceConfigResult): string | null {
+  if (!validLifetime(draft.lifetime, draft.lifetime === 'finite' ? draft.ttl : 0, mode)) return 'invalidLifetime'
+  if (!['127.0.0.1', '::1'].includes(draft.loopbackHost)) return 'invalidLoopback'
   if (!validServiceName(draft.name.trim())) return 'invalidName'
   const source = draft.source
   if (source && (!loaded || source.revision !== loaded.revision)) return 'service_revision_conflict'
@@ -66,8 +70,38 @@ export function serviceDraftIssue(draft: ServiceDraft, state: State, mode: Servi
 export function servicePayload(draft: ServiceDraft, mode: ServiceMode): ServicePayload {
   return {
     backend: draft.backend, name: draft.name.trim(), network: draft.protocol, ports: draft.ports,
-    excludePorts: draft.exclusions || undefined, ttlSeconds: draft.ttl, purpose: draft.purpose, discoverable: draft.discovery,
-    ...(mode === 'connect' ? { peerId: draft.peers[0], serviceId: draft.serviceId || undefined, localPort: draft.localPort.trim() ? Number(draft.localPort) : undefined } : { peerIds: [...draft.peers] }),
+    excludePorts: draft.exclusions || undefined, lifetime: draft.lifetime, ttlSeconds: draft.lifetime === 'finite' ? draft.ttl : 0, loopbackHost: draft.loopbackHost, localPort: draft.localPort.trim() ? Number(draft.localPort) : undefined, purpose: draft.purpose, discoverable: draft.discovery,
+    ...(mode === 'connect' ? { peerId: draft.peers[0], serviceId: draft.serviceId || undefined, serviceRevision: draft.serviceId ? draft.serviceRevision : undefined } : { peerIds: [...draft.peers] }),
     ...(draft.source?.intent === 'edit' ? { replaceId: draft.source.id, expectedRevision: draft.source.revision } : {}),
   }
+}
+
+export const MAX_SERVICE_TTL_SECONDS = 9_223_372_036
+export function validLifetime(lifetime: string, ttl: number, mode: ServiceMode) {
+  return lifetime === 'finite' ? Number.isSafeInteger(ttl) && ttl >= 1 && ttl <= MAX_SERVICE_TTL_SECONDS : ttl === 0 && lifetime === (mode === 'connect' ? 'until-stopped' : 'until-revoked')
+}
+export function remainingListeners(state: State): number | undefined {
+  const limit = state.limits?.effective.resources.materializedListeners
+  const usage = state.limits?.usage.materializedListeners
+  return limit?.mode === 'limited' && Number.isSafeInteger(limit.value) && limit.value! >= 0 && Number.isSafeInteger(usage) && usage! >= 0 ? Math.max(0, limit.value! - usage!) : undefined
+}
+export function loopbackEndpoint(host: string, port: string) { return `${host === '::1' ? '[::1]' : host}:${port}` }
+
+export function serviceDefinitionPayload(draft: ServiceDraft, mode: ServiceMode): CommandPayloads['service.save'] {
+  const { replaceId, expectedRevision, ...settings } = servicePayload(draft, mode)
+  return { configuration: { ...settings, direction: mode === 'connect' ? 'forward' : 'share', ...(replaceId ? { id: replaceId } : {}) }, ...(expectedRevision ? { expectedRevision } : {}) }
+}
+
+export function advertisedDraft(service: Service | undefined): Partial<ServiceDraft> {
+  return service ? { serviceId: service.id, serviceRevision: service.revision, serviceCheckedAt: service.checkedAt, serviceExpiresAt: service.expiresAt, serviceLifetime: service.lifetime, purpose: service.purpose || 'generic', ports: service.ports || String(service.remotePort || ''), protocol: service.network, exclusions: '' } : { serviceId: '', serviceRevision: undefined, serviceCheckedAt: undefined, serviceExpiresAt: undefined, serviceLifetime: undefined }
+}
+export function matchesAdvertisedDraft(draft: ServiceDraft, service: Service | undefined) {
+  if (!service || service.id !== draft.serviceId || service.peerId !== draft.peers[0] || service.network !== draft.protocol || (service.ports || String(service.remotePort || '')) !== draft.ports || (service.purpose || 'generic') !== draft.purpose) return false
+  if (draft.serviceLifetime && service.lifetime !== draft.serviceLifetime) return false
+  if (draft.serviceExpiresAt && (!service.expiresAt || Date.parse(service.expiresAt) < Date.parse(draft.serviceExpiresAt))) return false
+  return true
+}
+export function freshAdvertisedDraft(draft: ServiceDraft, now = Date.now()) {
+  const checked = Date.parse(draft.serviceCheckedAt || '')
+  return Boolean(draft.serviceRevision && Number.isFinite(checked) && checked <= now + 5_000 && now - checked <= 15_000 && (!draft.serviceExpiresAt || Date.parse(draft.serviceExpiresAt) > now))
 }

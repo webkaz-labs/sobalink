@@ -3,6 +3,9 @@ package main
 import "encoding/json"
 
 func previewPayload(name string, raw json.RawMessage) json.RawMessage {
+	if privateProxyCommand(name) {
+		return redactProxyPayload(raw)
+	}
 	if name != "lan.inspect" && name != "lan.join" && name != "lan.cancel" {
 		return raw
 	}
@@ -21,7 +24,15 @@ func previewPayload(name string, raw json.RawMessage) json.RawMessage {
 	return scrubbed
 }
 func helpTopic(topic string, ja bool) (string, bool) {
+	if help, ok := workflowHelp(topic, ja); ok {
+		return help, true
+	}
 	switch topic {
+	case "proxy":
+		return text(ja, proxyHelpEN, proxyHelpJA), true
+	case "doctor":
+		return text(ja, doctorHelpEN, doctorHelpJA), true
+
 	case "examples":
 		return text(ja, examplesEN, examplesJA), true
 	case "upgrade":
@@ -82,7 +93,36 @@ join の前に確認した正確な中継を設定してください。join は�
 cancel は自分が発行した招待を無効にし、revoke は保存済みLANペアを解除します。
 ネットワークを変更する場合は本体を停止し、start --offline で起動し直してください。`
 
-const serviceHelpEN = `Inspect and reuse saved service settings
+const serviceHelpEN = `Create, inspect and reuse service settings
+
+  soba service save share --backend tailnet --ports 8080 --peers PEER_ID
+  soba service save connect --backend tailnet --preset ssh --peer PEER_ID
+  soba service delete SERVICE_ID
+
+service save stores a stopped definition, including while the network is offline.
+Add global --offline before service to save with the agent stopped; this locks
+only profile metadata and never starts a network or generates credentials.
+Use --replace SERVICE_ID to explicitly replace a stopped definition.
+service delete previews affected groups and active state; apply the displayed
+review with --apply --review REVISION. --stop-active and --remove-from-groups
+make those effects explicit. An emptied group is removed.
+
+  soba connect --preset web --peer PEER_ID
+  soba share --preset ssh --peers PEER_ID
+  soba share --ports 8080 --local-port 3000 --peers PEER_ID
+  soba share --preset postgres --peers PEER_ID --lifetime until-revoked
+
+Presets web, ssh (SSH/SFTP), postgres and local-ai are editable examples.
+Use soba connect --help for their actual TCP ports. They do not install or
+configure applications; local-ai is an API example, not a universal AI port.
+Connections default to explicit until-stopped; shares default to finite 1h.
+--ttl 72h selects a custom finite lifetime in whole seconds. --lifetime
+until-revoked explicitly removes a share deadline. --loopback-host accepts
+only 127.0.0.1 or ::1. --local-port maps one shared port to an application
+port; shared ranges keep the same ports. Reconnecting never renews a grant.
+Saved settings do not automatically start after an application restart.
+--dry-run checks configuration; runtime capacity is not checked until apply.
+
 
   soba service show SERVICE_ID
   soba --dry-run service copy SERVICE_ID [--name NAME] [OPTIONS]
@@ -101,7 +141,36 @@ No command silently stops an active entry, replaces another name, or switches
 a known backend. Older unknown-backend entries require --backend tailnet|lan.
 Service and peer reachability are still checked by the agent when applied.`
 
-const serviceHelpJA = `保存済みサービスの確認・再利用
+const serviceHelpJA = `サービスの作成・確認・再利用
+
+  soba service save share --backend tailnet --ports 8080 --peers PEER_ID
+  soba service save connect --backend tailnet --preset ssh --peer PEER_ID
+  soba service delete SERVICE_ID
+
+service save はネットワークがオフラインでも停止状態の設定を保存します。
+本体も停止している場合は service の前に共通指定 --offline を付けます。
+設定だけを排他ロックし、ネットワークを開始せず認証情報も生成しません。
+停止中の既存設定を明示的に置き換えるには --replace SERVICE_ID を使います。
+service delete は影響するグループと稼働状態を表示します。確認後に
+--apply --review REVISION で適用します。稼働中の停止には --stop-active、
+グループの参照削除には --remove-from-groups が必要です。空のグループも削除します。
+
+  soba connect --preset web --peer PEER_ID
+  soba share --preset ssh --peers PEER_ID
+  soba share --ports 8080 --local-port 3000 --peers PEER_ID
+  soba share --preset postgres --peers PEER_ID --lifetime until-revoked
+
+web、ssh（SSH/SFTP）、postgres、local-ai は変更できる入力例です。
+実際のTCPポートは soba connect --help で確認できます。アプリの導入・設定は
+行いません。local-ai はAPIの例であり、全AIアプリ共通のポートではありません。
+接続の既定は until-stopped、共有の既定は有限の1時間です。
+--ttl 72h で任意の有限期間を整数秒単位で指定できます。共有の期限をなくすには
+--lifetime until-revoked を明示します。--loopback-host は127.0.0.1または::1
+のみです。--local-port は共有ポート1個をアプリ側ポートへ対応させます。
+範囲共有は同じポートです。再接続では許可を延長しません。
+アプリ再起動後、保存済み設定は自動開始しません。
+--dry-run は設定を確認します。実行時のリソース残量は適用時に確認します。
+
 
   soba service show SERVICE_ID
   soba --dry-run service copy SERVICE_ID [--name NAME] [OPTIONS]
@@ -124,7 +193,8 @@ const examplesEN = `Short sobalink workflows
 
 Start soba, then open its local URL. soba ui provides a new sign-in code.
 Human setup and selecting peers are guided in the Web UI; command output
-always stays JSON for scripts and agents.
+stays JSON by default for scripts and agents; explicit login --qr/--link/--browser
+provides private human sign-in output.
 
 Tailnet: soba setup --network tailnet, then soba login and soba peers.
 LAN: soba lan --help explains public-code and private-invitation exchange.
@@ -163,7 +233,8 @@ const examplesJA = `sobalink の短い操作例
 
 soba を起動してローカルURLを開きます。新しいコードは soba ui で取得できます。
 人が設定したり相手を選んだりする操作は画面から案内します。
-スクリプト・エージェント向けのコマンド結果は常にJSONです。
+通常のコマンド結果はスクリプト・エージェント向けのJSONです。
+login --qr/--link/--browser は、明示的に人向けの非公開サインイン表示を選びます。
 
 Tailnet: soba setup --network tailnet → soba login → soba peers
 LAN: soba lan --help で公開コードと機密の招待の交換手順を確認します。

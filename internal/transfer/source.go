@@ -109,13 +109,14 @@ func PlanSources(ctx context.Context, id string, paths []string, limits Limits) 
 }
 
 type sourceBuilder struct {
-	ctx      context.Context
-	manifest Manifest
-	sources  []Source
-	limits   Limits
-	total    int64
-	visited  int
-	info     map[string]os.FileInfo
+	ctx       context.Context
+	manifest  Manifest
+	sources   []Source
+	limits    Limits
+	total     int64
+	visited   int
+	walkBytes int64
+	info      map[string]os.FileInfo
 }
 
 func (b *sourceBuilder) visit(root *os.Root, local, wire, absolute string) error {
@@ -125,8 +126,17 @@ func (b *sourceBuilder) visit(root *os.Root, local, wire, absolute string) error
 	if err := validatePath(wire, b.limits); err != nil {
 		return err
 	}
+	// Directory traversal retains one frame and its local/wire paths per
+	// ancestor. Charge that live metadata before opening another directory so
+	// raising logical depth cannot multiply memory outside the finite budget.
+	frameBytes := int64(512) + int64(len(wire)) + int64(len(absolute))
+	if frameBytes > b.limits.MaxManifestBytes-metadataSize(b.manifest)-b.walkBytes {
+		return ErrMetadataLimit
+	}
+	b.walkBytes += frameBytes
+	defer func() { b.walkBytes -= frameBytes }()
 	b.visited++
-	if b.visited > b.limits.MaxEntries*b.limits.MaxDepth {
+	if (b.visited-1)/b.limits.MaxDepth >= b.limits.MaxEntries {
 		return ErrLimit
 	}
 	info, err := root.Lstat(local)

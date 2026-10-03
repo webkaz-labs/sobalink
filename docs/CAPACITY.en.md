@@ -1,0 +1,97 @@
+# Capacity, lifetimes and history
+
+[日本語](CAPACITY.ja.md) · [User guide](GENERIC.en.md) · [Security](../SECURITY.md) · [API contract](../web/API.md)
+
+Limits describe different things. Removing a logical limit does not allocate unlimited memory, disk, sockets or time in the underlying operating system. Review the requested choice, effective value and current usage together.
+
+| Kind | Choices | Meaning |
+| --- | --- | --- |
+| Logical policy | `default`, positive `limited`, explicit `unlimited` | A selected count, size, retention recommendation or operation deadline |
+| Resource budget | `default` or positive finite `limited` | Storage, metadata, listeners, active flows, queues and response pages remain bounded; `unlimited` is rejected |
+| Service lifetime | Finite duration, outbound `until-stopped`, inbound `until-revoked` | Authorization lifetime is explicit and independent of capacity |
+| Protocol and safety invariant | Not a capacity preference | Valid port/identifier/path syntax, identity and scope, reserved endpoints, private management and non-overwrite rules always apply |
+
+`default` resolves to the build's visible catalog value. It is not zero or unlimited. Finite values use positive JSON-safe integers; durations use whole seconds within the time representation. Omitted keys return to their defaults when a replacement policy is applied. The policy version is `1`; unknown keys, duplicate fields, nulls and ambiguous choices are rejected. Check `policy.config` for the exact build's `requested`, `effective`, `catalog`, `adjustable` and `usage` values.
+
+## Initial values are not product maxima
+
+| Logical choice | Initial default |
+| --- | --- |
+| `savedServices`, `trustedPeers`, `sharePeers` | 64 saved definitions, 128 trusted/paired peers, 32 peers per share |
+| `rangePolicies`, `portIntervals` | 64 range policies, 256 configured intervals |
+| `groups`, `groupMembers` | 32 groups, 64 members per group |
+| `batchEntries`, `fileBytes`, `batchBytes` | 256 entries including directories, 1 GiB per file and per batch |
+| `pathDepth`, `pathBytes` | 16 levels and 4096 UTF-8 bytes per portable relative path |
+| `messageBytes` | 16 KiB of decoded text |
+| `transferHistoryEntries` | 32 retained transfer records per direction |
+| `messageHistoryEntries`, `messageHistoryBytes`, `messageHistoryAgeSeconds` | Cleanup recommendations: 128 messages, 48 KiB encoded history, 30 days |
+| `stagingSeconds`, `receiveWaitSeconds`, `fileTransferSeconds` | 600 seconds for each operation |
+
+All listed logical choices support a custom positive value or explicit `unlimited`. A lower choice governs new admission without evicting saved records or canceling already admitted work. Retention recommendations only select candidates for reviewed cleanup; applying them never silently prunes history. A task lease and a service lifetime remain separate from operation deadlines.
+
+Resource budgets are independently adjustable and always finite. Representative defaults are:
+
+| Resource choice | Initial default |
+| --- | --- |
+| `profileBytes`, `lanStateBytes`, `messageStorageBytes` | 4 MiB profile, 2 MiB private LAN state, 4 MiB message storage |
+| `messageTextBytes` | 16 KiB decoded message storage/framing budget |
+| `materializedListeners` | 64 shared across UDP service sockets, local forwards and optional proxy listeners |
+| `tcpConnections`, `tcpPerPolicy`, `tcpPerPeer` | 512 total, 128 per policy, 64 per peer |
+| `udpSessions`, `udpPerPolicy` | 512 total, 256 per policy |
+| `udpQueuedBytes`, `udpPolicyQueuedBytes`, `udpQueuePackets` | 16 MiB total, 1 MiB per policy, 64 packets per queue |
+| `transferSpoolBytes`, `receiveReservedBytes` | 4 GiB sender staging and 4 GiB receiver reservations |
+| `transferManifestBytes`, `transferMetadataBytes` | 256 KiB manifest accounting, 1 MiB retained transfer metadata |
+| `transferPending`, `transferPendingPerPeer` | 32 pending transfers, 8 per peer |
+| `transferConcurrentFiles`, `transferConcurrentPerPeer` | 4 active file streams, 2 per peer |
+| `stagingInventoryEntries`, `stagingInventoryDepth` | 100,000 inspected staging entries, 64 inventory levels |
+| `discoveryBytes`, `pageBytes`, `pageEntries` | 256 KiB discovery response, 1 MiB / 128 entries per local page |
+
+Actual available disk, memory, descriptors and platform limits can reject work below a chosen budget. These are accounted resource bounds, not a promise to cap the process's total heap or RSS. Path depth and total UTF-8 length are logical choices, with defaults of 16 levels and 4096 bytes. Their unlimited modes still fit within the finite manifest budget: effective path bytes cannot exceed `transferManifestBytes`, and effective depth also cannot exceed the number of components that fit those bytes. The whole manifest and retained metadata need their own space. Portable components remain limited to 255 bytes and reject unsafe/reserved names, rooting, traversal, NUL, backslashes and links. These safety rules do not change with capacity. Native OS/filesystem limits may still reject a path accepted by policy; larger-policy tests do not prove every platform accepts long paths. The local absolute receive-destination field currently has a separate 4096-byte validation limit; `pathBytes` applies to offered relative paths, not that destination. The staging inventory depth is a separate finite traversal budget.
+
+`profileBytes` also bounds each private startup-approval, saved-proxy and revocation file separately. Usage reports their individual byte counts without serializing secrets. A policy change cannot shrink this limit below any retained file; it is not one aggregate directory-size limit.
+
+Examples of interacting limits:
+
+- A 2 GiB file needs suitable `fileBytes` and `batchBytes` choices plus sufficient sender spool and receiver reserved-byte budgets on the respective devices
+- Unlimited `batchEntries` still needs finite manifest and retained metadata capacity; directory entries count too. Source enumeration accounts for live ancestor/path metadata against `transferManifestBytes` as well
+- Unlimited `messageBytes` still uses `messageTextBytes`. Increasing text allowance may also require more message storage; JSON escaping is included in transport framing
+- Unlimited peers or services still require enough serialized profile and LAN-state storage. Lowering a count retains existing pairs and records; lowering storage below existing saved data is refused
+- A compact TCP share can cover ports 1–65535 except exclusions and reserved endpoints without allocating a listener per port. UDP and local forwards materialize listeners, so their finite listener budget still applies
+- Discovery checks peers in rotating bounded passes. A large peer set is not fully probed in one refresh, and a saved peer is not proof of online availability
+
+## Review and apply
+
+The local UI exposes capacity choices and review. Advanced CLI use goes through the same Core commands:
+
+```sh
+soba command policy.config '{}'
+soba command policy.preview --json-file capacity-change.json
+soba command policy.apply --json-file capacity-apply.json
+```
+
+Start from the current requested policy, preserve the choices you still want, then put that complete policy under `policy` in the change file. For example, this replacement resets omitted choices to default and raises only the shown values:
+
+```json
+{"policy":{"version":1,"logical":{"sharePeers":{"mode":"limited","value":64}},"resources":{"profileBytes":{"mode":"limited","value":8388608}}}}
+```
+
+Review the returned effective values and usage. The apply file contains that same `policy` and an `expectedRevision` copied from the preview's `revision`. A changed policy, saved profile or proposal requires a fresh preview. Preview changes nothing; successful apply persists the selection before reporting it. New admission uses the chosen budgets; occupied resources remain accounted. No additional permissions, listeners or transfers start merely because capacity grows.
+
+## Lifetimes and cancellation
+
+Shares default to a finite hour. `--ttl 72h` is a supported finite example; there is no fixed 24-hour ceiling. `--lifetime until-revoked` explicitly creates a share without an expiry. Outbound connections default to `until-stopped`, with finite `--ttl` available. Saved definitions preserve the chosen mode but alone do not authorize restart. A separately reviewed [outbound startup approval](STARTUP.en.md) can start a fresh finite lifetime on a future online process launch; inbound shares remain manual. Reconnect does not renew a grant.
+
+Local staging defaults to 600 seconds in both browser and CLI paths. Its explicit unlimited choice removes that operation's policy deadline while cancellation, process shutdown, storage limits and network failures remain effective. Receive waiting and file transfer have separate choices. Unlimited staging is not a durable offline outbox or a guarantee that a disconnected browser/request will resume.
+
+## Reviewed history cleanup
+
+Messages are not silently removed when a new one arrives or a retention choice changes. Use the UI cleanup preview or the advanced commands:
+
+```sh
+soba command message.history.preview '{}'
+soba command message.history.cleanup '{"expectedRevision":"REVISION"}'
+```
+
+Replace `REVISION` only after reviewing the returned exact candidates and counts. The revision binds current messages, policy and candidates; a change requires another preview. Cleanup must save successfully before the in-memory history changes. If storage fills first, sending/receiving can fail with a storage error rather than erasing earlier messages. A peer acknowledgement followed by a local history-save error does not mean the peer failed to receive the message; inspect the reported stage before retrying.
+
+Transfer history is separate. `soba forget TRANSFER_ID` explicitly removes a terminal transfer record; it does not delete received files. Released staging no longer consumes payload reservation, but failed cleanup remains accounted until successfully removed. Process restart does not resume transfer progress. [Transfer behavior](GENERIC.en.md#retry-and-cleanup)

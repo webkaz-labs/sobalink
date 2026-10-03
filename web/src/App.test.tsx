@@ -22,13 +22,13 @@ function setup(initial = state, configs: Record<string, ServiceConfigResult> = {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.body) requests.push({ path, body: JSON.parse(init.body as string) })
     const body = init?.body ? JSON.parse(init.body as string) : undefined
-    return new Response(JSON.stringify(path === '/api/state' ? current : body?.name === 'service.config' ? { ok: true, result: configs[body.payload.id] } : { ok: true }), { status: 200 })
+    return new Response(JSON.stringify(path === '/api/state' ? current : body?.name === 'discovery.refresh' ? { ok: true, result: { services: current.availableServices || [], observations: [], partial: false } } : body?.name === 'service.config' ? { ok: true, result: configs[body.payload.id] } : { ok: true }), { status: 200 })
   })
   vi.stubGlobal('fetch', fetch)
   return { requests, fetch, setState: (next: State) => { current = next } }
 }
 beforeEach(() => { localStorage.setItem('sobalink.locale', 'en') })
-async function openStudio() { await userEvent.click(await screen.findByRole('button', { name: /Studio/ })) }
+async function openStudio() { await userEvent.click(await screen.findByRole('button', { name: /Studio/ })); await userEvent.click(screen.getByRole('button', { name: 'Files & messages' })) }
 
 describe('explicit and interrupted flows', () => {
   it('does not send on Enter, paste, or IME composition confirmation', async () => {
@@ -58,6 +58,7 @@ describe('explicit and interrupted flows', () => {
   it('requires explicit peer permission and keeps ordinary Tailscale service access', async () => {
     const { requests } = setup(); render(<App />)
     await userEvent.click(await screen.findByRole('button', { name: /Notebook/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Files & messages' }))
     expect(screen.getByRole('textbox', { name: 'Write a message…' })).toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: 'Allow communication' }))
     await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'peer.trust', payload: { peerId: 'peer-b', trusted: true } }))
@@ -91,7 +92,7 @@ describe('explicit and interrupted flows', () => {
     await userEvent.click(opener)
     const dialog = screen.getByRole('dialog')
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'Ports' }), '8000-8100')
-    expect(within(dialog).getByText(/at most 64/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/exceeds the available listener budget/)).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Start connection' })).toBeDisabled()
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -133,13 +134,13 @@ describe('explicit and interrupted flows', () => {
     expect(requests[0].body.requestId).toBe(requests[1].body.requestId)
   })
   it('sends a discovered service ID with the exact advertised endpoint and shows resulting details', async () => {
-    const { requests } = setup({ ...state, availableServices: [{ id: 'opaque-service', peerId: 'peer-a', name: 'tcp 8080', ports: '8080', network: 'tcp', status: 'active', application: 'unverified' }] })
+    const { requests } = setup({ ...state, availableServices: [{ id: 'opaque-service', revision: 'opaque-review', checkedAt: new Date().toISOString(), purpose: 'generic', lifetime: 'until-revoked', peerId: 'peer-a', name: 'tcp 8080', ports: '8080', network: 'tcp', status: 'active', application: 'unverified' }] })
     render(<App />); await openStudio()
     await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Available services' }), 'opaque-service')
     expect(screen.getByRole('textbox', { name: 'Ports' })).toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: 'Start connection' }))
-    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'service.connect', payload: { serviceId: 'opaque-service', peerId: 'peer-a', ports: '8080', network: 'tcp', name: 'tcp-8080' } }))
+    await waitFor(() => expect(requests.find(request => request.body.name === 'service.connect')?.body).toMatchObject({ name: 'service.connect', payload: { serviceId: 'opaque-service', peerId: 'peer-a', ports: '8080', network: 'tcp', name: 'tcp-8080' } }))
     expect(await screen.findByRole('complementary', { name: 'Device details' })).toBeInTheDocument()
   })
   it('preserves long Japanese drafts and enforces the same UTF-8 byte limit as the server', async () => {
@@ -148,7 +149,7 @@ describe('explicit and interrupted flows', () => {
     const text = 'あ'.repeat(6000)
     fireEvent.change(input, { target: { value: text } })
     await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/16 KiB/)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/displayed UTF-8 byte limit/)
     expect(requests).toHaveLength(0)
     expect(input).toHaveValue(text)
   })
@@ -180,14 +181,16 @@ describe('explicit and interrupted flows', () => {
     expect(requests[0].body.payload).not.toHaveProperty('localPort')
   })
   it('keeps a manual escape when a discovered service disappears during review', async () => {
-    const observed = { id: 'opaque-service', peerId: 'peer-a', name: 'tcp 8080', ports: '8080', network: 'tcp' as const, status: 'active' as const }
-    const { setState } = setup({ ...state, availableServices: [observed] }); render(<App />); await openStudio()
+    const observed = { id: 'opaque-service', revision: 'opaque-review', checkedAt: new Date().toISOString(), purpose: 'generic', lifetime: 'until-revoked' as const, peerId: 'peer-a', name: 'tcp 8080', ports: '8080', network: 'tcp' as const, status: 'active' as const }
+    const { setState, requests } = setup({ ...state, availableServices: [observed] }); render(<App />); await openStudio()
     await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Available services' }), observed.id)
     setState({ ...state, availableServices: [] })
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-    expect(await screen.findByText(/This service is no longer advertised/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Start connection' })).toBeDisabled()
+    expect(await screen.findByText(/The current advertisement is unavailable/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Start connection' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('The advertised grant changed')
+    expect(requests.some(request => request.body.name === 'service.connect')).toBe(false)
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Available services' }), '')
     expect(screen.getByRole('textbox', { name: 'Ports' })).toBeEnabled()
     expect(screen.getByRole('textbox', { name: 'Ports' })).toHaveValue('8080')
@@ -235,7 +238,8 @@ describe('explicit and interrupted flows', () => {
     await userEvent.click(screen.getAllByRole('button', { name: /^Open device: Studio;/ })[0])
     expect(screen.getByRole('complementary', { name: 'Device details' })).toBeInTheDocument()
     expect(requests).toHaveLength(0)
-    await userEvent.click(screen.getByRole('button', { name: 'Open conversation' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Open device' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Files & messages' }))
     expect(screen.getByRole('textbox', { name: 'Write a message…' })).toBeInTheDocument()
   })
 
@@ -420,7 +424,7 @@ describe('service drafts and authoritative saved settings', () => {
     expect(requests).toHaveLength(0)
   })
   it('keeps a manually chosen name when selecting an advertised endpoint', async () => {
-    setup({ ...state, availableServices: [{ id: 'discovered', peerId: 'peer-a', name: 'ssh', network: 'tcp', ports: '22', status: 'active' }] })
+    setup({ ...state, availableServices: [{ id: 'discovered', revision: 'discovered-review', checkedAt: new Date().toISOString(), purpose: 'ssh', lifetime: 'until-revoked', peerId: 'peer-a', name: 'ssh', network: 'tcp', ports: '22', status: 'active' }] })
     render(<App />); await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
     fireEvent.change(screen.getByRole('textbox', { name: /^Connection name/ }), { target: { value: 'My-name' } })
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Available services' }), 'discovered')
@@ -434,7 +438,7 @@ describe('service drafts and authoritative saved settings', () => {
     render(<StrictMode><App /></StrictMode>); await openDetails()
     await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
     expect(await screen.findByRole('textbox', { name: /^Connection name/ })).toHaveValue('Scoped-share-2')
-    expect(screen.getByRole('combobox', { name: 'Expires after' })).toHaveValue('120')
+    expect(screen.getByRole('combobox', { name: 'Lifetime' })).toHaveValue('custom')
     expect(screen.getByText('8082,8084-8086')).toBeInTheDocument()
     expect(requests.map(request => request.body.name)).toEqual(['service.config'])
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -442,7 +446,7 @@ describe('service drafts and authoritative saved settings', () => {
     await screen.findByRole('textbox', { name: 'Ports' })
     await userEvent.click(screen.getByRole('button', { name: 'Start sharing' }))
     const payload = requests.find(request => request.body.name === 'service.share')?.body.payload
-    expect(payload).toEqual({ backend: 'tailnet', name: 'Scoped-share-2', network: 'udp', ports: '8080-8089', excludePorts: '8082,8084-8086', peerIds: ['peer-a', 'peer-c'], ttlSeconds: 120, purpose: 'custom', discoverable: true })
+    expect(payload).toEqual({ backend: 'tailnet', name: 'Scoped-share-2', network: 'udp', ports: '8080-8089', excludePorts: '8082,8084-8086', peerIds: ['peer-a', 'peer-c'], ttlSeconds: 120, lifetime: 'finite', loopbackHost: '127.0.0.1', purpose: 'custom', discoverable: true })
   })
   it('edits an inactive saved rule with exact revision and rejects a changed saved draft on reopen', async () => {
     const configs = { 'saved-share': savedShare }
@@ -513,5 +517,36 @@ describe('service drafts and authoritative saved settings', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open sobalink' }))
     await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
     expect(screen.getByRole('textbox', { name: 'Ports' })).toHaveValue('')
+  })
+})
+
+describe('connectivity-first device view', () => {
+  it('opens services before exchange and keeps the message draft through both views', async () => {
+    setup(); render(<App />)
+    expect(await screen.findByText('Close, even from afar.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /Studio/ }))
+    expect(screen.getByRole('region', { name: 'Services and connection' })).toBeVisible()
+    expect(screen.queryByRole('textbox', { name: 'Write a message…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Send files' })).toBeEnabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Write a message' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Write a message…' }), { target: { value: 'Draft to keep' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Services' }))
+    expect(screen.queryByRole('textbox', { name: 'Write a message…' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Files & messages' }))
+    expect(screen.getByRole('textbox', { name: 'Write a message…' })).toHaveValue('Draft to keep')
+  })
+  it('uses increased effective message limits and preserves UTF-8 overflow for review', async () => {
+    const limits = { effective: { logical: { messageBytes: { mode: 'unlimited' as const } }, resources: { messageTextBytes: { mode: 'limited' as const, value: 20000 } } }, usage: { materializedListeners: 0 } }
+    const { requests } = setup({ ...state, limits }); render(<App />); await openStudio()
+    const composer = screen.getByRole('textbox', { name: 'Write a message…' })
+    expect(composer).not.toHaveAttribute('maxlength')
+    fireEvent.change(composer, { target: { value: 'あ'.repeat(6000) } })
+    await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(requests).toHaveLength(1))
+    fireEvent.change(composer, { target: { value: 'あ'.repeat(7000) } })
+    await userEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('displayed UTF-8 byte limit')
+    expect(composer).toHaveValue('あ'.repeat(7000))
+    expect(requests).toHaveLength(1)
   })
 })

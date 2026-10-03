@@ -66,9 +66,6 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	if e := cfg.Relay.Validate(); e != nil {
 		return nil, e
 	}
-	if len(cfg.Remotes) > 128 {
-		return nil, errors.New("too many remotes")
-	}
 	if cfg.Trust == nil {
 		return nil, errors.New("trust book required")
 	}

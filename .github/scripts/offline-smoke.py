@@ -83,11 +83,11 @@ def check(binary):
                 time.sleep(0.05)
             else:
                 raise AssertionError("private IPC and local UI did not become ready")
-            snapshot = json.loads(run("status"))
+            snapshot = json.loads(run("status", "--json"))
             assert snapshot["settings"]["network"] == "none"
             assert snapshot["self"]["status"] == "idle"
             assert not snapshot["peers"] and not snapshot["services"]
-            assert run("status", locale="ja") == run("status", locale="en"), "machine JSON changed with locale"
+            assert run("status", "--json", locale="ja") == run("status", "--json", locale="en"), "machine JSON changed with locale"
             run("start", success=False)
             assert process.poll() is None, "duplicate startup stopped the first agent"
             assert ui["url"].startswith("http://127.0.0.1:") and ui["code"]
@@ -98,8 +98,8 @@ def check(binary):
                          ("command", "unknown.action", "{}")):
                 run(*args, success=False)
             run("setup", "--network", "none", "--name", "example-device")
-            assert json.loads(run("status"))["self"]["name"] == "example-device"
-            assert json.loads(run("stop"))["state"] == "stopping"
+            assert json.loads(run("status", "--json"))["self"]["name"] == "example-device"
+            assert json.loads(run("stop", "--json"))["state"] == "stopping"
             stdout, stderr = process.communicate(timeout=15)
             assert process.returncode == 0, (stdout, stderr)
             assert "One-time code" not in stdout and ui["code"] not in stdout, "redirected startup exposed login code"

@@ -2,6 +2,11 @@
 // These are transport limits, not message-history retention settings.
 package messageframe
 
+import (
+	"errors"
+	"math"
+)
+
 const (
 	TextBytes        = 16 << 10
 	IDBytes          = 128
@@ -22,3 +27,37 @@ const (
 	// structural bytes also covers escaped syntax and the inner newline.
 	ControlRequestBytes = 7*(TextBytes+IDBytes+RequestIDBytes+CommandNameBytes) + 2*(len(commandShape)+1) + len(controlShape) + 1
 )
+
+// Bounds preserves the original envelopes while allowing a selected finite
+// decoded-text budget. One spare byte is retained for oversize detection.
+type Bounds struct {
+	PeerRequestBytes, CommandBytes, ControlRequestBytes int64
+}
+
+// EncodedBytes checks multiplication and framing overhead before constructing
+// a JSON byte budget. It never turns an overflowing limit into an unbounded read.
+func EncodedBytes(decoded, expansion, overhead int64) (int64, error) {
+	if decoded < 0 || expansion < 1 || overhead < 0 || overhead >= math.MaxInt64 || decoded > (math.MaxInt64-1-overhead)/expansion {
+		return 0, errors.New("JSON envelope budget is outside the finite byte range")
+	}
+	return decoded*expansion + overhead, nil
+}
+
+func ForText(textBytes int64) (Bounds, error) {
+	if textBytes < 1 || textBytes > math.MaxInt64-IDBytes-RequestIDBytes-CommandNameBytes {
+		return Bounds{}, errors.New("message text budget must be a finite positive byte count")
+	}
+	peer, err := EncodedBytes(textBytes+IDBytes, 6, int64(len(peerShape)+1))
+	if err != nil {
+		return Bounds{}, err
+	}
+	command, err := EncodedBytes(textBytes+IDBytes+RequestIDBytes+CommandNameBytes, 6, int64(len(commandShape)+1))
+	if err != nil {
+		return Bounds{}, err
+	}
+	control, err := EncodedBytes(textBytes+IDBytes+RequestIDBytes+CommandNameBytes, 7, int64(2*(len(commandShape)+1)+len(controlShape)+1))
+	if err != nil {
+		return Bounds{}, err
+	}
+	return Bounds{peer, command, control}, nil
+}

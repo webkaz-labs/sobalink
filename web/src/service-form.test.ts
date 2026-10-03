@@ -13,7 +13,7 @@ describe('reviewed service configuration', () => {
   it('preserves complete copied scope, custom lifetime, purpose and discovery without overwrite fields', () => {
     const draft = draftFromConfig(record, { id: 's', intent: 'copy' }, state)
     expect(draft.name).toBe('app-2-2')
-    expect(servicePayload(draft, 'share')).toEqual({ backend: 'tailnet', name: 'app-2-2', network: 'udp', ports: '8000-8010', excludePorts: '8001,8003-8005', peerIds: ['p'], ttlSeconds: 120, purpose: 'custom', discoverable: true })
+    expect(servicePayload(draft, 'share')).toEqual({ backend: 'tailnet', name: 'app-2-2', network: 'udp', ports: '8000-8010', excludePorts: '8001,8003-8005', peerIds: ['p'], ttlSeconds: 120, lifetime: 'finite', loopbackHost: '127.0.0.1', purpose: 'custom', discoverable: true })
   })
   it('adds exact replacement identity and revision only for an explicit edit', () => {
     const draft = draftFromConfig(record, { id: 's', intent: 'edit' }, state)
@@ -38,9 +38,9 @@ describe('reviewed service configuration', () => {
     expect(serviceDraftIssue({ ...draft, legacyReviewed: true }, state, 'share', legacy)).toBeNull()
   })
   it('preserves the upstream discovered target separately from saved rule identity', () => {
-    const forward: ServiceConfigResult = { ...record, configuration: { ...record.configuration, direction: 'forward', peerId: 'p', peerIds: undefined, serviceId: 'remote-rule', localPort: 1234 } }
+    const forward: ServiceConfigResult = { ...record, configuration: { ...record.configuration, direction: 'forward', peerId: 'p', peerIds: undefined, serviceId: 'remote-rule', localPort: 1234, loopbackHost: '::1', lifetime: 'until-stopped', ttlSeconds: 0 } }
     const draft = draftFromConfig(forward, { id: 's', intent: 'edit' }, state)
-    expect(servicePayload(draft, 'connect')).toMatchObject({ serviceId: 'remote-rule', replaceId: 's', peerId: 'p', localPort: 1234 })
+    expect(servicePayload(draft, 'connect')).toMatchObject({ serviceId: 'remote-rule', replaceId: 's', peerId: 'p', localPort: 1234, loopbackHost: '::1', lifetime: 'until-stopped', ttlSeconds: 0 })
   })
   it('refuses partial status objects, wrong identities and invalid full-config responses', () => {
     expect(() => readServiceConfig(state.shares[0], 's', 'share')).toThrow('invalid_response')
@@ -48,5 +48,28 @@ describe('reviewed service configuration', () => {
     expect(() => readServiceConfig(record, 's', 'connect')).toThrow('invalid_response')
     expect(() => readServiceConfig({ ...record, configuration: { ...record.configuration, ttlSeconds: undefined } }, 's', 'share')).toThrow('invalid_response')
     expect(readServiceConfig(record, 's', 'share')).toBe(record)
+  })
+})
+
+describe('explicit service lifetimes and mappings', () => {
+  it('defaults outbound to until-stopped and inbound to finite one hour', () => {
+    expect(servicePayload(newServiceDraft(state.peers[0], 'connect', state), 'connect')).toMatchObject({ lifetime: 'until-stopped', ttlSeconds: 0, loopbackHost: '127.0.0.1' })
+    expect(servicePayload(newServiceDraft(state.peers[0], 'share', state), 'share')).toMatchObject({ lifetime: 'finite', ttlSeconds: 3600 })
+  })
+  it.each(['copy', 'edit'] as const)('preserves mapped IPv6 no-expiry shares on %s', intent => {
+    const saved: ServiceConfigResult = { ...record, configuration: { ...record.configuration, ports: '8080', excludePorts: '', localPort: 3000, loopbackHost: '::1', lifetime: 'until-revoked', ttlSeconds: 0 } }
+    expect(readServiceConfig(saved, 's', 'share')).toBe(saved)
+    expect(servicePayload(draftFromConfig(saved, { id: 's', intent }, state), 'share')).toMatchObject({ ports: '8080', localPort: 3000, loopbackHost: '::1', lifetime: 'until-revoked', ttlSeconds: 0, peerIds: ['p'] })
+  })
+  it('keeps old positive lifetimes finite and accepts custom durations beyond a day', () => {
+    const saved: ServiceConfigResult = { ...record, configuration: { ...record.configuration, ttlSeconds: 259200 } }
+    expect(readServiceConfig(saved, 's', 'share')).toBe(saved)
+    expect(servicePayload(draftFromConfig(saved, { id: 's', intent: 'copy' }, state), 'share')).toMatchObject({ lifetime: 'finite', ttlSeconds: 259200 })
+  })
+  it.each([0, -1, 1.5, NaN, 9223372037])('rejects invalid finite seconds %s', ttl => {
+    expect(serviceDraftIssue({ ...newServiceDraft(state.peers[0], 'share', state), ttl }, state, 'share')).toBe('invalidLifetime')
+  })
+  it('rejects no-expiry lifetime modes in the wrong direction or with positive ttl', () => {
+    for (const patch of [{ lifetime: 'until-stopped', ttlSeconds: 0 }, { lifetime: 'until-revoked', ttlSeconds: 1 }]) expect(() => readServiceConfig({ ...record, configuration: { ...record.configuration, ...patch } }, 's', 'share')).toThrow('invalid_response')
   })
 })

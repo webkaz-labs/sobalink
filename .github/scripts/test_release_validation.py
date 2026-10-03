@@ -84,17 +84,33 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("native locale fallback mismatch", offline)
 
     def test_ci_frontend_and_packaged_product_are_verified(self):
-        # Sobalink release-workflow preparation is a separate integration.
-        # Normal CI must already validate the complete packaged product.
-        native = self.job("ci", "native")
-        self.assertIn("node-version: '24.19.0'", native)
-        self.assertIn("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", native)
-        self.assertLess(native.index("python .github/scripts/check-frontend.py"), native.index("go test -race"))
-        self.assertIn("dist/sobalink-$", native)
+        for workflow in ("ci", "prerelease"):
+            with self.subTest(workflow=workflow):
+                native = self.job(workflow, "native")
+                self.assertIn("node-version: '24.19.0'", native)
+                self.assertIn("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", native)
+                self.assertLess(native.index("python .github/scripts/check-frontend.py"), native.index("go test -race"))
+                self.assertIn("dist/sobalink-$", native)
+                self.assertIn("GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy", self.workflow(workflow))
         frontend = (pathlib.Path(__file__).parent / "check-frontend.py").read_text(encoding="utf-8")
         self.assertEqual(frontend.count('run("ci", "--no-audit", "--no-fund")'), 2)
         self.assertIn('assert first == inventory()', frontend)
         self.assertIn('assert first == checked_in', frontend)
+
+    def test_release_product_identity_and_paired_transport_gate_match_packages(self):
+        release = self.workflow("prerelease")
+        self.assertNotIn("dist/tsnet-bridge-", release)
+        self.assertNotIn("mise exec -- tsnet-bridge", release)
+        self.assertIn('"<!-- sobalink-source:" + commit + " -->"', self.job("prerelease", "stage"))
+        installed = self.job("prerelease", "verify-mise-install")
+        self.assertIn("mise exec -- soba version", installed)
+        self.assertIn("mise exec -- soba --help", installed)
+        for workflow in ("ci", "prerelease"):
+            step = self.step(workflow, "native", "name: Verify paired transport")
+            self.assertNotIn("        if:", step)
+            self.assertIn("TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration", step)
+            self.assertIn('env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"', step)
+            self.assertIn("ts_omit_udptransport", step)
 
     def test_cache_keys_include_exact_runner_toolchain_manifests_and_source(self):
         prefix = "trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-"

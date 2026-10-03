@@ -332,6 +332,47 @@ func TestBuildAndCLIRejectInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestInstalledGuidesKeepRelativeWebDocumentationLinks(t *testing.T) {
+	tool, _ := mockTool(t)
+	writeFixture(t, filepath.Join(tool.Root, "docs", "ARCHITECTURE.md"), "[Local API](../web/API.md)")
+	writeFixture(t, filepath.Join(tool.Root, "web", "API.md"), "[Guide](../docs/ARCHITECTURE.md)")
+	writeFixture(t, filepath.Join(tool.Root, "web", "BROWSER_ACCEPTANCE.md"), "Browser acceptance")
+	writeFixture(t, filepath.Join(tool.Root, "web", "session.json"), "must not package runtime state")
+	version := "0.0.0-dev.1"
+	target := Target{"windows", "amd64"}
+	if err := tool.Build(version, target, strings.Repeat("a", 40), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data := readFixture(t, filepath.Join(tool.Root, "dist", stem(version, target)+target.Extension()))
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for _, file := range archive.File {
+		if strings.HasPrefix(file.Name, "share/sobalink/docs/") || strings.HasPrefix(file.Name, "share/sobalink/web/") {
+			reader, err := file.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil || closeErr != nil {
+				t.Fatal(readErr, closeErr)
+			}
+			files[file.Name] = string(body)
+		}
+	}
+	for path, want := range map[string]string{"share/sobalink/docs/ARCHITECTURE.md": "../web/API.md", "share/sobalink/web/API.md": "../docs/ARCHITECTURE.md", "share/sobalink/web/BROWSER_ACCEPTANCE.md": "Browser acceptance"} {
+		if !strings.Contains(files[path], want) {
+			t.Fatal("installed guide is incomplete", path)
+		}
+	}
+	if _, ok := files["share/sobalink/web/session.json"]; ok {
+		t.Fatal("runtime data was included in documentation")
+	}
+}
+
 func TestChecksumsFailClosedAndSorted(t *testing.T) {
 	tool, err := New(t.TempDir())
 	if err != nil {

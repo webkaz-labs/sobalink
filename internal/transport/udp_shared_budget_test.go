@@ -11,22 +11,22 @@ import (
 )
 
 func TestUDPSharedByteBudgetAcrossPorts(t *testing.T) {
-	baseline := udpMemory.usage()
+	baseline := defaultController.Usage().UDPQueuedBytes
 	budget := NewUDPBudget()
 	a := &udpTable{cfg: UDPConfig{Budget: budget}}
 	b := &udpTable{cfg: UDPConfig{Budget: budget}}
-	if !a.reserveBytes(maxUDPQueuedBytes/2) || !b.reserveBytes(maxUDPQueuedBytes/2) {
+	if !a.reserveBytes(defaultUDPPolicyQueuedBytes/2) || !b.reserveBytes(defaultUDPPolicyQueuedBytes/2) {
 		t.Fatal("shared byte capacity unavailable")
 	}
-	defer a.releaseBytes(maxUDPQueuedBytes / 2)
-	defer b.releaseBytes(maxUDPQueuedBytes / 2)
+	defer a.releaseBytes(defaultUDPPolicyQueuedBytes / 2)
+	defer b.releaseBytes(defaultUDPPolicyQueuedBytes / 2)
 	if a.reserveBytes(1) || b.reserveBytes(1) {
 		t.Fatal("per-port tables amplified one policy's queue cap")
 	}
-	if sessions, bytes := budget.Usage(); sessions != 0 || bytes != maxUDPQueuedBytes {
+	if sessions, bytes := budget.Usage(); sessions != 0 || bytes != defaultUDPPolicyQueuedBytes {
 		t.Fatalf("shared accounting: sessions %d bytes %d", sessions, bytes)
 	}
-	if udpMemory.usage() != baseline+maxUDPQueuedBytes {
+	if defaultController.Usage().UDPQueuedBytes != baseline+defaultUDPPolicyQueuedBytes {
 		t.Fatal("process budget was not retained")
 	}
 	independent := &udpTable{cfg: UDPConfig{Budget: NewUDPBudget()}}
@@ -37,34 +37,34 @@ func TestUDPSharedByteBudgetAcrossPorts(t *testing.T) {
 }
 
 func TestUDPSharedQueueDropsAndRepeatedStopRelease(t *testing.T) {
-	baseline := udpMemory.usage()
+	baseline := defaultController.Usage().UDPQueuedBytes
 	budget := NewUDPBudget()
 	var sessions []*udpSession
 	for range 2 {
 		ctx, cancel := context.WithCancel(t.Context())
-		table := &udpTable{cfg: UDPConfig{Budget: budget}}
-		s := &udpSession{ctx: ctx, cancel: cancel, table: table, queue: make(chan []byte, 1)}
+		table := &udpTable{cfg: UDPConfig{Budget: budget, QueueSize: 1}}
+		s := &udpSession{ctx: ctx, cancel: cancel, table: table, ready: make(chan struct{}, 1)}
 		sessions = append(sessions, s)
 		s.offer([]byte("one"))
 		s.offer([]byte("two"))
 	}
-	if _, bytes := budget.Usage(); bytes != 6 {
+	if _, bytes := budget.Usage(); bytes != int64(2*packetStorage(3)) {
 		t.Fatalf("queue overflow leaked shared bytes: %d", bytes)
 	}
 	for _, s := range sessions {
 		s.stop()
 		s.stop()
 	}
-	if _, bytes := budget.Usage(); bytes != 0 || udpMemory.usage() != baseline {
+	if _, bytes := budget.Usage(); bytes != 0 || defaultController.Usage().UDPQueuedBytes != baseline {
 		t.Fatal("repeated stop leaked or underflowed shared/process byte accounting")
 	}
 }
 
 func TestUDPSharedReservationRollsBackWhenProcessMemoryFull(t *testing.T) {
-	if !udpMemory.reserve(maxTotalUDPQueuedBytes) {
+	if !defaultController.reserveBytes(defaultUDPQueuedBytes, defaultUDPQueuedBytes) {
 		t.Fatal("process budget not empty")
 	}
-	defer udpMemory.release(maxTotalUDPQueuedBytes)
+	defer defaultController.releaseBytes(defaultUDPQueuedBytes)
 	budget := NewUDPBudget()
 	table := &udpTable{cfg: UDPConfig{Budget: budget}}
 	if table.reserveBytes(1) {
@@ -89,7 +89,7 @@ func sharedUDPTestServer(t *testing.T, budget *UDPBudget, dial Dialer, validate 
 
 func TestUDPSharedMappingCapAcrossMaterializedPorts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		beforeSlots, beforeBytes := len(udpSessionSlots), udpMemory.usage()
+		beforeSlots, beforeBytes := defaultController.Usage().UDPSessions, defaultController.Usage().UDPQueuedBytes
 		budget := NewUDPBudget()
 		dial := func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }
 		a, localA := sharedUDPTestServer(t, budget, dial, nil)
@@ -107,14 +107,14 @@ func TestUDPSharedMappingCapAcrossMaterializedPorts(t *testing.T) {
 		}
 		localB.incoming <- virtualDatagram{data: []byte("extra"), address: netip.MustParseAddrPort("127.0.0.1:5000")}
 		synctest.Wait()
-		if sessions, bytes := budget.Usage(); sessions != 256 || bytes != 256 {
+		if sessions, bytes := budget.Usage(); sessions != 256 || bytes != int64(256*packetStorage(1)) {
 			t.Fatalf("257th mapping admitted or queued: %d sessions, %d bytes", sessions, bytes)
 		}
-		if len(udpSessionSlots) != beforeSlots+256 {
+		if defaultController.Usage().UDPSessions != beforeSlots+256 {
 			t.Fatal("process reservation rollback failed on shared-cap rejection")
 		}
 		closeServer(t, a)
-		if sessions, bytes := budget.Usage(); sessions != 128 || bytes != 128 {
+		if sessions, bytes := budget.Usage(); sessions != 128 || bytes != int64(128*packetStorage(1)) {
 			t.Fatalf("closing one port did not release exactly its reservations: %d,%d", sessions, bytes)
 		}
 		localB.incoming <- virtualDatagram{data: []byte("x"), address: netip.MustParseAddrPort("127.0.0.1:5000")}
@@ -123,7 +123,7 @@ func TestUDPSharedMappingCapAcrossMaterializedPorts(t *testing.T) {
 			t.Fatal("released shared mapping capacity was not reusable")
 		}
 		closeServer(t, b)
-		if sessions, bytes := budget.Usage(); sessions != 0 || bytes != 0 || len(udpSessionSlots) != beforeSlots || udpMemory.usage() != beforeBytes {
+		if sessions, bytes := budget.Usage(); sessions != 0 || bytes != 0 || defaultController.Usage().UDPSessions != beforeSlots || defaultController.Usage().UDPQueuedBytes != beforeBytes {
 			t.Fatal("shared/process resources leaked on multiport shutdown")
 		}
 	})
@@ -133,7 +133,7 @@ func TestUDPSharedFailuresReleaseAllResources(t *testing.T) {
 	for _, phase := range []string{"dial", "validate", "write", "cancel"} {
 		t.Run(phase, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				beforeSlots, beforeBytes := len(udpSessionSlots), udpMemory.usage()
+				beforeSlots, beforeBytes := defaultController.Usage().UDPSessions, defaultController.Usage().UDPQueuedBytes
 				budget := NewUDPBudget()
 				for range 4 {
 					var validate func(context.Context, string, string) error
@@ -156,7 +156,7 @@ func TestUDPSharedFailuresReleaseAllResources(t *testing.T) {
 					local.incoming <- virtualDatagram{data: []byte("queued"), address: netip.MustParseAddrPort("127.0.0.1:12000")}
 					synctest.Wait()
 					closeServer(t, server)
-					if sessions, bytes := budget.Usage(); sessions != 0 || bytes != 0 || len(udpSessionSlots) != beforeSlots || udpMemory.usage() != beforeBytes {
+					if sessions, bytes := budget.Usage(); sessions != 0 || bytes != 0 || defaultController.Usage().UDPSessions != beforeSlots || defaultController.Usage().UDPQueuedBytes != beforeBytes {
 						t.Fatalf("%s leaked shared/process resources: %d sessions, %d bytes", phase, sessions, bytes)
 					}
 				}

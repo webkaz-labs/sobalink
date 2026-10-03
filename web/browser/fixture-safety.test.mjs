@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { assertSeparateArtifacts, safeArtifactName, validateSession } from './fixture-safety.mjs'
+import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
 import SafeReporter from './reporter.mjs'
 
 const sentinel = 'PRIVATE_FIXTURE_SENTINEL_MUST_NOT_APPEAR'
@@ -58,4 +58,13 @@ test('result reports omit private error details and never mark discovery-only ru
     else process.env.SOBA_SCREENSHOT_DIR = previous
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('capture excludes credential forms and all nonempty private values without serializing them', () => {
+  for (const selector of ['.login-panel', '.auth-private', '.proxy-credentials', '[data-private=proxy-credential]']) assert.ok(CAPTURE_FORBIDDEN_SELECTOR.includes(selector))
+  for (const selector of ['input[type=password]', '.private-copy', '[data-private]']) assert.ok(PRIVATE_VALUE_SELECTOR.includes(selector))
+  assert.equal(privateControlsAreEmpty([]), true)
+  assert.equal(privateControlsAreEmpty([{ value: '', textContent: '' }]), true)
+  assert.equal(privateControlsAreEmpty([{ value: sentinel, textContent: '' }]), false)
+  assert.equal(privateControlsAreEmpty([{ value: '', textContent: sentinel }]), false)
 })

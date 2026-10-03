@@ -72,6 +72,43 @@ func NewManager(options Options) (*Manager, error) {
 	return m, nil
 }
 
+// UpdateLimits changes future admission without removing history, cancelling
+// streams, or releasing already reserved storage. Existing idempotent offers
+// remain readable even when a newly lowered limit would reject a new batch.
+func (m *Manager) UpdateLimits(next Limits) error {
+	limits, err := limitsOrDefault(next)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	m.limits = limits
+	return nil
+}
+
+// LargestManifestBytes keeps the transport able to read idempotent requests
+// for retained batches after a lower future-admission budget is selected.
+func (m *Manager) LargestManifestBytes() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var largest int64
+	for _, batch := range m.batches {
+		largest = max(largest, metadataSize(batch.manifest))
+	}
+	return largest
+}
+
+// RetainedMetadataBytes includes admitted history even after future-admission
+// budgets are lowered, so local readers can keep that history accessible.
+func (m *Manager) RetainedMetadataBytes() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.metadata
+}
+
 // BindPeer is a trust-boundary operation for the authenticated caller. Trust
 // renewal must supply a greater generation; revoked generations stay revoked.
 func (m *Manager) BindPeer(peer Peer) error {
@@ -206,17 +243,17 @@ func (m *Manager) Offer(peer Peer, manifest Manifest) (Batch, error) {
 	if _, err := m.checkPeerLocked(peer); err != nil {
 		return Batch{}, err
 	}
-	// Serialize validation as well as reservation: concurrent offers cannot
-	// multiply temporary normalization/tree-validation allocations unboundedly.
-	total, err := validateManifest(manifest, m.limits)
-	if err != nil {
-		return Batch{}, err
-	}
 	if existing, ok := m.batches[manifest.ID]; ok {
 		if existing.value.Peer != peer || !sameManifest(existing.manifest, manifest) {
 			return Batch{}, ErrConflict
 		}
 		return snapshot(existing), nil
+	}
+	// Serialize validation as well as reservation: concurrent offers cannot
+	// multiply temporary normalization/tree-validation allocations unboundedly.
+	total, err := validateManifest(manifest, m.limits)
+	if err != nil {
+		return Batch{}, err
 	}
 	metadata := metadataSize(manifest)
 	if len(m.batches) >= m.limits.MaxBatches || total > m.limits.MaxReservedBytes-m.reserved || metadata > m.limits.MaxMetadataBytes-m.metadata {

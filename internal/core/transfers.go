@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
@@ -27,7 +28,7 @@ const transferManifestMetadataBytes = 256 << 10
 const transferManifestJSONBytes = 6 * transferManifestMetadataBytes
 
 func transferLimits() transfer.Limits {
-	return transfer.Limits{MaxEntries: 256, MaxManifestBytes: transferManifestMetadataBytes, MaxFileBytes: 1 << 30, MaxBatchBytes: 1 << 30, MaxReservedBytes: 4 << 30, MaxBatches: 32, MaxMetadataBytes: 1 << 20}
+	return transferLimitsFor(capacity.Defaults(), "transferSpoolBytes")
 }
 
 // wireBatch deliberately excludes local destination paths and trust state.
@@ -46,6 +47,7 @@ func batchWire(b transfer.Batch) wireBatch {
 type outgoingBatch struct {
 	mu           sync.Mutex
 	ID, PeerID   string
+	Network      string
 	Generation   uint64
 	Manifest     transfer.Manifest
 	Files        map[string]string
@@ -55,6 +57,7 @@ type outgoingBatch struct {
 	Created      time.Time
 	cancel       context.CancelFunc
 	running      bool
+	runDone      chan struct{} // Closed after the current outgoing network worker exits.
 	staging      bool
 	reserved     int64 // Payload bytes retained or reserved, independent of history.
 }
@@ -102,20 +105,54 @@ func (c *Core) reserveOutgoing(ctx context.Context, b *outgoingBatch, lim transf
 	if c.closing || c.ctx.Err() != nil {
 		return nil, errors.New("application is stopping")
 	}
+	// Selection planning can be slow and runs without c.op. Recheck the exact
+	// approval under the same lock that publishes revocation and reservations.
+	approved := false
+	for _, peer := range c.profile.Peers {
+		if peer.ID == b.PeerID && peer.Network == b.Network && peer.Network == c.profile.Settings.Network && peer.Generation == b.Generation && !peer.Paused {
+			approved = true
+			break
+		}
+	}
+	if !approved {
+		return nil, errors.New("peer permission changed")
+	}
 	if existing := c.outgoing[b.ID]; existing != nil {
 		return existing, nil
+	}
+	if c.capacity.Version != 0 {
+		current := transferLimitsFor(c.capacity, "transferSpoolBytes")
+		if err := transfer.ValidateManifest(b.Manifest, current); err != nil {
+			return nil, err
+		}
+		lim.MaxBatches = min(lim.MaxBatches, current.MaxBatches)
+		lim.MaxReservedBytes = min(lim.MaxReservedBytes, current.MaxReservedBytes)
+		lim.MaxMetadataBytes = min(lim.MaxMetadataBytes, current.MaxMetadataBytes)
 	}
 	if len(c.outgoing) >= lim.MaxBatches {
 		return nil, errOutgoingHistory
 	}
-	var total, reserved int64
+	var total int64
+	reserved := c.orphanSpoolBytes
+	if c.orphanSpoolError != "" {
+		return nil, errors.New("retained staging could not be inventoried; inspect private staging before sending")
+	}
+	metadata := transfer.ManifestMetadataBytes(b.Manifest)
 	for _, entry := range b.Manifest.Entries {
 		total += entry.Size
 	}
 	for _, other := range c.outgoing {
 		other.mu.Lock()
+		if other.reserved > lim.MaxReservedBytes-reserved {
+			other.mu.Unlock()
+			return nil, errOutgoingStaging
+		}
 		reserved += other.reserved
+		metadata += transfer.ManifestMetadataBytes(other.Manifest)
 		other.mu.Unlock()
+	}
+	if metadata > lim.MaxMetadataBytes {
+		return nil, errOutgoingHistory
 	}
 	if total > lim.MaxReservedBytes || reserved > lim.MaxReservedBytes-total {
 		return nil, errOutgoingStaging
@@ -150,7 +187,7 @@ func (c *Core) discardOutgoing(b *outgoingBatch) {
 }
 
 func (c *Core) Upload(w http.ResponseWriter, r *http.Request) {
-	c.upload(w, r, transferLimits())
+	c.upload(w, r, c.transferLimits())
 }
 
 func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limits) {
@@ -160,7 +197,8 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		return
 	}
 	defer done()
-	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxBatchBytes+6*lim.MaxManifestBytes+(256<<10))
+	// The selection JSON and each multipart file header both repeat paths.
+	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxBatchBytes+2*transferJSONBytes(lim.MaxManifestBytes)+(256<<10))
 	body := r.Body
 	stopBody := context.AfterFunc(c.ctx, func() { _ = body.Close() })
 	defer stopBody()
@@ -205,7 +243,7 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		reply(w, 409, map[string]string{"error": e.Error()})
 		return
 	}
-	manifestJSON, e := readField("manifest", 6*lim.MaxManifestBytes)
+	manifestJSON, e := readField("manifest", transferJSONBytes(lim.MaxManifestBytes))
 	if e != nil {
 		reply(w, 400, map[string]string{"error": e.Error()})
 		return
@@ -215,8 +253,8 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		Size int64         `json:"size"`
 		Kind transfer.Kind `json:"kind"`
 	}
-	if json.Unmarshal([]byte(manifestJSON), &selected) != nil || len(selected) == 0 || len(selected) > 256 {
-		reply(w, 400, map[string]string{"error": "select 1..256 files or empty folders"})
+	if json.Unmarshal([]byte(manifestJSON), &selected) != nil || len(selected) == 0 || len(selected) > lim.MaxEntries {
+		reply(w, 400, map[string]string{"error": "selection exceeds the configured transfer entry limit"})
 		return
 	}
 	manifest := transfer.Manifest{ID: id}
@@ -227,8 +265,8 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 			entry.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 		}
 		manifest.Entries = append(manifest.Entries, entry)
-		if s.Size < 0 || s.Size > (1<<30)-total {
-			reply(w, 400, map[string]string{"error": "batch exceeds 1 GiB"})
+		if s.Size < 0 || s.Size > lim.MaxBatchBytes-total {
+			reply(w, 400, map[string]string{"error": "batch exceeds the configured byte limit"})
 			return
 		}
 		total += s.Size
@@ -246,7 +284,7 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 	// Reserve staging capacity before reading payload bytes. The reservation is
 	// represented by the entry even while HTTP staging is still in progress.
 	life, cancel := context.WithCancel(c.ctx)
-	b := &outgoingBatch{ID: id, PeerID: peerID, Generation: trust.Generation, Manifest: manifest, Files: map[string]string{}, State: "queued", Created: time.Now().UTC(), cancel: cancel}
+	b := &outgoingBatch{ID: id, PeerID: peerID, Network: trust.Network, Generation: trust.Generation, Manifest: manifest, Files: map[string]string{}, State: "queued", Created: time.Now().UTC(), cancel: cancel}
 	existing, e := c.reserveOutgoing(r.Context(), b, lim)
 	if e != nil {
 		cancel()
@@ -275,7 +313,7 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 		reply(w, 200, map[string]any{"ok": true, "result": map[string]string{"id": id, "status": state}})
 		return
 	}
-	ctx, finishStaging := context.WithCancel(r.Context())
+	ctx, finishStaging := c.operationContext(r.Context(), "stagingSeconds")
 	defer finishStaging()
 	stopLifetime := context.AfterFunc(life, finishStaging)
 	defer stopLifetime()
@@ -400,12 +438,15 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 		return nil
 	}
 	b.running = true
+	b.runDone = make(chan struct{})
+	runDone := b.runDone
 	b.staging = false
 	b.State = "awaiting-acceptance"
 	b.Error = ""
 	b.mu.Unlock()
 	go func() {
 		defer done()
+		defer close(runDone)
 		err := c.deliver(ctx, b)
 		b.mu.Lock()
 		if err != nil {
@@ -433,7 +474,7 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 		return err
 	}
 	peer, ok := c.trust(b.PeerID)
-	if !ok || peer.Generation != b.Generation || peer.Paused {
+	if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused {
 		return errors.New("peer permission changed")
 	}
 	var remote wireBatch
@@ -443,17 +484,15 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	if e != nil {
 		return e
 	}
-	deadline := time.Now().Add(10 * time.Minute)
+	waitCtx, finishWait := c.operationContext(ctx, "receiveWaitSeconds")
+	defer finishWait()
 	for remote.State == transfer.Pending {
-		if !time.Now().Before(deadline) {
-			return errors.New("receiver did not accept within ten minutes; retry when ready")
-		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-waitCtx.Done():
+			return waitCtx.Err()
 		case <-time.After(time.Second):
 		}
-		call, cancel = context.WithTimeout(ctx, 8*time.Second)
+		call, cancel = context.WithTimeout(waitCtx, 8*time.Second)
 		e = c.peerJSON(call, b.PeerID, "GET", "/v1/batches/"+b.ID, nil, &remote)
 		cancel()
 		if e != nil {
@@ -497,7 +536,7 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 			}
 		}
 		peer, ok := c.trust(b.PeerID)
-		if !ok || peer.Generation != b.Generation || peer.Paused {
+		if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused {
 			return errors.New("peer permission changed")
 		}
 		f, e := os.Open(b.Files[entry.ID])
@@ -505,7 +544,7 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 			return errors.New("staged file is unavailable; select it again")
 		}
 		var ack transfer.FileAck
-		call, cancel = context.WithTimeout(ctx, 10*time.Minute)
+		call, cancel = c.operationContext(ctx, "fileTransferSeconds")
 		e = c.peerRequest(call, b.PeerID, "PUT", "/v1/batches/"+b.ID+"/files/"+entry.ID, f, "application/octet-stream", &ack)
 		cancel()
 		f.Close()
@@ -649,9 +688,28 @@ func (c *Core) transferViews() []map[string]any {
 	return out
 }
 
+// sourcePlan separates admission metadata from payload reads. The planner can
+// be replaced by deterministic in-memory plans when testing staging lifetimes.
+type sourcePlan interface {
+	Manifest() transfer.Manifest
+	Hash(context.Context) (transfer.Manifest, []transfer.Source, error)
+}
+
+type sourcePlanner func(context.Context, string, []string, transfer.Limits) (sourcePlan, error)
+
+func (c *Core) planTransferSources(ctx context.Context, id string, paths []string, lim transfer.Limits) (sourcePlan, error) {
+	c.mu.RLock()
+	planner := c.planSources
+	c.mu.RUnlock()
+	if planner != nil {
+		return planner(ctx, id, paths, lim)
+	}
+	return transfer.PlanSources(ctx, id, paths, lim)
+}
+
 // File selection from the agent CLI uses the same staging and manifest protocol.
 func (c *Core) SendPaths(ctx context.Context, peerID string, paths []string) (any, error) {
-	return c.sendPaths(ctx, peerID, paths, transferLimits())
+	return c.sendPaths(ctx, peerID, paths, c.transferLimits())
 }
 
 func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim transfer.Limits) (any, error) {
@@ -668,17 +726,17 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 		return nil, errors.New("approve this exact peer first")
 	}
 	life, cancel := context.WithCancel(c.ctx)
-	stageCtx, finishStaging := context.WithCancel(ctx)
+	stageCtx, finishStaging := c.operationContext(ctx, "stagingSeconds")
 	defer finishStaging()
 	stopLifetime := context.AfterFunc(life, finishStaging)
 	defer stopLifetime()
-	plan, e := transfer.PlanSources(stageCtx, randomID(), paths, lim)
+	plan, e := c.planTransferSources(stageCtx, randomID(), paths, lim)
 	if e != nil {
 		cancel()
 		return nil, e
 	}
 	planned := plan.Manifest()
-	b := &outgoingBatch{ID: planned.ID, PeerID: peerID, Generation: t.Generation, Manifest: planned, Files: map[string]string{}, Created: time.Now().UTC(), State: "queued", cancel: cancel}
+	b := &outgoingBatch{ID: planned.ID, PeerID: peerID, Network: t.Network, Generation: t.Generation, Manifest: planned, Files: map[string]string{}, Created: time.Now().UTC(), State: "queued", cancel: cancel}
 	if existing, e := c.reserveOutgoing(stageCtx, b, lim); e != nil || existing != nil {
 		cancel()
 		if e != nil {

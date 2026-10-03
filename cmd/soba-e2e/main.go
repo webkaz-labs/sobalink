@@ -199,20 +199,49 @@ func (f *fixtureBackend) Command(ctx context.Context, cmd webui.Command) (any, e
 			return nil, errors.New("network activation is unavailable in the offline browser fixture")
 		}
 	}
+	if cmd.Name == "services.start" {
+		// Batch start reaches Core's internal start path, so release only the
+		// harness-reserved listener selected by these actual saved definitions.
+		var selection struct {
+			IDs   []string `json:"ids,omitempty"`
+			Group string   `json:"group,omitempty"`
+		}
+		if json.Unmarshal(cmd.Payload, &selection) == nil {
+			payload, _ := json.Marshal(selection)
+			result, err := f.Backend.Command(ctx, webui.Command{RequestID: cmd.RequestID + "-fixture-selection", Name: "service.selection", Payload: payload})
+			if err == nil {
+				encoded, _ := json.Marshal(result)
+				var reviewed struct {
+					Services []core.ServiceSpec `json:"services"`
+				}
+				if json.Unmarshal(encoded, &reviewed) == nil {
+					for _, service := range reviewed.Services {
+						if service.Direction == "forward" && service.LocalPort == int(f.servicePort) {
+							f.releaseServiceReservation()
+						}
+					}
+				}
+			}
+		}
+	}
 	if cmd.Name == "service.connect" {
 		var choice struct {
 			LocalPort int `json:"localPort"`
 		}
 		if json.Unmarshal(cmd.Payload, &choice) == nil && choice.LocalPort == int(f.servicePort) {
-			f.serviceMu.Lock()
-			if f.serviceReservation != nil {
-				_ = f.serviceReservation.Close()
-				f.serviceReservation = nil
-			}
-			f.serviceMu.Unlock()
+			f.releaseServiceReservation()
 		}
 	}
 	return f.Backend.Command(ctx, cmd)
+}
+
+func (f *fixtureBackend) releaseServiceReservation() {
+	f.serviceMu.Lock()
+	defer f.serviceMu.Unlock()
+	if f.serviceReservation != nil {
+		_ = f.serviceReservation.Close()
+		f.serviceReservation = nil
+	}
 }
 
 func (f *fixtureBackend) Upload(w http.ResponseWriter, r *http.Request) {
@@ -328,10 +357,12 @@ func run() (runErr error) {
 		if _, e := b.SendPaths(ctx, "fixture-notebook", []string{notes}); e != nil {
 			return e
 		}
-		if e := command(ctx, b, "service.share", map[string]any{"name": "sample-web", "network": "tcp", "ports": "8080", "peerIds": []string{"fixture-notebook"}, "ttlSeconds": 3600, "purpose": "web", "discoverable": true}); e != nil {
+		if e := command(ctx, b, "service.share", map[string]any{"name": "sample-web", "network": "tcp", "ports": "8080", "peerIds": []string{"fixture-notebook"}, "lifetime": "finite", "ttlSeconds": 3600, "purpose": "web", "discoverable": true}); e != nil {
 			return e
 		}
-		_ = command(ctx, a, "peer.reconnect", map[string]string{"peerId": "fixture-studio"})
+		if e := command(ctx, a, "discovery.refresh", map[string]string{"peerId": "fixture-studio"}); e != nil {
+			return e
+		}
 	} else if e := command(ctx, a, "network.configure", map[string]string{"mode": "none", "hostname": "Notebook"}); e != nil {
 		return e
 	}

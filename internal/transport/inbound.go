@@ -114,7 +114,7 @@ func StartInboundTCP(ctx context.Context, cfg TCPConfig, l net.Listener, authori
 			bridge(&inboundConn{Conn: client, validate: validate}, remote)
 			stop()
 			<-watched
-		})
+		}, cfg)
 	}), nil
 }
 

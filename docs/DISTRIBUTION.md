@@ -2,7 +2,7 @@
 
 [日本語の概要](../README.md) · [English overview](../README.en.md) · [Verification](VERIFICATION.en.md)
 
-**sobalink is a development draft, with executable `soba` and no assigned public release version.** No command here installs a published sobalink release. The repository locator and Go module are `github.com/webkaz-labs/sobalink`. Renaming the repository does not create a release or alter the signatures of earlier artifacts.
+**sobalink is an unreleased development build, with executable `soba`.** The next candidate is `0.3.0-alpha.1`, which is not published. No command here installs a published sobalink release. The repository locator and Go module are `github.com/webkaz-labs/sobalink`. Renaming the repository does not create a release or alter the signatures of earlier artifacts.
 
 The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the earlier CLI. Their CI, signatures and installation results do not verify this draft, its embedded UI, file protocol or Tailcat adapter. [Legacy releases](https://github.com/webkaz-labs/tsnet-bridge/releases)
 
@@ -34,7 +34,7 @@ python -m unittest discover -s .github/scripts -p 'test_*.py' -v
 python .github/scripts/check-frontend.py
 ```
 
-The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. The local cloud environment can deny required sockets; that blocked result is separate from the successful [six-job native/browser CI](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076) at `14ee61f8`, including stock LAN loopback-relay acceptance on all four targets. New UI/Core checks require results for their own source.
+The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. A socket-restricted environment cannot establish native runtime acceptance. Public baseline `1027f04a` executed 23 formal Playwright cases in [run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635): 20 passed and three failed. Native race/vet passed on four targets, with relay/package stages still running at the recorded check. Later UI/Core/CLI fixes need their own final-source results. Enumeration and DOM tests do not replace browser execution.
 
 ## Native targets
 
@@ -75,6 +75,7 @@ share/sobalink/README.md
 share/sobalink/README.en.md
 share/sobalink/SECURITY.md
 share/sobalink/docs/*.md
+share/sobalink/web/*.md
 share/sobalink/go.mod
 share/sobalink/go.sum
 share/sobalink/build.json
@@ -99,7 +100,7 @@ Trusted-main Go caches bind runner, OS, architecture, toolchain, dependency mani
 
 ## LAN native acceptance
 
-The source now includes a stock Tailcat two-peer test using a loopback TLS DERP fixture, no external relay and no UDP underlay. It passed denied-key admission, bidirectional TCP held for 130 seconds across a real two-minute relay lease, UDP, active revocation and cleanup on all four native targets at `14ee61f8` in [run 37042721076](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). The newer Core and font/graph browser checks are prepared but await their own exact-source run. The restricted test topology is not a production promise of zero external traffic or general TCP continuity. Run the opt-in test on a native environment with socket support and no unsupported proxy/Tailscale environment overrides. The extra `lanlink_integration` and `ts_omit_udptransport` tags are for this isolated fixture only; ordinary production builds retain direct UDP support:
+The source now includes a stock Tailcat two-peer test using a loopback TLS DERP fixture, no external relay and no UDP underlay. Recorded four-target native CI covers denied-key admission, bidirectional TCP held for 130 seconds across a real two-minute relay lease, UDP, active revocation and cleanup, plus Core two-peer message/file/share operations. A recorded completed native snapshot is `1c5c195` in [run 37085369977](https://github.com/webkaz-labs/sobalink/actions/runs/37085369977); its separate browser job failed. Later changes and final font/graph/workflow browser checks need their own exact-source run. The restricted test topology is not a production promise of zero external traffic or general TCP continuity. Run the opt-in test on a native environment with socket support and no unsupported proxy/Tailscale environment overrides. The extra `lanlink_integration` and `ts_omit_udptransport` tags are for this isolated fixture only; ordinary production builds retain direct UDP support:
 
 ```sh
 SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport -count=1 -v -timeout=5m ./internal/lanlink -run '^TestTrustedRelayTwoPeerIntegration$'
@@ -107,7 +108,7 @@ SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmap
 
 ## Publication gates
 
-Publication is separate from local implementation. A future authorized release must:
+The prerelease workflow is prepared and starts only through an explicit manual `workflow_dispatch` with a candidate version and exact tested commit. It requires that commit to be the current main with successful canonical CI. Preparation does not start a release. Publication must:
 
 1. Select a new explicit prerelease version and exact reviewed main commit, with successful CI for that commit
 2. Execute the four native race/vet/package jobs and the actual Go-backed local-browser acceptance job; record failures and unperformed real-network tests accurately
@@ -120,9 +121,9 @@ Publication is separate from local implementation. A future authorized release m
 
 A release must have the signed `packslip.sigstore.json` and all matching assets; a tag or archive alone is insufficient. Ordinary CI's disposable offline signing fixture is not a release and must not be accepted as production identity.
 
-Future sobalink release verification uses `https://github.com/webkaz-labs/sobalink/.github/workflows/prerelease.yml@refs/heads/main`, with issuer `https://token.actions.githubusercontent.com`. Earlier tsnet-bridge signatures retain their original project and workflow identities; they are not rewritten. The separate sobalink release-workflow preparation remains pending. Packslip/mise do not themselves establish linked GitHub build provenance: the workflow separately verifies it with the repository, source, workflow, ref and runner restrictions.
+Future sobalink release verification uses `https://github.com/webkaz-labs/sobalink/.github/workflows/prerelease.yml@refs/heads/main`, with issuer `https://token.actions.githubusercontent.com`. Earlier tsnet-bridge signatures retain their original project and workflow identities; they are not rewritten. The sobalink workflow is prepared; its first signed candidate execution and publication remain pending. Packslip/mise do not themselves establish linked GitHub build provenance: the workflow separately verifies it with the repository, source, workflow, ref and runner restrictions.
 
-No new sobalink install pin is supplied before an actual release exists. The repository rename has completed; release frontend/product preparation and verification under the new workflow identity remain pending. Historical artifacts must still be checked against their original identities. OS warnings must be resolved through supported signing/distribution work, not bypassed.
+No new sobalink install pin is supplied before an actual release exists. The repository rename and local workflow preparation are complete; successful final-source CI and signed publication/install verification under the new workflow identity remain pending. Historical artifacts must still be checked against their original identities. OS warnings must be resolved through supported signing/distribution work, not bypassed.
 
 ## Updating a development build
 

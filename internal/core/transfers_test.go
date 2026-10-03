@@ -21,11 +21,15 @@ import (
 )
 
 func outgoingForCapacity(id string, size int64) *outgoingBatch {
-	return &outgoingBatch{ID: id, State: "queued", Manifest: transfer.Manifest{ID: id, Entries: []transfer.Entry{{ID: "1", Path: "note.txt", Kind: transfer.File, Size: size}}}}
+	return &outgoingBatch{ID: id, PeerID: "peer", Network: "tailnet", Generation: 1, State: "queued", Manifest: transfer.Manifest{ID: id, Entries: []transfer.Entry{{ID: "1", Path: "note.txt", Kind: transfer.File, Size: size}}}}
+}
+
+func outgoingCapacityCore() *Core {
+	return &Core{ctx: context.Background(), outgoing: map[string]*outgoingBatch{}, profile: Profile{Settings: Settings{Network: "tailnet"}, Peers: []Trust{{ID: "peer", Network: "tailnet", Generation: 1}}}}
 }
 
 func TestOutgoingCapacityCountsRetainedSpoolsInsteadOfHistory(t *testing.T) {
-	c := &Core{ctx: context.Background(), outgoing: map[string]*outgoingBatch{}}
+	c := outgoingCapacityCore()
 	lim := transferLimits()
 	lim.MaxReservedBytes = 4
 	b := outgoingForCapacity("first", 4)
@@ -59,7 +63,7 @@ func TestOutgoingCapacityCountsRetainedSpoolsInsteadOfHistory(t *testing.T) {
 }
 
 func TestConcurrentOutgoingAdmissionCannotOversubscribe(t *testing.T) {
-	c := &Core{ctx: context.Background(), outgoing: map[string]*outgoingBatch{}}
+	c := outgoingCapacityCore()
 	lim := transferLimits()
 	lim.MaxReservedBytes = 4
 	var wg sync.WaitGroup

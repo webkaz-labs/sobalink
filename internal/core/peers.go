@@ -12,6 +12,8 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -202,11 +204,11 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		p.mu.Unlock()
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/hello" {
-		reply(w, 200, map[string]any{"protocol": 1, "product": "sobalink", "capabilities": []string{"text", "batch", "ranges"}})
+		reply(w, 200, map[string]any{"protocol": 1, "product": "sobalink", "capabilities": []string{"text", "batch", "ranges", "discovery-v3"}})
 		return
 	}
-	if r.Method == "GET" && r.URL.Path == "/.well-known/sobalink/services/v2" {
-		reply(w, 200, map[string]any{"version": 2, "services": c.permittedServices(peerID)})
+	if r.Method == "GET" && (r.URL.Path == "/.well-known/sobalink/services/v2" || r.URL.Path == discoveryV3Path) {
+		c.serveServiceDiscovery(w, r, peerID)
 		return
 	}
 	t, ok := c.trust(peerID)
@@ -221,7 +223,12 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 			ID   string `json:"id"`
 			Text string `json:"text"`
 		}
-		err := readJSON(r, int64(messageframe.PeerRequestBytes), &msg)
+		bounds, err := messageframe.ForText(c.MessageTextBytes())
+		if err != nil {
+			reply(w, http.StatusServiceUnavailable, map[string]string{"error": "invalid message budget"})
+			return
+		}
+		err = readJSON(r, bounds.PeerRequestBytes, &msg)
 		if errors.Is(err, errPeerRequestTooLarge) {
 			reply(w, http.StatusRequestEntityTooLarge, map[string]string{"code": "request_too_large", "error": "message request is too large; shorten the text or reduce JSON padding"})
 			return
@@ -230,8 +237,8 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 			peerFailure(w, 400)
 			return
 		}
-		if len(msg.Text) > messageframe.TextBytes {
-			reply(w, http.StatusRequestEntityTooLarge, map[string]string{"code": "message_too_large", "error": "message exceeds 16384 UTF-8 bytes; shorten the text and retry"})
+		if int64(len(msg.Text)) > c.MessageTextBytes() {
+			reply(w, http.StatusRequestEntityTooLarge, map[string]string{"code": "message_too_large", "error": "message exceeds the configured UTF-8 byte limit; shorten the text or review capacity settings"})
 			return
 		}
 		if !validText(msg.Text) {
@@ -277,7 +284,7 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]string{"id": message.ID, "status": "received"})
 	case r.Method == "POST" && r.URL.Path == "/v1/offers":
 		var manifest transfer.Manifest
-		if readJSON(r, int64(transferManifestJSONBytes), &manifest) != nil {
+		if readJSON(r, c.receiveManifestJSONBytes(), &manifest) != nil {
 			peerFailure(w, 400)
 			return
 		}
@@ -333,7 +340,13 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, size+1)
-			ack, e := c.transfers.ReceiveFile(r.Context(), peer, batch.ID, parts[2], r.Body)
+			fileCtx, finishFile := c.operationContext(r.Context(), "fileTransferSeconds")
+			defer finishFile()
+			deadline, _ := fileCtx.Deadline()
+			controller := http.NewResponseController(w)
+			_ = controller.SetReadDeadline(deadline)
+			_ = controller.SetWriteDeadline(deadline)
+			ack, e := c.transfers.ReceiveFile(fileCtx, peer, batch.ID, parts[2], r.Body)
 			if e != nil {
 				peerFailure(w, 409)
 				return
@@ -354,6 +367,10 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 		}
 		return c.dial(ctx, id, "tcp", PeerPort)
 	}}
+	if method == "PUT" && strings.HasPrefix(path, "/v1/batches/") {
+		// File upload and save confirmation share the caller's selected lifetime.
+		transport.ResponseHeaderTimeout = 0
+	}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("peer redirects are refused") }}
 	req, e := http.NewRequestWithContext(ctx, method, "http://peer.invalid"+path, body)
@@ -369,6 +386,12 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if method == "GET" && strings.HasPrefix(path, "/.well-known/sobalink/services/") && resp.StatusCode == http.StatusRequestEntityTooLarge {
+			return &localCommandError{"discovery_capacity", "peer discovery exceeds its configured response budget; review discovery capacity on the sharing peer"}
+		}
+		if method == "GET" && (path == "/v1/hello" || strings.HasPrefix(path, "/.well-known/sobalink/services/")) && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUpgradeRequired) {
+			return &localCommandError{"discovery_unsupported", "peer did not provide a supported discovery endpoint; use a known service with manual settings"}
+		}
 		if path == "/v1/messages" {
 			switch resp.StatusCode {
 			case http.StatusRequestEntityTooLarge:
@@ -383,9 +406,35 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 		_, e = io.Copy(io.Discard, io.LimitReader(resp.Body, 256<<10))
 		return e
 	}
-	d := json.NewDecoder(io.LimitReader(resp.Body, 256<<10))
+	responseLimit := int64(256 << 10)
+	if path == "/v1/offers" || strings.HasPrefix(path, "/v1/batches/") {
+		responseLimit = c.transferResponseJSONBytes()
+	}
+	if strings.HasPrefix(path, discoveryV3Path) {
+		responseLimit = c.limit("resources", "discoveryBytes")
+	}
+	limited := &io.LimitedReader{R: resp.Body, N: responseLimit + 1}
+	d := json.NewDecoder(limited)
 	d.DisallowUnknownFields()
-	return d.Decode(out)
+	if err := d.Decode(out); err != nil {
+		if limited.N <= 0 && strings.HasPrefix(path, "/.well-known/sobalink/services/") {
+			return &localCommandError{"discovery_capacity", "peer discovery exceeds the configured response budget; review discoveryBytes"}
+		}
+		return err
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		return errors.New("unexpected data after peer response")
+	}
+	if limited.N <= 0 {
+		if strings.HasPrefix(path, "/.well-known/sobalink/services/") {
+			return &localCommandError{"discovery_capacity", "peer discovery exceeds the configured response budget; review discoveryBytes"}
+		}
+		return errors.New("peer response exceeds its configured framing budget")
+	}
+	if page, ok := out.(*servicePage); ok {
+		page.receivedBytes = responseLimit + 1 - limited.N
+	}
+	return nil
 }
 func (c *Core) peerJSON(ctx context.Context, id, method, path string, input, out any) error {
 	var body io.Reader
@@ -399,9 +448,10 @@ func (c *Core) peerJSON(ctx context.Context, id, method, path string, input, out
 	return c.peerRequest(ctx, id, method, path, body, "application/json", out)
 }
 
-func (c *Core) probePeer(ctx context.Context, id string) error {
+func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	defer func() { c.recordDiscoveryObservation(id, probeErr) }()
 	var hello struct {
 		Protocol     int      `json:"protocol"`
 		Product      string   `json:"product"`
@@ -411,7 +461,20 @@ func (c *Core) probePeer(ctx context.Context, id string) error {
 		return e
 	}
 	if hello.Protocol != 1 || hello.Product != "sobalink" {
-		return errors.New("peer protocol is unsupported")
+		return &localCommandError{"discovery_unsupported", "peer discovery protocol is unsupported; use manual settings for a known service"}
+	}
+	for _, capability := range hello.Capabilities {
+		if capability == "discovery-v3" {
+			services, err := c.queryServicePages(ctx, id)
+			if err != nil {
+				return err
+			}
+			c.mu.Lock()
+			c.confirmed[id] = time.Now()
+			c.discovered[id] = services
+			c.mu.Unlock()
+			return nil
+		}
 	}
 	var services struct {
 		Version  int             `json:"version"`
@@ -437,46 +500,84 @@ func (c *Core) probePeer(ctx context.Context, id string) error {
 func (c *Core) refreshPeers(st identity.State) {
 	ctx, cancel := context.WithTimeout(c.ctx, 8*time.Second)
 	defer cancel()
+	c.refreshPeerBatch(ctx, st, c.probePeer)
+}
+
+// The batch and concurrency limits bound one refresh pass, not peer eligibility.
+// Sorted IDs and a persistent cursor ensure later peers also get examined when
+// earlier probes consume the time budget. Only examined candidates advance it.
+func (c *Core) refreshPeerBatch(ctx context.Context, st identity.State, probe func(context.Context, string) error) {
+	if !c.refreshMu.TryLock() {
+		return
+	}
+	defer c.refreshMu.Unlock()
+	ids := make([]string, 0, len(st.Snapshot.Peers))
+	for _, peer := range st.Snapshot.Peers {
+		if !peer.Expired && peer.ID != "" {
+			ids = append(ids, peer.ID)
+		}
+	}
+	sort.Strings(ids)
+	ids = slices.Compact(ids)
+	c.mu.Lock()
+	for id := range c.discoveryObservations {
+		index := sort.SearchStrings(ids, id)
+		if index == len(ids) || ids[index] != id {
+			delete(c.discoveryObservations, id)
+			delete(c.confirmed, id)
+			delete(c.discovered, id)
+		}
+	}
+	c.mu.Unlock()
+	if len(ids) == 0 {
+		return
+	}
+	start := sort.SearchStrings(ids, c.refreshCursor)
+	if start < len(ids) && ids[start] == c.refreshCursor {
+		start++
+	}
+	if start == len(ids) {
+		start = 0
+	}
 	slots := make(chan struct{}, 4)
 	var wg sync.WaitGroup
-	for i, p := range st.Snapshot.Peers {
-		if i >= 128 || ctx.Err() != nil {
-			break
+	defer wg.Wait()
+	for examined := 0; examined < min(128, len(ids)); examined++ {
+		if ctx.Err() != nil {
+			return
 		}
-		if p.Expired || p.ID == "" {
-			continue
-		}
+		id := ids[(start+examined)%len(ids)]
 		c.mu.RLock()
-		recent := time.Since(c.confirmed[p.ID]) < 8*time.Second
+		recent := time.Since(c.confirmed[id]) < 8*time.Second
 		c.mu.RUnlock()
 		if recent {
+			c.refreshCursor = id
 			continue
 		}
 		select {
 		case slots <- struct{}{}:
 		case <-ctx.Done():
-			break
+			return
 		}
 		if ctx.Err() != nil {
-			break
+			<-slots
+			return
 		}
+		c.refreshCursor = id
 		wg.Add(1)
-		go func(id string) { defer wg.Done(); defer func() { <-slots }(); _ = c.probePeer(ctx, id) }(p.ID)
+		go func() { defer wg.Done(); defer func() { <-slots }(); _ = probe(ctx, id) }()
 	}
-	wg.Wait()
 }
 
 func validText(text string) bool {
-	return len(strings.TrimSpace(text)) > 0 && len(text) <= messageframe.TextBytes && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
+	return len(strings.TrimSpace(text)) > 0 && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
 }
 
-// The ordinary configuration limit stays at 64 KiB. Retention can keep one
-// message even when its escaped text exceeds the 48 KiB history target, so the
-// private history file needs room for that message and its bounded metadata.
-// The old 64 KiB allowance preserves readable legacy indented history files.
+// Legacy framing fixture retained for regression checks; actual history
+// storage uses the selected finite messageStorageBytes budget.
 const maxMessageHistoryBytes = max(64<<10, 6*messageframe.TextBytes+2*messageframe.IDBytes+len(`[{"id":"","peerId":"","direction":"outgoing","text":"","createdAt":"2006-01-02T15:04:05.999999999+00:00","status":"received"}]`)+1)
 
-func readMessageHistory(path string, history *[]Message) error {
+func readMessageHistory(path string, limit int64, history *[]Message) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -484,20 +585,20 @@ func readMessageHistory(path string, history *[]Message) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("message history must be a regular file, not a symlink")
 	}
-	if info.Size() > int64(maxMessageHistoryBytes) {
-		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+	if info.Size() > limit {
+		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
 	}
-	f, err := os.Open(path)
+	f, err := (transfer.Source{LocalPath: path}).Open()
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	limited := &io.LimitedReader{R: f, N: int64(maxMessageHistoryBytes) + 1}
+	limited := &io.LimitedReader{R: f, N: limit + 1}
 	d := json.NewDecoder(limited)
 	d.DisallowUnknownFields()
 	err = d.Decode(history)
 	if limited.N == 0 {
-		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
 	}
 	if err != nil {
 		return err
@@ -505,7 +606,7 @@ func readMessageHistory(path string, history *[]Message) error {
 	var extra any
 	err = d.Decode(&extra)
 	if limited.N == 0 {
-		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
 	}
 	if err != io.EOF {
 		return errors.New("unexpected data after message history")
@@ -513,27 +614,24 @@ func readMessageHistory(path string, history *[]Message) error {
 	return nil
 }
 
-func writeMessageHistory(path string, history []Message) error {
+func writeMessageHistory(path string, limit int64, history []Message) error {
 	b, err := json.Marshal(history)
 	if err != nil {
 		return err
 	}
-	if len(b)+1 > maxMessageHistoryBytes {
-		return &localCommandError{"message_history_too_large", "message history exceeds its bounded storage envelope; restore a valid history file"}
+	if int64(len(b))+1 > limit {
+		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
 	}
 	return config.AtomicWrite(path, append(b, '\n'))
 }
 
 func (c *Core) loadMessages() error {
 	var history []Message
-	if e := readMessageHistory(filepath.Join(c.dir, "messages.json"), &history); e != nil {
+	if e := readMessageHistory(filepath.Join(c.dir, "messages.json"), c.limit("resources", "messageStorageBytes"), &history); e != nil {
 		if errors.Is(e, os.ErrNotExist) {
 			return nil
 		}
 		return e
-	}
-	if len(history) > 128 {
-		return errors.New("message history exceeds limit")
 	}
 	for _, m := range history {
 		if !validText(m.Text) || !config.ValidPeerID(m.PeerID) || !config.ValidPeerID(m.ID) ||
@@ -547,23 +645,15 @@ func (c *Core) loadMessages() error {
 }
 func (c *Core) appendMessageLocked(m Message) error {
 	next := append(append([]Message(nil), c.messages...), m)
-	cut := time.Now().Add(-30 * 24 * time.Hour)
-	for len(next) > 1 {
-		b, e := json.Marshal(next)
-		if e != nil {
-			return e
-		}
-		if len(next) <= 128 && len(b) < 48<<10 && next[0].CreatedAt.After(cut) {
-			break
-		}
-		next = next[1:]
-	}
-	if e := writeMessageHistory(filepath.Join(c.dir, "messages.json"), next); e != nil {
+	// Retention choices are cleanup recommendations, never permission to erase
+	// older records while accepting a message or applying a different policy.
+	if e := writeMessageHistory(filepath.Join(c.dir, "messages.json"), c.messageHistoryStorageBytesLocked(), next); e != nil {
 		return e
 	}
 	c.messages = next
 	return nil
 }
+
 func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any, error) {
 	var v struct {
 		PeerID string `json:"peerId"`
@@ -572,11 +662,11 @@ func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any
 	if e := decodePayload(raw, &v); e != nil {
 		return nil, e
 	}
-	if len(v.Text) > messageframe.TextBytes {
-		return nil, &localCommandError{"message_too_large", "message exceeds 16384 UTF-8 bytes; shorten the text and retry"}
+	if int64(len(v.Text)) > c.MessageTextBytes() {
+		return nil, &localCommandError{"message_too_large", "message exceeds the configured UTF-8 byte limit; shorten the text or review capacity settings"}
 	}
 	if !validText(v.Text) {
-		return nil, errors.New("message must contain 1..16384 UTF-8 bytes")
+		return nil, errors.New("message must contain valid nonempty UTF-8 text")
 	}
 	t, ok := c.trust(v.PeerID)
 	if !ok || t.Paused {

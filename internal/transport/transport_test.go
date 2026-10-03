@@ -605,12 +605,12 @@ func TestTCPAndSOCKSBoundLocalConnections(t *testing.T) {
 					})
 				})
 				defer closeServer(t, server)
-				for i := 0; i < maxLocalConnections; i++ {
+				for i := 0; i < defaultTCPPerPolicy; i++ {
 					listener.client(t)
 				}
 				synctest.Wait()
-				if got := handlers.Load(); got != maxLocalConnections {
-					t.Fatalf("handlers %d, want %d", got, maxLocalConnections)
+				if got := handlers.Load(); got != defaultTCPPerPolicy {
+					t.Fatalf("handlers %d, want %d", got, defaultTCPPerPolicy)
 				}
 				overflow, closed := virtualStreamClient(t, listener)
 				defer overflow.Close()
@@ -619,8 +619,8 @@ func TestTCPAndSOCKSBoundLocalConnections(t *testing.T) {
 				if _, err := overflow.Read(make([]byte, 1)); err == nil {
 					t.Fatal("overflow connection stayed open")
 				}
-				if got := handlers.Load(); got != maxLocalConnections {
-					t.Fatalf("handlers %d, want %d", got, maxLocalConnections)
+				if got := handlers.Load(); got != defaultTCPPerPolicy {
+					t.Fatalf("handlers %d, want %d", got, defaultTCPPerPolicy)
 				}
 			})
 		})

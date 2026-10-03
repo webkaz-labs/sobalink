@@ -9,6 +9,7 @@ export interface Peer {
   verified: boolean
   trusted: boolean
   bridge: boolean
+  discovery?: { state: 'pending' | 'confirmed' | 'unconfirmed' | 'unsupported' | 'limited' | 'stale'; checkedAt?: string; code?: string; services: number }
   path: 'direct' | 'relay' | 'unknown'
   address?: string
   fingerprint?: string
@@ -44,6 +45,43 @@ export interface Transfer {
   createdAt: string
   error?: string
 }
+export type ServiceLifetime = 'finite' | 'until-stopped' | 'until-revoked'
+export interface ServicePreset { id: string; purpose: string; network: 'tcp' | 'udp'; port: number; localPort: number; label: Record<Locale, string> }
+export interface CapacityChoice { mode: 'default' | 'limited' | 'unlimited'; value?: number }
+export interface CapacityPolicy { version: 1; logical: Record<string, CapacityChoice>; resources: Record<string, CapacityChoice> }
+export interface PolicyConfig {
+  version: 1; requested: CapacityPolicy; effective: CapacityPolicy; revision: string
+  catalog: Record<'logical' | 'resources', Record<string, { default: number; unit: string }>>
+  adjustable: Record<'logical' | 'resources', Record<string, boolean>>
+  usage: Record<string, number>
+}
+export interface PolicyPreview { version: 1; requested: CapacityPolicy; effective: CapacityPolicy; revision: string; destructive: false; usage: Record<string, number> }
+export interface HistoryPreview { version: 1; revision: string; messageIds: string[]; retained: number; remove: number; destructive: true }
+export interface ServiceLimits { effective: { logical?: Record<string, CapacityChoice>; resources: Record<string, CapacityChoice> }; usage: { materializedListeners: number; [key: string]: number } }
+export interface ServiceDiagnostic {
+  serviceId: string; port: number; checkedAt: string; code: string
+  transport: 'reachable' | 'unreachable'; application: 'unverified'; nextSteps: Record<Locale, string>
+}
+export interface ServiceFailure { code: string; at: string; nextSteps: Record<Locale, string> }
+export interface ProxyTarget { peerId: string; port: number }
+export interface ProxyScope {
+  name: string; backend: Network; loopbackHost: '127.0.0.1' | '::1'; localPort: number
+  lifetime: 'finite' | 'until-stopped'; ttlSeconds: number; targets: ProxyTarget[]
+}
+export interface ProxyReview {
+  scope: ProxyScope; revision: string; endpoint: string; targets: (ProxyTarget & { host: string })[]
+  authentication: 'username-password-required'; application: 'unverified'
+}
+export interface SavedProxyView { name: string; scope: ProxyScope; revision: string; startOnLaunch: boolean; credentialsSaved: true; valid: boolean; state: string }
+export interface SavedProxyList { entries: SavedProxyView[]; revision: string; suppressed: boolean }
+export interface StartupEntry { name: string; ids?: string[]; group?: string; services: ServiceConfiguration[]; enabled: boolean; valid: boolean; revision: string; state: string }
+export interface StartupList { entries: StartupEntry[]; revision: string; suppressed: boolean }
+export interface StartupReview { name: string; ids?: string[]; group?: string; services: ServiceConfiguration[]; enabled: false; selectionRevision: string; revision: string; storeRevision: string; network: string; hostname: string }
+export interface ProxyView {
+  id: string; name: string; backend: Network; endpoint: string; targets: ProxyTarget[]
+  expiresAt: string | null; lifetime: 'finite' | 'until-stopped'; ttlSeconds: number
+  status: 'active' | 'failed' | 'stopped' | 'expired'; protocol: 'socks5-tcp-connect'; authentication: 'required'; application: 'unverified'
+}
 export interface Service {
   id: string
   peerId: string
@@ -53,10 +91,21 @@ export interface Service {
   ports?: string
   localPort?: number
   remotePort?: number
+  purpose?: string
+  checkedAt?: string
+  revision?: string
   endpoint?: string
-  expiresAt?: string
+  expiresAt?: string | null
+  loopbackHost?: '127.0.0.1' | '::1'
+  lifetime?: ServiceLifetime
+  ttlSeconds?: number
   status: 'active' | 'reconnecting' | 'stopped' | 'failed' | 'saved' | 'expired'
   application?: 'unverified'
+  owner?: string
+  leaseSeconds?: number
+  leaseExpiresAt?: string | null
+  diagnostic?: ServiceDiagnostic
+  lastFailure?: ServiceFailure
   error?: string
 }
 export interface LanAddress { interface: string; address: string }
@@ -70,8 +119,13 @@ export interface State {
   transfers: Transfer[]
   services: Service[]
   shares: Service[]
+  proxies?: ProxyView[]
+  startup?: StartupList
+  savedProxies?: SavedProxyList
   availableServices?: Service[]
   reservedPorts?: number[]
+  servicePresets?: ServicePreset[]
+  limits?: ServiceLimits
   lan?: { configured: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; path: 'unknown' | 'direct' | 'relay' }
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }
 }
@@ -88,16 +142,73 @@ export interface ServicePayload {
   name: string
   peerId?: string
   serviceId?: string
+  serviceRevision?: string
   peerIds?: string[]
   network: 'tcp' | 'udp'
   ports: string
   excludePorts?: string
   localPort?: number
+  loopbackHost?: '127.0.0.1' | '::1'
+  lifetime?: ServiceLifetime
   ttlSeconds: number
   purpose: string
   discoverable: boolean
 }
+export interface RustDeskMetadata { publicKey: string; idServiceId: string; heartbeatServiceId: string; natServiceId: string; relayServiceId: string }
+export interface ServiceGroup { name: string; serviceIds: string[]; rustdesk?: RustDeskMetadata }
+export interface DiscoveryRefresh { services: Service[]; observations: ({ peerId: string } & NonNullable<Peer['discovery']>)[]; partial: boolean }
+export interface ClientNotice { code: string; message: string; messageJa: string }
+export interface RustDeskSetup { name: string; backend: Network; idPeerId: string; relayPeerId: string; publicKey: string; idPort: number; relayPort: number; localIdPort: number; localRelayPort: number; loopbackHost: '127.0.0.1' | '::1'; lifetime: 'finite' | 'until-stopped'; ttlSeconds: number }
+export interface RustDeskRoleSettings { role: string; serviceId: string; network: 'tcp' | 'udp'; peerId: string; remotePort: number; localEndpoint: string; lifetime: ServiceLifetime; ttlSeconds: number; status: Service['status'] | 'planned'; listenerReady: boolean }
+export interface RustDeskClientSettings { group: string; idServer: string; relayServer: string; publicKey: string; proxy: string; udpEnabled: boolean; remoteIdSuffix: string; application: 'unverified'; roles: RustDeskRoleSettings[]; notices: ClientNotice[] }
+export interface RustDeskSetupReview { configuration: RustDeskSetup; group: ServiceGroup; services: ServiceConfiguration[]; revision: string; saved: boolean; applied: boolean; clientSettings: RustDeskClientSettings }
+export interface ClientServiceSettings { id: string; name: string; backend: Network; direction: 'forward' | 'share'; purpose: string; network: 'tcp' | 'udp'; peerId?: string; allowedPeerIds?: string[]; localHost: string; localEndpoint?: string; remoteHosts?: string[]; remoteEndpoints: string[]; mappings: { localFirst: number; localLast: number; remoteFirst: number; remoteLast: number }[]; lifetime: ServiceLifetime; ttlSeconds: number; status: Service['status']; listenerReady: boolean; application: 'unverified'; ssh?: { hostKeyAlias: string; args: string[]; command: string }; httpCandidate?: string; notices: ClientNotice[] }
+export interface ClientSettingsView { services: ClientServiceSettings[]; rustdesk: RustDeskClientSettings[]; application: 'unverified'; notices: ClientNotice[] }
+export interface DefinitionBundle { version: 1; services: ServiceConfiguration[]; groups: ServiceGroup[] | null }
+export interface DefinitionExport { profile: DefinitionBundle; revision: string; disabled: true }
+export interface DefinitionImport extends DefinitionExport { replacesServices: number; preservesIdentity: true; removesRustDeskMetadata?: string[]; applied?: boolean }
+export interface ServiceSelection { services: ServiceConfiguration[]; revision: string; group: string; ready: boolean; states: { id: string; status: Service['status']; lifetime?: ServiceLifetime; ttlSeconds?: number; expiresAt?: string | null; owner?: string; leaseSeconds?: number; leaseExpiresAt?: string | null }[]; application: 'unverified' }
+export interface GroupList { groups: ServiceGroup[] | null; revision: string }
 export interface CommandPayloads {
+  'rustdesk.preview': { configuration: RustDeskSetup }
+  'rustdesk.save': { configuration: RustDeskSetup; expectedRevision: string }
+  'rustdesk.settings': { group: string }
+  'client.settings': { ids?: string[]; group?: string }
+  'diagnostics.run': { serviceId: string; probeTCP: true; port: number }
+  'startup.list': Record<string, never>
+  'startup.preview': { name: string; ids?: string[]; group?: string }
+  'startup.save': { name: string; ids?: string[]; group?: string; expectedRevision: string; expectedStoreRevision: string }
+  'startup.disable': { name: string; expectedStoreRevision: string }
+  'proxy.saved.list': Record<string, never>
+  'proxy.save': { scope: ProxyScope; expectedRevision: string; expectedStoreRevision: string; username: string; password: string; startOnLaunch: boolean }
+  'proxy.generate': { scope: ProxyScope; expectedRevision: string; expectedStoreRevision: string; startOnLaunch: boolean }
+  'proxy.saved.start': { name: string; expectedRevision: string }
+  'proxy.saved.disable': { name: string; expectedRevision: string }
+  'proxy.saved.delete': { name: string; expectedRevision: string }
+  'proxy.reveal': { name: string; expectedRevision: string }
+  'proxy.preview': { scope: ProxyScope }
+  'proxy.start': { scope: ProxyScope; expectedRevision: string; username: string; password: string }
+  'proxy.list': Record<string, never>
+  'proxy.stop': { id: string }
+  'service.save': { configuration: Omit<ServiceConfiguration, 'id'> & { id?: string }; expectedRevision?: string }
+  'service.delete': { id: string; expectedRevision: string; expectedProfileRevision: string; stopActive: boolean; removeFromGroups: boolean }
+  'service.stop-shares': Record<string, never>
+  'group.list': Record<string, never>
+  'group.save': { group: ServiceGroup; expectedRevision?: string }
+  'profile.export': Record<string, never>
+  'profile.import.preview': { profile: DefinitionBundle }
+  'profile.import': { profile: DefinitionBundle; expectedRevision: string }
+  'service.selection': { ids?: string[]; group?: string }
+  'services.start': { ids?: string[]; group?: string; expectedRevision: string; lifetime?: ServiceLifetime; ttlSeconds?: number }
+  'services.stop': { ids?: string[]; group?: string; expectedRevision: string }
+  'policy.config': Record<string, never>
+  'policy.preview': { policy: CapacityPolicy }
+  'policy.apply': { policy: CapacityPolicy; expectedRevision: string }
+  'message.history.preview': Record<string, never>
+  'message.history.cleanup': { expectedRevision: string }
+  'message.list': { cursor?: string; revision?: string }
+  'transfer.list': { cursor?: string; revision?: string }
+  'service.list': { direction?: 'share' | 'forward'; cursor?: string; revision?: string }
   'message.send': { peerId: string; text: string }
   'transfer.accept': { transferId: string; destination?: string }
   'transfer.decline': { transferId: string }
@@ -105,6 +216,7 @@ export interface CommandPayloads {
   'transfer.retry': { transferId: string }
   'transfer.forget': { transferId: string }
   'peer.trust': { peerId: string; trusted: boolean }
+  'discovery.refresh': { peerId?: string }
   'peer.reconnect': { peerId: string }
   'peer.autosave': { peerId: string; enabled?: boolean; paused?: boolean; directory?: string }
   'service.connect': ServicePayload
@@ -112,7 +224,9 @@ export interface CommandPayloads {
   'service.stop': { id: string }
   'service.config': { id: string }
   'network.configure': { mode: 'none' | Network; hostname?: string; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
-  'network.login': Record<string, never>
+  'network.logout': Record<string, never>
+  'network.login': { refresh?: boolean; qr?: boolean }
+  'network.login.status': { qr?: boolean }
   'application.stop': Record<string, never>
   'lan.addresses': Record<string, never>
   'lan.identity': Record<string, never>
@@ -132,6 +246,24 @@ let csrfToken = ''
 export function setCSRFToken(value: string) { csrfToken = value }
 export function requestID() { return crypto.randomUUID() }
 export const MAX_MESSAGE_BYTES = 16_384
+function choiceBudget(choice: CapacityChoice | undefined, fallback: number, allowUnlimited = true) {
+  if (allowUnlimited && choice?.mode === 'unlimited') return Infinity
+  return choice?.mode === 'limited' && Number.isSafeInteger(choice.value) && choice.value! > 0 ? choice.value! : fallback
+}
+export function exchangeBudgets(state: State) {
+  const logical = state.limits?.effective.logical
+  const resources = state.limits?.effective.resources
+  const spoolBytes = choiceBudget(resources?.transferSpoolBytes, 4 * 1024 ** 3, false)
+  const manifestBytes = choiceBudget(resources?.transferManifestBytes, 256 * 1024, false)
+  const pathBytes = Math.min(choiceBudget(logical?.pathBytes, 4096), manifestBytes)
+  return {
+    pathBytes, pathDepth: Math.min(choiceBudget(logical?.pathDepth, 16), Math.max(1, Math.floor((pathBytes + 1) / 2))),
+    messageBytes: Math.min(choiceBudget(logical?.messageBytes, MAX_MESSAGE_BYTES), choiceBudget(resources?.messageTextBytes, MAX_MESSAGE_BYTES, false)),
+    batchEntries: Math.min(choiceBudget(logical?.batchEntries, state.settings?.maxFiles || 256), Math.max(1, Math.floor(manifestBytes / 512))),
+    batchBytes: Math.min(choiceBudget(logical?.batchBytes, state.settings?.maxBatchBytes || 1024 ** 3), spoolBytes),
+    fileBytes: Math.min(choiceBudget(logical?.fileBytes, 1024 ** 3), spoolBytes),
+  }
+}
 export function messageByteLength(value: string) { return new TextEncoder().encode(value).byteLength }
 export function safeAuthURL(value: string): string | null {
   // Match the CLI authorization-link boundary, including its bounded token form.
@@ -151,7 +283,8 @@ async function readResponse<T>(response: Response): Promise<T> {
 }
 async function jsonRequest<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const timeout = new AbortController()
-  const timer = setTimeout(() => timeout.abort(), body === undefined ? 15000 : 30000)
+  // Mutating operation deadlines belong to the selected Core policy.
+  const timer = path === '/api/command' ? undefined : setTimeout(() => timeout.abort(), body === undefined ? 15000 : 30000)
   const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
   try {
     return await readResponse<T>(await fetch(path, {
@@ -177,8 +310,8 @@ export async function login(code: string, signal?: AbortSignal) {
   const result = await jsonRequest<{ csrfToken?: string }>('/api/session', { code }, signal)
   return result
 }
-export async function command<N extends CommandName>(name: N, payload: CommandPayloads[N], id: string = requestID()) {
-  const result = await jsonRequest<CommandResult>('/api/command', { requestId: id, name, payload })
+export async function command<N extends CommandName>(name: N, payload: CommandPayloads[N], id: string = requestID(), signal?: AbortSignal) {
+  const result = await jsonRequest<CommandResult>('/api/command', { requestId: id, name, payload }, signal)
   if (!result.ok) throw new ApiError('request_failed', '')
   return result
 }

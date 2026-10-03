@@ -193,3 +193,32 @@ func TestBuildManifestRejectsCollidingSelectionsAndBounds(t *testing.T) {
 		t.Fatalf("deep source = %v", err)
 	}
 }
+
+func TestSourcePlanningUsesRaisedPathChoicesAndFiniteWalkBudget(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "selection")
+	leaf := filepath.Join(root, filepath.FromSlash(strings.Repeat("d/", 20)), "note")
+	if err := os.MkdirAll(filepath.Dir(leaf), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leaf, []byte("payload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanSources(context.Background(), "default", []string{root}, Limits{}); !errors.Is(err, ErrLimit) {
+		t.Fatalf("default depth error = %v", err)
+	}
+	lim := Limits{MaxDepth: 32, MaxPathBytes: 8192}
+	plan, err := PlanSources(context.Background(), "raised", []string{root}, lim)
+	if err != nil {
+		t.Fatalf("source path limit remained clamped: %v", err)
+	}
+	manifest, sources, err := plan.Hash(context.Background())
+	if err != nil || len(sources) != 1 || manifest.Entries[0].Path != "selection/"+strings.Repeat("d/", 20)+"note" {
+		t.Fatalf("raised source hashing = %+v, %+v, %v", manifest, sources, err)
+	}
+	// The final manifest fits, but the active traversal also needs bounded
+	// metadata for ancestor paths, handles and directory-reader frames.
+	lim.MaxManifestBytes = metadataSize(manifest) + 1024
+	if _, err := PlanSources(context.Background(), "bounded", []string{root}, lim); !errors.Is(err, ErrMetadataLimit) {
+		t.Fatalf("source traversal ignored metadata budget: %v", err)
+	}
+}

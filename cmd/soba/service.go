@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,14 +9,19 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/core"
 )
 
 type savedService struct {
-	ID, Backend, Name, Direction, Network, Ports, ExcludePorts, PeerID, Purpose, ServiceID string
-	PeerIDs                                                                                []string
-	LocalPort, TTLSeconds                                                                  int
-	Discoverable                                                                           bool
+	ID, Backend, Name, Direction, Network           string
+	Ports, ExcludePorts, PeerID, Purpose, ServiceID string
+	Lifetime, LoopbackHost, ServiceRevision         string
+	PeerIDs                                         []string
+	LocalPort, TTLSeconds                           int
+	Discoverable                                    bool
 }
+
 type serviceConfiguration struct {
 	Configuration savedService
 	Revision      string
@@ -36,21 +42,50 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 		return usageError(ja, "service "+operation+" SERVICE_ID [OPTIONS]")
 	}
 	if args[1] == "--help" || args[1] == "-h" {
-		return usageHelp(out, ja, "service "+operation+" SERVICE_ID [--name NAME] [--network tcp|udp] [--ports PORTS] [--exclude PORTS] [--peer ID | --peers IDS] [--local-port PORT] [--ttl DURATION] [--discoverable=true|false] [--backend tailnet|lan]")
+		return usageHelp(out, ja, "service "+operation+" SERVICE_ID [--name NAME] [--network tcp|udp] [--ports PORTS] [--exclude PORTS] [--peer ID | --peers IDS] [--local-port PORT] [--loopback-host 127.0.0.1|::1] [--lifetime MODE] [--ttl DURATION] [--discoverable=true|false] [--backend tailnet|lan]")
 	}
 	if operation == "show" {
-		if len(args) != 2 {
-			return usageError(ja, "service show SERVICE_ID")
+		f := commandFlags("service show NAME_OR_ID", ja, out)
+		structured := f.Bool("json", false, text(ja, "machine-readable saved definition", "保存済み定義の機械向け出力"))
+		if err := parseFlags(f, args[2:], ja); err != nil {
+			return err
 		}
-		return request("service.config", map[string]string{"id": args[1]})
+		resolved, err := resolveServiceReferences([]string{args[1]}, ja, query)
+		if err != nil {
+			return err
+		}
+		var raw json.RawMessage
+		if err = query("service.config", map[string]string{"id": resolved.IDs[0]}, &raw); err != nil {
+			return err
+		}
+		var view struct {
+			Configuration core.ServiceSpec `json:"configuration"`
+			Active        bool             `json:"active"`
+		}
+		if err = json.Unmarshal(raw, &view); err != nil {
+			return err
+		}
+		if err = checkResolvedName(resolved, view.Configuration.ID, view.Configuration.Name, ja); err != nil {
+			return err
+		}
+		if *structured {
+			encoder := json.NewEncoder(out)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(raw)
+		}
+		fmt.Fprintln(out, text(ja, "Saved definition; inspect settings for current endpoints and readiness.", "保存済み定義です。現在の接続先と準備状況は settings で確認してください。"))
+		writeHumanService(out, ja, humanFromSpec(view.Configuration), nil)
+		fmt.Fprintf(out, "%s: %s\n", text(ja, "Active runtime record", "稼働中の記録"), humanYesNo(ja, view.Active))
+		return nil
 	}
+
 	// Parse overrides before reading state; even invalid commands remain offline.
 	f := commandFlags("service "+operation+" SERVICE_ID", ja, out)
 	values := map[string]*string{}
-	for _, name := range []string{"name", "network", "ports", "exclude", "peer", "peers", "backend"} {
+	for _, name := range []string{"name", "network", "ports", "exclude", "peer", "peers", "backend", "loopback-host", "lifetime"} {
 		values[name] = f.String(name, "", text(ja, "override the saved "+name, "保存済みの "+name+" を変更"))
 	}
-	local := f.Int("local-port", 0, text(ja, "override the saved local starting port", "保存済みの入口先頭ポートを変更"))
+	local := f.Int("local-port", 0, text(ja, "override the saved listener or application port", "保存済みの入口またはアプリ側ポートを変更"))
 	ttl := f.Duration("ttl", 0, text(ja, "override the saved permission lifetime", "保存済みの許可期間を変更"))
 	discover := f.Bool("discoverable", false, text(ja, "override discovery visibility (true or false)", "共有情報の表示を変更（true または false）"))
 	if err := parseFlags(f, args[2:], ja); err != nil {
@@ -58,8 +93,17 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	}
 	changed := map[string]bool{}
 	f.Visit(func(value *flag.Flag) { changed[value.Name] = true })
+	resolved, err := resolveServiceReferences([]string{args[1]}, ja, query)
+	if err != nil {
+		return err
+	}
+	args = append([]string(nil), args...)
+	args[1] = resolved.IDs[0]
 	var snapshot serviceConfiguration
 	if err := query("service.config", map[string]string{"id": args[1]}, &snapshot); err != nil {
+		return err
+	}
+	if err := checkResolvedName(resolved, snapshot.Configuration.ID, snapshot.Configuration.Name, ja); err != nil {
 		return err
 	}
 	config := snapshot.Configuration
@@ -80,7 +124,7 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	if backend != "tailnet" && backend != "lan" {
 		return errors.New(text(ja, "This saved service has no known backend; review it and specify --backend tailnet|lan", "この保存済みサービスはネットワークが不明です。確認して --backend tailnet|lan を指定してください"))
 	}
-	for key, value := range map[string]*string{"name": &config.Name, "network": &config.Network, "ports": &config.Ports, "exclude": &config.ExcludePorts, "peer": &config.PeerID} {
+	for key, value := range map[string]*string{"name": &config.Name, "network": &config.Network, "ports": &config.Ports, "exclude": &config.ExcludePorts, "peer": &config.PeerID, "loopback-host": &config.LoopbackHost, "lifetime": &config.Lifetime} {
 		if changed[key] {
 			*value = *values[key]
 		}
@@ -91,11 +135,17 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	if changed["local-port"] {
 		config.LocalPort = *local
 	}
+	if changed["lifetime"] && config.Lifetime != "finite" && !changed["ttl"] {
+		config.TTLSeconds = 0
+	}
 	if changed["ttl"] {
 		if *ttl%time.Second != 0 {
 			return errors.New(text(ja, "--ttl must use whole seconds", "--ttl は整数秒で指定してください"))
 		}
 		config.TTLSeconds = int(ttl.Seconds())
+		if !changed["lifetime"] {
+			config.Lifetime = "finite"
+		}
 	}
 	if changed["discoverable"] {
 		config.Discoverable = *discover
@@ -107,7 +157,7 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	if config.Direction == "forward" {
 		command = "connect"
 	}
-	if (command == "share" && (changed["peer"] || changed["local-port"])) || (command == "connect" && (changed["peers"] || changed["discoverable"])) {
+	if (command == "share" && changed["peer"]) || (command == "connect" && (changed["peers"] || changed["discoverable"])) {
 		return errors.New(text(ja, "Override flags do not match this service direction; use service show first", "変更する指定がこのサービスの種類と合いません。先に service show を確認してください"))
 	}
 	if operation == "copy" && !changed["name"] {
@@ -121,11 +171,17 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 		}
 		config.Name = name
 	}
-	inputs := []string{"--name", config.Name, "--network", config.Network, "--ports", config.Ports, "--exclude", config.ExcludePorts, "--ttl", fmt.Sprintf("%ds", config.TTLSeconds)}
+	if config.Lifetime == "" {
+		config.Lifetime = "finite"
+	}
+	if config.LoopbackHost == "" {
+		config.LoopbackHost = "127.0.0.1"
+	}
+	inputs := []string{"--name", config.Name, "--network", config.Network, "--ports", config.Ports, "--exclude", config.ExcludePorts, "--ttl", fmt.Sprintf("%ds", config.TTLSeconds), "--lifetime", config.Lifetime, "--loopback-host", config.LoopbackHost, "--local-port", strconv.Itoa(config.LocalPort)}
 	if command == "share" {
 		inputs = append(inputs, "--peers", strings.Join(config.PeerIDs, ","), "--discoverable="+strconv.FormatBool(config.Discoverable))
 	} else {
-		inputs = append(inputs, "--peer", config.PeerID, "--local-port", strconv.Itoa(config.LocalPort))
+		inputs = append(inputs, "--peer", config.PeerID)
 	}
 	payload, err := servicePayload(command, inputs, ja, out)
 	if err != nil {
@@ -135,6 +191,7 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	payload["purpose"] = config.Purpose
 	if config.ServiceID != "" {
 		payload["serviceId"] = config.ServiceID
+		payload["serviceRevision"] = config.ServiceRevision
 	}
 	if operation == "restart" {
 		payload["replaceId"] = config.ID

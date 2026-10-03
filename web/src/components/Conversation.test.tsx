@@ -27,7 +27,7 @@ function deferred<T>() {
   const promise = new Promise<T>(done => { resolve = done })
   return { promise, resolve }
 }
-async function openPeer(name = 'Studio') { await userEvent.click(await screen.findByRole('button', { name: new RegExp(name) })) }
+async function openPeer(name = 'Studio') { await userEvent.click(await screen.findByRole('button', { name: new RegExp(name) })); await userEvent.click(screen.getByRole('button', { name: /^(Files & messages|ファイルとメッセージ)$/ })) }
 function fileInput(container: HTMLElement, folder = false) {
   return container.querySelector(`input[type="file"]${folder ? '[webkitdirectory]' : ':not([webkitdirectory])'}`) as HTMLInputElement
 }
@@ -330,4 +330,112 @@ describe('per-batch receive destination', () => {
     await userEvent.upload(fileInput(container), new File([], '資料.txt'))
     expect(screen.getByRole('button', { name: 'バッチから削除: 資料.txt' })).toBeInTheDocument()
   })
+})
+
+describe.each(['en', 'ja'] as const)('reviewed outgoing discard (%s)', locale => {
+  const copy = locale === 'ja' ? transferJapanese : transferEnglish
+  const cancel = locale === 'ja' ? 'キャンセル' : 'Cancel'
+  const close = locale === 'ja' ? '閉じる' : 'Close'
+  const retry = locale === 'ja' ? '転送を再試行' : 'Retry transfer'
+
+  it.each(['failed', 'declined'] as const)('reviews and cancels %s copies before committing the exact batch', async status => {
+    localStorage.setItem('sobalink.locale', locale)
+    const state = withOffer()
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status }
+    const { requests } = setup(state)
+    render(<App />); await openPeer()
+    const card = screen.getByRole('article', { name: /Notes/ })
+    expect(within(card).getByText(copy.discardHint)).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: /^(Remove from history|履歴から削除)$/ })).not.toBeInTheDocument()
+    const review = () => userEvent.click(within(card).getByRole('button', { name: copy.discardBatch }))
+    await review()
+    let dialog = screen.getByRole('dialog', { name: copy.discardTitle })
+    expect(dialog).toHaveTextContent('Notes')
+    expect(dialog).toHaveTextContent('Studio')
+    expect(dialog).toHaveTextContent(copy.discardImpact)
+    expect(dialog).toHaveTextContent(copy.discardPreservedFiles)
+    expect(requests).toHaveLength(0)
+    await userEvent.click(within(dialog).getByRole('button', { name: cancel }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+    if (status === 'failed') expect(within(card).getByRole('button', { name: retry })).toBeEnabled()
+    await review()
+    dialog = screen.getByRole('dialog', { name: copy.discardTitle })
+    await userEvent.click(within(dialog).getByRole('button', { name: close }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+    await review()
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { bubbles: true, cancelable: true }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+    await review()
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: copy.discardConfirm }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(requests).toEqual([{ requestId: expect.any(String), name: 'transfer.forget', payload: { transferId: 'batch-one' } }])
+  })
+})
+
+describe('discard review lifetime', () => {
+  it('keeps a failed discard visible and lets the user cancel without repeating the command', async () => {
+    const state = withOffer()
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'failed' }
+    const { requests, fetch } = setup(state)
+    render(<App />); await openPeer()
+    await userEvent.click(screen.getByRole('button', { name: 'Discard batch…' }))
+    fetch.mockImplementationOnce(async (_path: string, init?: RequestInit) => {
+      if (init?.body) requests.push(JSON.parse(init.body as string))
+      return new Response(JSON.stringify({ code: 'invalid_state' }), { status: 409 })
+    })
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discard copies and history' }))
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent(transferEnglish.discardPreservedFiles)
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(requests).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Retry transfer' })).toBeEnabled()
+  })
+
+  it('dismisses an outdated discard review when the transfer state changes', async () => {
+    const state = withOffer()
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'failed' }
+    const { requests, setState } = setup(state)
+    render(<App />); await openPeer()
+    await userEvent.click(screen.getByRole('button', { name: 'Discard batch…' }))
+    setState({ ...state, transfers: [{ ...state.transfers[0], status: 'transferring' }] })
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    setState(state)
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(await screen.findByRole('button', { name: 'Discard batch…' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+  })
+
+  it.each(['incoming', 'outgoing'] as const)('still removes completed %s history without a sending-copy review', async direction => {
+    const state = withOffer()
+    state.transfers[0] = { ...state.transfers[0], direction, status: 'completed' }
+    const { requests } = setup(state)
+    render(<App />); await openPeer()
+    expect(screen.getByText('Saved files stay in place.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Remove from history' }))
+    await waitFor(() => expect(requests).toEqual([{ requestId: expect.any(String), name: 'transfer.forget', payload: { transferId: 'batch-one' } }]))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+it('honors extended path choices and rechecks a lowered limit without discarding the draft', async () => {
+  const limits: api.ServiceLimits = { effective: { logical: { pathDepth: { mode: 'limited', value: 40 }, pathBytes: { mode: 'limited', value: 8192 } }, resources: { transferManifestBytes: { mode: 'limited', value: 256 * 1024 } } }, usage: { materializedListeners: 0 } }
+  const { setState } = setup({ ...initialState, limits })
+  const upload = vi.spyOn(api, 'upload')
+  const { container } = render(<App />); await openPeer()
+  const path = `${Array.from({ length: 20 }, (_, index) => `folder-${index}`).join('/')}/notes.txt`
+  await userEvent.upload(fileInput(container), folderFile(path))
+  expect(await screen.findByRole('heading', { name: 'To: Studio' })).toBeInTheDocument()
+  expect(container.querySelector('.batch-preview')).toHaveTextContent(path)
+  setState({ ...initialState, limits: { ...limits, effective: { ...limits.effective, logical: { ...limits.effective.logical, pathDepth: { mode: 'limited', value: 2 } } } } })
+  await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+  await userEvent.click(screen.getByRole('button', { name: 'Send batch' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('One selected path cannot be safely transferred')
+  expect(container.querySelector('.batch-preview')).toHaveTextContent(path)
+  expect(upload).not.toHaveBeenCalled()
 })

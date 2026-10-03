@@ -15,12 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/webkaz-labs/sobalink/internal/config"
-	"github.com/webkaz-labs/sobalink/internal/control"
 	"github.com/webkaz-labs/sobalink/internal/core"
 	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"github.com/webkaz-labs/sobalink/internal/webui"
-	assets "github.com/webkaz-labs/sobalink/web"
 	"golang.org/x/term"
 )
 
@@ -62,7 +59,7 @@ func text(ja bool, en, jp string) string {
 type controlCaller func(context.Context, string, string, any) error
 
 func run(ctx context.Context, args []string, out io.Writer) error {
-	return runWith(ctx, args, out, os.Stdin, control.Call)
+	return runWith(ctx, args, out, os.Stdin, controlCall)
 }
 
 func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader, client controlCaller) (err error) {
@@ -83,6 +80,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	global.StringVar(&locale, "locale", locale, "auto, ja or en")
 	global.BoolVar(&jsonErrors, "json-errors", false, "write stable JSON errors to stderr")
 	dryRun := global.Bool("dry-run", false, "preview the command without applying it")
+	offlineDefinitions := global.Bool("offline", false, "edit saved definitions while the agent is stopped; no network")
 	showVersion := global.Bool("version", false, "show version")
 	global.Usage = func() { fmt.Fprintln(out, text(japanese(locale), helpEN, helpJA)) }
 	if e := global.Parse(args); e != nil {
@@ -124,7 +122,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "start" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "service" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
@@ -139,50 +137,29 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			return e
 		}
 	}
-	if command == "start" {
-		startFlags := commandFlags("start", ja, out)
-		offline := startFlags.Bool("offline", false, text(ja, "open local management without starting the saved network", "保存済みのネットワークを開始せず、ローカル管理画面を開く"))
-		if e := parseFlags(startFlags, args, ja); e != nil {
-			return e
+	if command == "init" {
+		return initializeCommand(ctx, args, dir, ja, *dryRun, out)
+	}
+	if *offlineDefinitions {
+		if !offlineDefinitionCLIAllowed(command, args) {
+			return errors.New(text(ja, "--offline supports rules/settings, service save/show/delete, group list/save and profile export/import; use the running agent for other actions", "--offline は rules/settings、service save/show/delete、group list/save、profile export/import に対応しています。他の操作は稼働中の本体で実行してください"))
 		}
-		if *dryRun {
-			return errors.New(text(ja, "Use --dry-run with a configuration or action command; start launches the local agent", "--dry-run は設定・操作コマンドと使ってください。start は本体を起動します"))
-		}
-		lock, e := config.AcquireLock(dir)
-		if e != nil {
-			return e
-		}
-		defer func() { err = errors.Join(err, lock.Close()) }()
-		app, e := core.Open(ctx, core.Options{Directory: dir, Version: version, SkipNetworkStart: *offline})
-		if e != nil {
-			return e
-		}
-		defer func() { err = errors.Join(err, app.Close()) }()
-		files, e := assets.Assets()
-		if e != nil {
-			return e
-		}
-		url, code, e := app.StartWeb(files)
-		if e != nil {
-			return e
-		}
-		ipc, e := control.Serve(ctx, dir, app.IPC)
-		if e != nil {
-			return e
-		}
-		defer func() { err = errors.Join(err, ipc.Close()) }()
-		fmt.Fprintln(out, text(ja, "Local UI:", "ローカル画面:"), url)
-		if f, ok := out.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-			fmt.Fprintln(out, text(ja, "One-time code (5 minutes):", "一回用コード（5分）:"), code)
-		} else {
-			fmt.Fprintln(out, text(ja, "Use soba ui in a terminal for a one-time sign-in code.", "soba ui で一回用ログインコードを表示できます。"))
-		}
-		fmt.Fprintln(out, text(ja, "Keep this process running. Ctrl+C stops connections and shares.", "このプロセスを起動したまま使います。Ctrl+C で接続と共有を停止します。"))
-		select {
-		case <-ctx.Done():
-		case <-app.Done():
-		}
-		return nil
+		client = offlineDefinitionCall
+	}
+	if handled, err := clientHelperCLI(ctx, command, args, dir, ja, *dryRun, out, client); handled {
+		return err
+	}
+	if handled, err := definitionCLI(ctx, command, args, dir, ja, *dryRun, out, client); handled {
+		return err
+	}
+	if handled, err := workflowCommand(ctx, command, args, dir, ja, *dryRun, out, stdin, client); handled {
+		return err
+	}
+	if command == "start" || command == "run" {
+		return startCommand(ctx, command, dir, locale, args, ja, *dryRun, out, client)
+	}
+	if command == "autostart" {
+		return autostartCommand(ctx, dir, args, ja, *dryRun, out, currentAutostartEnvironment, runAutostartManager)
 	}
 	call := func(raw string) error {
 		var formatted json.RawMessage
@@ -194,21 +171,22 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(formatted)
 	}
-	if command == "status" || command == "ui" || command == "stop" {
+	if command == "status" || command == "peers" || command == "stop" {
+		if *dryRun && command == "stop" {
+			return errors.New(text(ja, "--dry-run is not available for stop", "stop は --dry-run に対応していません"))
+		}
+		return snapshotCommand(ctx, command, args, dir, ja, out, client)
+	}
+	if command == "ui" {
 		if len(args) > 0 {
-			return usageError(ja, command)
+			return usageError(ja, "ui")
 		}
-		if *dryRun && command != "status" {
-			return errors.New(text(ja, "--dry-run is not available for ui or stop", "ui と stop は --dry-run に対応していません"))
+		if *dryRun {
+			return errors.New(text(ja, "--dry-run is not available for ui", "ui は --dry-run に対応していません"))
 		}
-		return call(command)
+		return call("ui")
 	}
-	if command == "peers" {
-		if len(args) != 0 {
-			return usageError(ja, command)
-		}
-		return call("status")
-	}
+
 	request := func(name string, payload any) error {
 		raw, e := json.Marshal(payload)
 		if e != nil {
@@ -239,6 +217,15 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		return client(ctx, dir, string(command), v)
 	}
 	switch command {
+	case "startup":
+		return startupCommand(args, ja, out, request)
+	case "proxy":
+		if handled, err := savedProxyCLI(ctx, args, dir, ja, *dryRun, out, stdin, queryAction, request); handled {
+			return err
+		}
+		return proxyCommand(ctx, args, dir, ja, out, stdin, request)
+	case "doctor":
+		return doctorCommand(args, ja, out, request)
 	case "receive-dir", "autosave", "pause", "resume", "reconnect":
 		return preferenceCommand(command, args, ja, out, query, request)
 	case "service":
@@ -252,10 +239,15 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	case "lan":
 		return lanCommand(ctx, args, ja, out, stdin, request)
 	case "login":
-		if len(args) != 0 {
-			return usageError(ja, "login")
+		if len(args) == 0 {
+			return request("network.login", map[string]string{})
 		}
-		return request("network.login", map[string]string{})
+		return loginCommand(ctx, args, ja, *dryRun, out, dir, client, request)
+	case "logout":
+		if len(args) != 0 {
+			return usageError(ja, command)
+		}
+		return request("network."+command, map[string]string{})
 	case "trust", "revoke":
 		if len(args) != 1 {
 			return usageError(ja, "trust|revoke PEER_ID")
@@ -293,10 +285,20 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			return usageError(ja, "cancel|retry|forget TRANSFER_ID")
 		}
 		return request("transfer."+command, map[string]string{"transferId": args[0]})
+	case "discover":
+		return discoveryCommand(args, ja, out, request)
+	case "rules", "settings":
+		return savedRulesCommand(command, args, dir, ja, out, queryAction)
 	case "share", "connect":
+		if wantsGuidedService(args, stdin) {
+			return guidedServiceCommand(ctx, command, args, dir, ja, *dryRun, out, stdin, query, queryAction, request)
+		}
 		payload, e := servicePayload(command, args, ja, out)
 		if e != nil {
 			return e
+		}
+		if err := resolveNamedPeerPayload(payload, ja, query); err != nil {
+			return err
 		}
 		if !hasFlag(args, "name") {
 			name, e := unusedServiceName(payload["name"].(string), query)
@@ -310,9 +312,13 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		if len(args) != 1 {
 			return usageError(ja, "stop-service SERVICE_ID")
 		}
-		return request("service.stop", map[string]string{"id": args[0]})
+		resolved, err := resolveServiceReferences(args, ja, queryAction)
+		if err != nil {
+			return err
+		}
+		return request("service.stop", map[string]string{"id": resolved.IDs[0]})
 	case "command":
-		payload, e := commandPayload(ctx, args, stdin, ja)
+		payload, e := commandPayload(ctx, args, stdin, ja, dir)
 		if e != nil {
 			return e
 		}
@@ -323,25 +329,42 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 }
 
 var commandUsage = map[string]string{
-	"start": "start [--offline]", "status": "status", "peers": "peers", "ui": "ui", "stop": "stop",
+	"profile": "profile export [--output FILE] | profile import FILE [--apply --review REVISION]",
+	"start":   "start [--offline] [--background]", "run": "run [--offline]", "autostart": "autostart [enable|disable] [--startup saved|offline] [--json] [--apply --review TOKEN]", "status": "status [--json]", "peers": "peers [--json]", "ui": "ui", "stop": "stop [--json]",
 	"receive-dir": "receive-dir [DIRECTORY | --clear]", "autosave": "autosave PEER_ID --on [--directory DIR] | autosave PEER_ID --off",
 	"pause": "pause PEER_ID", "resume": "resume PEER_ID", "reconnect": "reconnect PEER_ID",
-	"login": "login", "trust": "trust PEER_ID", "revoke": "revoke PEER_ID",
+	"login": "login [--qr|--link|--browser] [--wait] [--refresh] [--timeout 5m]", "logout": "logout", "trust": "trust PEER_ID", "revoke": "revoke PEER_ID",
 	"message": "message PEER_ID TEXT", "send": "send PEER_ID PATH...",
 	"accept": "accept TRANSFER_ID DIRECTORY", "cancel": "cancel TRANSFER_ID",
 	"retry": "retry TRANSFER_ID", "forget": "forget TRANSFER_ID",
+	"rules": "rules [--json]", "settings": "settings [SERVICE_ID... | --service ID[,ID] | --group NAME] [--json]",
 	"stop-service": "stop-service SERVICE_ID", "command": "command NAME JSON_PAYLOAD | command NAME --json-file PATH | command NAME --stdin",
 }
 
-func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool) (json.RawMessage, error) {
+func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool, profileDir ...string) (json.RawMessage, error) {
 	if len(args) < 2 {
 		return nil, usageError(ja, commandUsage["command"])
+	}
+	if args[0] == "proxy.reveal" {
+		return nil, errors.New(text(ja, "Use proxy reveal with --private-file; generic command output cannot reveal credentials", "認証情報の確認には proxy reveal --private-file を使ってください。汎用コマンドでは認証情報を出力できません"))
+	}
+	if privateProxyCommand(args[0]) {
+		if err := validatePrivateProxyInput(args, ja); err != nil {
+			return nil, err
+		}
 	}
 	limit := int64(48 << 10)
 	if args[0] == "message.send" {
 		// Preserve the decoded text policy even when valid JSON escaping expands
 		// it beyond the smaller private-invitation input allowance.
 		limit = int64(messageframe.CommandBytes)
+	}
+	if len(profileDir) > 0 {
+		var err error
+		limit, err = core.ReadCommandInputBytes(profileDir[0], args[0])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", text(ja, "Could not read selected capacity settings", "選択中の容量設定を読み込めませんでした"), err)
+		}
 	}
 	var reader io.Reader
 	var owned io.Closer
@@ -364,6 +387,12 @@ func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool
 		if e != nil || !os.SameFile(info, opened) {
 			f.Close()
 			return nil, errors.New(text(ja, "JSON input file changed while opening", "JSON入力ファイルが読込み中に変わりました"))
+		}
+		if privateProxyCommand(args[0]) {
+			if err := privateProxyFileCheck(f, ja); err != nil {
+				f.Close()
+				return nil, err
+			}
 		}
 		reader = f
 		owned = f
@@ -432,14 +461,19 @@ func parseFlags(f *flag.FlagSet, args []string, ja bool) error {
 	return nil
 }
 
-const helpEN = `sobalink — nearby devices, one connection
+const helpEN = `sobalink — Close, even from afar.
 
   soba                         Start the local Web UI and agent
+  soba init                    Create inert local metadata without a network
+  soba run                     Run in the foreground (Ctrl+C stops)
+  soba start --background      Start a detached local application
+  soba autostart --help        Review optional startup at user sign-in
   soba start --offline         Open settings without starting the saved network
   soba ui                      Get the local URL and a fresh one-time code
-  soba status                  Show machine-readable state
+  soba status                  Show current state (--json for machines)
   soba setup --network tailnet Activate the existing Tailscale connection
   soba login                   Request an official interactive sign-in link
+  soba logout                  Stop traffic, log out of Tailnet and exit
   soba trust PEER_ID            Allow messages and batch offers from this identity
   soba message PEER_ID TEXT     Send text explicitly
   soba send PEER_ID PATH...     Offer files or folders as one batch
@@ -448,32 +482,50 @@ const helpEN = `sobalink — nearby devices, one connection
   soba autosave --help          Explicit per-peer automatic saving
   soba pause|resume PEER_ID     Pause/resume messages and file transfers
   soba reconnect PEER_ID        Refresh this peer's reachability and services
-  soba lan --help               Public identity and private pairing invitations\n  soba service --help           Inspect, copy and restart saved service settings
+  soba lan --help               Public identity and private pairing invitations
+  soba service --help           Save, inspect, delete and restart service settings
+  soba profile --help           Export/import stopped service definitions
+  soba rustdesk --help          Review and save RustDesk client settings
+  soba group --help             Save and start service groups
+  soba task --help              Run a command with owned temporary services
+  soba stop-shares              Stop every share; keep the node running
   soba share --help             Scoped TCP/UDP service sharing
-  soba connect --help           Local entry ports for a selected peer
+  soba connect --help           Guided or explicit local entries for a peer
+  soba discover                Refresh authenticated advertised services
   soba stop                    Stop the agent and revoke active shares
 
-For guided setup and picking peers, open the local URL from soba ui.
+Run soba connect or soba share in a terminal for guided selection and review.
+Use --interactive to explicitly select the guided flow; --json never prompts.
+soba --offline rules lists saved definitions with the agent stopped.
+soba settings [SERVICE_ID] shows saved endpoints and application hints.
 Use soba help examples for short workflows; soba help upgrade for safe updates.
 Global options: --state-dir DIR --locale auto|ja|en --dry-run --json-errors (before command)
+--offline edits saved service/group/profile definitions with the agent stopped.
 --json-errors writes {code,error} to stderr on failure; success JSON is unchanged.
 --dry-run previews action JSON and validates local inputs without applying it.
-Command results stay JSON in every locale; human guidance stays in help/errors.
+status, peers and service/group workflows default to human output; --json stays stable.
+Configuration actions and --dry-run previews keep their existing JSON output.
+Optional tools: soba proxy --help (scoped TCP proxy), soba doctor --help (transport checks)
 Advanced: command NAME JSON_PAYLOAD, revoke PEER_ID, stop-service ID,
-cancel ID, retry ID (whole unfinished files), forget ID (history only)
+cancel ID, retry ID (whole unfinished files), forget ID (history and retained sending copies)
 For private invitations: command NAME --json-file PATH or --stdin (pipe only)
 
 The Web UI and CLI use the same permission checks. The target application
 must already be running; ordinary Tailscale service targets need no sobalink.
 Files are never automatically opened or executed. Saving is receiver-approved.`
-const helpJA = `sobalink — 離れた端末を、そばに
+const helpJA = `sobalink — 離れていても、すぐそばに。
 
   soba                         ローカル画面と本体を起動
+  soba init                    ネットワークを開始せずローカル設定を作成
+  soba run                     フォアグラウンドで実行（Ctrl+C で停止）
+  soba start --background      本体をバックグラウンドで起動
+  soba autostart --help        サインイン時の起動を確認して任意登録
   soba start --offline         保存済みネットワークを開始せず設定画面を開く
   soba ui                      画面URLと新しい一回用コードを表示
-  soba status                  状態を機械向けJSONで表示
+  soba status                  現在の状態を表示（機械向けは --json）
   soba setup --network tailnet 既存のTailscale接続を有効化
   soba login                   公式の対話型ログインを開始
+  soba logout                  通信を停止し、Tailnet からログアウトして終了
   soba trust PEER_ID            この端末からのメッセージ・転送申込みを許可
   soba message PEER_ID TEXT     文字を明示的に送信
   soba send PEER_ID PATH...     ファイル・フォルダーを一括で送信
@@ -482,19 +534,32 @@ const helpJA = `sobalink — 離れた端末を、そばに
   soba autosave --help          相手を指定した自動保存
   soba pause|resume PEER_ID     メッセージ・ファイル転送を一時停止／再開
   soba reconnect PEER_ID        相手の到達状態と共有一覧を再確認
-  soba lan --help               公開IDと機密のペアリング招待\n  soba service --help           保存済み設定の確認・コピー・再開始
+  soba lan --help               公開IDと機密のペアリング招待
+  soba service --help           設定の保存・確認・削除・再開始
+  soba profile --help           停止状態のサービス設定を書き出し・読込み
+  soba rustdesk --help          RustDeskの接続設定を確認・保存
+  soba group --help             サービスをまとめて保存・開始
+  soba task --help              所有する一時サービスでコマンドを実行
+  soba stop-shares              本体を維持してすべての共有を停止
   soba share --help             範囲を指定したTCP/UDP共有
-  soba connect --help           相手へつなぐローカル入口
+  soba connect --help           案内付き・明示指定で相手へつなぐ入口
+  soba discover                認証済みの共有情報を更新
   soba stop                    本体を停止して稼働中の共有を取り消す
 
-案内付きの設定や相手の選択には、soba ui のローカルURLを開いてください。
+端末で soba connect または soba share を実行すると、選択と確認を案内します。
+--interactive は案内付き操作を明示します。--json は対話入力を求めません。
+soba --offline rules は本体を停止したまま保存済み設定を一覧表示します。
+soba settings [SERVICE_ID] は保存済み接続先とアプリの設定例を表示します。
 短い操作例は soba help examples、更新手順は soba help upgrade で表示します。
 共通指定: --state-dir DIR --locale auto|ja|en --dry-run --json-errors（コマンドより前）
+--offline は本体を起動せず保存済みサービス・グループ・プロファイルを編集します。
 --json-errors は失敗時に {code,error} のJSONを標準エラーへ出します。成功時のJSONは同じです。
 --dry-run はローカル入力を検証し、変更を適用せず操作JSONを表示します。
-操作結果のJSONは言語で変わりません。案内やエラーは選択した言語を使います。
+status・peers・サービス/グループの操作は人向け表示が基本です。--json は全言語で同じです。
+設定操作と --dry-run のプレビューは従来のJSON出力を維持します。
+任意の詳細機能: soba proxy --help（範囲を限定したTCPプロキシ）、soba doctor --help（通信の確認）
 詳細操作: command NAME JSON_PAYLOAD、revoke PEER_ID、stop-service ID、
-cancel ID、retry ID（未完了ファイルを先頭から）、forget ID（履歴のみ）
+cancel ID、retry ID（未完了ファイルを先頭から）、forget ID（履歴と送信用の一時コピー）
 機密の招待入力: command NAME --json-file PATH または --stdin（パイプ入力）
 
 画面とCLIは同じ許可判定を使います。接続先では対象アプリの起動が必要です。

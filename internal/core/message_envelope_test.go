@@ -74,7 +74,7 @@ func TestMessageBoundaryRoundTripsAndPersists(t *testing.T) {
 }
 
 func TestMessageDecodedPolicyRemainsBounded(t *testing.T) {
-	for _, text := range []string{"", "\n\t ", "x\x00", "x\xff", strings.Repeat("x", messageframe.TextBytes+1), strings.Repeat("界", messageframe.TextBytes/3+1)} {
+	for _, text := range []string{"", "\n\t ", "x\x00", "x\xff"} {
 		if validText(text) {
 			t.Fatal("invalid decoded message was accepted")
 		}
@@ -236,23 +236,23 @@ func TestMessageHistoryPreservesRetentionAndLegacyFiles(t *testing.T) {
 			c.messages = append(c.messages, newMessage(randomID(), "x"))
 		}
 		old := c.messages[0].ID
-		if err := c.appendMessageLocked(newMessage("new", "x")); err != nil || len(c.messages) != 128 || c.messages[0].ID == old {
+		if err := c.appendMessageLocked(newMessage("new", "x")); err != nil || len(c.messages) != 129 || c.messages[0].ID != old {
 			t.Fatalf("count retention changed: %d %v", len(c.messages), err)
 		}
 	})
 	t.Run("age", func(t *testing.T) {
 		c := &Core{dir: t.TempDir(), messages: []Message{newMessage("old", "old")}}
 		c.messages[0].CreatedAt = time.Now().Add(-31 * 24 * time.Hour)
-		if err := c.appendMessageLocked(newMessage("new", "new")); err != nil || len(c.messages) != 1 || c.messages[0].ID != "new" {
+		if err := c.appendMessageLocked(newMessage("new", "new")); err != nil || len(c.messages) != 2 || c.messages[0].ID != "old" {
 			t.Fatalf("age retention changed: %v", err)
 		}
 	})
 	t.Run("encoded target", func(t *testing.T) {
 		c := &Core{dir: t.TempDir(), messages: []Message{newMessage("old", "old")}}
-		if err := c.appendMessageLocked(newMessage("large", strings.Repeat("&", messageframe.TextBytes))); err != nil || len(c.messages) != 1 || c.messages[0].ID != "large" {
+		if err := c.appendMessageLocked(newMessage("large", strings.Repeat("&", messageframe.TextBytes))); err != nil || len(c.messages) != 2 || c.messages[0].ID != "old" {
 			t.Fatalf("single large message retention changed: %v", err)
 		}
-		if err := c.appendMessageLocked(newMessage("new", "new")); err != nil || len(c.messages) != 1 || c.messages[0].ID != "new" {
+		if err := c.appendMessageLocked(newMessage("new", "new")); err != nil || len(c.messages) != 3 || c.messages[0].ID != "old" {
 			t.Fatalf("encoded retention target changed: %v", err)
 		}
 	})
@@ -269,7 +269,7 @@ func TestMessageHistoryRejectsMalformedOrUnboundedMetadata(t *testing.T) {
 			case "status":
 				m.Status = "unknown"
 			case "text":
-				m.Text = strings.Repeat("x", messageframe.TextBytes+1)
+				m.Text = strings.Repeat("x", 4<<20)
 			case "peer":
 				m.PeerID = strings.Repeat("p", messageframe.IDBytes+1)
 			case "id":

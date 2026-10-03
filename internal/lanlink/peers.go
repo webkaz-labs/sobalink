@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/webkaz-labs/sobalink/internal/deadline"
 	"io"
 	"net/netip"
@@ -51,10 +52,42 @@ type Book struct {
 	peers      map[string]*approval
 	invites    map[[32]byte]invitation
 	generation uint64
+	peerLimit  func() int64
 }
 
 func NewBook() *Book {
-	return &Book{peers: make(map[string]*approval), invites: make(map[[32]byte]invitation)}
+	return NewBookWithPeerLimit(func() int64 { return 128 })
+}
+
+// NewBookWithPeerLimit uses a live admission policy. The callback must be safe
+// during concurrent policy changes and must not call back into Book or Node.
+// Existing approvals remain valid when the policy is lowered.
+func NewBookWithPeerLimit(limit func() int64) *Book {
+	return &Book{peers: make(map[string]*approval), invites: make(map[[32]byte]invitation), peerLimit: limit}
+}
+
+type PeerCapacityError struct{ Limit int64 }
+
+func (e *PeerCapacityError) Error() string {
+	return fmt.Sprintf("LAN paired-identity policy allows %d peers; raise trustedPeers or revoke an unused pair before pairing", e.Limit)
+}
+func (*PeerCapacityError) ErrorCode() string { return "peer_capacity" }
+
+func (b *Book) admissionErrorLocked() error {
+	limit := int64(128)
+	if b.peerLimit != nil {
+		limit = b.peerLimit()
+	}
+	if int64(len(b.peers)) >= limit {
+		return &PeerCapacityError{Limit: limit}
+	}
+	return nil
+}
+
+func (b *Book) admissionError() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.admissionErrorLocked()
 }
 func validKey(s string) bool {
 	if len(s) != 64 || s != strings.ToLower(s) {
@@ -108,6 +141,11 @@ func (b *Book) issue(ctx context.Context, p Peer, relay netip.AddrPort, now time
 	if e := ctx.Err(); e != nil {
 		return "", e
 	}
+	if _, approved := b.peers[p.Key]; !approved {
+		if err := b.admissionErrorLocked(); err != nil {
+			return "", err
+		}
+	}
 	for k, v := range b.invites {
 		if !deadline.Active(now, v.expires) {
 			delete(b.invites, k)
@@ -149,8 +187,8 @@ func (b *Book) Redeem(ctx context.Context, token, authenticatedKey string, conta
 	if _, ok := b.peers[authenticatedKey]; ok {
 		return nil
 	}
-	if len(b.peers) >= 128 {
-		return errors.New("too many approved peers")
+	if err := b.admissionErrorLocked(); err != nil {
+		return err
 	}
 	b.generation++
 	b.peers[authenticatedKey] = &approval{v.peer, b.generation, make(map[*trackedFlow]struct{})}
@@ -229,8 +267,10 @@ func (b *Book) Snapshot() Snapshot {
 
 // Restore is for a fresh, stopped Book only. Loading state never resumes flows
 // or pending invitations; repeated import cannot silently replace live trust.
+// The caller must bound private-state decoding. Previously saved approvals are
+// preserved even when the current policy blocks further admission.
 func (b *Book) Restore(s Snapshot) error {
-	if s.Version != 1 || len(s.Peers) > 128 {
+	if s.Version != 1 {
 		return errors.New("invalid trust snapshot")
 	}
 	seen := make(map[string]bool)
@@ -285,8 +325,8 @@ func (b *Book) approveVerified(p Peer) error {
 	if _, ok := b.peers[p.Key]; ok {
 		return nil
 	}
-	if len(b.peers) >= 128 {
-		return errors.New("too many approved peers")
+	if err := b.admissionErrorLocked(); err != nil {
+		return err
 	}
 	b.generation++
 	b.peers[p.Key] = &approval{p, b.generation, make(map[*trackedFlow]struct{})}

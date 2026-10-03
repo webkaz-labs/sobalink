@@ -26,3 +26,10 @@ export function assertSeparateArtifacts(output, privateRoot) {
   const parent = relative(output, privateRoot)
   assert.ok(child.startsWith('..') && parent.startsWith('..'), 'Artifacts and the private fixture runtime must be separate directories')
 }
+
+// Shared with the evidence gate so a new private field cannot bypass the check.
+export const CAPTURE_FORBIDDEN_SELECTOR = '.login-panel, .signin-link a, .auth-private, .auth-qr, .proxy-credentials, [data-private=proxy-credential]'
+export const PRIVATE_VALUE_SELECTOR = 'input[type=password], .private-copy, [data-private]'
+export function privateControlsAreEmpty(elements) {
+  return elements.every(element => !element.value && !(element.textContent || '').trim())
+}

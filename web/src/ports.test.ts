@@ -35,3 +35,18 @@ describe('scoped port previews', () => {
   it('rejects a fully excluded scope', () => { expect(() => previewPorts('80', '80', '', 'connect')).toThrow('empty_ports') })
   it('excludes dynamic backend ports from sharing previews', () => { expect(previewPorts('8000-8004', '', '', 'share', [8002]).ports).toBe('8000-8001, 8003-8004') })
 })
+
+describe('actual service capacity and inbound mappings', () => {
+  it('uses the available runtime listener budget and counts UDP share ports', () => {
+    expect(previewPorts('8000-8099', '', '', 'connect', [], { maxListeners: 100 }).count).toBe(100)
+    expect(() => previewPorts('8000-8002', '', '', 'connect', [], { maxListeners: 2 })).toThrow('too_many_ports')
+    expect(() => previewPorts('8000', '', '', 'share', [], { protocol: 'udp', maxListeners: 0 })).toThrow('too_many_ports')
+    expect(previewPorts('8000-8999', '', '', 'share', [], { protocol: 'tcp', maxListeners: 0 }).count).toBe(1000)
+  })
+  it('previews a single inbound mapping including a low application port', () => {
+    expect(previewPorts('8080', '', '80', 'share')).toMatchObject({ ports: '8080', localPorts: '80', count: 1 })
+    expect(() => previewPorts('8080-8081', '', '9000', 'share')).toThrow('invalid_share_mapping')
+    expect(() => previewPorts('8080', '', '54544', 'share')).toThrow('invalid_share_mapping')
+    expect(() => previewPorts('8080', '', '9000', 'share', [9000])).toThrow('invalid_share_mapping')
+  })
+})

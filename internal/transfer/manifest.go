@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,15 +19,33 @@ func limitsOrDefault(in Limits) (Limits, error) {
 	d := DefaultLimits()
 	v, defaults := reflect.ValueOf(&in).Elem(), reflect.ValueOf(d)
 	for i := 0; i < v.NumField(); i++ {
-		n, max := v.Field(i).Int(), defaults.Field(i).Int()
+		n, initial := v.Field(i).Int(), defaults.Field(i).Int()
 		if n == 0 {
-			v.Field(i).SetInt(max)
-		} else if n < 0 || n > max {
+			v.Field(i).SetInt(initial)
+		} else if n < 0 {
 			return Limits{}, fmt.Errorf("%w: %s", ErrLimit, v.Type().Field(i).Name)
 		}
 	}
+	// Streaming readers reserve one extra byte to detect a changed size.
+	if in.MaxFileBytes == int64(^uint64(0)>>1) || in.MaxBatchBytes == int64(^uint64(0)>>1) {
+		return Limits{}, fmt.Errorf("%w: byte limit leaves no framing allowance", ErrLimit)
+	}
+	// Paths are part of the finite manifest budget. A depth of n needs at
+	// least 2*n-1 path bytes, regardless of a caller's logical path choices.
+	in.MaxPathBytes = int(min(int64(in.MaxPathBytes), in.MaxManifestBytes))
+	in.MaxDepth = min(in.MaxDepth, in.MaxPathBytes/2+in.MaxPathBytes%2)
 	return in, nil
 }
+
+// ValidateLimits validates a proposed update without changing a Manager.
+func ValidateLimits(in Limits) error {
+	_, err := limitsOrDefault(in)
+	return err
+}
+
+// ManifestMetadataBytes returns the conservative retained-memory accounting
+// used by manifest validation and both sending and receiving admission.
+func ManifestMetadataBytes(m Manifest) int64 { return metadataSize(m) }
 
 func validID(s string) bool {
 	if len(s) < 1 || len(s) > 128 {
@@ -108,7 +127,9 @@ func validateManifest(manifest Manifest, lim Limits) (int64, error) {
 	if metadataSize(manifest) > lim.MaxManifestBytes {
 		return 0, ErrMetadataLimit
 	}
-	ids, names, full := map[string]bool{}, map[string]string{}, map[string]Kind{}
+	ids := map[string]bool{}
+	type manifestPath struct{ original, key string }
+	paths := make([]manifestPath, 0, len(manifest.Entries))
 	var total int64
 	for _, e := range manifest.Entries {
 		if !validID(e.ID) || ids[e.ID] {
@@ -135,26 +156,34 @@ func validateManifest(manifest Manifest, lim Limits) (int64, error) {
 			}
 			total += e.Size
 		}
-		parts := strings.Split(e.Path, "/")
-		for i := range parts {
-			prefix := strings.Join(parts[:i+1], "/")
-			key := canonical(prefix)
-			if previous, ok := names[key]; ok && previous != prefix {
+		// Order by components, with the separator before every portable name
+		// character. A parent then directly precedes its first descendant.
+		// Keeping one key per entry avoids retaining every full parent prefix,
+		// which otherwise grows quadratically when path depth is raised.
+		paths = append(paths, manifestPath{e.Path, strings.ReplaceAll(canonical(e.Path), "/", "\x00")})
+	}
+	sort.Slice(paths, func(i, j int) bool { return paths[i].key < paths[j].key })
+	for i := 1; i < len(paths); i++ {
+		previous, current := paths[i-1], paths[i]
+		for {
+			left, leftRest, leftMore := strings.Cut(previous.key, "\x00")
+			right, rightRest, rightMore := strings.Cut(current.key, "\x00")
+			if left != right {
+				break
+			}
+			leftName, leftOriginal, _ := strings.Cut(previous.original, "/")
+			rightName, rightOriginal, _ := strings.Cut(current.original, "/")
+			if leftName != rightName {
 				return 0, fmt.Errorf("%w: case or Unicode path collision", ErrInvalidManifest)
 			}
-			names[key] = prefix
-		}
-		key := canonical(e.Path)
-		if _, exists := full[key]; exists {
-			return 0, fmt.Errorf("%w: duplicate path", ErrInvalidManifest)
-		}
-		full[key] = e.Kind
-	}
-	for p := range full {
-		for parent := path.Dir(p); parent != "."; parent = path.Dir(parent) {
-			if _, exists := full[parent]; exists {
+			if !leftMore && !rightMore {
+				return 0, fmt.Errorf("%w: duplicate path", ErrInvalidManifest)
+			}
+			if !leftMore || !rightMore {
 				return 0, fmt.Errorf("%w: file or empty directory has children", ErrInvalidManifest)
 			}
+			previous = manifestPath{leftOriginal, leftRest}
+			current = manifestPath{rightOriginal, rightRest}
 		}
 	}
 	return total, nil

@@ -343,3 +343,47 @@ func TestManagementBoundsSessionsAndReclaimsExpiredEntries(t *testing.T) {
 		t.Fatalf("session count: %d", count)
 	}
 }
+
+type boundedBackend struct {
+	*testBackend
+	limit int64
+}
+
+func (b *boundedBackend) CommandRequestBytes() int64 { return b.limit }
+
+func TestManagementDynamicCommandBudget(t *testing.T) {
+	s, backend := testServer(t)
+	bounds, err := messageframe.ForText(128 << 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded := &boundedBackend{backend, bounds.CommandBytes}
+	s.backend = bounded
+	cookie, csrf := signIn(t, s)
+	for _, value := range []string{"&", "界", "😀", "\u2028"} {
+		payload, _ := json.Marshal(map[string]string{"peerId": "peer", "text": strings.Repeat(value, (128<<10)/len(value))})
+		encoded, _ := json.Marshal(Command{RequestID: "raised", Name: "message.send", Payload: payload})
+		if len(encoded) <= messageframe.CommandBytes {
+			t.Fatal("fixture does not exceed legacy budget")
+		}
+		if w := serve(s, request(s, "POST", "/api/command", string(encoded), cookie, csrf)); w.Code != http.StatusOK {
+			t.Fatalf("raised escaped input rejected: %d %s", w.Code, w.Body.String())
+		}
+	}
+	before := backend.commands.Load()
+	body := `{"requestId":"large","name":"message.send","payload":{}}` + strings.Repeat(" ", int(bounds.CommandBytes))
+	if w := serve(s, request(s, "POST", "/api/command", body, cookie, csrf)); w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized input accepted: %d", w.Code)
+	}
+	bounded.limit = 64
+	if w := serve(s, request(s, "POST", "/api/command", `{"requestId":"one","name":"message.send","payload":{"text":"longer than selected budget"}}`, cookie, csrf)); w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("lowered budget not applied: %d", w.Code)
+	}
+	bounded.limit = 0
+	if w := serve(s, request(s, "POST", "/api/command", `{}`, cookie, csrf)); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("invalid backend budget silently fell back: %d", w.Code)
+	}
+	if backend.commands.Load() != before {
+		t.Fatal("rejected request reached backend")
+	}
+}

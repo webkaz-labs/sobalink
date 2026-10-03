@@ -15,9 +15,10 @@ export interface NetworkGraphProps {
 const en = {
   heading: 'Network graph', intro: 'Select a device or connection to see its details.',
   diagram: 'Known connections from this device', list: 'Device list', showList: 'Show device list', showDiagram: 'Show network diagram',
-  self: 'This device', known: 'Known device', online: 'Network online', offline: 'Network offline', ready: 'Allowed here',
+  onlineCompact: 'Online', offlineCompact: 'Offline', self: 'This device', known: 'Known device', online: 'Network online', offline: 'Network offline', ready: 'Allowed here',
   appUnknown: 'sobalink service not confirmed', identityNeeded: 'Identity unverified', permissionNeeded: 'Permission needed', paused: 'App paused', appOffline: 'App offline',
   transferring: 'Transferring', direct: 'Direct path', relay: 'Relay path', unknown: 'Path unknown',
+  listenersCompact: 'Listeners', sharesCompact: 'Sharing rules', activeServices: 'Active services',
   connections: 'Ready connection services', shares: 'Active sharing rules', noListeners: 'No active connections or sharing rules',
   sending: 'Sending', receiving: 'Receiving', progressUnknown: 'progress unknown', transfer: 'File transfer',
   noTransfer: 'No file transfer in progress', saving: 'Saving files', waiting: 'Transfers waiting',
@@ -25,15 +26,16 @@ const en = {
   explain: 'About these states', explanation: 'Known devices may be offline. Network online is reported by the network or an authenticated sobalink reply; it does not by itself confirm the sobalink service. Allowed here means a confirmed sobalink service, verified identity, local communication permission, and no pause. The receiving device must also allow communication; its permission is not reported here. Lines show this device’s known relationships, not connections between other devices. Paths are shown only when reported.',
   empty: 'No known devices yet', emptyHint: 'Open this device to set up a network or pair a device.',
   open: 'Open device', openConnection: 'Open connection', status: 'Status', networkReady: 'Network ready', login: 'Sign-in required', starting: 'Connecting', disabled: 'Network not connected',
-  networkUnknown: 'Network unknown', networkUnavailable: 'Network unavailable',
+  networkUnknown: 'Network unknown', networkUnavailable: 'Network unavailable', routeLegend: 'Dashed: path unknown or device offline. Solid: reported path.',
 } as const
 type Labels = { [Key in keyof typeof en]: string }
 const ja: Labels = {
   heading: 'ネットワーク図', intro: 'デバイスや接続を選ぶと詳細を確認できます。',
   diagram: 'この端末から確認できる接続', list: 'デバイス一覧', showList: 'デバイス一覧を表示', showDiagram: 'ネットワーク図を表示',
-  self: 'この端末', known: '検出・登録済み', online: 'ネットワーク上でオンライン', offline: 'ネットワーク上でオフライン', ready: 'この端末で許可',
+  onlineCompact: 'オンライン', offlineCompact: 'オフライン', self: 'この端末', known: '検出・登録済み', online: 'ネットワーク上でオンライン', offline: 'ネットワーク上でオフライン', ready: 'この端末で許可',
   appUnknown: 'sobalink サービス未確認', identityNeeded: '識別情報が未確認', permissionNeeded: '通信の許可が必要', paused: 'アプリ通信を一時停止中', appOffline: 'アプリはオフライン',
   transferring: 'ファイル転送中', direct: '直接接続', relay: '中継接続', unknown: '経路不明',
+  listenersCompact: '接続待受', sharesCompact: '共有許可', activeServices: '有効なサービス',
   connections: '接続サービスの待受準備完了', shares: '共有の許可', noListeners: '有効な接続・共有許可なし',
   sending: '送信', receiving: '受信', progressUnknown: '進捗不明', transfer: 'ファイル転送',
   noTransfer: '進行中のファイル転送なし', saving: 'ファイルを保存中', waiting: '転送待ち',
@@ -41,7 +43,7 @@ const ja: Labels = {
   explain: '状態の見方', explanation: '検出・登録済みの端末がオンラインとは限りません。ネットワーク上でオンラインという表示は、ネットワーク側の状態通知または認証済みの sobalink 応答に基づきます。オンライン表示だけでは sobalink サービスの応答を確認できません。「この端末で許可」は sobalink サービスと識別情報の確認、この端末での通信許可、一時停止されていないことを表します。受信側でも通信の許可が必要です。相手側の許可状態はここでは確認できません。線はこの端末との既知の関係を示し、他の端末どうしの接続は示しません。経路は報告された場合のみ表示します。',
   empty: 'まだデバイスがありません', emptyHint: 'この端末を開いて、ネットワークの設定やデバイスのペアリングを行えます。',
   open: 'デバイスを開く', openConnection: '接続の詳細を開く', status: '状態', networkReady: 'ネットワーク利用準備完了', login: 'ログインが必要', starting: '接続中', disabled: 'ネットワーク未接続',
-  networkUnknown: 'ネットワーク不明', networkUnavailable: 'ネットワークを利用できません',
+  networkUnknown: 'ネットワーク不明', networkUnavailable: 'ネットワークを利用できません', routeLegend: '破線：経路不明またはオフライン。実線：報告された経路。',
 }
 
 function appLabel(peer: Peer, labels: Labels) {
@@ -82,26 +84,34 @@ function peerFacts(peer: Peer, state: State, locale: Locale, labels: Labels) {
   const pending = transfers.filter(item => ['offered', 'awaiting-acceptance', 'queued'].includes(item.status)).length
   const saving = transfers.filter(item => item.status === 'saving').length
   const transferLabel = active.length ? `${labels.transfer}: ${direction}` : saving ? `${labels.saving}: ${saving}` : pending ? `${labels.waiting}: ${pending}` : labels.noTransfer
-  const connections = state.services.filter(item => item.peerId === peer.id && item.status === 'active').length
+  const activeConnections = state.services.filter(item => item.peerId === peer.id && item.status === 'active')
+  const connections = activeConnections.length
   // A share applies only to its explicit peer scope, never to every visible device.
-  const shares = state.shares.filter(item => item.status === 'active' && (item.peerIds ? item.peerIds.includes(peer.id) : item.peerId === peer.id)).length
+  const activeShares = state.shares.filter(item => item.status === 'active' && (item.peerIds ? item.peerIds.includes(peer.id) : item.peerId === peer.id))
+  const shares = activeShares.length
   const listeners = [connections ? `${labels.connections}: ${connections}` : '', shares ? `${labels.shares}: ${shares}` : ''].filter(Boolean)
   const path = labels[peer.path === 'direct' ? 'direct' : peer.path === 'relay' ? 'relay' : 'unknown']
   const app = appLabel(peer, labels)
   const networks = peer.networks.map(network => network === 'lan' ? 'LAN' : 'Tailnet').join(' · ') || labels.networkUnknown
-  return { incoming: incoming.length > 0, outgoing: outgoing.length > 0, active: active.length > 0, transferLabel, listeners, path, app,
-    networks, description: `${labels.known}; ${peer.online ? labels.online : labels.offline}; ${app}; ${networks}; ${path}; ${listeners.join('; ') || labels.noListeners}; ${transferLabel}` }
+  return { incoming: incoming.length > 0, outgoing: outgoing.length > 0, active: active.length > 0, hasTransferWork: active.length > 0 || pending > 0 || saving > 0, transferLabel, listeners, path, app,
+    networks, serviceSummary: `${labels.listenersCompact} ${connections} · ${labels.sharesCompact} ${shares}`,
+    serviceNames: [...activeConnections, ...activeShares].map(item => `${item.name} (${item.network.toUpperCase()})`), description: `${labels.known}; ${peer.online ? labels.online : labels.offline}; ${app}; ${networks}; ${path}; ${listeners.join('; ') || labels.noListeners}; ${transferLabel}` }
 }
 
-type Connector = { line: string; outgoing: string; incoming: string }
+type Point = { x: number; y: number }
+type Connector = {
+  line: string; outgoing: string; incoming: string
+  source: Point; target: Point; junction: Point; lane: Point; annotation: string; compact: boolean
+}
 
-// SVG draws only decoration in CSS pixels. Native HTML controls determine the layout
-// and keep text, focus rings, and hit targets readable at every panel width.
+// Every path is continuous from the measured local device port to one peer port.
+// SVG is decoration in CSS pixels; labels and keyboard controls remain native HTML.
 function useConnectors(peerIds: string, view: NetworkGraphProps['view']) {
   const canvas = useRef<HTMLDivElement>(null)
   const self = useRef<HTMLButtonElement>(null)
   const edges = useRef(new Map<string, HTMLButtonElement>())
   const nodes = useRef(new Map<string, HTMLButtonElement>())
+  const lanes = useRef(new Map<string, HTMLSpanElement>())
   const [connectors, setConnectors] = useState<Record<string, Connector>>({})
 
   useLayoutEffect(() => {
@@ -112,51 +122,56 @@ function useConnectors(peerIds: string, view: NetworkGraphProps['view']) {
       const localGlyph = self.current?.querySelector('.network-graph-device-glyph')?.getBoundingClientRect()
       if (!bounds?.width || !local?.width || !localGlyph?.width) return
       const next: Record<string, Connector> = {}
-      edges.current.forEach((element, peerId) => {
-        const edge = element.getBoundingClientRect()
-        const node = nodes.current.get(peerId)?.getBoundingClientRect()
-        const nodeGlyph = nodes.current.get(peerId)?.querySelector('.network-graph-device-glyph')?.getBoundingClientRect()
-        if (!edge.width || !node?.width || !nodeGlyph?.width) return
-        const ex = edge.left - bounds.left
-        const ey = edge.top + edge.height / 2 - bounds.top
-        const compact = local.right > edge.left
+      nodes.current.forEach((element, peerId) => {
+        const node = element.getBoundingClientRect()
+        const glyph = element.querySelector('.network-graph-device-glyph')?.getBoundingClientRect()
+        const edge = edges.current.get(peerId)?.getBoundingClientRect()
+        if (!node.width || !glyph?.width) return
+        const wire = lanes.current.get(peerId)?.getBoundingClientRect()
+        if (!wire || !edge?.width) return
+        const compact = local.right > node.left
+        const stacked = edge.top >= glyph.bottom
         const sx = (compact ? localGlyph.left + 2 : localGlyph.right - 2) - bounds.left
         const sy = localGlyph.top + localGlyph.height / 2 - bounds.top
-        const shoulder = local.right + 12 - bounds.left
-        const spine = local.left - bounds.left
-        const bend = (shoulder + ex) / 2
-        // Curves attach to the illustrated device, then route outside its caption.
-        // Every branch starts at this device; no peer-to-peer relationship is inferred.
-        const source = compact
-          ? `M ${sx} ${sy} Q ${spine} ${sy} ${spine} ${sy + 12} V ${ey - 10} Q ${spine} ${ey} ${spine + 10} ${ey} H ${ex}`
-          : `M ${sx} ${sy} H ${shoulder} C ${bend} ${sy}, ${bend} ${ey}, ${ex} ${ey}`
-        const stacked = edge.bottom <= node.top
-        const tx = (stacked ? nodeGlyph.left + nodeGlyph.width / 2 : nodeGlyph.left + 2) - bounds.left
-        const ty = (stacked ? nodeGlyph.top + 2 : nodeGlyph.top + nodeGlyph.height / 2) - bounds.top
-        const ox = (stacked ? edge.left + edge.width / 2 : edge.right) - bounds.left
-        const oy = (stacked ? edge.bottom : edge.top + edge.height / 2) - bounds.top
-        const middle = (ox + tx) / 2
-        const target = stacked
-          ? `M ${ox} ${oy} C ${ox} ${(oy + ty) / 2}, ${tx} ${(oy + ty) / 2}, ${tx} ${ty}`
-          : `M ${ox} ${oy} C ${middle} ${oy}, ${middle} ${ty}, ${tx} ${ty}`
+        const tx = glyph.left + 2 - bounds.left
+        const ty = glyph.top + glyph.height / 2 - bounds.top
+        // The native row reserves a label, a wire slot, and facts. A shared local
+        // rail reaches each row; only the final, shallow section bends to its port.
+        const ly = stacked ? ty : wire.top + wire.height / 2 - bounds.top
+        const jx = compact ? Math.max(12, local.left - bounds.left + 4) : local.right - bounds.left + 20
+        const direction = Math.sign(ly - sy)
+        const radius = Math.min(14, Math.abs(ly - sy) / 2, Math.abs(sx - jx) / 2)
+        const towardRail = compact ? 1 : -1
+        const lead = direction === 0 ? `M ${sx} ${sy} H ${jx}`
+          : `M ${sx} ${sy} H ${jx + towardRail * radius} Q ${jx} ${sy} ${jx} ${sy + direction * radius} V ${ly - direction * radius} Q ${jx} ${ly} ${jx + radius} ${ly}`
+        const curveStart = Math.max(jx + radius, tx - Math.min(60, Math.max(16, (tx - jx) * .3)))
+        const curveMiddle = (curveStart + tx) / 2
+        const line = `${lead} H ${curveStart} C ${curveMiddle} ${ly}, ${curveMiddle} ${ty}, ${tx} ${ty}`
+        const labelX = edge.left + edge.width / 2 - bounds.left
         next[peerId] = {
-          line: `${source} ${target}`,
-          outgoing: stacked ? `M ${tx - 4} ${ty - 11} l 4 5 4 -5` : `M ${tx - 11} ${ty - 4} l 5 4 -5 4`,
-          incoming: `M ${ex - 5} ${ey - 4} l -5 4 5 4`,
+          line, source: { x: sx, y: sy }, target: { x: tx, y: ty }, junction: { x: jx, y: ly }, lane: { x: labelX, y: ly }, compact,
+          annotation: stacked ? '' : `M ${labelX} ${edge.bottom - bounds.top + 3} V ${ly - 4}`,
+          outgoing: `M ${tx - 14} ${ty - 5} l 6 5 -6 5`,
+          incoming: `M ${Math.max(jx + 22, curveStart - 16)} ${ly - 5} l -6 5 6 5`,
         }
+
       })
       setConnectors(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
     }
     measure()
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
-    for (const element of [canvas.current, self.current, ...edges.current.values(), ...nodes.current.values()]) observer?.observe(element)
+    for (const element of [canvas.current, self.current, ...edges.current.values(), ...nodes.current.values(), ...lanes.current.values()]) observer?.observe(element)
     window.addEventListener('resize', measure)
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure) }
   }, [peerIds, view])
 
-  return { canvas, self, edges, nodes, connectors }
+  return { canvas, self, edges, nodes, lanes, connectors }
 }
 
+function RouteGlyph({ path }: { path: Peer['path'] }) {
+  if (path !== 'direct' && path !== 'relay') return null
+  return <svg className="network-graph-route-glyph" width="34" height="20" viewBox="0 0 34 20" fill="none" aria-hidden="true"><path d="M7 10H27" /><circle cx="4" cy="10" r="3" /><circle cx="30" cy="10" r="3" />{path === 'relay' && <rect x="13" y="6" width="8" height="8" rx="2" />}</svg>
+}
 function DeviceGlyph({ local = false }: { local?: boolean }) {
   return <span className={`network-graph-device-glyph ${local ? 'is-local' : 'is-peer'}`} aria-hidden="true"><svg width="120" height="120" viewBox="0 0 120 120" fill="none">
     <circle className="network-graph-glyph-orbit" cx="60" cy="60" r="58" />
@@ -173,6 +188,10 @@ function DeviceGlyph({ local = false }: { local?: boolean }) {
 export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, onViewChange, selectedPeerId }: NetworkGraphProps) {
   const labels = locale === 'ja' ? ja : en
   const id = useId()
+  const [hoveredPeerId, setHoveredPeerId] = useState<string | null>(null)
+  const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null)
+  const emphasisRank = (peerId: string) => hoveredPeerId === peerId || focusedPeerId === peerId ? 2 : selectedPeerId === peerId ? 1 : 0
+  const emphasized = (peerId: string) => emphasisRank(peerId) > 0
   // Identity ordering keeps positions stable when polling changes names, statuses, or API order.
   const peers = useMemo(() => [...state.peers].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), [state.peers])
   const geometry = useConnectors(JSON.stringify(peers.map(peer => peer.id)), view)
@@ -200,25 +219,44 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
       {view === 'diagram' ? <div className="network-graph-diagram" role="group" aria-label={labels.diagram} aria-describedby={`${id}-traffic`}>
         <div className="network-graph-canvas" ref={geometry.canvas}>
           <svg className="network-graph-connectors" aria-hidden="true">
-            {facts.map(({ peer, facts }) => <g key={peer.id} className={selectedPeerId === peer.id ? 'is-selected' : ''} data-peer-id={peer.id}>
-              <path className={`network-graph-line ${facts.active ? 'has-transfer' : ''}`} d={geometry.connectors[peer.id]?.line} />
-              {facts.outgoing && <path className="network-graph-arrow" d={geometry.connectors[peer.id]?.outgoing} fill="none" data-direction="outgoing" />}
-              {facts.incoming && <path className="network-graph-arrow" d={geometry.connectors[peer.id]?.incoming} fill="none" data-direction="incoming" />}
-            </g>)}
+            {[...facts].sort((a, b) => emphasisRank(a.peer.id) - emphasisRank(b.peer.id)).map(({ peer, facts }) => {
+              const connector = geometry.connectors[peer.id]
+              return <g key={peer.id} className={`${selectedPeerId === peer.id ? 'is-selected' : ''} ${emphasized(peer.id) ? 'is-emphasized' : ''}`} data-peer-id={peer.id}>
+                <path className="network-graph-line-glow" d={connector?.line} />
+                <path className="network-graph-line-track" d={connector?.line} />
+                <path className={`network-graph-line ${!peer.online || !['direct', 'relay'].includes(peer.path) ? 'is-unconfirmed' : 'is-reported'} ${facts.active ? 'has-transfer' : ''}`} d={connector?.line} />
+                <path className="network-graph-annotation" d={connector?.annotation} />
+                <path className="network-graph-line-hit" d={connector?.line} onMouseEnter={() => setHoveredPeerId(peer.id)} onMouseLeave={() => setHoveredPeerId(null)} onClick={() => onSelectPeer(peer.id)} />
+                {connector && <><circle className="network-graph-junction" cx={connector.junction.x} cy={connector.junction.y} r="4" /><circle className="network-graph-terminal-halo" cx={connector.target.x} cy={connector.target.y} r="8" /><circle className="network-graph-terminal" cx={connector.source.x} cy={connector.source.y} r="4" /><circle className="network-graph-terminal" cx={connector.target.x} cy={connector.target.y} r="4" /></>}
+                {facts.outgoing && <path className="network-graph-arrow" d={connector?.outgoing} fill="none" data-direction="outgoing" />}
+                {facts.incoming && <path className="network-graph-arrow" d={connector?.incoming} fill="none" data-direction="incoming" />}
+              </g>
+            })}
           </svg>
           <div className="network-graph-origin">{selfButton}</div>
           <div className="network-graph-branches">
-            {facts.map(({ peer, facts }) => <div className="network-graph-branch" key={peer.id} data-peer-id={peer.id}>
-              <button ref={element => { if (element) geometry.edges.current.set(peer.id, element); else geometry.edges.current.delete(peer.id) }} type="button" className={`network-graph-edge ${facts.active ? 'has-transfer' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.openConnection}: ${selfName} — ${peer.name}; ${facts.description}`} onClick={() => onSelectPeer(peer.id)}>
-                <span className="network-graph-path">{facts.path}</span>
-                <span className="network-graph-listeners">{facts.listeners.length ? facts.listeners.map(text => <span key={text}>{text}</span>) : labels.noListeners}</span>
-                <span className="network-graph-transfer">{facts.transferLabel}</span>
-              </button>
+            {facts.map(({ peer, facts }) => <div className={`network-graph-branch ${emphasized(peer.id) ? 'is-emphasized' : ''}`} key={peer.id} data-peer-id={peer.id}
+              onMouseEnter={() => setHoveredPeerId(peer.id)} onMouseLeave={() => setHoveredPeerId(null)}
+              onFocusCapture={() => setFocusedPeerId(peer.id)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusedPeerId(null) }}>
+              <div className="network-graph-route-group">
+                <button ref={element => { if (element) geometry.edges.current.set(peer.id, element); else geometry.edges.current.delete(peer.id) }} type="button" data-path={peer.path}
+                  className={`network-graph-edge ${facts.active ? 'has-transfer' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.openConnection}: ${selfName} — ${peer.name}; ${facts.description}`} onClick={() => onSelectPeer(peer.id)}>
+                  <span className="network-graph-route"><RouteGlyph path={peer.path} /><span className="network-graph-path">{facts.path}</span></span>
+                </button>
+                <span className="network-graph-wire-slot" aria-hidden="true" ref={element => { if (element) geometry.lanes.current.set(peer.id, element); else geometry.lanes.current.delete(peer.id) }} />
+                <span className="network-graph-lane-meta"><span>{facts.networks}</span><span>{facts.serviceSummary}</span></span>
+                {facts.hasTransferWork && <span className={`network-graph-transfer ${facts.active ? 'has-transfer' : ''}`}>{facts.transferLabel}</span>}
+              </div>
               <button ref={element => { if (element) geometry.nodes.current.set(peer.id, element); else geometry.nodes.current.delete(peer.id) }} type="button" className={`network-graph-node ${canExchange(peer) ? 'is-ready' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.open}: ${peer.name}; ${facts.description}`} aria-pressed={selectedPeerId === peer.id} onClick={() => onSelectPeer(peer.id)}>
                 <span className="network-graph-device-heading"><DeviceGlyph /><span><span className="network-graph-node-kind">{labels.known}</span><strong title={peer.name}>{peer.name}</strong></span></span>
-                <span className="network-graph-node-meta"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" />{peer.online ? labels.online : labels.offline}<span className="network-graph-networks">{facts.networks}</span></span>
+                <span className="network-graph-node-meta"><span className="network-graph-online-status"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" /><span>{peer.online ? labels.onlineCompact : labels.offlineCompact}</span></span></span>
                 <span className={`network-graph-app ${canExchange(peer) ? 'is-ready' : ''}`}>{facts.app}</span>
               </button>
+              {selectedPeerId === peer.id && <div className="network-graph-selected-facts">
+                <span>{facts.listeners.join(' · ') || labels.noListeners}</span>
+                {facts.serviceNames.length > 0 && <span><span className="network-graph-facts-label">{labels.activeServices}: </span>{facts.serviceNames.join(' · ')}</span>}
+                {!facts.hasTransferWork && <span>{facts.transferLabel}</span>}
+              </div>}
             </div>)}
           </div>
         </div>
@@ -235,6 +273,6 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
       </div>}
     </div>
     {!peers.length && <div className="network-graph-empty"><h3>{labels.empty}</h3><p>{labels.emptyHint}</p></div>}
-    <footer className="network-graph-footer"><p id={`${id}-traffic`}>{labels.traffic}</p><details><summary>{labels.explain}</summary><p>{labels.explanation}</p></details></footer>
+    <footer className="network-graph-footer"><p className="network-graph-route-legend"><span className="network-graph-line-sample" aria-hidden="true" />{labels.routeLegend}</p><p id={`${id}-traffic`}>{labels.traffic}</p><details><summary>{labels.explain}</summary><p>{labels.explanation}</p></details></footer>
   </section>
 }

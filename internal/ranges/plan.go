@@ -18,15 +18,16 @@ var (
 // Policy shares ports on one exact embedded-node address and numeric loopback.
 // TargetPort optionally maps a single exposed port to a different local port.
 type Policy struct {
-	ID         string
-	Network    string
-	Address    netip.Addr
-	Ports      Set
-	Exclude    Set
-	Loopback   netip.Addr
-	TargetPort uint16
-	PeerIDs    []string
-	ExpiresAt  time.Time
+	ID           string
+	Network      string
+	Address      netip.Addr
+	Ports        Set
+	Exclude      Set
+	Loopback     netip.Addr
+	TargetPort   uint16
+	PeerIDs      []string
+	ExpiresAt    time.Time
+	UntilRevoked bool
 }
 
 type compiledPolicy struct {
@@ -53,6 +54,7 @@ type Description struct {
 	EffectivePorts uint32
 	Intervals      int
 	ExpiresAt      time.Time
+	UntilRevoked   bool
 }
 
 func tailnetIP(ip netip.Addr) bool {
@@ -64,11 +66,20 @@ func loopbackIP(ip netip.Addr) bool {
 }
 
 func BuildPlan(selfIPs []netip.Addr, policies []Policy) (*Plan, error) {
+	return BuildPlanWithLimits(selfIPs, policies, PlanLimits{Policies: MaxPolicies, Intervals: MaxIntervals, Peers: MaxPolicyPeers})
+}
+
+type PlanLimits struct{ Policies, Intervals, Peers int64 }
+
+func BuildPlanWithLimits(selfIPs []netip.Addr, policies []Policy, limits PlanLimits) (*Plan, error) {
+	if limits.Policies < 1 || limits.Intervals < 1 || limits.Peers < 1 {
+		return nil, errors.New("positive plan limits required")
+	}
 	if len(selfIPs) > 16 {
 		return nil, errors.New("too many embedded node addresses")
 	}
-	if len(policies) > MaxPolicies {
-		return nil, errors.New("too many range policies (maximum 64)")
+	if int64(len(policies)) > limits.Policies {
+		return nil, errors.New("configured range policy count limit exceeded")
 	}
 	p := &Plan{selfIPs: make(map[netip.Addr]struct{}, len(selfIPs)), policies: make([]compiledPolicy, 0, len(policies))}
 	for _, ip := range selfIPs {
@@ -93,11 +104,11 @@ func BuildPlan(selfIPs []netip.Addr, policies []Policy) (*Plan, error) {
 		if !loopbackIP(rule.Loopback) {
 			return nil, errors.New("range policy target must be exactly 127.0.0.1 or ::1")
 		}
-		if rule.ExpiresAt.IsZero() {
-			return nil, errors.New("range policy must have an explicit expiry")
+		if rule.ExpiresAt.IsZero() != rule.UntilRevoked {
+			return nil, errors.New("range policy requires a finite expiry or explicit until-revoked lifetime")
 		}
-		if len(rule.PeerIDs) == 0 || len(rule.PeerIDs) > MaxPolicyPeers {
-			return nil, errors.New("range policy requires 1..32 pinned peer IDs")
+		if len(rule.PeerIDs) == 0 || int64(len(rule.PeerIDs)) > limits.Peers {
+			return nil, errors.New("range policy requires pinned peer IDs within the configured peer limit")
 		}
 		rule.PeerIDs = append([]string(nil), rule.PeerIDs...)
 		sort.Strings(rule.PeerIDs)
@@ -107,17 +118,17 @@ func BuildPlan(selfIPs []netip.Addr, policies []Policy) (*Plan, error) {
 			}
 		}
 		var err error
-		rule.Ports, err = NewSet(rule.Ports.intervals)
+		rule.Ports, err = NewSetWithLimit(rule.Ports.intervals, limits.Intervals)
 		if err != nil {
 			return nil, err
 		}
-		rule.Exclude, err = NewSet(rule.Exclude.intervals)
+		rule.Exclude, err = NewSetWithLimit(rule.Exclude.intervals, limits.Intervals)
 		if err != nil {
 			return nil, err
 		}
 		configuredIntervals += rule.Ports.IntervalCount() + rule.Exclude.IntervalCount()
-		if configuredIntervals > MaxIntervals {
-			return nil, errors.New("too many configured port intervals (maximum 256)")
+		if int64(configuredIntervals) > limits.Intervals {
+			return nil, errors.New("configured port interval budget exceeded")
 		}
 		effective, err := rule.Ports.Excluding(rule.Exclude)
 		if err != nil {
@@ -134,8 +145,8 @@ func BuildPlan(selfIPs []netip.Addr, policies []Policy) (*Plan, error) {
 			return nil, fmt.Errorf("policy %q has no effective service ports", rule.ID)
 		}
 		p.intervals += effective.IntervalCount()
-		if p.intervals > MaxIntervals {
-			return nil, errors.New("too many effective port intervals (maximum 256)")
+		if int64(p.intervals) > limits.Intervals {
+			return nil, errors.New("effective port interval budget exceeded")
 		}
 		for _, previous := range p.policies {
 			if previous.policy.Network == rule.Network && previous.policy.Address == rule.Address && previous.effective.Overlaps(effective) {
@@ -165,7 +176,7 @@ func (p *Plan) Describe() []Description {
 	}
 	out := make([]Description, 0, len(p.policies))
 	for _, r := range p.policies {
-		out = append(out, Description{ID: r.policy.ID, Network: r.policy.Network, Address: r.policy.Address, Ports: r.policy.Ports.String(), Exclude: r.policy.Exclude.String(), Effective: r.effective.String(), EffectivePorts: r.effective.Count(), Intervals: r.effective.IntervalCount(), ExpiresAt: r.policy.ExpiresAt})
+		out = append(out, Description{ID: r.policy.ID, Network: r.policy.Network, Address: r.policy.Address, Ports: r.policy.Ports.String(), Exclude: r.policy.Exclude.String(), Effective: r.effective.String(), EffectivePorts: r.effective.Count(), Intervals: r.effective.IntervalCount(), ExpiresAt: r.policy.ExpiresAt, UntilRevoked: r.policy.UntilRevoked})
 	}
 	return out
 }
@@ -214,7 +225,7 @@ func (p *Plan) ExpandMaterialized(ids []string, limit int) (map[string][]uint16,
 
 func equalPolicies(a, b compiledPolicy) bool {
 	x, y := a.policy, b.policy
-	if x.ID != y.ID || x.Network != y.Network || x.Address != y.Address || x.Loopback != y.Loopback || x.TargetPort != y.TargetPort || !x.ExpiresAt.Equal(y.ExpiresAt) || !equalSets(x.Ports, y.Ports) || !equalSets(x.Exclude, y.Exclude) || len(x.PeerIDs) != len(y.PeerIDs) {
+	if x.ID != y.ID || x.Network != y.Network || x.Address != y.Address || x.Loopback != y.Loopback || x.TargetPort != y.TargetPort || x.UntilRevoked != y.UntilRevoked || !x.ExpiresAt.Equal(y.ExpiresAt) || !equalSets(x.Ports, y.Ports) || !equalSets(x.Exclude, y.Exclude) || len(x.PeerIDs) != len(y.PeerIDs) {
 		return false
 	}
 	for i := range x.PeerIDs {

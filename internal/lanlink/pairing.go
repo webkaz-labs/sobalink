@@ -274,8 +274,8 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 	if n.clients[remote.Peer.Key] != nil || b.peers[remote.Peer.Key] != nil {
 		return errors.New("peer already paired; revoke before replacing role keys")
 	}
-	if len(n.clients) >= 128 || len(b.peers) >= 128 {
-		return errors.New("too many peers")
+	if err := b.admissionErrorLocked(); err != nil {
+		return err
 	}
 	usedKeys := map[string]bool{n.PublicKey(): true}
 	for _, r := range n.clients {
@@ -535,6 +535,11 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 	}
 	if remote.Peer.Key == n.PublicKey() {
 		return ErrInvite
+	}
+	// Reject a known local policy failure before contacting the remote. The
+	// durable commit checks admission again after the authenticated handshake.
+	if err := n.cfg.Trust.admissionError(); err != nil {
+		return err
 	}
 	n.pairMu.Lock()
 	if n.cfg.Trust.pending(remote.Peer.Key) {

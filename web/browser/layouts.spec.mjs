@@ -1,14 +1,24 @@
 import { test, expect } from './fixtures.mjs'
 
-const widths = [1440, 1180, 960, 390]
-const viewport = width => ({ width, height: width === 390 ? 844 : 960 })
+const widths = [1440, 1180, 960, 390, 375]
+const viewport = width => ({ width, height: width <= 390 ? 844 : 960 })
 
 async function graphGeometry(page) {
   await expect.poll(() => page.locator('.network-graph-connectors').evaluate(svg => {
     const paths = [...svg.querySelectorAll('.network-graph-line')]
     return paths.length > 0 && paths.every(path => {
       const box = path.getBBox()
-      return !/NaN|Infinity|undefined/.test(path.getAttribute('d') || '') && path.getTotalLength() > 0 && box.width > 0 && box.x >= -1 && box.y >= -1 && box.x + box.width <= svg.clientWidth + 1 && box.y + box.height <= svg.clientHeight + 1
+      const d = path.getAttribute('d') || ''
+      const canvas = svg.getBoundingClientRect()
+      const peerId = path.closest('[data-peer-id]').getAttribute('data-peer-id')
+      const branch = [...svg.parentElement.querySelectorAll('.network-graph-branch')].find(item => item.getAttribute('data-peer-id') === peerId)
+      const local = svg.parentElement.querySelector('.network-graph-self .network-graph-device-glyph').getBoundingClientRect()
+      const remote = branch.querySelector('.network-graph-device-glyph').getBoundingClientRect()
+      const start = path.getPointAtLength(0)
+      const end = path.getPointAtLength(path.getTotalLength())
+      const atLocalPort = Math.min(Math.abs(start.x - (local.left + 2 - canvas.left)), Math.abs(start.x - (local.right - 2 - canvas.left))) < 1 && Math.abs(start.y - (local.top + local.height / 2 - canvas.top)) < 1
+      const atRemotePort = Math.abs(end.x - (remote.left + 2 - canvas.left)) < 1 && Math.abs(end.y - (remote.top + remote.height / 2 - canvas.top)) < 1
+      return d.match(/M /g)?.length === 1 && atLocalPort && atRemotePort && !/NaN|Infinity|undefined/.test(d) && path.getTotalLength() > 0 && box.width > 0 && box.x >= -1 && box.y >= -1 && box.x + box.width <= svg.clientWidth + 1 && box.y + box.height <= svg.clientHeight + 1
     })
   }), { message: 'Graph connectors must have valid visible geometry within their canvas' }).toBe(true)
   await expect(page.locator('.network-graph foreignObject')).toHaveCount(0)
@@ -63,11 +73,19 @@ async function edgeStyles(page, app, tag) {
   const luminance = rgba => rgba.slice(0, 3).map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
   const shades = [luminance(normal.border), luminance(normal.background)].sort((a, b) => a - b)
   expect(normal.borderWidth).toBeGreaterThanOrEqual(1)
-  expect((shades[1] + 0.05) / (shades[0] + 0.05), 'Connection-card outline contrasts with its surface').toBeGreaterThanOrEqual(3)
+  expect((shades[1] + 0.05) / (shades[0] + 0.05), 'Route-badge outline contrasts with its surface').toBeGreaterThanOrEqual(3)
+  const connector = await page.locator('.network-graph-line').first().evaluate(element => getComputedStyle(element).stroke)
+  const lineContrast = await page.locator('.network-graph-diagram').evaluate((element, stroke) => {
+    const ctx = document.createElement('canvas').getContext('2d')
+    const luminance = color => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0) }
+    const shades = [luminance(stroke), luminance(getComputedStyle(element).backgroundColor)].sort((a, b) => a - b)
+    return (shades[1] + 0.05) / (shades[0] + 0.05)
+  }, connector)
+  expect(lineContrast, 'Meaningful connector lines contrast with the diagram surface').toBeGreaterThanOrEqual(3)
   await app.capture(`edge-${tag}-normal`)
   await edge.hover()
   const hovered = await read()
-  expect(hovered.borderColor !== normal.borderColor || hovered.backgroundColor !== normal.backgroundColor, 'Hover visibly identifies the connection card').toBe(true)
+  expect(hovered.borderColor !== normal.borderColor || hovered.backgroundColor !== normal.backgroundColor, 'Hover visibly identifies the route badge').toBe(true)
   await app.capture(`edge-${tag}-hover`)
   await page.mouse.move(5, 5)
   await page.locator('.network-graph-self').focus()
@@ -111,6 +129,10 @@ for (const locale of ['en', 'ja']) for (const theme of ['light', 'dark']) {
       await page.setViewportSize(viewport(width))
       await expect(page.locator('.network-graph')).toHaveAttribute('data-view', 'diagram')
       await graphGeometry(page)
+      if (width <= 390) {
+        const sizes = await page.locator('.primary-nav button, .network-graph-view-toggle').evaluateAll(elements => elements.map(element => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, clipped: element.scrollWidth > element.clientWidth + 1 })))
+        expect(sizes.every(size => size.width >= 44 && size.height >= 44 && !size.clipped), 'Narrow navigation remains readable and operable').toBe(true)
+      }
       await app.capture(`graph-${locale}-${theme}-diagram-${width}`)
       if (width >= 960) {
         const node = page.locator('.network-graph-node:not(.network-graph-self)').first()

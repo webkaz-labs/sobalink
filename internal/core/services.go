@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
@@ -23,6 +24,12 @@ import (
 )
 
 type activeService struct {
+	discoveryID     string
+	savedRevision   string
+	activation      *atomic.Bool
+	owner           string
+	leaseSeconds    int
+	leaseExpires    atomic.Pointer[time.Time]
 	spec            ServiceSpec
 	expires         time.Time
 	ctx             context.Context
@@ -43,9 +50,11 @@ type rangeState struct {
 }
 type RemoteService struct {
 	ID          string    `json:"id"`
+	Purpose     string    `json:"purpose,omitempty"`
 	Network     string    `json:"network"`
 	Ports       string    `json:"ports"`
-	ExpiresAt   time.Time `json:"expiresAt"`
+	ExpiresAt   time.Time `json:"expiresAt,omitzero"`
+	Lifetime    string    `json:"lifetime,omitempty"`
 	Application string    `json:"application"`
 }
 
@@ -88,10 +97,16 @@ func (c *Core) serviceConfiguration(raw json.RawMessage) (any, error) {
 }
 
 func validateRemote(s RemoteService) error {
-	if !config.ValidPeerID(s.ID) || (s.Network != "tcp" && s.Network != "udp") || s.Application != "unverified" || !deadline.Active(time.Now(), s.ExpiresAt) || s.ExpiresAt.After(time.Now().Add(24*time.Hour)) {
+	now := time.Now()
+	maximum, _ := capacity.Duration(capacity.MaxDurationSeconds)
+	lifetimeOK := (s.Lifetime == "" || s.Lifetime == "finite") && deadline.Active(now, s.ExpiresAt) && !s.ExpiresAt.After(now.Add(maximum))
+	if s.Lifetime == "until-revoked" {
+		lifetimeOK = s.ExpiresAt.IsZero()
+	}
+	if !config.ValidPeerID(s.ID) || !validServicePurpose(s.Purpose) || (s.Network != "tcp" && s.Network != "udp") || s.Application != "unverified" || !lifetimeOK {
 		return errors.New("invalid service metadata")
 	}
-	_, e := ranges.Parse(s.Ports)
+	_, e := ranges.ParseWithLimit(s.Ports, 65535)
 	return e
 }
 
@@ -100,7 +115,9 @@ func (c *Core) ensureRanges() error {
 		select {
 		case <-c.rangeState.engine.Done():
 			c.rangeState.unregister()
+			c.mu.Lock()
 			c.rangeState = nil
+			c.mu.Unlock()
 		default:
 			return nil
 		}
@@ -111,7 +128,16 @@ func (c *Core) ensureRanges() error {
 	if !ok {
 		return errors.New("network does not support compact TCP sharing")
 	}
-	engine, e := ranges.New(c.ctx, ranges.Options{AdmitTCP: transport.AdmitTCP, Authorize: func(ctx context.Context, r ranges.Request) (string, error) {
+	resources := c.serviceResources()
+	engine, e := ranges.New(c.ctx, ranges.Options{LocalGuard: func(id string) error {
+		c.mu.RLock()
+		a := c.active[id]
+		c.mu.RUnlock()
+		if a == nil {
+			return errors.New("share is inactive")
+		}
+		return a.guard()
+	}, CurrentLimits: c.rangeFlowLimits, AdmitPolicyTCP: func(id string) (func(), bool) { return resources.AdmitTCP(id, "") }, AdmitPeerTCP: resources.AdmitTCPPeer, Authorize: func(ctx context.Context, r ranges.Request) (string, error) {
 		c.mu.RLock()
 		active := c.active[r.PolicyID]
 		c.mu.RUnlock()
@@ -138,14 +164,16 @@ func (c *Core) ensureRanges() error {
 		engine.Close()
 		return e
 	}
+	c.mu.Lock()
 	c.rangeState = &rangeState{engine: engine, unregister: unregister}
+	c.mu.Unlock()
 	return nil
 }
 func (a *activeService) guard() error {
 	return a.guardAt(time.Now())
 }
 func (a *activeService) guardAt(now time.Time) error {
-	if !a.ready.Load() || (a.online != nil && !a.online.Load()) || !a.permissionActiveAt(now) {
+	if !a.ready.Load() || (a.activation != nil && !a.activation.Load()) || (a.online != nil && !a.online.Load()) || !a.permissionActiveAt(now) {
 		return errors.New("service permission is inactive or expired")
 	}
 	return nil
@@ -155,11 +183,14 @@ func (a *activeService) guardAt(now time.Time) error {
 // explicitly started with until-stopped. Other grants keep deadline.Active's
 // fail-closed semantics.
 func (a *activeService) permissionActiveAt(now time.Time) bool {
-	if a.ctx == nil || a.ctx.Err() != nil {
+	if a.ctx == nil || a.ctx.Err() != nil || !a.leaseActiveAt(now) {
 		return false
 	}
 	if a.spec.Lifetime == "until-stopped" {
 		return a.spec.Direction == "forward" && a.spec.TTLSeconds == 0 && a.expires.IsZero()
+	}
+	if a.spec.Lifetime == "until-revoked" {
+		return a.spec.Direction == "share" && a.spec.TTLSeconds == 0 && a.expires.IsZero()
 	}
 	return (a.spec.Lifetime == "" || a.spec.Lifetime == "finite") && deadline.Active(now, a.expires)
 }
@@ -170,15 +201,19 @@ func serviceLifetime(mode string, ttl int, direction string) (string, error) {
 	}
 	switch mode {
 	case "finite":
-		if ttl >= 1 && ttl <= 86400 {
+		if _, err := capacity.Duration(int64(ttl)); err == nil {
 			return mode, nil
 		}
 	case "until-stopped":
 		if direction == "forward" && ttl == 0 {
 			return mode, nil
 		}
+	case "until-revoked":
+		if direction == "share" && ttl == 0 {
+			return mode, nil
+		}
 	}
-	return "", errors.New("choose a finite lifetime of 1..86400 seconds, or explicit until-stopped for an outbound connection")
+	return "", errors.New("choose positive whole seconds within the time representation, until-stopped for an outbound connection, or until-revoked for a share")
 }
 
 func serviceLoopback(host string) (string, error) {
@@ -191,28 +226,45 @@ func serviceLoopback(host string) (string, error) {
 	return host, nil
 }
 
-func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.RawMessage) (any, error) {
+func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.RawMessage, activation ...*atomic.Bool) (any, error) {
+	if err := validateLifetimeInput(raw); err != nil {
+		return nil, err
+	}
 	var in struct {
-		Name         string   `json:"name"`
-		PeerID       string   `json:"peerId"`
-		PeerIDs      []string `json:"peerIds"`
-		Network      string   `json:"network"`
-		Ports        string   `json:"ports"`
-		ExcludePorts string   `json:"excludePorts"`
-		LocalPort    int      `json:"localPort"`
-		LoopbackHost string   `json:"loopbackHost"`
-		Lifetime     string   `json:"lifetime"`
-		RemotePort   int      `json:"remotePort"`
-		TTLSeconds   int      `json:"ttlSeconds"`
-		Purpose      string   `json:"purpose"`
-		Discoverable bool     `json:"discoverable"`
-		ServiceID    string   `json:"serviceId"`
-		Backend      string   `json:"backend"`
-		ReplaceID    string   `json:"replaceId"`
-		Revision     string   `json:"expectedRevision"`
+		Name              string   `json:"name"`
+		PeerID            string   `json:"peerId"`
+		PeerIDs           []string `json:"peerIds"`
+		Network           string   `json:"network"`
+		Ports             string   `json:"ports"`
+		ExcludePorts      string   `json:"excludePorts"`
+		LocalPort         int      `json:"localPort"`
+		LoopbackHost      string   `json:"loopbackHost"`
+		Lifetime          string   `json:"lifetime"`
+		RemotePort        int      `json:"remotePort"`
+		TTLSeconds        int      `json:"ttlSeconds"`
+		Purpose           string   `json:"purpose"`
+		Discoverable      bool     `json:"discoverable"`
+		ServiceID         string   `json:"serviceId"`
+		ServiceRevision   string   `json:"serviceRevision"`
+		Backend           string   `json:"backend"`
+		ReplaceID         string   `json:"replaceId"`
+		Revision          string   `json:"expectedRevision"`
+		Owner             string   `json:"owner"`
+		LeaseSeconds      int      `json:"leaseSeconds"`
+		RuntimeLifetime   string   `json:"runtimeLifetime"`
+		RuntimeTTLSeconds *int     `json:"runtimeTTLSeconds"`
 	}
 	if e := decodePayload(raw, &in); e != nil {
 		return nil, e
+	}
+	if in.Purpose == "" {
+		in.Purpose = "generic"
+	}
+	if (in.ServiceID == "") != (in.ServiceRevision == "") {
+		return nil, discoveryReviewError()
+	}
+	if err := validServiceOwner(in.Owner, in.LeaseSeconds); err != nil {
+		return nil, err
 	}
 	if in.Ports == "" && in.RemotePort > 0 {
 		in.Ports = strconv.Itoa(in.RemotePort)
@@ -239,13 +291,13 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	if in.LocalPort < 0 || in.LocalPort > 65535 {
 		return nil, errors.New("local port must be 1..65535, or omitted for same-port mapping")
 	}
-	ports, e := ranges.Parse(in.Ports)
+	ports, e := ranges.ParseWithLimit(in.Ports, c.limit("logical", "portIntervals"))
 	if e != nil {
 		return nil, e
 	}
 	var exclude ranges.Set
 	if in.ExcludePorts != "" {
-		exclude, e = ranges.Parse(in.ExcludePorts)
+		exclude, e = ranges.ParseWithLimit(in.ExcludePorts, c.limit("logical", "portIntervals"))
 		if e != nil {
 			return nil, e
 		}
@@ -306,7 +358,22 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			return nil, &localCommandError{"service_name_conflict", "a saved service already uses this name; choose a new name or explicitly review that service for replacement"}
 		}
 	}
-	spec := ServiceSpec{ID: id, Backend: p.Settings.Network, Name: in.Name, Direction: direction, Network: in.Network, Ports: ports.String(), ExcludePorts: exclude.String(), LocalPort: in.LocalPort, LoopbackHost: in.LoopbackHost, Lifetime: in.Lifetime, PeerID: in.PeerID, PeerIDs: in.PeerIDs, TTLSeconds: in.TTLSeconds, Purpose: in.Purpose, Discoverable: in.Discoverable, ServiceID: in.ServiceID}
+	spec := ServiceSpec{ID: id, Backend: p.Settings.Network, Name: in.Name, Direction: direction, Network: in.Network, Ports: ports.String(), ExcludePorts: exclude.String(), LocalPort: in.LocalPort, LoopbackHost: in.LoopbackHost, Lifetime: in.Lifetime, PeerID: in.PeerID, PeerIDs: in.PeerIDs, TTLSeconds: in.TTLSeconds, Purpose: in.Purpose, Discoverable: in.Discoverable, ServiceID: in.ServiceID, ServiceRevision: in.ServiceRevision}
+	runtimeSpec := spec
+	if in.RuntimeLifetime != "" || in.RuntimeTTLSeconds != nil {
+		if in.ReplaceID == "" {
+			return nil, errors.New("temporary lifetime overrides apply to a reviewed saved definition")
+		}
+		ttl := 0
+		if in.RuntimeTTLSeconds != nil {
+			ttl = *in.RuntimeTTLSeconds
+		}
+		mode, err := serviceLifetime(in.RuntimeLifetime, ttl, direction)
+		if err != nil {
+			return nil, err
+		}
+		runtimeSpec.Lifetime, runtimeSpec.TTLSeconds = mode, ttl
+	}
 	st, e := c.current(ctx)
 	if e != nil || !st.Snapshot.Running || len(st.IPs) == 0 {
 		return nil, errors.New("connect the selected network before starting a service")
@@ -319,6 +386,9 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			intervals = append(intervals, ranges.Interval{First: port, Last: port})
 		}
 		c.mu.RLock()
+		for _, endpoint := range c.proxyReservedPorts() {
+			intervals = append(intervals, ranges.Interval{First: endpoint.Port(), Last: endpoint.Port()})
+		}
 		if c.web != nil {
 			port := c.web.Port()
 			intervals = append(intervals, ranges.Interval{First: port, Last: port})
@@ -338,8 +408,11 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		}
 	}
 	if direction == "share" {
-		if len(in.PeerIDs) < 1 || len(in.PeerIDs) > 32 {
-			return nil, errors.New("select 1..32 current peers for sharing")
+		if in.ServiceID != "" {
+			return nil, errors.New("shares cannot follow a remote service")
+		}
+		if len(in.PeerIDs) < 1 || int64(len(in.PeerIDs)) > c.limit("logical", "sharePeers") {
+			return nil, &localCommandError{"share_peer_capacity", "select at least one current peer within the configured sharePeers limit"}
 		}
 		seen := map[string]bool{}
 		for _, id := range in.PeerIDs {
@@ -359,26 +432,39 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			return nil, e
 		}
 		if in.ServiceID != "" {
+			review, err := decodeDiscoveryReview(in.ServiceRevision)
+			if err != nil || !review.matchesRequest(spec, effective.String()) {
+				return nil, discoveryReviewError()
+			}
+			allowHistorical := false
+			for _, saved := range p.Services {
+				if saved.ID == in.ReplaceID && saved.ServiceID == in.ServiceID && saved.ServiceRevision == in.ServiceRevision {
+					allowHistorical = true
+				}
+			}
+			if !allowHistorical && !freshDiscoveryCheck(review.CheckedAt, time.Now()) {
+				return nil, discoveryReviewError()
+			}
 			if e := c.probePeer(ctx, in.PeerID); e != nil {
 				return nil, e
 			}
 			c.mu.RLock()
 			found := false
 			for _, s := range c.discovered[in.PeerID] {
-				if s.ID == in.ServiceID && s.Network == in.Network && s.Ports == effective.String() {
+				if sameDiscoveredGrant(review.Service, s) {
 					found = true
 				}
 			}
 			c.mu.RUnlock()
 			if !found {
-				return nil, errors.New("shared service changed; review the current service before connecting")
+				return nil, discoveryReviewError()
 			}
 		}
 	}
 	var expanded []uint16
 	if direction == "forward" || in.Network == "udp" {
-		remaining := 64 - c.materializedCount()
-		expanded, e = effective.Expand(remaining)
+		remaining := c.limit("resources", "materializedListeners") - int64(c.materializedCount())
+		expanded, e = effective.ExpandWithLimit(remaining)
 		if e != nil {
 			return nil, errors.New("this plan exceeds the remaining OS/UDP listener capacity; narrow the selection")
 		}
@@ -407,9 +493,16 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		}
 	}
 	lifetime, cancel := context.WithCancel(c.ctx)
-	active := &activeService{spec: spec, ctx: lifetime, cancel: cancel, address: self, effective: effective, online: &c.networkReady, reserved: backendReserved}
-	if spec.Lifetime == "finite" {
-		active.expires = time.Now().Add(time.Duration(spec.TTLSeconds) * time.Second)
+	active := &activeService{discoveryID: randomID(), savedRevision: serviceRevision(spec), owner: in.Owner, leaseSeconds: in.LeaseSeconds, spec: runtimeSpec, ctx: lifetime, cancel: cancel, address: self, effective: effective, online: &c.networkReady, reserved: backendReserved}
+	if len(activation) > 0 {
+		active.activation = activation[0]
+	}
+	if in.Owner != "" && in.LeaseSeconds > 0 {
+		leaseExpires := time.Now().Add(time.Duration(in.LeaseSeconds) * time.Second)
+		active.leaseExpires.Store(&leaseExpires)
+	}
+	if runtimeSpec.Lifetime == "finite" {
+		active.expires = time.Now().Add(time.Duration(runtimeSpec.TTLSeconds) * time.Second)
 	}
 	// Validate the complete compact plan before saving or opening any listener.
 	if direction == "share" {
@@ -442,6 +535,7 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		c.mu.Lock()
 		delete(c.active, spec.ID)
 		c.serviceStates[spec.ID] = "failed"
+		c.recordServiceFailureLocked(spec.ID, "service_start_failed")
 		c.mu.Unlock()
 		return nil, fmt.Errorf("saved but not started: %w", err)
 	}
@@ -471,12 +565,23 @@ func (c *Core) startServiceTransport(ctx context.Context, st identity.State, act
 		}
 		c.mu.Lock()
 		active.error = err.Error()
+		c.recordServiceFailureLocked(active.spec.ID, "service_start_failed")
 		c.mu.Unlock()
 		return err
 	}
-	udpBudget := transport.NewUDPBudget()
+	resources := c.serviceResources()
+	udpBudget := resources.NewUDPBudget()
 	if spec.Direction == "forward" || spec.Network == "udp" {
-		expanded, err := active.effective.Expand(64)
+		// Admission reserved this exact scope before publishing active. Reusing
+		// that reservation must neither count itself twice nor lose an already
+		// admitted grant when a later policy lowers new-listener capacity.
+		c.mu.RLock()
+		admitted := c.active[spec.ID] == active
+		c.mu.RUnlock()
+		if !admitted {
+			return rollback(errors.New("service listener scope is not admitted"))
+		}
+		expanded, err := active.effective.ExpandWithLimit(int64(active.effective.Count()))
 		if err != nil {
 			return rollback(err)
 		}
@@ -500,7 +605,7 @@ func (c *Core) startServiceTransport(ctx context.Context, st identity.State, act
 				pol := &policy.Policy{Rules: []policy.Rule{{PeerID: peer.ID, Host: targetHost, Port: int(port), Network: spec.Network}}, Guard: active.guard, Source: func(ctx context.Context) (policy.Snapshot, error) { s, e := c.current(ctx); return s.Snapshot, e }, DialIP: node.DialIP}
 				policies = append(policies, pol)
 				if spec.Network == "tcp" {
-					server, err = transport.StartTCP(lifetime, transport.TCPConfig{ListenAddress: config.Address(loopback, local), Target: target}, pol.Dial)
+					server, err = transport.StartTCP(lifetime, transport.TCPConfig{ListenAddress: config.Address(loopback, local), Target: target, Controller: resources, PolicyID: spec.ID, PeerID: spec.PeerID}, pol.Dial)
 				} else {
 					server, err = transport.StartUDP(lifetime, transport.UDPConfig{ListenAddress: config.Address(loopback, local), Target: target, Validate: pol.Validate, Budget: udpBudget}, pol.Dial)
 				}
@@ -574,31 +679,48 @@ func (c *Core) rangePlan(ips []netip.Addr, extra *activeService) (*ranges.Plan, 
 		entries = append(entries, extra)
 	}
 	policies := make([]ranges.Policy, 0, len(entries))
+	limits := ranges.PlanLimits{Policies: c.limit("logical", "rangePolicies"), Intervals: c.limit("logical", "portIntervals"), Peers: c.limit("logical", "sharePeers")}
+	var retainedConfigured, retainedEffective int64
 	for _, a := range entries {
-		ports, e := ranges.Parse(a.spec.Ports)
+		parseLimit := limits.Intervals
+		if extra == nil {
+			// Saved canonical text and the reserved set bound parsing. This is
+			// an existing permission, not a new scope admitted by the lower policy.
+			parseLimit = max(parseLimit, int64(len(a.spec.Ports)+len(a.spec.ExcludePorts)+a.reserved.IntervalCount()))
+		}
+		ports, e := ranges.ParseWithLimit(a.spec.Ports, parseLimit)
 		if e != nil {
 			return nil, e
 		}
 		var exclude ranges.Set
 		if a.spec.ExcludePorts != "" {
-			exclude, e = ranges.Parse(a.spec.ExcludePorts)
+			exclude, e = ranges.ParseWithLimit(a.spec.ExcludePorts, parseLimit)
 			if e != nil {
 				return nil, e
 			}
 		}
 		allExclusions := append(exclude.Intervals(), a.reserved.Intervals()...)
-		exclude, e = ranges.NewSet(allExclusions)
+		exclude, e = ranges.NewSetWithLimit(allExclusions, parseLimit)
 		if e != nil {
 			return nil, e
 		}
-		policies = append(policies, ranges.Policy{ID: a.spec.ID, Network: a.spec.Network, Address: a.address, Ports: ports, Exclude: exclude, Loopback: serviceLoopbackAddr(a.spec), TargetPort: uint16(a.spec.LocalPort), PeerIDs: a.spec.PeerIDs, ExpiresAt: a.expires})
+		policies = append(policies, ranges.Policy{ID: a.spec.ID, Network: a.spec.Network, Address: a.address, Ports: ports, Exclude: exclude, Loopback: serviceLoopbackAddr(a.spec), TargetPort: uint16(a.spec.LocalPort), PeerIDs: a.spec.PeerIDs, ExpiresAt: a.expires, UntilRevoked: a.spec.Lifetime == "until-revoked"})
+		retainedConfigured += int64(ports.IntervalCount() + exclude.IntervalCount())
+		retainedEffective += int64(a.effective.IntervalCount())
+		if extra == nil {
+			limits.Peers = max(limits.Peers, int64(len(a.spec.PeerIDs)))
+		}
 	}
-	return ranges.BuildPlan(ips, policies)
+	if extra == nil {
+		limits.Policies = max(limits.Policies, int64(len(policies)))
+		limits.Intervals = max(limits.Intervals, retainedConfigured, retainedEffective)
+	}
+	return ranges.BuildPlanWithLimits(ips, policies, limits)
 }
 func (c *Core) materializedCount() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	n := 0
+	n := len(c.proxies) + c.suspendedProxyReservations()
 	for _, a := range c.active {
 		if a.spec.Direction == "forward" || a.spec.Network == "udp" {
 			n += int(a.effective.Count())
@@ -608,16 +730,25 @@ func (c *Core) materializedCount() int {
 }
 func (c *Core) stopServiceCommand(raw json.RawMessage) (any, error) {
 	var v struct {
-		ID string `json:"id"`
+		ID    string `json:"id"`
+		Owner string `json:"owner"`
 	}
 	if e := decodePayload(raw, &v); e != nil {
 		return nil, e
+	}
+	c.mu.RLock()
+	a := c.active[v.ID]
+	conflict := a != nil && a.owner != v.Owner
+	c.mu.RUnlock()
+	if conflict {
+		return nil, &localCommandError{"service_owner_conflict", "another task owns this service; use its owner for selected cleanup or explicitly stop all shares"}
 	}
 	c.stopServiceIDs([]string{v.ID})
 	return nil, nil
 }
 
 func (c *Core) stopServiceIDs(ids []string) {
+	c.cancelStartupServices(ids)
 	c.mu.Lock()
 	var stopped []*activeService
 	for _, id := range ids {
@@ -671,10 +802,13 @@ func (c *Core) stopAllServices() {
 	if c.rangeState != nil {
 		_ = c.rangeState.engine.Close()
 		c.rangeState.unregister()
+		c.mu.Lock()
 		c.rangeState = nil
+		c.mu.Unlock()
 	}
 }
 func (c *Core) stopPeerServices(id string) {
+	c.stopPeerProxies(id)
 	c.mu.RLock()
 	var ids []string
 	for key, a := range c.active {
@@ -729,6 +863,9 @@ func (c *Core) suspendServices() {
 		a.ready.Store(false)
 	}
 	for _, a := range all {
+		c.mu.Lock()
+		c.recordServiceFailureLocked(a.spec.ID, "network_unavailable")
+		c.mu.Unlock()
 		c.suspendServiceTransport(a)
 	}
 }
@@ -840,6 +977,11 @@ func (c *Core) revalidateServiceScopes(st identity.State, recoverTransport bool)
 		}
 	}
 	c.mu.RUnlock()
+	c.mu.Lock()
+	for _, id := range revoke {
+		c.recordServiceFailureLocked(id, "service_scope_changed")
+	}
+	c.mu.Unlock()
 	c.stopServiceIDs(revoke)
 	for _, a := range active {
 		if !a.permissionActiveAt(time.Now()) {
@@ -874,6 +1016,9 @@ func (c *Core) serviceView(a *activeService) map[string]any {
 		endpoint = net.JoinHostPort(a.address.String(), a.effective.String())
 	}
 	state := "active"
+	if a.activation != nil && !a.activation.Load() {
+		state = "starting"
+	}
 	if !c.networkReady.Load() || !a.ready.Load() {
 		state = "reconnecting"
 	}
@@ -884,7 +1029,13 @@ func (c *Core) serviceView(a *activeService) map[string]any {
 	if !a.expires.IsZero() {
 		expiresAt = a.expires
 	}
-	return map[string]any{"id": a.spec.ID, "name": a.spec.Name, "peerId": a.spec.PeerID, "peerIds": a.spec.PeerIDs, "network": a.spec.Network, "ports": a.effective.String(), "localPort": a.spec.LocalPort, "loopbackHost": a.spec.LoopbackHost, "lifetime": a.spec.Lifetime, "ttlSeconds": a.spec.TTLSeconds, "error": a.error, "endpoint": endpoint, "expiresAt": expiresAt, "status": state, "application": "unverified", "direction": a.spec.Direction}
+	var leaseExpiresAt any
+	if expires := a.leaseExpires.Load(); expires != nil {
+		leaseExpiresAt = *expires
+	}
+	view := map[string]any{"owner": a.owner, "leaseSeconds": a.leaseSeconds, "leaseExpiresAt": leaseExpiresAt, "id": a.spec.ID, "name": a.spec.Name, "peerId": a.spec.PeerID, "peerIds": a.spec.PeerIDs, "network": a.spec.Network, "ports": a.effective.String(), "localPort": a.spec.LocalPort, "loopbackHost": a.spec.LoopbackHost, "lifetime": a.spec.Lifetime, "ttlSeconds": a.spec.TTLSeconds, "error": a.error, "endpoint": endpoint, "expiresAt": expiresAt, "status": state, "application": "unverified", "direction": a.spec.Direction}
+	c.addServiceDiagnosticsLocked(a.spec.ID, view)
+	return view
 }
 func (c *Core) serviceViews() []map[string]any {
 	c.mu.RLock()
@@ -898,7 +1049,9 @@ func (c *Core) serviceViews() []map[string]any {
 			if state == "" {
 				state = "saved"
 			}
-			out = append(out, map[string]any{"id": s.ID, "name": s.Name, "peerId": s.PeerID, "peerIds": s.PeerIDs, "network": s.Network, "ports": s.Ports, "localPort": s.LocalPort, "loopbackHost": s.LoopbackHost, "lifetime": s.Lifetime, "ttlSeconds": s.TTLSeconds, "status": state, "application": "unverified", "direction": s.Direction})
+			view := map[string]any{"id": s.ID, "name": s.Name, "peerId": s.PeerID, "peerIds": s.PeerIDs, "network": s.Network, "ports": s.Ports, "localPort": s.LocalPort, "loopbackHost": s.LoopbackHost, "lifetime": s.Lifetime, "ttlSeconds": s.TTLSeconds, "status": state, "application": "unverified", "direction": s.Direction}
+			c.addServiceDiagnosticsLocked(s.ID, view)
+			out = append(out, view)
 		}
 	}
 	return out
@@ -909,7 +1062,15 @@ func (c *Core) permittedServices(id string) []RemoteService {
 	out := []RemoteService{}
 	for _, a := range c.active {
 		if a.spec.Direction == "share" && a.spec.Discoverable && slices.Contains(a.spec.PeerIDs, id) && a.guard() == nil {
-			out = append(out, RemoteService{ID: a.spec.ID, Network: a.spec.Network, Ports: a.effective.String(), ExpiresAt: a.expires, Application: "unverified"})
+			expires, lifetime := a.expires, a.spec.Lifetime
+			if lease := a.leaseExpires.Load(); lease != nil && (expires.IsZero() || lease.Before(expires)) {
+				expires, lifetime = *lease, "finite"
+			}
+			purpose := a.spec.Purpose
+			if purpose == "" || !validServicePurpose(purpose) {
+				purpose = "generic"
+			}
+			out = append(out, RemoteService{ID: a.discoveryID, Purpose: purpose, Network: a.spec.Network, Ports: a.effective.String(), ExpiresAt: expires, Lifetime: lifetime, Application: "unverified"})
 		}
 	}
 	return out
@@ -919,12 +1080,16 @@ func (c *Core) discoveredViews() []map[string]any {
 	defer c.mu.RUnlock()
 	out := []map[string]any{}
 	for id, services := range c.discovered {
-		if time.Since(c.confirmed[id]) > 15*time.Second {
+		if !freshDiscoveryCheck(c.confirmed[id], time.Now()) {
 			continue
 		}
 		for _, s := range services {
-			if deadline.Active(time.Now(), s.ExpiresAt) {
-				out = append(out, map[string]any{"id": s.ID, "name": s.Network + " " + s.Ports, "peerId": id, "network": s.Network, "ports": s.Ports, "expiresAt": s.ExpiresAt, "status": "active", "application": "unverified"})
+			if validateRemote(s) == nil {
+				var expires any
+				if !s.ExpiresAt.IsZero() {
+					expires = s.ExpiresAt
+				}
+				out = append(out, map[string]any{"id": s.ID, "name": s.Network + " " + s.Ports, "peerId": id, "purpose": s.Purpose, "network": s.Network, "ports": s.Ports, "expiresAt": expires, "lifetime": s.Lifetime, "checkedAt": c.confirmed[id], "revision": encodeDiscoveryReview(id, s, c.confirmed[id]), "status": "active", "application": "unverified"})
 			}
 		}
 	}

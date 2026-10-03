@@ -94,7 +94,7 @@ func TestLANStoreStrictBoundsAndAtomicFailure(t *testing.T) {
 	for name, changed := range map[string][]byte{
 		"trailing": append(append([]byte(nil), data...), []byte("{}")...),
 		"unknown":  []byte(`{"version":1,"unexpected":true}`),
-		"oversize": []byte(strings.Repeat(" ", maxLANState+1)),
+		"oversize": []byte(strings.Repeat(" ", (2<<20)+1)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "lan.json")

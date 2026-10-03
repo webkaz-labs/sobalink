@@ -29,18 +29,20 @@ func TestManifestRejectsNonportablePaths(t *testing.T) {
 
 func TestManifestRejectsPortableCollisionsAndHierarchy(t *testing.T) {
 	tests := map[string][]Entry{
-		"same path":                 {testEntry("a", "same", ""), testEntry("b", "same", "")},
-		"case":                      {testEntry("a", "Readme", ""), testEntry("b", "README", "")},
-		"case parent":               {testEntry("a", "Folder/a", ""), testEntry("b", "folder/b", "")},
-		"Unicode normalization":     {testEntry("a", "caf\u00e9", ""), testEntry("b", "cafe\u0301", "")},
-		"Unicode parent":            {testEntry("a", "caf\u00e9/a", ""), testEntry("b", "cafe\u0301/b", "")},
-		"Unicode full case fold":    {testEntry("a", "Straße", ""), testEntry("b", "STRASSE", "")},
-		"Unicode sigma":             {testEntry("a", "σ", ""), testEntry("b", "ς", "")},
-		"Unicode Windows case":      {testEntry("a", "I.txt", ""), testEntry("b", "ı.txt", "")},
-		"file has child":            {testEntry("a", "parent", ""), testEntry("b", "parent/child", "")},
-		"child before file":         {testEntry("b", "parent/child", ""), testEntry("a", "parent", "")},
-		"empty directory has child": {{ID: "a", Path: "parent", Kind: Directory}, testEntry("b", "parent/child", "")},
-		"duplicate entry ID":        {testEntry("a", "one", ""), testEntry("a", "two", "")},
+		"same path":                   {testEntry("a", "same", ""), testEntry("b", "same", "")},
+		"case":                        {testEntry("a", "Readme", ""), testEntry("b", "README", "")},
+		"case parent":                 {testEntry("a", "Folder/a", ""), testEntry("b", "folder/b", "")},
+		"Unicode normalization":       {testEntry("a", "caf\u00e9", ""), testEntry("b", "cafe\u0301", "")},
+		"Unicode parent":              {testEntry("a", "caf\u00e9/a", ""), testEntry("b", "cafe\u0301/b", "")},
+		"Unicode full case fold":      {testEntry("a", "Straße", ""), testEntry("b", "STRASSE", "")},
+		"Unicode sigma":               {testEntry("a", "σ", ""), testEntry("b", "ς", "")},
+		"Unicode Windows case":        {testEntry("a", "I.txt", ""), testEntry("b", "ı.txt", "")},
+		"file has child":              {testEntry("a", "parent", ""), testEntry("b", "parent/child", "")},
+		"child before file":           {testEntry("b", "parent/child", ""), testEntry("a", "parent", "")},
+		"empty directory has child":   {{ID: "a", Path: "parent", Kind: Directory}, testEntry("b", "parent/child", "")},
+		"prefix sibling before child": {testEntry("a", "parent", ""), testEntry("b", "parent!", ""), testEntry("c", "parent/child", "")},
+		"case prefix siblings":        {testEntry("a", "A/one", ""), testEntry("b", "a!/two", ""), testEntry("c", "a/three", "")},
+		"duplicate entry ID":          {testEntry("a", "one", ""), testEntry("a", "two", "")},
 	}
 	for name, entries := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -48,6 +50,49 @@ func TestManifestRejectsPortableCollisionsAndHierarchy(t *testing.T) {
 				t.Fatalf("ValidateManifest = %v, want invalid manifest", err)
 			}
 		})
+	}
+}
+
+func TestManifestRaisedPathChoicesRemainBoundedAndPortable(t *testing.T) {
+	for _, name := range []string{
+		strings.Repeat("d/", 32) + "file",
+		strings.Repeat(strings.Repeat("x", 240)+"/", 20) + "file",
+	} {
+		m := testManifest("raised", testEntry("file", name, ""))
+		if err := ValidateManifest(m, Limits{}); err == nil {
+			t.Fatal("default path choices unexpectedly admitted fixture")
+		}
+		lim := Limits{MaxDepth: 10000, MaxPathBytes: 10000, MaxManifestBytes: metadataSize(m)}
+		if err := ValidateManifest(m, lim); err != nil {
+			t.Fatalf("explicit path choices remained clamped: %v", err)
+		}
+		lim.MaxManifestBytes--
+		if err := ValidateManifest(m, lim); !errors.Is(err, ErrMetadataLimit) {
+			t.Fatalf("raised path choices escaped metadata budget: %v", err)
+		}
+	}
+	lim := Limits{MaxDepth: 10000, MaxPathBytes: 10000}
+	for _, name := range []string{"../file", "/file", "a/../file", "a/zero\x00byte", "a/NUL", "a/" + strings.Repeat("x", 256)} {
+		if err := ValidateManifest(testManifest("unsafe", testEntry("file", name, "")), lim); !errors.Is(err, ErrUnsafePath) {
+			t.Fatalf("raised choices weakened path safety for %q: %v", name, err)
+		}
+	}
+}
+
+func TestManifestVeryDeepPathsPreserveCollisionAndHierarchyChecks(t *testing.T) {
+	// Synthetic paths avoid implying that a host filesystem accepts this depth.
+	prefix := strings.Repeat("d/", 12000)
+	lim := Limits{MaxDepth: 13000, MaxPathBytes: 30000, MaxManifestBytes: 200000}
+	if err := ValidateManifest(testManifest("deep", testEntry("a", prefix+"a", ""), testEntry("b", prefix+"b", "")), lim); err != nil {
+		t.Fatalf("deep sibling paths rejected: %v", err)
+	}
+	for _, entries := range [][]Entry{
+		{testEntry("a", prefix+"Leaf", ""), testEntry("b", prefix+"leaf", "")},
+		{testEntry("a", prefix+"parent", ""), testEntry("b", prefix+"parent!", ""), testEntry("c", prefix+"parent/child", "")},
+	} {
+		if err := ValidateManifest(testManifest("conflict", entries...), lim); !errors.Is(err, ErrInvalidManifest) {
+			t.Fatalf("deep conflict accepted: %v", err)
+		}
 	}
 }
 
@@ -116,15 +161,21 @@ func TestManifestEnforcesMetadataAndByteLimits(t *testing.T) {
 	}
 }
 
-func TestLimitsCannotRaiseHardCeilings(t *testing.T) {
+func TestLimitsAllowExplicitIncreaseAndRejectNegative(t *testing.T) {
 	defaults := reflect.ValueOf(DefaultLimits())
 	for i := 0; i < defaults.NumField(); i++ {
-		for _, n := range []int64{-1, defaults.Field(i).Int() + 1} {
-			limits := Limits{}
-			reflect.ValueOf(&limits).Elem().Field(i).SetInt(n)
-			if _, err := NewManager(Options{Limits: limits}); !errors.Is(err, ErrLimit) {
-				t.Errorf("%s = %d: error = %v, want limit", defaults.Type().Field(i).Name, n, err)
-			}
+		limits := Limits{}
+		field := reflect.ValueOf(&limits).Elem().Field(i)
+		field.SetInt(-1)
+		if _, err := NewManager(Options{Limits: limits}); !errors.Is(err, ErrLimit) {
+			t.Errorf("%s: negative limit accepted: %v", defaults.Type().Field(i).Name, err)
+		}
+		field.SetInt(defaults.Field(i).Int() + 1)
+		manager, err := NewManager(Options{Limits: limits})
+		if err != nil {
+			t.Errorf("%s: explicit increase rejected: %v", defaults.Type().Field(i).Name, err)
+		} else {
+			manager.Close()
 		}
 	}
 }

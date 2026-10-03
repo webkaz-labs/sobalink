@@ -38,10 +38,13 @@ func TestSavedServiceConfigurationIsExactLocalAndDoesNotRenew(t *testing.T) {
 		t.Fatal("reading saved configuration changed persistence or active lifetime")
 	}
 	public, _ := json.Marshal(p.b.permittedServices("peer-a"))
-	for _, local := range []string{"backend", "excludePorts", "ttlSeconds", "purpose", "discoverable", "revision", "peerIds"} {
+	for _, local := range []string{"backend", "excludePorts", "ttlSeconds", "review", "discoverable", "revision", "peerIds"} {
 		if strings.Contains(string(public), local) {
 			t.Fatalf("local saved field %s leaked through peer discovery", local)
 		}
+	}
+	if p.b.permittedServices("peer-a")[0].Purpose != "generic" {
+		t.Fatal("free-form local purpose was advertised instead of a fixed generic label")
 	}
 	if _, err := command(p.b, randomID(), "service.config", map[string]string{"id": "missing"}); networkErrorCode(err) != "service_not_found" {
 		t.Fatal("missing saved configuration was not explicit")

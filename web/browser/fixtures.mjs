@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
-import { assertSeparateArtifacts, safeArtifactName, validateSession } from './fixture-safety.mjs'
+import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
 
 export { expect }
 
@@ -106,8 +106,8 @@ export const test = base.extend({
       const assertCaptureAllowed = async () => {
         assert.ok(authenticated, 'Evidence capture requires the authenticated workspace')
         await expect(page.locator('.workspace')).toBeVisible()
-        await expect(page.locator('.login-panel, .signin-link a')).toHaveCount(0)
-        const safe = await page.locator('input[type=password], .private-copy').evaluateAll(elements => elements.every(element => !element.value && !element.textContent.trim()))
+        await expect(page.locator(CAPTURE_FORBIDDEN_SELECTOR)).toHaveCount(0)
+        const safe = await page.locator(PRIVATE_VALUE_SELECTOR).evaluateAll(privateControlsAreEmpty)
         assert.ok(safe, 'Private controls must be absent or empty before evidence capture')
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), { message: 'The page must not overflow horizontally' }).toBe(true)
       }
@@ -161,11 +161,17 @@ export const test = base.extend({
           if (!await page.locator('.details-panel').isVisible()) await page.locator('.conversation-header button[aria-expanded]').click()
           await expect(page.locator('.details-panel')).toBeVisible()
         },
-        async openPeer() {
+        async openPeer(section = 'exchange') {
           await this.closeDetails()
           await page.setViewportSize({ width: 1440, height: 960 })
           await page.locator('.device-row').first().click()
-          await expect(page.locator('.composer textarea')).toBeVisible()
+          if (section === 'exchange') {
+            await page.locator('.device-sections button').nth(1).click()
+            await expect(page.locator('.composer textarea')).toBeVisible()
+          } else {
+            await page.locator('.device-sections button').first().click()
+            await expect(page.locator('.device-overview')).toBeVisible()
+          }
         },
         async privateDirectory(name) {
           safeArtifactName(name)

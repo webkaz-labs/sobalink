@@ -17,15 +17,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/policy"
 )
 
-const maxLANState = 2 << 20
 const maxLANInvitation = 64 << 10
 
 type lanCommandError struct{ code, message string }
@@ -74,43 +75,53 @@ type lanState struct {
 }
 
 type lanStore struct {
-	mu    sync.Mutex
-	path  string
-	state lanState
+	mu     sync.Mutex
+	path   string
+	state  lanState
+	limits atomic.Pointer[lanStoreLimits]
 }
 
+type lanStoreLimits struct{ peers, bytes int64 }
+
+func selectedLANLimits(policy capacity.Policy) *lanStoreLimits {
+	return &lanStoreLimits{peers: policy.Number("logical", "trustedPeers"), bytes: policy.Number("resources", "lanStateBytes")}
+}
+
+func (s *lanStore) currentLimits() *lanStoreLimits {
+	if limits := s.limits.Load(); limits != nil {
+		return limits
+	}
+	return selectedLANLimits(capacity.Defaults())
+}
+
+func (s *lanStore) peerLimit() int64 { return s.currentLimits().peers }
+
 func readLANStore(path string) (*lanStore, error) {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	policy, err := readCapacityPolicy(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > maxLANState {
-		return nil, errors.New("private LAN state must be a regular file within the 2 MiB limit")
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	opened, err := f.Stat()
-	if err != nil || !os.SameFile(info, opened) {
-		return nil, errors.New("private LAN state changed while opening")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxLANState+1))
-	if err != nil || len(data) > maxLANState {
-		return nil, errors.New("private LAN state exceeds the 2 MiB limit")
-	}
+	return readLANStoreWithPolicy(path, policy)
+}
+
+func readLANStoreWithPolicy(path string, policy capacity.Policy) (*lanStore, error) {
+	limits := selectedLANLimits(policy)
 	var state lanState
-	if err := strictLANJSON(data, &state); err != nil {
-		return nil, errors.New("invalid private LAN state")
+	if err := readBoundedPrivateJSON(path, limits.bytes, &state); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		if networkErrorCode(err) == "profile_capacity" {
+			return nil, &lanCommandError{"lan_state_capacity", fmt.Sprintf("private LAN state exceeds the %d-byte lanStateBytes budget; raise that storage budget before loading", limits.bytes)}
+		}
+		return nil, err
 	}
 	if err := validateLANState(state); err != nil {
 		return nil, err
 	}
-	return &lanStore{path: path, state: state}, nil
+	store := &lanStore{path: path, state: state}
+	store.limits.Store(limits)
+	return store, nil
 }
 
 func strictLANJSON(raw []byte, value any) error {
@@ -127,7 +138,7 @@ func strictLANJSON(raw []byte, value any) error {
 }
 
 func validateLANState(s lanState) error {
-	if s.Version != 1 || s.Identity.Validate() != nil || len(s.Remotes) > 128 {
+	if s.Version != 1 || s.Identity.Validate() != nil {
 		return errors.New("invalid private LAN state")
 	}
 	book := lanlink.NewBook()
@@ -227,12 +238,19 @@ func cloneLANState(s lanState) lanState {
 }
 
 func (s *lanStore) saveLocked(next lanState) error {
+	limits := s.currentLimits()
+	if len(next.Remotes) > len(s.state.Remotes) && int64(len(next.Remotes)) > limits.peers {
+		return &lanlink.PeerCapacityError{Limit: limits.peers}
+	}
 	if err := validateLANState(next); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(next, "", "  ")
-	if err != nil || len(data)+1 > maxLANState {
-		return errors.New("private LAN state exceeds the 2 MiB limit")
+	if err != nil {
+		return err
+	}
+	if int64(len(data))+1 > limits.bytes {
+		return &lanCommandError{"lan_state_capacity", fmt.Sprintf("private LAN state needs %d bytes; raise the %d-byte lanStateBytes budget before saving", len(data)+1, limits.bytes)}
 	}
 	if err := config.AtomicWrite(s.path, append(data, '\n')); err != nil {
 		return errors.New("could not save private LAN state; check its directory permissions and available space")
@@ -267,6 +285,7 @@ func (c *Core) ensureLANIdentity() (*lanStore, error) {
 		return saved, nil
 	}
 	s := &lanStore{path: filepath.Join(c.dir, "lan.json")}
+	s.limits.Store(selectedLANLimits(c.capacityPolicy()))
 	initial := lanState{Version: 1, Identity: lanlink.GenerateIdentity(), Trust: lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{}}, Remotes: []lanlink.RemotePeer{}}
 	if err := s.save(initial); err != nil {
 		return nil, err
@@ -340,6 +359,7 @@ func (c *Core) configureLAN(selection *LANSelection) error {
 	}
 	if saved == nil {
 		saved = &lanStore{path: filepath.Join(c.dir, "lan.json"), state: lanState{Version: 1, Identity: lanlink.GenerateIdentity(), Trust: lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{}}, Remotes: []lanlink.RemotePeer{}}}
+		saved.limits.Store(selectedLANLimits(c.capacityPolicy()))
 	}
 	next := saved.copy()
 	next.Selection, next.RelayIdentity = &choice, relayIdentity
@@ -392,7 +412,7 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	book := lanlink.NewBook()
+	book := lanlink.NewBookWithPeerLimit(store.peerLimit)
 	if err := book.Restore(state.Trust); err != nil {
 		return nil, err
 	}
@@ -702,6 +722,10 @@ func (c *Core) lanCommand(ctx context.Context, name string, raw json.RawMessage)
 		pairCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		if err := node.PairInvitation(pairCtx, invitation); err != nil {
+			var capacityError *lanlink.PeerCapacityError
+			if errors.As(err, &capacityError) && !errors.Is(err, lanlink.ErrRemotePairedLocalSave) {
+				return nil, capacityError
+			}
 			if errors.Is(err, lanlink.ErrRelayMismatch) {
 				return nil, codedLANError(err)
 			}
@@ -760,6 +784,9 @@ func (r offlineLANRevoker) Revoke(id string) error {
 }
 
 func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
+	if err := c.revokeStartupPeer(id); err != nil {
+		return err
+	}
 	p := c.profileCopy()
 	peers := p.Peers[:0]
 	removedAppTrust := false
