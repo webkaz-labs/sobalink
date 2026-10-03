@@ -64,6 +64,25 @@ func assertGuard(t *testing.T, file FileReceiveAccountingStore) ReceiveRetiremen
 	return *g
 }
 
+func assertAtomicAccountingInventory(t *testing.T, dir string) {
+	t.Helper()
+	entries := mustReadDir(t, dir)
+	if len(entries) != 2 || entries[0].Name() != ".sobalink-atomic-v1" || entries[1].Name() != "receive-accounting.json" {
+		t.Fatalf("unexpected accounting inventory: %v", entries)
+	}
+	if !entries[0].IsDir() || entries[0].Type()&os.ModeSymlink != 0 || !entries[1].Type().IsRegular() {
+		t.Fatalf("unexpected accounting entry types: %v", entries)
+	}
+	lockEntries := mustReadDir(t, filepath.Join(dir, ".sobalink-atomic-v1"))
+	if len(lockEntries) != 1 || lockEntries[0].Name() != "owner.lock" || !lockEntries[0].Type().IsRegular() {
+		t.Fatalf("unexpected atomic persistence inventory: %v", lockEntries)
+	}
+	lock, err := os.ReadFile(filepath.Join(dir, ".sobalink-atomic-v1", "owner.lock"))
+	if err != nil || string(lock) != "sobalink atomic persistence v1\n" {
+		t.Fatalf("unexpected atomic persistence owner lock: %q, %v", lock, err)
+	}
+}
+
 func TestRetirementGuardAcquireAndReleaseFailures(t *testing.T) {
 	for _, mode := range []string{"acquire-before", "acquire-after", "release-before", "release-after"} {
 		t.Run(mode, func(t *testing.T) {
@@ -438,7 +457,7 @@ func TestRetirementGuardProcessCrashCuts(t *testing.T) {
 }
 
 func TestRetirementRepeatedTransfersCancelAndRestartConstantFiles(t *testing.T) {
-	file := FileReceiveAccountingStore{Path: filepath.Join(t.TempDir(), "index.json")}
+	file := FileReceiveAccountingStore{Path: filepath.Join(t.TempDir(), "receive-accounting.json")}
 	destination := t.TempDir()
 	for i := 0; i < 40; i++ {
 		m, peer := testManager(t, Options{AccountingStore: file, ExistingState: i != 0})
@@ -463,9 +482,7 @@ func TestRetirementRepeatedTransfersCancelAndRestartConstantFiles(t *testing.T) 
 			t.Fatal("unresolved normal ownership", err)
 		}
 		m.Close()
-		if len(mustReadDir(t, filepath.Dir(file.Path))) != 1 {
-			t.Fatal("control file history accumulated")
-		}
+		assertAtomicAccountingInventory(t, filepath.Dir(file.Path))
 		entries, err := os.ReadDir(b.Destination)
 		if err != nil {
 			t.Fatal(err)
@@ -629,7 +646,7 @@ func TestRetirementGuardAcquireSubstitutionAndBatchInventory(t *testing.T) {
 	}
 	for _, target := range []string{"destination", "root", "stage", "marker"} {
 		t.Run(target, func(t *testing.T) {
-			file := FileReceiveAccountingStore{Path: filepath.Join(t.TempDir(), "index.json")}
+			file := FileReceiveAccountingStore{Path: filepath.Join(t.TempDir(), "receive-accounting.json")}
 			store := &guardFaultStore{FileReceiveAccountingStore: file}
 			m, peer := testManager(t, Options{AccountingStore: store})
 			if _, err := m.Offer(peer, testManifest("acquire", testEntry("f", "file", "x"))); err != nil {
@@ -681,7 +698,7 @@ func TestRetirementGuardAcquireSubstitutionAndBatchInventory(t *testing.T) {
 		})
 	}
 	t.Run("batch-startup", func(t *testing.T) {
-		file := FileReceiveAccountingStore{Path: filepath.Join(t.TempDir(), "index.json")}
+		file := FileReceiveAccountingStore{Path: filepath.Join(t.TempDir(), "receive-accounting.json")}
 		m, peer := testManager(t, Options{AccountingStore: file})
 		for i := 0; i < 8; i++ {
 			id := fmt.Sprint(i)
@@ -705,9 +722,7 @@ func TestRetirementGuardAcquireSubstitutionAndBatchInventory(t *testing.T) {
 		if reopened.ReceiveRecovery().State != "ready" || store.saves != 1 {
 			t.Fatalf("startup did not batch removal: %d saves %+v", store.saves, reopened.ReceiveRecovery())
 		}
-		if len(mustReadDir(t, filepath.Dir(file.Path))) != 1 {
-			t.Fatal("guard history accumulated")
-		}
+		assertAtomicAccountingInventory(t, filepath.Dir(file.Path))
 	})
 }
 
