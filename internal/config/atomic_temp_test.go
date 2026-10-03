@@ -451,17 +451,51 @@ func TestOwnedAtomicPostRenameDurabilityOutcome(t *testing.T) {
 			if err := AtomicWritePrivate(path, []byte(`{"generation":"old"}`)); err != nil {
 				t.Fatal(err)
 			}
+			parent, err := atomicOpenDirectory(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer parent.Close()
+			prior, err := atomicOpenChild(parent, "profile.json", false, false, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prior.Close()
+			priorMeta, err := atomicFileMetadata(prior)
+			if err != nil {
+				t.Fatal(err)
+			}
 			flushes := 0
-			err := atomicWriteOwned(path, []byte(atomicTestSnapshot), &atomicHooks{
+			beforeReplace := false
+			err = atomicWriteOwned(path, []byte(atomicTestSnapshot), &atomicHooks{
+				barrier: func(phase string) {
+					if phase == "beforeReplace" {
+						beforeReplace = true
+						current, err := atomicChildMetadata(parent, "profile.json")
+						if err != nil || current.id != priorMeta.id {
+							t.Fatal("destination changed before replacement", err)
+						}
+					}
+				},
 				remove: func(*os.File, string, *os.File) error {
 					t.Error("cleanup ran after replacement")
 					return os.ErrPermission
 				},
 				syncReplacement: func(f, parent, owned *os.File) error {
 					flushes++
-					data, err := os.ReadFile(path)
-					if err != nil || string(data) != atomicTestSnapshot {
-						t.Fatal("durability boundary before publication", err)
+					if !beforeReplace {
+						t.Fatal("durability boundary before replacement phase")
+					}
+					snapshot, err := atomicFileMetadata(f)
+					if err != nil {
+						t.Fatal(err)
+					}
+					published, err := atomicChildMetadata(parent, "profile.json")
+					if err != nil || published.id != snapshot.id || published.id == priorMeta.id {
+						t.Fatal("durability boundary before snapshot publication", err)
+					}
+					if _, err := atomicChildMetadata(owned, atomicSnapshot); !errors.Is(err, os.ErrNotExist) {
+						t.Fatal("published snapshot still has temporary binding", err)
 					}
 					// Run the native implementation, including both directory syncs on Unix
 					// or the renamed handle flush on Windows, before injecting a failure.
@@ -484,7 +518,15 @@ func TestOwnedAtomicPostRenameDurabilityOutcome(t *testing.T) {
 			} else if err != nil {
 				t.Fatal("durably published save reported failure", err)
 			}
-			assertFormalJSON(t, path)
+			// Read payloads after the writer closes its renamed native handle.
+			data, readErr := os.ReadFile(path)
+			if readErr != nil || string(data) != atomicTestSnapshot {
+				t.Fatal("published destination does not contain new snapshot", readErr)
+			}
+			oldData, readErr := io.ReadAll(prior)
+			if readErr != nil || string(oldData) != `{"generation":"old"}` {
+				t.Fatal("replacement altered held prior file", readErr)
+			}
 			if count, _ := atomicSnapshotState(t, dir); count != 0 {
 				t.Fatal("committed snapshot retained")
 			}
