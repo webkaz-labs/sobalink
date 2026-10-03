@@ -35,9 +35,12 @@ type ReceiveRetirementWitness struct {
 	MarkerIdentity string      `json:"markerIdentity"`
 }
 
-// A lease retains the exact fixed-slot identity until terminal unlink. Release
-// may have committed even when it returns error. Close never removes evidence.
+// A lease retains guard identity and target-bound writer exclusion through
+// Release and Close. LeaseWrite accepts only the acquired index and canonical
+// After. Release may have committed even when it returns error; Close never
+// removes evidence.
 type ReceiveRetirementLease interface {
+	LeaseWrite(string, []byte) error
 	Release(func() error) error
 	Close() error
 }
@@ -146,8 +149,10 @@ func validateRetirementGuard(g ReceiveRetirementGuard, budget AccountingLimits) 
 		}
 	}
 	data, err := json.Marshal(g)
-	// Current index + one bounded atomic-writer slot + singleton guard. Count
-	// the snapshots stored in the guard too; admission reserves this peak.
+	// Under the writer lease, admission reserves current index + one bounded
+	// snapshot + guard (2B+G). After failed retirement releases exclusion,
+	// unrelated callers retain their limits: B+G+max(B,S_other), with protocol
+	// metadata and preserved legacy allowances accounted separately.
 	b, a := int64(len(canonicalAccounting(g.Before))), int64(len(canonicalAccounting(g.After)))
 	if a > b {
 		b = a
@@ -427,7 +432,7 @@ func (m *Manager) runRetirementLocked(ctx context.Context, g ReceiveRetirementGu
 		}
 	}()
 	m.guardPending = true
-	// Once acquired, failures retain the slot and freeze every stale writer.
+	// Failures retain guard evidence and block stale receive transitions.
 	verify := func(cleanup bool) error {
 		if liveVerify != nil {
 			if err := liveVerify(); err != nil {
@@ -456,7 +461,7 @@ func (m *Manager) runRetirementLocked(ctx context.Context, g ReceiveRetirementGu
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := m.accountingStore.SaveReceiveAccounting(g.After); err != nil {
+	if err := m.accountingStore.SaveReceiveAccounting(g.After, lease); err != nil {
 		return err
 	}
 	current, err = m.accountingStore.LoadReceiveAccounting()

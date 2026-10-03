@@ -290,14 +290,14 @@ func (s *coreRetirementFailureStore) AcquireReceiveRetirementGuard(g transfer.Re
 	}
 	return s.FileReceiveAccountingStore.AcquireReceiveRetirementGuard(g, l)
 }
-func (s *coreRetirementFailureStore) SaveReceiveAccounting(a transfer.ReceiveAccounting) error {
+func (s *coreRetirementFailureStore) SaveReceiveAccounting(a transfer.ReceiveAccounting, leases ...transfer.ReceiveRetirementLease) error {
 	if a.Preparation != nil || len(a.Roots) == 0 {
-		return s.FileReceiveAccountingStore.SaveReceiveAccounting(a)
+		return s.FileReceiveAccountingStore.SaveReceiveAccounting(a, leases...)
 	}
 	if s.mode == "before" {
 		return errors.New("before forgetting commit")
 	}
-	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(a); err != nil {
+	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(a, leases...); err != nil {
 		return err
 	}
 	if s.mode == "after" {

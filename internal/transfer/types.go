@@ -163,7 +163,7 @@ type PolicyStore interface {
 // decorators must override it rather than returning their embedded base store.
 type ReceiveAccountingStore interface {
 	LoadReceiveAccounting() (ReceiveAccounting, error)
-	SaveReceiveAccounting(ReceiveAccounting) error
+	SaveReceiveAccounting(ReceiveAccounting, ...ReceiveRetirementLease) error
 	WithReceiveAccountingLimits(AccountingLimits) ReceiveAccountingStore
 	LoadReceiveRetirementGuard(AccountingLimits) (*ReceiveRetirementGuard, ReceiveRetirementLease, error)
 	AcquireReceiveRetirementGuard(ReceiveRetirementGuard, AccountingLimits) (ReceiveRetirementLease, error)

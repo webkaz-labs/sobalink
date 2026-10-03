@@ -403,8 +403,8 @@ type cancelAfterAccountingCommitStore struct {
 	cancelLifetime context.CancelFunc
 }
 
-func (s *cancelAfterAccountingCommitStore) SaveReceiveAccounting(state ReceiveAccounting) error {
-	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(state); err != nil {
+func (s *cancelAfterAccountingCommitStore) SaveReceiveAccounting(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...); err != nil {
 		return err
 	}
 	s.cancelCaller()

@@ -17,11 +17,11 @@ func TestAdvisorMissingIntentRetirement(t *testing.T) {
 			}
 			store := &prepareFailureStore{FileReceiveAccountingStore: file}
 			injected := false
-			store.onSave = func(next ReceiveAccounting) error {
+			store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 				if next.Preparation != nil {
 					return errors.New("restoration unavailable")
 				}
-				if err := file.SaveReceiveAccounting(next); err != nil {
+				if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 					return err
 				}
 				if !injected {
@@ -78,8 +78,8 @@ func TestAdvisorFinalPromotionRetirementSubstitution(t *testing.T) {
 				t.Fatal(err)
 			}
 			once := false
-			store.onSave = func(next ReceiveAccounting) error {
-				if err := file.SaveReceiveAccounting(next); err != nil {
+			store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+				if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 					return err
 				}
 				if !once && next.Preparation == nil && len(next.Roots) > 0 {
@@ -144,8 +144,8 @@ func TestAdvisorRuntimeRootRetirementSubstitution(t *testing.T) {
 		t.Fatal(err)
 	}
 	once := false
-	store.onSave = func(next ReceiveAccounting) error {
-		if err := file.SaveReceiveAccounting(next); err != nil {
+	store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+		if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 			return err
 		}
 		if !once && len(next.Roots) == 0 {
@@ -179,8 +179,8 @@ func TestAdvisorStartupRootRetirementSubstitution(t *testing.T) {
 	file := FileReceiveAccountingStore{Path: filepath.Join(dir, "receive-accounting.json")}
 	store := &prepareFailureStore{FileReceiveAccountingStore: file}
 	once := false
-	store.onSave = func(next ReceiveAccounting) error {
-		if err := file.SaveReceiveAccounting(next); err != nil {
+	store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+		if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 			return err
 		}
 		if !once && len(next.Roots) == 0 {

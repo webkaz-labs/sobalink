@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,9 +25,9 @@ func (s *guardFaultStore) WithReceiveAccountingLimits(l AccountingLimits) Receiv
 	s.Limits = l
 	return s
 }
-func (s *guardFaultStore) SaveReceiveAccounting(a ReceiveAccounting) error {
+func (s *guardFaultStore) SaveReceiveAccounting(a ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 	s.saves++
-	return s.FileReceiveAccountingStore.SaveReceiveAccounting(a)
+	return s.FileReceiveAccountingStore.SaveReceiveAccounting(a, leases...)
 }
 func (s *guardFaultStore) AcquireReceiveRetirementGuard(g ReceiveRetirementGuard, l AccountingLimits) (ReceiveRetirementLease, error) {
 	var lease ReceiveRetirementLease
@@ -56,12 +57,31 @@ func (l *guardFaultLease) Release(v func() error) error {
 
 func assertGuard(t *testing.T, file FileReceiveAccountingStore) ReceiveRetirementGuard {
 	t.Helper()
-	g, l, err := file.LoadReceiveRetirementGuard(accountingLimits(AccountingLimits{}))
+	// Observe evidence without trying to acquire a second writer lease from a
+	// callback that is already inside the protected retirement interval.
+	root, err := openDestination(filepath.Dir(file.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	f, err := openAccountingFile(root, file.retirementName())
 	if err != nil {
 		t.Fatal("durable guard missing", err)
 	}
-	l.Close()
-	return *g
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !accountingPrivate(f, info) {
+		t.Fatal("unsafe guard", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, accountingLimits(file.Limits).MaxBytes+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := parseRetirementGuard(data, accountingLimits(file.Limits))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
 }
 
 func assertAtomicAccountingInventory(t *testing.T, dir string) {
@@ -205,8 +225,8 @@ func TestRetirementGuardFreezesCompetingCloseAndCleanup(t *testing.T) {
 			}
 		}
 	}
-	store.onSave = func(a ReceiveAccounting) error {
-		if err := file.SaveReceiveAccounting(a); err != nil {
+	store.onSave = func(a ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+		if err := file.SaveReceiveAccounting(a, leases...); err != nil {
 			return err
 		}
 		if a.Preparation == nil && len(a.Roots) == 2 {
@@ -234,7 +254,10 @@ func TestRetirementGuardFreezesCompetingCloseAndCleanup(t *testing.T) {
 	if err := m.Forget("older"); !errors.Is(err, ErrState) {
 		t.Fatal("cleanup debt forgotten", err)
 	}
-	store.onSave = func(ReceiveAccounting) error { t.Fatal("stale writer saved"); return nil }
+	store.onSave = func(_ ReceiveAccounting, _ ...ReceiveRetirementLease) error {
+		t.Fatal("stale writer saved")
+		return nil
+	}
 	m.Close()
 	after, _ := os.ReadFile(file.Path)
 	guardAfter, _ := os.ReadFile(file.Path + ".retirement")
@@ -261,12 +284,12 @@ func TestRetirementGuardRootRetirementFaultMatrix(t *testing.T) {
 				mustWrite(t, filepath.Join(r.OwnedRoot, receiveOwnerMarker), "saved owner payload")
 				store := &prepareFailureStore{FileReceiveAccountingStore: file}
 				called := false
-				store.onSave = func(a ReceiveAccounting) error {
+				store.onSave = func(a ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 					called = true
 					if mode == "before" {
 						return errors.New("before commit")
 					}
-					if err := file.SaveReceiveAccounting(a); err != nil {
+					if err := file.SaveReceiveAccounting(a, leases...); err != nil {
 						return err
 					}
 					if mode == "after" {
@@ -399,7 +422,7 @@ func TestRetirementGuardCrashChild(t *testing.T) {
 	if phase == "stage-removed" {
 		os.Exit(87)
 	}
-	if err := file.SaveReceiveAccounting(after); err != nil {
+	if err := file.SaveReceiveAccounting(after, lease); err != nil {
 		t.Fatal(err)
 	}
 	if phase == "index-replaced" {
@@ -544,7 +567,7 @@ func TestRetirementGuardStrictFormatBudgetsAndLimitUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease.Close()
-	m, err := NewManager(Options{AccountingStore: &prepareFailureStore{FileReceiveAccountingStore: file, onSave: func(ReceiveAccounting) error { return errors.New("offline") }}, ExistingState: true})
+	m, err := NewManager(Options{AccountingStore: &prepareFailureStore{FileReceiveAccountingStore: file, onSave: func(_ ReceiveAccounting, _ ...ReceiveRetirementLease) error { return errors.New("offline") }}, ExistingState: true})
 	if err != nil {
 		t.Fatal(err)
 	}

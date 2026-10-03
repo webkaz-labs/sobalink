@@ -89,7 +89,10 @@ func (s FileReceiveAccountingStore) LoadReceiveAccounting() (ReceiveAccounting, 
 	return state, validateAccounting(state, budget)
 }
 
-func (s FileReceiveAccountingStore) SaveReceiveAccounting(state ReceiveAccounting) error {
+func (s FileReceiveAccountingStore) SaveReceiveAccounting(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+	if len(leases) > 1 || (len(leases) == 1 && leases[0] == nil) {
+		return ErrState
+	}
 	budget := accountingLimits(s.Limits)
 	if err := validateAccounting(state, budget); err != nil {
 		return err
@@ -102,7 +105,13 @@ func (s FileReceiveAccountingStore) SaveReceiveAccounting(state ReceiveAccountin
 	if err != nil || int64(len(data)) > budget.MaxBytes {
 		return ErrLimit
 	}
-	if err := config.AtomicWrite(s.Path, data); err != nil {
+	write := func() error {
+		if len(leases) == 1 {
+			return leases[0].LeaseWrite(s.Path, data)
+		}
+		return config.AtomicWrite(s.Path, data)
+	}
+	if err := write(); err != nil {
 		return ErrReceiveRecovery
 	}
 	return nil

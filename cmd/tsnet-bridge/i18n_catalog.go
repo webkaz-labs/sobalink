@@ -2,6 +2,7 @@ package main
 
 // Exact strings and anchored format templates. Captured user values stay unchanged.
 var japaneseCatalog = map[string]string{
+	"invalid reserved parent entry": "予約する親フォルダーの項目名が不正です",
 	"LAN pairing is paused because private state needs recovery; stop this device and inspect its saved approval before restarting or reopening pairing":                                                                                                   "非公開状態の復旧が必要なため LAN ペアリングを一時停止しています。この端末を停止し、再起動またはペアリングを再開する前に保存済み承認を確認してください",
 	"LAN pairing is paused because private state needs recovery; stop this device and inspect its saved approval before restarting or reopening pairing\n%w":                                                                                               "非公開状態の復旧が必要なため LAN ペアリングを一時停止しています。この端末を停止し、再起動またはペアリングを再開する前に保存済み承認を確認してください\n%w",
 	"the other device paired, but the local save was not written; inspect local saved approvals and revoke that pair on the other device before retrying":                                                                                                  "相手端末ではペアリングが完了しましたが、この端末の保存は書き込まれていません。この端末の保存済み承認を確認し、相手端末のペアを解除してから再試行してください",

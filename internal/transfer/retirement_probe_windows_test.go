@@ -343,7 +343,7 @@ func probeGuardCycles(t *testing.T, profile string) {
 				t.Error(err)
 			}
 		}
-		if !errors.Is(duplicateErr, os.ErrExist) {
+		if !errors.Is(duplicateErr, config.ErrAtomicBusy) {
 			t.Errorf("exclusive guard creation: %v", duplicateErr)
 		}
 		if err := verifyRetirement(g, true); err != nil {
@@ -353,7 +353,7 @@ func probeGuardCycles(t *testing.T, profile string) {
 			}
 			return
 		}
-		if err := file.SaveReceiveAccounting(after); err != nil {
+		if err := file.SaveReceiveAccounting(after, lease); err != nil {
 			t.Error(err)
 			if err := lease.Close(); err != nil {
 				t.Error(err)

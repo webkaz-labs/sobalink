@@ -159,14 +159,14 @@ func TestPreparationIntentUncertainPromotionCleanupAndReopen(t *testing.T) {
 				t.Fatal(err)
 			}
 			var foreign string
-			store.onSave = func(state ReceiveAccounting) error {
+			store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 				if len(state.Roots) == 0 {
-					return store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+					return store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 				}
 				foreign = filepath.Join(state.Roots[0].OwnedRoot, "empty", "foreign")
 				mustWrite(t, foreign, "user data")
 				if committed {
-					if err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state); err != nil {
+					if err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -231,9 +231,9 @@ func TestPreparationIntentRetirementNeverRollsBackPromotion(t *testing.T) {
 			if _, err := m.Offer(peer, testManifest("promote", Entry{ID: "dir", Path: "empty", Kind: Directory})); err != nil {
 				t.Fatal(err)
 			}
-			store.onSave = func(state ReceiveAccounting) error {
+			store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 				if state.Preparation != nil {
-					err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+					err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 					if len(state.Roots) != 0 && mode == "cancel-before" {
 						m.batches["promote"].cancel()
 					}
@@ -242,7 +242,7 @@ func TestPreparationIntentRetirementNeverRollsBackPromotion(t *testing.T) {
 				if mode == "fail-before" {
 					return errors.New("retirement failed")
 				}
-				err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+				err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 				if mode == "cancel-after" {
 					m.batches["promote"].cancel()
 				}
@@ -394,7 +394,7 @@ func TestPreparationIntentMissingRootRequiresSameParent(t *testing.T) {
 				replace()
 			} else {
 				once := true
-				store.onSave = func(next ReceiveAccounting) error {
+				store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 					if next.Preparation == nil && once {
 						once = false
 						if replacement == "root-during-retirement" {
@@ -405,7 +405,7 @@ func TestPreparationIntentMissingRootRequiresSameParent(t *testing.T) {
 							replace()
 						}
 					}
-					return file.SaveReceiveAccounting(next)
+					return file.SaveReceiveAccounting(next, leases...)
 				}
 			}
 			m, err := NewManager(Options{AccountingStore: store, ExistingState: true})
@@ -448,13 +448,13 @@ func TestPreparationIntentOtherRootWriterPreservesOutstandingPlan(t *testing.T) 
 	if _, err := m.Offer(peer, testManifest("failed", Entry{ID: "dir", Path: "empty", Kind: Directory})); err != nil {
 		t.Fatal(err)
 	}
-	store.onSave = func(state ReceiveAccounting) error {
+	store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 		if len(state.Roots) == 2 {
 			record := state.Roots[1]
 			mustWrite(t, filepath.Join(record.OwnedRoot, "empty", "foreign"), "user data")
 			return errors.New("promotion unavailable")
 		}
-		return store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+		return store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 	}
 	if _, err := m.Accept("failed", destination); !errors.Is(err, ErrReceiveRecovery) {
 		t.Fatal(err)
@@ -498,7 +498,7 @@ func TestPreparationIntentCancelledRetirementIsRetryable(t *testing.T) {
 			if err := file.SaveReceiveAccounting(state); err != nil {
 				t.Fatal(err)
 			}
-			store := &prepareFailureStore{FileReceiveAccountingStore: file, onSave: func(ReceiveAccounting) error { return errors.New("offline index") }}
+			store := &prepareFailureStore{FileReceiveAccountingStore: file, onSave: func(_ ReceiveAccounting, _ ...ReceiveRetirementLease) error { return errors.New("offline index") }}
 			m, err := NewManager(Options{AccountingStore: store, ExistingState: true})
 			if err != nil {
 				t.Fatal(err)
@@ -511,11 +511,18 @@ func TestPreparationIntentCancelledRetirementIsRetryable(t *testing.T) {
 			defer cancel()
 			if phase == "before-save" {
 				cancel()
-				store.onSave = func(ReceiveAccounting) error { t.Fatal("cancelled retirement saved"); return nil }
+				store.onSave = func(_ ReceiveAccounting, _ ...ReceiveRetirementLease) error {
+					t.Fatal("cancelled retirement saved")
+					return nil
+				}
 			} else if phase == "during-save" {
-				store.onSave = func(ReceiveAccounting) error { cancel(); return ctx.Err() }
+				store.onSave = func(_ ReceiveAccounting, _ ...ReceiveRetirementLease) error { cancel(); return ctx.Err() }
 			} else {
-				store.onSave = func(next ReceiveAccounting) error { err := file.SaveReceiveAccounting(next); cancel(); return err }
+				store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+					err := file.SaveReceiveAccounting(next, leases...)
+					cancel()
+					return err
+				}
 			}
 			view, err := m.ConfirmReceiveRecovery(ctx, true)
 			if phase != "after-save" {
@@ -554,8 +561,8 @@ func TestPreparationIntentPromotionReplacementDisarmsRollback(t *testing.T) {
 				t.Fatal(err)
 			}
 			var original, substitute string
-			store.onSave = func(state ReceiveAccounting) error {
-				err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+			store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+				err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 				if len(state.Roots) != 0 && state.Preparation != nil {
 					substitute = state.Roots[0].OwnedRoot
 					if target == "destination" {
@@ -644,8 +651,8 @@ func TestPreparationIntentPromotionMarkerReplacementBlocksRetirement(t *testing.
 		t.Fatal(err)
 	}
 	var marker string
-	store.onSave = func(state ReceiveAccounting) error {
-		err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+	store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+		err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 		if len(state.Roots) > 0 && state.Preparation != nil {
 			r := state.Roots[0]
 			marker = filepath.Join(r.OwnedRoot, r.Stage, receiveOwnerMarker)

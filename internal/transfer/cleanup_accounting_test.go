@@ -20,9 +20,9 @@ type saveThenFailAccountingStore struct {
 	saves int
 }
 
-func (s *saveThenFailAccountingStore) SaveReceiveAccounting(state ReceiveAccounting) error {
+func (s *saveThenFailAccountingStore) SaveReceiveAccounting(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 	s.saves++
-	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(state); err != nil {
+	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...); err != nil {
 		return err
 	}
 	if s.saves == 5 {
@@ -80,11 +80,11 @@ func TestReceiveAccountingRetirementFailurePreservesIdempotentRetries(t *testing
 	}
 }
 
-func (s *accountingFailureStore) SaveReceiveAccounting(state ReceiveAccounting) error {
+func (s *accountingFailureStore) SaveReceiveAccounting(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 	if s.fail {
 		return errors.New("private-path/secret-token")
 	}
-	return s.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+	return s.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 }
 
 func TestReceiveAccountingPersistenceFailurePrecedesApproval(t *testing.T) {

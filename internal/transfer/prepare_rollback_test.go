@@ -16,14 +16,14 @@ import (
 
 type prepareFailureStore struct {
 	FileReceiveAccountingStore
-	onSave func(ReceiveAccounting) error
+	onSave func(ReceiveAccounting, ...ReceiveRetirementLease) error
 }
 
-func (s *prepareFailureStore) SaveReceiveAccounting(state ReceiveAccounting) error {
+func (s *prepareFailureStore) SaveReceiveAccounting(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 	if s.onSave != nil {
-		return s.onSave(state)
+		return s.onSave(state, leases...)
 	}
-	return s.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+	return s.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 }
 
 func TestPrepareRollbackRepeatedFailuresPreserveSavedMarker(t *testing.T) {
@@ -107,10 +107,10 @@ func TestPrepareRollbackPersistenceAndUncertainSave(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := 0
-			store.onSave = func(state ReceiveAccounting) error {
+			store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 				calls++
 				if saved {
-					if err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state); err != nil {
+					if err := store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -176,14 +176,14 @@ func TestPrepareRollbackRecordAndValidationFailures(t *testing.T) {
 			if failure == "validation" {
 				m.accountingLimits.MaxPathBytes = 1
 			}
-			store.onSave = func(state ReceiveAccounting) error {
+			store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 				if failure == "validation" {
 					t.Fatal("budget failure must precede persistence")
 				}
 				if len(state.Roots) != 0 {
 					t.Fatal("record failure must precede promotion")
 				}
-				return store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+				return store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 			}
 			if _, err := m.Offer(peer, testManifest("failed", testEntry("file", "a/file", "payload"))); err != nil {
 				t.Fatal(err)
@@ -209,9 +209,9 @@ func TestPrepareRollbackCleanupDeniedKeepsOneRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var obstruction string
-	store.onSave = func(state ReceiveAccounting) error {
+	store.onSave = func(state ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 		if len(state.Roots) == 0 {
-			return store.FileReceiveAccountingStore.SaveReceiveAccounting(state)
+			return store.FileReceiveAccountingStore.SaveReceiveAccounting(state, leases...)
 		}
 		obstruction = filepath.Join(state.Roots[0].OwnedRoot, "empty", "foreign")
 		if err := os.WriteFile(obstruction, []byte("user data"), 0600); err != nil {

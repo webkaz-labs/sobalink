@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -69,6 +70,7 @@ type atomicHooks struct {
 	barrier         func(string)
 	remove          func(*os.File, string, *os.File) error
 	syncReplacement func(*os.File, *os.File, *os.File) error
+	syncReclaim     func(*os.File) error
 }
 
 func (h *atomicHooks) at(phase string) {
@@ -100,53 +102,165 @@ func atomicDestination(path string) (string, error) {
 	return abs, nil
 }
 
-func atomicWriteOwned(path string, b []byte, hooks *atomicHooks) (result error) {
+// AtomicWriteLease retains the existing parent writer exclusion for one target.
+// Admission durably reclaims the owned snapshot before returning. Close releases
+// exclusion only; independent caller evidence is never removed.
+type AtomicWriteLease struct {
+	mu       sync.Mutex
+	writer   *atomicWriter
+	target   string
+	release  func()
+	reserved []string
+}
+
+// AcquireAtomicWriteLease reserves additional parent entry names before metadata
+// allocation. Reservations do not authorize writes to those entries.
+func AcquireAtomicWriteLease(path string, reserved ...string) (*AtomicWriteLease, error) {
+	return acquirePublicAtomicWriteLease(path, nil, reserved...)
+}
+
+// The public admission seam uses the same implementation; test-only observers
+// supply the existing boundary hooks without an installed-binary switch.
+var acquirePublicAtomicWriteLease = acquireAtomicWriteLease
+
+func acquireAtomicWriteLease(path string, hooks *atomicHooks, reserved ...string) (*AtomicWriteLease, error) {
 	abs, err := atomicDestination(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dir, name := filepath.Dir(abs), filepath.Base(abs)
 	release, err := admitAtomic(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer release()
+
 	w := &atomicWriter{path: dir, hooks: hooks}
-	defer w.close()
+	success := false
+	defer func() {
+		if !success {
+			w.close()
+			release()
+		}
+	}()
 	w.parent, err = atomicOpenDirectory(dir)
 	if err != nil {
-		return recovery(err)
+		return nil, recovery(err)
 	}
 	w.parentInfo, err = atomicFileMetadata(w.parent)
 	if err != nil || !w.parentInfo.directory {
-		return recovery(errors.New("unsafe destination directory"))
+		return nil, recovery(errors.New("unsafe destination directory"))
 	}
 	if err = w.checkDestination(name); err != nil {
-		return err
+		return nil, err
 	}
 	// Reserve missing protocol and destination entries before allocating any
 	// metadata. Admission rechecks the complete inventory under the lease.
-	if err = w.inventoryLegacy(name); err != nil {
-		return recovery(err)
+	if err = w.inventoryLegacy(name, reserved...); err != nil {
+		return nil, recovery(err)
 	}
 	if err = w.openOwned(); err != nil {
 		if errors.Is(err, ErrAtomicBusy) {
-			return err
+			return nil, err
 		}
-		return recovery(err)
+		return nil, recovery(err)
 	}
 	if err = w.verify(); err != nil {
-		return recovery(err)
+		return nil, recovery(err)
 	}
-	if err = w.inventoryLegacy(name); err != nil {
-		return recovery(err)
+	if err = w.inventoryLegacy(name, reserved...); err != nil {
+		return nil, recovery(err)
 	}
 	if err = w.reclaim(); err != nil {
-		return recovery(err)
+		return nil, recovery(err)
+	}
+	if len(reserved) != 0 {
+		syncDirectory := func(owned *os.File) error {
+			return atomicSyncLeaseNamespace(w.path, owned)
+		}
+		if hooks != nil && hooks.syncReclaim != nil {
+			syncDirectory = hooks.syncReclaim
+		}
+		if err = syncDirectory(w.owned); err != nil {
+			return nil, recovery(err)
+		}
 	}
 	if err = w.verify(); err != nil {
+		return nil, recovery(err)
+	}
+
+	hooks.at("afterReclaim")
+	success = true
+	return &AtomicWriteLease{writer: w, target: abs, release: release, reserved: append([]string(nil), reserved...)}, nil
+}
+
+// CheckParent compares the caller's retained native handle with the admitted
+// parent identity, and verifies the writer's retained protocol handles.
+func (l *AtomicWriteLease) CheckParent(parent *os.File) error {
+	if l == nil {
+		return ErrAtomicRecovery
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.writer == nil || parent == nil {
+		return ErrAtomicRecovery
+	}
+	info, err := atomicFileMetadata(parent)
+	if err != nil || !info.directory || info.id != l.writer.parentInfo.id {
+		return ErrAtomicRecovery
+	}
+	return l.writer.verify()
+}
+
+func (l *AtomicWriteLease) Write(path string, b []byte) error {
+	if l == nil {
+		return ErrAtomicRecovery
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	abs, err := atomicDestination(path)
+	if err != nil {
+		return err
+	}
+	if l.writer == nil || abs != l.target {
+		return ErrAtomicRecovery
+	}
+	w := l.writer
+	if err := w.verify(); err != nil {
 		return recovery(err)
 	}
+	if err := w.inventoryLegacy(filepath.Base(abs), l.reserved...); err != nil {
+		return recovery(err)
+	}
+	return w.write(filepath.Base(abs), b)
+}
+
+func (l *AtomicWriteLease) Close() error {
+	if l == nil {
+		return ErrAtomicRecovery
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.writer == nil {
+		return ErrAtomicRecovery
+	}
+	l.writer.close()
+	l.writer = nil
+	l.release()
+	l.release = nil
+	return nil
+}
+
+func atomicWriteOwned(path string, b []byte, hooks *atomicHooks) error {
+	l, err := acquireAtomicWriteLease(path, hooks)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	return l.writer.write(filepath.Base(l.target), b)
+}
+
+func (w *atomicWriter) write(name string, b []byte) (result error) {
+	hooks := w.hooks
 	f, err := atomicOpenChild(w.owned, atomicSnapshot, true, false, true)
 	if err != nil {
 		return recovery(err)
@@ -322,7 +436,7 @@ func (w *atomicWriter) verify() error {
 // ReadDir is bounded including unrelated entries. Metadata-only legacy
 // accounting neither opens nor parses secret payloads, follows links, or
 // removes ambiguous entries. A size/count/inspection overflow blocks admission.
-func (w *atomicWriter) inventoryLegacy(destination string) error {
+func (w *atomicWriter) inventoryLegacy(destination string, reservedNames ...string) error {
 	// A fresh enumeration handle also supports the first-use preflight without
 	// relying on directory seeks (which are not portable to Windows).
 	f, err := atomicOpenDirectory(w.path)
@@ -339,7 +453,22 @@ func (w *atomicWriter) inventoryLegacy(destination string) error {
 		return err
 	}
 	reserved := 0
-	for _, name := range []string{atomicNamespace, destination} {
+	names := []string{atomicNamespace, destination}
+	for _, name := range reservedNames {
+		if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "/\\") {
+			return errors.New("invalid reserved parent entry")
+		}
+		duplicate := false
+		for _, existing := range names {
+			if existing == name {
+				duplicate = true
+			}
+		}
+		if !duplicate {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
 		if _, err := atomicChildMetadata(w.parent, name); errors.Is(err, os.ErrNotExist) {
 			reserved++
 		} else if err != nil {
@@ -441,5 +570,9 @@ func (w *atomicWriter) removeSnapshot(f *os.File, expected atomicMetadata) error
 	if err != nil {
 		return err
 	}
-	return atomicSyncDirectory(w.owned)
+	syncDirectory := atomicSyncDirectory
+	if w.hooks != nil && w.hooks.syncReclaim != nil {
+		syncDirectory = w.hooks.syncReclaim
+	}
+	return syncDirectory(w.owned)
 }

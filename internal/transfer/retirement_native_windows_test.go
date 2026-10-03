@@ -224,8 +224,8 @@ func TestWindowsRetirementPostSaveBarrierFailure(t *testing.T) {
 			}
 			store := &prepareFailureStore{FileReceiveAccountingStore: file}
 			committed, unavailable, calls := false, true, 0
-			store.onSave = func(next ReceiveAccounting) error {
-				if err := file.SaveReceiveAccounting(next); err != nil {
+			store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+				if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 					return err
 				}
 				if next.Preparation == nil {
@@ -295,8 +295,8 @@ func TestWindowsRetirementPostSaveGuardMutation(t *testing.T) {
 	}
 	store := &prepareFailureStore{FileReceiveAccountingStore: file}
 	mutated := false
-	store.onSave = func(next ReceiveAccounting) error {
-		if err := file.SaveReceiveAccounting(next); err != nil {
+	store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+		if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 			return err
 		}
 		if next.Preparation == nil {
@@ -338,8 +338,8 @@ func TestWindowsRetirementPostSaveUnexpectedStageChild(t *testing.T) {
 	file := FileReceiveAccountingStore{Path: filepath.Join(dir, "receive-accounting.json")}
 	store := &prepareFailureStore{FileReceiveAccountingStore: file}
 	var unknown string
-	store.onSave = func(next ReceiveAccounting) error {
-		if err := file.SaveReceiveAccounting(next); err != nil {
+	store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
+		if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 			return err
 		}
 		if len(next.Roots) == 0 {

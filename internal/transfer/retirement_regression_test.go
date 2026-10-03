@@ -17,7 +17,7 @@ func TestRetirementSaveErrorAfterCommitKeepsMissingRootEvidenceOnRestart(t *test
 	}
 	store := &prepareFailureStore{FileReceiveAccountingStore: file}
 	wroteUnknownRoot := false
-	store.onSave = func(next ReceiveAccounting) error {
+	store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 		if next.Preparation == nil {
 			root := filepath.Join(state.Preparation.Destination, state.Preparation.Root)
 			if err := os.Mkdir(root, 0700); err != nil {
@@ -26,13 +26,13 @@ func TestRetirementSaveErrorAfterCommitKeepsMissingRootEvidenceOnRestart(t *test
 			if err := os.WriteFile(filepath.Join(root, "unknown"), []byte("preserve me"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := file.SaveReceiveAccounting(next); err != nil {
+			if err := file.SaveReceiveAccounting(next, leases...); err != nil {
 				t.Fatal(err)
 			}
 			wroteUnknownRoot = true
 			return errors.New("retirement response lost after commit")
 		}
-		return file.SaveReceiveAccounting(next)
+		return file.SaveReceiveAccounting(next, leases...)
 	}
 
 	m, err := NewManager(Options{AccountingStore: store, ExistingState: true})
@@ -74,11 +74,11 @@ func TestAcceptFinalRetirementSaveRejectsBindingSubstitution(t *testing.T) {
 			}
 			substituted := false
 			unknownPath := ""
-			store.onSave = func(next ReceiveAccounting) error {
+			store.onSave = func(next ReceiveAccounting, leases ...ReceiveRetirementLease) error {
 				if next.Preparation != nil || len(next.Roots) == 0 || substituted {
-					return store.FileReceiveAccountingStore.SaveReceiveAccounting(next)
+					return store.FileReceiveAccountingStore.SaveReceiveAccounting(next, leases...)
 				}
-				if err := store.FileReceiveAccountingStore.SaveReceiveAccounting(next); err != nil {
+				if err := store.FileReceiveAccountingStore.SaveReceiveAccounting(next, leases...); err != nil {
 					return err
 				}
 				record := next.Roots[len(next.Roots)-1]
