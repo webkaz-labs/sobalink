@@ -158,15 +158,31 @@ type PolicyStore interface {
 
 // ReceiveAccountingStore persists only receiver-owned roots and names of
 // active temporary files. Implementations must not call back into Manager.
+// The independent singleton guard is mandatory for durable implementations.
+// WithReceiveAccountingLimits must preserve the adapter's behavior/dependencies;
+// decorators must override it rather than returning their embedded base store.
 type ReceiveAccountingStore interface {
 	LoadReceiveAccounting() (ReceiveAccounting, error)
 	SaveReceiveAccounting(ReceiveAccounting) error
+	WithReceiveAccountingLimits(AccountingLimits) ReceiveAccountingStore
+	LoadReceiveRetirementGuard(AccountingLimits) (*ReceiveRetirementGuard, ReceiveRetirementLease, error)
+	AcquireReceiveRetirementGuard(ReceiveRetirementGuard, AccountingLimits) (ReceiveRetirementLease, error)
 }
 
 // ReceiveAccounting is private local storage, never a wire or export contract.
 type ReceiveAccounting struct {
-	Version int           `json:"version"`
-	Roots   []ReceiveRoot `json:"roots"`
+	Version     int                 `json:"version"`
+	Roots       []ReceiveRoot       `json:"roots"`
+	Preparation *ReceivePreparation `json:"preparation,omitempty"`
+}
+
+// ReceivePreparation identifies a planned creation, never authority to delete it.
+type ReceivePreparation struct {
+	Destination         string `json:"destination"`
+	DestinationIdentity string `json:"destinationIdentity"`
+	Root                string `json:"root"`
+	Stage               string `json:"stage"`
+	OwnerToken          string `json:"ownerToken"`
 }
 
 type ReceiveRoot struct {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,23 +39,26 @@ type batchState struct {
 // Manager has no listeners or transport credentials. Calls may run concurrently.
 // Keep one Manager per local trust scope, and close it when that scope ends.
 type Manager struct {
-	mu                sync.Mutex
-	limits            Limits
-	diskSpace         *diskspace.Guard
-	store             PolicyStore
-	peers             map[string]*peerState
-	policies          map[string]ReceivePolicy
-	batches           map[string]*batchState
-	reserved          int64
-	retained          int64
-	accountingStore   ReceiveAccountingStore
-	accounting        ReceiveAccounting
-	accountingLimits  AccountingLimits
-	policySavePending bool
-	recoveryCode      string
-	metadata          int64
-	active            int
-	closed            bool
+	mu                      sync.Mutex
+	limits                  Limits
+	diskSpace               *diskspace.Guard
+	store                   PolicyStore
+	peers                   map[string]*peerState
+	policies                map[string]ReceivePolicy
+	batches                 map[string]*batchState
+	reserved                int64
+	retained                int64
+	accountingStore         ReceiveAccountingStore
+	guardPending            bool
+	accounting              ReceiveAccounting
+	accountingLimits        AccountingLimits
+	policySavePending       bool
+	recoveryCode            string
+	pendingPreparation      *preparedDestination
+	pendingPreparationBatch *batchState
+	metadata                int64
+	active                  int
+	closed                  bool
 }
 
 func NewManager(options Options) (*Manager, error) {
@@ -68,29 +72,42 @@ func NewManager(options Options) (*Manager, error) {
 	}
 	m := &Manager{diskSpace: space, limits: limits, store: options.PolicyStore, accountingStore: options.AccountingStore, peers: map[string]*peerState{}, policies: map[string]ReceivePolicy{}, batches: map[string]*batchState{}}
 	m.accountingLimits = accountingLimits(options.AccountingLimits)
+	if m.accountingStore != nil {
+		m.accountingStore = m.accountingStore.WithReceiveAccountingLimits(m.accountingLimits)
+	}
 	m.accounting = ReceiveAccounting{Version: 1}
 	if m.accountingStore != nil {
 		startupCtx := options.Context
 		if startupCtx == nil {
 			startupCtx = context.Background()
 		}
+		guardErr := m.probeRetirementGuardLocked()
 		state, loadErr := m.accountingStore.LoadReceiveAccounting()
 		if err := startupCtx.Err(); err != nil {
 			return nil, err
 		}
-		if errors.Is(loadErr, os.ErrNotExist) && !options.ExistingState {
+		if errors.Is(loadErr, os.ErrNotExist) && !options.ExistingState && !m.guardPending {
 			loadErr = m.accountingStore.SaveReceiveAccounting(m.accounting)
 			if err := startupCtx.Err(); err != nil {
 				return nil, err
 			}
 			state = m.accounting
-		} else if errors.Is(loadErr, os.ErrNotExist) {
+		} else if errors.Is(loadErr, os.ErrNotExist) && !m.guardPending {
 			m.recoveryCode = "legacy_review_required"
 		}
 		if loadErr == nil {
-			next, retained, inventoryErr := inventoryReceive(startupCtx, state, m.accountingLimits)
-			if inventoryErr == nil && len(next.Roots) != len(state.Roots) {
-				inventoryErr = m.accountingStore.SaveReceiveAccounting(next)
+			m.accounting = state
+			var next ReceiveAccounting
+			var retained int64
+			inventoryErr := guardErr
+			if inventoryErr == nil {
+				state, _, inventoryErr = m.recoverRetirementLocked(startupCtx, state)
+			}
+			if inventoryErr == nil {
+				next, retained, inventoryErr = inventoryReceive(startupCtx, state, m.accountingLimits)
+			}
+			if inventoryErr == nil && accountingChanged(next, state) {
+				inventoryErr = m.saveInventoryLocked(startupCtx, state, next)
 			}
 			if inventoryErr == nil {
 				m.accounting, m.retained, m.reserved = next, retained, retained
@@ -435,40 +452,161 @@ func (m *Manager) Accept(id, destination string) (Batch, error) {
 	return snapshot(b), err
 }
 
-func (m *Manager) acceptLocked(b *batchState, destination string) error {
+func (m *Manager) retryPreparationLocked() error {
+	if m.guardPending {
+		return ErrReceiveRecovery
+	}
+	if m.pendingPreparation == nil {
+		return nil
+	}
+	if err := m.pendingPreparation.rollback(); err != nil {
+		return ErrReceiveRecovery
+	}
+	if err := m.retireRolledBackPreparationLocked(); err != nil {
+		return err
+	}
+	b := m.pendingPreparationBatch
+	m.pendingPreparation, m.pendingPreparationBatch = nil, nil
+	if m.recoveryCode == "prepare_cleanup_unavailable" {
+		m.recoveryCode = ""
+	}
+	if terminal(b.value.State) {
+		m.releaseLocked(b)
+	}
+	return nil
+}
+
+// Cleanup uses a bounded independent context because a cancelled batch still
+// needs durable bookkeeping. No pending name is guessed to be ours on reopen.
+func (m *Manager) retireRolledBackPreparationLocked() error {
+	if m.accountingStore == nil || m.accounting.Preparation == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	next := m.accounting
+	next.Preparation, next.Roots = nil, nil
+	for _, record := range m.accounting.Roots {
+		p := m.accounting.Preparation
+		if record.OwnedRoot != filepath.Join(p.Destination, p.Root) || record.OwnerToken != p.OwnerToken {
+			next.Roots = append(next.Roots, record)
+		}
+	}
+	if err := m.saveInventoryLocked(ctx, m.accounting, next); err != nil {
+		m.recoveryCode = "index_unavailable"
+		return ErrReceiveRecovery
+	}
+	m.accounting = next
+	return nil
+}
+
+func (m *Manager) acceptLocked(b *batchState, destination string) (resultErr error) {
+	if err := m.retryPreparationLocked(); err != nil {
+		return err
+	}
 	if m.recoveryCode != "" {
 		return ErrReceiveRecovery
 	}
-	root, actual, stage, token, destinationIdentity, err := prepareDestinationWithSpace(destination, b.manifest.Entries, m.diskSpace, m.limits.DiskReserveBytes)
-	if err != nil {
+	p := &preparedDestination{}
+	// Installed before preparation, including root creation/protection/opening.
+	defer func() {
+		if p.disarmed {
+			return
+		}
+		if err := p.rollback(); err != nil {
+			m.pendingPreparation, m.pendingPreparationBatch = p, b
+			if m.recoveryCode == "" {
+				m.recoveryCode = "prepare_cleanup_unavailable"
+			}
+			resultErr = ErrReceiveRecovery
+			return
+		}
+		if p.plan != nil {
+			if err := m.retireRolledBackPreparationLocked(); err != nil {
+				resultErr = err
+			}
+		}
+	}()
+	beforeCreate := func(plan ReceivePreparation) error {
+		if m.accountingStore == nil {
+			return nil
+		}
+		next := m.accounting
+		next.Version, next.Preparation = 2, &plan
+		// Reserve both the plan and its eventual record before allocating any
+		// directory. Identity strings are bounded to 128 bytes by the contract.
+		record := ReceiveRoot{Destination: plan.Destination, DestinationIdentity: plan.DestinationIdentity, OwnedRoot: filepath.Join(plan.Destination, plan.Root), RootIdentity: strings.Repeat("x", 128), Stage: plan.Stage, StageIdentity: strings.Repeat("x", 128), OwnerToken: plan.OwnerToken}
+		overlap := next
+		overlap.Roots = append(append([]ReceiveRoot(nil), next.Roots...), record)
+		after := overlap
+		after.Preparation = nil
+		g := ReceiveRetirementGuard{Version: 1, ID: plan.OwnerToken, Kind: "promote", Before: overlap, After: after, BeforeHash: accountingHash(overlap), AfterHash: accountingHash(after), Witnesses: []ReceiveRetirementWitness{{Root: record, MarkerIdentity: strings.Repeat("x", 128)}}}
+		if err := validateRetirementGuard(g, m.accountingLimits); err != nil {
+			return ErrReceiveRecovery
+		}
+		if err := verifyMissingPreparation(b.ctx, &plan); err != nil {
+			return ErrReceiveRecovery
+		}
+		// Generic Save errors have uncertain commit outcomes. Keep the plan in
+		// every subsequent snapshot even if its first publication returns error.
+		m.accounting = next
+		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
+			m.recoveryCode = "index_unavailable"
+			return ErrReceiveRecovery
+		}
+		return nil
+	}
+	if err := p.prepare(b.ctx, destination, b.manifest.Entries, m.diskSpace, m.limits.DiskReserveBytes, beforeCreate); err != nil {
 		return err
 	}
-	stageInfo, err := root.Lstat(stage)
-	if err != nil {
-		root.Close()
+	if err := p.stage.verify(); err != nil {
+		return ErrReceiveRecovery
+	}
+	var promotionBindingErr error
+	if m.accountingStore != nil {
+		record, recordErr := receiveRootRecord(destination, p.actual, p.stage.name, p.token, p.parentIdentity, p.root)
+		if recordErr != nil {
+			return ErrReceiveRecovery
+		}
+		next := m.accounting
+		next.Roots = append(append([]ReceiveRoot(nil), m.accounting.Roots...), record)
+		if err := validateAccounting(next, m.accountingLimits); err != nil {
+			return ErrReceiveRecovery
+		}
+		m.accounting = next
+		if err := b.ctx.Err(); err != nil {
+			return err
+		}
+		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
+			m.recoveryCode = "index_unavailable"
+			return ErrReceiveRecovery
+		}
+		p.disarmed = true
+		promotionBindingErr = p.verifyBinding()
+	}
+	// Successful promotion commits preparation. Retirement cannot roll it back.
+	p.disarmed = true
+	defer p.close(true)
+	b.root, b.stage, b.value.Destination = p.root, p.stage.name, p.actual
+	b.ownerToken, b.stageInfo = p.token, p.stage.info
+	b.value.State = Accepted
+	if promotionBindingErr != nil {
+		m.recoveryCode = "inventory_unavailable"
 		return ErrReceiveRecovery
 	}
 	if m.accountingStore != nil {
-		record, recordErr := receiveRootRecord(destination, actual, stage, token, destinationIdentity, root)
-		if recordErr != nil {
-			root.Close()
+		if err := b.ctx.Err(); err != nil {
+			m.recoveryCode = "index_unavailable"
 			return ErrReceiveRecovery
 		}
-		next := ReceiveAccounting{Version: 1, Roots: append(append([]ReceiveRoot(nil), m.accounting.Roots...), record)}
-		if err := validateAccounting(next, m.accountingLimits); err != nil {
-			root.Close()
-			return ErrReceiveRecovery
-		}
-		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
-			root.Close()
+		next := m.accounting
+		next.Preparation = nil
+		if err := m.guardedRetirementLocked(b.ctx, m.accounting, next, true, p.verifyBinding); err != nil {
 			m.recoveryCode = "index_unavailable"
 			return ErrReceiveRecovery
 		}
 		m.accounting = next
 	}
-	b.root, b.stage, b.value.Destination = root, stage, actual
-	b.ownerToken, b.stageInfo = token, stageInfo
-	b.value.State = Accepted
 	for i := range b.value.Files {
 		if b.value.Files[i].Kind == Directory {
 			b.value.Files[i].State = FileSaved
@@ -518,7 +656,7 @@ func (m *Manager) stopLocked(b *batchState, state BatchState) {
 
 func (m *Manager) releaseLocked(b *batchState) {
 	// Retain the complete reservation while cleanup is unknown or incomplete.
-	if b.reserved && b.active == 0 && len(b.cleanup) == 0 {
+	if b.reserved && b.active == 0 && b.root == nil && !m.guardPending && len(b.cleanup) == 0 && m.pendingPreparationBatch != b {
 		m.reserved -= b.value.TotalBytes
 		b.reserved = false
 	}
@@ -535,33 +673,47 @@ func (m *Manager) closeRootLocked(b *batchState) {
 		}
 		return
 	}
-	stageErr := removeReceiveStage(b.root, b.stage, b.ownerToken, b.stageInfo) // Never remove saved output.
-	if stageErr != nil && !errors.Is(stageErr, os.ErrNotExist) {
-		m.recoveryCode = "cleanup_unavailable"
+	if m.guardPending || m.accounting.Preparation != nil {
 		if m.closed {
 			_ = b.root.Close()
 			b.root = nil
 		}
 		return
 	}
+	var retireErr error
 	if m.accountingStore != nil {
-		next := ReceiveAccounting{Version: 1}
-		for _, record := range m.accounting.Roots {
-			if record.OwnedRoot != b.value.Destination || record.OwnerToken != b.ownerToken {
-				next.Roots = append(next.Roots, record)
+		next := m.accounting
+		next.Roots = nil
+		for _, r := range m.accounting.Roots {
+			if r.OwnedRoot != b.value.Destination || r.OwnerToken != b.ownerToken {
+				next.Roots = append(next.Roots, r)
 			}
 		}
-		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
-			m.recoveryCode = "index_unavailable"
+		if len(next.Roots) == len(m.accounting.Roots) {
+			retireErr = ErrReceiveRecovery
 		} else {
-			m.accounting = next
+			retireErr = m.guardedRetirementLocked(context.Background(), m.accounting, next, false, nil)
 		}
+	} else {
+		retireErr = removeReceiveStage(b.root, b.stage, b.ownerToken, b.stageInfo)
+	}
+	if retireErr != nil {
+		m.recoveryCode = "index_unavailable"
+		if m.closed {
+			_ = b.root.Close()
+			b.root = nil
+		}
+		return
 	}
 	_ = b.root.Close()
 	b.root = nil
+	m.releaseLocked(b)
 }
 
 func (m *Manager) cleanupFileLocked(b *batchState, fileID string) error {
+	if m.guardPending {
+		return ErrReceiveRecovery
+	}
 	for name, id := range b.cleanup {
 		if id != fileID {
 			continue
@@ -862,6 +1014,10 @@ func (m *Manager) Close() error {
 		return nil
 	}
 	m.closed = true
+	var cleanupErr error
+	if m.pendingPreparation != nil {
+		cleanupErr = m.retryPreparationLocked()
+	}
 	for _, b := range m.batches {
 		if !terminal(b.value.State) {
 			m.stopLocked(b, Cancelled)
@@ -869,7 +1025,10 @@ func (m *Manager) Close() error {
 			m.closeRootLocked(b)
 		}
 	}
-	return nil
+	if m.pendingPreparation != nil {
+		m.pendingPreparation.close(false)
+	}
+	return cleanupErr
 }
 
 func transferError(ctx context.Context, err error) error {

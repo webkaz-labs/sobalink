@@ -25,7 +25,7 @@ func (s *saveThenFailAccountingStore) SaveReceiveAccounting(state ReceiveAccount
 	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(state); err != nil {
 		return err
 	}
-	if s.saves == 3 {
+	if s.saves == 5 {
 		return errors.New("response lost after accounting save")
 	}
 	return nil
@@ -182,4 +182,14 @@ func TestReceiveCleanupUnknownCancelForgetCannotReleaseCapacity(t *testing.T) {
 	if _, err := m.RetryFile("fixture", "file"); !errors.Is(err, ErrState) {
 		t.Fatal("cancelled transfer retried")
 	}
+}
+
+func (s *accountingFailureStore) WithReceiveAccountingLimits(l AccountingLimits) ReceiveAccountingStore {
+	s.Limits = l
+	return s
+}
+
+func (s *saveThenFailAccountingStore) WithReceiveAccountingLimits(l AccountingLimits) ReceiveAccountingStore {
+	s.Limits = l
+	return s
 }

@@ -96,12 +96,16 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		if temp != nil {
 			_ = temp.Close()
 		}
-		cleanupErr := error(nil)
-		if tempName != "" {
-			cleanupErr = root.Remove(tempName)
-		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		cleanupErr := error(nil)
+		if tempName != "" {
+			if m.guardPending {
+				cleanupErr = ErrReceiveRecovery
+			} else {
+				cleanupErr = root.Remove(tempName)
+			}
+		}
 		if tempName != "" && cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
 			if b.cleanup == nil {
 				b.cleanup = map[string]string{}

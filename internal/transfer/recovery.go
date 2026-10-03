@@ -63,26 +63,37 @@ func (m *Manager) ConfirmReceiveRecovery(ctx context.Context, reviewed bool) (Re
 			return m.recoveryViewLocked(false), err
 		}
 	}
+	if err := m.probeRetirementGuardLocked(); err != nil {
+		return m.recoveryViewLocked(false), ErrReceiveRecovery
+	}
 	state, err := m.accountingStore.LoadReceiveAccounting()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return m.recoveryViewLocked(false), ctxErr
 	}
-	initializeLegacy := m.recoveryCode == "legacy_review_required" && errors.Is(err, os.ErrNotExist)
+	initializeLegacy := !m.guardPending && m.recoveryCode == "legacy_review_required" && errors.Is(err, os.ErrNotExist)
 	if initializeLegacy {
 		state = ReceiveAccounting{Version: 1}
 	} else if err != nil {
 		return m.recoveryViewLocked(false), ErrReceiveRecovery
 	}
-	next, retained, err := inventoryReceive(ctx, state, m.accountingLimits)
+	state, recovered, err := m.recoverRetirementLocked(ctx, state)
 	if err != nil {
 		return m.recoveryViewLocked(false), ErrReceiveRecovery
 	}
-	durableCommit := false
-	if initializeLegacy || len(next.Roots) != len(state.Roots) {
+	inventoryCtx := ctx
+	if recovered {
+		inventoryCtx = context.WithoutCancel(ctx)
+	}
+	next, retained, err := inventoryReceive(inventoryCtx, state, m.accountingLimits)
+	if err != nil {
+		return m.recoveryViewLocked(false), ErrReceiveRecovery
+	}
+	durableCommit := recovered
+	if initializeLegacy || accountingChanged(next, state) {
 		if err := ctx.Err(); err != nil {
 			return m.recoveryViewLocked(false), err
 		}
-		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
+		if err := m.saveInventoryLocked(ctx, state, next); err != nil {
 			return m.recoveryViewLocked(false), ErrReceiveRecovery
 		}
 		// A successful save is the durable commit point. Cancellation during
@@ -111,9 +122,8 @@ func (m *Manager) UpdateAccountingLimits(next AccountingLimits) error {
 		return ErrClosed
 	}
 	m.accountingLimits = next
-	if file, ok := m.accountingStore.(FileReceiveAccountingStore); ok {
-		file.Limits = next
-		m.accountingStore = file
+	if m.accountingStore != nil {
+		m.accountingStore = m.accountingStore.WithReceiveAccountingLimits(next)
 	}
 	return nil
 }

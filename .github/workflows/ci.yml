@@ -96,6 +96,9 @@ jobs:
           test "$(go env GOARCH)" = '${{ matrix.goarch }}'
           go mod verify
           python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Verify Windows receive-retirement directory barriers
+        if: matrix.goos == 'windows'
+        run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail

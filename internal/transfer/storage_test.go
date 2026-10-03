@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 )
 
 func TestConcurrentDestinationCreationNeverOverwrites(t *testing.T) {
@@ -285,4 +287,24 @@ func TestStageSubstitutionCleanupPreservesSavedMarkerPayload(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Recovery fixtures create destinations independently of Manager acceptance.
+func prepareDestination(destination string, entries []Entry) (*os.Root, string, string, string, string, error) {
+	return prepareDestinationWithSpace(destination, entries, diskspace.Process, diskspace.DefaultReserveBytes)
+}
+
+func prepareDestinationWithSpace(destination string, entries []Entry, space *diskspace.Guard, reserve int64) (openedRoot *os.Root, actualDirectory, stagingName, ownerToken, parentIdentity string, resultErr error) {
+	p := &preparedDestination{}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, p.rollback())
+			p.close(false)
+		}
+	}()
+	if err := p.prepare(context.Background(), destination, entries, space, reserve, nil); err != nil {
+		return nil, "", "", "", "", err
+	}
+	p.commit()
+	return p.root, p.actual, p.stage.name, p.token, p.parentIdentity, nil
 }
