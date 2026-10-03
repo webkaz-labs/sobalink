@@ -181,6 +181,11 @@ func (c *Core) capacityUsage() map[string]int64 {
 	}
 	resources, lan := c.resources, c.lan
 	c.mu.RUnlock()
+	if c.transfers != nil {
+		if bytes := c.transfers.ReceiveRecovery().ReservedBytes; bytes != nil {
+			usage["receiveReservedBytes"] = *bytes
+		}
+	}
 	if private, err := c.privateSettingsUsage(); err == nil {
 		for key, size := range private {
 			usage[key] = size
@@ -294,6 +299,9 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 	// Core command/Close serialization keeps the manager alive here. This
 	// changes admission only; occupied reservations remain accounted for.
 	if c.transfers != nil {
+		if err := c.transfers.UpdateAccountingLimits(receiveAccountingLimits(in.Policy)); err != nil {
+			return nil, err
+		}
 		if err := c.transfers.UpdateLimits(nextTransferLimits); err != nil {
 			return nil, err
 		}

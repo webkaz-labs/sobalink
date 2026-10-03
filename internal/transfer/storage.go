@@ -46,43 +46,47 @@ func openDestination(destination string) (*os.Root, error) {
 	return root, nil
 }
 
-func prepareDestination(destination string, entries []Entry) (*os.Root, string, string, error) {
+func prepareDestination(destination string, entries []Entry) (*os.Root, string, string, string, string, error) {
 	return prepareDestinationWithSpace(destination, entries, diskspace.Process, diskspace.DefaultReserveBytes)
 }
 
-func prepareDestinationWithSpace(destination string, entries []Entry, space *diskspace.Guard, reserve int64) (openedRoot *os.Root, actualDirectory, stagingName string, resultErr error) {
+func prepareDestinationWithSpace(destination string, entries []Entry, space *diskspace.Guard, reserve int64) (openedRoot *os.Root, actualDirectory, stagingName, ownerToken, parentIdentity string, resultErr error) {
 	defer func() { resultErr = diskspace.NormalizeError(resultErr) }()
 	parent, err := openDestination(destination)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
 	}
 	defer parent.Close()
 	if err := checkRootSpace(context.Background(), parent, space, reserve); err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
+	}
+	destinationIdentity, err := rootIdentity(parent)
+	if err != nil {
+		return nil, "", "", "", "", err
 	}
 	name, err := randomName("sobalink-")
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
 	}
 	if err = parent.Mkdir(name, 0700); err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
 	}
 	actual := filepath.Join(destination, name)
 	if err = protectDirectory(actual); err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
 	}
 	info, err := parent.Lstat(name)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, "", "", ErrUnsafePath
+		return nil, "", "", "", "", ErrUnsafePath
 	}
 	root, err := parent.OpenRoot(name)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
 	}
 	opened, err := root.Stat(".")
 	if err != nil || !os.SameFile(info, opened) {
 		root.Close()
-		return nil, "", "", ErrUnsafePath
+		return nil, "", "", "", "", ErrUnsafePath
 	}
 	ok := false
 	defer func() {
@@ -92,29 +96,47 @@ func prepareDestinationWithSpace(destination string, entries []Entry, space *dis
 	}()
 	stage, err := randomName(".incoming-")
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
 	}
 	if err = checkRootSpace(context.Background(), root, space, reserve); err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
 	}
 	if err = root.Mkdir(stage, 0700); err != nil {
-		return nil, "", "", err
+		return nil, "", "", "", "", err
+	}
+	token, err := newOwnerToken()
+	if err != nil {
+		return nil, "", "", "", "", err
+	}
+	marker, err := root.OpenFile(".sobalink-owner", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, "", "", "", "", err
+	}
+	if _, err = marker.Write([]byte(token)); err == nil {
+		err = marker.Sync()
+	}
+	closeErr := marker.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, "", "", "", "", err
 	}
 	for _, e := range entries {
 		if err = ensureDirectoriesWithSpace(context.Background(), root, path.Dir(e.Path), space, reserve); err != nil {
-			return nil, "", "", err
+			return nil, "", "", "", "", err
 		}
 		if e.Kind == Directory {
 			if err = checkRootSpace(context.Background(), root, space, reserve); err != nil {
-				return nil, "", "", err
+				return nil, "", "", "", "", err
 			}
 			if err = root.Mkdir(e.Path, 0700); err != nil {
-				return nil, "", "", err
+				return nil, "", "", "", "", err
 			}
 		}
 	}
 	ok = true
-	return root, actual, stage, nil
+	return root, actual, stage, token, destinationIdentity, nil
 }
 
 // Root confines all operations even when a component is exchanged concurrently.

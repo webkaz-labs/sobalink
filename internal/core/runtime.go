@@ -262,7 +262,7 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			services = append(services, v)
 		}
 	}
-	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus()}, nil
+	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus()}, nil
 }
 
 // Command deduplicates requests independently of the mutation lock. Slow file
@@ -355,6 +355,18 @@ func (c *Core) executeCommand(ctx context.Context, cmd webui.Command) (any, erro
 
 func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 	switch cmd.Name {
+	case "receive.recovery.confirm":
+		var input struct {
+			Reviewed bool `json:"reviewed"`
+		}
+		if err := decodePayload(cmd.Payload, &input); err != nil {
+			return nil, err
+		}
+		view, err := c.transfers.ConfirmReceiveRecovery(ctx, input.Reviewed)
+		if err != nil {
+			return view, &localCommandError{transfer.ErrorCode(err), "receive recovery could not be confirmed"}
+		}
+		return view, nil
 	case "startup.list", "startup.preview", "startup.save", "startup.disable":
 		return c.startupCommand(ctx, cmd.Name, cmd.Payload)
 	case "proxy.save", "proxy.generate", "proxy.saved.list", "proxy.saved.start", "proxy.saved.delete", "proxy.saved.disable", "proxy.reveal":

@@ -24,6 +24,10 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		return FileAck{}, ErrState
 	}
 	m.mu.Lock()
+	if m.recoveryCode != "" {
+		m.mu.Unlock()
+		return FileAck{}, ErrReceiveRecovery
+	}
 	p, err := m.checkPeerLocked(peer)
 	if err != nil {
 		m.mu.Unlock()
@@ -92,11 +96,25 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		if temp != nil {
 			_ = temp.Close()
 		}
+		cleanupErr := error(nil)
 		if tempName != "" {
-			_ = root.Remove(tempName)
+			cleanupErr = root.Remove(tempName)
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		if tempName != "" && cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			if b.cleanup == nil {
+				b.cleanup = map[string]string{}
+			}
+			b.cleanup[tempName] = fileID
+			info, statErr := root.Lstat(tempName)
+			if statErr != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > entry.Size {
+				m.recoveryCode = "cleanup_unavailable"
+			}
+			if resultErr == nil {
+				resultErr = ErrReceiveRecovery
+			}
+		}
 		b.active--
 		m.active--
 		m.peers[peer.ID].active--
@@ -213,6 +231,9 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 	if f.State != FileReceiving || terminal(b.value.State) {
 		return FileAck{}, ErrCancelled
 	}
+	if m.recoveryCode != "" {
+		return FileAck{}, ErrReceiveRecovery
+	}
 	if err = commitFileWithSpace(streamCtx, root, tempName, entry.Path, original, m.diskSpace, m.limits.DiskReserveBytes, func() error { return receiveCancellation(ctx, streamCtx) }); err != nil {
 		return FileAck{}, transferError(streamCtx, err)
 	}
@@ -254,7 +275,7 @@ func ErrorCode(err error) string {
 		err  error
 		code string
 	}{
-		{ErrInvalidManifest, "invalid_manifest"}, {ErrLimit, "limit_exceeded"},
+		{ErrReceiveRecovery, "receive_recovery_required"}, {ErrInvalidManifest, "invalid_manifest"}, {ErrLimit, "limit_exceeded"},
 		{ErrUnknownPeer, "unknown_peer"}, {ErrPeerChanged, "peer_changed"},
 		{ErrPeerPaused, "peer_paused"}, {ErrNotFound, "not_found"},
 		{ErrConflict, "destination_conflict"}, {ErrState, "invalid_state"},

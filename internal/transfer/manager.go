@@ -22,30 +22,37 @@ type peerState struct {
 }
 
 type batchState struct {
-	value    Batch
-	manifest Manifest
-	root     *os.Root
-	stage    string
-	active   int
-	reserved bool
-	cancel   context.CancelFunc
-	ctx      context.Context
+	value      Batch
+	manifest   Manifest
+	root       *os.Root
+	stage      string
+	active     int
+	reserved   bool
+	ownerToken string
+	cleanup    map[string]string
+	cancel     context.CancelFunc
+	ctx        context.Context
 }
 
 // Manager has no listeners or transport credentials. Calls may run concurrently.
 // Keep one Manager per local trust scope, and close it when that scope ends.
 type Manager struct {
-	mu        sync.Mutex
-	limits    Limits
-	diskSpace *diskspace.Guard
-	store     PolicyStore
-	peers     map[string]*peerState
-	policies  map[string]ReceivePolicy
-	batches   map[string]*batchState
-	reserved  int64
-	metadata  int64
-	active    int
-	closed    bool
+	mu               sync.Mutex
+	limits           Limits
+	diskSpace        *diskspace.Guard
+	store            PolicyStore
+	peers            map[string]*peerState
+	policies         map[string]ReceivePolicy
+	batches          map[string]*batchState
+	reserved         int64
+	retained         int64
+	accountingStore  ReceiveAccountingStore
+	accounting       ReceiveAccounting
+	accountingLimits AccountingLimits
+	recoveryCode     string
+	metadata         int64
+	active           int
+	closed           bool
 }
 
 func NewManager(options Options) (*Manager, error) {
@@ -57,7 +64,35 @@ func NewManager(options Options) (*Manager, error) {
 	if space == nil {
 		space = diskspace.Process
 	}
-	m := &Manager{diskSpace: space, limits: limits, store: options.PolicyStore, peers: map[string]*peerState{}, policies: map[string]ReceivePolicy{}, batches: map[string]*batchState{}}
+	m := &Manager{diskSpace: space, limits: limits, store: options.PolicyStore, accountingStore: options.AccountingStore, peers: map[string]*peerState{}, policies: map[string]ReceivePolicy{}, batches: map[string]*batchState{}}
+	m.accountingLimits = accountingLimits(options.AccountingLimits)
+	m.accounting = ReceiveAccounting{Version: 1}
+	if m.accountingStore != nil {
+		startupCtx := options.Context
+		if startupCtx == nil {
+			startupCtx = context.Background()
+		}
+		state, loadErr := m.accountingStore.LoadReceiveAccounting()
+		if errors.Is(loadErr, os.ErrNotExist) && !options.ExistingState {
+			loadErr = m.accountingStore.SaveReceiveAccounting(m.accounting)
+			state = m.accounting
+		} else if errors.Is(loadErr, os.ErrNotExist) {
+			m.recoveryCode = "legacy_review_required"
+		}
+		if loadErr == nil {
+			next, retained, inventoryErr := inventoryReceive(startupCtx, state, m.accountingLimits)
+			if inventoryErr == nil && len(next.Roots) != len(state.Roots) {
+				inventoryErr = m.accountingStore.SaveReceiveAccounting(next)
+			}
+			if inventoryErr == nil {
+				m.accounting, m.retained, m.reserved = next, retained, retained
+			} else {
+				m.recoveryCode = "inventory_unavailable"
+			}
+		} else if m.recoveryCode == "" {
+			m.recoveryCode = "index_unavailable"
+		}
+	}
 	if m.store != nil {
 		policies, err := m.store.LoadPolicies()
 		if err != nil {
@@ -248,6 +283,9 @@ func (m *Manager) checkPeerIdentityLocked(peer Peer) (*peerState, error) {
 func (m *Manager) Offer(peer Peer, manifest Manifest) (Batch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.recoveryCode != "" {
+		return Batch{}, ErrReceiveRecovery
+	}
 	if _, err := m.checkPeerLocked(peer); err != nil {
 		return Batch{}, err
 	}
@@ -366,11 +404,33 @@ func (m *Manager) Accept(id, destination string) (Batch, error) {
 }
 
 func (m *Manager) acceptLocked(b *batchState, destination string) error {
-	root, actual, stage, err := prepareDestinationWithSpace(destination, b.manifest.Entries, m.diskSpace, m.limits.DiskReserveBytes)
+	if m.recoveryCode != "" {
+		return ErrReceiveRecovery
+	}
+	root, actual, stage, token, destinationIdentity, err := prepareDestinationWithSpace(destination, b.manifest.Entries, m.diskSpace, m.limits.DiskReserveBytes)
 	if err != nil {
 		return err
 	}
+	if m.accountingStore != nil {
+		record, recordErr := receiveRootRecord(destination, actual, stage, token, destinationIdentity, root)
+		if recordErr != nil {
+			root.Close()
+			return ErrReceiveRecovery
+		}
+		next := ReceiveAccounting{Version: 1, Roots: append(append([]ReceiveRoot(nil), m.accounting.Roots...), record)}
+		if err := validateAccounting(next, m.accountingLimits); err != nil {
+			root.Close()
+			return ErrReceiveRecovery
+		}
+		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
+			root.Close()
+			m.recoveryCode = "index_unavailable"
+			return ErrReceiveRecovery
+		}
+		m.accounting = next
+	}
 	b.root, b.stage, b.value.Destination = root, stage, actual
+	b.ownerToken = token
 	b.value.State = Accepted
 	for i := range b.value.Files {
 		if b.value.Files[i].Kind == Directory {
@@ -420,20 +480,69 @@ func (m *Manager) stopLocked(b *batchState, state BatchState) {
 }
 
 func (m *Manager) releaseLocked(b *batchState) {
-	// A cancelled stream may still be blocked in a caller-owned Reader. Keep its
-	// storage reservation until temporary files have actually been removed.
-	if b.reserved && b.active == 0 {
+	// Retain the complete reservation while cleanup is unknown or incomplete.
+	if b.reserved && b.active == 0 && len(b.cleanup) == 0 {
 		m.reserved -= b.value.TotalBytes
 		b.reserved = false
 	}
 }
 
 func (m *Manager) closeRootLocked(b *batchState) {
-	if b.root != nil && b.active == 0 && terminal(b.value.State) {
-		_ = b.root.Remove(b.stage) // Only an empty staging directory is removed.
-		_ = b.root.Close()
-		b.root = nil
+	if b.root == nil || b.active != 0 || !terminal(b.value.State) {
+		return
 	}
+	if len(b.cleanup) != 0 {
+		if m.closed {
+			_ = b.root.Close()
+			b.root = nil
+		}
+		return
+	}
+	stageErr := b.root.Remove(b.stage) // Never remove saved output.
+	if stageErr != nil && !errors.Is(stageErr, os.ErrNotExist) {
+		m.recoveryCode = "cleanup_unavailable"
+		if m.closed {
+			_ = b.root.Close()
+			b.root = nil
+		}
+		return
+	}
+	if m.accountingStore != nil {
+		next := ReceiveAccounting{Version: 1}
+		for _, record := range m.accounting.Roots {
+			if record.OwnedRoot != b.value.Destination || record.OwnerToken != b.ownerToken {
+				next.Roots = append(next.Roots, record)
+			}
+		}
+		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
+			m.recoveryCode = "index_unavailable"
+		} else {
+			m.accounting = next
+		}
+	}
+	// Preserve ownership markers until the durable record is retired.
+	if m.recoveryCode == "" {
+		_ = b.root.Remove(".sobalink-owner")
+	}
+	_ = b.root.Close()
+	b.root = nil
+}
+
+func (m *Manager) cleanupFileLocked(b *batchState, fileID string) error {
+	for name, id := range b.cleanup {
+		if id != fileID {
+			continue
+		}
+		if b.root == nil {
+			return ErrReceiveRecovery
+		}
+		err := b.root.Remove(name)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return ErrReceiveRecovery
+		}
+		delete(b.cleanup, name)
+	}
+	return nil
 }
 
 // PausePeer prevents new offers and streams. Existing streams are cancelled;
@@ -521,6 +630,12 @@ func (m *Manager) RetryFile(id, fileID string) (Batch, error) {
 			return snapshot(b), ErrBusy
 		}
 		b.ctx, b.cancel = context.WithCancel(context.Background())
+	}
+	if m.recoveryCode != "" {
+		return snapshot(b), ErrReceiveRecovery
+	}
+	if err := m.cleanupFileLocked(b, fileID); err != nil {
+		return snapshot(b), err
 	}
 	b.value.CompletedBytes -= f.CompletedBytes
 	f.CompletedBytes, f.Error, f.State = 0, "", FilePending
@@ -699,7 +814,7 @@ func (m *Manager) Forget(id string) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if !terminal(b.value.State) || b.active != 0 {
+	if !terminal(b.value.State) || b.active != 0 || len(b.cleanup) != 0 || b.reserved {
 		return ErrState
 	}
 	m.metadata -= metadataSize(b.manifest)
@@ -717,6 +832,8 @@ func (m *Manager) Close() error {
 	for _, b := range m.batches {
 		if !terminal(b.value.State) {
 			m.stopLocked(b, Cancelled)
+		} else {
+			m.closeRootLocked(b)
 		}
 	}
 	return nil

@@ -184,8 +184,9 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &p); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	profileLoadErr := readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &p)
+	if profileLoadErr != nil && !errors.Is(profileLoadErr, os.ErrNotExist) {
+		return nil, profileLoadErr
 	}
 	if err := validateProfile(p); err != nil {
 		return nil, err
@@ -225,7 +226,8 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 			c.trustGeneration = peer.Generation
 		}
 	}
-	m, err := transfer.NewManager(transfer.Options{Limits: receiveTransferLimits(limits), PolicyStore: receiveStore{c}})
+	accountingLimits := receiveAccountingLimits(limits)
+	m, err := transfer.NewManager(transfer.Options{Context: parent, Limits: receiveTransferLimits(limits), PolicyStore: receiveStore{c}, ExistingState: profileLoadErr == nil, AccountingLimits: accountingLimits, AccountingStore: transfer.FileReceiveAccountingStore{Path: filepath.Join(opts.Directory, "receive-accounting.json"), Limits: accountingLimits}})
 	if err != nil {
 		cancel()
 		return nil, err

@@ -230,6 +230,8 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		return client(ctx, dir, string(command), v)
 	}
 	switch command {
+	case "receive":
+		return receiveRecoveryCommand(args, dir, ja, *dryRun, out, queryAction)
 	case "startup":
 		return startupCommand(args, ja, out, request)
 	case "proxy":
@@ -344,6 +346,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 var commandUsage = map[string]string{
 	"profile": "profile export [--output FILE] | profile import FILE [--apply --review REVISION]",
 	"start":   "start [--offline] [--background]", "run": "run [--offline]", "autostart": "autostart [enable|disable] [--startup saved|offline] [--json] [--apply --review TOKEN]", "status": "status [--json]", "peers": "peers [--json]", "ui": "ui", "stop": "stop [--json]",
+	"receive":     "receive recovery confirm [--reviewed] [--json]",
 	"receive-dir": "receive-dir [DIRECTORY | --clear]", "autosave": "autosave PEER_ID --on [--directory DIR] | autosave PEER_ID --off",
 	"pause": "pause PEER_ID", "resume": "resume PEER_ID", "reconnect": "reconnect PEER_ID",
 	"login": "login [--qr|--link|--browser] [--wait] [--refresh] [--timeout 5m]", "logout": "logout", "trust": "trust PEER_ID", "revoke": "revoke PEER_ID",
@@ -491,6 +494,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba message PEER_ID TEXT     Send text explicitly
   soba send PEER_ID PATH...     Offer files or folders as one batch
   soba accept ID DIRECTORY      Accept an incoming batch into this directory
+  soba receive recovery confirm [--reviewed]  Review old receive leftovers
   soba receive-dir DIRECTORY   Save the preferred receive folder
   soba autosave --help          Explicit per-peer automatic saving
   soba pause|resume PEER_ID     Pause/resume messages and file transfers
@@ -543,6 +547,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba message PEER_ID TEXT     文字を明示的に送信
   soba send PEER_ID PATH...     ファイル・フォルダーを一括で送信
   soba accept ID DIRECTORY      指定フォルダーへ一括受信を承認
+  soba receive recovery confirm [--reviewed]  旧受信の残骸を確認して再開
   soba receive-dir DIRECTORY   既定の受信フォルダーを保存
   soba autosave --help          相手を指定した自動保存
   soba pause|resume PEER_ID     メッセージ・ファイル転送を一時停止／再開

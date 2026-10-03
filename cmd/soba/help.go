@@ -28,6 +28,10 @@ func helpTopic(topic string, ja bool) (string, bool) {
 		return help, true
 	}
 	switch topic {
+	case "receive":
+		return text(ja,
+			"soba receive recovery confirm [--reviewed] [--json]\n\nWithout --reviewed, preview only. Review previous default, per-peer and manual receive folders, unfinished staging, and saved output. Keep saved files. Resolve unfinished old receives before confirming so no untracked partial data remains. Unknown old locations need your own review. --reviewed durably initializes only a missing legacy index; it cannot discard damaged records. Start soba first; this operation uses local control only.",
+			"soba receive recovery confirm [--reviewed] [--json]\n\n--reviewed なしは確認対象の表示だけです。以前の既定・相手別・手動の受信先、途中保存の残骸、保存済みファイルを確認してください。保存済みファイルは残します。確認の前に未追跡の途中保存データを整理してください。不明な旧保存先はご自身で確認が必要です。--reviewed は旧版の未作成索引だけを永続初期化し、破損記録は破棄しません。先に soba を起動してください。ローカル操作のみです。"), true
 	case "proxy":
 		return text(ja, proxyHelpEN, proxyHelpJA), true
 	case "doctor":
