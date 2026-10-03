@@ -300,6 +300,8 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .target-pill .badge { margin-left: auto; }
 .scope-note, .inline-note { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.8; color: var(--muted); }
 .scope-note svg, .inline-note svg { margin-top: 2px; color: var(--primary-text); }
+.advertised-review { display: grid; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+.advertised-review > .button { justify-self: start; max-width: 100%; white-space: normal; }
 .advanced { font-size: 13px; color: var(--muted); }
 .advanced summary { padding: 5px 0; }
 .advanced .form-stack { margin-top: 13px; color: var(--text); }

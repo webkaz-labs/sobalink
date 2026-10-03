@@ -4,11 +4,24 @@
 
 **Close, even from afar.** Connect devices and use their applications through selected TCP/UDP services. Start `soba`, choose a peer in its local Web UI, then connect to SSH/SFTP, web, database or other application ports. Share a local service with explicit peers and a chosen lifetime. Text, images, files and folders are also available. The embedded React UI and CLI use the same Go authorization checks.
 
-**This is an unreleased development build of sobalink.** The next candidate is `0.3.0-alpha.1`; no asset or installation pin for that version is published. The repository and Go module are now `github.com/webkaz-labs/sobalink`. Existing `tsnet-bridge` releases retain their historical signatures and do not establish availability of these new features. [Distribution and legacy releases](docs/DISTRIBUTION.md)
-
-Public baseline `1027f04a` ran 23 formal Playwright cases in [run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635): 20 passed and 3 failed. All four native target jobs, including race/vet, relay fixtures and packages, and the manifest job passed. This baseline and later fixes are not accepted releases. Actual-device and signed-distribution acceptance remain open. [Exact-source results](docs/VERIFICATION.en.md)
+**Experimental software.** Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a published version's source, signed assets and verification results. Source feature descriptions alone do not establish acceptance for that version. Real-device enrollment, application compatibility, phone QR, native IME, OS sign-in and sleep/wake need separate checks. [Exact-source verification results](docs/VERIFICATION.en.md)
 
 ## Get started
+
+### Use a signed release
+
+Use the following candidate `0.3.0-alpha.1` pin only if the canonical Releases page above contains the complete signed asset set for `v0.3.0-alpha.1` and you have checked that version's verification results. This example does not assert publication. If the required assets are absent, build from source below. [Required assets, signatures and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+
+Run with mise **2026.9.18** available. `mise use -g` selects the version for normal use.
+
+```sh
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise exec -- soba version
+mise exec -- soba
+```
+
+### Build from source
 
 Build this checkout with Go **1.27.1**, Node **24.19.0** and npm **11.9.0**. Frontend dependencies are pinned in the lockfile.
 
@@ -20,6 +33,8 @@ go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpa
 ```
 
 On Windows, build with `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba` and run `./bin/soba.exe`. Node is not required to run the resulting binary.
+
+### After starting
 
 1. Open the printed `http://127.0.0.1:PORT` in a browser on the same device, then enter the one-time code shown in the terminal. The code is never part of the URL. Run `soba ui` in another terminal to issue a new code
 2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. Tailcat LAN setup is available in the local UI and CLI, using an explicit trusted relay and pairing. See the [LAN guide](docs/LAN.en.md)

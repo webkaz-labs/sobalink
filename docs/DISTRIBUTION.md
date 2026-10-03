@@ -2,9 +2,28 @@
 
 [日本語の概要](../README.md) · [English overview](../README.en.md) · [Verification](VERIFICATION.en.md)
 
-**sobalink is an unreleased development build, with executable `soba`.** The next candidate is `0.3.0-alpha.1`, which is not published. No command here installs a published sobalink release. The repository locator and Go module are `github.com/webkaz-labs/sobalink`. Renaming the repository does not create a release or alter the signatures of earlier artifacts.
+**sobalink uses the executable `soba`.** Build a reviewed source checkout or install a complete signed prerelease from [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases). The repository locator and Go module are `github.com/webkaz-labs/sobalink`. Publication and verification belong to an exact version and source commit; the existence of source code, a tag or installation instructions does not establish either.
 
-The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the earlier CLI. Their CI, signatures and installation results do not verify this draft, its embedded UI, file protocol or Tailcat adapter. [Legacy releases](https://github.com/webkaz-labs/tsnet-bridge/releases)
+The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the earlier CLI. Their CI, signatures and installation results do not verify sobalink, its embedded UI, file protocol or Tailcat adapter. Historical signatures retain their original identities. [Legacy releases](https://github.com/webkaz-labs/tsnet-bridge/releases)
+
+## Install a signed prerelease
+
+The candidate pin below is usable **only if `v0.3.0-alpha.1` is published at the canonical [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) with its complete signed asset set**. Check the release's source commit and linked workflow results first, including the public-download and four-target installed-binary checks. This conditional example does not assert that the candidate is published or verified. If those assets or results are missing, use a reviewed source build or wait for a verified release.
+
+A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
+
+With mise **2026.9.18** available, the same explicit prerelease pin used by the publication workflow is:
+
+```sh
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise exec -- soba version
+mise exec -- soba
+```
+
+`mise use -g` selects this version in the global mise configuration. `mise exec --` runs it without depending on shell activation; with mise already activated, use `soba` directly. The manifest selects `bin/soba` or `bin/soba.exe` for the [native target](#native-targets). Keep signature, identity and digest checks enabled; do not use an age override, test signing key or verification bypass.
+
+The workflow uses `mise where` with this exact pin and [verify-installed.py](https://github.com/webkaz-labs/sobalink/blob/main/.github/scripts/verify-installed.py) to inspect the actual installation. It checks the native target, version, source commit, binary and frontend-lock digests, SBOM and retained notices, then executes the installed binary. These checks do not establish real enrollment, application compatibility, native IME, OS sign-in or suspend behavior. [Source-specific evidence and remaining acceptance](VERIFICATION.en.md)
 
 ## Build this checkout
 
@@ -34,7 +53,7 @@ python -m unittest discover -s .github/scripts -p 'test_*.py' -v
 python .github/scripts/check-frontend.py
 ```
 
-The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. A socket-restricted environment cannot establish native runtime acceptance. Public baseline `1027f04a` executed 23 formal Playwright cases in [run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635): 20 passed and three failed. Native race/vet passed on four targets, with relay/package stages still running at the recorded check. Later UI/Core/CLI fixes need their own final-source results. Enumeration and DOM tests do not replace browser execution.
+The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. A socket-restricted environment cannot establish native runtime acceptance. Each changed source needs its own affected checks; enumeration and DOM tests do not replace browser execution. Keep exact run outcomes in the [verification record](VERIFICATION.en.md#recorded-source-evidence).
 
 ## Native targets
 
@@ -100,7 +119,7 @@ Trusted-main Go caches bind runner, OS, architecture, toolchain, dependency mani
 
 ## LAN native acceptance
 
-The source now includes a stock Tailcat two-peer test using a loopback TLS DERP fixture, no external relay and no UDP underlay. Recorded four-target native CI covers denied-key admission, bidirectional TCP held for 130 seconds across a real two-minute relay lease, UDP, active revocation and cleanup, plus Core two-peer message/file/share operations. A recorded completed native snapshot is `1c5c195` in [run 37085369977](https://github.com/webkaz-labs/sobalink/actions/runs/37085369977); its separate browser job failed. Later changes and final font/graph/workflow browser checks need their own exact-source run. The restricted test topology is not a production promise of zero external traffic or general TCP continuity. Run the opt-in test on a native environment with socket support and no unsupported proxy/Tailscale environment overrides. The extra `lanlink_integration` and `ts_omit_udptransport` tags are for this isolated fixture only; ordinary production builds retain direct UDP support:
+The source includes a stock Tailcat two-peer test using a loopback TLS DERP fixture, no external relay and no UDP underlay. It exercises denied-key admission, bidirectional TCP held for 130 seconds across a real two-minute relay lease, UDP, active revocation and cleanup; the native suite also covers Core two-peer message/file/share operations. See the [verification record](VERIFICATION.en.md#recorded-source-evidence) for completed source-specific results. Each changed source and its browser flows need their own run. The restricted test topology is not a production promise of zero external traffic or general TCP continuity. Run the opt-in test on a native environment with socket support and no unsupported proxy/Tailscale environment overrides. The extra `lanlink_integration` and `ts_omit_udptransport` tags are for this isolated fixture only; ordinary production builds retain direct UDP support:
 
 ```sh
 SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport -count=1 -v -timeout=5m ./internal/lanlink -run '^TestTrustedRelayTwoPeerIntegration$'
@@ -108,7 +127,7 @@ SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmap
 
 ## Publication gates
 
-The prerelease workflow is prepared and starts only through an explicit manual `workflow_dispatch` with a candidate version and exact tested commit. It requires that commit to be the current main with successful canonical CI. Preparation does not start a release. Publication must:
+The prerelease workflow starts only through an explicit manual `workflow_dispatch` with a candidate version and exact tested commit. It requires that commit to be the current main with successful canonical CI. Publication must:
 
 1. Select a new explicit prerelease version and exact reviewed main commit, with successful CI for that commit
 2. Execute the four native race/vet/package jobs and the actual Go-backed local-browser acceptance job; record failures and unperformed real-network tests accurately
@@ -121,9 +140,9 @@ The prerelease workflow is prepared and starts only through an explicit manual `
 
 A release must have the signed `packslip.sigstore.json` and all matching assets; a tag or archive alone is insufficient. Ordinary CI's disposable offline signing fixture is not a release and must not be accepted as production identity.
 
-Future sobalink release verification uses `https://github.com/webkaz-labs/sobalink/.github/workflows/prerelease.yml@refs/heads/main`, with issuer `https://token.actions.githubusercontent.com`. Earlier tsnet-bridge signatures retain their original project and workflow identities; they are not rewritten. The sobalink workflow is prepared; its first signed candidate execution and publication remain pending. Packslip/mise do not themselves establish linked GitHub build provenance: the workflow separately verifies it with the repository, source, workflow, ref and runner restrictions.
+sobalink release verification uses `https://github.com/webkaz-labs/sobalink/.github/workflows/prerelease.yml@refs/heads/main`, with issuer `https://token.actions.githubusercontent.com`. Earlier tsnet-bridge signatures retain their original project and workflow identities; they are not rewritten. Packslip/mise do not themselves establish linked GitHub build provenance: the workflow separately verifies it with the repository, source, workflow, ref and runner restrictions.
 
-No new sobalink install pin is supplied before an actual release exists. The repository rename and local workflow preparation are complete; successful final-source CI and signed publication/install verification under the new workflow identity remain pending. Historical artifacts must still be checked against their original identities. OS warnings must be resolved through supported signing/distribution work, not bypassed.
+Check the selected release's linked run for signed publication and installed-binary results under this workflow identity. Historical artifacts must still be checked against their original identities. OS warnings must be resolved through supported signing/distribution work, not bypassed.
 
 ## Updating a development build
 

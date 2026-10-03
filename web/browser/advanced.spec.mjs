@@ -82,6 +82,28 @@ for (const locale of ['en', 'ja']) {
     await page.getByRole('button', { name: ja ? 'サービスに接続' : 'Connect to a service', exact: true }).click()
     await expect(page.locator('dialog .discovery-observation')).toContainText(ja ? 'サービス情報を確認済み' : 'Service information confirmed')
     await expect(page.locator('dialog input[aria-describedby=port-help]')).toBeEnabled()
+    const selection = page.getByRole('dialog').getByRole('combobox', { name: ja ? '利用できるサービス' : 'Available services', exact: true })
+    const advertised = selection.getByRole('option').filter({ hasText: /TCP 8080/ })
+    await expect(advertised).toHaveCount(1)
+    await selection.selectOption(await advertised.getAttribute('value'))
+    await expect(page.locator('dialog input[aria-describedby=port-help]')).toBeDisabled()
+    const review = page.locator('dialog .advertised-review')
+    for (const width of [1180, 390, 375]) {
+      await page.setViewportSize({ width, height: width <= 390 ? 844 : 960 })
+      await review.scrollIntoViewIfNeeded()
+      await expect.poll(() => review.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        const dialog = element.closest('dialog').getBoundingClientRect()
+        const children = [...element.children]
+        return bounds.left >= dialog.left && bounds.right <= dialog.right && element.scrollWidth <= element.clientWidth + 1 && children.every((child, index) => {
+          const box = child.getBoundingClientRect()
+          const previous = index ? children[index - 1].getBoundingClientRect() : null
+          return box.width > 0 && box.left >= bounds.left - 1 && box.right <= bounds.right + 1 && child.scrollWidth <= child.clientWidth + 1 && (!previous || box.top >= previous.bottom - 1)
+        })
+      }), { message: 'Advertised metadata and its review action must stack without clipping inside the dialog' }).toBe(true)
+      await expect(review.getByRole('button', { name: ja ? '公開情報を更新して確認' : 'Refresh advertised review', exact: true })).toBeVisible()
+      await app.capture(`advertised-review-${locale}-${width}`)
+    }
     expect(await app.count('service.connect')).toBe(0)
     await page.keyboard.press('Escape')
   })

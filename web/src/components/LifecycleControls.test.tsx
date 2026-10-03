@@ -57,6 +57,13 @@ describe('reviewed lifecycle controls', () => {
       await userEvent.selectOptions(screen.getByLabelText(l('action')), 'disable')
       expect(screen.getByLabelText(l('previewCLI'))).toHaveValue('soba --state-dir "STATE_DIRECTORY" autostart disable --startup offline --json')
       expect(screen.getByLabelText(l('applyCLI'))).toHaveValue('soba --state-dir "STATE_DIRECTORY" autostart disable --startup offline --apply --review REVIEW_TOKEN')
+      for (const key of ['mode', 'action']) expect(screen.getByRole('combobox', { name: l(key) })).toHaveAccessibleName(l(key))
+      for (const key of ['previewCLI', 'applyCLI']) {
+        const input = screen.getByRole('textbox', { name: l(key) }) as HTMLTextAreaElement
+        expect(input.labels).toHaveLength(1)
+        expect(input.labels![0].textContent).toBe(l(key))
+        expect(input.labels![0].control).toBe(input)
+      }
       await userEvent.click(screen.getAllByRole('button', { name: l('copy') })[0])
       expect(copy).toHaveBeenCalledWith('soba --state-dir "STATE_DIRECTORY" autostart disable --startup offline --json')
       expect(fetch).not.toHaveBeenCalled()

@@ -28,12 +28,12 @@ func bindFixturePort(network string, port int) (int, io.Closer, error) {
 	return l.Addr().(*net.TCPAddr).Port, l, nil
 }
 
-// allocateFixturePorts claims the complete listener set at once, then releases
-// it for the service. Keep rejected TCP anchors open so :0 cannot repeatedly
-// select the same unusable ID port. A prior anchor can supply the next ID's
-// lower neighbor; otherwise sequential OS allocation would block itself.
-// The relay is independent: only the two ID TCP ports must be consecutive.
-// At most maxAttempts+3 sockets are held, and all are closed on every exit.
+// allocateFixturePorts reserves the UDP ID anchor first. Windows TCP and UDP
+// excluded ranges can differ, so a TCP :0 candidate can repeatedly be forbidden
+// for UDP. The OS UDP allocator chooses a valid UDP candidate, then this helper
+// checks its two TCP ports and the independent relay without changing OS policy.
+// Rejected UDP anchors remain held; partial TCP claims are released immediately.
+// At most maxAttempts+3 sockets are held, and every exit closes them all.
 func allocateFixturePorts(maxAttempts int, bind fixturePortBinder) (int, int, error) {
 	anchors := make(map[int]io.Closer)
 	defer func() {
@@ -43,43 +43,38 @@ func allocateFixturePorts(maxAttempts int, bind fixturePortBinder) (int, int, er
 	}()
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		id, anchor, err := bind("tcp4", 0)
+		id, anchor, err := bind("udp4", 0)
 		if err != nil {
-			return 0, 0, fmt.Errorf("fixture TCP candidate %d/%d: %w", attempt, maxAttempts, err)
+			return 0, 0, fmt.Errorf("fixture UDP candidate %d/%d: %w", attempt, maxAttempts, err)
 		}
 		if _, exists := anchors[id]; exists {
 			_ = anchor.Close()
-			return 0, 0, fmt.Errorf("fixture TCP candidate %d/%d reused reserved port %d", attempt, maxAttempts, id)
+			return 0, 0, fmt.Errorf("fixture UDP candidate %d/%d reused reserved port %d", attempt, maxAttempts, id)
 		}
 		anchors[id] = anchor
 		if id < 1025 || id > 65535 {
 			lastErr = fmt.Errorf("ID candidate %d is outside 1025..65535", id)
 			continue
 		}
-		neighbor, held := anchors[id-1]
-		if !held {
-			_, neighbor, err = bind("tcp4", id-1)
-			if err != nil {
-				lastErr = fmt.Errorf("ID candidate %d, TCP %d: %w", id, id-1, err)
-				continue
-			}
-		}
-		_, udp, err := bind("udp4", id)
+		_, tcp, err := bind("tcp4", id)
 		if err != nil {
-			if !held {
-				_ = neighbor.Close()
-			}
-			lastErr = fmt.Errorf("ID candidate %d, UDP %d: %w", id, id, err)
+			lastErr = fmt.Errorf("ID candidate %d, TCP %d: %w", id, id, err)
 			continue
 		}
-		defer udp.Close()
-		if !held {
-			defer neighbor.Close()
+		_, neighbor, err := bind("tcp4", id-1)
+		if err != nil {
+			_ = tcp.Close()
+			lastErr = fmt.Errorf("ID candidate %d, TCP %d: %w", id, id-1, err)
+			continue
 		}
 		relay, listener, err := bind("tcp4", 0)
 		if err != nil {
+			_ = tcp.Close()
+			_ = neighbor.Close()
 			return 0, 0, fmt.Errorf("fixture relay TCP after ID candidate %d/%d (port %d): %w", attempt, maxAttempts, id, err)
 		}
+		defer tcp.Close()
+		defer neighbor.Close()
 		defer listener.Close()
 		if relay < 1024 || relay > 65535 || relay == id || relay == id-1 {
 			return 0, 0, fmt.Errorf("fixture relay TCP port %d is invalid for ID candidate %d/%d (port %d)", relay, attempt, maxAttempts, id)
@@ -89,7 +84,7 @@ func allocateFixturePorts(maxAttempts int, bind fixturePortBinder) (int, int, er
 	if lastErr == nil {
 		return 0, 0, fmt.Errorf("fixture port search requires a positive attempt limit, got %d", maxAttempts)
 	}
-	return 0, 0, fmt.Errorf("no fixture ports after %d distinct TCP candidates: %w", maxAttempts, lastErr)
+	return 0, 0, fmt.Errorf("no fixture ports after %d distinct UDP candidates: %w", maxAttempts, lastErr)
 }
 
 // The fake OS always returns the first available ephemeral candidate. Releasing
@@ -157,23 +152,30 @@ func (os *fixturePortOS) assertClosed(t *testing.T) {
 	}
 }
 
-func TestFixturePortsRetainAndReuseRejectedAnchors(t *testing.T) {
-	for _, failure := range []string{"tcp4:39999", "udp4:40000"} {
-		t.Run(failure, func(t *testing.T) {
-			os := &fixturePortOS{
-				candidates: []int{40000, 40001, 53000},
-				failures:   map[string]error{failure: errors.New("test bind failure")},
-			}
-			id, relay, err := allocateFixturePorts(2, os.bind)
-			if err != nil || id != 40001 || relay != 53000 {
-				t.Fatalf("ports = (%d, %d), error = %v", id, relay, err)
-			}
-			os.assertClosed(t)
-			if os.maxOpen != 4 {
-				t.Errorf("peak sockets = %d, want 4 (reuse anchor; release failed UDP neighbor)", os.maxOpen)
-			}
-		})
+func TestFixturePortsRetainUDPAnchorsAndReleasePartialTCP(t *testing.T) {
+	os := &fixturePortOS{candidates: []int{40000, 40001, 53000}, failures: map[string]error{"tcp4:39999": errors.New("test bind failure")}}
+	id, relay, err := allocateFixturePorts(2, os.bind)
+	if err != nil || id != 40001 || relay != 53000 {
+		t.Fatalf("ports=(%d,%d), err=%v", id, relay, err)
 	}
+	os.assertClosed(t)
+	if os.maxOpen != 5 {
+		t.Fatalf("peak sockets=%d, want five bounded claims", os.maxOpen)
+	}
+}
+func TestFixturePortsPreferUsableUDPRange(t *testing.T) {
+	os := &fixturePortOS{candidates: []int{40000, 65000}, failures: map[string]error{"udp4:65000": errors.New("excluded UDP range")}}
+	binder := func(network string, port int) (int, io.Closer, error) {
+		if network == "tcp4" && port == 0 {
+			return os.bind(network, 65000)
+		}
+		return os.bind(network, port)
+	}
+	id, relay, err := allocateFixturePorts(2, binder)
+	if err != nil || id != 40000 || relay != 65000 {
+		t.Fatalf("UDP allocator was not authoritative: %d %d %v", id, relay, err)
+	}
+	os.assertClosed(t)
 }
 
 func TestFixturePortsAcceptUpperIDBoundary(t *testing.T) {
@@ -208,10 +210,10 @@ func TestFixturePortsFailureDiagnosticsAndCleanup(t *testing.T) {
 		wantCause  error
 		wantText   []string
 	}{
-		{"neighbor exhaustion", 2, []int{40000, 41000}, map[string]error{"tcp4:39999": bindErr, "tcp4:40999": bindErr}, bindErr, []string{"2 distinct TCP candidates", "ID candidate 41000", "TCP 40999"}},
-		{"UDP exhaustion", 2, []int{40000, 40001}, map[string]error{"udp4:40000": bindErr, "udp4:40001": bindErr}, bindErr, []string{"2 distinct TCP candidates", "ID candidate 40001", "UDP 40001"}},
-		{"invalid candidates", 2, []int{1024, 1023}, nil, nil, []string{"2 distinct TCP candidates", "ID candidate 1023", "outside 1025..65535"}},
-		{"candidate allocation", 2, nil, nil, errFixturePortExhausted, []string{"TCP candidate 1/2"}},
+		{"neighbor exhaustion", 2, []int{40000, 41000}, map[string]error{"tcp4:39999": bindErr, "tcp4:40999": bindErr}, bindErr, []string{"2 distinct UDP candidates", "ID candidate 41000", "TCP 40999"}},
+		{"TCP ID exhaustion", 2, []int{40000, 41000}, map[string]error{"tcp4:40000": bindErr, "tcp4:41000": bindErr}, bindErr, []string{"2 distinct UDP candidates", "ID candidate 41000", "TCP 41000"}},
+		{"invalid candidates", 2, []int{1024, 1023}, nil, nil, []string{"2 distinct UDP candidates", "ID candidate 1023", "outside 1025..65535"}},
+		{"candidate allocation", 2, nil, nil, errFixturePortExhausted, []string{"UDP candidate 1/2"}},
 		{"relay allocation", 2, []int{40000}, nil, errFixturePortExhausted, []string{"relay TCP", "ID candidate 1/2", "port 40000"}},
 		{"invalid relay", 2, []int{40000, 1023}, nil, nil, []string{"relay TCP port 1023", "ID candidate 1/2"}},
 		{"invalid limit", 0, nil, nil, nil, []string{"positive attempt limit"}},

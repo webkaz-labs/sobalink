@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import * as api from '../api'
 import { lifecycleText } from '../lifecycle-i18n'
 import type { Translate } from '../i18n'
@@ -7,16 +7,17 @@ import { Button, Modal, useAlive } from './ui'
 const prefix = 'soba --state-dir "STATE_DIRECTORY"'
 function CommandCopy({ value, label, locale }: { value: string; label: string; locale: api.Locale }) {
   const [status, setStatus] = useState('')
+  const id = useId()
   useEffect(() => setStatus(''), [value])
   const copy = async () => { try { await navigator.clipboard.writeText(value); setStatus('copied') } catch { setStatus('copyFailed') } }
-  return <div className="form-stack"><label className="field">{label}<textarea readOnly value={value} rows={2} spellCheck={false} className="code-value" /></label><div><Button type="button" onClick={copy}>{lifecycleText(locale, 'copy')}</Button>{status && <p role="status" className="small muted">{lifecycleText(locale, status)}</p>}</div></div>
+  return <div className="form-stack"><div className="field"><label htmlFor={id}>{label}</label><textarea id={id} readOnly value={value} rows={2} spellCheck={false} className="code-value" /></div><div><Button type="button" onClick={copy}>{lifecycleText(locale, 'copy')}</Button>{status && <p role="status" className="small muted">{lifecycleText(locale, status)}</p>}</div></div>
 }
 export function StartupGuide({ locale, t, onClose }: { locale: api.Locale; t: Translate; onClose: () => void }) {
   const l = (key: string) => lifecycleText(locale, key)
   const [mode, setMode] = useState('saved')
   const [action, setAction] = useState('enable')
   const command = `${prefix} autostart ${action} --startup ${mode}`
-  return <Modal title={l('startup')} t={t} onClose={onClose} wide><p>{l('startupIntro')}</p><p className="scope-note">{l('registrationStatus')}</p><p className="small muted">{l('registrationHint')}</p><div className="form-stack"><label className="field">{l('action')}<select value={action} onChange={event => setAction(event.target.value)}><option value="enable">{l('enable')}</option><option value="disable">{l('disable')}</option></select></label><label className="field">{l('mode')}<select value={mode} onChange={event => setMode(event.target.value)}><option value="saved">{l('saved')}</option><option value="offline">{l('offline')}</option></select></label><p>{l(mode === 'saved' ? 'savedHint' : 'offlineHint')}</p><p>{l('neverRestart')}</p>{action === 'disable' && <p>{l('disableHint')}</p>}<p className="scope-note">{l('sameDirectory')}</p><CommandCopy label={l('previewCLI')} value={`${command} --json`} locale={locale} /><p>{l('tokenHint')}</p><CommandCopy label={l('applyCLI')} value={`${command} --apply --review REVIEW_TOKEN`} locale={locale} /><details className="advanced"><summary>{t('technicalDetails')}</summary><p>{l('recovery')}</p><CommandCopy label={l('statusCLI')} value={`${prefix} status`} locale={locale} /><CommandCopy label={l('uiCLI')} value={`${prefix} ui`} locale={locale} /></details><div className="modal-actions"><Button onClick={onClose}>{t('close')}</Button></div></div></Modal>
+  return <Modal title={l('startup')} t={t} onClose={onClose} wide><p>{l('startupIntro')}</p><p className="scope-note">{l('registrationStatus')}</p><p className="small muted">{l('registrationHint')}</p><div className="form-stack"><label className="field">{l('action')}<select aria-label={l('action')} value={action} onChange={event => setAction(event.target.value)}><option value="enable">{l('enable')}</option><option value="disable">{l('disable')}</option></select></label><label className="field">{l('mode')}<select aria-label={l('mode')} value={mode} onChange={event => setMode(event.target.value)}><option value="saved">{l('saved')}</option><option value="offline">{l('offline')}</option></select></label><p>{l(mode === 'saved' ? 'savedHint' : 'offlineHint')}</p><p>{l('neverRestart')}</p>{action === 'disable' && <p>{l('disableHint')}</p>}<p className="scope-note">{l('sameDirectory')}</p><CommandCopy label={l('previewCLI')} value={`${command} --json`} locale={locale} /><p>{l('tokenHint')}</p><CommandCopy label={l('applyCLI')} value={`${command} --apply --review REVIEW_TOKEN`} locale={locale} /><details className="advanced"><summary>{t('technicalDetails')}</summary><p>{l('recovery')}</p><CommandCopy label={l('statusCLI')} value={`${prefix} status`} locale={locale} /><CommandCopy label={l('uiCLI')} value={`${prefix} ui`} locale={locale} /></details><div className="modal-actions"><Button onClick={onClose}>{t('close')}</Button></div></div></Modal>
 }
 export function ServiceOwnership({ service, locale }: { service: Pick<api.Service, 'owner' | 'leaseSeconds' | 'leaseExpiresAt'>; locale: api.Locale }) {
   const l = (key: string) => lifecycleText(locale, key)

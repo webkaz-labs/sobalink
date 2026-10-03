@@ -4,13 +4,26 @@
 
 **離れていても、すぐそばに。** 端末同士をつなぎ、必要な TCP/UDP サービスを通じてアプリを使います。`soba` を起動し、ローカル画面で相手を選んで、SSH/SFTP・Web・データベースなどのポートへ接続します。この端末のサービスも、相手と有効期間を決めて共有できます。文字・画像・ファイル・フォルダーの送信にも対応します。Go に埋め込んだ React 画面と CLI は同じ許可判定を使います。
 
-**sobalink の未リリース開発版です。** 次の候補は `0.3.0-alpha.1` ですが、その版の配布物や導入用の指定はまだ公開していません。 リポジトリと Go モジュールは `github.com/webkaz-labs/sobalink` になりました。旧 `tsnet-bridge` の署名は当時の識別情報を保持し、その公開物に新機能が含まれるとは扱いません。[配布方針と旧版の区別](docs/DISTRIBUTION.md)
-
-公開基準 `1027f04a` の [run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635) では、正式な Playwright 23ケース中20件が合格、3件が失敗しました。race/vet・中継 fixture・パッケージを含む4ネイティブ対象のジョブとマニフェストは合格しました。このソースや後続修正を受入済みとは扱いません。実端末と署名付き配布も未完了です。[正確なソースごとの結果](docs/VERIFICATION.md)
+**実験的なソフトウェアです。** 公開版は [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) で版・ソース・署名付き資材と検証結果を確認してください。ソースの機能説明だけでは、その版での受入を示しません。実端末での認証・アプリ互換性・スマートフォン QR・ネイティブ IME・OS サインインとスリープ復帰は別の確認が必要です。[ソースごとの検証結果](docs/VERIFICATION.md)
 
 ## まず使う
 
-開発用に、このチェックアウトからビルドします。Go **1.27.1**、Node **24.19.0**、npm **11.9.0** が対象です。画面の依存関係はロックファイルに固定しています。
+### 署名付き公開版を使う
+
+候補 `0.3.0-alpha.1` は、上の正規 Releases に `v0.3.0-alpha.1` の署名付き完全な資材一式が公開され、その版の検証結果を確認できる場合だけ、次の指定で導入できます。この例は公開済みという意味ではありません。必要な資材がない場合は、下のソースビルドを使います。[必要な資材・署名・対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+
+mise **2026.9.18** を用意した環境で実行します。`mise use -g` は通常使う版を設定します。
+
+```sh
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise exec -- soba version
+mise exec -- soba
+```
+
+### ソースからビルドする
+
+このチェックアウトをビルドする場合は Go **1.27.1**、Node **24.19.0**、npm **11.9.0** を使います。画面の依存関係はロックファイルに固定しています。
 
 ```sh
 npm --prefix web ci --no-audit --no-fund
@@ -20,6 +33,8 @@ go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpa
 ```
 
 Windows のビルドは `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba`、起動は `./bin/soba.exe` です。導入後の実行に Node は不要です。
+
+### 起動後の操作
 
 1. 表示された `http://127.0.0.1:ポート` を同じ端末のブラウザーで開き、端末に表示された一回用コードを入力します。コードは URL に含みません。再発行は別の端末ウィンドウで `soba ui`
 2. ネットワークを選びます。既存の Tailnet を利用する場合は、sobalink の独立ノードを公式の Tailscale 認証ページで参加させます。Tailcat LAN は明示した信頼できる中継先とペアリングを使います。ローカル画面と CLI から設定できます。[LAN 手順](docs/LAN.ja.md)

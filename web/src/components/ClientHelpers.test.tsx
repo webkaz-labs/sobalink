@@ -104,6 +104,27 @@ function clientSettings(): ClientSettingsView {
   return { application: 'unverified', rustdesk: [], notices: [{ code: 'application_unverified', message: 'Keep TLS certificate and SSH host-key verification enabled.', messageJa: 'TLS 証明書・SSH ホスト鍵の検証は有効のままにしてください。' }], services: [{ id: 'saved-ssh', name: 'ssh-fixture', backend: 'tailnet', direction: 'forward', purpose: 'ssh', network: 'tcp', peerId: 'fixture-id', localHost: '127.0.0.1', localEndpoint: '127.0.0.1:2222', remoteEndpoints: [], mappings: [{ localFirst: 2222, localLast: 2222, remoteFirst: 22, remoteLast: 22 }], lifetime: 'until-stopped', ttlSeconds: 0, status: 'saved', listenerReady: false, application: 'unverified', ssh: { hostKeyAlias: 'sobalink-tailnet-fixture-id-22', args: ['ssh'], command: 'ssh -o HostKeyAlias=sobalink-tailnet-fixture-id-22 -p 2222 -l USER 127.0.0.1' }, httpCandidate: 'http://127.0.0.1:2222/', notices: [{ code: 'http_candidate_tls', message: 'HTTP is only a candidate; preserve the original TLS hostname, SNI and certificate validation.', messageJa: 'HTTP は候補です。元の TLS ホスト名・SNI・証明書検証を維持してください。' }] }] }
 }
 describe('read-only client hints', () => {
+  it.each(['en', 'ja'] as const)('keeps copy-field labels separate from changing values (%s)', locale => {
+    const relay = clientText(locale, 'relayServer'); const http = clientText(locale, 'http')
+    const fields = (port: number) => <><CopyValue label={relay} value={`127.0.0.1:${port}`} locale={locale} /><CopyValue label={http} value={`http://127.0.0.1:${port}/`} locale={locale} /></>
+    const view = render(fields(32117))
+    for (const port of [32117, 33117]) {
+      view.rerender(fields(port))
+      const inputs = [relay, http].map(label => {
+        const input = screen.getByRole('textbox', { name: label }) as HTMLTextAreaElement
+        expect(input.labels).toHaveLength(1)
+        expect(input.labels![0].textContent).toBe(label)
+        expect(input.labels![0].control).toBe(input)
+        expect(input).toHaveAccessibleName(label)
+        expect(input.readOnly).toBe(true)
+        return input
+      })
+      expect(inputs[0].id).not.toBe(inputs[1].id)
+      expect(inputs[0]).toHaveValue(`127.0.0.1:${port}`)
+      expect(inputs[1]).toHaveValue(`http://127.0.0.1:${port}/`)
+    }
+  })
+
   it.each(['en', 'ja'] as const)('shows exact endpoints and application caveats without launch or mutation (%s)', async locale => {
     const value = clientSettings(); const run = vi.fn().mockResolvedValue({ ok: true, result: value }); const server = { state, error: null, setError: vi.fn(), run, stale: false } as unknown as Server; const c = (key: string) => clientText(locale, key)
     render(<ClientSettingsDialog target={{ ids: ['saved-ssh'] }} server={server} locale={locale} t={translator(locale)} onClose={vi.fn()} />)

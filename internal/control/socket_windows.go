@@ -9,6 +9,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"golang.org/x/sys/windows"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -42,7 +43,7 @@ func dial(ctx context.Context, dir string) (net.Conn, error) {
 }
 
 func Unavailable(e error) bool {
-	return errors.Is(e, windows.ERROR_FILE_NOT_FOUND) || errors.Is(e, windows.ERROR_PATH_NOT_FOUND)
+	return errors.Is(e, os.ErrNotExist) || errors.Is(e, windows.ERROR_FILE_NOT_FOUND) || errors.Is(e, windows.ERROR_PATH_NOT_FOUND)
 }
 
 // A server DACL alone does not prevent another account squatting a predictable

@@ -11,11 +11,12 @@ function lifetimeText(locale: Locale, lifetime: ServiceLifetime, seconds: number
 function Notices({ notices, locale }: { notices: ClientNotice[]; locale: Locale }) { return <ul className="client-notices">{notices.map((notice, index) => <li key={`${notice.code}:${index}`}>{locale === 'ja' ? notice.messageJa : notice.message}</li>)}</ul> }
 export function CopyValue({ label, value, locale }: { label: string; value: string; locale: Locale }) {
   const [status, setStatus] = useState('')
+  const id = useId()
   const alive = useAlive()
   const current = useRef(value); current.current = value
   useEffect(() => setStatus(''), [value])
   const copy = async () => { const selected = value; try { await navigator.clipboard.writeText(selected); if (alive.current && current.current === selected) setStatus('copied') } catch { if (alive.current && current.current === selected) setStatus('copyFailed') } }
-  return <div className="client-copy"><label className="field">{label}<textarea readOnly value={value} rows={value.length > 100 ? 3 : 2} spellCheck={false} className="code-value" /></label><Button type="button" onClick={() => void copy()} aria-label={`${clientText(locale, 'copy')}: ${label}`}>{clientText(locale, 'copy')}</Button>{status && <p role="status" className="small muted">{clientText(locale, status)}</p>}</div>
+  return <div className="client-copy"><div className="field"><label htmlFor={id}>{label}</label><textarea id={id} readOnly value={value} rows={value.length > 100 ? 3 : 2} spellCheck={false} className="code-value" /></div><Button type="button" onClick={() => void copy()} aria-label={`${clientText(locale, 'copy')}: ${label}`}>{clientText(locale, 'copy')}</Button>{status && <p role="status" className="small muted">{clientText(locale, status)}</p>}</div>
 }
 export function RustDeskSettings({ settings, locale, t }: { settings: RustDeskClientSettings; locale: Locale; t: Translate }) {
   const c = (key: string) => clientText(locale, key)

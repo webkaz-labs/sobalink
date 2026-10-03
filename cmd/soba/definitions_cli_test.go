@@ -64,8 +64,15 @@ func TestProfileCLIExportUsesPrivateNewFileAndImportReview(t *testing.T) {
 	if _, err := run("profile", "export", "--output", path); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm()&0077 != 0 {
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = checkProxyPrivateFile(file)
+	if closeErr := file.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
 		t.Fatal("export was not private", err)
 	}
 	b, err := os.ReadFile(path)

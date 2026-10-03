@@ -413,7 +413,7 @@ test('advertised service selection locks its target and starts one reviewed list
   await expect(serviceName(page)).toHaveValue('advertised-service-2')
   await expectPrivateValue(selection, advertisedID, 'authoritative settings retain the advertised service identity')
   expect(await app.count('service.config')).toBe(reads + 1)
-  await dialog(page).getByText('Advanced options', { exact: true }).click()
+  await dialog(page).getByText('More options', { exact: true }).click()
   await expect(dialog(page).getByRole('combobox', { name: 'Purpose', exact: true })).toHaveValue('web')
   await expect(dialog(page).getByRole('combobox', { name: 'Purpose', exact: true })).toBeDisabled()
   await closeDialog(page)

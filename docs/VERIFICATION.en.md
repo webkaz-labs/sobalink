@@ -2,13 +2,14 @@
 
 [日本語](VERIFICATION.md) · [User guide](GENERIC.en.md) · [Distribution](DISTRIBUTION.md)
 
-**sobalink is an unreleased development build.** Device/service connectivity, transfers, saved workflows, capacity controls, private sign-in, the optional proxy and diagnostics are implemented. Implementation, local logic tests, native CI, browser execution and actual-device acceptance are separate results.
+**Verification applies to an exact source and version.** Device/service connectivity, transfers, saved workflows, capacity controls, private sign-in, the optional proxy and diagnostics are implemented. Implementation, local logic tests, native CI, browser execution, signed distribution and actual-device acceptance are separate results. For a published prerelease, also inspect its linked release workflow results.
 
 ## Recorded source evidence
 
 | Source/category | Result and boundary |
 | --- | --- |
-| Public baseline `1027f04a` | [Run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635): 23 formal Playwright cases executed, 20 passed and 3 failed. Two failures concern positional relay-input test locators; one exposed empty-string/default-folder autosave fallback. Later fixes are integrated locally and require their own run. All four native target jobs (Linux x64/ARM64, macOS ARM64 and Windows x64), including race/vet, isolated relay fixtures and packages, plus the manifest job passed. The browser failure keeps this run from passing overall |
+| Source `20dac52` | [Run 37104195732](https://github.com/webkaz-labs/sobalink/actions/runs/37104195732) completed with Linux x64/ARM64 and macOS ARM64 native jobs passing, while the Windows x64 and browser jobs failed. The browser suite passed 36 of 45 cases. This is a failed run overall; it establishes neither acceptance of later fixes nor signed-release or actual-device acceptance |
+| Historical public `1027f04a` | [Run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635): 23 formal Playwright cases executed, 20 passed and 3 failed. Two failures concern positional relay-input test locators; one exposed empty-string/default-folder autosave fallback. Later fixes require their own source-specific evidence. All four native target jobs (Linux x64/ARM64, macOS ARM64 and Windows x64), including race/vet, isolated relay fixtures and packages, plus the manifest job passed. The browser failure keeps this run from passing overall |
 | Historical public `1c5c195` | [Run 37085369977](https://github.com/webkaz-labs/sobalink/actions/runs/37085369977): Linux x64/ARM64, macOS ARM64, Windows x64 and manifest passed. The older agent-script browser job failed before local login. This run is not fully green |
 | Earlier `5dd6b8c99b8e0167924b38411889e3a0092ac4af` | [Run 37046723268](https://github.com/webkaz-labs/sobalink/actions/runs/37046723268) passed all six jobs, including that snapshot's Go-backed Chromium smoke. This does not verify later forms or restored workflows |
 | Later service/capacity/profile changes | Local focused race tests cover logical choices, finite storage/flow budgets, lifetime and revocation, saved definitions, groups, leased tasks, rollback, offline metadata and reviewed deletion/import. Native CI must run on the final integrated source |
@@ -18,7 +19,7 @@
 | Later local Playwright Test suite | 28 production Go-process browser cases were enumerated for the later UI snapshot, not executed there. The 23-case execution above belongs to `1027f04a`; it does not establish acceptance of later UI or fixes |
 | Proxy and diagnostics | Focused race tests, vet and Windows cross-compilation passed locally. Mock/in-memory transports exercise authenticated TCP-only scopes, current identities, teardown, redaction and explicit diagnostics. Native proxy sockets and actual applications remain unverified |
 | Explicit startup/private profiles `c148f85` / `50d0f00` | Focused synthetic Core/CLI race tests and vet passed for frozen outbound selections, stale approval, offline suppression, private save/generate/reveal, durable revoke/failure handling, bounded storage and recovery without expiry renewal. This does not establish native installed ACLs, actual OS sign-in/suspend, enrollment or real proxy clients |
-| Prerelease preparation `d74d815` | Manual exact-main CI gate, four native packages, repeatability, Packslip signature/provenance and four-target mise installation checks are prepared. Candidate `0.3.0-alpha.1` is not published |
+| Prerelease preparation `d74d815` | Prepared the manual exact-main CI gate, four native packages, repeatability, Packslip signature/provenance and four-target mise installation checks for candidate `0.3.0-alpha.1`. Workflow preparation alone is not evidence of publication or successful execution |
 
 A failed server launch or pre-login browser failure is a failed gate, not acceptance of the screens that follow. Do not carry results across changed source without rerunning affected checks. Cross-compilation is not native execution. Native loopback fixtures do not establish actual-device, direct LAN/WAN/NAT, sleep/wake, OS sign-in, native IME or application compatibility.
 
@@ -70,6 +71,6 @@ Actual devices still need explicit setup/identity verification, consented servic
 
 ## Release boundary
 
-[Distribution](DISTRIBUTION.md) requires successful CI for the exact current main commit, real-browser acceptance, repeatable packages, signatures/provenance, independent public download and actual installed-binary checks on four native targets. No new sobalink release or installation pin exists yet. A prepared workflow, draft PR or candidate version is not a release.
+[Distribution](DISTRIBUTION.md) requires successful CI for the exact main commit selected for publication, real-browser acceptance, repeatable packages, signatures/provenance, independent public download and actual installed-binary checks on four native targets. Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a selected version's assets, source and linked workflow results. A prepared workflow, draft PR, conditional installation example or candidate version is not evidence of a release.
 
 Historical [tsnet-bridge releases](https://github.com/webkaz-labs/tsnet-bridge/releases) retain their original executable, configuration and signature identities. Their installation and application-specific results do not verify this product.

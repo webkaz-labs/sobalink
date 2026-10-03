@@ -37,7 +37,12 @@ function setup(locale: api.Locale = 'en', failure?: string) {
 async function draft(p: (key: string) => string) {
   await screen.findByText(p('none'))
   await userEvent.type(screen.getByLabelText(p('name')), 'example-proxy')
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: `${p('target')} 1` }), 'fixture-studio')
+  const target = screen.getByRole('combobox', { name: `${p('target')} 1` })
+  expect(target).toHaveAccessibleName(`${p('target')} 1`)
+  await userEvent.selectOptions(target, 'fixture-studio')
+  expect(target).toHaveAccessibleName(`${p('target')} 1`)
+  expect(screen.getByRole('combobox', { name: p('listener') })).toHaveAccessibleName(p('listener'))
+  expect(screen.getByRole('combobox', { name: p('lifetime') })).toHaveAccessibleName(p('lifetime'))
 }
 async function review(p: (key: string) => string) {
   await userEvent.click(screen.getByRole('button', { name: p('review') }))

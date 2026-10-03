@@ -23,8 +23,11 @@ func TestSobaPlansSavedAndOffline(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := os.Stat(p.Path); !os.IsNotExist(err) {
-					t.Fatalf("planning wrote a file: %v", err)
+				// Deliberately malformed path characters exercise escaping even on
+				// hosts where that path cannot exist. Inspect the real fixture root
+				// rather than confusing ERROR_INVALID_NAME with a created file.
+				if entries, err := os.ReadDir(o.Home); err != nil || len(entries) != 0 {
+					t.Fatalf("planning changed the fixture directory: %v (%d entries)", err, len(entries))
 				}
 				if !strings.HasPrefix(p.Name, "sobalink-") || strings.Contains(p.Content, "tsnet-bridge") || strings.Contains(p.Content, "--idle") {
 					t.Fatalf("not an independent sobalink registration: %+v", p)
