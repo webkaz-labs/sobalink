@@ -20,7 +20,9 @@ Automatic saving uses the exact previously approved peer and destination; a defa
 
 Ctrl+C, `soba stop`, and the local UI's Stop action stop the application and active traffic while preserving the saved login. A repeated background start reports `already-running` with `startupApplied: false`; it does not change the running application's startup mode. Stop the current process before choosing another startup mode.
 
-Background output goes to private `startup.log` inside the selected state directory. A readiness timeout or cancellation can leave the launched process running; check `soba status` before retrying and use `soba stop` if needed. For a direct startup error, run `soba run` with the same `--state-dir`.
+Background application output and command errors go to private `startup.log` inside the selected state directory. The application keeps that single file at or below 1 MiB for its entire lifetime, retaining recent output when older bytes roll off. Rollover keeps up to the most recent half-file before appending; an oversized write keeps only its final 1 MiB. The first retained line may be incomplete. No backup log files accumulate. Raw process stdout/stderr, including runtime panic output, are discarded for detached launches; foreground `soba run` retains its normal terminal diagnostics. Service-manager logs for sign-in startup are managed separately by the OS.
+
+A readiness timeout or cancellation can leave the launched process running; check `soba status` before retrying and use `soba stop` if needed. For a direct startup error or runtime panic, run `soba run` with the same `--state-dir`.
 
 [Explicit outbound startup and private SOCKS profiles](STARTUP.en.md) describe the separate opt-in. Saving a definition or importing a profile does not create that permission. Changes to reviewed scope, network/hostname or peer revocation invalidate approval. A finite lifetime begins anew on a new online process launch; reconnecting an existing session does not renew it. Inbound shares and old file transfers never auto-start.
 

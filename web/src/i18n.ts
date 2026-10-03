@@ -1,5 +1,11 @@
 import type { Locale } from './api'
 export const en = {
+  peer_storage_unavailable: 'The receiving device could not store this transfer. Check its storage and receive settings, then retry.',
+  disk_space_low: 'Storage or its disk quota is full, or free space is below the transfer safety margin. Free space, check the quota or review diskReserveBytes in Capacity and history, then retry. Original and saved files stay in place.',
+  disk_space_unknown: 'Available disk space could not be checked. Check the destination volume and permissions, then retry. Original and saved files stay in place.',
+  peer_disk_space_low: 'The receiving device reports full storage, a full disk quota, or too little free space. Free space, check its quota or review diskReserveBytes there, accept the pending batch if needed, then retry. Saved files stay in place.',
+  peer_disk_space_unknown: 'The receiving device could not check its available disk space. Check its destination volume and permissions, accept the pending batch if needed, then retry. Saved files stay in place.',
+
   autosave_directory_required: 'Choose an existing absolute folder on this device before enabling automatic receiving.',
   lan_identity_required: 'Create this device’s public ID before reviewing the invitation.',
   lan_invitation_invalid: 'This invitation is invalid or expired. Copy a new complete invitation from the other device.',
@@ -93,6 +99,11 @@ export const en = {
 } as const
 export type TextKey = keyof typeof en
 export const ja: Record<TextKey, string> = {
+  peer_storage_unavailable: '受信側で転送内容を保存できませんでした。受信側の保存容量と受信設定を確認して再試行してください。',
+  disk_space_low: 'ディスク・ディスクquotaが満杯か、転送用に残す空き容量が不足しています。空き容量・quotaか「容量と履歴」の diskReserveBytes を確認して再試行してください。元のファイルと保存済みファイルは残ります。',
+  disk_space_unknown: 'ディスクの空き容量を確認できません。保存先のボリュームとアクセス権を確認して再試行してください。元のファイルと保存済みファイルは残ります。',
+  peer_disk_space_low: '受信側のディスク・ディスクquotaが満杯か、空き容量が不足しています。受信側の空き容量・quotaか diskReserveBytes を確認し、必要なら保留中のバッチを許可して再試行してください。保存済みファイルは残ります。',
+  peer_disk_space_unknown: '受信側で空き容量を確認できません。受信側の保存先ボリュームとアクセス権を確認し、必要なら保留中のバッチを許可して再試行してください。保存済みファイルは残ります。',
   autosave_directory_required: '自動受信を有効にする前に、このデバイスにある既存のフォルダーを絶対パスで指定してください。',
   lan_identity_required: '招待を確認する前に、このデバイスの公開IDを作成してください。',
   lan_invitation_invalid: '招待が無効か期限切れです。相手から新しい招待を全体コピーしてください。',
@@ -218,4 +229,8 @@ export function errorText(error: unknown, t: Translate) {
 export function errorDetail(error: unknown, t: Translate) {
   const object = error as { message?: string }
   return object?.message && object.message !== errorText(error, t) ? object.message : undefined
+}
+
+export function transferFailureText(value: string, t: Translate) {
+  return ['peer_storage_unavailable', 'disk_space_low', 'disk_space_unknown', 'peer_disk_space_low', 'peer_disk_space_unknown'].includes(value) ? t(value as TextKey) : value
 }

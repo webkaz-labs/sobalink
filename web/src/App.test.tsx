@@ -382,6 +382,36 @@ describe('explicit and interrupted flows', () => {
     expect(within(navigation).getByRole('button', { name: 'Network graph' })).toHaveAttribute('aria-current', 'page')
   })
 
+  it.each(['diagram', 'list'] as const)('returns focus to the latest selected device after switching %s details', async view => {
+    const { requests } = setup(); render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: view === 'diagram' ? 'Network graph' : 'Device list' }))
+    const first = screen.getByRole('button', { name: /^Open device: Studio;/ })
+    const second = screen.getByRole('button', { name: /^Open device: Notebook;/ })
+    await userEvent.click(first)
+    await userEvent.click(second)
+    expect(within(screen.getByRole('complementary', { name: 'Device details' })).getByRole('heading', { name: 'Notebook' })).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    expect(second).toHaveAttribute('aria-pressed', 'true')
+    expect(second).toHaveFocus()
+    await userEvent.keyboard('{Enter}')
+    expect(within(screen.getByRole('complementary', { name: 'Device details' })).getByRole('heading', { name: 'Notebook' })).toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+  })
+
+  it('returns to the current graph selection when history changes the open details', async () => {
+    setup(); render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Network graph' }))
+    const first = screen.getByRole('button', { name: /^Open device: Studio;/ })
+    await userEvent.click(first)
+    const firstRoute = history.state
+    await userEvent.click(screen.getByRole('button', { name: /^Open device: Notebook;/ }))
+    act(() => { history.replaceState(firstRoute, ''); window.dispatchEvent(new PopStateEvent('popstate')) })
+    expect(within(screen.getByRole('complementary', { name: 'Device details' })).getByRole('heading', { name: 'Studio' })).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(first).toHaveFocus()
+  })
+
 })
 
 const savedShare: ServiceConfigResult = { revision: 'a'.repeat(64), active: false, configuration: { id: 'saved-share', backend: 'tailnet', name: 'Scoped-share', direction: 'share', network: 'udp', ports: '8080-8089', excludePorts: '8082,8084-8086', peerIds: ['peer-a', 'peer-c'], ttlSeconds: 120, purpose: 'custom', discoverable: true } }

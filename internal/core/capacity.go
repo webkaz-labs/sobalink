@@ -125,7 +125,7 @@ var supportedCapacityResources = map[string]bool{"profileBytes": true, "lanState
 	"tcpConnections":   true, "tcpPerPolicy": true, "tcpPerPeer": true, "udpSessions": true, "udpPerPolicy": true, "udpQueuedBytes": true, "udpPolicyQueuedBytes": true, "udpQueuePackets": true}
 
 func init() {
-	for _, key := range []string{"transferSpoolBytes", "receiveReservedBytes", "transferManifestBytes", "transferMetadataBytes", "transferPending", "transferPendingPerPeer", "transferConcurrentFiles", "transferConcurrentPerPeer", "messageStorageBytes", "stagingInventoryEntries", "stagingInventoryDepth"} {
+	for _, key := range []string{"diskReserveBytes", "transferSpoolBytes", "receiveReservedBytes", "transferManifestBytes", "transferMetadataBytes", "transferPending", "transferPendingPerPeer", "transferConcurrentFiles", "transferConcurrentPerPeer", "messageStorageBytes", "stagingInventoryEntries", "stagingInventoryDepth"} {
 		supportedCapacityResources[key] = true
 	}
 }

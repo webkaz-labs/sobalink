@@ -214,7 +214,7 @@ soba accept TRANSFER_ID ./received
 
 The CLI resolves relative paths from its working directory. Choose an appropriate destination on the receiving host; on Windows, quote a path such as `C:\Downloads\sobalink`. Files with an existing name are saved under a unique name without replacing the existing file. The receiver checks the declared size and SHA-256 before finalizing a file. Empty folders are preserved when present in the manifest. File permissions are restricted; executable attributes and links are not imported.
 
-Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Canceling or revoking does not delete already saved files or retrieve data already sent.
+Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Once the sender confirms receiver rejection or cancellation, the batch is terminal: its sending copies are removed and staging capacity is released. It cannot be retried; choose the files again to offer a new batch. A temporary communication failure remains retryable and retains its sending copies. If cleanup fails, the capacity stays reserved until cleanup succeeds. Canceling or revoking does not delete already saved files or retrieve data already sent.
 
 ### Opt into autosave for one peer
 
@@ -250,6 +250,10 @@ soba forget TRANSFER_ID
 Retry sends unfinished files from their beginning while both agents retain the same batch state. Successfully acknowledged files are not rewritten. After a lost acknowledgement, a repeated file request returns the existing saved acknowledgement. This is per-file retry, not byte-level resume.
 
 Batch progress and acknowledgements are process-local. After either agent restarts, send a new batch and review what was already saved. A new batch can create a uniquely named copy. Forget removes terminal history and any retained sender staging copies, so that batch can no longer be retried. Original source files and files already saved by the receiver stay in place.
+
+**Known crash-recovery limitation:** after an unexpected process exit, old sending copies in the private state directory’s `outgoing` subdirectory are inventoried and still count against the finite staging budget. The application does not automatically delete these orphan copies, and CLI/Web history clearing cannot remove batches from a previous process. Repeated interruptions can therefore exhaust the budget and block new sends even though growth remains bounded. Stop the matching instance, review and remove only confirmed orphan staging inside that `outgoing` directory, then restart so usage is inventoried again. Keep uncertain copies private; do not remove the identity/configuration files, original source files or received files. This is separate from a retryable batch retained by the currently running instance. A visible, reviewed orphan-cleanup control remains a usability follow-up.
+
+Receiver temporary files left after a crash are not restored into an exact startup quota. The [transfer free-space reserve](CAPACITY.en.md#transfer-free-space-margin) checks actual available disk space and stops new writes as that margin is reached; receiver orphans may accumulate until then. It does not silently delete those files or provide crash-resumable reception.
 
 ## Stop, revoke and upgrade
 

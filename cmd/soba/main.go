@@ -24,12 +24,23 @@ import (
 var version = "0.0.0-dev"
 
 func main() {
+	os.Exit(mainExitCode())
+}
+
+func mainExitCode() int {
+	out, errorOut, closeOutput, err := backgroundCommandOutput(os.Args[1:], os.Stdout, os.Stderr)
+	if err != nil {
+		writeCommandError(os.Stderr, err)
+		return 1
+	}
+	defer closeOutput()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if e := run(ctx, os.Args[1:], os.Stdout); e != nil {
-		writeCommandError(os.Stderr, e)
-		os.Exit(1)
+	if e := run(ctx, os.Args[1:], out); e != nil {
+		writeCommandError(errorOut, e)
+		return 1
 	}
+	return 0
 }
 func japanese(locale string) bool {
 	if locale == "ja" {
@@ -64,16 +75,18 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 
 func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader, client controlCaller) (err error) {
 	var jsonErrors bool
+	locale := "auto"
 	// Help is a successful, side-effect-free action at every command level.
 	defer func() {
 		if errors.Is(err, flag.ErrHelp) {
 			err = nil
 		} else if err != nil && jsonErrors {
 			err = &jsonCommandError{err}
+		} else if err != nil {
+			err = localizeDiskSpaceError(japanese(locale), err)
 		}
 	}()
 	var dir string
-	locale := "auto"
 	global := flag.NewFlagSet("soba", flag.ContinueOnError)
 	global.SetOutput(io.Discard)
 	global.StringVar(&dir, "state-dir", "", "private state directory")

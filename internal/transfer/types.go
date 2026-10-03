@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 )
 
 var (
@@ -123,6 +125,7 @@ type Limits struct {
 	MaxFileBytes         int64
 	MaxBatchBytes        int64
 	MaxReservedBytes     int64
+	DiskReserveBytes     int64 // Observed filesystem free-space safety margin.
 	MaxConcurrentFiles   int
 	MaxConcurrentPerPeer int
 }
@@ -132,7 +135,7 @@ func DefaultLimits() Limits {
 		MaxPendingPerPeer: 8, MaxEntries: 1024, MaxDepth: 16,
 		MaxPathBytes: 4096, MaxManifestBytes: 1 << 20, MaxMetadataBytes: 16 << 20,
 		MaxFileBytes: 8 << 30, MaxBatchBytes: 32 << 30,
-		MaxReservedBytes: 64 << 30, MaxConcurrentFiles: 4, MaxConcurrentPerPeer: 2}
+		MaxReservedBytes: 64 << 30, DiskReserveBytes: diskspace.DefaultReserveBytes, MaxConcurrentFiles: 4, MaxConcurrentPerPeer: 2}
 }
 
 type ReceivePolicy struct {
@@ -154,4 +157,5 @@ type PolicyStore interface {
 type Options struct {
 	Limits      Limits
 	PolicyStore PolicyStore
+	DiskSpace   *diskspace.Guard // nil uses the shared process guard.
 }

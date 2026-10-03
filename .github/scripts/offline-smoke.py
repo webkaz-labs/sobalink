@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Exercise installed soba with a fresh offline profile and loopback-only IPC/UI."""
+import http.client
+import http.cookiejar
 import json
 import os
 import platform
@@ -8,6 +10,51 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import urllib.parse
+import urllib.request
+
+
+class LocalWebClient:
+    """Direct, persistent HTTP/1.1 for the loopback smoke server."""
+
+    def __init__(self, base):
+        target = urllib.parse.urlsplit(base)
+        if (target.scheme != "http" or target.hostname != "127.0.0.1"
+                or target.port is None or target.username is not None
+                or target.password is not None or target.path not in ("", "/")
+                or target.query or target.fragment):
+            raise ValueError("expected a loopback HTTP origin with an explicit port")
+        self.base = base.rstrip("/")
+        self.jar = http.cookiejar.CookieJar()
+        self.connection = http.client.HTTPConnection(target.hostname, target.port, timeout=5)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.connection.close()
+
+    def request(self, path, data=None, headers=None, status=200):
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("expected a local absolute path")
+        headers = {} if headers is None else dict(headers)
+        raw = None if data is None else json.dumps(data).encode("utf-8")
+        if raw is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(self.base + path, data=raw, headers=headers)
+        self.jar.add_cookie_header(request)
+        # urllib's HTTPHandler forces Connection: close. An early rejection can
+        # then close a Go server connection with an unread POST body, resetting
+        # TCP on Windows. Keep HTTP/1.1 persistent as browsers do, and consume
+        # each response before the next request or closing the connection.
+        # HTTPConnection connects directly: no environment proxy or redirects.
+        self.connection.request(request.get_method(), request.selector, body=raw,
+                                headers=dict(request.header_items()))
+        with self.connection.getresponse() as response:
+            body = response.read()
+            self.jar.extract_cookies(response, request)
+            assert response.status == status, (path, response.status, "expected", status)
+            return body
 
 
 def check_locales(binary):
@@ -112,41 +159,29 @@ def check(binary):
 
 
 def check_web(ui, binary):
-    import http.cookiejar
-    import urllib.error
-    import urllib.request
-    jar = http.cookiejar.CookieJar()
-    client = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(jar))
     base = ui["url"]
-
-    def request(path, data=None, headers=None, status=200):
-        headers = {} if headers is None else headers
-        raw = None if data is None else json.dumps(data).encode("utf-8")
-        if raw is not None:
-            headers = dict(headers, **{"Content-Type": "application/json"})
-        try:
-            response = client.open(urllib.request.Request(base + path, data=raw, headers=headers), timeout=5)
-        except urllib.error.HTTPError as error:
-            response = error
-        with response:
-            body = response.read()
-            assert response.status == status, (path, response.status, body)
-            return body
-
-    assert b"<html" in request("/").lower(), "embedded frontend absent"
-    metadata = pathlib.Path(binary).parent.parent / "share" / "sobalink" / "build.json"
-    if metadata.is_file():
-        import hashlib
-        for asset in json.loads(metadata.read_text(encoding="utf-8"))["frontend"]["assets"]:
-            route = "/" if asset["path"] == "index.html" else "/" + asset["path"]
-            assert hashlib.sha256(request(route)).hexdigest() == asset["sha256"], "embedded frontend differs from build inventory"
-    request("/api/state", status=401)
-    request("/api/state", headers={"Host": "attacker.example"}, status=403)
-    request("/api/session", {"code": ui["code"]}, status=403)
-    request("/api/session", {"code": ui["code"]}, {"Origin": base})
-    assert json.loads(request("/api/state"))["settings"]["network"] == "none"
-    request("/api/command", {"requestId": "smoke", "name": "network.login", "payload": {}}, {"Origin": base}, status=403)
-    request("/api/session", {"code": ui["code"]}, {"Origin": base}, status=401)
+    with LocalWebClient(base) as client:
+        request = client.request
+        assert b"<html" in request("/").lower(), "embedded frontend absent"
+        metadata = pathlib.Path(binary).parent.parent / "share" / "sobalink" / "build.json"
+        if metadata.is_file():
+            import hashlib
+            for asset in json.loads(metadata.read_text(encoding="utf-8"))["frontend"]["assets"]:
+                route = "/" if asset["path"] == "index.html" else "/" + asset["path"]
+                assert hashlib.sha256(request(route)).hexdigest() == asset["sha256"], "embedded frontend differs from build inventory"
+        assert json.loads(request("/api/state", status=401))["code"] == "unauthenticated"
+        assert json.loads(request("/api/state", headers={"Host": "attacker.example"}, status=403))["code"] == "local_only"
+        # Every rejection must return its complete expected response. These are
+        # repeated native transport checks, never retries of failed requests.
+        for _ in range(10):
+            assert json.loads(request("/api/session", {"code": ui["code"]}, status=403))["code"] == "origin"
+        request("/api/session", {"code": ui["code"]}, {"Origin": base})
+        assert json.loads(request("/api/state"))["settings"]["network"] == "none"
+        for _ in range(10):
+            body = request("/api/command", {"requestId": "smoke", "name": "network.login", "payload": {}}, {"Origin": base}, status=403)
+            assert json.loads(body)["code"] == "csrf"
+            assert json.loads(request("/api/state"))["settings"]["network"] == "none"
+        assert json.loads(request("/api/session", {"code": ui["code"]}, {"Origin": base}, status=401))["code"] == "invalid_code"
 
 
 if __name__ == "__main__":

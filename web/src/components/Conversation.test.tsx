@@ -338,7 +338,8 @@ describe.each(['en', 'ja'] as const)('reviewed outgoing discard (%s)', locale =>
   const close = locale === 'ja' ? '閉じる' : 'Close'
   const retry = locale === 'ja' ? '転送を再試行' : 'Retry transfer'
 
-  it.each(['failed', 'declined'] as const)('reviews and cancels %s copies before committing the exact batch', async status => {
+  it('reviews and cancels failed copies before committing the exact batch', async () => {
+    const status = 'failed' as const
     localStorage.setItem('sobalink.locale', locale)
     const state = withOffer()
     state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status }
@@ -372,6 +373,23 @@ describe.each(['en', 'ja'] as const)('reviewed outgoing discard (%s)', locale =>
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: copy.discardConfirm }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(requests).toEqual([{ requestId: expect.any(String), name: 'transfer.forget', payload: { transferId: 'batch-one' } }])
+  })
+})
+
+describe.each(['en', 'ja'] as const)('declined outgoing history (%s)', locale => {
+  it('offers no retry and clears history without a stale sending-copy review', async () => {
+    localStorage.setItem('sobalink.locale', locale)
+    const state = withOffer()
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'declined' }
+    const { requests } = setup(state)
+    render(<App />); await openPeer()
+    const card = screen.getByRole('article', { name: /Notes/ })
+    expect(within(card).getByText(locale === 'ja' ? '辞退済み' : 'Declined')).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: /^(Retry transfer|転送を再試行)$/ })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: (locale === 'ja' ? transferJapanese : transferEnglish).discardBatch })).not.toBeInTheDocument()
+    await userEvent.click(within(card).getByRole('button', { name: locale === 'ja' ? '履歴から削除' : 'Remove from history' }))
+    await waitFor(() => expect(requests).toEqual([{ requestId: expect.any(String), name: 'transfer.forget', payload: { transferId: 'batch-one' } }]))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
 
@@ -438,4 +456,19 @@ it('honors extended path choices and rechecks a lowered limit without discarding
   expect(await screen.findByRole('alert')).toHaveTextContent('One selected path cannot be safely transferred')
   expect(container.querySelector('.batch-preview')).toHaveTextContent(path)
   expect(upload).not.toHaveBeenCalled()
+})
+
+
+describe('disk-space transfer failures', () => {
+  for (const locale of ['en', 'ja'] as const) {
+    it(`shows recoverable receiving and sender space guidance in ${locale}`, async () => {
+      localStorage.setItem('sobalink.locale', locale)
+      setup({ ...initialState, transfers: [{ id: 'space-failure', peerId: 'peer-a', direction: 'incoming', name: 'Space test', status: 'failed', totalBytes: 10, completedBytes: 0, createdAt: '2026-01-01T00:00:00Z', error: 'peer_disk_space_unknown', entries: [{ id: 'file', path: 'payload', kind: 'file', size: 10, status: 'failed', error: 'disk_space_low' }] }] })
+      render(<App />); await openPeer()
+      expect(screen.queryByText('disk_space_low')).not.toBeInTheDocument()
+      expect(screen.queryByText('peer_disk_space_unknown')).not.toBeInTheDocument()
+      expect(screen.getByText(locale === 'ja' ? /転送用に残す空き容量が不足/ : /free space is below/)).toBeInTheDocument()
+      expect(screen.getByText(locale === 'ja' ? /受信側で空き容量を確認できません/ : /The receiving device could not check/)).toBeInTheDocument()
+    })
+  }
 })

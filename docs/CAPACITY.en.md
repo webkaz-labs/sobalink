@@ -39,6 +39,7 @@ Resource budgets are independently adjustable and always finite. Representative 
 | `tcpConnections`, `tcpPerPolicy`, `tcpPerPeer` | 512 total, 128 per policy, 64 per peer |
 | `udpSessions`, `udpPerPolicy` | 512 total, 256 per policy |
 | `udpQueuedBytes`, `udpPolicyQueuedBytes`, `udpQueuePackets` | 16 MiB total, 1 MiB per policy, 64 packets per queue |
+| `diskReserveBytes` | 512 MiB of observed free space retained as a transfer safety margin |
 | `transferSpoolBytes`, `receiveReservedBytes` | 4 GiB sender staging and 4 GiB receiver reservations |
 | `transferManifestBytes`, `transferMetadataBytes` | 256 KiB manifest accounting, 1 MiB retained transfer metadata |
 | `transferPending`, `transferPendingPerPeer` | 32 pending transfers, 8 per peer |
@@ -58,6 +59,18 @@ Examples of interacting limits:
 - Unlimited peers or services still require enough serialized profile and LAN-state storage. Lowering a count retains existing pairs and records; lowering storage below existing saved data is refused
 - A compact TCP share can cover ports 1–65535 except exclusions and reserved endpoints without allocating a listener per port. UDP and local forwards materialize listeners, so their finite listener budget still applies
 - Discovery checks peers in rotating bounded passes. A large peer set is not fully probed in one refresh, and a saved peer is not proof of online availability
+
+## Transfer free-space margin
+
+`diskReserveBytes` is a positive, finite, adjustable free-space reserve, not a file-count limit or a lifetime byte counter. Raising it leaves more room and can stop new writes sooner; lowering it leaves less room. It applies immediately to subsequent receiving and outgoing staging checks, including active transfers. Review the value in Capacity and history or through the policy preview/apply flow below.
+
+The receiver checks before preparing a destination, each new directory, each temporary file, and the final no-replace hard link; browser and CLI sending check before staging and each temporary file. Each payload write rechecks the actual destination filesystem in chunks of at most 32 KiB. Linux and macOS use available blocks from the open file descriptor; Windows uses available-to-caller bytes on the open handle's volume GUID. An unavailable/unsupported space probe fails closed. In particular, Windows destinations without volume-GUID resolution, such as some network filesystems, cannot be used for guarded transfer writes.
+
+Each admitted payload write charges a 64 KiB allowance against other in-flight writes. A process-wide 1 MiB allowance budget bounds overlapping checks/writes across receiving and sending, even across different volumes. A short admission lock is released before the disk write; waiting for an allowance respects cancellation. Existing finite manifest, staging, reservation, and concurrency settings continue to apply.
+
+Low space or an inspection failure stops the affected operation with a retryable error. Free space or check the volume/access permissions; review the reserve if appropriate, then retry. A failed outgoing staging attempt must be selected again. A failed receiving item restarts from byte zero; saved files retain their acknowledgements and are never overwritten. An automatic-accept failure leaves a pending batch that may need explicit acceptance after space is restored. The app removes only its active failed temporary copies under the existing cleanup rules and never silently deletes older files to make room.
+
+This is a practical guard based on observed free space, not an exact disk quota. Other processes, filesystem metadata/allocation granularity, quotas, and delayed allocation can still cause a write to fail or consume the margin between checks. The allowance is not a filesystem allocation guarantee. Separate app processes do not share the allowance. Receiver temporary quota accounting is not restored after a crash: orphan temporary files may accumulate until the free-space reserve stops new writes. No automatic orphan cleanup or restart-resume guarantee is provided. [Background log bound and diagnostic limits](LIFECYCLE.en.md)
 
 ## Review and apply
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
@@ -118,6 +119,7 @@ type Core struct {
 	networkReady               atomic.Bool
 	peerServer                 *peerServer
 	transfers                  *transfer.Manager
+	diskSpace                  *diskspace.Guard
 	messages                   []Message
 	outgoing                   map[string]*outgoingBatch
 	orphanSpoolBytes           int64

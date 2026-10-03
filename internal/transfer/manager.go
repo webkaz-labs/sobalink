@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 )
 
 type peerState struct {
@@ -33,16 +35,17 @@ type batchState struct {
 // Manager has no listeners or transport credentials. Calls may run concurrently.
 // Keep one Manager per local trust scope, and close it when that scope ends.
 type Manager struct {
-	mu       sync.Mutex
-	limits   Limits
-	store    PolicyStore
-	peers    map[string]*peerState
-	policies map[string]ReceivePolicy
-	batches  map[string]*batchState
-	reserved int64
-	metadata int64
-	active   int
-	closed   bool
+	mu        sync.Mutex
+	limits    Limits
+	diskSpace *diskspace.Guard
+	store     PolicyStore
+	peers     map[string]*peerState
+	policies  map[string]ReceivePolicy
+	batches   map[string]*batchState
+	reserved  int64
+	metadata  int64
+	active    int
+	closed    bool
 }
 
 func NewManager(options Options) (*Manager, error) {
@@ -50,7 +53,11 @@ func NewManager(options Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{limits: limits, store: options.PolicyStore, peers: map[string]*peerState{}, policies: map[string]ReceivePolicy{}, batches: map[string]*batchState{}}
+	space := options.DiskSpace
+	if space == nil {
+		space = diskspace.Process
+	}
+	m := &Manager{diskSpace: space, limits: limits, store: options.PolicyStore, peers: map[string]*peerState{}, policies: map[string]ReceivePolicy{}, batches: map[string]*batchState{}}
 	if m.store != nil {
 		policies, err := m.store.LoadPolicies()
 		if err != nil {
@@ -75,6 +82,7 @@ func NewManager(options Options) (*Manager, error) {
 // UpdateLimits changes future admission without removing history, cancelling
 // streams, or releasing already reserved storage. Existing idempotent offers
 // remain readable even when a newly lowered limit would reject a new batch.
+// The free-space reserve also applies to the next check in an active stream.
 func (m *Manager) UpdateLimits(next Limits) error {
 	limits, err := limitsOrDefault(next)
 	if err != nil {
@@ -358,7 +366,7 @@ func (m *Manager) Accept(id, destination string) (Batch, error) {
 }
 
 func (m *Manager) acceptLocked(b *batchState, destination string) error {
-	root, actual, stage, err := prepareDestination(destination, b.manifest.Entries)
+	root, actual, stage, err := prepareDestinationWithSpace(destination, b.manifest.Entries, m.diskSpace, m.limits.DiskReserveBytes)
 	if err != nil {
 		return err
 	}

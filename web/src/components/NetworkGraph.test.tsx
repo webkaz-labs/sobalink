@@ -243,6 +243,40 @@ describe('network diagram evidence and interaction', () => {
     expect(a).toHaveFocus()
   })
 
+  it('remeasures moved rows when selection changes without a resize', () => {
+    // Switching equal-height details changes row positions, not observed sizes.
+    // ResizeObserver deliberately never fires in this regression.
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+    const rect = (x: number, y: number, width: number, height: number) => ({ x, y, left: x, top: y, right: x + width, bottom: y + height, width, height, toJSON: () => ({}) })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const branch = this.closest('.network-graph-branch')
+      const branches = [...(branch?.parentElement?.children || [])]
+      const index = branches.indexOf(branch!)
+      const hasDetailsBefore = branches.slice(0, index).some(item => item.querySelector('.network-graph-selected-facts'))
+      const row = 24 + index * 160 + (hasDetailsBefore ? 64 : 0)
+      if (this.classList.contains('network-graph-canvas')) return rect(0, 0, 860, 700)
+      if (this.classList.contains('network-graph-self')) return rect(24, 56, 152, 240)
+      if (this.classList.contains('network-graph-device-glyph')) return this.closest('.network-graph-self') ? rect(44, 80, 112, 112) : rect(548, row + 16, 80, 80)
+      if (this.classList.contains('network-graph-node')) return rect(540, row, 296, 150)
+      if (this.classList.contains('network-graph-edge')) return rect(270, row, 144, 44)
+      if (this.classList.contains('network-graph-wire-slot')) return rect(228, row + 44, 220, 24)
+      return rect(0, 0, 0, 0)
+    })
+    const handlers = props({ state: state({ peers: [peer('A'), peer('B'), peer('C')] }), selectedPeerId: 'A' })
+    const { container, rerender } = render(<NetworkGraph {...handlers} />)
+    const line = (id: string) => container.querySelector(`g[data-peer-id="${id}"] .network-graph-line`)!.getAttribute('d')!
+    const before = line('B')
+    expect(before).toMatch(/, 550 304$/)
+    rerender(<NetworkGraph {...handlers} selectedPeerId="B" />)
+    expect(line('B')).toMatch(/, 550 240$/)
+    expect(line('B')).not.toBe(before)
+    expect(line('C')).toMatch(/, 550 464$/)
+    rerender(<NetworkGraph {...handlers} selectedPeerId={null} />)
+    expect(line('C')).toMatch(/, 550 400$/)
+    rerender(<NetworkGraph {...handlers} selectedPeerId="A" />)
+    expect(line('B')).toBe(before)
+  })
+
   it('has an honest actionable empty state and aligned Japanese labels', () => {
     const initial = props({ state: state({ peers: [] }), locale: 'ja' })
     const { container } = render(<NetworkGraph {...initial} />)
