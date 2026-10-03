@@ -176,7 +176,7 @@ func TestReceiveAccountingDeletedChildVersusUnavailableDestination(t *testing.T)
 				t.Fatalf("verified deletion not zero: %+v", view)
 			}
 			data, err := os.ReadFile(filepath.Join(dir, "receive-accounting.json"))
-			if err != nil || string(data) != `{"version":1,"roots":[]}` {
+			if err != nil || string(data) != `{"version":2,"roots":[],"preparation":null}` {
 				t.Fatalf("deleted stage/root not durably retired: %s %v", data, err)
 			}
 		})
@@ -865,7 +865,22 @@ func TestDeletedStageRetiresIndexWithoutTouchingSavedMarkerName(t *testing.T) {
 		t.Fatal("retirement removed saved marker-name payload")
 	}
 	index, err := os.ReadFile(filepath.Join(dir, "receive-accounting.json"))
-	if err != nil || string(index) != `{"version":1,"roots":[]}` {
+	if err != nil || string(index) != `{"version":2,"roots":[],"preparation":null}` {
 		t.Fatalf("retirement not canonical: %s %v", index, err)
 	}
+}
+
+func (s *cancellationDuringMissingLoadStore) WithReceiveAccountingLimits(l AccountingLimits) ReceiveAccountingStore {
+	s.Limits = l
+	return s
+}
+
+func (s *cancelAfterAccountingCommitStore) WithReceiveAccountingLimits(l AccountingLimits) ReceiveAccountingStore {
+	s.Limits = l
+	return s
+}
+
+func (s cancelStartupLoadStore) WithReceiveAccountingLimits(l AccountingLimits) ReceiveAccountingStore {
+	s.Limits = l
+	return s
 }
