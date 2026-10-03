@@ -31,8 +31,9 @@ func transferLimitsFor(p capacity.Policy, reserved string) transfer.Limits {
 		MaxPathBytes:     finiteInt(pathBytes),
 		MaxDepth:         finiteInt(min(p.Number("logical", "pathDepth"), max(1, pathBytes/2+pathBytes%2))),
 		MaxManifestBytes: metadata, MaxMetadataBytes: retained,
-		MaxFileBytes:  min(p.Number("logical", "fileBytes"), bytes),
-		MaxBatchBytes: min(p.Number("logical", "batchBytes"), bytes), MaxReservedBytes: bytes,
+		DiskReserveBytes: p.Number("resources", "diskReserveBytes"),
+		MaxFileBytes:     min(p.Number("logical", "fileBytes"), bytes),
+		MaxBatchBytes:    min(p.Number("logical", "batchBytes"), bytes), MaxReservedBytes: bytes,
 		MaxBatches: finiteInt(min(p.Number("logical", "transferHistoryEntries"), max(1, retained/512))),
 		// Trust records are already constrained by the separately finite profile
 		// budget. Do not reapply a lowered logical count to existing bindings.

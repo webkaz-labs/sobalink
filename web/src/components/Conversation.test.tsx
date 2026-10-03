@@ -457,3 +457,18 @@ it('honors extended path choices and rechecks a lowered limit without discarding
   expect(container.querySelector('.batch-preview')).toHaveTextContent(path)
   expect(upload).not.toHaveBeenCalled()
 })
+
+
+describe('disk-space transfer failures', () => {
+  for (const locale of ['en', 'ja'] as const) {
+    it(`shows recoverable receiving and sender space guidance in ${locale}`, async () => {
+      localStorage.setItem('sobalink.locale', locale)
+      setup({ ...initialState, transfers: [{ id: 'space-failure', peerId: 'peer-a', direction: 'incoming', name: 'Space test', status: 'failed', totalBytes: 10, completedBytes: 0, createdAt: '2026-01-01T00:00:00Z', error: 'peer_disk_space_unknown', entries: [{ id: 'file', path: 'payload', kind: 'file', size: 10, status: 'failed', error: 'disk_space_low' }] }] })
+      render(<App />); await openPeer()
+      expect(screen.queryByText('disk_space_low')).not.toBeInTheDocument()
+      expect(screen.queryByText('peer_disk_space_unknown')).not.toBeInTheDocument()
+      expect(screen.getByText(locale === 'ja' ? /転送用に残す空き容量が不足/ : /free space is below/)).toBeInTheDocument()
+      expect(screen.getByText(locale === 'ja' ? /受信側で空き容量を確認できません/ : /The receiving device could not check/)).toBeInTheDocument()
+    })
+  }
+})

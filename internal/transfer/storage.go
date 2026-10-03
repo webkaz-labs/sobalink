@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 )
 
 func randomName(prefix string) (string, error) {
@@ -44,11 +47,19 @@ func openDestination(destination string) (*os.Root, error) {
 }
 
 func prepareDestination(destination string, entries []Entry) (*os.Root, string, string, error) {
+	return prepareDestinationWithSpace(destination, entries, diskspace.Process, diskspace.DefaultReserveBytes)
+}
+
+func prepareDestinationWithSpace(destination string, entries []Entry, space *diskspace.Guard, reserve int64) (openedRoot *os.Root, actualDirectory, stagingName string, resultErr error) {
+	defer func() { resultErr = diskspace.NormalizeError(resultErr) }()
 	parent, err := openDestination(destination)
 	if err != nil {
 		return nil, "", "", err
 	}
 	defer parent.Close()
+	if err := checkRootSpace(context.Background(), parent, space, reserve); err != nil {
+		return nil, "", "", err
+	}
 	name, err := randomName("sobalink-")
 	if err != nil {
 		return nil, "", "", err
@@ -83,14 +94,20 @@ func prepareDestination(destination string, entries []Entry) (*os.Root, string, 
 	if err != nil {
 		return nil, "", "", err
 	}
+	if err = checkRootSpace(context.Background(), root, space, reserve); err != nil {
+		return nil, "", "", err
+	}
 	if err = root.Mkdir(stage, 0700); err != nil {
 		return nil, "", "", err
 	}
 	for _, e := range entries {
-		if err = ensureDirectories(root, path.Dir(e.Path)); err != nil {
+		if err = ensureDirectoriesWithSpace(context.Background(), root, path.Dir(e.Path), space, reserve); err != nil {
 			return nil, "", "", err
 		}
 		if e.Kind == Directory {
+			if err = checkRootSpace(context.Background(), root, space, reserve); err != nil {
+				return nil, "", "", err
+			}
 			if err = root.Mkdir(e.Path, 0700); err != nil {
 				return nil, "", "", err
 			}
@@ -104,7 +121,20 @@ func prepareDestination(destination string, entries []Entry) (*os.Root, string, 
 // The checks additionally reject existing symlinks instead of following them.
 // An attacker with write access as the same OS user can still modify received
 // files after saving; this package is not a sandbox against that user.
+func checkRootSpace(ctx context.Context, root *os.Root, space *diskspace.Guard, reserve int64) error {
+	volume, err := root.Open(".")
+	if err != nil {
+		return diskspace.ErrUnknown
+	}
+	defer volume.Close()
+	return space.Check(ctx, volume, reserve)
+}
+
 func ensureDirectories(root *os.Root, name string) error {
+	return ensureDirectoriesWithSpace(context.Background(), root, name, diskspace.Process, diskspace.DefaultReserveBytes)
+}
+
+func ensureDirectoriesWithSpace(ctx context.Context, root *os.Root, name string, space *diskspace.Guard, reserve int64) error {
 	if name == "." {
 		return nil
 	}
@@ -113,6 +143,9 @@ func ensureDirectories(root *os.Root, name string) error {
 		part := strings.Join(parts[:i+1], "/")
 		info, err := root.Lstat(part)
 		if errors.Is(err, fs.ErrNotExist) {
+			if err = checkRootSpace(ctx, root, space, reserve); err != nil {
+				return err
+			}
 			if err = root.Mkdir(part, 0700); err != nil && !errors.Is(err, fs.ErrExist) {
 				return err
 			}
@@ -132,7 +165,11 @@ func ensureDirectories(root *os.Root, name string) error {
 // no-replace operation. Filesystems without hard-link support fail closed; it
 // never falls back to a rename that could overwrite an existing destination.
 func commitFile(root *os.Root, temp, name string, original fs.FileInfo) error {
-	if err := ensureDirectories(root, path.Dir(name)); err != nil {
+	return commitFileWithSpace(context.Background(), root, temp, name, original, diskspace.Process, diskspace.DefaultReserveBytes, nil)
+}
+
+func commitFileWithSpace(ctx context.Context, root *os.Root, temp, name string, original fs.FileInfo, space *diskspace.Guard, reserve int64, beforeLink func() error) error {
+	if err := ensureDirectoriesWithSpace(ctx, root, path.Dir(name), space, reserve); err != nil {
 		return err
 	}
 	current, err := root.Lstat(temp)
@@ -141,6 +178,14 @@ func commitFile(root *os.Root, temp, name string, original fs.FileInfo) error {
 	}
 	if !current.Mode().IsRegular() || !os.SameFile(original, current) {
 		return ErrUnsafePath
+	}
+	if err = checkRootSpace(ctx, root, space, reserve); err != nil {
+		return err
+	}
+	if beforeLink != nil {
+		if err := beforeLink(); err != nil {
+			return err
+		}
 	}
 	if err = root.Link(temp, name); err != nil {
 		if errors.Is(err, fs.ErrExist) {

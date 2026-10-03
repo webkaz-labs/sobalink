@@ -205,7 +205,7 @@ var resourceDefinitions = map[string]Definition{
 	"profileBytes": {4 << 20, "bytes"}, "lanStateBytes": {2 << 20, "bytes"}, "discoveryBytes": {256 << 10, "bytes"},
 	"materializedListeners": {64, "listeners"}, "tcpConnections": {512, "connections"}, "tcpPerPolicy": {128, "connections"}, "tcpPerPeer": {64, "connections"},
 	"udpSessions": {512, "sessions"}, "udpPerPolicy": {256, "sessions"}, "udpQueuedBytes": {16 << 20, "bytes"}, "udpPolicyQueuedBytes": {1 << 20, "bytes"}, "udpQueuePackets": {64, "packets"},
-	"transferSpoolBytes": {4 << 30, "bytes"}, "receiveReservedBytes": {4 << 30, "bytes"}, "transferManifestBytes": {256 << 10, "bytes"}, "transferMetadataBytes": {1 << 20, "bytes"},
+	"diskReserveBytes": {512 << 20, "bytes"}, "transferSpoolBytes": {4 << 30, "bytes"}, "receiveReservedBytes": {4 << 30, "bytes"}, "transferManifestBytes": {256 << 10, "bytes"}, "transferMetadataBytes": {1 << 20, "bytes"},
 	"transferPending": {32, "entries"}, "transferPendingPerPeer": {8, "entries"}, "transferConcurrentFiles": {4, "streams"}, "transferConcurrentPerPeer": {2, "streams"},
 	"pageBytes": {1 << 20, "bytes"}, "pageEntries": {128, "entries"},
 }

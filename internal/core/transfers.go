@@ -18,6 +18,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
@@ -328,9 +329,21 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 			c.discardOutgoing(b)
 		}
 	}()
+	if e := c.checkStagingSpace(ctx); e != nil {
+		reply(w, http.StatusInsufficientStorage, map[string]string{"code": networkErrorCode(e), "error": e.Error()})
+		return
+	}
 	spoolRoot := filepath.Join(c.dir, "outgoing")
 	if e = config.SecureDir(spoolRoot); e != nil {
+		if normalized := diskspace.NormalizeError(e); diskspace.IsCapacityError(normalized) {
+			replyDiskSpace(w, normalized)
+			return
+		}
 		reply(w, 507, map[string]string{"error": "private staging directory unavailable"})
+		return
+	}
+	if e := c.checkStagingDirectory(ctx, spoolRoot); e != nil {
+		replyDiskSpace(w, e)
 		return
 	}
 	spool, e := os.MkdirTemp(spoolRoot, "batch-")
@@ -338,6 +351,10 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 	b.Spool = spool
 	b.mu.Unlock()
 	if e != nil {
+		if normalized := diskspace.NormalizeError(e); diskspace.IsCapacityError(normalized) {
+			replyDiskSpace(w, normalized)
+			return
+		}
 		reply(w, 507, map[string]string{"error": "could not stage this batch"})
 		return
 	}
@@ -372,17 +389,34 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 			reply(w, 400, map[string]string{"error": reason})
 			return
 		}
+		if e := c.checkStagingDirectory(ctx, b.Spool); e != nil {
+			part.Close()
+			replyDiskSpace(w, e)
+			return
+		}
 		filePath := filepath.Join(b.Spool, entry.ID)
 		f, e := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if e != nil {
 			part.Close()
+			if normalized := diskspace.NormalizeError(e); diskspace.IsCapacityError(normalized) {
+				replyDiskSpace(w, normalized)
+				return
+			}
 			reply(w, 507, map[string]string{"error": "could not stage file"})
 			return
 		}
 		hash := sha256.New()
-		n, copyErr := copyStaging(ctx, io.MultiWriter(f, hash), part, entry.Size)
-		closeErr := f.Close()
+		n, copyErr := copyStaging(ctx, io.MultiWriter(stagingDiskWriter{c, ctx, f}, hash), part, entry.Size)
+		closeErr := diskspace.NormalizeError(f.Close())
 		_ = part.Close()
+		if diskspace.IsCapacityError(closeErr) {
+			replyDiskSpace(w, closeErr)
+			return
+		}
+		if diskspace.IsCapacityError(copyErr) {
+			reply(w, http.StatusInsufficientStorage, map[string]string{"code": networkErrorCode(copyErr), "error": copyErr.Error()})
+			return
+		}
 		if copyErr != nil || closeErr != nil || n != entry.Size || r.Context().Err() != nil || ctx.Err() != nil {
 			reply(w, 400, map[string]string{"error": "upload was interrupted or its size changed"})
 			return
@@ -462,6 +496,9 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 			} else {
 				b.State = "failed"
 				b.Error = err.Error()
+				if code := networkErrorCode(err); code == "peer_disk_space_low" || code == "peer_disk_space_unknown" || code == "peer_storage_unavailable" {
+					b.Error = code
+				}
 			}
 		}
 		finished := b.State == "completed" || b.State == "cancelled" || b.State == "declined"
@@ -756,7 +793,8 @@ func (c *Core) SendPaths(ctx context.Context, peerID string, paths []string) (an
 	return c.sendPaths(ctx, peerID, paths, c.transferLimits())
 }
 
-func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim transfer.Limits) (any, error) {
+func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim transfer.Limits) (result any, resultErr error) {
+	defer func() { resultErr = diskspace.NormalizeError(resultErr) }()
 	done, err := c.beginWork()
 	if err != nil {
 		return nil, err
@@ -794,6 +832,9 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 			c.discardOutgoing(b)
 		}
 	}()
+	if e := c.checkStagingSpace(stageCtx); e != nil {
+		return nil, e
+	}
 	manifest, sources, e := plan.Hash(stageCtx)
 	if e != nil {
 		return nil, e
@@ -801,8 +842,14 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 	b.mu.Lock()
 	b.Manifest = manifest
 	b.mu.Unlock()
+	if e := c.checkStagingSpace(stageCtx); e != nil {
+		return nil, e
+	}
 	spoolRoot := filepath.Join(c.dir, "outgoing")
 	if e := config.SecureDir(spoolRoot); e != nil {
+		return nil, e
+	}
+	if e := c.checkStagingDirectory(stageCtx, spoolRoot); e != nil {
 		return nil, e
 	}
 	spool, e := os.MkdirTemp(spoolRoot, "batch-")
@@ -824,6 +871,10 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 		if e != nil {
 			return nil, e
 		}
+		if e := c.checkStagingDirectory(stageCtx, spool); e != nil {
+			from.Close()
+			return nil, e
+		}
 		target := filepath.Join(spool, source.EntryID)
 		to, e := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if e != nil {
@@ -838,11 +889,17 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 			}
 		}
 		hash := sha256.New()
-		n, e := copyStaging(stageCtx, io.MultiWriter(to, hash), from, entry.Size)
+		n, e := copyStaging(stageCtx, io.MultiWriter(stagingDiskWriter{c, stageCtx, to}, hash), from, entry.Size)
 		from.Close()
-		closeErr := to.Close()
+		closeErr := diskspace.NormalizeError(to.Close())
 		if err := stageCtx.Err(); err != nil {
 			return nil, err
+		}
+		if diskspace.IsCapacityError(closeErr) {
+			return nil, closeErr
+		}
+		if diskspace.IsCapacityError(e) {
+			return nil, e
 		}
 		if e != nil || closeErr != nil || n != entry.Size || hex.EncodeToString(hash.Sum(nil)) != entry.SHA256 {
 			return nil, errors.New("selected file changed while staging")

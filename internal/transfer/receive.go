@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 )
 
 const streamBufferBytes = 32 << 10
@@ -83,6 +85,7 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 	var tempName string
 	var temp *os.File
 	defer func() {
+		resultErr = diskspace.NormalizeError(resultErr)
 		stopCancel()
 		stopClose()
 		cancel()
@@ -111,6 +114,15 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		}
 		m.closeRootLocked(b)
 	}()
+	volume, err := root.Open(stage)
+	if err != nil {
+		return FileAck{}, err
+	}
+	err = m.diskSpace.Check(streamCtx, volume, m.diskReserve())
+	_ = volume.Close()
+	if err != nil {
+		return FileAck{}, transferError(streamCtx, err)
+	}
 	name, err := randomName("part-")
 	if err != nil {
 		return FileAck{}, err
@@ -146,9 +158,9 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		}
 		if n > 0 {
 			emptyReads = 0
-			written, writeErr := temp.Write(buffer[:n])
+			written, writeErr := m.diskSpace.Write(streamCtx, temp, buffer[:n], m.diskReserve())
 			if writeErr != nil {
-				return FileAck{}, writeErr
+				return FileAck{}, transferError(streamCtx, writeErr)
 			}
 			if written != n {
 				return FileAck{}, io.ErrShortWrite
@@ -175,6 +187,9 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 	if received != entry.Size || hex.EncodeToString(digest.Sum(nil)) != entry.SHA256 {
 		return FileAck{}, ErrIntegrity
 	}
+	if err = m.diskSpace.Check(streamCtx, temp, m.diskReserve()); err != nil {
+		return FileAck{}, transferError(streamCtx, err)
+	}
 	if err = temp.Sync(); err != nil {
 		return FileAck{}, err
 	}
@@ -198,11 +213,17 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 	if f.State != FileReceiving || terminal(b.value.State) {
 		return FileAck{}, ErrCancelled
 	}
-	if err = commitFile(root, tempName, entry.Path, original); err != nil {
-		return FileAck{}, err
+	if err = commitFileWithSpace(streamCtx, root, tempName, entry.Path, original, m.diskSpace, m.limits.DiskReserveBytes, func() error { return receiveCancellation(ctx, streamCtx) }); err != nil {
+		return FileAck{}, transferError(streamCtx, err)
 	}
 	f.State, f.StoredName, f.Error = FileSaved, entry.Path, ""
 	return savedAck(b, f), nil
+}
+
+func (m *Manager) diskReserve() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.limits.DiskReserveBytes
 }
 
 func receiveCancellation(request, stream context.Context) error {
@@ -237,6 +258,7 @@ func ErrorCode(err error) string {
 		{ErrUnknownPeer, "unknown_peer"}, {ErrPeerChanged, "peer_changed"},
 		{ErrPeerPaused, "peer_paused"}, {ErrNotFound, "not_found"},
 		{ErrConflict, "destination_conflict"}, {ErrState, "invalid_state"},
+		{diskspace.ErrLow, "disk_space_low"}, {diskspace.ErrUnknown, "disk_space_unknown"},
 		{ErrBusy, "busy"}, {ErrIntegrity, "integrity_mismatch"},
 		{ErrCancelled, "cancelled"}, {ErrClosed, "closed"}, {ErrUnsafePath, "unsafe_path"},
 	} {

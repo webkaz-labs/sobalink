@@ -253,6 +253,8 @@ Batch progress and acknowledgements are process-local. After either agent restar
 
 **Known crash-recovery limitation:** after an unexpected process exit, old sending copies in the private state directory’s `outgoing` subdirectory are inventoried and still count against the finite staging budget. The application does not automatically delete these orphan copies, and CLI/Web history clearing cannot remove batches from a previous process. Repeated interruptions can therefore exhaust the budget and block new sends even though growth remains bounded. Stop the matching instance, review and remove only confirmed orphan staging inside that `outgoing` directory, then restart so usage is inventoried again. Keep uncertain copies private; do not remove the identity/configuration files, original source files or received files. This is separate from a retryable batch retained by the currently running instance. A visible, reviewed orphan-cleanup control remains a usability follow-up.
 
+Receiver temporary files left after a crash are not restored into an exact startup quota. The [transfer free-space reserve](CAPACITY.en.md#transfer-free-space-margin) checks actual available disk space and stops new writes as that margin is reached; receiver orphans may accumulate until then. It does not silently delete those files or provide crash-resumable reception.
+
 ## Stop, revoke and upgrade
 
 ```sh

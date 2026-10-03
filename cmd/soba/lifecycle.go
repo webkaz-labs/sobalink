@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/boundedlog"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/control"
 	"github.com/webkaz-labs/sobalink/internal/core"
@@ -89,9 +90,17 @@ type processStatus struct {
 	ProcessID int `json:"processId"`
 }
 
+const (
+	backgroundLogEnv   = "SOBALINK_BACKGROUND_LOG"
+	startupLogMaxBytes = 1 << 20
+)
+
 func launchBackground(executable string, args []string, log *os.File) (backgroundProcess, error) {
 	cmd := exec.Command(executable, args...)
-	cmd.Stdout, cmd.Stderr = log, log
+	// The detached application owns its bounded writer. A writer or pipe in
+	// this short-lived launcher would stop capturing when readiness returns.
+	// Raw stdout/stderr go to the null device, including runtime panic output.
+	cmd.Env = append(os.Environ(), backgroundLogEnv+"="+log.Name())
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		return backgroundProcess{}, err
@@ -99,6 +108,91 @@ func launchBackground(executable string, args []string, log *os.File) (backgroun
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	return backgroundProcess{PID: cmd.Process.Pid, Done: done}, nil
+}
+
+func backgroundCommandOutput(args []string, out, errorOut io.Writer) (io.Writer, io.Writer, func(), error) {
+	path, background := os.LookupEnv(backgroundLogEnv)
+	if !background {
+		return out, errorOut, func() {}, nil
+	}
+	// Do not pass the private logging mode to commands launched by the app.
+	if err := os.Unsetenv(backgroundLogEnv); err != nil {
+		return nil, nil, nil, err
+	}
+	// An inherited marker must not redirect ordinary CLI commands. Accept
+	// only the exact invocation and log path emitted by startBackground.
+	if !backgroundLogInvocation(args, path) {
+		return out, errorOut, func() {}, nil
+	}
+	log, err := openStartupLog(path, false, japanese(args[3]))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	writer, err := boundedlog.New(log, startupLogMaxBytes)
+	if err != nil {
+		log.Close()
+		return nil, nil, nil, err
+	}
+	return writer, writer, func() { _ = log.Close() }, nil
+}
+
+func backgroundLogInvocation(args []string, path string) bool {
+	if len(args) != 5 && len(args) != 6 {
+		return false
+	}
+	if args[0] != "--state-dir" || args[2] != "--locale" || args[4] != "run" {
+		return false
+	}
+	if !filepath.IsAbs(args[1]) || filepath.Join(args[1], "startup.log") != path {
+		return false
+	}
+	if args[3] != "auto" && args[3] != "en" && args[3] != "ja" {
+		return false
+	}
+	return len(args) == 5 || args[5] == "--offline"
+}
+
+func openStartupLog(path string, create bool, ja bool) (_ *os.File, err error) {
+	before, err := os.Lstat(path)
+	if err == nil && !before.Mode().IsRegular() {
+		return nil, errors.New(text(ja, "startup.log must be a regular private file", "startup.log には通常の非公開ファイルが必要です"))
+	}
+	if err != nil && (!create || !errors.Is(err, os.ErrNotExist)) {
+		return nil, err
+	}
+	flags := os.O_RDWR
+	if create {
+		flags |= os.O_CREATE
+	}
+	log, err := os.OpenFile(path, flags, 0600)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = log.Close()
+		}
+	}()
+	opened, err := log.Stat()
+	if err != nil {
+		return nil, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !current.Mode().IsRegular() || !os.SameFile(opened, current) || (before != nil && !os.SameFile(before, opened)) {
+		return nil, errors.New(text(ja, "startup.log changed while opening; retry startup", "startup.log が読込み中に変わりました。起動を再試行してください"))
+	}
+	if err := config.Protect(path, false); err != nil {
+		return nil, err
+	}
+	if create {
+		if err := log.Truncate(0); err != nil {
+			return nil, err
+		}
+	}
+	return log, nil
 }
 
 func startBackground(ctx context.Context, dir, locale string, offline, ja bool, out io.Writer, client controlCaller, launch backgroundLauncher, timeout time.Duration) error {
@@ -138,19 +232,11 @@ func startBackground(ctx context.Context, dir, locale string, offline, ja bool, 
 		return err
 	}
 	logPath := filepath.Join(dir, "startup.log")
-	if info, err := os.Lstat(logPath); err == nil && !info.Mode().IsRegular() {
-		return errors.New(text(ja, "startup.log must be a regular private file", "startup.log には通常の非公開ファイルが必要です"))
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	log, err := openStartupLog(logPath, true, ja)
 	if err != nil {
 		return err
 	}
 	defer log.Close()
-	if err := config.Protect(logPath, false); err != nil {
-		return err
-	}
 	args := []string{"--state-dir", dir, "--locale", locale, "run"}
 	if offline {
 		args = append(args, "--offline")

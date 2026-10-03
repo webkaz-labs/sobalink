@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 	"github.com/webkaz-labs/sobalink/internal/httpbound"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/messageframe"
@@ -289,6 +290,10 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		batch, e := c.transfers.Offer(peer, manifest)
+		if diskspace.IsCapacityError(e) {
+			replyDiskSpace(w, e)
+			return
+		}
 		if e != nil {
 			peerFailure(w, 400)
 			return
@@ -347,6 +352,10 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 			_ = controller.SetReadDeadline(deadline)
 			_ = controller.SetWriteDeadline(deadline)
 			ack, e := c.transfers.ReceiveFile(fileCtx, peer, batch.ID, parts[2], r.Body)
+			if diskspace.IsCapacityError(e) {
+				replyDiskSpace(w, e)
+				return
+			}
 			if e != nil {
 				peerFailure(w, 409)
 				return
@@ -386,6 +395,9 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if resp.StatusCode == http.StatusInsufficientStorage && (path == "/v1/offers" || strings.HasPrefix(path, "/v1/batches/")) {
+			return peerDiskSpaceError(resp.Body)
+		}
 		if method == "GET" && strings.HasPrefix(path, "/.well-known/sobalink/services/") && resp.StatusCode == http.StatusRequestEntityTooLarge {
 			return &localCommandError{"discovery_capacity", "peer discovery exceeds its configured response budget; review discovery capacity on the sharing peer"}
 		}
