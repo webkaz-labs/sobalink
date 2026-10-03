@@ -152,6 +152,29 @@ func nativeUploadPrefix(id string, size int, filename string) string {
 
 const nativeUploadSuffix = "\r\n--native-boundary--\r\n"
 
+// Unix permits moving the live spool root. Windows replaces this fixture with
+// a handle on an owned file that denies deletion while leaving the root intact.
+var blockNativeUploadCleanup = func(t *testing.T, spool string) (string, func()) {
+	t.Helper()
+	root := filepath.Dir(spool)
+	if err := os.Rename(root, root+"-saved"); err != nil {
+		t.Fatal(err)
+	}
+	release := sync.OnceFunc(func() {
+		if err := os.Remove(root); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Error(err)
+		}
+		if err := os.Rename(root+"-saved", root); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Cleanup(release)
+	if err := os.WriteFile(root, []byte("block removal"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root+"-saved", filepath.Base(spool)), release
+}
+
 func awaitNativeUpload(t *testing.T, f nativeUploadFixture) {
 	t.Helper()
 	select {
@@ -235,6 +258,12 @@ func TestNativeMultipartCancelAndDeadline(t *testing.T) {
 				staging = capacity.Limited(10)
 			}
 			f := newNativeUploadFixture(t, idle, staging)
+			if action == "cleanup-failure" {
+				f.pair.a.mu.Lock()
+				f.pair.a.capacity.Resources["transferSpoolBytes"] = capacity.Limited(4)
+				f.pair.a.capacity.Logical["transferHistoryEntries"] = capacity.Limited(1)
+				f.pair.a.mu.Unlock()
+			}
 			prefix := nativeUploadPrefix("slow-native", 4, "note.txt") + "d"
 			length := len(prefix) + len(nativeUploadSuffix) + 3
 			if action == "chunked-eof" {
@@ -258,15 +287,13 @@ func TestNativeMultipartCancelAndDeadline(t *testing.T) {
 			}
 			started := time.Now()
 			closeResult := make(chan error, 1)
-			spoolRoot := filepath.Dir(staged.spool)
+			var retainedSpool string
+			var unblockCleanup func()
 			if action == "cleanup-failure" {
-				if err := os.Rename(spoolRoot, spoolRoot+"-saved"); err != nil {
+				if err := os.WriteFile(filepath.Join(staged.spool, "cleanup-blocker"), []byte("keep"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(spoolRoot, []byte("block removal"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = os.Remove(spoolRoot); _ = os.Rename(spoolRoot+"-saved", spoolRoot) })
+				retainedSpool, unblockCleanup = blockNativeUploadCleanup(t, staged.spool)
 			}
 			switch action {
 			case "explicit-cancel", "unlimited-cancel", "cleanup-failure":
@@ -318,20 +345,53 @@ func TestNativeMultipartCancelAndDeadline(t *testing.T) {
 			if action == "cleanup-failure" {
 				staged.batch.mu.Lock()
 				retained, spool := staged.batch.reserved, staged.batch.Spool
+				state, detail := staged.batch.State, staged.batch.Error
+				running, staging := staged.batch.running, staged.batch.staging
 				staged.batch.mu.Unlock()
 				f.pair.a.mu.RLock()
 				batch := f.pair.a.outgoing["slow-native"]
 				f.pair.a.mu.RUnlock()
-				if retained != 4 || spool == "" || batch != staged.batch {
-					t.Fatal("failed cleanup released quota")
+				if retained != 4 || spool != staged.spool || batch != staged.batch || state != "cancelled" || running || staging || detail != "could not remove staged files; clear this transfer to retry cleanup" {
+					t.Fatalf("failed cleanup state: bytes=%d spool=%q batch=%p state=%q running=%t staging=%t error=%q", retained, spool, batch, state, running, staging, detail)
 				}
-				if err := os.Remove(spoolRoot); err != nil {
-					t.Fatal(err)
+				if data, err := os.ReadFile(filepath.Join(retainedSpool, "cleanup-blocker")); err != nil || string(data) != "keep" {
+					t.Fatalf("cleanup blocker not retained: %q %v", data, err)
 				}
-				if err := os.Rename(spoolRoot+"-saved", spoolRoot); err != nil {
-					t.Fatal(err)
+				if bytes, entries, err := inspectStaging(retainedSpool, 10, 2); err != nil || bytes < 4 || entries < 1 {
+					t.Fatalf("residual file not inventoried: bytes=%d entries=%d err=%v", bytes, entries, err)
 				}
-				f.pair.a.discardOutgoing(staged.batch)
+				if len(f.pair.b.transfers.List()) != 0 {
+					t.Fatal("failed cleanup offered incomplete upload to remote")
+				}
+				probeAdmission := func(want int, reason string) {
+					t.Helper()
+					body := nativeUploadPrefix("after-cleanup", 4, "note.txt") + "data" + nativeUploadSuffix
+					probe := f.openUpload(t, body, len(body))
+					awaitNativeUpload(t, f)
+					resp := nativeUploadResponse(t, bufio.NewReader(probe))
+					data, err := io.ReadAll(resp.Body)
+					_ = resp.Body.Close()
+					_ = probe.Close()
+					if err != nil || resp.StatusCode != want || !strings.Contains(string(data), reason) {
+						t.Fatalf("admission: status=%d want=%d body=%s err=%v", resp.StatusCode, want, data, err)
+					}
+				}
+				probeAdmission(http.StatusConflict, errOutgoingHistory.Error())
+				f.pair.a.mu.Lock()
+				f.pair.a.capacity.Logical["transferHistoryEntries"] = capacity.Limited(2)
+				f.pair.a.mu.Unlock()
+				probeAdmission(http.StatusConflict, errOutgoingStaging.Error())
+				if _, err := f.pair.a.Command(context.Background(), testCommand(t, "blocked-clear", "transfer.forget", map[string]any{"transferId": "slow-native"})); err == nil {
+					t.Fatal("clear succeeded while cleanup was still blocked")
+				}
+				unblockCleanup()
+				mustCommand(t, f.pair.a, "transfer.forget", map[string]any{"transferId": "slow-native"})
+				requireNativeCleanup(t, f, staged)
+				f.pair.a.mu.Lock()
+				f.pair.a.capacity.Logical["transferHistoryEntries"] = capacity.Limited(1)
+				f.pair.a.mu.Unlock()
+				probeAdmission(http.StatusOK, "after-cleanup")
+				return
 			}
 			requireNativeCleanup(t, f, staged)
 		})
