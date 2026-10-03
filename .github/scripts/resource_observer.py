@@ -114,7 +114,7 @@ def process_sample(pid, expected_start=None, proc_root=Path("/proc")):
         return dict(process_alive=state_after not in ("Z", "X"),
                     rss_bytes=values["VmRSS"], os_peak_rss_bytes=values["VmHWM"],
                     threads=values["Threads"], fd_count=fd_count), start
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return dict(process_alive=False), expected_start
     except PermissionError:
         raise ObservationError("process_read_not_authorized") from None

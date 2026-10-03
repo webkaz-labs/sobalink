@@ -34,6 +34,22 @@ class MeasurementCancelled(MeasurementError):
     pass
 
 
+def exception_category(error):
+    # Only fixed categories leave the fixture, never exception names or text.
+    for kind, code in ((MeasurementCancelled, "cancelled"),
+                       (MeasurementError, "measurement_check"),
+                       (observer.ObservationError, "observation_check"),
+                       (subprocess.TimeoutExpired, "command_timeout"),
+                       (ProcessLookupError, "process_missing"),
+                       (FileNotFoundError, "file_missing"),
+                       (PermissionError, "permission_denied"),
+                       (OSError, "os_error"),
+                       (ValueError, "invalid_value")):
+        if isinstance(error, kind):
+            return code
+    return "unexpected_error"
+
+
 def require(condition, code):
     if not condition:
         raise MeasurementError(code)
@@ -98,7 +114,8 @@ def write_json(path, value, private=False):
 def initial_report(digest):
     return dict(schema=1, evidence="published_binary_offline", version=VERSION,
                 source_commit=COMMIT, target=TARGET, binary_sha256=digest,
-                outcome="in_progress", failure_code=None, cleanup_failure_code=None,
+                outcome="in_progress", failure_code=None, failure_operation=None, failure_category=None,
+                cleanup_failure_code=None, cleanup_failure_operation=None, cleanup_failure_category=None,
                 memory_scope="one_application_process_rss_not_heap",
                 disk_scope="fixture_only_outgoing_is_subset_of_state",
                 network_bytes=None, network_measurement="not_measured",
@@ -117,6 +134,7 @@ class Session:
         self.control, self.report_path = control, report_path
         self.minimum_start = minimum_start
         self.pid, self.start_identity = None, None
+        self.operation = "initialize_session"
         self.report = initial_report(digest)
 
     @property
@@ -185,7 +203,7 @@ class Session:
             return False
         try:
             state, start = observer.proc_stat(Path("/proc") / str(self.pid))
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             return False
         # A reused numeric PID is not the owned application. Never signal it.
         return start == self.start_identity and state not in ("Z", "X")
@@ -199,35 +217,46 @@ class Session:
         return True
 
     def start(self):
+        self.operation = "start_command"
         result = self.invoke(["start", "--background", "--offline"], timeout=20)
         require(result.get("state") == "ready" and result.get("startupApplied") is True
                 and type(result.get("pid")) is int and result["pid"] > 0, "fixture_start_not_ready")
         self.pid = result["pid"]
+        self.operation = "start_identity"
         self.start_identity = self.guard(self.pid)
         self.save_control()
+        self.operation = "start_status"
         assert_offline(self.invoke(["status", "--json"]), self.pid)
 
     def stop(self, seconds=15):
+        self.operation = "stop_identity"
         self.guard(self.pid, self.start_identity)
+        self.operation = "stop_command"
         result = self.invoke(["stop", "--json"])
         require(result.get("state") == "stopping", "fixture_stop_not_acknowledged")
+        self.operation = "stop_wait"
         require(self.wait_exit(seconds), "fixture_clean_stop_timeout")
         self.pid, self.start_identity = None, None
+        self.operation = "stop_control"
         self.save_control()
 
     def force_stop(self):
+        self.operation = "force_stop_identity"
         # pidfd addresses this exact process even if the numeric PID is reused.
         descriptor = os.pidfd_open(self.pid)
         try:
             self.guard(self.pid, self.start_identity)
+            self.operation = "force_stop_signal"
             signal.pidfd_send_signal(descriptor, signal.SIGKILL)
         finally:
             os.close(descriptor)
+        self.operation = "force_stop_wait"
         require(self.wait_exit(3), "fixture_forced_stop_timeout")
         self.pid, self.start_identity = None, None
         self.save_control()
 
     def checkpoint(self, name, cycle=0):
+        self.operation = "disk_checkpoint"
         value = observer.disk_sample(self.fixture)
         require(all(v for k, v in value.items() if k.endswith("scan_complete")), "incomplete_disk_sample")
         self.report["checkpoints"].append(dict(name=name, cycle=cycle, counters=value))
@@ -242,7 +271,9 @@ class Session:
         try:
             while True:
                 elapsed = time.monotonic() - started
+                self.operation = "observe_process"
                 sample, _ = observer.process_sample(self.pid, self.start_identity)
+                self.operation = "observe_disk"
                 sample.update(observer.disk_sample(self.fixture))
                 sample["elapsed_seconds"] = round(elapsed, 3)
                 phase["samples"].append(sample)
@@ -251,6 +282,7 @@ class Session:
                 require(all(v for k, v in sample.items() if k.endswith("scan_complete")), "incomplete_disk_sample")
                 require(sample["startup_log_bytes"] <= 1048576, "background_log_bound_exceeded")
                 if elapsed >= seconds:
+                    self.operation = "observe_status"
                     assert_offline(self.invoke(["status", "--json"]), self.pid)
                     phase["completed"] = True
                     break
@@ -288,6 +320,7 @@ class Session:
         self.report["outcome"] = "passed"
 
     def cleanup(self):
+        self.operation = "cleanup_process"
         # Recover even after a launcher timeout or cancellation before JSON/PID.
         # Normal measurement stops already ran; this is bounded failure cleanup.
         if not self.live():
@@ -304,6 +337,7 @@ class Session:
         self.pid, self.start_identity = None, None
         require(not self.recover_owned(), "fixture_process_remains")
         self.checkpoint("before_fixture_cleanup")
+        self.operation = "cleanup_fixture"
         if self.fixture.exists():
             shutil.rmtree(self.fixture)
         self.report["cleanup_complete"] = not self.fixture.exists()
@@ -336,6 +370,7 @@ def main():
     parser.add_argument("--cleanup-only", action="store_true")
     args = parser.parse_args()
     session = None
+    operation = "host_context"
     try:
         runner_root = hosted_root()
         require(hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"), "pidfd_support_required")
@@ -343,17 +378,21 @@ def main():
         if args.cleanup_only:
             if not args.control.exists():
                 return 0
+            operation = "load_cleanup"
             session = load_cleanup(args.control, args.report, runner_root)
             session.cleanup()
             return 0
         require(args.install is not None and args.public_build is not None, "verified_installed_package_required")
+        operation = "installed_identity"
         binary, digest = installed_identity(args.install, args.public_build)
         # The release workflow already ran its full installed offline smoke on
         # this exact artifact. Avoid starting an untracked second fixture here.
+        operation = "installed_version"
         result = subprocess.run([str(binary), "--version"], stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30)
         require(result.returncode == 0 and result.stdout.strip() == ("sobalink " + VERSION + " (soba)").encode(),
                 "installed_version_mismatch")
+        operation = "create_fixture"
         fixture = Path(tempfile.mkdtemp(prefix="sobalink-resource-", dir=runner_root))
         (fixture / "tmp").mkdir(mode=0o700)
         # The application creates its own state/log files. No fake log growth,
@@ -367,16 +406,20 @@ def main():
         session.measure()
     except MeasurementError as error:
         if session is not None:
-            session.report.update(outcome="cancelled" if isinstance(error, MeasurementCancelled) else "failed", failure_code=str(error))
+            session.report.update(outcome="cancelled" if isinstance(error, MeasurementCancelled) else "failed", failure_code=str(error),
+                                  failure_operation=session.operation, failure_category=exception_category(error))
         else:
-            write_json(args.report, dict(schema=1, outcome="failed", failure_code=str(error)))
+            write_json(args.report, dict(schema=1, outcome="failed", failure_code=str(error),
+                                         failure_operation=operation, failure_category=exception_category(error)))
         if session is not None:
             session.persist()
-    except Exception:
+    except Exception as error:
         if session is not None:
-            session.report.update(outcome="failed", failure_code="measurement_unavailable")
+            session.report.update(outcome="failed", failure_code="measurement_unavailable",
+                                  failure_operation=session.operation, failure_category=exception_category(error))
         else:
-            write_json(args.report, dict(schema=1, outcome="failed", failure_code="measurement_unavailable"))
+            write_json(args.report, dict(schema=1, outcome="failed", failure_code="measurement_unavailable",
+                                         failure_operation=operation, failure_category=exception_category(error)))
         if session is not None:
             session.persist()
     finally:
@@ -385,8 +428,9 @@ def main():
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
             try:
                 session.cleanup()
-            except Exception:
-                session.report.update(outcome="failed", cleanup_complete=False, cleanup_failure_code="fixture_cleanup_incomplete")
+            except Exception as error:
+                session.report.update(outcome="failed", cleanup_complete=False, cleanup_failure_code="fixture_cleanup_incomplete",
+                                      cleanup_failure_operation=session.operation, cleanup_failure_category=exception_category(error))
                 session.persist()
     if session is None or session.report["outcome"] != "passed" or not session.report["cleanup_complete"]:
         print("Published-binary resource observation did not complete; see the aggregate report.")

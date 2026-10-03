@@ -1,5 +1,6 @@
 """Socket-free lifecycle, identity, privacy, and cancellation checks."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -35,7 +36,7 @@ class ResourceLifecycleTests(unittest.TestCase):
                    SOBALINK_BACKGROUND_LOG="private", HOME="private")
         result = measure.child_environment(Path("/fixture"), env)
         self.assertEqual(set(result), {"PATH", "RUNNER_TRACKING_ID", "LANG", "LC_ALL", "TZ", "TMPDIR", "TMP", "TEMP"})
-        self.assertEqual(result["TMPDIR"], "/fixture/tmp")
+        self.assertEqual(result["TMPDIR"], str(Path("/fixture") / "tmp"))
 
     def test_missing_or_online_status_is_rejected(self):
         measure.assert_offline(snapshot(), 123)
@@ -73,8 +74,8 @@ class ResourceLifecycleTests(unittest.TestCase):
         value = session(Path("/not-read"))
         value.pid, value.start_identity = 123, 100
         value.guard = Mock(side_effect=measure.MeasurementError("process_identity_changed"))
-        with patch.object(measure.os, "pidfd_open", return_value=11), patch.object(measure.os, "close") as close:
-            with patch.object(measure.signal, "pidfd_send_signal") as send:
+        with patch.object(measure.os, "pidfd_open", return_value=11, create=True), patch.object(measure.os, "close") as close:
+            with patch.object(measure.signal, "pidfd_send_signal", create=True) as send:
                 with self.assertRaisesRegex(measure.MeasurementError, "process_identity_changed"):
                     value.force_stop()
                 send.assert_not_called()
@@ -84,8 +85,8 @@ class ResourceLifecycleTests(unittest.TestCase):
         value = session(Path("/not-read"))
         value.pid, value.start_identity = 123, 100
         value.guard, value.wait_exit, value.save_control = Mock(), Mock(return_value=True), Mock()
-        with patch.object(measure.os, "pidfd_open", return_value=11), patch.object(measure.os, "close"):
-            with patch.object(measure.signal, "pidfd_send_signal") as send:
+        with patch.object(measure.os, "pidfd_open", return_value=11, create=True), patch.object(measure.os, "close"):
+            with patch.object(measure.signal, "pidfd_send_signal", create=True) as send, patch.object(measure.signal, "SIGKILL", 9, create=True):
                 value.force_stop()
                 value.guard.assert_called_once_with(123, 100)
                 send.assert_called_once_with(11, signal.SIGKILL)
@@ -112,6 +113,61 @@ class ResourceLifecycleTests(unittest.TestCase):
                 self.assertFalse(value.live())
             with patch.object(measure.observer, "proc_stat", return_value=("S", 101)):
                 self.assertFalse(value.live())
+
+    def test_acknowledged_stop_accepts_process_disappearance_during_wait(self):
+        for missing in (FileNotFoundError, ProcessLookupError):
+            with self.subTest(error=missing.__name__):
+                value = session(Path("/not-read"))
+                value.pid, value.start_identity = 123, 100
+                value.guard = Mock()
+                value.invoke = Mock(return_value={"state": "stopping"})
+                value.save_control = Mock()
+                with patch.object(measure.observer, "proc_stat", side_effect=[("S", 100), missing("private-fixture")]):
+                    with patch.object(measure.time, "sleep"):
+                        value.stop()
+                value.invoke.assert_called_once_with(["stop", "--json"])
+                value.save_control.assert_called_once()
+                self.assertIsNone(value.pid)
+                self.assertIsNone(value.start_identity)
+
+    def test_stop_wait_still_fails_on_unexpected_stat_errors(self):
+        for error in (PermissionError("private-fixture"), OSError("private-fixture"),
+                      measure.observer.ObservationError("process_stat_invalid")):
+            with self.subTest(error=type(error).__name__):
+                value = session(Path("/not-read"))
+                value.pid, value.start_identity = 123, 100
+                value.guard = Mock()
+                value.invoke = Mock(return_value={"state": "stopping"})
+                value.save_control = Mock()
+                with patch.object(measure.observer, "proc_stat", side_effect=error):
+                    with self.assertRaises(type(error)):
+                        value.stop()
+                self.assertEqual(value.operation, "stop_wait")
+                self.assertEqual(value.pid, 123)
+                value.save_control.assert_not_called()
+
+    def test_unexpected_failure_records_only_fixed_operation_and_category(self):
+        class PrivateFixtureException(RuntimeError):
+            pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            value = session(Path(tmp))
+            value.control.touch()
+            value.operation = "stop_wait"
+            value.cleanup = Mock(side_effect=PrivateFixtureException("/private/path secret-fixture-token"))
+            args = ["measure", "--cleanup-only", "--control", str(value.control), "--report", str(value.report_path)]
+            with patch.object(measure.sys, "argv", args), patch.object(measure.sys, "stdout", io.StringIO()):
+                with patch.object(measure, "hosted_root", return_value=Path(tmp)), patch.object(measure, "load_cleanup", return_value=value):
+                    with patch.object(measure.os, "pidfd_open", create=True), patch.object(measure.signal, "pidfd_send_signal", create=True):
+                        self.assertEqual(measure.main(), 1)
+            report = json.loads(value.report_path.read_text())
+            self.assertEqual(report["outcome"], "failed")
+            self.assertEqual(report["failure_code"], "measurement_unavailable")
+            self.assertEqual(report["failure_operation"], "stop_wait")
+            self.assertEqual(report["failure_category"], "unexpected_error")
+            encoded = json.dumps(report)
+            for private in ("/private/path", "secret-fixture-token", "PrivateFixtureException", tmp):
+                self.assertNotIn(private, encoded)
 
     def test_start_already_running_is_not_adopted(self):
         value = session(Path("/not-read"))

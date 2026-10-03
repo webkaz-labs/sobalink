@@ -1,5 +1,6 @@
 """Pure fixture checks only: no soba execution, real PID observation, or sockets."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ def proc_fixture(root, pid=123, start=100, state="S", rss=80, peak=96):
 
 
 class ObserverTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os.stat_result, "st_blocks"), "requires Unix allocated-block metadata")
     def test_counts_sizes_without_content_or_names(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -51,6 +53,7 @@ class ObserverTests(unittest.TestCase):
             (root / "one").touch()
             self.assertFalse(observer.tree_totals(root, entry_limit=0)["scan_complete"])
 
+    @unittest.skipUnless(hasattr(os.stat_result, "st_blocks"), "requires Unix allocated-block metadata")
     def test_log_and_outgoing_are_separate_subset_counters(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -81,6 +84,12 @@ class ObserverTests(unittest.TestCase):
             self.assertFalse(observer.process_sample(123, proc_root=root)[0]["process_alive"])
             proc_fixture(root, state="Z")
             self.assertFalse(observer.process_sample(123, proc_root=root)[0]["process_alive"])
+
+    def test_process_disappearing_during_proc_read_is_not_alive(self):
+        with patch.object(observer, "proc_stat", side_effect=ProcessLookupError("private-fixture")):
+            value, identity = observer.process_sample(123, expected_start=100, proc_root=Path("/not-read"))
+        self.assertFalse(value["process_alive"])
+        self.assertEqual(identity, 100)
 
     def test_summary_does_not_turn_exit_into_zero_memory(self):
         samples = [dict(elapsed_seconds=0, process_alive=True, rss_bytes=10, fd_count=3),
