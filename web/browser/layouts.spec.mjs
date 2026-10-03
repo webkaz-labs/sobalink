@@ -29,6 +29,115 @@ async function graphGeometry(page) {
   expect(text, 'Graph labels keep their declared readable CSS size').toBe(true)
 }
 
+async function graphLayout(page, count) {
+  await expect(page.locator('.network-graph-branch')).toHaveCount(count)
+  await graphGeometry(page)
+  await expect.poll(() => page.locator('.network-graph').evaluate(graph => {
+    const canvas = graph.querySelector('.network-graph-canvas')
+    const bounds = canvas.getBoundingClientRect()
+    const branches = [...canvas.querySelectorAll('.network-graph-branch')]
+    const withinCanvas = element => {
+      const box = element.getBoundingClientRect()
+      return box.width > 0 && box.height > 0 && box.left >= bounds.left - 1 && box.right <= bounds.right + 1 && box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1
+    }
+    const disjoint = (a, b) => a.right <= b.left + 1 || b.right <= a.left + 1 || a.bottom <= b.top + 1 || b.bottom <= a.top + 1
+    return document.documentElement.scrollWidth <= innerWidth + 1 && graph.scrollWidth <= graph.clientWidth + 1 && canvas.scrollWidth <= canvas.clientWidth + 1 && branches.every((branch, index) => {
+      const contents = [...branch.children]
+      return withinCanvas(branch) && (!index || branches[index - 1].getBoundingClientRect().bottom <= branch.getBoundingClientRect().top + 1) && contents.every((element, index) => withinCanvas(element) && contents.slice(index + 1).every(other => disjoint(element.getBoundingClientRect(), other.getBoundingClientRect())))
+    }) && [...graph.querySelectorAll('.network-graph-node strong, .network-graph-edge, .network-graph-selected-facts')].every(element => element.scrollWidth <= element.clientWidth + 1)
+  }), { message: 'Graph rows, labels and selected facts must remain inside the canvas without overlapping or horizontal overflow' }).toBe(true)
+}
+
+// Only these layout cases replace state reads with fictional peers. Existing
+// workflow cases continue to exercise the real isolated Go state and commands.
+for (const locale of ['en', 'ja']) for (const count of [3, 6, 12]) {
+  test(`graph selection ${locale}: ${count} peers retain layout through switching, closing and narrow views`, async ({ page, app }) => {
+    await app.appearance(locale, 'light')
+    const peers = Array.from({ length: count }, (_, index) => ({
+      id: `layout-device-${String(index + 1).padStart(2, '0')}`,
+      name: locale === 'ja' ? `制作スタジオの共有デバイス・長い表示名 ${String(index + 1).padStart(2, '0')}` : `Shared studio device with a longer display name ${String(index + 1).padStart(2, '0')}`,
+      networks: ['tailnet'], online: true, verified: true, trusted: true, bridge: true,
+      path: ['direct', 'relay', 'unknown'][index % 3],
+    }))
+    await page.route('**/api/state', async route => {
+      const response = await route.fetch()
+      const state = await response.json()
+      await route.fulfill({ response, json: { ...state, peers, services: [], shares: [], availableServices: [], messages: [], transfers: [] } })
+    })
+    await page.reload()
+    await expect(page.locator('.workspace')).toBeVisible()
+    await page.locator('.network-map-button').click()
+    const node = index => page.locator(`.network-graph-branch[data-peer-id="${peers[index].id}"] > .network-graph-node`)
+    const selectedName = index => expect(page.locator('.details-identity h3')).toHaveText(peers[index].name)
+    for (const width of [1180, 1100, 960, 800, 390, 375]) {
+      await page.setViewportSize(viewport(width))
+      await page.locator('.network-map-button').click()
+      await graphLayout(page, count)
+      await expect(page.locator('.network-graph-node[aria-pressed="true"]')).toHaveCount(0)
+      await node(0).click()
+      await selectedName(0)
+      await expect(page.locator('.details-panel')).toBeVisible()
+      if (width > 760) {
+        await graphLayout(page, count)
+        const height = await page.locator('.network-graph-canvas').evaluate(element => element.getBoundingClientRect().height)
+        // Equal-height detail blocks move intervening rows without resizing
+        // the canvas. This is the stale-connector regression, not a resize test.
+        for (const index of [1, count - 1, 0, count - 1]) {
+          await node(index).click()
+          await selectedName(index)
+          await graphLayout(page, count)
+          expect(await page.locator('.network-graph-canvas').evaluate(element => element.getBoundingClientRect().height)).toBeCloseTo(height, 0)
+        }
+      } else {
+        await expect(page.locator('.network-graph')).toBeHidden()
+        expect(await page.locator('.details-panel').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+      }
+      await page.keyboard.press('Escape')
+      await expect(page.locator('.details-panel')).toHaveCount(0)
+      await graphLayout(page, count)
+      const last = width > 760 ? count - 1 : 0
+      await expect(node(last)).toBeFocused()
+      await page.keyboard.press('Enter')
+      await selectedName(last)
+      await app.closeDetails()
+      await expect(node(last)).toBeFocused()
+      await graphLayout(page, count)
+      // Changing from diagram to list keeps selection and the same details.
+      await page.locator('.network-graph-view-toggle').click()
+      const rows = page.locator('.network-graph-list-peer')
+      await expect(rows.nth(last)).toHaveAttribute('aria-pressed', 'true')
+      await rows.nth(1).focus()
+      await page.keyboard.press('Space')
+      await selectedName(1)
+      await app.closeDetails()
+      await expect(rows.nth(1)).toBeFocused()
+      await page.locator('.network-graph-view-toggle').click()
+      await graphLayout(page, count)
+      await page.locator('.network-map-button').click()
+      await expect(page.locator('.network-graph-node[aria-pressed="true"], .network-graph-selected-facts')).toHaveCount(0)
+      await graphLayout(page, count)
+    }
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.setViewportSize(viewport(1180))
+    await node(0).click()
+    await node(1).click()
+    await graphLayout(page, count)
+    await page.goBack()
+    await selectedName(0)
+    await graphLayout(page, count)
+    await page.goForward()
+    await selectedName(1)
+    await graphLayout(page, count)
+    await expect(page.locator('.network-graph [data-direction], .network-graph .has-transfer, .network-graph animate, .network-graph animateMotion')).toHaveCount(0)
+    expect(await page.locator('.network-graph button').evaluateAll(elements => elements.every(element => getComputedStyle(element).transitionDuration.split(',').every(value => parseFloat(value) === 0)))).toBe(true)
+    await app.closeDetails()
+    await expect(node(1)).toBeFocused()
+    await graphLayout(page, count)
+    await app.capture(`graph-selection-${locale}-${count}-peers`)
+    expect(await page.evaluate(() => window.__sobaQA.commands.length), 'Layout inspection does not issue application commands').toBe(0)
+  })
+}
+
 async function typography(page, app, name) {
   await page.evaluate(() => document.fonts.ready)
   const selectors = ['.sidebar-title h1', '.conversation-header h2', '.accept-hint', '.composer textarea', '.composer-hints', '.input-help summary', '.network-graph-header h2', '.network-graph-node strong', '.network-graph-path']

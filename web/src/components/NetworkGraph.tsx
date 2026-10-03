@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { canExchange, type Locale, type Peer, type State, type Transfer } from '../api'
 import './NetworkGraph.css'
 
@@ -114,56 +114,59 @@ function useConnectors(peerIds: string, view: NetworkGraphProps['view']) {
   const lanes = useRef(new Map<string, HTMLSpanElement>())
   const [connectors, setConnectors] = useState<Record<string, Connector>>({})
 
+  const measure = useCallback(() => {
+    const bounds = canvas.current?.getBoundingClientRect()
+    const local = self.current?.getBoundingClientRect()
+    const localGlyph = self.current?.querySelector('.network-graph-device-glyph')?.getBoundingClientRect()
+    if (!bounds?.width || !local?.width || !localGlyph?.width) return
+    const next: Record<string, Connector> = {}
+    nodes.current.forEach((element, peerId) => {
+      const node = element.getBoundingClientRect()
+      const glyph = element.querySelector('.network-graph-device-glyph')?.getBoundingClientRect()
+      const edge = edges.current.get(peerId)?.getBoundingClientRect()
+      if (!node.width || !glyph?.width) return
+      const wire = lanes.current.get(peerId)?.getBoundingClientRect()
+      if (!wire || !edge?.width) return
+      const compact = local.right > node.left
+      const stacked = edge.top >= glyph.bottom
+      const sx = (compact ? localGlyph.left + 2 : localGlyph.right - 2) - bounds.left
+      const sy = localGlyph.top + localGlyph.height / 2 - bounds.top
+      const tx = glyph.left + 2 - bounds.left
+      const ty = glyph.top + glyph.height / 2 - bounds.top
+      // The native row reserves a label, a wire slot, and facts. A shared local
+      // rail reaches each row; only the final, shallow section bends to its port.
+      const ly = stacked ? ty : wire.top + wire.height / 2 - bounds.top
+      const jx = compact ? Math.max(12, local.left - bounds.left + 4) : local.right - bounds.left + 20
+      const direction = Math.sign(ly - sy)
+      const radius = Math.min(14, Math.abs(ly - sy) / 2, Math.abs(sx - jx) / 2)
+      const towardRail = compact ? 1 : -1
+      const lead = direction === 0 ? `M ${sx} ${sy} H ${jx}`
+        : `M ${sx} ${sy} H ${jx + towardRail * radius} Q ${jx} ${sy} ${jx} ${sy + direction * radius} V ${ly - direction * radius} Q ${jx} ${ly} ${jx + radius} ${ly}`
+      const curveStart = Math.max(jx + radius, tx - Math.min(60, Math.max(16, (tx - jx) * .3)))
+      const curveMiddle = (curveStart + tx) / 2
+      const line = `${lead} H ${curveStart} C ${curveMiddle} ${ly}, ${curveMiddle} ${ty}, ${tx} ${ty}`
+      const labelX = edge.left + edge.width / 2 - bounds.left
+      next[peerId] = {
+        line, source: { x: sx, y: sy }, target: { x: tx, y: ty }, junction: { x: jx, y: ly }, lane: { x: labelX, y: ly }, compact,
+        annotation: stacked ? '' : `M ${labelX} ${edge.bottom - bounds.top + 3} V ${ly - 4}`,
+        outgoing: `M ${tx - 14} ${ty - 5} l 6 5 -6 5`,
+        incoming: `M ${Math.max(jx + 22, curveStart - 16)} ${ly - 5} l -6 5 6 5`,
+      }
+
+    })
+    setConnectors(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
+  }, [])
+
+  // Selection and polling can move rows without changing any observed size.
+  // Measure after the DOM commits, before paint, as well as on actual resizes.
+  useLayoutEffect(() => { measure() })
   useLayoutEffect(() => {
     if (view !== 'diagram' || !canvas.current || !self.current) return
-    const measure = () => {
-      const bounds = canvas.current?.getBoundingClientRect()
-      const local = self.current?.getBoundingClientRect()
-      const localGlyph = self.current?.querySelector('.network-graph-device-glyph')?.getBoundingClientRect()
-      if (!bounds?.width || !local?.width || !localGlyph?.width) return
-      const next: Record<string, Connector> = {}
-      nodes.current.forEach((element, peerId) => {
-        const node = element.getBoundingClientRect()
-        const glyph = element.querySelector('.network-graph-device-glyph')?.getBoundingClientRect()
-        const edge = edges.current.get(peerId)?.getBoundingClientRect()
-        if (!node.width || !glyph?.width) return
-        const wire = lanes.current.get(peerId)?.getBoundingClientRect()
-        if (!wire || !edge?.width) return
-        const compact = local.right > node.left
-        const stacked = edge.top >= glyph.bottom
-        const sx = (compact ? localGlyph.left + 2 : localGlyph.right - 2) - bounds.left
-        const sy = localGlyph.top + localGlyph.height / 2 - bounds.top
-        const tx = glyph.left + 2 - bounds.left
-        const ty = glyph.top + glyph.height / 2 - bounds.top
-        // The native row reserves a label, a wire slot, and facts. A shared local
-        // rail reaches each row; only the final, shallow section bends to its port.
-        const ly = stacked ? ty : wire.top + wire.height / 2 - bounds.top
-        const jx = compact ? Math.max(12, local.left - bounds.left + 4) : local.right - bounds.left + 20
-        const direction = Math.sign(ly - sy)
-        const radius = Math.min(14, Math.abs(ly - sy) / 2, Math.abs(sx - jx) / 2)
-        const towardRail = compact ? 1 : -1
-        const lead = direction === 0 ? `M ${sx} ${sy} H ${jx}`
-          : `M ${sx} ${sy} H ${jx + towardRail * radius} Q ${jx} ${sy} ${jx} ${sy + direction * radius} V ${ly - direction * radius} Q ${jx} ${ly} ${jx + radius} ${ly}`
-        const curveStart = Math.max(jx + radius, tx - Math.min(60, Math.max(16, (tx - jx) * .3)))
-        const curveMiddle = (curveStart + tx) / 2
-        const line = `${lead} H ${curveStart} C ${curveMiddle} ${ly}, ${curveMiddle} ${ty}, ${tx} ${ty}`
-        const labelX = edge.left + edge.width / 2 - bounds.left
-        next[peerId] = {
-          line, source: { x: sx, y: sy }, target: { x: tx, y: ty }, junction: { x: jx, y: ly }, lane: { x: labelX, y: ly }, compact,
-          annotation: stacked ? '' : `M ${labelX} ${edge.bottom - bounds.top + 3} V ${ly - 4}`,
-          outgoing: `M ${tx - 14} ${ty - 5} l 6 5 -6 5`,
-          incoming: `M ${Math.max(jx + 22, curveStart - 16)} ${ly - 5} l -6 5 6 5`,
-        }
-
-      })
-      setConnectors(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
-    }
-    measure()
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
     for (const element of [canvas.current, self.current, ...edges.current.values(), ...nodes.current.values(), ...lanes.current.values()]) observer?.observe(element)
     window.addEventListener('resize', measure)
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure) }
-  }, [peerIds, view])
+  }, [measure, peerIds, view])
 
   return { canvas, self, edges, nodes, lanes, connectors }
 }

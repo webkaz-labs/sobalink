@@ -55,15 +55,21 @@ function ServiceRows({ peer, state, t, locale, server, savedService, removeServi
 function Details({ peer, state, t, server, locale, close, autosave, editAutosave, pause, revokePairing, service, savedService, removeService, conversation }: { peer: api.Peer; state: api.State; t: Translate; server: Server; locale: api.Locale; close: () => void; autosave: () => void; editAutosave: () => void; savedService: (mode: ServiceMode, action: SavedServiceAction) => void; removeService: (id: string, mode: ServiceMode) => void; pause: () => void; revokePairing: () => void; service: (value: 'connect' | 'share') => void; conversation?: () => void }) {
   const receive = peer.autosave
   const panel = useRef<HTMLElement>(null)
+  const returnFocus = useRef<HTMLElement | null>(null)
   const closeRef = useRef(close)
   closeRef.current = close
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null
+    returnFocus.current = before && before !== document.body && !panel.current?.contains(before) ? before
+      : document.querySelector<HTMLButtonElement>('.network-graph-node[aria-pressed="true"], .network-graph-list-peer[aria-pressed="true"]') || returnFocus.current
     panel.current?.querySelector<HTMLButtonElement>('button')?.focus()
+  }, [peer.id])
+  useEffect(() => {
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !document.querySelector('dialog[open]')) { event.preventDefault(); closeRef.current() } }
     document.addEventListener('keydown', escape)
     return () => {
       document.removeEventListener('keydown', escape)
+      const before = returnFocus.current
       if (before?.isConnected && before !== document.body) before.focus()
       else (document.querySelector<HTMLButtonElement>('.network-graph-node[aria-pressed="true"], .network-graph-list-peer[aria-pressed="true"]') || document.querySelector<HTMLButtonElement>('.network-graph-view-toggle, .conversation-header button[aria-expanded]'))?.focus()
     }
