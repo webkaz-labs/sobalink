@@ -251,6 +251,8 @@ Retry sends unfinished files from their beginning while both agents retain the s
 
 Batch progress and acknowledgements are process-local. After either agent restarts, send a new batch and review what was already saved. A new batch can create a uniquely named copy. Forget removes terminal history and any retained sender staging copies, so that batch can no longer be retried. Original source files and files already saved by the receiver stay in place.
 
+**Known crash-recovery limitation:** after an unexpected process exit, old sending copies in the private state directory’s `outgoing` subdirectory are inventoried and still count against the finite staging budget. The application does not automatically delete these orphan copies, and CLI/Web history clearing cannot remove batches from a previous process. Repeated interruptions can therefore exhaust the budget and block new sends even though growth remains bounded. Stop the matching instance, review and remove only confirmed orphan staging inside that `outgoing` directory, then restart so usage is inventoried again. Keep uncertain copies private; do not remove the identity/configuration files, original source files or received files. This is separate from a retryable batch retained by the currently running instance. A visible, reviewed orphan-cleanup control remains a usability follow-up.
+
 ## Stop, revoke and upgrade
 
 ```sh
