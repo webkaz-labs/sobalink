@@ -555,23 +555,70 @@ func (b *lanBackend) Close() error {
 }
 
 func (c *Core) lanStatus() map[string]any {
-	status := map[string]any{"configured": false, "pairingReady": false, "path": "unknown"}
+	status := map[string]any{"configured": false, "pairingReady": false, "listenerReady": false, "relayReady": false, "path": "unknown"}
+	host := false
 	if saved := c.lanStoreCopy(); saved != nil {
 		state := saved.copy()
 		status["publicKey"] = state.Identity.PublicKey()
 		status["configured"] = state.Selection != nil
 		if state.Selection != nil {
 			status["relay"] = *state.Selection
+			host = state.Selection.Kind == "host"
 		}
 	}
-	if node, ok := c.nodeCopy().(lanNetworkBackend); ok {
-		state, err := node.State(c.ctx)
-		status["pairingReady"] = err == nil && state.Snapshot.Running
+	if _, ok := c.nodeCopy().(lanNetworkBackend); ok {
+		state, err := c.current(c.ctx)
+		ready := err == nil && state.Snapshot.Running
+		status["pairingReady"], status["listenerReady"] = ready, ready
+		status["relayReady"] = host && ready
 	}
 	return status
 }
 
 func (c *Core) lanCommand(ctx context.Context, name string, raw json.RawMessage) (any, error) {
+	if name == "lan.inspect" {
+		var input struct {
+			Invitation string `json:"invitation"`
+		}
+		if err := decodePayload(raw, &input); err != nil {
+			return nil, err
+		}
+		var invitation lanlink.Invitation
+		if len(input.Invitation) > maxLANInvitation || strictLANJSON([]byte(input.Invitation), &invitation) != nil {
+			return nil, &lanCommandError{"lan_invitation_invalid", "invitation contents are invalid or expired; request a new invitation"}
+		}
+		store := c.lanStoreCopy()
+		if store == nil {
+			return nil, &lanCommandError{"lan_identity_required", "create this device's public identity before reviewing an invitation"}
+		}
+		publicKey := store.copy().Identity.PublicKey()
+		if invitation.RecipientKey != publicKey {
+			return nil, &lanCommandError{"lan_invitation_recipient_mismatch", "this invitation is for another public identity; ask the host for an invitation to this device"}
+		}
+		if err := invitation.ValidateFor(publicKey, time.Now()); err != nil {
+			return nil, &lanCommandError{"lan_invitation_invalid", "invitation contents are invalid or expired; request a new invitation"}
+		}
+		return map[string]any{
+			"recipientPublicKey": invitation.RecipientKey, "recipientMatches": true,
+			"hostPublicKey": invitation.Host.Peer.Key, "hostName": invitation.Host.Peer.Name, "expires": invitation.Expires,
+			"relay": LANSelection{Kind: "relay", Address: invitation.Relay.Address.String(), CertificateSHA256: invitation.Relay.CertificateSHA256},
+		}, nil
+	}
+	if name == "lan.addresses" {
+		var input struct{}
+		if err := decodePayload(raw, &input); err != nil {
+			return nil, err
+		}
+		read := c.lanAddresses
+		if read == nil {
+			read = localLANAddresses
+		}
+		choices, err := read()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"addresses": choices}, nil
+	}
 	if name == "lan.identity" {
 		var input struct{}
 		if err := decodePayload(raw, &input); err != nil {

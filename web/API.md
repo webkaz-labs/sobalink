@@ -19,14 +19,16 @@ The React client uses only same-origin `/api` requests. The Go host is responsib
 
 - `message.send`: `{peerId,text}`; text is explicit and limited to 16,384 UTF-8 bytes, matching the backend
 - `peer.trust`: `{peerId,trusted}`; this is local permission for the exact verified identity, not permission granted by the remote device
-- `peer.reconnect`: `{peerId}`
-- `peer.autosave`: `{peerId,enabled,paused,directory}`; the designated directory is on the host. Pause requires a review of its impact: it stops messages/file offers, cancels outgoing batches and removes their staging copies. Original files remain; they must be selected again after resume. Separate service grants remain active
-- `transfer.accept`: `{transferId,destination}`; explicit per-batch directory required when no configured receive directory exists
+- `peer.reconnect`: `{peerId}`; probes current reachability without renewing trust, autosave or service grants
+- `peer.autosave`: `{peerId,enabled?,paused?,directory?}`; omitted fields preserve independent settings under the Core command lock. Enabling without a directory uses the saved peer directory or configured receive directory. Policy, directory and pause are persisted once before publication. A failed enable/directory/unpause save preserves prior state; failed disable still removes runtime auto-accept, which a later partial save must not restore. Durable disable remains unconfirmed after a save error and must be retried before restart. Pause stops messages/file offers, cancels outgoing batches and removes staging copies; original files must be selected again after resume. Separate service grants remain active
+- `transfer.accept`: `{transferId,destination?}`; explicit per-batch directory required when no configured receive directory exists
 - `transfer.decline`, `transfer.cancel`, `transfer.retry`, `transfer.forget`: `{transferId}`. Forgetting terminal history does not delete saved files
-- `service.connect`: `{name,peerId,serviceId?,network,ports,excludePorts?,localPort?,ttlSeconds,purpose,discoverable:false}`
-- `service.share`: `{name,peerIds,network,ports,excludePorts?,ttlSeconds,purpose,discoverable}`; shares use the same local and exposed port numbers
+- `service.connect`: `{name,peerId,serviceId?,network,ports,excludePorts?,localPort?,ttlSeconds,purpose,discoverable:false,backend?,replaceId?,expectedRevision?}`
+- `service.share`: `{name,peerIds,network,ports,excludePorts?,ttlSeconds,purpose,discoverable,backend?,replaceId?,expectedRevision?}`; shares use the same local and exposed port numbers
+- `service.config`: `{id}` returns `{configuration,revision,active}` to authenticated local management only. The full saved configuration is not peer discovery metadata. Create rejects existing names; copy starts a new name. Replacement requires a stopped `replaceId`, its complete `expectedRevision` and the reviewed `backend`; stale revisions, another existing name and backend changes are rejected before changing saved settings
 - `service.stop`: `{id}`
-- `network.configure`: `{mode:"none"|"tailnet"|"lan",hostname?,lan?:{kind:"relay",address,certificateSHA256}}`; changing a running network/hostname requires stopping and restarting the process, which the UI explains
+- `network.configure`: `{mode:"none"|"tailnet"|"lan",hostname?,lan?}`; LAN is either `{kind:"host",address}` for an exact private local listener or `{kind:"relay",address,certificateSHA256}` for a trusted numeric relay. Changing a running network/hostname requires stopping and restarting the process, which the UI explains
+- `application.stop`: `{}` returns `{state:"stopping"}` before the agent closes the local UI, hosted relay and active work. The UI reviews impact and does not claim shutdown is complete from this acknowledgement
 - `network.login`: `{}`. An explicit response may include `result.authUrl`; only HTTPS `login.tailscale.com` links are rendered, never loaded automatically or persisted
 - `settings.update`: `{locale?:"auto"|"en"|"ja",theme?:"system"|"light"|"dark",receiveDirectory?}`
 
@@ -34,17 +36,21 @@ Discovered `availableServices` carry opaque IDs and compact port ranges. A disco
 
 ## LAN identities and pairing
 
-The LAN relay mode uses an explicitly selected numeric IP/port and pinned certificate, with paired direct paths when available. Listener readiness does not prove relay reachability. `lan` carries `configured`, `publicKey`, optional `relay`, `pairingReady`, and observed-or-unknown `path`. A LAN peer ID is its exact lowercase 64-hex public key.
+The LAN relay mode uses an explicitly selected numeric IP/port and pinned certificate, with paired direct paths when available. Listener readiness does not prove relay reachability. `lan` carries `configured`, `publicKey`, optional `relay`, `pairingReady`, `listenerReady`, `relayReady`, and observed-or-unknown `path`. Saved relay settings, relay listener readiness and pairing readiness are distinct; none proves the other device is reachable. A LAN peer ID is its exact lowercase 64-hex public key.
 
+- `lan.addresses {}` returns `{addresses:[{interface,address}]}` with eligible private local address candidates; it starts no listener
 - `lan.identity {}` explicitly creates/returns the local server public identity; no private role keys are shown
+- `lan.inspect {invitation}` validates the current recipient and expiry without joining, returning `{recipientPublicKey,recipientMatches:true,hostPublicKey,hostName,expires,relay}`. It does not establish remote availability or prove that an invitation has not been canceled
 - `lan.invite {recipientPublicKey,name,ttlSeconds:300}` returns `{invitation,expires,recipientPublicKey}`. Names are limited to 80 UTF-8 bytes
 - `lan.cancel {invitation}` cancels the exact pending capability; it does not undo an established pair
 - `lan.join {invitation}` returns `{peerId,paired:true,trusted:false}`. Pairing alone does not grant local messages/file permission or automatic receiving
 - `lan.revoke {peerId}` explicitly reviews the exact target and app/service impact before submission; offline saved pairs remain revocable
 
+The guided host UI reads current address candidates, requires an explicit selection and reviews the exact listener before configuration. The fresh-profile join UI inspects an invitation, reviews its relay and impact, then explicitly configures that exact relay and pairs. It rechecks refreshed state and expiry before joining and never replaces an already selected different backend or relay silently.
+
 The opaque invitation remains in memory across setup dismissal so it can be cancelled. It is never placed in URLs, persistent browser storage, ordinary status or logs. Copy is explicit; a manual selection field appears only if that operation is unavailable. A consumed invitation loses its copy/cancel actions and retained capability. Expiry, reciprocal-invitation conflicts, uncertain replies and persistence failures require explicit recovery; there is no automatic re-pairing or trust.
 
-The network view uses only self-to-peer relationships from state. It separates discovery/registration, network online status, verified app readiness, ready listeners and file-transfer progress. It does not estimate total network traffic or infer paths. Device and edge buttons open the same local details and permission controls. Narrow layouts use an equivalent accessible list.
+The network view uses only self-to-peer relationships from state. It separates discovery/registration, network online status, verified app readiness, ready listeners and file-transfer progress. It does not estimate total network traffic or infer paths. Device and edge buttons open the same local details and permission controls. Both the diagram and accessible list remain available on narrow layouts, and the explicit selected view is preserved.
 
 ## Upload staging
 

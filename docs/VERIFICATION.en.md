@@ -2,28 +2,28 @@
 
 [日本語](VERIFICATION.md) · [User guide](GENERIC.en.md) · [Distribution](DISTRIBUTION.md)
 
-**sobalink is an unreleased development draft.** The LAN adapter, Core/CLI, dedicated setup UI and local SVG connection graph are implemented. Verified native results and the newer locally integrated UI/Core changes have different source boundaries.
+**sobalink is an unreleased development draft.** LAN, the local UI and typed CLI are implemented, but published CI and later local verification cover different source snapshots.
 
 ## Verified native snapshot
 
-[PR #2](https://github.com/webkaz-labs/sobalink/pull/2), exact commit `14ee61f87b0bb339f69eb133021e15f624b90fcd`, passed [all six jobs in run 37042721076](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). All four native platforms passed the real stock Tailcat loopback TLS DERP test: 130 seconds of existing TCP across an actual two-minute relay lease, bidirectional TCP/UDP, denied-key admission, active revocation and cleanup. Native package jobs, the baseline Go-backed Chromium browser job and manifest job also passed.
+Published [PR #2](https://github.com/webkaz-labs/sobalink/pull/2) commit `5dd6b8c99b8e0167924b38411889e3a0092ac4af` passed [all six jobs in run 37046723268](https://github.com/webkaz-labs/sobalink/actions/runs/37046723268). Linux x64/ARM64, macOS ARM64 and Windows x64 passed the real stock Tailcat loopback TLS DERP test: 130 seconds of existing TCP across an actual two-minute relay lease, bidirectional TCP/UDP, denied-key admission, active revocation and cleanup. Core two-peer text/file/share/revoke integration, native packages, that snapshot's Go-backed Chromium checks and the manifest also passed.
 
-These are real native CI processes using isolated loopback peers. They are not tests on actual user devices, direct LAN/WAN paths, sleep/wake or a published release. The older baseline browser coverage must not be represented as acceptance of UI changes added afterward.
+These are real native CI processes using isolated loopback peers. They do not establish actual-device, direct LAN/WAN/NAT, sleep/wake, native IME or release acceptance. Do not apply those results to later UI, CLI or Core changes.
 
-## New locally integrated snapshot
+## Later local verification
 
-| Category | Recorded result and limit |
+| Source/category | Recorded result and limit |
 | --- | --- |
-| LAN setup and graph | Integrated locally, including pairing, confirmation flows and offline mode-switch recovery |
-| Frontend | 117 tests and strict TypeScript passed; two production builds were byte-identical |
-| Japanese typography | Source sets body text to 15 px and secondary text to 13 px; actual Chromium font/glyph/metric checks are prepared, not yet executed for this revision |
-| Browser screenshots | New desktop/mobile graph and detail-view capture is prepared; execution awaits the next exact CI |
-| Core integration | Real Core text/file/share/revoke integration is prepared; execution awaits the next exact CI |
-| Recovery contract | Five additional stable network recovery codes and `self.errorCode` are implemented, alongside existing pairing/revocation codes |
+| Graph/navigation `76648f48` | 121 UI tests and five browser-QA safety tests passed locally; no published CI for this source |
+| Guided UI `8c49e4f6` | Integrated from `0d9d3a3`: 216 UI tests, strict TypeScript/build, five privacy/preflight tests and two byte-identical clean builds passed locally. Real browser execution of the new forms and published CI remain pending |
+| Typed CLI `7b69e606` / `9cfcc958` | LAN setup, invitation input, receive settings, presets, service reuse, previews and structured errors are implemented. Pure-function, mock CLI and in-memory IPC tests cover these changes; actual native IPC awaits new CI |
+| Local IPC `e85c3ece` | 13 focused in-memory/shutdown race tests and vet passed locally. A validated six-batch history exceeds the old 256 KiB allowance and now fits the 16 MiB encoded response limit; oversized replies return `response_too_large` with local-UI history recovery. This is a wire-size limit, not a heap-memory limit. New native IPC CI remains pending |
+| Receive settings/Core `321da1e` | Reviewed changes persist autosave/directory/pause once, then publish them together. Core and transfer race tests passed locally; published CI for this change has not run |
+| Additional real-browser acceptance | Verify actual fonts/glyphs/metrics, graph/detail screenshots and complete flows against the latest source. Unit-test counts do not establish real-browser or native IME acceptance |
 | Actual-device acceptance | Real device setup, direct LAN/WAN/NAT changes, application compatibility and sleep/wake remain unverified |
 | Signed publication | No new version is assigned; release preparation and signed publication remain pending |
 
-Local socket restrictions remain separate from the successful native CI. A local logic test is not a substitute for a prepared but unexecuted integration test. Bind every later result and screenshot to the exact source that produced it.
+Later source is not yet covered by published CI. Separate source inspection, mocks, real-process tests and actual-device acceptance. Bind each later result and screenshot to the exact source that produced it.
 
 ## Required native and browser checks
 
@@ -56,7 +56,7 @@ The adapter and Core/CLI now cover explicit relay selection, distinct server/cli
 
 Source dependencies use Tailscale `v1.104.0` and Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`, which supplies the required identity and revocation APIs. That pin and successful compilation are not evidence of working native pairing.
 
-The opt-in native harness passed on all four targets at `14ee61f87b0bb339f69eb133021e15f624b90fcd` in [run 37042721076](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). It uses real stock Tailcat/WireGuard and a TLS-pinned loopback DERP fixture, rejects invalid invitations and unknown keys, exchanges bidirectional TCP/UDP, holds existing TCP for 130 seconds across an actual two-minute relay lease with observed DERP re-admission, and verifies active revoke and cleanup. This fixture omits UDP underlay and uses no external relay.
+The opt-in native harness passed on all four targets at `5dd6b8c99b8e0167924b38411889e3a0092ac4af` in [run 37046723268](https://github.com/webkaz-labs/sobalink/actions/runs/37046723268). It uses real stock Tailcat/WireGuard and a TLS-pinned loopback DERP fixture, rejects invalid invitations and unknown keys, exchanges bidirectional TCP/UDP, holds existing TCP for 130 seconds across an actual two-minute relay lease with observed DERP re-admission, and verifies active revoke and cleanup. This fixture omits UDP underlay and uses no external relay.
 
 This successful fixture result does not establish real direct UDP, LAN/WAN/NAT migration, cross-relay migration, throughput or general established-TCP preservation. The fixture's loopback-only restrictions are not a production zero-egress promise. Production permits peer direct traffic plus encrypted payload and HTTPS/ICMP diagnostics to the explicit trusted relay endpoint.
 

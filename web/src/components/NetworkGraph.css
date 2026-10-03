@@ -1,67 +1,114 @@
-.network-graph { container-type: inline-size; flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 25px 24px; color: var(--text); font-size: 14px; line-height: 1.5; }
+.network-graph { container-type: inline-size; flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 20px; color: var(--text); font-size: 14px; line-height: 1.5; }
 .network-graph button { font-size: 14px; line-height: 1.5; }
-.network-graph-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.network-graph-header h2 { font-size: 22px; letter-spacing: -.35px; }
-.network-graph-header p { margin-top: 7px; color: var(--muted); font-size: 14px; line-height: 1.5; }
-.network-graph-legend { display: flex; flex-wrap: wrap; gap: 12px 22px; margin: 22px 0 18px; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
-.network-graph-legend li { display: flex; align-items: center; gap: 7px; }
-.network-graph-key { display: inline-block; width: 9px; height: 9px; flex: none; border-radius: 50%; }
+.network-graph-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; }
+.network-graph-header h2 { font-size: 18px; font-weight: 650; letter-spacing: -.2px; }
+.network-graph-header p { margin-top: 4px; color: var(--muted); font-size: 13px; }
+.network-graph .network-graph-view-toggle { font-size: 13px; min-height: 36px; }
+.network-graph-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 16px 0; padding: 0; list-style: none; color: var(--muted); font-size: 12px; }
+.network-graph-legend li { display: flex; align-items: center; gap: 6px; }
+.network-graph-key { display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 50%; }
 .network-graph-key.known { border: 1px solid var(--muted); border-radius: 2px; }
 .network-graph-key.online { background: var(--green); }
 .network-graph-key.offline { border: 1px solid var(--muted); }
 .network-graph-key.ready { border: 2px solid var(--primary); }
-.network-graph-key.transferring { color: var(--primary-text); font-size: 17px; width: 17px; height: 17px; line-height: 14px; font-weight: 700; }
-.network-graph-diagram { overflow: auto; max-height: 570px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 12px; }
-/* Keep SVG text at its declared size or larger; narrow panels use the list below. */
-.network-graph-diagram > svg { display: block; width: 100%; min-width: 860px; height: auto; }
-.network-graph-line { stroke: var(--border); stroke-width: 2; fill: none; }
-.network-graph-line.has-transfer { stroke: var(--primary); stroke-dasharray: 5 5; }
-.network-graph-arrow { stroke: var(--primary); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.network-graph-node, .network-graph-edge { display: flex; width: 100%; height: 100%; flex-direction: column; text-align: left; justify-content: center; gap: 7px; padding: 12px 15px; border: 1px solid var(--border); border-radius: 11px; color: var(--text); background: var(--surface); }
+.network-graph-key.transferring { color: var(--primary-text); font-size: 16px; width: 16px; height: 16px; line-height: 14px; font-weight: 700; }
+.network-graph-diagram { background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 12px; background-image: radial-gradient(circle, color-mix(in srgb, var(--muted) 16%, transparent) .65px, transparent .65px); background-size: 18px 18px; }
+.network-graph-canvas { position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(145px, .85fr) minmax(0, 2fr); column-gap: 44px; padding: 20px; min-height: 172px; }
+.network-graph-connectors { position: absolute; z-index: -1; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.network-graph-line { stroke: color-mix(in srgb, var(--muted) 62%, var(--border)); stroke-width: 1.5; fill: none; }
+.network-graph-line.has-transfer { stroke: var(--primary); stroke-dasharray: 5 4; }
+.network-graph-connectors .is-selected .network-graph-line { stroke: var(--primary); stroke-width: 2; }
+.network-graph-arrow { stroke: var(--primary); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.network-graph-origin { min-width: 0; align-self: center; }
+.network-graph-branches { display: grid; gap: 30px; min-width: 0; }
+.network-graph-branch { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.15fr); align-items: start; gap: 24px; min-width: 0; }
+.network-graph-node, .network-graph-edge { position: relative; display: flex; width: 100%; min-width: 0; flex-direction: column; text-align: left; justify-content: center; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); overflow-wrap: anywhere; }
+.network-graph-node { min-height: 132px; box-shadow: 0 2px 6px #15112806; }
 .network-graph-node:hover, .network-graph-edge:hover, .network-graph-list-peer:hover { background: var(--surface-hover); }
-.network-graph-node:focus-visible, .network-graph-edge:focus-visible { outline: 3px solid var(--primary); outline-offset: -4px; }
-.network-graph-node.is-ready { border-color: var(--primary); }
-.network-graph-node.is-selected, .network-graph-list-peer.is-selected { box-shadow: inset 0 0 0 2px var(--primary); background: var(--primary-soft); }
-.network-graph-node strong { font-size: 16px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.network-graph-node-kind { color: var(--muted); font-size: 13px; font-weight: 500; }
-.network-graph-node-meta { display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; color: var(--muted); font-size: 13px; min-width: 0; }
-.network-graph-networks { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.network-graph-local-status { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-.network-graph-app { color: var(--muted); font-size: 13px; }
+.network-graph-node:focus-visible, .network-graph-edge:focus-visible, .network-graph-list-peer:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.network-graph-node.is-ready { border-color: color-mix(in srgb, var(--primary) 65%, var(--border)); }
+.network-graph-node.is-selected, .network-graph-list-peer.is-selected { box-shadow: 0 0 0 2px var(--primary); background: var(--primary-soft); }
+.network-graph-device-heading { display: flex; align-items: center; gap: 9px; min-width: 0; margin-bottom: 3px; }
+.network-graph-device-heading > span:last-child { min-width: 0; }
+.network-graph-device-glyph { display: block; flex: none; width: 38px; height: 38px; color: var(--muted); }
+.network-graph-device-glyph svg { display: block; width: 100%; height: 100%; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.network-graph-glyph-orbit { stroke: color-mix(in srgb, currentColor 34%, var(--border)); }
+.network-graph-glyph-halo { fill: color-mix(in srgb, currentColor 5%, var(--surface)); stroke: color-mix(in srgb, currentColor 12%, var(--border)); }
+.network-graph-glyph-core { fill: var(--surface); stroke: color-mix(in srgb, currentColor 26%, var(--border)); }
+.network-graph-glyph-detail { stroke: color-mix(in srgb, currentColor 60%, var(--border)); stroke-width: 2.5; }
+.network-graph-glyph-device { fill: var(--surface); stroke-width: 2; }
+.network-graph-glyph-screen { fill: color-mix(in srgb, currentColor 9%, var(--surface)); stroke-width: 1.2; }
+.network-graph-glyph-reflection { stroke: color-mix(in srgb, currentColor 40%, var(--surface)); stroke-width: 2; }
+.network-graph-device-glyph.is-local { color: var(--primary-text); }
+.network-graph-node.is-selected .network-graph-device-glyph { color: var(--primary-text); }
+.network-graph-node.is-selected .network-graph-glyph-orbit { stroke: var(--primary); stroke-width: 3; }
+/* Illustrated topology nodes use compact native identity captions, not scaled SVG text. */
+.network-graph-diagram .network-graph-node { min-height: 0; padding: 8px; border-color: transparent; background: transparent; box-shadow: none; }
+.network-graph-diagram .network-graph-node:hover { background: color-mix(in srgb, var(--surface-hover) 72%, transparent); }
+.network-graph-diagram .network-graph-self { align-items: center; text-align: center; padding: 10px 8px; }
+.network-graph-diagram .network-graph-self .network-graph-device-heading { flex-direction: column; gap: 8px; }
+.network-graph-diagram .network-graph-self .network-graph-device-glyph { width: 116px; height: 116px; filter: drop-shadow(0 5px 12px color-mix(in srgb, var(--primary) 14%, transparent)); }
+.network-graph-diagram .network-graph-self .network-graph-node-meta { justify-content: center; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 4px 8px; align-items: start; text-align: left; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-device-heading { display: contents; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-device-glyph { grid-column: 1; grid-row: 1 / span 3; width: 72px; height: 72px; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-device-heading > span:last-child,
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-node-meta,
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-app { grid-column: 2; }
+.network-graph-diagram .network-graph-node .network-graph-networks { margin-left: 0; }
+.network-graph-diagram .network-graph-node.is-selected strong { color: var(--primary-text); }
+.network-graph-node strong { display: block; font-size: 14px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+.network-graph-node-kind { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.network-graph-node-meta { display: flex; flex-wrap: wrap; gap: 3px 5px; align-items: center; color: var(--muted); font-size: 12px; min-width: 0; }
+.network-graph-networks { margin-left: auto; overflow-wrap: anywhere; }
+.network-graph-local-status { font-size: 12px; color: var(--muted); }
+.network-graph-app { color: var(--muted); font-size: 12px; }
 .network-graph-app.is-ready { color: var(--primary-text); }
 .network-graph-self { background: var(--primary-soft); border-color: var(--primary); }
-.network-graph-edge { background: var(--surface-subtle); align-items: center; text-align: center; border-color: transparent; border-radius: 9px; gap: 7px; padding: 10px 8px; overflow-wrap: anywhere; }
-.network-graph-path { color: var(--text); font-size: 14px; font-weight: 600; }
-.network-graph-listeners { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 13px; line-height: 1.5; }
-.network-graph-transfer { display: block; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.network-graph-edge { min-height: 94px; padding: 9px; align-items: center; text-align: center; border-color: color-mix(in srgb, var(--muted) 72%, var(--border)); background: var(--surface); border-radius: 8px; gap: 5px; }
+.network-graph-edge:hover { border-color: var(--primary-text); background: var(--surface-hover); }
+.network-graph-edge.is-selected { border-color: var(--primary); background: var(--primary-soft); }
+.network-graph-path { color: var(--text); font-size: 13px; font-weight: 600; }
+.network-graph-listeners { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.network-graph-transfer { display: block; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .network-graph-edge.has-transfer .network-graph-transfer, .network-graph-transfer.has-transfer { color: var(--primary-text); font-weight: 600; }
-.network-graph-list { display: none; }
-.network-graph-list > .network-graph-self { min-height: 140px; height: auto; }
-.network-graph-list > ul { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-.network-graph-list-peer { width: 100%; display: flex; flex-direction: column; gap: 8px; background: var(--surface); color: var(--text); text-align: left; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }
-.network-graph-list-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; }
-.network-graph-list-title strong { font-size: 16px; overflow-wrap: anywhere; }
-.network-graph-list-state { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
-.network-graph[data-view="list"] .network-graph-list { display: block; }
-.network-graph[data-view="list"] .network-graph-diagram { display: none; }
-.network-graph-empty { text-align: center; padding: 22px 12px; }
-.network-graph-empty h3 { font-size: 16px; }
-.network-graph-empty p { font-size: 14px; color: var(--muted); line-height: 1.5; margin-top: 8px; }
-.network-graph-footer { padding-top: 15px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.network-graph-list > .network-graph-self { min-height: 120px; }
+.network-graph-list > ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.network-graph-list-peer { width: 100%; display: flex; flex-direction: column; gap: 6px; background: var(--surface); color: var(--text); text-align: left; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.network-graph-list-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 12px; }
+.network-graph-list-title strong { font-size: 14px; overflow-wrap: anywhere; }
+.network-graph-list-state { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; color: var(--muted); font-size: 12px; }
+.network-graph-empty { text-align: center; padding: 20px 10px; }
+.network-graph-empty h3 { font-size: 15px; }
+.network-graph-empty p { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.network-graph-footer { padding-top: 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .network-graph-footer details { margin-top: 6px; }
 .network-graph-footer summary { display: list-item; width: fit-content; }
 .network-graph-footer details p { margin-top: 8px; max-width: 76ch; }
-@container (max-width: 859px) {
-  .network-graph-diagram { display: none; }
-  .network-graph-list, .network-graph[data-view="diagram"] .network-graph-list { display: block; }
-  .network-graph-view-toggle { display: none; }
-  .network-graph-legend { gap: 10px 16px; }
+/* A compact panel keeps the same explicit graph view and its real connectors. */
+@container (max-width: 680px) {
+  .network-graph-canvas { grid-template-columns: minmax(0, 1fr); row-gap: 28px; padding: 16px; }
+  .network-graph-origin { width: 100%; align-self: start; }
+  .network-graph-diagram .network-graph-self { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 12px; align-items: center; text-align: left; }
+  .network-graph-diagram .network-graph-self .network-graph-device-heading { display: contents; }
+  .network-graph-diagram .network-graph-self .network-graph-device-glyph { width: 96px; height: 96px; grid-row: 1 / span 3; }
+  .network-graph-diagram .network-graph-self .network-graph-device-heading > span:last-child,
+  .network-graph-diagram .network-graph-self .network-graph-local-status,
+  .network-graph-diagram .network-graph-self .network-graph-node-meta { grid-column: 2; }
+  .network-graph-diagram .network-graph-self .network-graph-node-meta { justify-content: flex-start; }
+  .network-graph-branches { padding-left: 32px; }
+  .network-graph-branch { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); }
+}
+@container (max-width: 440px) {
+  .network-graph-canvas { padding: 12px; }
+  .network-graph-branch { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .network-graph-edge { min-height: 0; padding: 9px 12px; }
+  .network-graph-node { min-height: 116px; }
+  .network-graph-diagram .network-graph-node { min-height: 0; }
+  .network-graph-legend { gap: 7px 12px; }
 }
 @media (max-width: 600px) {
-  .network-graph { padding: 20px 16px; }
-  .network-graph-diagram { display: none; }
-  .network-graph-list { display: block; }
-  .network-graph-view-toggle { display: none; }
+  .network-graph { padding: 16px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .network-graph button { transition: none; }

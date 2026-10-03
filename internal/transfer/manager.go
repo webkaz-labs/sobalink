@@ -406,6 +406,11 @@ func (m *Manager) PausePeer(id string, paused bool) error {
 	if p.revoked {
 		return ErrPeerChanged
 	}
+	m.pausePeerLocked(id, p, paused)
+	return nil
+}
+
+func (m *Manager) pausePeerLocked(id string, p *peerState, paused bool) {
 	p.paused = paused
 	if paused {
 		for _, b := range m.batches {
@@ -420,7 +425,6 @@ func (m *Manager) PausePeer(id string, paused bool) error {
 			}
 		}
 	}
-	return nil
 }
 
 func (m *Manager) RevokePeer(id string) error {
@@ -525,17 +529,29 @@ func boolInt(b bool) int {
 func (m *Manager) SetReceivePolicy(policy ReceivePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	next, err := m.prepareReceivePolicyLocked(policy)
+	if err != nil {
+		return err
+	}
+	if err := m.savePoliciesLocked(next); err != nil {
+		return err
+	}
+	m.policies = next
+	return nil
+}
+
+func (m *Manager) prepareReceivePolicyLocked(policy ReceivePolicy) (map[string]ReceivePolicy, error) {
 	// A paused peer may have its local policy edited without unpausing inbound
 	// transfers or changing the trust generation.
 	if _, err := m.checkPeerIdentityLocked(policy.Peer); err != nil {
-		return err
+		return nil, err
 	}
 	if !validDestination(policy.Destination) {
-		return ErrUnsafePath
+		return nil, ErrUnsafePath
 	}
 	root, err := openDestination(policy.Destination)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_ = root.Close()
 	copy := make(map[string]ReceivePolicy, len(m.policies)+1)
@@ -544,12 +560,51 @@ func (m *Manager) SetReceivePolicy(policy ReceivePolicy) error {
 	}
 	copy[policy.Peer.ID] = policy
 	if len(copy) > m.limits.MaxPeers {
-		return ErrLimit
+		return nil, ErrLimit
 	}
-	if err := m.savePoliciesLocked(copy); err != nil {
+	return copy, nil
+}
+
+// UpdateReceiveSettings atomically publishes a reviewed policy and pause state
+// after one persistence callback succeeds. A nil policy preserves the current
+// runtime policy without reopening its directory. AutoAccept=false removes it;
+// removal remains fail-closed in memory if persistence fails. The callback runs
+// under m.mu and must persist the combined settings without reentering Manager.
+func (m *Manager) UpdateReceiveSettings(peer Peer, policy *ReceivePolicy, paused bool, persist func([]ReceivePolicy) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, err := m.checkPeerIdentityLocked(peer)
+	if err != nil {
 		return err
 	}
-	m.policies = copy
+	if persist == nil {
+		return ErrState
+	}
+	next := make(map[string]ReceivePolicy, len(m.policies)+1)
+	for id, value := range m.policies {
+		next[id] = value
+	}
+	if policy != nil {
+		if policy.Peer != peer {
+			return ErrPeerChanged
+		}
+		if policy.AutoAccept {
+			next, err = m.prepareReceivePolicyLocked(*policy)
+			if err != nil {
+				return err
+			}
+		} else {
+			delete(next, peer.ID)
+		}
+	}
+	if err := persist(policyList(next)); err != nil {
+		if policy != nil && !policy.AutoAccept {
+			delete(m.policies, peer.ID)
+		}
+		return err
+	}
+	m.policies = next
+	m.pausePeerLocked(peer.ID, p, paused)
 	return nil
 }
 

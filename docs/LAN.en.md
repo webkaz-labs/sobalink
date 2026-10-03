@@ -2,15 +2,21 @@
 
 [日本語](LAN.ja.md) · [Main guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#tailcat-gate)
 
-The local LAN setup UI, graph and shared Core/CLI implement explicit relay setup, recipient-bound invitations, pairing and durable revocation. At `14ee61f8`, [all four native targets passed](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076) the real stock Tailcat loopback-relay scenario, including 130-second existing TCP across a real two-minute lease, bidirectional TCP/UDP, denied keys, revoke and cleanup. The newer UI has 117 passing local tests, strict TypeScript and two byte-identical builds; its actual-font/graph browser checks and new Core integration execution are pending on the next exact CI. Actual devices, direct LAN/WAN and sleep/wake remain unverified.
+This guide covers the sobalink development build. At `5dd6b8c9`, [all four native targets passed](https://github.com/webkaz-labs/sobalink/actions/runs/37046723268) a loopback relay test across an actual two-minute lease and Core two-peer text/file/share/revoke integration. Later UI, typed CLI and Core changes have local evidence only and are not covered by that CI. Actual devices, direct LAN/WAN/NAT, sleep/wake and native IME remain unverified. [Verification by source](VERIFICATION.en.md)
 
 ## Use the local UI
 
-Open Network setup and choose LAN. Create or display this device's public identity, enter the trusted numeric relay endpoint and certificate pin, then activate it. The UI configures an existing relay; use the host command below to start an embedded relay. Invite the exact recipient key or paste a received invitation, review the target, and join. Pairing success leaves application trust off until explicitly approved.
+Open Network setup, choose LAN and create or display this device's public identity. Then choose the appropriate path:
+
+1. To host, choose “Host a relay on this device”, select a private address/interface from the current list and an unused TCP port, review the listener, then start it. The default port is 48443 and can be changed. An empty list needs a private-network connection and refresh. Firewall settings are unchanged; a running listener does not prove another device can reach it
+2. To join from a fresh profile, send this device's public ID to the inviter and paste its private invitation. Review the host identity, exact relay/pin and expiry, then choose “Connect and pair”. The UI configures that reviewed relay and pairs; an existing different network or relay requires explicit stop/offline recovery first
+3. “Advanced: use an existing relay” remains available for a verified numeric endpoint and certificate pin. Once connected, invite the exact recipient key or join a received invitation. Pairing leaves application trust off until explicitly approved
+
+“Stop sobalink” reviews active transfers and services before stopping the app, hosted relay and connections. The local control page disconnects. Reopen the app to continue; previous connections do not resume automatically.
 
 Copying an invitation is explicit. Dismissing setup retains an outstanding invitation only in memory so it can still be canceled; consumed invitations lose their copy/cancel actions. Pause and revoke show their affected peer and scope before submission. For a running-backend change, stop and restart with `soba start --offline`, then return to setup.
 
-The local SVG graph and its narrow-screen list show self-to-peer state only. Click a device or edge to open its existing details and permission controls. Japanese body text is configured at 15 px with secondary text at 13 px; actual Chromium font/metric evidence for this revision remains pending.
+The local SVG graph and accessible list show self-to-peer state only. Both remain available on narrow layouts, preserving the view explicitly selected. Click a device or edge to open its details and permission controls. Record actual font/metric and interaction acceptance for the latest source separately in [verification](VERIFICATION.en.md).
 
 ## Choose the relay explicitly
 
@@ -26,10 +32,11 @@ soba start --offline
 
 Leave that process running and use another terminal for commands. `--offline` is a startup option, not a promise that later explicit network commands are disabled.
 
-To host on a chosen private address, replace the generic sample with an address assigned to this device:
+On the hosting device, use `soba lan addresses` to list candidates and choose a private address. The IP below is fictional; replace it with an actual candidate. Listing a candidate does not prove reachability:
 
 ```sh
-soba command network.configure '{"mode":"lan","hostname":"sample-host","lan":{"kind":"host","address":"192.168.50.10:54430"}}'
+soba lan addresses
+soba setup --network lan --host 192.168.50.10:54546
 soba status
 ```
 
@@ -38,59 +45,64 @@ The host creates a private relay identity and certificate. State exposes only it
 The other device selects the same relay. `RELAY_CERT_SHA256` is a placeholder for the verified 64-character lowercase certificate hash:
 
 ```sh
-soba command network.configure '{"mode":"lan","hostname":"sample-peer","lan":{"kind":"relay","address":"192.168.50.10:54430","certificateSHA256":"RELAY_CERT_SHA256"}}'
+soba setup --network lan --relay 192.168.50.10:54546 --certificate RELAY_CERT_SHA256
 ```
 
-Selecting `kind: relay` does not start a relay. That operator is responsible for its listener and admission policy. Configuration validates and starts the selected backend; listener readiness is not proof that the other device is reachable. `soba setup --network lan` can reuse an existing selection, but cannot supply a first relay selection by itself.
+`--relay` does not start a relay; its operator provides the listener and admission policy. Configuration validates and starts the selected backend, but listener readiness does not prove that the other device is reachable. `--host` and `--relay` are mutually exclusive. Use `soba setup --network lan` to reuse a saved selection; add `--name sample-node` only to change the node name.
 
 ## Pair the intended identity
 
-Get each device's public identity without starting a network if needed:
+With the agent running on each device, obtain its public identity. This also works with no selected network or under `start --offline`:
 
 ```sh
-soba command lan.identity '{}'
+soba lan identity
 ```
 
-This creates and saves a LAN identity if one does not already exist and returns only its public key. Compare the intended recipient's key through a trusted channel. Names are labels, not authentication.
+This creates and saves a LAN identity if needed and returns only the public key in `publicKey`. Send the joining device's exact 64-character public key to the inviter through a trusted channel and compare it. Names are labels, not authentication.
 
-The inviter issues a one-time invitation for that exact key, with a lifetime of 1–600 seconds:
+On the inviter, after configuring the relay, issue a one-time invitation for that exact key. Replace `PUBLIC_ID` with the joining device's public key:
 
 ```sh
-soba command lan.invite '{"recipientPublicKey":"RECIPIENT_PUBLIC_KEY","name":"sample-peer","ttlSeconds":300}'
+soba lan invite --to PUBLIC_ID
 ```
 
-The result includes an `invitation` string, expiry and recipient public key. The invitation string contains a secret capability. Share it only with that intended peer through an appropriate private channel. Keep it out of URLs, screenshots, routine status, logs, shell history and literal command arguments. Do not publish an actual invitation as a configuration example.
+The default lifetime is five minutes. Override it with `--ttl`, in whole seconds from 1 second to 10 minutes, and set a display name with `--name sample-peer`. The result includes the secret `invitation` string, expiry and recipient public key. Save this output privately as `private-invitation.json` and share it only with the intended peer through an appropriate private channel. Keep secrets out of URLs, screenshots, shared logs, shell history and command arguments.
 
-The payload for `lan.join` is one JSON object whose `invitation` value is that complete string. The shape below is a placeholder, not a working invitation:
-
-```json
-{"invitation":"COMPLETE_INVITATION_JSON_STRING"}
-```
-
-Use a private regular file or a pipe for secret payloads. These bounded input paths avoid putting the secret itself into command arguments:
+On the joining device, inspect the received file before joining:
 
 ```sh
-soba command lan.join --json-file ./private-join.json
-soba command lan.join --stdin < ./private-join.json
+soba lan inspect --json-file ./private-invitation.json
 ```
 
-The file contains the wrapper object above, not the entire invitation-creation response and not a raw unwrapped invitation. JSON-encode the string; do not concatenate or manually escape secret content into a shell command. Input is limited to 48 KiB, and interactive-terminal stdin is rejected. Protect the input file and any invitation-creation output; remove temporary copies when no longer needed. The CLI does not make a file private merely by reading it.
+`inspect` checks the recipient against this device and validates the expiry, then returns the host public key/name and relay endpoint/pin without joining. Verify the intended host and configure that exact relay using `setup --network lan --relay ... --certificate ...` above before joining. `join` never changes the relay automatically:
 
-A successful join returns `paired: true` and `trusted: false`. Pairing commits private state before acknowledging success and establishes the transport relationship only. Each receiving device separately grants application trust:
+```sh
+soba lan join --json-file ./private-invitation.json
+```
+
+`inspect`, `join` and `cancel` accept either the full `lan invite` response or raw invitation JSON. No hand-written wrapper or manual JSON-string escaping is needed. A pipe or redirected input can replace the file option:
+
+```sh
+soba lan inspect --stdin < ./private-invitation.json
+```
+
+Input is limited to 48 KiB and interactive-terminal stdin is rejected. Protect the file and invitation-creation output, and remove unnecessary temporary copies. Reading a file does not change its permissions. `--dry-run` redacts invitation contents; use a real `inspect` call to validate the recipient, expiry and relay.
+
+A successful join returns `paired: true` and `trusted: false`. Pairing commits private state before acknowledging success and establishes the transport relationship only. Each receiving device separately grants application trust to its sender:
 
 ```sh
 soba peers
 soba trust PEER_ID
 ```
 
-You can then use explicit messages, batch transfers and scoped services from the [main guide](GENERIC.en.md). Autosave remains a separate opt-in bound to backend, exact peer, trust generation and destination.
+Then use explicit messages, batch transfers and scoped services from the [main guide](GENERIC.en.md). Autosave remains a separate opt-in bound to backend, exact peer, trust generation and destination.
 
 ## Cancel or recover an invitation
 
-The inviter can cancel its own outstanding invitation with the same wrapper shape and private payload input:
+The inviter can cancel its own outstanding invitation using the private file it issued:
 
 ```sh
-soba command lan.cancel --json-file ./private-invitation.json
+soba lan cancel --json-file ./private-invitation.json
 ```
 
 | Result | Next action |
@@ -106,7 +118,7 @@ soba command lan.cancel --json-file ./private-invitation.json
 | `lan_revoke_not_persisted` | LAN has stopped because durable revocation could not be confirmed. Repair private-state storage before restarting |
 | Expired, canceled or invalid invitation | Verify the intended identity and selected relay, then issue a fresh invitation if still wanted |
 
-Network failures also expose the stable `self.errorCode` in state. The UI localizes known recovery codes and keeps the unchanged technical explanation separate.
+Add `--json-errors` before the CLI command to receive failures as `{code,error}` on stderr. Network failures also expose the stable `self.errorCode` in state. The UI localizes known recovery codes and keeps the unchanged technical explanation separate.
 
 An uncertain reply is not success or proof that neither side changed. Reissuing the same command is not a safe substitute for inspecting both sides.
 
@@ -116,11 +128,11 @@ Application trust and transport pairing are separate:
 
 ```sh
 soba revoke PEER_ID
-soba command lan.revoke '{"peerId":"PEER_ID"}'
+soba lan revoke PEER_ID
 soba stop
 ```
 
-The first command removes application trust. `lan.revoke` also removes the LAN transport pair, its application trust/autosave and affected services, and persists that removal. Run it on each side when ending the relationship completely. A storage failure causes the LAN backend to stop instead of claiming durable success.
+The first command removes application trust. `soba lan revoke` also removes the LAN transport pair, its application trust/autosave and affected services, and persists that removal. Run it on each side when ending the relationship completely. A storage failure causes the LAN backend to stop instead of claiming durable success.
 
 If the saved network will not start, stop the agent and restart with `soba start --offline`. Saved peers remain visible as unverified/offline so you can explicitly revoke them. Changing the relay requires all current LAN pairs to be revoked and no active backend. The same recovery path is available after a saved local certificate expires; do not bypass certificate checks or silently reuse old pair permissions.
 

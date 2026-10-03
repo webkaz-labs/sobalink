@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { StrictMode } from 'react'
 import { App } from './App'
-import type { State } from './api'
+import type { ServiceConfigResult, State } from './api'
 import * as api from './api'
 
 const state: State = {
@@ -13,12 +14,13 @@ const state: State = {
     { id: 'peer-c', name: 'Service host', networks: ['tailnet'], online: true, verified: true, trusted: false, bridge: false, path: 'relay' },
   ], messages: [], transfers: [], services: [], shares: [], settings: { network: 'tailnet' },
 }
-function setup(initial = state) {
+function setup(initial = state, configs: Record<string, ServiceConfigResult> = {}) {
   const requests: { path: string; body: Record<string, unknown> }[] = []
   let current = structuredClone(initial)
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.body) requests.push({ path, body: JSON.parse(init.body as string) })
-    return new Response(JSON.stringify(path === '/api/state' ? current : { ok: true }), { status: 200 })
+    const body = init?.body ? JSON.parse(init.body as string) : undefined
+    return new Response(JSON.stringify(path === '/api/state' ? current : body?.name === 'service.config' ? { ok: true, result: configs[body.payload.id] } : { ok: true }), { status: 200 })
   })
   vi.stubGlobal('fetch', fetch)
   return { requests, fetch, setState: (next: State) => { current = next } }
@@ -154,14 +156,14 @@ describe('explicit and interrupted flows', () => {
     expect(screen.getByText(/Messages and file transfers with this device are paused/)).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Write a message…' })).toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: 'Resume' }))
-    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'peer.autosave', payload: { peerId: 'peer-a', enabled: true, paused: false, directory: '/tmp/received' } }))
+    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'peer.autosave', payload: { peerId: 'peer-a', paused: false } }))
   })
   it('turns off automatic receiving without silently resuming a paused peer', async () => {
     const { requests } = setup({ ...state, peers: [{ ...state.peers[0], autosave: { enabled: true, paused: true, directory: '/tmp/received' } }] })
     render(<App />); await openStudio()
     await userEvent.click(screen.getByRole('button', { name: 'Open device details' }))
     await userEvent.click(screen.getByRole('button', { name: 'Turn off' }))
-    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'peer.autosave', payload: { peerId: 'peer-a', enabled: false, paused: true, directory: '/tmp/received' } }))
+    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'peer.autosave', payload: { peerId: 'peer-a', enabled: false } }))
   })
   it('never offers unsupported local remapping for a shared service', async () => {
     const { requests } = setup(); render(<App />); await openStudio()
@@ -227,7 +229,7 @@ describe('explicit and interrupted flows', () => {
   })
   it('opens local details from the map without issuing a command', async () => {
     const { requests } = setup(); render(<App />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Network map' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Network graph' }))
     await userEvent.click(screen.getAllByRole('button', { name: /^Open device: Studio;/ })[0])
     expect(screen.getByRole('complementary', { name: 'Device details' })).toBeInTheDocument()
     expect(requests).toHaveLength(0)
@@ -247,7 +249,7 @@ describe('explicit and interrupted flows', () => {
     fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] } })
     await userEvent.click(await screen.findByRole('button', { name: 'Send batch' }))
     expect(upload).toHaveBeenCalledTimes(1)
-    await userEvent.click(screen.getByRole('button', { name: 'Network map' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Network graph' }))
     expect(signal.aborted).toBe(false)
     expect(container.querySelector('.background-upload')).toHaveTextContent('Studio')
     await userEvent.click(screen.getAllByRole('button', { name: 'Back to devices' })[0])
@@ -261,10 +263,11 @@ describe('explicit and interrupted flows', () => {
     render(<App />)
     await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
     await userEvent.click(screen.getByRole('radio', { name: /^LAN/ }))
+    await userEvent.click(screen.getByText('Advanced: use an existing relay'))
     expect(screen.getByRole('button', { name: 'Create device identity' })).toBeInTheDocument()
     expect(screen.getByLabelText('Relay address', { exact: false })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Activate selected relay' })).toBeEnabled()
-    expect(requests).toHaveLength(0)
+    expect(requests.every(request => request.body.name === 'lan.addresses')).toBe(true)
   })
   it('allows saved LAN to activate Tailnet after an offline restart', async () => {
     const { requests } = setup({ ...state, self: { ...state.self, status: 'idle', name: 'notebook' }, settings: { network: 'lan' } })
@@ -272,7 +275,211 @@ describe('explicit and interrupted flows', () => {
     await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
     await userEvent.click(screen.getByRole('radio', { name: /^Tailnet/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Activate' }))
-    await waitFor(() => expect(requests[0].body).toMatchObject({ name: 'network.configure', payload: { mode: 'tailnet', hostname: 'notebook' } }))
+    await waitFor(() => expect(requests.find(request => request.body.name === 'network.configure')?.body).toMatchObject({ name: 'network.configure', payload: { mode: 'tailnet', hostname: 'notebook' } }))
   })
 
+  it('keeps reviewed whole-app Stop available while switching away from a running network', async () => {
+    const { requests } = setup(); render(<App />)
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    await userEvent.click(screen.getByRole('radio', { name: /^LAN/ }))
+    expect(screen.queryByRole('button', { name: 'Start relay' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Stop sobalink' }))
+    const review = screen.getByRole('region', { name: 'Stop this app and its connections?' })
+    expect(review).toHaveFocus()
+    expect(review).toHaveTextContent('active transfers, and service connections')
+    await userEvent.click(within(review).getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('button', { name: 'Stop sobalink' })).toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+  })
+
+  it('keeps a network name draft when setup closes without activating', async () => {
+    const { requests } = setup({ ...state, self: { ...state.self, status: 'idle' }, settings: { network: 'none' } })
+    render(<App />)
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    fireEvent.change(screen.getByRole('textbox', { name: /This device name/ }), { target: { value: 'draft-device' } })
+    await userEvent.keyboard('{Escape}')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Set up network' })[0])
+    expect(screen.getByRole('textbox', { name: /This device name/ })).toHaveValue('draft-device')
+    expect(requests).toHaveLength(0)
+    expect(screen.getByRole('button', { name: 'Sign in to Tailscale' })).toBeDisabled()
+  })
+
+  it('keeps explicit network view and details in browser history', async () => {
+    setup(); render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Network graph' }))
+    const diagramRoute = history.state
+    expect(screen.getByRole('heading', { name: 'Network graph' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Show device list' }))
+    const listRoute = history.state
+    expect(screen.getByRole('heading', { name: 'Device list' })).toBeInTheDocument()
+    expect(document.title).toBe('Device list · sobalink')
+    await userEvent.click(screen.getByRole('button', { name: /^Open device: Studio;/ }))
+    const detailRoute = history.state
+    expect(screen.getByRole('complementary', { name: 'Device details' })).toBeInTheDocument()
+    act(() => { history.replaceState(listRoute, ''); window.dispatchEvent(new PopStateEvent('popstate')) })
+    expect(screen.queryByRole('complementary', { name: 'Device details' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Device list' })).toBeInTheDocument()
+    act(() => { history.replaceState(diagramRoute, ''); window.dispatchEvent(new PopStateEvent('popstate')) })
+    expect(screen.getByRole('heading', { name: 'Network graph' })).toBeInTheDocument()
+    act(() => { history.replaceState(detailRoute, ''); window.dispatchEvent(new PopStateEvent('popstate')) })
+    expect(screen.getByRole('heading', { name: 'Device list' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Device details' })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('complementary', { name: 'Device details' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Device list' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Open device: Studio;/ })).toHaveFocus()
+  })
+
+  it('opens the device list directly from global navigation without visiting the graph', async () => {
+    const { requests } = setup(); render(<App />)
+    const navigation = await screen.findByRole('navigation', { name: 'Workspace views' })
+    await userEvent.click(within(navigation).getByRole('button', { name: 'Device list' }))
+    expect(screen.getByRole('heading', { name: 'Device list' })).toBeInTheDocument()
+    expect(document.querySelector('.network-graph-diagram')).not.toBeInTheDocument()
+    expect(within(navigation).getByRole('button', { name: 'Device list' })).toHaveAttribute('aria-current', 'page')
+    await userEvent.click(screen.getByRole('button', { name: /^Open device: Studio;/ }))
+    expect(screen.getByRole('complementary', { name: 'Device details' })).toBeInTheDocument()
+    expect(requests).toHaveLength(0)
+    await userEvent.click(within(navigation).getByRole('button', { name: 'Network graph' }))
+    expect(screen.getByRole('heading', { name: 'Network graph' })).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: 'Device details' })).not.toBeInTheDocument()
+    expect(within(navigation).getByRole('button', { name: 'Network graph' })).toHaveAttribute('aria-current', 'page')
+  })
+
+})
+
+const savedShare: ServiceConfigResult = { revision: 'a'.repeat(64), active: false, configuration: { id: 'saved-share', backend: 'tailnet', name: 'Scoped-share', direction: 'share', network: 'udp', ports: '8080-8089', excludePorts: '8082,8084-8086', peerIds: ['peer-a', 'peer-c'], ttlSeconds: 120, purpose: 'custom', discoverable: true } }
+const savedState: State = { ...state, shares: [{ id: 'saved-share', peerId: '', peerIds: ['peer-a', 'peer-c'], name: 'Scoped-share', network: 'udp', ports: '8080-8089', status: 'stopped' }] }
+async function openDetails() { await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Open device details' })) }
+describe('service drafts and authoritative saved settings', () => {
+  it('offers editable unique names across connections and shares and refuses collisions', async () => {
+    const { requests } = setup({ ...savedState, services: [{ id: 'existing', peerId: 'peer-c', name: 'connect-Studio', network: 'tcp', status: 'active' }] })
+    render(<App />); await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    const name = screen.getByRole('textbox', { name: /^Connection name/ })
+    expect(name).toHaveValue('connect-Studio-2')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ports' }), { target: { value: '8080' } })
+    fireEvent.change(name, { target: { value: 'Scoped-share' } })
+    expect(screen.getByRole('button', { name: 'Start connection' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Use a new name' }))
+    expect(name).toHaveValue('Scoped-share-2')
+    await userEvent.click(screen.getByRole('button', { name: 'Start connection' }))
+    expect(requests[0].body.payload).toMatchObject({ name: 'Scoped-share-2', backend: 'tailnet' })
+    expect(requests[0].body.payload).not.toHaveProperty('replaceId')
+  })
+  it('retains per-peer/mode drafts across Close and Back, then resets explicitly', async () => {
+    const { requests } = setup(); render(<App />); await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ports' }), { target: { value: '80,443' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Local starting port' }), { target: { value: '8080' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^Connection name/ }), { target: { value: 'Reviewed-name' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getByRole('button', { name: /Service host/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    expect(screen.getByRole('textbox', { name: 'Ports' })).toHaveValue('')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    expect(screen.getByRole('textbox', { name: 'Ports' })).toHaveValue('80,443')
+    expect(screen.getByRole('textbox', { name: 'Local starting port' })).toHaveValue('8080')
+    expect(screen.getByText('127.0.0.1:8081 → Studio:443')).toBeInTheDocument()
+    act(() => window.dispatchEvent(new PopStateEvent('popstate')))
+    await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    expect(screen.getByRole('textbox', { name: /^Connection name/ })).toHaveValue('Reviewed-name')
+    await userEvent.click(screen.getByRole('button', { name: 'Reset form' }))
+    expect(screen.getByRole('textbox', { name: 'Ports' })).toHaveValue('')
+    expect(requests).toHaveLength(0)
+  })
+  it('keeps a manually chosen name when selecting an advertised endpoint', async () => {
+    setup({ ...state, availableServices: [{ id: 'discovered', peerId: 'peer-a', name: 'ssh', network: 'tcp', ports: '22', status: 'active' }] })
+    render(<App />); await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /^Connection name/ }), { target: { value: 'My-name' } })
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Available services' }), 'discovered')
+    expect(screen.getByRole('textbox', { name: /^Connection name/ })).toHaveValue('My-name')
+    expect(screen.getByRole('button', { name: 'Start connection' })).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Local starting port' }), { target: { value: '1024' } })
+    expect(screen.getByRole('button', { name: 'Start connection' })).toBeEnabled()
+  })
+  it('copies only authoritative complete settings and does not start on read or cancel under StrictMode', async () => {
+    const { requests } = setup(savedState, { 'saved-share': savedShare })
+    render(<StrictMode><App /></StrictMode>); await openDetails()
+    await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
+    expect(await screen.findByRole('textbox', { name: /^Connection name/ })).toHaveValue('Scoped-share-2')
+    expect(screen.getByRole('combobox', { name: 'Expires after' })).toHaveValue('120')
+    expect(screen.getByText('8082,8084-8086')).toBeInTheDocument()
+    expect(requests.map(request => request.body.name)).toEqual(['service.config'])
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
+    await screen.findByRole('textbox', { name: 'Ports' })
+    await userEvent.click(screen.getByRole('button', { name: 'Start sharing' }))
+    const payload = requests.find(request => request.body.name === 'service.share')?.body.payload
+    expect(payload).toEqual({ backend: 'tailnet', name: 'Scoped-share-2', network: 'udp', ports: '8080-8089', excludePorts: '8082,8084-8086', peerIds: ['peer-a', 'peer-c'], ttlSeconds: 120, purpose: 'custom', discoverable: true })
+  })
+  it('edits an inactive saved rule with exact revision and rejects a changed saved draft on reopen', async () => {
+    const configs = { 'saved-share': savedShare }
+    const { requests } = setup(savedState, configs); render(<App />); await openDetails()
+    await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
+    await screen.findByRole('textbox', { name: 'Ports' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ports' }), { target: { value: '8080-8090' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    configs['saved-share'] = { ...savedShare, revision: 'b'.repeat(64) }
+    await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
+    expect(await screen.findByText(/These saved settings have changed/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apply and start' })).toBeDisabled()
+    await userEvent.click(screen.getAllByRole('button', { name: 'Reload saved settings' })[0])
+    expect(await screen.findByRole('textbox', { name: 'Ports' })).toHaveValue('8080-8089')
+    await userEvent.click(screen.getByRole('button', { name: 'Apply and start' }))
+    expect(requests.find(request => request.body.name === 'service.share')?.body.payload).toMatchObject({ replaceId: 'saved-share', expectedRevision: 'b'.repeat(64), ttlSeconds: 120, excludePorts: '8082,8084-8086', discoverable: true, peerIds: ['peer-a', 'peer-c'] })
+  })
+  it.each(['active', 'backend', 'legacy'] as const)('blocks unsafe saved-rule %s use until reviewed', async reason => {
+    const record = { ...savedShare, active: reason === 'active', configuration: { ...savedShare.configuration, backend: reason === 'backend' ? 'lan' as const : reason === 'legacy' ? undefined : 'tailnet' as const } }
+    const { requests } = setup(savedState, { 'saved-share': record }); render(<App />); await openDetails()
+    await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
+    expect(await screen.findByRole('button', { name: 'Apply and start' })).toBeDisabled()
+    if (reason === 'legacy') {
+      await userEvent.click(screen.getByRole('checkbox', { name: /I reviewed the selected network/ }))
+      expect(screen.getByRole('button', { name: 'Apply and start' })).toBeEnabled()
+    }
+    expect(requests.every(request => request.body.name === 'service.config')).toBe(true)
+  })
+  it('refuses a partial saved-rule response instead of guessing settings', async () => {
+    setup(savedState); render(<App />); await openDetails()
+    await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('The response could not be read')
+    expect(screen.queryByRole('button', { name: 'Start sharing' })).not.toBeInTheDocument()
+  })
+  it.each([false, true])('edits a receiving folder without changing enabled or paused=%s', async paused => {
+    const { requests } = setup({ ...state, peers: [{ ...state.peers[0], autosave: { enabled: true, paused, directory: '/tmp/old' } }] })
+    render(<App />); await openDetails(); await userEvent.click(screen.getByRole('button', { name: 'Edit folder' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Receive directory' }), { target: { value: '/tmp/new' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save folder' }))
+    expect(requests[0].body).toMatchObject({ name: 'peer.autosave', payload: { peerId: 'peer-a', directory: '/tmp/new' } })
+    expect(requests[0].body.payload).toEqual({ peerId: 'peer-a', directory: '/tmp/new' })
+  })
+  it('retains unsaved default and automatic receiving folders separately on close', async () => {
+    const { requests } = setup({ ...state, peers: [{ ...state.peers[0], autosave: { enabled: true, paused: true, directory: '/tmp/old' } }] })
+    render(<App />); await openDetails()
+    await userEvent.click(screen.getByRole('button', { name: 'Edit folder' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Receive directory' }), { target: { value: '/tmp/peer-draft' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Preferences' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Receive directory' }), { target: { value: '/tmp/default-draft' } })
+    await userEvent.keyboard('{Escape}')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit folder' }))
+    expect(screen.getByRole('textbox', { name: 'Receive directory' })).toHaveValue('/tmp/peer-draft')
+    await userEvent.keyboard('{Escape}')
+    await userEvent.click(screen.getByRole('button', { name: 'Preferences' }))
+    expect(screen.getByRole('textbox', { name: 'Receive directory' })).toHaveValue('/tmp/default-draft')
+    expect(requests).toHaveLength(0)
+  })
+  it('clears service drafts after session expiry and successful reauthentication', async () => {
+    const { fetch } = setup(); const connected = fetch.getMockImplementation()!
+    render(<App />); await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ports' }), { target: { value: '9191' } })
+    fetch.mockImplementation(async () => new Response('{"code":"unauthenticated"}', { status: 401 }))
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+    await screen.findByLabelText('Local access code')
+    fetch.mockImplementation(connected)
+    fireEvent.change(screen.getByLabelText('Local access code'), { target: { value: 'test-code' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Open sobalink' }))
+    await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Connect to a service' }))
+    expect(screen.getByRole('textbox', { name: 'Ports' })).toHaveValue('')
+  })
 })

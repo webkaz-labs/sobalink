@@ -59,6 +59,9 @@ export interface Service {
   application?: 'unverified'
   error?: string
 }
+export interface LanAddress { interface: string; address: string }
+export interface LanInvitationPreview { recipientPublicKey: string; recipientMatches: true; hostPublicKey: string; hostName: string; expires: string; relay: { kind: 'relay'; address: string; certificateSHA256: string } }
+export interface LanRelay { kind: 'relay' | 'host'; address: string; certificateSHA256?: string }
 export interface State {
   csrfToken: string
   self: { name: string; status: string; error?: string; errorCode?: string; receiveDirectory?: string; networks?: Network[] }
@@ -69,11 +72,19 @@ export interface State {
   shares: Service[]
   availableServices?: Service[]
   reservedPorts?: number[]
-  lan?: { configured: boolean; publicKey?: string; relay?: { kind: 'relay' | 'host'; address: string; certificateSHA256?: string }; pairingReady: boolean; path: 'unknown' | 'direct' | 'relay' }
+  lan?: { configured: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; path: 'unknown' | 'direct' | 'relay' }
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }
 }
 export interface CommandResult { ok: boolean; result?: { authUrl?: string; [key: string]: unknown } }
+export interface ServiceConfiguration extends ServicePayload {
+  id: string
+  direction: 'forward' | 'share'
+}
+export interface ServiceConfigResult { configuration: ServiceConfiguration; revision: string; active: boolean }
 export interface ServicePayload {
+  backend?: Network | ''
+  replaceId?: string
+  expectedRevision?: string
   name: string
   peerId?: string
   serviceId?: string
@@ -95,13 +106,17 @@ export interface CommandPayloads {
   'transfer.forget': { transferId: string }
   'peer.trust': { peerId: string; trusted: boolean }
   'peer.reconnect': { peerId: string }
-  'peer.autosave': { peerId: string; enabled: boolean; paused: boolean; directory: string }
+  'peer.autosave': { peerId: string; enabled?: boolean; paused?: boolean; directory?: string }
   'service.connect': ServicePayload
   'service.share': ServicePayload
   'service.stop': { id: string }
-  'network.configure': { mode: 'none' | Network; hostname?: string; lan?: { kind: 'relay'; address: string; certificateSHA256: string } }
+  'service.config': { id: string }
+  'network.configure': { mode: 'none' | Network; hostname?: string; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
   'network.login': Record<string, never>
+  'application.stop': Record<string, never>
+  'lan.addresses': Record<string, never>
   'lan.identity': Record<string, never>
+  'lan.inspect': { invitation: string }
   'lan.invite': { recipientPublicKey: string; name: string; ttlSeconds: 300 }
   'lan.cancel': { invitation: string }
   'lan.join': { invitation: string }

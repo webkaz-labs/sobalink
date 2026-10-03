@@ -17,7 +17,30 @@ type Request struct {
 }
 type Response struct {
 	Error string          `json:"error,omitempty"`
+	Code  string          `json:"code,omitempty"`
 	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// RemoteError preserves a stable command error code across the local IPC
+// boundary. Older servers without codes remain readable with an empty Code.
+type RemoteError struct {
+	Code    string
+	Message string
+}
+
+func (e *RemoteError) Error() string     { return e.Message }
+func (e *RemoteError) ErrorCode() string { return e.Code }
+
+func boundedErrorCode(code string) string {
+	if len(code) == 0 || len(code) > 64 {
+		return ""
+	}
+	for _, r := range code {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return ""
+		}
+	}
+	return code
 }
 
 // Handler must return when its context is canceled. Close reports a timeout
@@ -27,7 +50,9 @@ type Handler func(context.Context, string) (any, error)
 const (
 	responseDrainTimeout = 200 * time.Millisecond
 	maxRequestBytes      = 64 << 10
-	maxResponseBytes     = 256 << 10
+	// Local status includes bounded multi-batch metadata and saved destinations,
+	// so it needs more room than a command request. File bodies never use IPC.
+	maxResponseBytes = 16 << 20
 	// Total cleanup includes response draining. This five-second budget leaves
 	// ample margin within the 20-second control-call deadline for Windows I/O
 	// completion scheduling, while still refusing an indefinitely stuck close.
@@ -105,13 +130,21 @@ func serveListener(parent context.Context, ln net.Listener, h Handler) *Server {
 				resp := Response{}
 				if e != nil {
 					resp.Error = e.Error()
+					var coded interface{ ErrorCode() string }
+					if errors.As(e, &coded) {
+						resp.Code = boundedErrorCode(coded.ErrorCode())
+					}
 				} else {
 					resp.Data, e = json.Marshal(v)
 					if e != nil {
 						resp.Error = "could not encode response"
 					}
 				}
-				_ = json.NewEncoder(c).Encode(resp)
+				encoded, err := json.Marshal(resp)
+				if err != nil || len(encoded)+1 > maxResponseBytes {
+					encoded, _ = json.Marshal(Response{Error: "local response is too large; use the local UI to inspect and clear completed transfer history", Code: "response_too_large"})
+				}
+				_, _ = c.Write(append(encoded, '\n'))
 			}()
 		}
 	}()
@@ -250,12 +283,21 @@ func Call(ctx context.Context, dir, command string, v any) error {
 	if e = json.NewEncoder(c).Encode(Request{command}); e != nil {
 		return e
 	}
+	return readResponse(c, v)
+}
+
+func readResponse(reader io.Reader, v any) error {
 	var r Response
-	if e = json.NewDecoder(io.LimitReader(c, maxResponseBytes)).Decode(&r); e != nil {
+	limited := &io.LimitedReader{R: reader, N: maxResponseBytes + 1}
+	e := json.NewDecoder(limited).Decode(&r)
+	if limited.N == 0 {
+		return &RemoteError{Code: "response_too_large", Message: "local response exceeds the 16 MiB IPC limit"}
+	}
+	if e != nil {
 		return e
 	}
 	if r.Error != "" {
-		return errors.New(r.Error)
+		return &RemoteError{Code: boundedErrorCode(r.Code), Message: r.Error}
 	}
 	if v != nil {
 		return json.Unmarshal(r.Data, v)

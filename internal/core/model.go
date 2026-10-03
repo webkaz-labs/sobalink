@@ -50,6 +50,7 @@ type Profile struct {
 }
 type ServiceSpec struct {
 	ID           string   `json:"id"`
+	Backend      string   `json:"backend,omitempty"`
 	Name         string   `json:"name"`
 	Direction    string   `json:"direction"`
 	Network      string   `json:"network"`
@@ -61,6 +62,7 @@ type ServiceSpec struct {
 	TTLSeconds   int      `json:"ttlSeconds"`
 	Purpose      string   `json:"purpose"`
 	Discoverable bool     `json:"discoverable"`
+	ServiceID    string   `json:"serviceId,omitempty"`
 }
 type Message struct {
 	ID        string    `json:"id"`
@@ -116,6 +118,7 @@ type Core struct {
 	closeErr                   error
 	lan                        *lanStore
 	lanFactory                 func(*lanStore) (lanNetworkBackend, error)
+	lanAddresses               func() ([]LANLocalAddress, error)
 }
 type requestResult struct {
 	signature string

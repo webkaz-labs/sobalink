@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { Peer, State, Transfer } from '../api'
@@ -14,7 +14,7 @@ function transfer(extra: Partial<Transfer> = {}): Transfer {
   return { id: 'transfer-one', peerId: 'Studio', direction: 'outgoing', name: 'Files', entries: [], totalBytes: 400, completedBytes: 100, status: 'transferring', createdAt: '2026-10-02T10:00:00Z', ...extra }
 }
 function props(extra: Partial<NetworkGraphProps> = {}): NetworkGraphProps {
-  return { state: state(), locale: 'en', onSelectPeer: vi.fn(), onSelectSelf: vi.fn(), ...extra }
+  return { state: state(), locale: 'en', view: 'diagram', onViewChange: vi.fn(), onSelectPeer: vi.fn(), onSelectSelf: vi.fn(), ...extra }
 }
 function diagram() { return within(screen.getByRole('group', { name: 'Known connections from this device' })) }
 
@@ -139,34 +139,95 @@ describe('network diagram evidence and interaction', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('provides a keyboard-selectable equivalent list and a way back to the diagram', async () => {
-    const handlers = props({ onShowList: vi.fn(), selectedPeerId: 'Studio' })
-    const { container } = render(<NetworkGraph {...handlers} />)
-    const toggle = screen.getByRole('button', { name: 'Show device list' })
+  it.each([
+    { locale: 'en' as const, graphHeading: 'Network graph', listHeading: 'Device list', showList: 'Show device list', showGraph: 'Show network diagram', open: /^Open device: Studio;/ },
+    { locale: 'ja' as const, graphHeading: 'ネットワーク図', listHeading: 'デバイス一覧', showList: 'デバイス一覧を表示', showGraph: 'ネットワーク図を表示', open: /^デバイスを開く: Studio;/ },
+  ])('renders only the parent-selected mode with its truthful heading in $locale', async ({ locale, graphHeading, listHeading, showList, showGraph, open }) => {
+    const handlers = props({ locale, selectedPeerId: 'Studio' })
+    const { container, rerender } = render(<NetworkGraph {...handlers} />)
+    const toggle = screen.getByRole('button', { name: showList })
     toggle.focus()
     await userEvent.keyboard('{Enter}')
-    expect(handlers.onShowList).toHaveBeenCalledOnce()
-    expect(container.querySelector('.network-graph')).toHaveAttribute('data-view', 'list')
-    const list = within(screen.getByRole('group', { name: 'Device list' }))
-    const item = list.getByRole('button', { name: /^Open device: Studio;/ })
+    expect(handlers.onViewChange).toHaveBeenCalledExactlyOnceWith('list')
+    // Parent navigation owns the mode. Requesting a change never silently diverges from it.
+    expect(container.querySelector('.network-graph')).toHaveAttribute('data-view', 'diagram')
+    expect(screen.getByRole('heading', { name: graphHeading })).toBeInTheDocument()
+    expect(container.querySelector('.network-graph-list')).not.toBeInTheDocument()
+    rerender(<NetworkGraph {...handlers} view="list" />)
+    expect(screen.getByRole('heading', { name: listHeading })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: graphHeading })).not.toBeInTheDocument()
+    expect(container.querySelector('.network-graph-diagram')).not.toBeInTheDocument()
+    const list = within(screen.getByRole('group', { name: listHeading }))
+    const item = list.getByRole('button', { name: open })
     expect(item).toHaveAttribute('aria-pressed', 'true')
-    expect(item).toHaveTextContent('Path unknown')
-    expect(item).toHaveTextContent('No file transfer in progress')
+    expect(item).toHaveAccessibleName(locale === 'en' ? /Path unknown; No active connections or sharing rules; No file transfer in progress/ : /経路不明; 有効な接続・共有許可なし; 進行中のファイル転送なし/)
     item.focus()
     await userEvent.keyboard(' ')
     expect(handlers.onSelectPeer).toHaveBeenCalledWith('Studio')
-    await userEvent.click(screen.getByRole('button', { name: 'Show network diagram' }))
+    await userEvent.click(screen.getByRole('button', { name: showGraph }))
+    expect(handlers.onViewChange).toHaveBeenLastCalledWith('diagram')
+    rerender(<NetworkGraph {...handlers} view="diagram" />)
+    expect(screen.getByRole('heading', { name: graphHeading })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: open })).toHaveLength(1)
+  })
+
+  it('anchors branches to illustrated device glyphs outside their captions and redraws when the panel narrows', () => {
+    let compact = false
+    let notifyResize = () => {}
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { notifyResize = callback }
+      observe = observe
+      disconnect = disconnect
+    })
+    const rect = (x: number, y: number, width: number, height: number) => ({ x, y, left: x, top: y, right: x + width, bottom: y + height, width, height, toJSON: () => ({}) })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const second = this.closest('.network-graph-branch')?.getAttribute('data-peer-id') === 'B'
+      if (this.classList.contains('network-graph-canvas')) return rect(100, 100, compact ? 320 : 820, compact ? 800 : 360)
+      if (this.classList.contains('network-graph-device-glyph')) {
+        if (this.closest('.network-graph-self')) return compact ? rect(128, 128, 96, 96) : rect(144, 128, 112, 112)
+        return compact ? rect(160, second ? 720 : 420, 72, 72) : rect(526, second ? 288 : 128, 72, 72)
+      }
+      if (this.classList.contains('network-graph-self')) return rect(120, 120, compact ? 260 : 160, 132)
+      if (this.classList.contains('network-graph-edge')) return compact ? rect(152, second ? 600 : 300, 248, 90) : rect(324, second ? 292 : 132, 170, 108)
+      if (this.classList.contains('network-graph-node')) return compact ? rect(152, second ? 712 : 412, 248, 132) : rect(518, second ? 280 : 120, 202, 132)
+      return rect(0, 0, 0, 0)
+    })
+    const { container, unmount } = render(<NetworkGraph {...props({ selectedPeerId: 'A', state: state({ peers: [peer('B'), peer('A')], transfers: [transfer({ peerId: 'A' })] }) })} />)
+    const lines = () => Array.from(container.querySelectorAll('.network-graph-line')).map(line => line.getAttribute('d'))
+    expect(lines()).toEqual([
+      'M 154 84 H 192 C 208 84, 208 86, 224 86 M 394 86 C 411 86, 411 64, 428 64',
+      'M 154 84 H 192 C 208 84, 208 246, 224 246 M 394 246 C 411 246, 411 224, 428 224',
+    ])
+    expect(container.querySelector('g[data-peer-id="A"]')).toHaveClass('is-selected')
+    expect(diagram().getByRole('button', { name: /^Open connection: Local device — A;/ })).toHaveClass('is-selected')
+    expect(observe).toHaveBeenCalledTimes(6)
+    compact = true
+    act(() => notifyResize())
+    expect(lines()).toEqual([
+      'M 30 76 Q 20 76 20 88 V 235 Q 20 245 30 245 H 52 M 176 290 C 176 306, 96 306, 96 322',
+      'M 30 76 Q 20 76 20 88 V 535 Q 20 545 30 545 H 52 M 176 590 C 176 606, 96 606, 96 622',
+    ])
+    expect(container.querySelector('[data-direction="outgoing"]')).toHaveAttribute('d', 'M 92 311 l 4 5 4 -5')
     expect(container.querySelector('.network-graph')).toHaveAttribute('data-view', 'diagram')
+    expect(screen.getByRole('button', { name: 'Show device list' })).toBeInTheDocument()
+    expect(container.querySelector('.network-graph-list')).not.toBeInTheDocument()
+    expect(container.querySelectorAll('foreignObject, text, [style]')).toHaveLength(0)
+    expect(diagram().getAllByRole('button')).toHaveLength(5)
+    unmount()
+    expect(disconnect).toHaveBeenCalledOnce()
   })
 
   it('keeps coordinates and keyboard nodes stable as polling reorders or updates peers', () => {
     const first = props({ state: state({ peers: [peer('B'), peer('A')] }) })
     const { container, rerender } = render(<NetworkGraph {...first} />)
     const a = diagram().getByRole('button', { name: /^Open device: A;/ })
-    const before = Array.from(container.querySelectorAll('g[data-peer-id]')).map(group => [group.getAttribute('data-peer-id'), group.querySelector('foreignObject')?.getAttribute('y')])
+    const before = Array.from(container.querySelectorAll('.network-graph-branch')).map(group => group.getAttribute('data-peer-id'))
     a.focus()
     rerender(<NetworkGraph {...first} state={state({ peers: [peer('A', { online: false, name: 'Renamed' }), peer('B', { trusted: false })] })} />)
-    const after = Array.from(container.querySelectorAll('g[data-peer-id]')).map(group => [group.getAttribute('data-peer-id'), group.querySelector('foreignObject')?.getAttribute('y')])
+    const after = Array.from(container.querySelectorAll('.network-graph-branch')).map(group => group.getAttribute('data-peer-id'))
+    expect(before).toEqual(['A', 'B'])
     expect(after).toEqual(before)
     expect(diagram().getByRole('button', { name: /^Open device: Renamed;/ })).toBe(a)
     expect(a).toHaveFocus()

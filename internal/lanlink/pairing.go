@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -43,6 +44,27 @@ type Invitation struct {
 	Token         string       `json:"token"`
 }
 
+// ValidateFor checks invitation contents locally, without creating a node or
+// contacting the host. Only pairing can prove that the host still accepts the
+// invitation; this check cannot establish remote availability or consumption.
+func (inv Invitation) ValidateFor(recipient string, now time.Time) error {
+	if inv.Version != pairingVersion || !validKey(recipient) || inv.RecipientKey != recipient || inv.Host.Peer.Key == recipient || !deadline.Active(now, inv.Expires) {
+		return ErrInvite
+	}
+	if len(inv.Token) != 43 {
+		return ErrInvite
+	}
+	token, err := base64.RawURLEncoding.Strict().DecodeString(inv.Token)
+	if err != nil || len(token) != 32 {
+		return ErrInvite
+	}
+	if err := inv.Relay.Validate(); err != nil {
+		return err
+	}
+	_, err = validateRemote(inv.Host, inv.Relay)
+	return err
+}
+
 func (n *Node) IssueInvitation(ctx context.Context, recipient Peer, hostName string, ttl time.Duration) (Invitation, error) {
 	if n.cfg.Persist == nil {
 		return Invitation{}, errors.New("durable pairing persistence required")
@@ -77,8 +99,8 @@ func (n *Node) IssueInvitation(ctx context.Context, recipient Peer, hostName str
 }
 func (n *Node) CancelInvitation(token string) { n.cfg.Trust.CancelInvite(token) }
 func (n *Node) PairInvitation(ctx context.Context, inv Invitation) error {
-	if inv.Version != pairingVersion || inv.RecipientKey != n.PublicKey() || !deadline.Active(time.Now(), inv.Expires) {
-		return ErrInvite
+	if err := inv.ValidateFor(n.PublicKey(), time.Now()); err != nil {
+		return err
 	}
 	if inv.Relay != n.cfg.Relay {
 		return ErrRelayMismatch

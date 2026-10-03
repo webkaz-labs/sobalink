@@ -64,8 +64,7 @@ func (c *Core) IPC(ctx context.Context, raw string) (any, error) {
 		return c.UICode()
 	}
 	if raw == "stop" {
-		c.cancel()
-		return map[string]string{"state": "stopping"}, nil
+		return c.stopApplication(), nil
 	}
 	var cmd webui.Command
 	if err := json.Unmarshal([]byte(raw), &cmd); err != nil {
@@ -74,6 +73,17 @@ func (c *Core) IPC(ctx context.Context, raw string) (any, error) {
 	return c.Command(ctx, cmd)
 }
 func (c *Core) Done() <-chan struct{} { return c.ctx.Done() }
+
+// The owning process closes Core after Done, as with the existing IPC stop.
+// Keeping one shutdown path closes relay, peer, transfer and service work too.
+func (c *Core) stopApplication() map[string]string {
+	c.networkReady.Store(false)
+	c.mu.Lock()
+	c.networkState = "stopping"
+	c.mu.Unlock()
+	c.cancel()
+	return map[string]string{"state": "stopping"}
+}
 
 func (c *Core) startNetwork(ctx context.Context) error {
 	if c.nodeCopy() != nil {
@@ -284,8 +294,14 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 
 func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 	switch cmd.Name {
-	case "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
+	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
 		return c.lanCommand(ctx, cmd.Name, cmd.Payload)
+	case "application.stop":
+		var input struct{}
+		if err := decodePayload(cmd.Payload, &input); err != nil {
+			return nil, err
+		}
+		return c.stopApplication(), nil
 	case "network.configure":
 		var v struct {
 			Mode     string        `json:"mode"`
@@ -330,7 +346,13 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		c.profile = p
 		c.mu.Unlock()
 		if v.Mode == "tailnet" || v.Mode == "lan" {
-			return nil, c.startNetwork(ctx)
+			err := c.startNetwork(ctx)
+			if err != nil {
+				c.mu.Lock()
+				c.networkState, c.networkError, c.networkErrorCode = "error", err.Error(), networkErrorCode(err)
+				c.mu.Unlock()
+			}
+			return nil, err
 		}
 		return nil, nil
 	case "network.login":
@@ -423,10 +445,10 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return nil, nil
 	case "peer.autosave":
 		var v struct {
-			PeerID    string `json:"peerId"`
-			Enabled   bool   `json:"enabled"`
-			Paused    bool   `json:"paused"`
-			Directory string `json:"directory"`
+			PeerID    string  `json:"peerId"`
+			Enabled   *bool   `json:"enabled"`
+			Paused    *bool   `json:"paused"`
+			Directory *string `json:"directory"`
 		}
 		if e := decodePayload(cmd.Payload, &v); e != nil {
 			return nil, e
@@ -438,32 +460,34 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if _, e := c.currentPeer(ctx, v.PeerID); e != nil {
 			return nil, e
 		}
-		if v.Enabled && !filepath.IsAbs(v.Directory) {
-			return nil, errors.New("select an absolute receive directory")
+		// Omitted values are merged while c.op is held. A client changing one
+		// setting must not write back a stale snapshot of the other settings.
+		next := t
+		if v.Enabled != nil {
+			next.Autosave = *v.Enabled
 		}
-		if v.Enabled {
-			if err := c.transfers.SetReceivePolicy(transfer.ReceivePolicy{Peer: transfer.Peer{ID: t.ID, Generation: t.Generation}, Destination: v.Directory, AutoAccept: true}); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := c.transfers.RemoveReceivePolicy(t.ID); err != nil {
-				return nil, err
-			}
+		if v.Paused != nil {
+			next.Paused = *v.Paused
 		}
-		p := c.profileCopy()
-		for i := range p.Peers {
-			if p.Peers[i].ID == t.ID {
-				p.Peers[i].Paused = v.Paused
-			}
+		if v.Directory != nil {
+			next.Directory = *v.Directory
+		} else if v.Enabled != nil && *v.Enabled && next.Directory == "" {
+			next.Directory = c.profileCopy().Settings.ReceiveDirectory
 		}
-		if e := c.saveProfile(p); e != nil {
-			return nil, e
+		if (next.Autosave || next.Directory != "") && !filepath.IsAbs(next.Directory) {
+			return nil, &localCommandError{"autosave_directory_required", "select an absolute receive directory before enabling automatic saving"}
 		}
-		c.mu.Lock()
-		c.profile = p
-		c.mu.Unlock()
-		err := c.transfers.PausePeer(t.ID, v.Paused)
-		if v.Paused {
+		peer := transfer.Peer{ID: t.ID, Generation: t.Generation}
+		var policy *transfer.ReceivePolicy
+		if v.Enabled != nil || (v.Directory != nil && next.Autosave) {
+			policy = &transfer.ReceivePolicy{Peer: peer, Destination: next.Directory, AutoAccept: next.Autosave}
+		}
+		if err := c.transfers.UpdateReceiveSettings(peer, policy, next.Paused, func(policies []transfer.ReceivePolicy) error {
+			return (receiveStore{c}).savePolicies(policies, &next)
+		}); err != nil {
+			return nil, err
+		}
+		if next.Paused {
 			c.mu.RLock()
 			ps := c.peerServer
 			var outgoing []*outgoingBatch
@@ -480,7 +504,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 				b.stop()
 			}
 		}
-		return nil, err
+		return nil, nil
 	case "peer.reconnect":
 		var v struct {
 			PeerID string `json:"peerId"`
@@ -533,6 +557,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.SendPaths(ctx, v.PeerID, v.Paths)
 	case "service.share", "service.connect":
 		return c.startServiceCommand(ctx, cmd.Name, cmd.Payload)
+	case "service.config":
+		return c.serviceConfiguration(cmd.Payload)
 	case "service.stop":
 		return c.stopServiceCommand(cmd.Payload)
 	default:

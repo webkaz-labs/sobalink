@@ -6,7 +6,7 @@
 
 **This is a development draft of sobalink, with no assigned release version.** The repository and Go module are now `github.com/webkaz-labs/sobalink`. Existing `tsnet-bridge` releases retain their historical signatures and do not establish availability of these new features. [Distribution and legacy releases](docs/DISTRIBUTION.md)
 
-Commit `14ee61f8` passed [all six CI jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076). All four native platforms passed the real stock Tailcat loopback-relay test: existing TCP across a two-minute lease for 130 seconds, bidirectional TCP/UDP, denied-key admission, active revoke and cleanup. Native packages, the baseline browser checks and manifest also passed. The newer LAN setup UI, SVG graph and recovery controls are integrated locally, with 117 frontend tests, strict TypeScript and two byte-identical builds passing; their new font/graph browser checks and Core integration run await the next exact CI. This does not verify actual devices, direct LAN/WAN paths, sleep/wake or a release. [Exact verification scope](docs/VERIFICATION.en.md)
+Published commit `5dd6b8c9` passed [all six CI jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37046723268). All four native targets passed a loopback relay test across an actual two-minute lease and Core two-peer text/file/share/revoke integration. Later graph/navigation and CLI/Core changes have local evidence only; that published CI does not cover them. Actual devices, direct LAN/WAN/NAT, sleep/wake, native IME and release verification remain open. [Verification by source](docs/VERIFICATION.en.md)
 
 ## Get started
 
@@ -55,13 +55,16 @@ soba peers
 soba trust PEER_ID
 soba message PEER_ID "Hello"
 soba send PEER_ID ./image.png ./notes.txt ./sample-folder
-soba share --name preview --network tcp --ports 3000-3003 --peers PEER_ID --ttl 1h
-soba connect --name preview --network tcp --ports 3000 --peer PEER_ID --ttl 1h
+soba --dry-run share --preset ssh --peers PEER_ID
+soba share --preset ssh --peers PEER_ID
+soba connect --preset ssh --peer PEER_ID
 soba status
 soba stop
 ```
 
-Replace `PEER_ID` with a current peer. The provider must run and authorize access to the actual service. Language is selected automatically; override with `soba --locale ja ...` or `en`. Machine JSON field names and user values stay unchanged. Tailnet and transfer workflows do not require editing configuration JSON. LAN setup also has dedicated local controls; CLI payloads remain available for automation and embedded-relay hosting.
+Replace `PEER_ID` with a current peer and run share/connect on the respective devices. The SSH preset suggests TCP 22 and local connection port 2222. `--preset web` suggests TCP 80/local 8080; override target and local ports with `--ports` and `--local-port`. Run and authenticate to the actual application separately. Omitted names use an unused name and never overwrite saved settings.
+
+Use the local UI for human workflows and typed CLI commands for automation. LAN host/relay setup, invitation files, receive folders, autosave and saved-service inspection/copy/restart need no JSON editing. See `soba help examples`, `soba lan --help` and `soba service --help`. `--dry-run` checks inputs before applying; it is not a reachability or free-port test. Language is automatic, with `soba --locale ja ...` / `en` overrides. Success responses use JSON; `--json-errors` writes failures as `{code,error}` to stderr. [Detailed CLI guide](docs/GENERIC.en.md#language-automation-and-troubleshooting)
 
 ## Development and verification
 

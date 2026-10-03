@@ -41,6 +41,13 @@ export function previewPorts(value: string, exclusions: string, local: string, m
   if (!count) throw new PortError('empty_ports')
   if (mode === 'connect' && count > 64) throw new PortError('too_many_ports')
   const localPort = local.trim() ? Number(local) : undefined
-  if (localPort !== undefined && (!/^\d+$/.test(local) || localPort < 1 || localPort + count - 1 > 65535 || ranges.length !== 1)) throw new PortError('invalid_mapping')
-  return { ranges, count, ports: formatPorts(ranges), localPorts: localPort ? formatPorts([{ start: localPort, end: localPort + count - 1 }]) : formatPorts(ranges), localPort }
+  if (localPort !== undefined && (!/^\d+$/.test(local) || localPort < 1024 || localPort + count - 1 > 65535)) throw new PortError('invalid_mapping')
+  if (mode === 'connect' && localPort === undefined && ranges.some(range => range.start < 1024)) throw new PortError('invalid_mapping')
+  let offset = 0
+  const mappings = ranges.map(range => {
+    const localRange = localPort === undefined ? range : { start: localPort + offset, end: localPort + offset + range.end - range.start }
+    offset += range.end - range.start + 1
+    return { remote: formatPorts([range]), local: formatPorts([localRange]) }
+  })
+  return { ranges, mappings, count, ports: formatPorts(ranges), localPorts: localPort ? formatPorts([{ start: localPort, end: localPort + count - 1 }]) : formatPorts(ranges), localPort }
 }

@@ -20,10 +20,33 @@ func (s receiveStore) LoadPolicies() ([]transfer.ReceivePolicy, error) {
 	return out, nil
 }
 func (s receiveStore) SavePolicies(policies []transfer.ReceivePolicy) error {
+	return s.savePolicies(policies, nil)
+}
+
+// updated is the complete reviewed peer setting merged under the Core command
+// lock. Manager holds its own lock until this one durable save and the combined
+// policy/pause publication complete; the callback never reenters Manager.
+func (s receiveStore) savePolicies(policies []transfer.ReceivePolicy, updated *Trust) error {
 	p := s.core.profileCopy()
 	for i := range p.Peers {
 		if p.Peers[i].Network == p.Settings.Network {
 			p.Peers[i].Autosave = false
+		}
+	}
+	if updated != nil {
+		found := false
+		for i := range p.Peers {
+			if p.Peers[i].Network == p.Settings.Network && p.Peers[i].Network == updated.Network && p.Peers[i].ID == updated.ID && p.Peers[i].Generation == updated.Generation {
+				p.Peers[i] = *updated
+				// The runtime policy list is authoritative after a fail-closed
+				// removal. A pause-only edit must not restore an old approval.
+				p.Peers[i].Autosave = false
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.New("receive policy peer changed")
 		}
 	}
 	for _, policy := range policies {

@@ -276,6 +276,12 @@ jobs:
           git diff --exit-code -- web/dist
           node web/node_modules/playwright-core/cli.js install --with-deps chromium
           sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+      - name: Install the pinned agent-browser QA tool
+        run: |
+          set -euo pipefail
+          npm --prefix web/qa-agent-browser ci --no-audit --no-fund
+          npm --prefix web/qa-agent-browser run test:safety
+          web/qa-agent-browser/node_modules/.bin/agent-browser install --with-deps
       - name: Verify actual local UI against fixture-backed Go harness
         run: |
           set -euo pipefail
@@ -294,6 +300,36 @@ jobs:
           done
           test -s "$session"
           SOBA_E2E_SESSION_FILE="$session" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
+      - name: Exercise complete studio and offline journeys with agent-browser
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          harness=''
+          session=''
+          cleanup() {
+            if [[ -n "$harness" ]]; then
+              kill "$harness" 2>/dev/null || true
+              wait "$harness" 2>/dev/null || true
+              harness=''
+            fi
+            if [[ -n "$session" ]]; then rm -f "$session"; fi
+          }
+          trap cleanup EXIT
+          for scenario in studio offline; do
+            session="$RUNNER_TEMP/soba-agent-browser-$scenario-session.json"
+            screenshots="$RUNNER_TEMP/soba-screenshots/agent-browser/$scenario"
+            mkdir -p "$screenshots"
+            "$RUNNER_TEMP/soba-e2e" --scenario "$scenario" --session-file "$session" &
+            harness=$!
+            for attempt in $(seq 1 200); do
+              test -s "$session" && break
+              kill -0 "$harness"
+              sleep 0.1
+            done
+            test -s "$session"
+            SOBA_E2E_SESSION_FILE="$session" SOBA_SCREENSHOT_DIR="$screenshots" node web/scripts/agent-browser-journeys.mjs
+            cleanup
+          done
       - name: Preserve sanitized UI screenshots and typography measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -302,5 +338,9 @@ jobs:
           path: |
             ${{ runner.temp }}/soba-screenshots/*.png
             ${{ runner.temp }}/soba-screenshots/typography-ja-*.json
+            ${{ runner.temp }}/soba-screenshots/agent-browser/studio/*.png
+            ${{ runner.temp }}/soba-screenshots/agent-browser/studio/agent-browser-report.json
+            ${{ runner.temp }}/soba-screenshots/agent-browser/offline/*.png
+            ${{ runner.temp }}/soba-screenshots/agent-browser/offline/agent-browser-report.json
           if-no-files-found: warn
           retention-days: 14

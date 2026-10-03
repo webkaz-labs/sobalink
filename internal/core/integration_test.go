@@ -481,6 +481,8 @@ func TestRangesStopRevokeAndFailureRemainSavedInactive(t *testing.T) {
 	if views := p.b.serviceViews(); len(views) != 1 || views[0]["status"] != "stopped" {
 		t.Fatalf("stopped view: %+v", views)
 	}
+	saved := mustCommand(t, p.b, "service.config", map[string]string{"id": id}).(SavedServiceConfiguration)
+	args["replaceId"], args["expectedRevision"], args["backend"] = id, saved.Revision, saved.Configuration.Backend
 	restarted := mustCommand(t, p.b, "service.share", args).(map[string]any)
 	if restarted["id"] != id {
 		t.Fatal("restarting saved service changed its identity")

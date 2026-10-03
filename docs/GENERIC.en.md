@@ -37,20 +37,20 @@ A fresh profile starts with no network selected. UI preferences, trust and servi
 | Choice | Setup | Important boundary |
 | --- | --- | --- |
 | Existing Tailnet | Activate the embedded node, then use the official interactive Tailscale sign-in flow | It is a separate node in the chosen Tailnet; the OS Tailscale app's session is not imported |
-| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI implemented; stock loopback-relay acceptance passed at the recorded commit. New UI browser acceptance is pending. No arbitrary public fallback or zero-external-traffic claim |
+| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI implemented; stock loopback-relay acceptance passed at the recorded commit. Later source needs separate verification. No arbitrary public fallback or zero-external-traffic claim |
 | No network | Leave the agent local | No peer transfer or service connection |
 
 For the Tailnet path:
 
 ```sh
-soba setup --network tailnet --name sample-node
+soba setup --network tailnet
 soba login
 soba peers
 ```
 
 Review the returned official sign-in URL and complete enrollment. Treat enrollment URLs as secrets. The tool does not accept an auth key in command arguments, and it does not change OS routes or DNS. Tailnet policy and service authentication still apply.
 
-Selecting a mode is explicit. Stop the agent and use `soba start --offline` to open management without reconnecting the saved network when changing modes or repairing saved LAN state. An existing TCP session does not transfer between Tailnet and Tailcat. The local UI and CLI support explicit relay selection and pairing; follow the [LAN guide](LAN.en.md). The recorded native loopback-relay test passed; the integrated UI changes await their own browser CI.
+Selecting a mode is explicit. Stop the agent and use `soba start --offline` to open management without reconnecting the saved network when changing modes or repairing saved LAN state. An existing TCP session does not transfer between Tailnet and Tailcat. The local UI and CLI support explicit relay selection and pairing; follow the [LAN guide](LAN.en.md). [Verification](VERIFICATION.en.md) separates published CI from later local checks.
 
 Tailcat's permitted traffic includes direct peer traffic, encrypted payload via the explicitly selected relay, and HTTPS/ICMP diagnostics to that relay endpoint. A relay may be self-hosted or another endpoint explicitly trusted by the user. This is not a LAN egress sandbox. [Transport detail](ARCHITECTURE.md#network-boundaries)
 
@@ -102,18 +102,35 @@ The current product limit is 256 manifest entries and 1 GiB per batch, including
 The default is to review each batch and accept it into a selected directory. Acceptance covers that batch's files and subfolders; it is not a standing permission for the sender.
 
 ```sh
-soba accept TRANSFER_ID /absolute/receive-directory
+soba accept TRANSFER_ID ./received
 ```
 
-Use an appropriate absolute path on the receiving host; on Windows, quote a path such as `C:\Downloads\sobalink`. Files with an existing name are saved under a unique name without replacing the existing file. The receiver checks the declared size and SHA-256 before finalizing a file. Empty folders are preserved when present in the manifest. File permissions are restricted; executable attributes and links are not imported.
+The CLI resolves relative paths from its working directory. Choose an appropriate destination on the receiving host; on Windows, quote a path such as `C:\Downloads\sobalink`. Files with an existing name are saved under a unique name without replacing the existing file. The receiver checks the declared size and SHA-256 before finalizing a file. Empty folders are preserved when present in the manifest. File permissions are restricted; executable attributes and links are not imported.
 
 Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Canceling or revoking does not delete already saved files or retrieve data already sent.
 
 ### Opt into autosave for one peer
 
-In that peer's settings, select an absolute directory and explicitly enable autosave. The permission binds the selected backend, exact verified peer, its current trust generation and that directory. It does not apply to peers with the same display name. Persisted autosave is loaded only for its matching trusted identity; it can accept future batches without a new per-batch approval while enabled.
+Choose a destination in the UI, or set the CLI default receive folder and enable autosave for an already trusted peer:
+
+```sh
+soba receive-dir ./received
+soba autosave PEER_ID --on
+```
+
+`receive-dir` alone shows the current setting; `receive-dir --clear` clears the default. This setting grants no autosave permission and does not move existing per-peer destinations. `autosave --on` uses the peer's saved folder, or the default if it has none. Use `soba autosave PEER_ID --on --directory ./received-from-peer` to choose a different folder explicitly.
+
+The autosave permission binds the selected backend, exact verified peer, its current trust generation and that directory. It does not apply to peers with the same display name. Persisted autosave is loaded only for its matching trusted identity; it can accept future batches without a new per-batch approval while enabled.
 
 Disable autosave to restore per-batch acceptance. Peer Pause blocks messages and files and cancels active sends; after unpausing, select the files again for a new batch. It does not stop separately granted services. Changing the destination is another explicit choice. Revocation or an identity change invalidates the old grant; review and enable it again if needed. Autosave never enables overwrite, automatic opening, execution or clipboard sync.
+
+```sh
+soba autosave PEER_ID --off
+soba pause PEER_ID
+soba resume PEER_ID
+```
+
+Toggling autosave preserves pause; pause/resume preserves autosave and its directory. A failed save for enable, directory change or resume leaves the prior state intact. If saving a disable fails, runtime auto-accept still stops, but durable disable is not confirmed. Repair storage and retry disabling before restarting the agent. After a successful disable, enable autosave explicitly if wanted again.
 
 ### Retry and cleanup
 
@@ -132,8 +149,19 @@ Batch progress and acknowledgements are process-local. After either agent restar
 Start the real application first, with its own authentication. Select Share, the current peers, TCP or UDP, ports and exclusions, and an expiry. Review the effective scope before starting.
 
 ```sh
-soba share --name preview --network tcp --ports 3000-3003 --peers PEER_ID --ttl 1h
+soba share --ports 3000-3003 --peers PEER_ID
 ```
+
+Omitting the name chooses an unused one; set `--name preview` to choose explicitly. Existing names are never overwritten. On a name conflict, choose another name or use the saved-service commands below. TCP and a one-hour lifetime are the defaults.
+
+For common SSH or web ports, choose an editable preset:
+
+```sh
+soba --dry-run share --preset ssh --peers PEER_ID
+soba share --preset ssh --peers PEER_ID
+```
+
+`ssh` suggests TCP 22; `web` suggests TCP 80. Explicit `--ports` or `--network` values take precedence. Presets do not discover, configure or validate the actual application.
 
 This makes the selected embedded-node ports available to the selected peers and maps each port to the same numeric loopback port. It does not publish an internet URL or configure the application. A recipient with ordinary Tailscale access can use the provider's embedded-node address and permitted port without installing sobalink.
 
@@ -154,18 +182,43 @@ A port conflict fails the operation; the tool does not silently switch ports or 
 Choose an available share in the UI, or enter a current Tailnet peer and the intended service manually. An ordinary Tailscale target needs no sobalink. Its application must listen on the destination address and port and allow access through Tailnet and application policy.
 
 ```sh
-soba connect --name preview --network tcp --ports 3000 --peer PEER_ID --ttl 1h
+soba connect --ports 3000 --peer PEER_ID
 ```
 
-Copy the actual local endpoint from status into your client. A single port defaults to the same local port. For a privileged or occupied destination port, explicitly choose another local starting port:
+Copy the actual local endpoint from status into your client. Local ports default to the target port numbers. For targets below 1024, explicitly choose an unprivileged local port or use a preset: `ssh` suggests TCP 22/local 2222 and `web` suggests TCP 80/local 8080. If occupied, choose another entry with `--local-port`. These are separate examples:
 
 ```sh
-soba connect --name ssh --network tcp --ports 22 --local-port 10022 --peer PEER_ID --ttl 1h
+soba connect --preset ssh --peer PEER_ID
+soba connect --preset web --ports 3000 --local-port 8081 --peer PEER_ID
 ```
 
 Connect listeners bind numeric loopback, use local ports 1024–65535 and consume the shared 64-listener budget. `--local-port` maps sorted effective remote ports to consecutive local ports; review the displayed mapping. It does not change a share's same-port loopback target.
 
 A ready listener is only transport readiness. Verify authentication and an actual operation in the target app. Preserve TLS certificate names, SSH host-key verification, origin rules and the app's own authorization. A tunnel does not adapt stdio protocols into HTTP or run remote jobs.
+
+## Reuse saved service settings
+
+Find the current ID in `soba status`, then inspect its complete saved configuration. These details are available only to authenticated local management, never as peer discovery metadata:
+
+```sh
+soba service show SERVICE_ID
+soba --dry-run service copy SERVICE_ID
+soba service copy SERVICE_ID
+```
+
+`copy` chooses an unused name by default and starts a new service. It retains ports, exclusions, peers, local ports, discovery visibility and permission lifetime; override selected fields with `--name`, `--ports`, `--ttl` and related flags. This starts a fresh permission lifetime when applied, rather than merely saving a definition.
+
+To restart the original service, explicitly stop it first if it is active:
+
+```sh
+soba stop-service SERVICE_ID
+soba --dry-run service restart SERVICE_ID
+soba service restart SERVICE_ID
+```
+
+`restart` replaces and starts the stopped saved ID after checking the full configuration revision it just read and the reviewed backend. A conflict leaves saved settings unchanged; display the latest configuration and review again. It cannot change a known backend, silently stop an active service or overwrite another name. Only an unknown-backend entry needs an explicit reviewed `--backend tailnet|lan`. A connection following an advertised service must retain that service's peer, protocol and complete ports. Use a fresh `soba connect` for another target.
+
+Use `--help` after `copy` or `restart` for override flags. The agent checks peer, network and port conditions when applying. A dry-run does not pin the later command to its preview: rerunning reads the saved settings again.
 
 ## Read connection state
 
@@ -181,6 +234,13 @@ A ready listener is only transport readiness. Verify authentication and an actua
 
 Backend status may remain Unknown until a reliable path observation exists. A same-backend direct/relay route change is different from selecting another network. Do not assume that a path change, sleep/wake or reconnect preserves an established TCP stream. After interruption, confirm the peer identity and grant, then reconnect or retry the unfinished file as appropriate.
 
+```sh
+soba reconnect PEER_ID
+soba status
+```
+
+`reconnect` probes the current peer again. It does not renew trust, autosave or service lifetimes, or resume canceled transfers or application sessions.
+
 ## Stop, revoke and upgrade
 
 ```sh
@@ -192,7 +252,7 @@ soba stop
 
 Use current IDs from state. `soba revoke PEER_ID` removes application trust; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
-No released sobalink upgrade path exists yet. For a new development build, stop the process, keep a private backup of state if needed, rebuild the frontend and binary from the intended source, run `soba version`, then inspect state before explicitly restarting services. Keep backups private because they contain identity and peer information. A fresh state directory requires its own enrollment and trust decisions. Legacy `tsnet-bridge` commands and configuration are not compatibility requirements for this new product.
+No released sobalink upgrade path exists yet. For a new development build, stop the process, keep a private backup of state if needed, rebuild the frontend and binary from the intended source, run `soba version` and `soba start --offline` to inspect retained settings, then restart normally and explicitly restart the services you want. See `soba help upgrade` for the short workflow. Keep backups private because they contain identity and peer information. A fresh state directory requires its own enrollment and trust decisions. Legacy `tsnet-bridge` commands and configuration are not compatibility requirements for this new product.
 
 Saved-network startup failure can be recovered with `soba start --offline`. It keeps local management available, labels saved peers unverified/offline, and allows explicit pair revocation or relay reconfiguration without starting that network.
 
@@ -204,9 +264,16 @@ Global options precede the command:
 soba --locale ja help
 soba --locale en share --help
 soba --state-dir ./sample-state status
+soba --json-errors service show SERVICE_ID
 ```
 
 Language follows `LC_ALL`, `LC_MESSAGES`, `LANG`, then the OS preference; Japanese uses Japanese messages and other locales fall back to English. The UI has language and theme controls. Command names, IDs, endpoint values and machine JSON are stable across languages. CLI status and action responses use JSON rather than interactive prompts.
+
+Normal typed commands need no JSON editing. Use `soba help examples`, `soba lan --help` and `soba service --help` for short recipes.
+
+`--dry-run` returns JSON containing `applied: false`, the command, payload and `validation: "local-input-only"` without applying an action. It may read a running agent to choose unused names or reuse saved settings. To check inputs without an agent, supply an explicit name, for example `soba --dry-run share --name review-ssh --preset ssh --peers PEER_ID`. This does not verify identity, network reachability, free ports or later execution success. Invitation contents are redacted. It is unavailable for `start`, `ui` and `stop`.
+
+`--json-errors` writes a stable `code` and explanatory `error` to stderr on failure, retaining a failing exit status. Success stdout stays unchanged. Automation should use `code`, not the potentially localized explanation.
 
 Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For invitations or other secret payloads, use `soba command NAME --json-file PATH` or pipe a JSON object into `soba command NAME --stdin` (48 KiB maximum); do not put secrets in literal arguments. Each sends a typed request through the same local core; it is not a bypass of trust, CSRF/session boundaries or filesystem policy. [API contract](../web/API.md)
 
@@ -217,6 +284,7 @@ Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For in
 | Transfer waits | Have the receiving peer inspect and accept its batch or review its autosave policy |
 | Partial transfer | Keep both agents running and retry the unfinished files; after a restart, create a new batch |
 | Service not discovered | Check explicit share scope and expiry, or use a manual connection to a known service |
+| `response_too_large` | Use the local UI to inspect and forget completed transfer history, then retry; forgetting history does not delete received files |
 | Local port conflict or listener cap | Stop an unused connection, narrow the ports, or explicitly select another local starting port |
 | Socket operation not permitted | Run native/socket checks in an environment that permits listeners; baseline CI passed, but a local mock result does not establish live LAN connectivity |
 | Unknown route or reconnect | Inspect current state and retry the app connection; do not assume a relay or uninterrupted TCP |

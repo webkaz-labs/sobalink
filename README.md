@@ -6,7 +6,7 @@
 
 **sobalink の開発版で、リリース番号は未確定です。** リポジトリと Go モジュールは `github.com/webkaz-labs/sobalink` になりました。旧 `tsnet-bridge` の署名は当時の識別情報を保持し、その公開物に新機能が含まれるとは扱いません。[配布方針と旧版の区別](docs/DISTRIBUTION.md)
 
-コミット `14ee61f8` は [CI 全6ジョブ](https://github.com/webkaz-labs/sobalink/actions/runs/37042721076)に合格しました。4対象すべてで stock Tailcat の loopback 中継を使い、実際の2分リースをまたぐ130秒の既存 TCP、双方向 TCP/UDP、不許可鍵、稼働中の解除・片付けを確認しました。パッケージ・従来の画面・マニフェストも合格です。その後の LAN 設定画面・SVG 接続図・復旧操作はローカルへ統合済みで、画面117試験、厳密な TypeScript 検査、同一バイトの2回ビルドが通りました。新しいフォント・接続図のブラウザー検査と Core 統合試験は次の正確なソースの CI を待ちます。実端末・direct LAN/WAN・スリープ・リリースの確認とは別です。[確認範囲](docs/VERIFICATION.md)
+公開済みのコミット `5dd6b8c9` は [CI 全6ジョブ](https://github.com/webkaz-labs/sobalink/actions/runs/37046723268)に合格しました。4ネイティブ対象で実際の2分リースをまたぐ loopback 中継と、Core の2ピア間の文字・ファイル・共有・解除を確認しています。その後の接続図・移動操作と新しい CLI・Core の変更はローカルの結果で、この公開済み CI の対象ではありません。実端末・direct LAN/WAN/NAT・スリープ・ネイティブ IME・リリースの確認は残っています。[ソースごとの確認範囲](docs/VERIFICATION.md)
 
 ## まず使う
 
@@ -55,13 +55,16 @@ soba peers
 soba trust PEER_ID
 soba message PEER_ID "Hello"
 soba send PEER_ID ./image.png ./notes.txt ./sample-folder
-soba share --name preview --network tcp --ports 3000-3003 --peers PEER_ID --ttl 1h
-soba connect --name preview --network tcp --ports 3000 --peer PEER_ID --ttl 1h
+soba --dry-run share --preset ssh --peers PEER_ID
+soba share --preset ssh --peers PEER_ID
+soba connect --preset ssh --peer PEER_ID
 soba status
 soba stop
 ```
 
-`PEER_ID` は現在の相手に置き換えます。共有元では対象アプリの起動と認証が必要です。言語は自動選択し、`soba --locale ja ...` / `en` で切り替えられます。JSON の項目名と利用者の値は翻訳しません。Tailnet と転送の通常操作に設定 JSON の編集は不要です。LAN も専用画面から設定でき、自動処理や組込み中継の起動には CLI の payload を使えます。
+`PEER_ID` は現在の相手に置き換えます。共有と接続はそれぞれ必要な端末で実行します。SSH プリセットは TCP 22、接続側のローカル入口は2222です。Web は `--preset web` で TCP 80／入口8080を候補にし、`--ports`・`--local-port` で変更できます。アプリ自身の起動・認証は別に必要です。省略した名前には未使用名を選び、既存設定を上書きしません。
+
+人の操作にはローカル画面、自動処理には型付き CLI を使えます。LAN のホスト／中継設定、招待のファイル入力、受信先、自動保存、保存済みサービスの確認・コピー・再開始も JSON 編集なしで操作できます。`soba help examples`、`soba lan --help`、`soba service --help` を参照してください。`--dry-run` は適用前の入力確認で、到達性や空きポートの試験ではありません。言語は自動選択し、`soba --locale ja ...` / `en` で切り替えます。成功応答は JSON、`--json-errors` 指定時の失敗は標準エラーの `{code,error}` です。[詳しい CLI 手順](docs/GENERIC.ja.md#言語自動処理困ったとき)
 
 ## 開発と検証
 

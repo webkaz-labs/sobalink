@@ -29,7 +29,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if e := run(ctx, os.Args[1:], os.Stdout); e != nil {
-		fmt.Fprintln(os.Stderr, "soba:", e)
+		writeCommandError(os.Stderr, e)
 		os.Exit(1)
 	}
 }
@@ -58,11 +58,20 @@ func text(ja bool, en, jp string) string {
 	return en
 }
 
-func run(ctx context.Context, args []string, out io.Writer) (err error) {
+type controlCaller func(context.Context, string, string, any) error
+
+func run(ctx context.Context, args []string, out io.Writer) error {
+	return runWith(ctx, args, out, os.Stdin, control.Call)
+}
+
+func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader, client controlCaller) (err error) {
+	var jsonErrors bool
 	// Help is a successful, side-effect-free action at every command level.
 	defer func() {
 		if errors.Is(err, flag.ErrHelp) {
 			err = nil
+		} else if err != nil && jsonErrors {
+			err = &jsonCommandError{err}
 		}
 	}()
 	var dir string
@@ -71,6 +80,8 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 	global.SetOutput(io.Discard)
 	global.StringVar(&dir, "state-dir", "", "private state directory")
 	global.StringVar(&locale, "locale", locale, "auto, ja or en")
+	global.BoolVar(&jsonErrors, "json-errors", false, "write stable JSON errors to stderr")
+	dryRun := global.Bool("dry-run", false, "preview the command without applying it")
 	showVersion := global.Bool("version", false, "show version")
 	global.Usage = func() { fmt.Fprintln(out, text(japanese(locale), helpEN, helpJA)) }
 	if e := global.Parse(args); e != nil {
@@ -103,12 +114,16 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 			return usageError(ja, "help [COMMAND]")
 		}
 		if len(args) == 1 {
-			return run(ctx, []string{"--locale", locale, args[0], "--help"}, out)
+			if topic, ok := helpTopic(args[0], ja); ok {
+				_, err := fmt.Fprintln(out, topic)
+				return err
+			}
+			return runWith(ctx, []string{"--locale", locale, args[0], "--help"}, out, stdin, client)
 		}
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "setup" && command != "share" && command != "connect" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "start" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "service" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
@@ -124,14 +139,13 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 		}
 	}
 	if command == "start" {
-		startFlags := flag.NewFlagSet("start", flag.ContinueOnError)
-		startFlags.SetOutput(out)
+		startFlags := commandFlags("start", ja, out)
 		offline := startFlags.Bool("offline", false, text(ja, "open local management without starting the saved network", "保存済みのネットワークを開始せず、ローカル管理画面を開く"))
-		if e := startFlags.Parse(args); e != nil {
+		if e := parseFlags(startFlags, args, ja); e != nil {
 			return e
 		}
-		if len(startFlags.Args()) > 0 {
-			return usageError(ja, "[--state-dir DIR] start [--offline]")
+		if *dryRun {
+			return errors.New(text(ja, "Use --dry-run with a configuration or action command; start launches the local agent", "--dry-run は設定・操作コマンドと使ってください。start は本体を起動します"))
 		}
 		lock, e := config.AcquireLock(dir)
 		if e != nil {
@@ -171,7 +185,7 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 	}
 	call := func(raw string) error {
 		var formatted json.RawMessage
-		e := control.Call(ctx, dir, raw, &formatted)
+		e := client(ctx, dir, raw, &formatted)
 		if e != nil {
 			return fmt.Errorf("%s: %w", text(ja, "Command failed. Check that soba is running and review the error", "操作に失敗しました。soba の起動状態とエラーを確認してください"), e)
 		}
@@ -182,6 +196,9 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 	if command == "status" || command == "ui" || command == "stop" {
 		if len(args) > 0 {
 			return usageError(ja, command)
+		}
+		if *dryRun && command != "status" {
+			return errors.New(text(ja, "--dry-run is not available for ui or stop", "ui と stop は --dry-run に対応していません"))
 		}
 		return call(command)
 	}
@@ -196,6 +213,11 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 		if e != nil {
 			return e
 		}
+		if *dryRun {
+			encoder := json.NewEncoder(out)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(map[string]any{"applied": false, "command": name, "payload": previewPayload(name, raw), "validation": "local-input-only"})
+		}
 		id := fmt.Sprintf("cli-%d", time.Now().UnixNano())
 		request, e := json.Marshal(webui.Command{RequestID: id, Name: name, Payload: raw})
 		if e != nil {
@@ -203,15 +225,31 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 		}
 		return call(string(request))
 	}
-	switch command {
-	case "setup":
-		f := commandFlags(command, ja, out)
-		network := f.String("network", "tailnet", text(ja, "tailnet, lan or none", "tailnet、lan、none"))
-		hostname := f.String("name", "", text(ja, "node name", "端末名"))
-		if e := parseFlags(f, args, ja); e != nil {
+	query := func(v any) error { return client(ctx, dir, "status", v) }
+	queryAction := func(name string, payload any, v any) error {
+		raw, e := json.Marshal(payload)
+		if e != nil {
 			return e
 		}
-		return request("network.configure", map[string]string{"mode": *network, "hostname": *hostname})
+		command, e := json.Marshal(webui.Command{RequestID: fmt.Sprintf("cli-read-%d", time.Now().UnixNano()), Name: name, Payload: raw})
+		if e != nil {
+			return e
+		}
+		return client(ctx, dir, string(command), v)
+	}
+	switch command {
+	case "receive-dir", "autosave", "pause", "resume", "reconnect":
+		return preferenceCommand(command, args, ja, out, query, request)
+	case "service":
+		return serviceCommand(args, ja, out, query, queryAction, request)
+	case "setup":
+		payload, e := setupPayload(args, ja, out)
+		if e != nil {
+			return e
+		}
+		return request("network.configure", payload)
+	case "lan":
+		return lanCommand(ctx, args, ja, out, stdin, request)
 	case "login":
 		if len(args) != 0 {
 			return usageError(ja, "login")
@@ -255,55 +293,16 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 		}
 		return request("transfer."+command, map[string]string{"transferId": args[0]})
 	case "share", "connect":
-		f := commandFlags(command, ja, out)
-		name := f.String("name", "", text(ja, "service name", "共有・接続の名前"))
-		network := f.String("network", "tcp", text(ja, "tcp or udp", "tcp または udp"))
-		ports := f.String("ports", "", text(ja, "port list or inclusive ranges", "ポートの一覧または範囲"))
-		exclude := f.String("exclude", "", text(ja, "excluded ports", "除外するポート"))
-		var peer, peers string
-		var local int
-		var discover bool
-		if command == "share" {
-			f.StringVar(&peers, "peers", "", text(ja, "comma-separated allowed peer IDs", "許可する相手のID（カンマ区切り）"))
-			f.BoolVar(&discover, "discoverable", false, text(ja, "advertise minimal metadata to allowed peers", "許可した相手に最小限の共有情報を表示"))
-		} else {
-			f.StringVar(&peer, "peer", "", text(ja, "current peer ID", "現在の相手のID"))
-			f.IntVar(&local, "local-port", 0, text(ja, "local starting port; default same port", "ローカル入口の先頭ポート（既定は同じ番号）"))
-		}
-		ttl := f.Duration("ttl", time.Hour, text(ja, "permission lifetime, maximum 24h", "許可の有効期間（最大24時間）"))
-		if e := parseFlags(f, args, ja); e != nil {
+		payload, e := servicePayload(command, args, ja, out)
+		if e != nil {
 			return e
 		}
-		if *name == "" || *ports == "" {
-			return errors.New(text(ja, "--name and --ports are required", "--name と --ports を指定してください"))
-		}
-		if *ttl < time.Second || *ttl > 24*time.Hour || *ttl%time.Second != 0 {
-			return errors.New(text(ja, "--ttl must be a whole number of seconds from 1s to 24h", "--ttl は1秒〜24時間の整数秒で指定してください"))
-		}
-		if *network != "tcp" && *network != "udp" {
-			return errors.New(text(ja, "--network must be tcp or udp", "--network は tcp または udp を指定してください"))
-		}
-		if local < 0 || local > 65535 {
-			return errors.New(text(ja, "--local-port must be 0..65535", "--local-port は 0〜65535 で指定してください"))
-		}
-		payload := map[string]any{"name": *name, "network": *network, "ports": *ports, "excludePorts": *exclude, "localPort": local, "ttlSeconds": int(ttl.Seconds()), "purpose": "custom", "discoverable": discover}
-		if command == "share" {
-			if peers == "" {
-				return errors.New(text(ja, "--peers is required", "--peers を指定してください"))
+		if !hasFlag(args, "name") {
+			name, e := unusedServiceName(payload["name"].(string), query)
+			if e != nil {
+				return fmt.Errorf("%s: %w", text(ja, "Could not choose an unused name; start soba or supply an explicit --name", "未使用の名前を選べません。soba を起動するか --name を明示してください"), e)
 			}
-			ids := strings.Split(peers, ",")
-			for i := range ids {
-				ids[i] = strings.TrimSpace(ids[i])
-				if ids[i] == "" {
-					return errors.New(text(ja, "--peers contains an empty peer ID", "--peers に空のIDが含まれています"))
-				}
-			}
-			payload["peerIds"] = ids
-		} else {
-			if peer == "" {
-				return errors.New(text(ja, "--peer is required", "--peer を指定してください"))
-			}
-			payload["peerId"] = peer
+			payload["name"] = name
 		}
 		return request("service."+command, payload)
 	case "stop-service":
@@ -312,7 +311,7 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 		}
 		return request("service.stop", map[string]string{"id": args[0]})
 	case "command":
-		payload, e := commandPayload(ctx, args, os.Stdin, ja)
+		payload, e := commandPayload(ctx, args, stdin, ja)
 		if e != nil {
 			return e
 		}
@@ -324,6 +323,8 @@ func run(ctx context.Context, args []string, out io.Writer) (err error) {
 
 var commandUsage = map[string]string{
 	"start": "start [--offline]", "status": "status", "peers": "peers", "ui": "ui", "stop": "stop",
+	"receive-dir": "receive-dir [DIRECTORY | --clear]", "autosave": "autosave PEER_ID --on [--directory DIR] | autosave PEER_ID --off",
+	"pause": "pause PEER_ID", "resume": "resume PEER_ID", "reconnect": "reconnect PEER_ID",
 	"login": "login", "trust": "trust PEER_ID", "revoke": "revoke PEER_ID",
 	"message": "message PEER_ID TEXT", "send": "send PEER_ID PATH...",
 	"accept": "accept TRANSFER_ID DIRECTORY", "cancel": "cancel TRANSFER_ID",
@@ -437,11 +438,21 @@ const helpEN = `sobalink — nearby devices, one connection
   soba message PEER_ID TEXT     Send text explicitly
   soba send PEER_ID PATH...     Offer files or folders as one batch
   soba accept ID DIRECTORY      Accept an incoming batch into this directory
+  soba receive-dir DIRECTORY   Save the preferred receive folder
+  soba autosave --help          Explicit per-peer automatic saving
+  soba pause|resume PEER_ID     Pause/resume messages and file transfers
+  soba reconnect PEER_ID        Refresh this peer's reachability and services
+  soba lan --help               Public identity and private pairing invitations\n  soba service --help           Inspect, copy and restart saved service settings
   soba share --help             Scoped TCP/UDP service sharing
   soba connect --help           Local entry ports for a selected peer
   soba stop                    Stop the agent and revoke active shares
 
-Global options: --state-dir DIR --locale auto|ja|en (before the command)
+For guided setup and picking peers, open the local URL from soba ui.
+Use soba help examples for short workflows; soba help upgrade for safe updates.
+Global options: --state-dir DIR --locale auto|ja|en --dry-run --json-errors (before command)
+--json-errors writes {code,error} to stderr on failure; success JSON is unchanged.
+--dry-run previews action JSON and validates local inputs without applying it.
+Command results stay JSON in every locale; human guidance stays in help/errors.
 Advanced: command NAME JSON_PAYLOAD, revoke PEER_ID, stop-service ID,
 cancel ID, retry ID (whole unfinished files), forget ID (history only)
 For private invitations: command NAME --json-file PATH or --stdin (pipe only)
@@ -461,11 +472,21 @@ const helpJA = `sobalink — 離れた端末を、そばに
   soba message PEER_ID TEXT     文字を明示的に送信
   soba send PEER_ID PATH...     ファイル・フォルダーを一括で送信
   soba accept ID DIRECTORY      指定フォルダーへ一括受信を承認
+  soba receive-dir DIRECTORY   既定の受信フォルダーを保存
+  soba autosave --help          相手を指定した自動保存
+  soba pause|resume PEER_ID     メッセージ・ファイル転送を一時停止／再開
+  soba reconnect PEER_ID        相手の到達状態と共有一覧を再確認
+  soba lan --help               公開IDと機密のペアリング招待\n  soba service --help           保存済み設定の確認・コピー・再開始
   soba share --help             範囲を指定したTCP/UDP共有
   soba connect --help           相手へつなぐローカル入口
   soba stop                    本体を停止して稼働中の共有を取り消す
 
-共通指定: --state-dir DIR --locale auto|ja|en（コマンドより前）
+案内付きの設定や相手の選択には、soba ui のローカルURLを開いてください。
+短い操作例は soba help examples、更新手順は soba help upgrade で表示します。
+共通指定: --state-dir DIR --locale auto|ja|en --dry-run --json-errors（コマンドより前）
+--json-errors は失敗時に {code,error} のJSONを標準エラーへ出します。成功時のJSONは同じです。
+--dry-run はローカル入力を検証し、変更を適用せず操作JSONを表示します。
+操作結果のJSONは言語で変わりません。案内やエラーは選択した言語を使います。
 詳細操作: command NAME JSON_PAYLOAD、revoke PEER_ID、stop-service ID、
 cancel ID、retry ID（未完了ファイルを先頭から）、forget ID（履歴のみ）
 機密の招待入力: command NAME --json-file PATH または --stdin（パイプ入力）

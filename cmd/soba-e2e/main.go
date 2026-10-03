@@ -1,8 +1,9 @@
 //go:build soba_e2e
 
 // The browser acceptance harness uses the production Core and embedded assets.
-// Only the peer network is synthetic and entirely in-memory. It is excluded
-// from ordinary builds and distribution; no real node is enrolled.
+// Peers are synthetic and entirely in-memory. A test-only wrapper supplies
+// deterministic failure/recovery scenarios and rejects live enrollment. This
+// binary is excluded from ordinary builds and distribution.
 package main
 
 import (
@@ -12,11 +13,13 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -37,6 +40,7 @@ type node struct {
 	ip                       netip.Addr
 	remoteIP                 netip.Addr
 	id, remoteID, remoteName string
+	managementPort           *atomic.Uint32
 }
 type listener struct {
 	address netip.AddrPort
@@ -65,7 +69,11 @@ func (n *node) Start() error                 { return nil }
 func (n *node) Login(context.Context) error  { return nil }
 func (n *node) Logout(context.Context) error { return nil }
 func (n *node) State(context.Context) (identity.State, error) {
-	return identity.State{IPs: []netip.Addr{n.ip}, Backend: "Running", Snapshot: policy.Snapshot{Running: true, Peers: []policy.Peer{{ID: n.remoteID, DNSName: n.remoteName, IPs: []netip.Addr{n.remoteIP}, Online: true}}}}, nil
+	state := identity.State{IPs: []netip.Addr{n.ip}, Backend: "Running", Snapshot: policy.Snapshot{Running: true, Peers: []policy.Peer{{ID: n.remoteID, DNSName: n.remoteName, IPs: []netip.Addr{n.remoteIP}, Online: true}}}}
+	if n.managementPort != nil && n.managementPort.Load() != 0 {
+		state.ReservedPorts = []uint16{uint16(n.managementPort.Load())}
+	}
+	return state, nil
 }
 func (n *node) WhoIs(_ context.Context, source netip.AddrPort) (string, error) {
 	if source.Addr() == n.remoteIP {
@@ -139,6 +147,97 @@ func command(ctx context.Context, c *core.Core, name string, payload any) error 
 	_, e = c.Command(ctx, webui.Command{RequestID: fmt.Sprintf("fixture-%d", time.Now().UnixNano()), Name: name, Payload: b})
 	return e
 }
+
+// The production HTTP handler still owns loopback/Origin/CSRF/auth/CSP checks.
+// This wrapper is reached only after those checks, and never creates a network
+// backend, account login or alternate endpoint itself.
+type fixtureBackend struct {
+	webui.Backend
+	scenario           string
+	managementPort     *atomic.Uint32
+	uploadFailed       atomic.Bool
+	serviceMu          sync.Mutex
+	servicePort        uint16
+	serviceReservation net.Listener
+}
+
+func (f *fixtureBackend) Snapshot(ctx context.Context) (map[string]any, error) {
+	state, err := f.Backend.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if f.managementPort != nil {
+		port := uint16(f.managementPort.Load())
+		ports, _ := state["reservedPorts"].([]uint16)
+		found := false
+		for _, existing := range ports {
+			found = found || existing == port
+		}
+		if port != 0 && !found {
+			state["reservedPorts"] = append(append([]uint16(nil), ports...), port)
+		}
+	}
+	return state, nil
+}
+
+func (f *fixtureBackend) Command(ctx context.Context, cmd webui.Command) (any, error) {
+	if cmd.Name == "lan.addresses" {
+		// Never enumerate the CI machine's interfaces in browser evidence.
+		return map[string]any{"addresses": []core.LANLocalAddress{{Interface: "fixture0", Address: "192.168.50.10"}}}, nil
+	}
+	if cmd.Name == "network.login" {
+		return nil, errors.New("account login is unavailable in the browser fixture")
+	}
+	if cmd.Name == "network.configure" {
+		var choice struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.Unmarshal(cmd.Payload, &choice); err != nil {
+			return nil, errors.New("invalid command payload")
+		}
+		if choice.Mode == "lan" || (f.scenario == "offline" && choice.Mode != "none") {
+			return nil, errors.New("network activation is unavailable in the offline browser fixture")
+		}
+	}
+	if cmd.Name == "service.connect" {
+		var choice struct {
+			LocalPort int `json:"localPort"`
+		}
+		if json.Unmarshal(cmd.Payload, &choice) == nil && choice.LocalPort == int(f.servicePort) {
+			f.serviceMu.Lock()
+			if f.serviceReservation != nil {
+				_ = f.serviceReservation.Close()
+				f.serviceReservation = nil
+			}
+			f.serviceMu.Unlock()
+		}
+	}
+	return f.Backend.Command(ctx, cmd)
+}
+
+func (f *fixtureBackend) Upload(w http.ResponseWriter, r *http.Request) {
+	if f.scenario == "offline" || f.uploadFailed.CompareAndSwap(false, true) {
+		defer r.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "upload_failed", "error": "Synthetic upload interruption; retry the reviewed batch"})
+		return
+	}
+	f.Backend.Upload(w, r)
+}
+
+type privateSession struct {
+	URL              string   `json:"url"`
+	Code             string   `json:"code"`
+	ReceiveDirectory string   `json:"receiveDirectory,omitempty"`
+	Scenario         string   `json:"scenario"`
+	Capabilities     []string `json:"capabilities"`
+	LocalServicePort uint16   `json:"localServicePort,omitempty"`
+}
+
+func validScenario(s string) bool { return s == "studio" || s == "offline" }
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "browser harness failed:", err)
@@ -147,9 +246,13 @@ func main() {
 }
 func run() error {
 	file := flag.String("session-file", "", "private output file read by the browser test")
+	scenario := flag.String("scenario", "studio", "browser fixture: studio or offline")
 	flag.Parse()
 	if *file == "" {
 		return errors.New("--session-file is required")
+	}
+	if !validScenario(*scenario) {
+		return errors.New("--scenario must be studio or offline")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -159,45 +262,20 @@ func run() error {
 	}
 	defer os.RemoveAll(dir)
 	netw := &network{listeners: map[netip.AddrPort]*listener{}}
+	managementPort := new(atomic.Uint32)
 	aIP, bIP := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.0.2")
-	aNode := &node{network: netw, ip: aIP, remoteIP: bIP, id: "fixture-notebook", remoteID: "fixture-studio", remoteName: "Studio"}
+	aNode := &node{network: netw, ip: aIP, remoteIP: bIP, id: "fixture-notebook", remoteID: "fixture-studio", remoteName: "Studio", managementPort: managementPort}
 	bNode := &node{network: netw, ip: bIP, remoteIP: aIP, id: "fixture-studio", remoteID: "fixture-notebook", remoteName: "Notebook"}
-	a, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "notebook"), Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return aNode, nil }})
+	a, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "notebook"), Version: "browser-acceptance", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
+		if *scenario == "offline" {
+			return nil, errors.New("offline browser fixture cannot activate a network")
+		}
+		return aNode, nil
+	}})
 	if e != nil {
 		return e
 	}
 	defer a.Close()
-	b, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "studio"), Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return bNode, nil }})
-	if e != nil {
-		return e
-	}
-	defer b.Close()
-	for _, item := range []struct {
-		app        *core.Core
-		name, peer string
-	}{{a, "Notebook", "fixture-studio"}, {b, "Studio", "fixture-notebook"}} {
-		if e := command(ctx, item.app, "network.configure", map[string]string{"mode": "tailnet", "hostname": item.name}); e != nil {
-			return e
-		}
-		if e := command(ctx, item.app, "peer.trust", map[string]any{"peerId": item.peer, "trusted": true}); e != nil {
-			return e
-		}
-	}
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		e = command(ctx, a, "peer.reconnect", map[string]string{"peerId": "fixture-studio"})
-		if e == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			return e
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
 	receiveDir := filepath.Join(dir, "received")
 	if e := os.Mkdir(receiveDir, 0700); e != nil {
 		return e
@@ -205,36 +283,97 @@ func run() error {
 	if e := command(ctx, a, "settings.update", map[string]string{"receiveDirectory": receiveDir}); e != nil {
 		return e
 	}
-	if e := command(ctx, b, "message.send", map[string]string{"peerId": "fixture-notebook", "text": "Here are the notes for review."}); e != nil {
+	if *scenario == "studio" {
+		b, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "studio"), Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return bNode, nil }})
+		if e != nil {
+			return e
+		}
+		defer b.Close()
+		for _, item := range []struct {
+			app        *core.Core
+			name, peer string
+		}{{a, "Notebook", "fixture-studio"}, {b, "Studio", "fixture-notebook"}} {
+			if e := command(ctx, item.app, "network.configure", map[string]string{"mode": "tailnet", "hostname": item.name}); e != nil {
+				return e
+			}
+			if e := command(ctx, item.app, "peer.trust", map[string]any{"peerId": item.peer, "trusted": true}); e != nil {
+				return e
+			}
+		}
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			e = command(ctx, a, "peer.reconnect", map[string]string{"peerId": "fixture-studio"})
+			if e == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				return e
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		if e := command(ctx, b, "message.send", map[string]string{"peerId": "fixture-notebook", "text": "Here are the notes for review."}); e != nil {
+			return e
+		}
+		if e := command(ctx, a, "message.send", map[string]string{"peerId": "fixture-studio", "text": "Thanks. I will review the batch before saving."}); e != nil {
+			return e
+		}
+		notes := filepath.Join(dir, "design-notes.txt")
+		if e := os.WriteFile(notes, []byte("Fictional design notes for browser acceptance.\n"), 0600); e != nil {
+			return e
+		}
+		if _, e := b.SendPaths(ctx, "fixture-notebook", []string{notes}); e != nil {
+			return e
+		}
+		if e := command(ctx, b, "service.share", map[string]any{"name": "sample-web", "network": "tcp", "ports": "8080", "peerIds": []string{"fixture-notebook"}, "ttlSeconds": 3600, "purpose": "web", "discoverable": true}); e != nil {
+			return e
+		}
+		_ = command(ctx, a, "peer.reconnect", map[string]string{"peerId": "fixture-studio"})
+	} else if e := command(ctx, a, "network.configure", map[string]string{"mode": "none", "hostname": "Notebook"}); e != nil {
 		return e
 	}
-	if e := command(ctx, a, "message.send", map[string]string{"peerId": "fixture-studio", "text": "Thanks. I will review the batch before saving."}); e != nil {
-		return e
-	}
-	notes := filepath.Join(dir, "design-notes.txt")
-	if e := os.WriteFile(notes, []byte("Fictional design notes for browser acceptance.\n"), 0600); e != nil {
-		return e
-	}
-	if _, e := b.SendPaths(ctx, "fixture-notebook", []string{notes}); e != nil {
-		return e
-	}
-	if e := command(ctx, b, "service.share", map[string]any{"name": "sample-web", "network": "tcp", "ports": "8080", "peerIds": []string{"fixture-notebook"}, "ttlSeconds": 3600, "purpose": "web", "discoverable": true}); e != nil {
-		return e
-	}
-	_ = command(ctx, a, "peer.reconnect", map[string]string{"peerId": "fixture-studio"})
 	files, e := assets.Assets()
 	if e != nil {
 		return e
 	}
-	url, code, e := a.StartWeb(files)
+	backend := &fixtureBackend{Backend: a, scenario: *scenario, managementPort: managementPort}
+	if *scenario == "studio" {
+		// Reserve a numeric loopback port until the exact UI connect action.
+		// Core then owns the real listener and its ordinary stop lifecycle.
+		reservation, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+		defer reservation.Close()
+		backend.serviceReservation = reservation
+		backend.servicePort = reservation.Addr().(*net.TCPAddr).AddrPort().Port()
+	}
+	server, e := webui.Start(ctx, files, backend)
 	if e != nil {
 		return e
 	}
-	if e := config.WriteJSON(*file, map[string]string{"url": url, "code": code}); e != nil {
+	defer func() {
+		closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		_ = server.Close(closeCtx)
+	}()
+	managementPort.Store(uint32(server.Port()))
+	code, e := server.IssueCode()
+	if e != nil {
+		return e
+	}
+	metadata := privateSession{URL: server.URL(), Code: code, ReceiveDirectory: receiveDir, Scenario: *scenario, Capabilities: []string{"service-lifecycle", "offline-network", "failed-upload-retry", "host-review", "application-stop"}, LocalServicePort: backend.servicePort}
+	if e := config.WriteJSON(*file, metadata); e != nil {
 		return e
 	}
 	defer os.Remove(*file)
-	fmt.Println("Production UI acceptance server ready with synthetic peers")
-	<-ctx.Done()
+	fmt.Println("Production UI acceptance server ready with isolated fixtures")
+	select {
+	case <-ctx.Done():
+	case <-a.Done():
+	}
 	return nil
 }

@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,44 @@ type RemoteService struct {
 	Ports       string    `json:"ports"`
 	ExpiresAt   time.Time `json:"expiresAt"`
 	Application string    `json:"application"`
+}
+
+// SavedServiceConfiguration is available only through the authenticated local
+// command API. Peer discovery continues to expose only RemoteService metadata.
+type SavedServiceConfiguration struct {
+	Configuration ServiceSpec `json:"configuration"`
+	Revision      string      `json:"revision"`
+	Active        bool        `json:"active"`
+}
+
+type localCommandError struct{ code, message string }
+
+func (e *localCommandError) Error() string     { return e.message }
+func (e *localCommandError) ErrorCode() string { return e.code }
+
+func serviceRevision(spec ServiceSpec) string {
+	data, _ := json.Marshal(spec)
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
+
+func (c *Core) serviceConfiguration(raw json.RawMessage) (any, error) {
+	var input struct {
+		ID string `json:"id"`
+	}
+	if err := decodePayload(raw, &input); err != nil {
+		return nil, err
+	}
+	p := c.profileCopy()
+	for _, saved := range p.Services {
+		if saved.ID == input.ID {
+			c.mu.RLock()
+			active := c.active[saved.ID] != nil
+			c.mu.RUnlock()
+			return SavedServiceConfiguration{Configuration: saved, Revision: serviceRevision(saved), Active: active}, nil
+		}
+	}
+	return nil, &localCommandError{"service_not_found", "saved service no longer exists; refresh the local service list"}
 }
 
 func validateRemote(s RemoteService) error {
@@ -118,6 +158,9 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		Purpose      string   `json:"purpose"`
 		Discoverable bool     `json:"discoverable"`
 		ServiceID    string   `json:"serviceId"`
+		Backend      string   `json:"backend"`
+		ReplaceID    string   `json:"replaceId"`
+		Revision     string   `json:"expectedRevision"`
 	}
 	if e := decodePayload(raw, &in); e != nil {
 		return nil, e
@@ -161,7 +204,49 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			return nil, errors.New("ports 54543 through 54545 are reserved")
 		}
 	}
-	spec := ServiceSpec{ID: randomID(), Name: in.Name, Direction: direction, Network: in.Network, Ports: ports.String(), ExcludePorts: exclude.String(), LocalPort: in.LocalPort, PeerID: in.PeerID, PeerIDs: in.PeerIDs, TTLSeconds: in.TTLSeconds, Purpose: in.Purpose, Discoverable: in.Discoverable}
+	p := c.profileCopy()
+	if in.Backend != "" && in.Backend != p.Settings.Network {
+		return nil, &localCommandError{"service_backend_mismatch", "review this service in its selected network before starting it"}
+	}
+	if (in.ReplaceID == "") != (in.Revision == "") {
+		return nil, &localCommandError{"service_revision_required", "explicit replacement requires the saved service ID and reviewed revision"}
+	}
+	id := randomID()
+	if in.ReplaceID != "" {
+		if in.Backend != "tailnet" && in.Backend != "lan" {
+			return nil, &localCommandError{"service_backend_required", "review and explicitly select the backend for this saved service"}
+		}
+		found := false
+		for _, saved := range p.Services {
+			if saved.ID != in.ReplaceID {
+				continue
+			}
+			found = true
+			c.mu.RLock()
+			active := c.active[saved.ID] != nil
+			c.mu.RUnlock()
+			if active {
+				return nil, &localCommandError{"service_active", "stop this service explicitly before editing or restarting it"}
+			}
+			if in.Revision != serviceRevision(saved) {
+				return nil, &localCommandError{"service_revision_conflict", "saved service changed; reload and review its complete configuration"}
+			}
+			if saved.Backend != "" && saved.Backend != in.Backend {
+				return nil, &localCommandError{"service_backend_mismatch", "saved service belongs to another backend; review it in that network"}
+			}
+			id = saved.ID
+			break
+		}
+		if !found {
+			return nil, &localCommandError{"service_not_found", "saved service no longer exists; refresh the local service list"}
+		}
+	}
+	for _, saved := range p.Services {
+		if saved.Name == in.Name && saved.ID != in.ReplaceID {
+			return nil, &localCommandError{"service_name_conflict", "a saved service already uses this name; choose a new name or explicitly review that service for replacement"}
+		}
+	}
+	spec := ServiceSpec{ID: id, Backend: p.Settings.Network, Name: in.Name, Direction: direction, Network: in.Network, Ports: ports.String(), ExcludePorts: exclude.String(), LocalPort: in.LocalPort, PeerID: in.PeerID, PeerIDs: in.PeerIDs, TTLSeconds: in.TTLSeconds, Purpose: in.Purpose, Discoverable: in.Discoverable, ServiceID: in.ServiceID}
 	st, e := c.current(ctx)
 	if e != nil || !st.Snapshot.Running || len(st.IPs) == 0 {
 		return nil, errors.New("connect the selected network before starting a service")
@@ -224,18 +309,6 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 			if !found {
 				return nil, errors.New("shared service changed; review the current service before connecting")
 			}
-		}
-	}
-	p := c.profileCopy()
-	for _, saved := range p.Services {
-		if saved.Name == spec.Name {
-			c.mu.RLock()
-			active := c.active[saved.ID]
-			c.mu.RUnlock()
-			if active != nil {
-				return nil, errors.New("a service with this name is active; stop it before editing")
-			}
-			spec.ID = saved.ID
 		}
 	}
 	var expanded []uint16
