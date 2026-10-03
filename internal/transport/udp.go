@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 const DefaultUDPIdleTimeout = 5 * time.Minute
@@ -22,8 +23,14 @@ type UDPConfig struct {
 	// applications should enforce a minimum of five minutes for normal use.
 	IdleTimeout  time.Duration
 	WriteTimeout time.Duration
-	MaxSessions  int
-	QueueSize    int
+	// MaxSessions and QueueSize optionally further restrict the live budget.
+	// Zero follows the current budget, including later increases.
+	MaxSessions int
+	QueueSize   int
+	// Budget shares current session and queued-storage limits across every
+	// materialized port belonging to one policy. Reuse the same pointer for
+	// those ports. Nil selects a policy budget on the default controller.
+	Budget *UDPBudget
 	// Validate optionally rechecks current destination authorization before
 	// forwarding each datagram in either direction. It must be concurrency-safe
 	// and honor its context. Any error closes that source's session.
@@ -39,7 +46,9 @@ type udpPacketIO interface {
 
 type udpTable struct {
 	bytesMu     sync.Mutex
-	queuedBytes int
+	queuedBytes int64
+	budgetOnce  sync.Once
+	budget      *UDPBudget
 	authorize   SourceAuthorizer
 	guard       func() error
 	mu          sync.Mutex
@@ -51,16 +60,29 @@ type udpTable struct {
 }
 
 type udpSession struct {
-	globalReserved bool
-	table          *udpTable
-	source         netip.AddrPort
-	ctx            context.Context
-	cancel         context.CancelFunc
-	queue          chan []byte
-	mu             sync.Mutex
-	lastActive     time.Time
-	closed         bool
+	sharedBudget  *UDPBudget
+	table         *udpTable
+	source        netip.AddrPort
+	ctx           context.Context
+	cancel        context.CancelFunc
+	queue, tail   *queuedPacket
+	queuedPackets int64
+	ready         chan struct{}
+	mu            sync.Mutex
+	lastActive    time.Time
+	closed        bool
 }
+
+// Queue storage grows only with admitted datagrams. Charging metadata also
+// bounds empty datagrams when a caller selects a very large packet budget.
+type queuedPacket struct {
+	data []byte
+	next *queuedPacket
+}
+
+const udpPacketOverhead = int(unsafe.Sizeof(queuedPacket{}))
+
+func packetStorage(n int) int { return n + udpPacketOverhead }
 
 // StartUDP keeps one connected upstream socket per local source, preserving
 // reverse delivery of delayed or unsolicited replies until the session expires.
@@ -78,7 +100,7 @@ func StartUDP(ctx context.Context, cfg UDPConfig, dial Dialer) (*Server, error) 
 	if err := normalizeUDPConfig(&cfg); err != nil {
 		return nil, err
 	}
-	localPacket, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp4", cfg.ListenAddress)
+	localPacket, err := (&net.ListenConfig{}).ListenPacket(ctx, loopbackNetwork("udp", cfg.ListenAddress), cfg.ListenAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -113,15 +135,14 @@ func (t *udpTable) readLocal() {
 		packet := buffer[:n]
 		t.mu.Lock()
 		session := t.sessions[source]
-		if session == nil && len(t.sessions) < t.cfg.MaxSessions {
-			select {
-			case udpSessionSlots <- struct{}{}:
-			default:
+		if session == nil && (t.cfg.MaxSessions == 0 || len(t.sessions) < t.cfg.MaxSessions) {
+			budget := t.resourceBudget()
+			if !budget.reserveSession() {
 				t.mu.Unlock()
 				continue
 			}
 			ctx, cancel := context.WithCancel(t.server.ctx)
-			session = &udpSession{globalReserved: true, table: t, source: source, ctx: ctx, cancel: cancel, queue: make(chan []byte, t.cfg.QueueSize), lastActive: time.Now()}
+			session = &udpSession{sharedBudget: budget, table: t, source: source, ctx: ctx, cancel: cancel, ready: make(chan struct{}, 1), lastActive: time.Now()}
 			t.sessions[source] = session
 			t.server.wg.Add(1)
 			go func() { defer t.server.wg.Done(); session.run() }()
@@ -134,21 +155,50 @@ func (t *udpTable) readLocal() {
 }
 
 func (s *udpSession) offer(packet []byte) {
+	limit := s.table.resourceBudget().resources().limits().UDPQueuePackets
+	if configured := s.table.cfg.QueueSize; configured > 0 && int64(configured) < limit {
+		limit = int64(configured)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.ctx.Err() != nil {
+	if s.closed || s.ctx.Err() != nil || s.queuedPackets >= limit {
 		return
 	}
-	if !s.table.reserveBytes(len(packet)) {
+	if !s.table.reserveBytes(packetStorage(len(packet))) {
 		return
 	}
-	stored := append([]byte{}, packet...)
+	stored := &queuedPacket{data: make([]byte, len(packet))}
+	copy(stored.data, packet)
+	if s.tail == nil {
+		s.queue = stored
+	} else {
+		s.tail.next = stored
+	}
+	s.tail = stored
+	s.queuedPackets++
+	s.lastActive = time.Now()
+	if s.ready == nil {
+		s.ready = make(chan struct{}, 1)
+	}
 	select {
-	case s.queue <- stored:
-		s.lastActive = time.Now()
+	case s.ready <- struct{}{}:
 	default:
-		s.table.releaseBytes(len(stored))
 	}
+}
+
+func (s *udpSession) takePacket() ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.ctx.Err() != nil || s.queue == nil {
+		return nil, false
+	}
+	packet := s.queue
+	s.queue = packet.next
+	if s.queue == nil {
+		s.tail = nil
+	}
+	s.queuedPackets--
+	return packet.data, true
 }
 
 func (s *udpSession) touch() bool {
@@ -180,17 +230,16 @@ func (s *udpSession) remaining() time.Duration {
 
 func (s *udpSession) stop() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.closed = true
 	s.cancel()
-	for {
-		select {
-		case packet := <-s.queue:
-			s.table.releaseBytes(len(packet))
-		default:
-			s.mu.Unlock()
-			return
-		}
+	for s.queue != nil {
+		packet := s.queue
+		s.queue = packet.next
+		s.table.releaseBytes(packetStorage(len(packet.data)))
 	}
+	s.tail = nil
+	s.queuedPackets = 0
 }
 
 func (s *udpSession) validate() error {
@@ -217,8 +266,8 @@ func (s *udpSession) run() {
 	t := s.table
 	defer func() {
 		s.stop()
-		if s.globalReserved {
-			<-udpSessionSlots
+		if s.sharedBudget != nil {
+			s.sharedBudget.releaseSession()
 		}
 		t.mu.Lock()
 		if t.sessions[s.source] == s {
@@ -246,14 +295,16 @@ func (s *udpSession) run() {
 	go func() { defer close(readerDone); s.readRemote(remote) }()
 	go func() { defer close(watcherDone); s.watchRemote(remote) }()
 	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case packet := <-s.queue:
+		if packet, ok := s.takePacket(); ok {
 			if err := s.sendPacket(remote, packet); err != nil {
 				return
 			}
-
+			continue
+		}
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-s.ready:
 		}
 	}
 }
@@ -311,15 +362,6 @@ func normalizeUDPConfig(cfg *UDPConfig) error {
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = DefaultUDPIdleTimeout
 	}
-	if cfg.MaxSessions == 0 {
-		cfg.MaxSessions = defaultMaxUDPSessions
-	}
-	if cfg.QueueSize == 0 {
-		cfg.QueueSize = defaultUDPQueueSize
-	}
-	if cfg.MaxSessions > defaultMaxUDPSessions || cfg.QueueSize > defaultUDPQueueSize {
-		return errors.New("UDP limits exceed maximum")
-	}
 	var err error
 	cfg.DialTimeout, err = normalizeTimeout(cfg.DialTimeout)
 	if err != nil {
@@ -330,7 +372,7 @@ func normalizeUDPConfig(cfg *UDPConfig) error {
 }
 
 func (s *udpSession) sendPacket(remote net.Conn, packet []byte) error {
-	defer s.table.releaseBytes(len(packet))
+	defer s.table.releaseBytes(packetStorage(len(packet)))
 	if err := s.validate(); err != nil {
 		return err
 	}

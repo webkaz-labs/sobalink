@@ -1,191 +1,304 @@
-# Named connections and time-limited sharing
+# Use sobalink
 
-This guide targets the `0.2.0-alpha.2` testing prerelease, including service-first discovery and arrow-key editing. Publication and signed assets must be confirmed before installation. The published `0.2.0-alpha.1` binary has named connections but retains the peer/purpose wizard; `0.1.0-alpha.2` has only the legacy workflow. Legacy RustDesk profiles remain supported as an experimental separate workflow. [日本語](GENERIC.ja.md) · [Verification](VERIFICATION.en.md)
+[日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-**[0.2.0-alpha.1 is published](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1).** [Exact-source CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666) and the [complete release/native mise-install workflow](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369) passed, including Japanese/English output, OS-locale fallback and exact JSON checks on all four targets. Real enrollment and application acceptance remain incomplete. [Detailed distribution record](DISTRIBUTION.md)
+This guide describes the sobalink development draft and its `soba` executable. It is not an installation guide for the legacy `tsnet-bridge` releases. The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed.
 
-The common path is **shared service → review → connect**. Only fresh authenticated responses describing active shares permitted to this node are selectable. Peer, purpose, protocol and shared port are filled in; no JSON editing, peer-ID typing or guessing the remote port is required. `connect --manual` keeps the peer/purpose/port path for ordinary Tailscale services, older bridges and known endpoints. Sharing recipients are still chosen from all current eligible peers, including peers that publish no services.
+[Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
-The historical release results above do not verify this version or its discovery feature. Commands below use the exact-pin installation described under [First use](#first-use), after publication is confirmed. A source-build alternative is available there. See [version-specific verification scope](VERIFICATION.en.md#service-discovery-current-source).
+## Start and open the local UI
 
-The design targets ordinary-user installation and operation without OS VPN, route or DNS changes. This does not remove authorization requirements for the tailnet or destination service. An additional isolated non-root Linux offline installation passed for `0.2.0-alpha.1`. Real enrollment, Windows standard-user authentication, actual tailnet ACLs and applications, phone QR authentication and OS sleep/login behavior remain unverified for the new version.
-
-## Display language
-
-Language selection is automatic: Japanese locales use Japanese, otherwise English is the safe fallback. The order is `LC_ALL`, `LC_MESSAGES`, then `LANG`; when unset, Windows reads the current user's UI language and macOS reads the first preferred language. Override only when desired:
+[Build this checkout](DISTRIBUTION.md#build-this-checkout), then run:
 
 ```sh
-mise exec -- tsnet-bridge --lang ja help
-mise exec -- tsnet-bridge --lang en help
-mise exec -- tsnet-bridge --lang auto help
+soba
 ```
 
-`TSNET_BRIDGE_LANG=ja`, `en` or `auto` is also supported. Command/flag names and complete machine JSON remain unchanged. Endpoints, identifiers and user values are not translated. Rule/group names may use Japanese letters as well as other letters/digits, hyphens and underscores. English and Japanese confirmation/edit/back/cancel inputs are accepted.
-
-Use a UTF-8 terminal. In supported interactive terminals, Up/Down highlights one peer, purpose or service; Enter chooses it. Left/Right moves within typed text. Numbers, names and control words still work; type comma-separated peer numbers or names to share with several peers. Arrow navigation alone never confirms saving or starting. Redirected input/output keeps plain line prompts without terminal controls. Malformed UTF-8 and unsupported control sequences are rejected instead of being saved, and terminal settings are restored after prompting. Actual IME/font combinations and Windows Console/ConPTY visual input remain unverified; POSIX PTY tests do not replace those checks.
-
-## First use
-
-First confirm `v0.2.0-alpha.2` is public as a **Pre-release**, with `packslip.sigstore.json` and the target archive, using the [README installation checks](../README.en.md#install-020-alpha2-after-publication). Stop if the release or required assets are missing. With [mise](https://mise.jdx.dev/getting-started.html) **2026.9.18**, run in PowerShell, macOS or Linux:
+`soba start` is equivalent. It runs in the foreground. Keep that terminal open; Ctrl+C closes its active connections and shares. From another terminal:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.2"
-mise exec -- tsnet-bridge version
+soba ui
+soba status
 ```
 
-Require `tsnet-bridge 0.2.0-alpha.2` before continuing:
+Open the exact printed numeric-loopback URL on the same device. Enter the separately printed one-time code within five minutes. `soba ui` returns the URL and a fresh code as JSON; issuing another code replaces the previous unused code. Do not place it in a bookmark, URL, screenshot or shared log. The Web UI does not have a network-facing management address.
+
+The first terminal prints a code only when its output is an interactive terminal. Use `soba ui` when needed and handle its response as secret local sign-in information. If the browser session expires, request a new code and sign in again. Normal state responses never contain the sign-in code.
+
+The default private state directory is the operating system's user configuration directory under `sobalink`. To use another directory, include the same global option in every command:
 
 ```sh
-mise exec -- tsnet-bridge init
-mise exec -- tsnet-bridge login
+soba --state-dir ./sample-state
+soba --state-dir ./sample-state status
 ```
 
-For a source build before publication, use the [development commands](../README.en.md#security-and-development), then replace `mise exec -- tsnet-bridge` throughout this guide with `bin/tsnet-bridge` (`bin/tsnet-bridge.exe` on Windows). A development binary is separate from signed release artifacts. Stop at OS security warnings instead of bypassing them.
+A fresh profile starts with no network selected. UI preferences, trust and service definitions are saved. Ordinary saved definitions remain stopped after a process restart; transfer progress never resumes. Separately reviewed [outbound startup and private proxy profiles](STARTUP.en.md) can opt into a future online launch. Inbound shares remain manual.
 
-`init` writes an idle profile without networking. `login` starts a separate embedded node and presents the official private sign-in URL. Review the account, tailnet and node authorization yourself; never share login URLs, secrets or credentials. Existing profiles are never silently overwritten. Use `login --no-browser` for manual browser opening.
+## Choose one network
 
-### Choose how to sign in
+| Choice | Setup | Important boundary |
+| --- | --- | --- |
+| Existing Tailnet | Activate the embedded node, then use the official interactive Tailscale sign-in flow | It is a separate node in the chosen Tailnet; the OS Tailscale app's session is not imported |
+| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI implemented; stock loopback-relay acceptance passed at the recorded commit. Later source needs separate verification. No arbitrary public fallback or zero-external-traffic claim |
+| No network | Leave the agent local | No peer transfer or service connection |
 
-- `login`: open the official sign-in URL in this device's browser
-- `login --qr`: display a private, locally generated QR and link; scan using a trusted phone/tablet and confirm the account, tailnet and bridge node in its browser
-- `login --link` or `login --no-browser`: display the private link for manual opening
-
-[Tailscale documents this cross-device QR flow](https://tailscale.com/docs/features/access-control/device-management/how-to/set-up-qr-code). The bridge node is enrolled, not the scanning phone. Account authentication, MFA and device approval still apply. This bridge's complete real-phone flow remains unverified.
-
-QR generation runs entirely in memory using the same pinned Go encoder as Tailscale; no external QR service, screenshot or image file is used. QR output refuses redirected files/pipes. Do not share, record or screenshot the terminal. A terminal narrower than the required QR width receives a specific width message and link fallback instead of wrapped QR output. Enlarge the terminal, use `--qr-format large`, or fall back to the private link if scanning is difficult. On Windows, QR rendering temporarily enables supported ANSI/VT color output and restores the previous mode; if that capability cannot be enabled, the private link is offered instead. Native Windows terminal scanning remains unverified.
-
-Waiting, connected and device-approval-pending states are distinct. The default five-minute local wait can be changed with `--timeout 10m`; it is not the server link's expiration. Rerun `login` to request the current sign-in link if it expired. Upstream may reuse its cached link; rerunning does not guarantee rotation or revocation. Cancellation stops the wait, not the node or an already displayed authorization link; use `stop` to close the node.
-
-## Use a peer's service
+For the Tailnet path:
 
 ```sh
-mise exec -- tsnet-bridge connect
+soba setup --network tailnet
+soba login --browser
+soba peers
 ```
 
-1. Select a shared service with Up/Down and Enter, or type its number. The list shows the peer, purpose, TCP/UDP shared port, check time and sharing expiry
-2. Accept or edit the local rule name and proposed local port
-3. Review the actual local endpoint and remote service, then start
+`--browser` opens the official sign-in page and waits; `--qr` offers a locally generated QR in a private terminal, and `--link` explicitly prints the private link. Plain `soba login` retains machine JSON. Complete enrollment or wait for device approval; see [sign-in and cancellation](SIGN_IN.en.md). Treat enrollment URLs as secrets. The tool does not accept an auth key in command arguments, and it does not change OS routes or DNS. Tailnet policy and service authentication still apply.
 
-The selected remote peer, purpose, protocol and shared port stay together. At review, `e` edits only the local port, `s` or `back` returns to services, `m` switches deliberately to manual configuration and `r` changes the name. `r` at the service picker refreshes instead. `q`/`cancel` cancels without saving. Observations are usable for at most 15 seconds, never beyond sharing expiry. If an observation ages while you read the list, the same grant is rechecked when selected; an unchanged service with fresh, valid metadata needs no extra selection. Selection is rechecked before save and again before start; a changed, stopped, expired or newly denied share requires a fresh choice. If the final check fails after save, the rule remains saved but disabled. Advertised expiry is the earlier of the share TTL and a task’s current lease. Normal lease renewal can keep the same grant/service selectable after rechecking; it does not retarget the connection.
+Selecting a mode is explicit. Stop the agent and use `soba start --offline` to open management without reconnecting the saved network when changing modes or repairing saved LAN state. An existing TCP session does not transfer between Tailnet and Tailcat. The local UI and CLI support explicit relay selection and pairing; follow the [LAN guide](LAN.en.md). [Verification](VERIFICATION.en.md) separates published CI from later local checks.
 
-The list confirms recent sharing metadata, not application health. A peer being online, a TCP handshake or a `ready` listener cannot establish an application's success. No result does not prove the remote service is stopped. Refresh after checking that the provider started a discoverable share and allowed this bridge node. If discovery is unsupported, blocked or unavailable, use `m` or `connect --manual` for a known service.
+For foreground/background startup, optional reviewed startup at user sign-in, saved autosave behavior and Tailnet logout, see [startup and logout](LIFECYCLE.en.md).
 
-### What the service provider needs
+Tailcat's permitted traffic includes direct peer traffic, encrypted payload via the explicitly selected relay, and HTTPS/ICMP diagnostics to that relay endpoint. A relay may be self-hosted or another endpoint explicitly trusted by the user. This is not a LAN egress sandbox. [Transport detail](ARCHITECTURE.md#network-boundaries)
 
-For a bridge-published share, the provider runs both the actual local application and a signed-in bridge node. A started, unexpired share must explicitly allow the receiving bridge node. Discovery must also be enabled: review the new interactive share preview, or deliberately add `--discoverable` when using `--confirm`. Tailnet policy must allow the discovery port and actual shared service port separately.
+## Trust the peer you mean
 
-On the provider, after installing the same version (or building the same source):
+Choose a current peer in the UI and compare its identity before trusting it. Names are labels, not credentials. Reusing a name or address does not transfer permission to another identity.
 
 ```sh
-mise exec -- tsnet-bridge init
-mise exec -- tsnet-bridge login
-mise exec -- tsnet-bridge share
+soba peers
+soba trust PEER_ID
 ```
 
-Run `init` only once; skip it when a profile already exists. Start the local application with authentication before `share`, then choose the receiver, actual service port and lifetime, and review before starting. Keep the application and bridge running. The receiver refreshes `connect` after the provider starts sharing. An empty list or timeout does not establish that a bridge is missing or the peer is offline.
+Trust permits incoming messages and transfer offers from that exact identity. It does not grant permission inside the peer's applications. The receiving side must also trust the sender; local trust alone cannot authorize receipt on another device. Service sharing is a separate explicit peer-and-port grant.
 
-An ordinary service already listening on a Tailscale peer does **not** need a bridge on that peer. Use `connect --manual` with its known peer, actual service port and TCP/UDP transport; the service listener, tailnet policy and application authentication must permit access.
-
-Same-port forwarding is preferred. Privileged or occupied local ports produce an alternative that requires confirmation; no silent renumbering or elevation occurs. Forward local ports are 1024..65535, destination service ports 1..65535. Existing RustDesk fixed-port rules remain separate.
+Revoking trust invalidates that peer's transfer authorization and autosave generation, closes its tracked work and stops affected shares. Trusting it again does not restore the previous autosave grant. Check active services after any trust change.
 
 ```sh
-mise exec -- tsnet-bridge connect web-demo
-mise exec -- tsnet-bridge settings
-mise exec -- tsnet-bridge stop web-demo
+soba revoke PEER_ID
 ```
 
-Replace `web-demo` with your saved name. `connect NAME` and `start NAME` reuse the saved pinned peer and port; they do not claim a fresh discovery observation. A new service-picker configuration is the path that revalidates discovery before save/start. Copy the displayed service endpoint into the application, not its SOCKS field. TLS names/SNI, origin/Cookie/CORS and SSH host-key checks remain application concerns. Never disable verification. Saving with `--save-only` does not connect. Replacing a saved rule requires stopping it and explicitly selecting `--replace`. A different node with the same display name is never silently substituted for a saved peer; select the current peer again.
-
-<details>
-<summary>Manual configuration and advanced connection details</summary>
-
-Purpose presets only suggest editable port numbers; they do not install/configure applications or choose TCP/UDP:
-
-| Purpose | Example and suggested port |
-| --- | --- |
-| `web` | HTTP service, `8080` |
-| `ssh` | SSH/SFTP, `22` |
-| `db` | PostgreSQL example, `5432`; other databases may differ |
-| `ai` | Local AI API example, `11434`; other AI services may differ |
-| `custom` | Enter the actual service port |
-
-The picker shows the selected transport. It defaults to TCP; pass `--network udp` for a UDP service. Every suggested port can be changed. Discovery instead takes the provider's actual shared port and transport, with no preset guessing. The final review distinguishes the local loopback entry point from the remote tailnet endpoint, or the shared tailnet listener from its local loopback target.
-
-`connect --manual` selects a current peer, purpose and actual port. Existing `--peer`, `--purpose`, `--port` or `--network` flags also choose this path. Purpose presets are suggestions, not evidence that the service exists. Here `e` edits ports/lifetime, `p`/`back` returns to peers, `u` changes purpose and `r` changes the name. Typing mistakes can be retried in place.
-
-```sh
-# Replace demo with a peer currently shown in your list
-mise exec -- tsnet-bridge connect --peer demo --purpose web --port 8080 --name web-demo
-mise exec -- tsnet-bridge connect --peer demo --purpose ssh --listen-port 2222 --name ssh-demo
-mise exec -- tsnet-bridge connect --peer demo --purpose custom --network udp --port 9000 --name udp-demo
-```
-
-Input troubleshooting: redirected streams or `TERM=dumb` use plain number/name/CSV line input. If `TEA_TRACE` is set, unset that debugging variable before retrying; interactive input refuses it to prevent input logs, and does not save prompt history.
-
-</details>
+For Tailcat, pairing establishes the verified key relationship using an explicit invitation. Treat invitation tokens and Tailcat capability addresses as secrets. Pairing, local message/file trust, autosave and service sharing are distinct decisions.
 
 ## Share a local service
 
-Start the application with appropriate authentication, then:
+Start the real application first, with its own authentication. Select Share, the current peers, TCP or UDP, ports and exclusions, and a lifetime. Review the effective scope before starting.
 
 ```sh
-mise exec -- tsnet-bridge share
-mise exec -- tsnet-bridge shares
-mise exec -- tsnet-bridge stop api-demo
-mise exec -- tsnet-bridge stop-shares
+soba share --ports 3000-3003 --peers PEER_ID
 ```
 
-Select explicitly allowed current peers, service and lifetime. Only an exact numeric `127.0.0.1` or `::1` target is allowed. TCP and UDP are supported; use `--network udp` for UDP or `--loopback ::1` for an IPv6 local service. LAN/public IPs, arbitrary hostnames and blanket sharing are rejected. The receiving app connects to the provider bridge node's displayed tailnet address, not its own localhost. Tailnet ACLs and per-rule pinned-peer authorization both apply.
+Omitting the name chooses an unused one; set `--name preview` to choose explicitly. Existing names are never overwritten. On a name conflict, choose another name or use the saved-service commands below. TCP and a one-hour lifetime are the defaults.
 
-A new interactive share enables discovery metadata in the full confirmation preview. Only its allowed peers can receive purpose, protocol, shared port, expiry, an opaque identifier and the explicit `application: unverified` marker. Rule names, local target addresses/ports, owners, paths and free-form descriptions are not announced. Use `share --no-discovery` when configuring a new share to disable this metadata. Existing scripts using `--confirm` keep discovery off unless they explicitly add `--discoverable`; the two discovery flags cannot be combined. Saved rules retain their setting, and older profiles with no `discoverable` field remain off. To change a saved share's setting, stop it and deliberately replace its configuration with `--replace`.
-
-Discovery reads only TCP `54543` at `/.well-known/tsnet-bridge/services/v1`, on the provider's embedded tailnet node while a discoverable share is active. Tailnet ACLs must permit that discovery port as well as the separately selected TCP/UDP service port. Allowing one does not allow the other. Blocked discovery does not remove the manual connection path. There is no central registry, public/LAN discovery listener or application-port scan. A read checks at most 128 peers with four requests in parallel, two seconds per peer and an eight-second total budget; a limited scan is reported. Results are not persisted.
-
-A concurrent change to reviewed rules/groups rejects startup and requires review again. Changing an active TTL/lease requires stop and a new reviewed start. A verified identical active scope/owner/lifetime only displays current status, without another confirmation or mutation, keeping the original expiry.
-
-Saved shares require a fresh explicit lifetime, for example `share --ttl 30m api-demo`. TTL is 1 second..24 hours. Stop/expiry closes the listener and existing streams/datagram mappings. It does not retract data or cancel an already running remote job. Local applications see the bridge's loopback connection: do not expose a sensitive API relying on “localhost means trusted” instead of authentication.
-
-## Groups, status and task cleanup
+For common SSH or web ports, choose an editable preset:
 
 ```sh
-mise exec -- tsnet-bridge group save dev web-demo ssh-demo
-mise exec -- tsnet-bridge group start dev
-mise exec -- tsnet-bridge group stop dev
-mise exec -- tsnet-bridge status --json
-mise exec -- tsnet-bridge doctor
-mise exec -- tsnet-bridge wait-ready --timeout 30s web-demo
-mise exec -- tsnet-bridge task --rules web-demo --timeout 30s -- curl http://127.0.0.1:8080/
+soba --dry-run share --preset ssh --peers PEER_ID
+soba share --preset ssh --peers PEER_ID
 ```
 
-Group startup rolls back only newly started members if a member fails. Shares within groups require `--ttl` and review. Rule status includes direction, endpoints, selected identities, owner, reason code, checked time and expiry.
+`ssh` suggests TCP 22 (SSH/SFTP); `web` suggests TCP 8080. `postgres` and `local-ai` are additional editable examples; inspect `soba connect --help` for their ports. A local AI preset is an API example, not a universal port. Explicit `--ports` or `--network` values take precedence. Presets do not discover, configure or validate the actual application.
 
-| State | Next action |
+This makes the selected embedded-node ports available to the selected peers and maps each port to the same numeric loopback port by default. It does not publish an internet URL or configure the application. A recipient with ordinary Tailscale access can use the provider's embedded-node address and permitted port without installing sobalink.
+
+- Select current peers explicitly; the initial `sharePeers` policy is 32, adjustable or explicitly unlimited. There is no implicit “all peers” grant
+- Shares default to a finite hour. Choose another positive whole-second duration, including over 24 hours, with `--ttl 72h`; choose `--lifetime until-revoked` explicitly to remove the share deadline
+- TCP shares retain compact ranges across ports 1–65535, with exclusions and reserved internal endpoints removed, instead of opening one OS listener for every port
+- A range also covers a service started later on an allowed port while the grant remains active. Prefer the narrowest useful range
+- Use `--exclude`, for example `--ports 3000-3010 --exclude 3005-3007`, to remove ports
+- Discovery `54543`, peer API `54544`, pairing `54545` and backend-internal endpoints cannot be exposed through a service share
+- UDP requires individual sockets and shares an adjustable finite `materializedListeners` budget with local connections and optional proxy listeners; the initial budget is 64. Narrow the plan, stop unused work, or review a larger budget if capacity is exhausted
+
+Optional `--discoverable` exposes only minimal active service metadata to the selected peers. It is off by default in the CLI. A discovery result says a grant is available, not that the application works. The receiving UI rechecks a selected discovered service before starting the connection.
+
+A port conflict fails the operation; the tool does not silently switch ports or widen scope. Shared ranges retain same-port mapping. For a single shared port, `--local-port` can explicitly select the application port, for example `soba share --ports 8080 --local-port 3000 --peers PEER_ID`. `--loopback-host` selects exactly `127.0.0.1` or `::1`. Review this target separately from a client's local entry port.
+
+## Connect to a peer's service
+
+Choose an available share in the UI, or enter a current Tailnet peer and the intended service manually. An ordinary Tailscale target needs no sobalink. Its application must listen on the destination address and port and allow access through Tailnet and application policy.
+
+```sh
+soba connect --ports 3000 --peer PEER_ID
+```
+
+Copy the actual local endpoint from status into your client. Local ports default to the target port numbers. For targets below 1024, explicitly choose an unprivileged local port or use a preset: `ssh` suggests TCP 22/local 2222 and `web` suggests TCP 8080/local 8080. If occupied, choose another entry with `--local-port`. These are separate examples:
+
+```sh
+soba connect --preset ssh --peer PEER_ID
+soba connect --preset web --ports 3000 --local-port 8081 --peer PEER_ID
+```
+
+Connections default to `until-stopped`; use `--ttl` for a finite lifetime. Connect listeners bind numeric loopback, use local ports 1024–65535 and consume the adjustable finite listener budget, initially 64. `--local-port` maps sorted effective remote ports to consecutive local ports; review the displayed mapping. It does not change the provider's application-target mapping.
+
+A ready listener is only transport readiness. Verify authentication and an actual operation in the target app. Preserve TLS certificate names, SSH host-key verification, origin rules and the app's own authorization. A tunnel does not adapt stdio protocols into HTTP or run remote jobs.
+
+## Reuse saved service settings
+
+Save stopped definitions without starting listeners, including while offline, then group or export them and explicitly start reviewed selections. `soba --offline service save ...` and `soba --offline profile ...` work while the agent is stopped; `soba start --offline` instead starts local management. Groups start with rollback of newly started members on failure. `soba task` owns temporary services with a renewable 30-second lease and cleans them up after the local command exits. See [saved services, groups and tasks](SAVED_SERVICES.en.md) for complete commands, private exports, revision checks and cancellation boundaries.
+
+Find the current ID in `soba status`, then inspect its complete saved configuration. These details are available only to authenticated local management, never as peer discovery metadata:
+
+```sh
+soba service show SERVICE_ID
+soba --dry-run service copy SERVICE_ID
+soba service copy SERVICE_ID
+```
+
+`copy` chooses an unused name by default and starts a new service. It retains ports, exclusions, peers, local ports, discovery visibility and permission lifetime; override selected fields with `--name`, `--ports`, `--ttl` and related flags. This starts a fresh permission lifetime when applied, rather than merely saving a definition.
+
+To restart the original service, explicitly stop it first if it is active:
+
+```sh
+soba stop-service SERVICE_ID
+soba --dry-run service restart SERVICE_ID
+soba service restart SERVICE_ID
+```
+
+`restart` replaces and starts the stopped saved ID after checking the full configuration revision it just read and the reviewed backend. A conflict leaves saved settings unchanged; display the latest configuration and review again. It cannot change a known backend, silently stop an active service or overwrite another name. Only an unknown-backend entry needs an explicit reviewed `--backend tailnet|lan`. A connection following an advertised service must retain that service's peer, protocol and complete ports. Use a fresh `soba connect` for another target.
+
+Use `--help` after `copy` or `restart` for override flags. The agent checks peer, network and port conditions when applying. A dry-run does not pin the later command to its preview: rerunning reads the saved settings again.
+
+## Optional proxy and diagnostics
+
+Use `soba connect` for an ordinary service entry point. For a SOCKS5-capable application that needs several reviewed TCP targets, an optional authenticated proxy is available. Review its peer/port scope and lifetime; provide credentials only through private input. Ordinary starts are ephemeral; explicit [private saved profiles](STARTUP.en.md) support generation, reviewed reveal and optional future startup. There is no OS DNS or target-dial fallback. `soba doctor` shows observations; `soba doctor --service SERVICE_ID --tcp` explicitly checks one TCP connection. Application authentication and operation still need separate checks. [Proxy and diagnostics guide](PROXY_DIAGNOSTICS.en.md)
+
+## Read connection state
+
+| State or label | Meaning |
 | --- | --- |
-| `idle` | The node is running; select the needed connection |
-| `needs-login` / `approval-required` | Complete official sign-in or node approval |
-| `ready` | The selected listener is ready; verify the actual application separately |
-| `partial` | Inspect usable and unavailable rules individually |
-| `recovering` | Rechecking the same identity, authorization and lifetime; traffic may close |
-| `failed` | Review the reason, peer and ports, then start deliberately |
-| `stopped` / `expired` | Finished; recovery, reconnect and process restart do not resume it |
+| Saved | A definition exists; it does not prove any listener is running |
+| Ready / active | The local transport is prepared within its grant |
+| Direct | The backend has evidence of a direct peer path |
+| Relay | The backend has evidence of a relayed encrypted path |
+| Unknown | A current route has not been verified; do not infer it from latency |
+| Reconnecting | Contact is unavailable or being re-established; application sessions may need reconnecting |
+| Application unverified | The actual target application has not been validated |
 
-Recovery never falls back to the OS network or replays application requests.
+Backend status may remain Unknown until a reliable path observation exists. A same-backend direct/relay route change is different from selecting another network. Do not assume that a path change, sleep/wake or reconnect preserves an established TCP stream. After interruption, confirm the peer identity and grant, then reconnect or retry the unfinished file as appropriate.
 
-`task` generates an owner, starts only its rules, waits, executes the command directly without a shell, and cleans up on exit/error/cancellation. A 30-second lease renewed every 10 seconds expires after caller death. It cannot reuse or stop another owner's active rule. Ownership is a cleanup boundary, not isolation from another process of the same OS user. Remote job scheduling, authorization, cancellation and results remain the application's responsibility. TCP forwarding does not turn stdio MCP into HTTP MCP.
+```sh
+soba reconnect PEER_ID
+soba status
+```
 
-Machine JSON excludes login URLs and SOCKS credentials but includes node names and endpoints that may be identifying. Review and redact before sharing. Use the same global `--state-dir PATH` before each command when selecting a separate profile.
+`reconnect` probes the current peer again. It does not renew trust, autosave or service lifetimes, or resume canceled transfers or application sessions.
 
-`stop` without names stops the entire node while retaining login. `reconnect` recreates only currently requested listeners. Stopped/expired rules never restart after recovery or process restart.
+## Send text, images and files
 
-## Migration, local export/import, optional startup
+### Text and images
 
-- `migrate` previews v1 RustDesk fixed forwarding into four disabled rules and a group. Stop the node and use `migrate --confirm --id-peer-id ID [--relay-peer-id ID]` after identifying current peers. The exact old file is retained privately. SOCKS stays supported in v1 and is not lossily converted
-- `export` previews data and privacy implications. `export --output FILE --confirm` writes a private disabled local copy. It excludes credentials/login state but includes node names, peer IDs and service endpoints. Review before sharing; no upload occurs
-- `import FILE` previews; `import --confirm FILE` applies while stopped. Existing replacement additionally requires `--replace`. Imported rules stay disabled and an existing node identity is retained
-- `autostart enable` previews. `autostart enable --apply` registers an idle v2 node for a future user login; `autostart disable --apply` removes registration. Linux uses user systemd, macOS LaunchAgents, Windows a least-privilege interactive logon task. No immediate node start, forwarding or sharing is included. Registration and current process stop are separate. OS login behavior is not yet real-device verified; review the executable path after updating/moving binaries
+Type or paste text, review it, then press Send. The Copy action copies selected text only when requested. There is no background clipboard reading or synchronization.
 
-No GUI, subnet/exit routing, Funnel, arbitrary destination relay, automatic certificate issuance, OS-wide sandboxing, iOS bridge binary or application authentication proxy is included. See the [roadmap](ROADMAP.ja.md) for remaining acceptance work.
+```sh
+soba message PEER_ID "Hello from sample-node"
+```
 
-## Evidence and remaining acceptance
+A pasted image enters the same reviewable file batch flow as a chosen image file. It is not sent merely because it was pasted. Images are transferred as files; received payloads are not automatically opened or executed.
 
-The published `0.2.0-alpha.1` source `236bd8e217f213a93b667f3d8d0509811d4f5464` passed native race, real IPC and package checks on all four targets, including actual OS-locale fallback, Japanese/English output and exact machine-JSON equality in packaged binaries. Actual public-release mise installation passed the same offline checks on all four targets, recorded separately in [distribution](DISTRIBUTION.md). Local/mocked tests and distribution checks do not replace real tailnet enrollment, ACL/application acceptance, phone QR, OS login/sleep or RustDesk screen/input tests. See the [verification report](VERIFICATION.en.md).
+### Several files or a folder
+
+Select or drop files or folders into the UI. Review the peer, relative names, count and total size, remove unwanted items, then send the batch. Browser directory APIs may omit empty folders; verify them or use the CLI when needed.
+
+```sh
+soba send PEER_ID ./image.png ./notes.txt ./sample-folder
+```
+
+The CLI resolves paths relative to its current working directory. It rejects links and unsafe or unsupported entries instead of following them into other paths. Folder contents use relative paths; unrelated source paths are not exposed to the receiver.
+
+Initial logical defaults are 256 manifest entries, including directories, and 1 GiB per file and per batch. Each can be set to a custom positive limit or explicitly unlimited; separately adjustable finite metadata, staging inventory, pending-offer, stream and byte budgets still constrain actual work. Local staging defaults to 600 seconds and can also use a custom duration or no policy deadline. [Capacity and history](CAPACITY.en.md) explains the distinct choices. Large files stream through bounded buffers. Browser uploads first stage into the local agent: **100% local upload is not remote delivery**. Wait for receiver acceptance and the remote saved/completed state.
+
+### Receive a batch
+
+The default is to review each batch and accept it into a selected directory. Acceptance covers that batch's files and subfolders; it is not a standing permission for the sender.
+
+```sh
+soba accept TRANSFER_ID ./received
+```
+
+The CLI resolves relative paths from its working directory. Choose an appropriate destination on the receiving host; on Windows, quote a path such as `C:\Downloads\sobalink`. Files with an existing name are saved under a unique name without replacing the existing file. The receiver checks the declared size and SHA-256 before finalizing a file. Empty folders are preserved when present in the manifest. File permissions are restricted; executable attributes and links are not imported.
+
+Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Canceling or revoking does not delete already saved files or retrieve data already sent.
+
+### Opt into autosave for one peer
+
+Choose a destination in the UI, or set the CLI default receive folder and enable autosave for an already trusted peer:
+
+```sh
+soba receive-dir ./received
+soba autosave PEER_ID --on
+```
+
+`receive-dir` alone shows the current setting; `receive-dir --clear` clears the default. This setting grants no autosave permission and does not move existing per-peer destinations. `autosave --on` uses the peer's saved folder, or the default if it has none. Use `soba autosave PEER_ID --on --directory ./received-from-peer` to choose a different folder explicitly.
+
+The autosave permission binds the selected backend, exact verified peer, its current trust generation and that directory. It does not apply to peers with the same display name. Persisted autosave is loaded only for its matching trusted identity; it can accept future batches without a new per-batch approval while enabled.
+
+Disable autosave to restore per-batch acceptance. Peer Pause blocks messages and files and cancels active sends; after unpausing, select the files again for a new batch. It does not stop separately granted services. Changing the destination is another explicit choice. Revocation or an identity change invalidates the old grant; review and enable it again if needed. Autosave never enables overwrite, automatic opening, execution or clipboard sync.
+
+```sh
+soba autosave PEER_ID --off
+soba pause PEER_ID
+soba resume PEER_ID
+```
+
+Toggling autosave preserves pause; pause/resume preserves autosave and its directory. A failed save for enable, directory change or resume leaves the prior state intact. If saving a disable fails, runtime auto-accept still stops, but durable disable is not confirmed. Repair storage and retry disabling before restarting the agent. After a successful disable, enable autosave explicitly if wanted again.
+
+### Retry and cleanup
+
+```sh
+soba retry TRANSFER_ID
+soba cancel TRANSFER_ID
+soba forget TRANSFER_ID
+```
+
+Retry sends unfinished files from their beginning while both agents retain the same batch state. Successfully acknowledged files are not rewritten. After a lost acknowledgement, a repeated file request returns the existing saved acknowledgement. This is per-file retry, not byte-level resume.
+
+Batch progress and acknowledgements are process-local. After either agent restarts, send a new batch and review what was already saved. A new batch can create a uniquely named copy. Forget removes terminal history and any retained sender staging copies, so that batch can no longer be retried. Original source files and files already saved by the receiver stay in place.
+
+## Stop, revoke and upgrade
+
+```sh
+soba status
+soba stop-service SERVICE_ID
+soba stop-shares
+soba revoke PEER_ID
+soba stop
+```
+
+Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
+
+No released sobalink upgrade path exists yet. For a new development build, stop the process, keep a private backup of state if needed, rebuild the frontend and binary from the intended source, run `soba version` and `soba start --offline` to inspect retained settings, then restart normally and explicitly restart the services you want. See `soba help upgrade` for the short workflow. Keep backups private because they contain identity and peer information. A fresh state directory requires its own enrollment and trust decisions. Legacy `tsnet-bridge` commands and configuration are not compatibility requirements for this new product.
+
+Saved-network startup failure can be recovered with `soba start --offline`. It keeps local management available, labels saved peers unverified/offline, and allows explicit pair revocation or relay reconfiguration without starting that network.
+
+## Language, automation and troubleshooting
+
+Global options precede the command:
+
+```sh
+soba --locale ja help
+soba --locale en share --help
+soba --state-dir ./sample-state status
+soba --json-errors service show SERVICE_ID
+```
+
+Language follows `LC_ALL`, `LC_MESSAGES`, `LANG`, then the OS preference; Japanese uses Japanese messages and other locales fall back to English. The UI has language and theme controls. Command names, IDs, endpoint values and machine JSON are stable across languages. `status`, `peers`, groups, service workflows, guided `connect`/`share`, saved `rules` and application `settings` provide localized human views. Use `--json` for structured output; advanced typed actions retain structured results. Explicit login display modes provide private human-oriented output.
+
+Normal typed commands need no JSON editing. Use `soba help examples`, `soba lan --help` and `soba service --help` for short recipes.
+
+`--dry-run` returns JSON containing `applied: false`, the command, payload and `validation: "local-input-only"` without applying an action. It may read a running agent to choose unused names or reuse saved settings. To check inputs without an agent, supply an explicit name, for example `soba --dry-run share --name review-ssh --preset ssh --peers PEER_ID`. This does not verify identity, network reachability, free ports or later execution success. Invitation contents are redacted. It is unavailable for `start`, `ui` and `stop`.
+
+`--json-errors` writes a stable `code` and explanatory `error` to stderr on failure, retaining a failing exit status. Success stdout stays unchanged. Automation should use `code`, not the potentially localized explanation.
+
+Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For invitations or other secret payloads, use `soba command NAME --json-file PATH` or pipe a JSON object into `soba command NAME --stdin`; invitations retain a separate 48 KiB input envelope, while other local command envelopes follow the selected finite resource budgets. Do not put secrets in literal arguments. Each sends a typed request through the same local core; it is not a bypass of trust, CSRF/session boundaries or filesystem policy. [API contract](../web/API.md)
+
+| Problem | Next action |
+| --- | --- |
+| Local sign-in fails | Use the exact printed URL, run `soba ui`, and enter its new code |
+| No peers | Check the selected network and complete its enrollment or pairing |
+| Transfer waits | Have the receiving peer inspect and accept its batch or review its autosave policy |
+| Partial transfer | Keep both agents running and retry the unfinished files; after a restart, create a new batch |
+| Service not discovered | Check explicit share scope, active lifetime and current peer contact, or connect manually to a known service |
+| `response_too_large` | Inspect current data and the relevant finite page/storage budget in the local UI; review a larger budget or explicit terminal-history cleanup, then retry. Cleanup does not delete received files |
+| Local port conflict or listener budget | Stop unused work, narrow the ports, review the finite capacity budget, or explicitly select another local starting port |
+| Message/history capacity | Inspect [capacity and reviewed cleanup](CAPACITY.en.md); increasing a count does not increase its separate storage budget |
+| Socket operation not permitted | Run native/socket checks in an environment that permits listeners; baseline CI passed, but a local mock result does not establish live LAN connectivity |
+| Unknown route or reconnect | Inspect current state and retry the app connection; do not assume a relay or uninterrupted TCP |
+
+Report errors with secrets, local identity state, pairing capabilities and private endpoints removed. [Acceptance gates](VERIFICATION.en.md) distinguish source checks from real-device results.

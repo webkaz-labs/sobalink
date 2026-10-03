@@ -47,7 +47,7 @@ func AcquireLock(dir string) (*Lock, error) {
 	f := os.NewFile(uintptr(fd), p)
 	if e = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); e != nil {
 		f.Close()
-		return nil, errors.New("another tsnet-bridge process owns this profile")
+		return nil, errors.New("another sobalink process owns this profile")
 	}
 	return &Lock{f}, nil
 }

@@ -1,0 +1,8 @@
+.relay-review p, .relay-stop-review p { margin-top: 12px; }
+.relay-host select { width: 100%; }
+.lan-setup .relay-stop-review .invitation-actions { align-items: stretch; }
+.lan-setup .relay-stop-review .invitation-actions .button { white-space: normal; }
+@media (max-width: 480px) {
+  .lan-setup .relay-review dl, .lan-setup .relay-stop-review dl { grid-template-columns: 1fr; gap: 5px; }
+  .lan-setup .relay-review dd, .lan-setup .relay-stop-review dd { margin-bottom: 8px; }
+}

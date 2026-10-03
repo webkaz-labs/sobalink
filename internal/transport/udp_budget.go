@@ -2,46 +2,86 @@ package transport
 
 import "sync"
 
-const maxUDPQueuedBytes = 1 << 20
-const maxTotalUDPQueuedBytes = 16 << 20
-const maxTotalUDPSessions = 512
+const defaultUDPPolicyQueuedBytes = 1 << 20
+const defaultUDPQueuedBytes = 16 << 20
+const defaultUDPSessions = 512
 
-// Byte limits complement packet counts: an allowed sender using large
-// datagrams and many source ports cannot reserve gigabytes of queue storage.
-var udpMemory = byteBudget{limit: maxTotalUDPQueuedBytes}
-var udpSessionSlots = make(chan struct{}, maxTotalUDPSessions)
-
-type byteBudget struct {
-	mu          sync.Mutex
-	used, limit int
+// UDPBudget bounds one policy across all its materialized ports. The zero
+// value uses the shared default controller. Budgets always follow live limits.
+type UDPBudget struct {
+	controller            *Controller
+	mu                    sync.Mutex
+	sessions, queuedBytes int64
 }
 
-func (b *byteBudget) reserve(n int) bool {
+func NewUDPBudget() *UDPBudget { return defaultController.NewUDPBudget() }
+func (c *Controller) NewUDPBudget() *UDPBudget {
+	return &UDPBudget{controller: controllerOrDefault(c)}
+}
+func (b *UDPBudget) resources() *Controller { return controllerOrDefault(b.controller) }
+func (b *UDPBudget) reserveSession() bool {
+	controller := b.resources()
+	limits := controller.limits()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if n < 0 || n > b.limit-b.used {
+	if b.sessions >= limits.UDPPerPolicy || !controller.reserveSession(limits.UDPSessions) {
 		return false
 	}
-	b.used += n
+	b.sessions++
 	return true
 }
-func (b *byteBudget) release(n int) { b.mu.Lock(); b.used -= n; b.mu.Unlock() }
-func (b *byteBudget) usage() int    { b.mu.Lock(); defer b.mu.Unlock(); return b.used }
+func (b *UDPBudget) releaseSession() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.sessions--
+	b.resources().releaseSession()
+}
+func (b *UDPBudget) reserveBytes(n int) bool {
+	controller := b.resources()
+	limits := controller.limits()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n < 0 || limits.UDPPolicyQueuedBytes < b.queuedBytes || int64(n) > limits.UDPPolicyQueuedBytes-b.queuedBytes || !controller.reserveBytes(n, limits.UDPQueuedBytes) {
+		return false
+	}
+	b.queuedBytes += int64(n)
+	return true
+}
+func (b *UDPBudget) releaseBytes(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.queuedBytes -= int64(n)
+	b.resources().releaseBytes(n)
+}
+
+// Usage includes queued and in-flight datagram payloads and queue metadata.
+func (b *UDPBudget) Usage() (sessions, queuedBytes int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessions, b.queuedBytes
+}
+
+func (t *udpTable) resourceBudget() *UDPBudget {
+	t.budgetOnce.Do(func() {
+		t.budget = t.cfg.Budget
+		if t.budget == nil {
+			t.budget = NewUDPBudget()
+		}
+	})
+	return t.budget
+}
 func (t *udpTable) reserveBytes(n int) bool {
 	t.bytesMu.Lock()
 	defer t.bytesMu.Unlock()
-	if n < 0 || n > maxUDPQueuedBytes-t.queuedBytes {
+	if !t.resourceBudget().reserveBytes(n) {
 		return false
 	}
-	if !udpMemory.reserve(n) {
-		return false
-	}
-	t.queuedBytes += n
+	t.queuedBytes += int64(n)
 	return true
 }
 func (t *udpTable) releaseBytes(n int) {
 	t.bytesMu.Lock()
-	t.queuedBytes -= n
-	udpMemory.release(n)
-	t.bytesMu.Unlock()
+	defer t.bytesMu.Unlock()
+	t.queuedBytes -= int64(n)
+	t.resourceBudget().releaseBytes(n)
 }

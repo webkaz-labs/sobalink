@@ -8,12 +8,15 @@ import (
 )
 
 type TCPConfig struct {
-	ListenAddress string
-	Target        string
-	DialTimeout   time.Duration
+	// Controller shares live finite budgets across all ports and directions.
+	Controller       *Controller
+	PolicyID, PeerID string
+	ListenAddress    string
+	Target           string
+	DialTimeout      time.Duration
 }
 
-// StartTCP binds a literal IPv4 loopback address and forwards streams to Target.
+// StartTCP binds an exact numeric loopback address and forwards streams to Target.
 func StartTCP(ctx context.Context, cfg TCPConfig, dial Dialer) (*Server, error) {
 	if err := validateListenAddress(cfg.ListenAddress); err != nil {
 		return nil, err
@@ -28,14 +31,14 @@ func StartTCP(ctx context.Context, cfg TCPConfig, dial Dialer) (*Server, error) 
 	if err != nil {
 		return nil, err
 	}
-	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", cfg.ListenAddress)
+	l, err := (&net.ListenConfig{}).Listen(ctx, loopbackNetwork("tcp", cfg.ListenAddress), cfg.ListenAddress)
 	if err != nil {
 		return nil, err
 	}
 	return startServer(ctx, l, l.Addr(), func(s *Server) {
 		acceptConnections(s, l, func(client net.Conn) {
 			serveTCP(s, client, cfg.Target, timeout, dial)
-		})
+		}, cfg)
 	}), nil
 }
 

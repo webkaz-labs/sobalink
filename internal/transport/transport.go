@@ -19,10 +19,12 @@ import (
 type Dialer func(context.Context, string, string) (net.Conn, error)
 
 const defaultDialTimeout = 10 * time.Second
-const maxLocalConnections = 128
-const maxTotalConnections = 512
+const defaultTCPPerPolicy = 128
+const defaultTCPConnections = 512
 
-var connectionSlots = make(chan struct{}, maxTotalConnections)
+// AdmitTCP shares the default aggregate budget with virtual range handlers.
+// Applications with their own configurable budget use Controller.AdmitTCP.
+func AdmitTCP() (func(), bool) { return defaultController.AdmitTCP("", "") }
 
 // Server owns its listener, accepted connections, and remote connections.
 // Close and context cancellation shut down all of them; Wait joins all workers.
@@ -110,14 +112,23 @@ func validateListenAddress(address string) error {
 		return fmt.Errorf("invalid listener address: %w", err)
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || !ip.Is4() || !ip.IsLoopback() {
-		return errors.New("listener must use a literal IPv4 loopback address")
+	if err != nil || (ip != netip.MustParseAddr("127.0.0.1") && ip != netip.IPv6Loopback()) {
+		return errors.New("listener must use exactly 127.0.0.1 or ::1")
 	}
 	p, err := strconv.Atoi(port)
 	if err != nil || p < 0 || p > 65535 {
 		return errors.New("invalid listener port")
 	}
 	return nil
+}
+
+// loopbackNetwork is used only after exact numeric listener validation.
+func loopbackNetwork(network, address string) string {
+	host, _, _ := net.SplitHostPort(address)
+	if host == "::1" {
+		return network + "6"
+	}
+	return network + "4"
 }
 
 func normalizeTimeout(t time.Duration) (time.Duration, error) {
@@ -133,37 +144,36 @@ func normalizeTimeout(t time.Duration) (time.Duration, error) {
 	return t, nil
 }
 
-func acceptConnections(s *Server, l net.Listener, handle func(net.Conn)) {
-	// This cap also includes unauthenticated SOCKS handshakes and pending dials.
-	slots := make(chan struct{}, maxLocalConnections)
+func acceptConnections(s *Server, l net.Listener, handle func(net.Conn), configs ...TCPConfig) {
+	var cfg TCPConfig
+	if len(configs) != 0 {
+		cfg = configs[0]
+	}
+	controller := controllerOrDefault(cfg.Controller)
+	policy := cfg.PolicyID
+	if policy == "" {
+		policy = fmt.Sprintf("listener:%p", s)
+	}
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			s.fail(err)
 			return
 		}
-		select {
-		case slots <- struct{}{}:
-		default:
+		// Pending dials and unauthenticated SOCKS handshakes hold their slots.
+		release, ok := controller.AdmitTCP(policy, cfg.PeerID)
+		if !ok {
 			_ = c.Close()
-			continue
-		}
-		select {
-		case connectionSlots <- struct{}{}:
-		default:
-			_ = c.Close()
-			<-slots
 			continue
 		}
 		if !s.track(c) {
-			<-connectionSlots
-			<-slots
+			release()
 			return
 		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			defer func() { <-slots; <-connectionSlots }()
+			defer release()
 			defer s.release(c)
 			handle(c)
 		}()

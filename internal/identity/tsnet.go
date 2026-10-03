@@ -4,22 +4,25 @@ package identity
 import (
 	"context"
 	"errors"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"tailscale.com/client/local"
 	"tailscale.com/logtail"
 	"tailscale.com/tsnet"
 )
 
 type State struct {
-	IPs      []netip.Addr
-	Backend  string
-	AuthURL  string
-	Snapshot policy.Snapshot
+	IPs           []netip.Addr
+	Backend       string
+	AuthURL       string
+	Snapshot      policy.Snapshot
+	ReservedPorts []uint16
 }
 type Backend interface {
 	Start() error
@@ -86,15 +89,34 @@ func (n *Node) State(ctx context.Context) (State, error) {
 	out := State{Backend: s.BackendState, AuthURL: s.AuthURL, Snapshot: policy.Snapshot{Running: s.BackendState == "Running"}}
 	if s.Self != nil {
 		out.IPs = append([]netip.Addr(nil), s.Self.TailscaleIPs...)
+		for _, raw := range s.Self.PeerAPIURL {
+			u, err := url.Parse(raw)
+			if err != nil {
+				continue
+			}
+			p, err := strconv.Atoi(u.Port())
+			if err == nil && p > 0 && p <= 65535 {
+				out.ReservedPorts = append(out.ReservedPorts, uint16(p))
+			}
+		}
 	}
 	for _, p := range s.Peer {
-		out.Snapshot.Peers = append(out.Snapshot.Peers, policy.Peer{ID: string(p.ID), DNSName: p.DNSName, IPs: p.TailscaleIPs, Expired: p.Expired})
+		out.Snapshot.Peers = append(out.Snapshot.Peers, policy.Peer{ID: string(p.ID), DNSName: p.DNSName, IPs: p.TailscaleIPs, Expired: p.Expired, Online: p.Online})
 	}
 	return out, nil
 }
 func (n *Node) Login(ctx context.Context) error  { return n.client.StartLoginInteractive(ctx) }
 func (n *Node) Logout(ctx context.Context) error { return n.client.Logout(ctx) }
 func (n *Node) Close() error                     { return n.s.Close() }
+
+// RegisterTCPFallback exposes the exact tsnet-only range dispatch boundary.
+// The selector runs under tsnet's mutex and must only inspect immutable state.
+func (n *Node) RegisterTCPFallback(f func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)) (func(), error) {
+	if n.client == nil {
+		return nil, errors.New("node not started")
+	}
+	return n.s.RegisterFallbackTCPHandler(f), nil
+}
 func (n *Node) DialIP(ctx context.Context, network string, a netip.AddrPort) (net.Conn, error) {
 	if !config.TailnetIP(a.Addr()) {
 		return nil, errors.New("netstack destination must be a tailnet address")

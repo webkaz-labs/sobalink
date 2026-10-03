@@ -18,7 +18,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/app"
+	"github.com/webkaz-labs/sobalink/internal/app"
 )
 
 func localeEnvironment(values map[string]string) func(string) string {

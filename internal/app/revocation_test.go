@@ -1,8 +1,8 @@
 package app
 
 import (
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 	"io"
 	"net"
 	"testing"

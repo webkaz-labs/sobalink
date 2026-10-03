@@ -10,7 +10,7 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
-	"github.com/webkaz-labs/tsnet-bridge/internal/app"
+	"github.com/webkaz-labs/sobalink/internal/app"
 	"golang.org/x/term"
 )
 

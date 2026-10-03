@@ -2,14 +2,19 @@
 package control
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 )
 
 type Request struct {
@@ -17,7 +22,30 @@ type Request struct {
 }
 type Response struct {
 	Error string          `json:"error,omitempty"`
+	Code  string          `json:"code,omitempty"`
 	Data  json.RawMessage `json:"data,omitempty"`
+}
+
+// RemoteError preserves a stable command error code across the local IPC
+// boundary. Older servers without codes remain readable with an empty Code.
+type RemoteError struct {
+	Code    string
+	Message string
+}
+
+func (e *RemoteError) Error() string     { return e.Message }
+func (e *RemoteError) ErrorCode() string { return e.Code }
+
+func boundedErrorCode(code string) string {
+	if len(code) == 0 || len(code) > 64 {
+		return ""
+	}
+	for _, r := range code {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return ""
+		}
+	}
+	return code
 }
 
 // Handler must return when its context is canceled. Close reports a timeout
@@ -26,11 +54,14 @@ type Handler func(context.Context, string) (any, error)
 
 const (
 	responseDrainTimeout = 200 * time.Millisecond
-	maxRequestBytes      = 64 << 10
-	maxResponseBytes     = 256 << 10
-	// Total cleanup includes response draining. This five-second budget leaves
-	// ample margin within the 20-second control-call deadline for Windows I/O
-	// completion scheduling, while still refusing an indefinitely stuck close.
+	initialReadTimeout   = 20 * time.Second
+	responseWriteTimeout = 20 * time.Second
+	maxRequestBytes      = messageframe.ControlRequestBytes
+	// Local status includes bounded multi-batch metadata and saved destinations,
+	// so it needs more room than a command request. File bodies never use IPC.
+	maxResponseBytes = 16 << 20
+	// Total cleanup includes response draining and Windows I/O completion,
+	// while still refusing an indefinitely stuck native close.
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -50,17 +81,51 @@ type Server struct {
 	closeErr  error
 }
 
+// Limits are finite encoded byte budgets, not decoded application admission rules.
+// Providers may grow response budgets to retain access to existing history.
+type Limits struct {
+	CommandBytes  int64 `json:"commandBytes"`
+	RequestBytes  int64 `json:"requestBytes"`
+	ResponseBytes int64 `json:"responseBytes"`
+}
+
+func DefaultLimits() Limits {
+	return Limits{int64(messageframe.CommandBytes), int64(maxRequestBytes), maxResponseBytes}
+}
+
+func (l Limits) Validate() error {
+	for _, value := range []int64{l.CommandBytes, l.RequestBytes, l.ResponseBytes} {
+		if value < 1 || value >= math.MaxInt64 {
+			return errors.New("local IPC budgets must be finite positive byte counts")
+		}
+	}
+	return nil
+}
+
+type LimitsProvider func() Limits
+
 func Serve(parent context.Context, dir string, h Handler) (*Server, error) {
+	return ServeWithLimits(parent, dir, h, DefaultLimits)
+}
+
+func ServeWithLimits(parent context.Context, dir string, h Handler, limits LimitsProvider) (*Server, error) {
+	if limits == nil || limits().Validate() != nil {
+		return nil, errors.New("invalid local IPC limits")
+	}
 	ln, e := listen(dir)
 	if e != nil {
 		return nil, e
 	}
-	return serveListener(parent, ln, h), nil
+	return serveListenerWithLimits(parent, ln, h, limits), nil
 }
 
 // serveListener keeps shutdown policy testable with in-memory I/O while Serve
 // continues to use the actual protected Unix socket or Windows named pipe.
 func serveListener(parent context.Context, ln net.Listener, h Handler) *Server {
+	return serveListenerWithLimits(parent, ln, h, DefaultLimits)
+}
+
+func serveListenerWithLimits(parent context.Context, ln net.Listener, h Handler, limits LimitsProvider) *Server {
 	ctx, cancel := context.WithCancel(parent)
 	s := &Server{ln: ln, cancel: cancel, conns: make(map[net.Conn]bool)}
 	s.wg.Add(1)
@@ -92,26 +157,77 @@ func serveListener(parent context.Context, ln net.Listener, h Handler) *Server {
 				defer s.wg.Done()
 				defer func() { <-slots; s.mu.Lock(); delete(s.conns, c); s.mu.Unlock() }()
 				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(20 * time.Second))
-				var r Request
-				d := json.NewDecoder(io.LimitReader(c, maxRequestBytes))
-				d.DisallowUnknownFields()
-				if e := d.Decode(&r); e != nil {
+				budget := limits()
+				if budget.Validate() != nil {
 					return
 				}
-				callCtx, stop := context.WithTimeout(ctx, 15*time.Second)
+				_ = c.SetReadDeadline(time.Now().Add(initialReadTimeout))
+				limited := &io.LimitedReader{R: c, N: budget.RequestBytes + 1}
+				reader := bufio.NewReader(limited)
+				line, err := reader.ReadBytes('\n')
+				if limited.N == 0 || int64(len(line)) > budget.RequestBytes {
+					writeResponse(c, Response{Error: requestTooLargeMessage, Code: "request_too_large"}, budget.ResponseBytes)
+					return
+				}
+				if err != nil {
+					return
+				}
+				var r Request
+				d := json.NewDecoder(bytes.NewReader(line))
+				d.DisallowUnknownFields()
+				if err := d.Decode(&r); err != nil {
+					return
+				}
+				if err := d.Decode(new(any)); err != io.EOF {
+					return
+				}
+				if int64(len(r.Command)) > budget.CommandBytes {
+					writeResponse(c, Response{Error: requestTooLargeMessage, Code: "request_too_large"}, budget.ResponseBytes)
+					return
+				}
+				// Exactly one newline-delimited request belongs to a connection.
+				// Buffered trailing data is rejected before any command is admitted.
+				if reader.Buffered() != 0 {
+					return
+				}
+				_ = c.SetReadDeadline(time.Time{})
+				callCtx, stop := context.WithCancel(ctx)
 				defer stop()
-				v, e := h(callCtx, r.Command)
+				// Read no more request data; disconnects or a second frame cancel
+				// staging promptly without imposing a separate operation timeout.
+				s.wg.Add(1)
+				go func() {
+					defer s.wg.Done()
+					var extra [1]byte
+					_, _ = c.Read(extra[:])
+					stop()
+				}()
+				var v any
+				var e error
+				if r.Command == "control.limits" {
+					v = budget
+				} else {
+					v, e = h(callCtx, r.Command)
+				}
 				resp := Response{}
 				if e != nil {
 					resp.Error = e.Error()
+					var coded interface{ ErrorCode() string }
+					if errors.As(e, &coded) {
+						resp.Code = boundedErrorCode(coded.ErrorCode())
+					}
 				} else {
 					resp.Data, e = json.Marshal(v)
 					if e != nil {
 						resp.Error = "could not encode response"
 					}
 				}
-				_ = json.NewEncoder(c).Encode(resp)
+				// A policy command may just have raised or lowered admission.
+				// Reevaluate after it finishes so retained data stays readable.
+				responseBudget := limits()
+				if responseBudget.Validate() == nil {
+					writeResponse(c, resp, responseBudget.ResponseBytes)
+				}
 			}()
 		}
 	}()
@@ -220,42 +336,95 @@ func awaitShutdown(deadline <-chan time.Time, expired bool, listenerClosed <-cha
 	return closeErr
 }
 
+const requestTooLargeMessage = "local command exceeds its JSON envelope limit; shorten the text or reduce the command payload"
+
+func writeResponse(c net.Conn, response Response, limit int64) {
+	encoded, err := json.Marshal(response)
+	if err != nil || int64(len(encoded))+1 > limit {
+		encoded, _ = json.Marshal(Response{Error: "local response is too large; raise the finite response budgets or use paginated list commands", Code: "response_too_large"})
+	}
+	_ = c.SetWriteDeadline(time.Now().Add(responseWriteTimeout))
+	_, _ = c.Write(append(encoded, '\n'))
+}
+
 func Call(ctx context.Context, dir, command string, v any) error {
+	return CallWithLimits(ctx, dir, command, v, DefaultLimits())
+}
+
+func CallWithLimits(ctx context.Context, dir, command string, v any, limits Limits) error {
+	if err := limits.Validate(); err != nil {
+		return err
+	}
 	encoded, err := json.Marshal(Request{command})
 	if err != nil {
 		return err
 	}
-	if len(encoded)+1 > maxRequestBytes {
-		return errors.New("control request exceeds 64 KiB")
+	if int64(len(command)) > limits.CommandBytes || int64(len(encoded))+1 > limits.RequestBytes {
+		return &RemoteError{Code: "request_too_large", Message: requestTooLargeMessage}
 	}
-	c, e := dial(ctx, dir)
-	if e != nil {
-		return e
+	c, err := dial(ctx, dir)
+	if err != nil {
+		return err
 	}
 	defer c.Close()
-	deadline := time.Now().Add(20 * time.Second)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
+	return callConn(ctx, c, encoded, v, limits.ResponseBytes)
+}
+
+// callConn is shared by the native client and deterministic in-memory tests.
+// The caller's context is the only operation deadline. The server separately
+// bounds initial request reads, writes and shutdown.
+func callConn(ctx context.Context, c net.Conn, encoded []byte, v any, responseBytes int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	_ = c.SetDeadline(deadline)
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = c.SetDeadline(deadline)
+	}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
 		select {
 		case <-ctx.Done():
-			c.Close()
+			_ = c.SetDeadline(time.Now())
+			_ = c.Close()
 		case <-done:
 		}
 	}()
-	if e = json.NewEncoder(c).Encode(Request{command}); e != nil {
-		return e
+	_, err := c.Write(append(encoded, '\n'))
+	if err == nil {
+		err = readResponseWithLimit(c, v, responseBytes)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
+func readResponse(reader io.Reader, v any) error {
+	return readResponseWithLimit(reader, v, maxResponseBytes)
+}
+
+func readResponseWithLimit(reader io.Reader, v any, limit int64) error {
+	if limit < 1 || limit >= math.MaxInt64 {
+		return errors.New("invalid response budget")
 	}
 	var r Response
-	if e = json.NewDecoder(io.LimitReader(c, maxResponseBytes)).Decode(&r); e != nil {
-		return e
+	limited := &io.LimitedReader{R: reader, N: limit + 1}
+	decoder := json.NewDecoder(limited)
+	err := decoder.Decode(&r)
+	if limited.N == 0 {
+		return &RemoteError{Code: "response_too_large", Message: "local response exceeds the selected finite IPC budget"}
+	}
+	if err != nil {
+		return err
+	}
+	if err = decoder.Decode(new(any)); limited.N == 0 {
+		return &RemoteError{Code: "response_too_large", Message: "local response exceeds the selected finite IPC budget"}
+	} else if err != io.EOF {
+		return errors.New("unexpected data after local response")
 	}
 	if r.Error != "" {
-		return errors.New(r.Error)
+		return &RemoteError{Code: boundedErrorCode(r.Code), Message: r.Error}
 	}
 	if v != nil {
 		return json.Unmarshal(r.Data, v)

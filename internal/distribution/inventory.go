@@ -65,10 +65,11 @@ type ModuleNotices struct {
 	Notices []Notice `json:"notices"`
 }
 type NoticeInventory struct {
-	ArchiveBasePath string          `json:"archive_base_path"`
-	Scope           string          `json:"scope"`
-	Modules         []ModuleNotices `json:"modules"`
-	Go              ModuleNotices   `json:"go_standard_library"`
+	ArchiveBasePath string           `json:"archive_base_path"`
+	Scope           string           `json:"scope"`
+	Modules         []ModuleNotices  `json:"modules"`
+	Go              ModuleNotices    `json:"go_standard_library"`
+	Frontend        []FrontendModule `json:"frontend_modules"`
 }
 
 func noticeName(name string) bool {
@@ -154,7 +155,7 @@ func collectNotices(root, destination string, skipToolSources bool) ([]Notice, e
 }
 
 func collectInventory(packages []goPackage, goRoot, out string) (NoticeInventory, error) {
-	inventory := NoticeInventory{ArchiveBasePath: "share/tsnet-bridge", Scope: "Target-filtered Go package/module inventory (CGO_ENABLED=0), excluding test dependencies. Module-level notice files are preserved without license classification. Embedded source-only licenses still require release review."}
+	inventory := NoticeInventory{ArchiveBasePath: "share/sobalink", Scope: "Target-filtered Go package/module inventory (CGO_ENABLED=0), excluding test dependencies. Module-level notice files are preserved without license classification. Embedded source-only licenses still require release review."}
 	modules := map[string]goModule{}
 	for _, p := range packages {
 		if p.Module == nil || p.Module.Main {
@@ -233,7 +234,7 @@ func moduleRef(m *goModule) string {
 		return "golang:stdlib"
 	}
 	if m.Main {
-		return "application:tsnet-bridge"
+		return "application:sobalink"
 	}
 	return "golang:" + moduleKey(m.Path, m.Version)
 }
@@ -245,14 +246,22 @@ func purl(path, version string) string {
 	return "pkg:golang/" + strings.Join(parts, "/") + "@" + url.PathEscape(version)
 }
 func makeSBOM(packages []goPackage, notices NoticeInventory, version string, target Target, commit, binaryHash string) map[string]any {
-	root := "application:tsnet-bridge"
+	root := "application:sobalink"
 	goRef := "golang:stdlib"
 	components := []any{map[string]any{"type": "library", "bom-ref": goRef, "name": "Go standard library", "version": GoVersion, "licenses": []any{map[string]any{"license": map[string]string{"name": "See licenses/go/ and third-party-notices.json"}}}}}
 	for _, m := range notices.Modules {
 		components = append(components, map[string]any{"type": "library", "bom-ref": "golang:" + moduleKey(m.Module, m.Version), "name": m.Module, "version": m.Version, "purl": purl(m.Module, m.Version), "properties": []any{map[string]string{"name": "go:module:sum", "value": m.Sum}}, "licenses": []any{map[string]any{"license": map[string]string{"name": "See third-party-notices.json for original notices (not classified)"}}}})
 	}
+	for _, m := range notices.Frontend {
+		components = append(components, map[string]any{"type": "library", "bom-ref": "npm:" + moduleKey(m.Name, m.Version), "name": m.Name, "version": m.Version, "purl": npmPURL(m.Name, m.Version), "properties": []any{map[string]string{"name": "npm:integrity", "value": m.Integrity}}, "licenses": []any{map[string]any{"license": map[string]string{"name": "See third-party-notices.json for original notices (not classified)"}}}})
+	}
 	refs := map[string]string{}
 	edges := map[string]map[string]bool{root: {}, goRef: {}}
+	for _, m := range notices.Frontend {
+		ref := "npm:" + moduleKey(m.Name, m.Version)
+		edges[root][ref] = true
+		edges[ref] = map[string]bool{}
+	}
 	for _, p := range packages {
 		ref := moduleRef(p.Module)
 		refs[p.ImportPath] = ref
@@ -283,5 +292,5 @@ func makeSBOM(packages []goPackage, notices NoticeInventory, version string, tar
 		sort.Strings(deps)
 		dependencies = append(dependencies, map[string]any{"ref": ref, "dependsOn": deps})
 	}
-	return map[string]any{"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1, "metadata": map[string]any{"component": map[string]any{"type": "application", "bom-ref": root, "name": "tsnet-bridge", "version": version, "purl": purl(Project, "v"+version), "hashes": []any{map[string]string{"alg": "SHA-256", "content": binaryHash}}}, "properties": []any{map[string]string{"name": "inventory:scope", "value": notices.Scope}, map[string]string{"name": "build:target", "value": target.String()}, map[string]string{"name": "source:commit", "value": commit}, map[string]string{"name": "build:cgo", "value": "0"}}}, "components": components, "dependencies": dependencies}
+	return map[string]any{"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1, "metadata": map[string]any{"component": map[string]any{"type": "application", "bom-ref": root, "name": Product, "version": version, "purl": purl(Project, "v"+version), "hashes": []any{map[string]string{"alg": "SHA-256", "content": binaryHash}}}, "properties": []any{map[string]string{"name": "inventory:scope", "value": notices.Scope}, map[string]string{"name": "build:target", "value": target.String()}, map[string]string{"name": "source:commit", "value": commit}, map[string]string{"name": "build:cgo", "value": "0"}}}, "components": components, "dependencies": dependencies}
 }

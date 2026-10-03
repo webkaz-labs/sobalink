@@ -16,7 +16,10 @@ import (
 	"strings"
 )
 
-const Project = "github.com/webkaz-labs/tsnet-bridge"
+const Project = "github.com/webkaz-labs/sobalink"
+const Product = "sobalink"
+const Executable = "soba"
+const BuildTags = "ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"
 const GoVersion = "go1.27.1"
 
 type Target struct{ OS, Arch string }
@@ -26,9 +29,9 @@ var Targets = []Target{{"linux", "amd64"}, {"linux", "arm64"}, {"darwin", "arm64
 func (t Target) String() string { return t.OS + "-" + t.Arch }
 func (t Target) Binary() string {
 	if t.OS == "windows" {
-		return "tsnet-bridge.exe"
+		return Executable + ".exe"
 	}
-	return "tsnet-bridge"
+	return Executable
 }
 func (t Target) Extension() string {
 	if t.OS == "windows" {
@@ -45,7 +48,7 @@ func (t Target) valid() bool {
 	return false
 }
 func stem(version string, target Target) string {
-	return "tsnet-bridge-" + version + "-" + target.String()
+	return Product + "-" + version + "-" + target.String()
 }
 
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
@@ -175,7 +178,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		return err
 	}
 	defer os.RemoveAll(stage)
-	share := filepath.Join(stage, "share", "tsnet-bridge")
+	share := filepath.Join(stage, "share", Product)
 	if err = os.MkdirAll(share, 0o755); err != nil {
 		return err
 	}
@@ -184,13 +187,13 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		return err
 	}
 	flags := "-s -w -buildid= -X main.version=" + version
-	if _, err = t.run(env, "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", bin, "./cmd/tsnet-bridge"); err != nil {
+	if _, err = t.run(env, "build", "-tags", BuildTags, "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", bin, "./cmd/soba"); err != nil {
 		return err
 	}
 	if err = os.Chmod(bin, 0o755); err != nil {
 		return err
 	}
-	packagesJSON, err := t.run(env, "list", "-mod=readonly", "-buildvcs=false", "-deps", "-json", "./cmd/tsnet-bridge")
+	packagesJSON, err := t.run(env, "list", "-tags", BuildTags, "-mod=readonly", "-buildvcs=false", "-deps", "-json", "./cmd/soba")
 	if err != nil {
 		return err
 	}
@@ -206,6 +209,16 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
+	frontend, assets, err := frontendInventory(t.Root, share)
+	if err != nil {
+		return err
+	}
+	licenses.Frontend = frontend
+	licenses.Scope += " Embedded frontend inventory includes all locked npm production packages, including tree-shaken source, plus Vite preload helpers and Tailwind CSS."
+	frontendLockHash, err := fileHash(filepath.Join(t.Root, "web", "package-lock.json"))
+	if err != nil {
+		return err
+	}
 	if err = writeJSON(filepath.Join(share, "third-party-notices.json"), licenses); err != nil {
 		return err
 	}
@@ -214,14 +227,17 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 			return err
 		}
 	}
-	// Keep README links usable in the installed package by preserving docs.
-	docs, err := filepath.Glob(filepath.Join(t.Root, "docs", "*.md"))
-	if err != nil {
-		return err
-	}
-	for _, doc := range docs {
-		if err = copyFile(doc, filepath.Join(share, "docs", filepath.Base(doc))); err != nil {
+	// Preserve the relative layout used by guides, including their Web API
+	// and browser-acceptance references. Never collect runtime state or caches.
+	for _, directory := range []string{"docs", "web"} {
+		docs, err := filepath.Glob(filepath.Join(t.Root, directory, "*.md"))
+		if err != nil {
 			return err
+		}
+		for _, doc := range docs {
+			if err = copyFile(doc, filepath.Join(share, directory, filepath.Base(doc))); err != nil {
+				return err
+			}
 		}
 	}
 	binaryHash, err := fileHash(bin)
@@ -232,7 +248,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
-	metadata := map[string]any{"project": Project, "version": version, "source_commit": commit, "target": target.String(), "go_version": GoVersion, "cgo_enabled": false, "trimpath": true, "buildvcs": false, "ldflags": flags, "go_sum_sha256": sumHash, "binary": map[string]string{"path": "bin/" + target.Binary(), "sha256": binaryHash}}
+	metadata := map[string]any{"project": Project, "product": Product, "version": version, "source_commit": commit, "target": target.String(), "go_version": GoVersion, "build_tags": BuildTags, "cgo_enabled": false, "trimpath": true, "buildvcs": false, "ldflags": flags, "go_sum_sha256": sumHash, "frontend": map[string]any{"node_version": "24.19.0", "npm_version": "11.9.0", "lock_sha256": frontendLockHash, "assets": assets}, "binary": map[string]string{"path": "bin/" + target.Binary(), "sha256": binaryHash}}
 	if err = writeJSON(filepath.Join(share, "build.json"), metadata); err != nil {
 		return err
 	}
@@ -303,7 +319,7 @@ func (t *Tool) Manifest(version string) error {
 			arch = "aarch64"
 		}
 		format := strings.TrimPrefix(target.Extension(), ".")
-		fmt.Fprintf(&b, "[[artifact]]\npath = %q\nos = %q\narch = %q\nformat = %q\nbin = [{ name = \"tsnet-bridge\", path = %q }]\n", "dist/"+base+target.Extension(), target.OS, arch, format, "bin/"+target.Binary())
+		fmt.Fprintf(&b, "[[artifact]]\npath = %q\nos = %q\narch = %q\nformat = %q\nbin = [{ name = \"soba\", path = %q }]\n", "dist/"+base+target.Extension(), target.OS, arch, format, "bin/"+target.Binary())
 		if target.OS == "linux" {
 			b.WriteString("libc = \"any\"\n")
 		}

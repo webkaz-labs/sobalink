@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
 // Native IPC checks exercise actual named pipes/Unix sockets. This watchdog is
@@ -114,6 +114,27 @@ func TestUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNativeCommandErrorCode(t *testing.T) {
+	dir := shortDir(t)
+	if err := config.SecureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Serve(t.Context(), dir, func(context.Context, string) (any, error) {
+		return nil, fixtureCommandError{}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	err = Call(t.Context(), dir, "fixture", nil)
+	assertRemoteCode(t, err, "service_revision_conflict", "reload the saved configuration")
+}
+
 func shortDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "tb-ipc-")

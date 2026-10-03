@@ -1,0 +1,151 @@
+.network-graph { container-type: inline-size; flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 20px; --graph-line: var(--muted); color: var(--text); font-size: 14px; line-height: 1.5; }
+.network-graph button { font-size: 14px; line-height: 1.5; }
+.network-graph-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; }
+.network-graph-header h2 { font-size: 18px; font-weight: 650; letter-spacing: -.2px; }
+.network-graph-header p { margin-top: 4px; color: var(--muted); font-size: 13px; }
+.network-graph .network-graph-view-toggle { font-size: 13px; min-height: 44px; }
+.network-graph-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 16px 0; padding: 0; list-style: none; color: var(--muted); font-size: 12px; }
+.network-graph-legend li { display: flex; align-items: center; gap: 6px; }
+.network-graph-key { display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 50%; }
+.network-graph-key.known { border: 1px solid var(--muted); border-radius: 2px; }
+.network-graph-key.online { background: var(--green); }
+.network-graph-key.offline { border: 1px solid var(--muted); }
+.network-graph-key.ready { border: 2px solid var(--primary); }
+.network-graph-key.transferring { color: var(--primary-text); font-size: 16px; width: 16px; height: 16px; line-height: 14px; font-weight: 700; }
+.network-graph-diagram { position: relative; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 20px; background-image: radial-gradient(ellipse at 22% 50%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 52%), radial-gradient(circle, color-mix(in srgb, var(--muted) 17%, transparent) .7px, transparent .7px); background-size: auto, 22px 22px; }
+.network-graph-canvas { position: relative; isolation: isolate; display: grid; grid-template-columns: 152px minmax(0, 1fr); column-gap: 52px; padding: 24px; min-height: 240px; }
+.network-graph-connectors { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.network-graph-line, .network-graph-line-track, .network-graph-line-glow, .network-graph-line-hit { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.network-graph-line { stroke: var(--graph-line); stroke-width: 1.75; }
+.network-graph-line.is-unconfirmed { stroke-dasharray: 3 7; }
+.network-graph-line-track { stroke: color-mix(in srgb, var(--graph-line) 10%, var(--surface-subtle)); stroke-width: 7; }
+.network-graph-line-glow { stroke: transparent; stroke-width: 18; }
+.network-graph-line-hit { stroke: transparent; stroke-width: 22; pointer-events: stroke; cursor: pointer; }
+.network-graph-terminal { fill: var(--surface); stroke: var(--graph-line); stroke-width: 2; }
+.network-graph-terminal-halo { fill: var(--surface-subtle); stroke: var(--border); stroke-width: 1; }
+.network-graph-junction { fill: var(--surface); stroke: var(--graph-line); stroke-width: 1.5; }
+.network-graph-connectors .is-emphasized .network-graph-line,
+.network-graph-line.has-transfer { stroke: var(--primary-text); stroke-width: 2.5; }
+.network-graph-connectors .is-emphasized .network-graph-line-track { stroke: color-mix(in srgb, var(--primary) 22%, transparent); }
+.network-graph-connectors .is-emphasized .network-graph-line-glow { stroke: color-mix(in srgb, var(--primary) 5%, transparent); }
+.network-graph-connectors .is-emphasized .network-graph-terminal,
+.network-graph-connectors .is-emphasized .network-graph-junction { stroke: var(--primary-text); fill: var(--primary-soft); }
+.network-graph-connectors .is-emphasized .network-graph-terminal-halo { stroke: var(--primary); fill: var(--primary-soft); }
+.network-graph-annotation { stroke: var(--graph-line); stroke-width: 1.5; fill: none; }
+.network-graph-connectors .is-emphasized .network-graph-annotation { stroke: var(--primary-text); }
+.network-graph-arrow { stroke: var(--primary-text); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.network-graph-origin { min-width: 0; align-self: start; margin-top: 32px; }
+.network-graph-branches { display: grid; gap: 18px; min-width: 0; }
+.network-graph-branch { display: grid; grid-template-columns: minmax(154px, .8fr) minmax(220px, 1.2fr); align-items: start; min-width: 0; min-height: 118px; gap: 8px 24px; }
+.network-graph-node, .network-graph-edge { position: relative; display: flex; min-width: 0; flex-direction: column; text-align: left; justify-content: center; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface); overflow-wrap: anywhere; }
+.network-graph-node { width: 100%; }
+.network-graph-node:hover, .network-graph-list-peer:hover { background: var(--surface-hover); }
+.network-graph-node:focus-visible, .network-graph-edge:focus-visible, .network-graph-list-peer:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.network-graph-node.is-ready { border-color: color-mix(in srgb, var(--primary) 65%, var(--border)); }
+.network-graph-node.is-selected, .network-graph-list-peer.is-selected { box-shadow: 0 0 0 2px var(--primary); background: var(--primary-soft); }
+.network-graph-device-heading { display: flex; align-items: center; gap: 9px; min-width: 0; margin-bottom: 3px; }
+.network-graph-device-heading > span:last-child { min-width: 0; }
+.network-graph-device-glyph { display: block; flex: none; width: 38px; height: 38px; color: var(--muted); }
+.network-graph-device-glyph svg { display: block; width: 100%; height: 100%; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.network-graph-glyph-orbit { stroke: color-mix(in srgb, currentColor 48%, var(--border)); stroke-width: 1.5; }
+.network-graph-glyph-halo { fill: color-mix(in srgb, currentColor 5%, var(--surface)); stroke: color-mix(in srgb, currentColor 20%, var(--border)); }
+.network-graph-glyph-core { fill: var(--surface); stroke: color-mix(in srgb, currentColor 32%, var(--border)); }
+.network-graph-glyph-detail { stroke: color-mix(in srgb, currentColor 70%, var(--border)); stroke-width: 3; }
+.network-graph-glyph-device { fill: var(--surface); stroke-width: 2.2; }
+.network-graph-glyph-screen { fill: color-mix(in srgb, currentColor 12%, var(--surface)); stroke-width: 1.2; }
+.network-graph-glyph-reflection { stroke: color-mix(in srgb, currentColor 50%, var(--surface)); stroke-width: 2; }
+.network-graph-device-glyph.is-local, .network-graph-node.is-ready .network-graph-device-glyph { color: var(--primary-text); }
+.network-graph-branch.is-emphasized .network-graph-device-glyph { color: var(--primary-text); }
+.network-graph-branch.is-emphasized .network-graph-glyph-orbit { stroke: var(--primary-text); stroke-width: 3; }
+.network-graph-branch.is-emphasized .network-graph-glyph-halo { fill: var(--primary-soft); }
+/* Device illustrations are the endpoints. All names and state labels stay HTML. */
+.network-graph-diagram .network-graph-node { z-index: 1; min-height: 0; padding: 8px; border-color: transparent; background: transparent; box-shadow: none; }
+.network-graph-diagram .network-graph-node:hover { background: color-mix(in srgb, var(--surface-hover) 65%, transparent); }
+.network-graph-diagram .network-graph-self { align-items: center; text-align: center; padding: 12px 8px; }
+.network-graph-diagram .network-graph-self .network-graph-device-heading { flex-direction: column; gap: 12px; }
+.network-graph-diagram .network-graph-self .network-graph-device-glyph { width: 112px; height: 112px; filter: drop-shadow(0 5px 14px color-mix(in srgb, var(--primary) 15%, transparent)); }
+.network-graph-diagram .network-graph-self .network-graph-node-meta { justify-content: center; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) { padding-top: 16px; display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 3px 10px; align-items: start; text-align: left; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-device-heading { display: contents; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-device-glyph { grid-column: 1; grid-row: 1 / span 3; width: 80px; height: 80px; }
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-device-heading > span:last-child,
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-node-meta,
+.network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-app { grid-column: 2; }
+.network-graph-diagram .network-graph-node .network-graph-networks { margin-left: 0; }
+.network-graph-diagram .network-graph-branch.is-emphasized strong { color: var(--primary-text); }
+.network-graph-node strong { display: block; font-size: 16px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
+.network-graph-node-kind { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.network-graph-node-meta { display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; color: var(--muted); font-size: 14px; line-height: 1.55; min-width: 0; }
+.network-graph-networks { margin-left: auto; overflow-wrap: anywhere; }
+.network-graph-local-status { font-size: 14px; line-height: 1.55; color: var(--muted); }
+.network-graph-app { color: var(--muted); font-size: 14px; line-height: 1.55; }
+.network-graph-app.is-ready { color: var(--primary-text); }
+.network-graph-self { background: var(--primary-soft); border-color: var(--primary); }
+.network-graph-route-group { position: relative; z-index: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.network-graph-edge { position: relative; z-index: 2; width: max-content; max-width: 100%; min-height: 44px; padding: 8px 13px; border-color: var(--graph-line); background: var(--surface); border-radius: 24px; gap: 0; }
+.network-graph-wire-slot { display: block; width: 100%; height: 24px; flex: none; pointer-events: none; }
+.network-graph-lane-meta { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.network-graph-route-group > .network-graph-transfer { margin-top: 6px; font-size: 13px; }
+.network-graph-selected-facts { grid-column: 2; display: flex; flex-direction: column; gap: 4px; margin-left: 8px; padding-left: 10px; border-left: 2px solid var(--primary); color: var(--muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.network-graph-facts-label { color: var(--text); }
+
+.network-graph-edge:hover, .network-graph-branch.is-emphasized .network-graph-edge { border-color: var(--primary-text); background: var(--primary-soft); }
+.network-graph-path { color: var(--text); font-size: 14px; font-weight: 600; line-height: 1.55; }
+.network-graph-edge[data-path="unknown"] .network-graph-path { color: var(--muted); font-weight: 400; }
+.network-graph-route { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.network-graph-route-glyph { flex: none; width: 26px; stroke: var(--muted); stroke-width: 1.8; }
+.network-graph-route-glyph circle, .network-graph-route-glyph rect { fill: var(--surface); }
+.network-graph-listeners { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.network-graph-transfer { display: block; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.network-graph-transfer.has-transfer { color: var(--primary-text); font-weight: 600; }
+.network-graph-list > .network-graph-self { min-height: 120px; }
+.network-graph-list > ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.network-graph-list-peer { width: 100%; display: flex; flex-direction: column; gap: 6px; background: var(--surface); color: var(--text); text-align: left; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.network-graph-list-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 12px; }
+.network-graph-list-title strong { font-size: 16px; overflow-wrap: anywhere; }
+.network-graph-list-state { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.network-graph-empty { text-align: center; padding: 20px 10px; }
+.network-graph-empty h3 { font-size: 15px; }
+.network-graph-empty p { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.network-graph-footer { padding-top: 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.network-graph-footer details { margin-top: 6px; }
+.network-graph-footer summary { display: list-item; width: fit-content; }
+.network-graph-footer details p { margin-top: 8px; max-width: 76ch; }
+/* Narrow panels retain an actual branched topology, with its rail beside the nodes. */
+@container (max-width: 680px) {
+  .network-graph-canvas { grid-template-columns: minmax(0, 1fr); row-gap: 22px; padding: 20px 16px; }
+  .network-graph-origin { width: 100%; align-self: start; margin-top: 0; }
+  .network-graph-diagram .network-graph-self { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 12px; align-items: center; text-align: left; }
+  .network-graph-diagram .network-graph-self .network-graph-device-heading { display: contents; }
+  .network-graph-diagram .network-graph-self .network-graph-device-glyph { width: 96px; height: 96px; grid-row: 1 / span 3; }
+  .network-graph-diagram .network-graph-self .network-graph-device-heading > span:last-child,
+  .network-graph-diagram .network-graph-self .network-graph-local-status,
+  .network-graph-diagram .network-graph-self .network-graph-node-meta { grid-column: 2; }
+  .network-graph-diagram .network-graph-self .network-graph-node-meta { justify-content: flex-start; }
+  .network-graph-branches { padding-left: 36px; gap: 28px; }
+  .network-graph-branch { gap: 8px 20px; grid-template-columns: minmax(154px, .8fr) minmax(210px, 1.2fr); }
+  .network-graph-edge { padding: 7px 11px; }
+}
+@container (max-width: 520px) {
+  .network-graph-canvas { padding: 16px 10px; }
+  .network-graph-branches { padding-left: 28px; }
+  .network-graph-diagram .network-graph-node:not(.network-graph-self) { grid-template-columns: 72px minmax(0, 1fr); gap: 3px 8px; }
+  .network-graph-diagram .network-graph-node:not(.network-graph-self) .network-graph-device-glyph { width: 72px; height: 72px; }
+  .network-graph-branch { display: flex; flex-direction: column; gap: 8px; }
+  .network-graph-branch > .network-graph-node { order: 1; }
+  .network-graph-route-group { order: 2; align-items: flex-start; text-align: left; margin-left: 88px; max-width: calc(100% - 88px); gap: 7px; }
+  .network-graph-wire-slot { display: none; }
+  .network-graph-selected-facts { order: 3; margin-left: 88px; }
+  .network-graph-route-group > .network-graph-transfer { margin-top: 0; }
+  .network-graph-legend { gap: 7px 12px; }
+}
+@media (max-width: 600px) {
+  .network-graph { padding: 16px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .network-graph button { transition: none; }
+}
+.network-graph-route-legend { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.network-graph-line-sample { width: 22px; flex: none; border-top: 2px dashed var(--graph-line); }
+.network-graph-online-status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.network-graph-node .network-graph-networks { font-size: 12px; }

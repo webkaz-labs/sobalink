@@ -16,7 +16,7 @@ concurrency:
 env:
   GOTOOLCHAIN: local
   GOWORK: 'off'
-  GOFLAGS: -mod=readonly
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
 
 jobs:
   native:
@@ -51,6 +51,14 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+      - name: Test and reproduce locked frontend assets
+        run: |
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          python .github/scripts/check-frontend.py
       - name: Locate Go module and compilation caches
         id: go-cache-info
         run: |
@@ -62,7 +70,7 @@ jobs:
       # GitHub's branch scope and the release gate exclude PR and branch caches.
       - name: Restore trusted main Go caches
         id: go-cache
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -72,7 +80,7 @@ jobs:
           # Reuse only identical runner, toolchain, and dependency manifests.
           restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-
       - name: Report Go cache result
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
           CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
@@ -95,11 +103,32 @@ jobs:
           # Repeat real native IPC cleanup; exact timer policy is tested virtually.
           go test -race -count=5 -timeout=2m ./internal/control
           go vet ./...
-          unformatted="$(gofmt -l cmd internal)"
+          unformatted="$(gofmt -l cmd internal web)"
           if [[ -n "$unformatted" ]]; then
             printf 'Go files need gofmt (check checkout line endings):\n%s\n' "$unformatted" >&2
             exit 1
           fi
+      - name: Verify paired transport and Core applications over an isolated relay
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import subprocess
+
+          # Only this child test process receives a clean backend environment.
+          # The test compiles out OS UDP and refuses non-loopback listeners.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/core",
+          ], env=env, check=True, timeout=9 * 60)
+          PY
       - name: Build native package and smoke archive contents
         run: |
           set -euo pipefail
@@ -113,7 +142,7 @@ jobs:
           else
             extension=tar.gz
           fi
-          python .github/scripts/smoke-package.py "dist/tsnet-bridge-$version-${{ matrix.goos }}-${{ matrix.goarch }}.$extension" "$version"
+          python .github/scripts/smoke-package.py "dist/sobalink-$version-${{ matrix.goos }}-${{ matrix.goarch }}.$extension" "$version"
           # Per-target checksum names avoid collisions when matrix artifacts merge.
           mv dist/SHA256SUMS "dist/SHA256SUMS-${{ matrix.goos }}-${{ matrix.goarch }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -123,7 +152,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Save Go caches after all native checks pass on main
-        if: success() && github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit != 'true'
+        if: success() && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -154,7 +183,7 @@ jobs:
       # GitHub's branch scope and the release gate exclude PR and branch caches.
       - name: Restore trusted main Go caches
         id: go-cache
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -162,7 +191,7 @@ jobs:
             ${{ steps.go-cache-info.outputs.gocache }}
           key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
       - name: Report Go cache result and require an exact source key
-        if: github.repository == 'webkaz-labs/tsnet-bridge' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
           CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
@@ -202,8 +231,8 @@ jobs:
           # production project identity. No transparency-log entry is created.
           mise exec github:jdx/packslip@1.4.0 -- packslip create \
             --manifest dist/packslip.toml \
-            --project tsnet-bridge-ci.example.com \
-            --url-base https://tsnet-bridge-ci.example.com/test-only \
+            --project sobalink-ci.example.com \
+            --url-base https://sobalink-ci.example.com/test-only \
             --key "$keydir/fixture.key" --no-log --out "$keydir/bundle"
           args=()
           for file in dist/*.tar.gz dist/*.zip dist/*.cdx.json; do
@@ -219,4 +248,52 @@ jobs:
           name: distribution-inputs-not-a-release
           path: dist/*
           if-no-files-found: error
+          retention-days: 14
+
+  browser:
+    # Real Go management HTTP and embedded assets; networking peers are fixtures.
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+      - name: Install exact frontend dependencies and official Chromium
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          npm --prefix web run build
+          git diff --exit-code -- web/dist
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+      - name: Verify actual UI workflows with isolated Playwright fixtures
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          go mod verify
+          go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
+          npm --prefix web run test:browser:safety
+          screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
+          mkdir -m 700 "$screenshots"
+          SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
+      - name: Preserve sanitized UI screenshots and typography measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-browser-screenshots
+          path: |
+            ${{ runner.temp }}/soba-playwright-screenshots/*.png
+            ${{ runner.temp }}/soba-playwright-screenshots/typography-*.json
+            ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
+          if-no-files-found: warn
           retention-days: 14

@@ -1,9 +1,19 @@
+[env]
+GOFLAGS = "-mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"
+
 [tools]
 go = "1.27.1"
+node = "24.19.0"
+
+[tasks.frontend]
+run = "npm --prefix web ci --no-audit --no-fund && npm --prefix web run build"
 
 [tasks.test]
-run = "go test -race ./..."
+depends = ["frontend"]
+run = "npm --prefix web test && go test -race ./..."
 [tasks.check]
+depends = ["frontend"]
 run = "go vet ./..."
 [tasks.build]
-run = "go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge"
+depends = ["frontend"]
+run = "go build -trimpath -o bin/soba ./cmd/soba"

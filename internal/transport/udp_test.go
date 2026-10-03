@@ -348,11 +348,11 @@ func TestUDPSessionQueueAndTerminalExpiry(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := &udpSession{ctx: ctx, cancel: cancel, queue: make(chan []byte, 2), lastActive: time.Now(), table: &udpTable{cfg: UDPConfig{IdleTimeout: time.Minute}}}
+	s := &udpSession{ctx: ctx, cancel: cancel, lastActive: time.Now(), table: &udpTable{cfg: UDPConfig{IdleTimeout: time.Minute, QueueSize: 2}}}
 	for i := 0; i < 100; i++ {
 		s.offer([]byte{byte(i)})
 	}
-	if len(s.queue) != 2 {
+	if s.queuedPackets != 2 {
 		t.Fatal("queue bound changed")
 	}
 	s.mu.Lock()

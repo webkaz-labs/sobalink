@@ -58,7 +58,7 @@ func TestRejectNonLoopbackListeners(t *testing.T) {
 		t.Error("unexpected dial")
 		return nil, errors.New("unexpected")
 	}
-	for _, address := range []string{":0", "0.0.0.0:0", "localhost:0", "192.0.2.1:0", "[::1]:0", "[::ffff:127.0.0.1]:0", "127.0.0.1:-1", "127.0.0.1:65536", "127.0.0.1:http"} {
+	for _, address := range []string{":0", "0.0.0.0:0", "localhost:0", "192.0.2.1:0", "127.0.0.2:0", "[::]:0", "[::ffff:127.0.0.1]:0", "127.0.0.1:-1", "127.0.0.1:65536", "127.0.0.1:http"} {
 		t.Run(address, func(t *testing.T) {
 			if s, err := StartTCP(context.Background(), TCPConfig{ListenAddress: address, Target: "example.test:80"}, dial); err == nil {
 				s.Close()
@@ -605,12 +605,12 @@ func TestTCPAndSOCKSBoundLocalConnections(t *testing.T) {
 					})
 				})
 				defer closeServer(t, server)
-				for i := 0; i < maxLocalConnections; i++ {
+				for i := 0; i < defaultTCPPerPolicy; i++ {
 					listener.client(t)
 				}
 				synctest.Wait()
-				if got := handlers.Load(); got != maxLocalConnections {
-					t.Fatalf("handlers %d, want %d", got, maxLocalConnections)
+				if got := handlers.Load(); got != defaultTCPPerPolicy {
+					t.Fatalf("handlers %d, want %d", got, defaultTCPPerPolicy)
 				}
 				overflow, closed := virtualStreamClient(t, listener)
 				defer overflow.Close()
@@ -619,8 +619,8 @@ func TestTCPAndSOCKSBoundLocalConnections(t *testing.T) {
 				if _, err := overflow.Read(make([]byte, 1)); err == nil {
 					t.Fatal("overflow connection stayed open")
 				}
-				if got := handlers.Load(); got != maxLocalConnections {
-					t.Fatalf("handlers %d, want %d", got, maxLocalConnections)
+				if got := handlers.Load(); got != defaultTCPPerPolicy {
+					t.Fatalf("handlers %d, want %d", got, defaultTCPPerPolicy)
 				}
 			})
 		})

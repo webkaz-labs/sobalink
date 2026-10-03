@@ -14,6 +14,8 @@ import (
 const defaultHandshakeTimeout = 10 * time.Second
 
 type SOCKSConfig struct {
+	Controller       *Controller
+	PolicyID         string
 	ListenAddress    string
 	Username         string
 	Password         string
@@ -44,12 +46,12 @@ func StartSOCKS(ctx context.Context, cfg SOCKSConfig, dial Dialer) (*Server, err
 	if err != nil {
 		return nil, err
 	}
-	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", cfg.ListenAddress)
+	l, err := (&net.ListenConfig{}).Listen(ctx, loopbackNetwork("tcp", cfg.ListenAddress), cfg.ListenAddress)
 	if err != nil {
 		return nil, err
 	}
 	return startServer(ctx, l, l.Addr(), func(s *Server) {
-		acceptConnections(s, l, func(client net.Conn) { serveSOCKS(s, client, cfg, dial) })
+		acceptConnections(s, l, func(client net.Conn) { serveSOCKS(s, client, cfg, dial) }, TCPConfig{Controller: cfg.Controller, PolicyID: cfg.PolicyID})
 	}), nil
 }
 

@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/app"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/control"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/app"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/control"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 )
 
 // request is injectable so CLI lifecycle tests never require a real node or login.

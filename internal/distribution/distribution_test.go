@@ -222,6 +222,11 @@ func mockTool(t *testing.T) (*Tool, *int) {
 	for _, name := range []string{"LICENSE", "README.md", "README.en.md", "SECURITY.md", "go.mod", "go.sum"} {
 		writeFixture(t, filepath.Join(root, name), name)
 	}
+	writeFixture(t, filepath.Join(root, "web", "package.json"), `{"name":"fixture","dependencies":{"react":"1.0.0"}}`)
+	writeFixture(t, filepath.Join(root, "web", "package-lock.json"), `{"lockfileVersion":3,"packages":{"node_modules/react":{"version":"1.0.0","integrity":"sha512-fixture"}}}`)
+	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "package.json"), `{"name":"react","version":"1.0.0"}`)
+	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "LICENSE"), "React license")
+	writeFixture(t, filepath.Join(root, "web", "dist", "index.html"), "<!doctype html><html></html>")
 	goRoot := filepath.Join(root, "toolchain")
 	writeFixture(t, filepath.Join(goRoot, "LICENSE"), "Go license")
 	builds := new(int)
@@ -236,6 +241,11 @@ func mockTool(t *testing.T) (*Tool, *int) {
 		}
 		if reflect.DeepEqual(args, []string{"env", "GOROOT"}) {
 			return []byte(goRoot), nil
+		}
+		if args[0] == "build" || args[0] == "list" {
+			if len(args) < 3 || args[1] != "-tags" || args[2] != BuildTags || args[len(args)-1] != "./cmd/soba" {
+				t.Fatalf("unsafe or wrong product build: %v", args)
+			}
 		}
 		if args[0] == "build" {
 			*builds++
@@ -273,7 +283,7 @@ func TestBuildDeterministicAndManifestComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := string(readFixture(t, filepath.Join(tool.Root, "dist", "packslip.toml")))
-	for _, want := range []string{"arch = \"x86_64\"", "arch = \"aarch64\"", "bin/tsnet-bridge.exe", "libc = \"any\"", "format = \"zip\"", commit} {
+	for _, want := range []string{"arch = \"x86_64\"", "arch = \"aarch64\"", "bin/soba.exe", "libc = \"any\"", "format = \"zip\"", commit} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("manifest missing %s", want)
 		}
@@ -319,6 +329,47 @@ func TestBuildAndCLIRejectInvalidInputs(t *testing.T) {
 	tool.run = func([]string, ...string) ([]byte, error) { return []byte("go1.99.0"), nil }
 	if err := tool.Build("1.2.3", Targets[0], strings.Repeat("a", 40), io.Discard); err == nil {
 		t.Fatal("accepted unexpected toolchain")
+	}
+}
+
+func TestInstalledGuidesKeepRelativeWebDocumentationLinks(t *testing.T) {
+	tool, _ := mockTool(t)
+	writeFixture(t, filepath.Join(tool.Root, "docs", "ARCHITECTURE.md"), "[Local API](../web/API.md)")
+	writeFixture(t, filepath.Join(tool.Root, "web", "API.md"), "[Guide](../docs/ARCHITECTURE.md)")
+	writeFixture(t, filepath.Join(tool.Root, "web", "BROWSER_ACCEPTANCE.md"), "Browser acceptance")
+	writeFixture(t, filepath.Join(tool.Root, "web", "session.json"), "must not package runtime state")
+	version := "0.0.0-dev.1"
+	target := Target{"windows", "amd64"}
+	if err := tool.Build(version, target, strings.Repeat("a", 40), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	data := readFixture(t, filepath.Join(tool.Root, "dist", stem(version, target)+target.Extension()))
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for _, file := range archive.File {
+		if strings.HasPrefix(file.Name, "share/sobalink/docs/") || strings.HasPrefix(file.Name, "share/sobalink/web/") {
+			reader, err := file.Open()
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, readErr := io.ReadAll(reader)
+			closeErr := reader.Close()
+			if readErr != nil || closeErr != nil {
+				t.Fatal(readErr, closeErr)
+			}
+			files[file.Name] = string(body)
+		}
+	}
+	for path, want := range map[string]string{"share/sobalink/docs/ARCHITECTURE.md": "../web/API.md", "share/sobalink/web/API.md": "../docs/ARCHITECTURE.md", "share/sobalink/web/BROWSER_ACCEPTANCE.md": "Browser acceptance"} {
+		if !strings.Contains(files[path], want) {
+			t.Fatal("installed guide is incomplete", path)
+		}
+	}
+	if _, ok := files["share/sobalink/web/session.json"]; ok {
+		t.Fatal("runtime data was included in documentation")
 	}
 }
 

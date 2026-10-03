@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
-	"github.com/webkaz-labs/tsnet-bridge/internal/discovery"
-	"github.com/webkaz-labs/tsnet-bridge/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/discovery"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 )
 
 // All discovery tests use synthetic peer identities and local in-memory or

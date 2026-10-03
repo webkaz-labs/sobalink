@@ -94,7 +94,7 @@ func AcquireLock(dir string) (*Lock, error) {
 	l := &Lock{f: f}
 	if e = windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &l.ov); e != nil {
 		f.Close()
-		return nil, errors.New("another tsnet-bridge process owns this profile")
+		return nil, errors.New("another sobalink process owns this profile")
 	}
 	return l, nil
 }

@@ -1,166 +1,95 @@
-# tsnet-bridge
+# sobalink
 
-[English](README.en.md) · **[名前付き接続の使い方](docs/GENERIC.ja.md)** · [実験的な RustDesk 手順](docs/VERIFICATION.md)
+[English](README.en.md) · [使い方](docs/GENERIC.ja.md) · [確認範囲](docs/VERIFICATION.md)
 
-**このノードに共有されたサービスを選ぶ → 確認してつなぐ。** tsnet を組み込んだ、アプリ単位の tailnet 接続ツールです。現在のソースは、名前付き TCP/UDP 接続と相手・サービス・期限を限定した共有に、サービスから選ぶ探索を追加しています。日本語・英語は OS／実行環境のロケールから自動選択します。
+**離れていても、すぐそばに。** 端末同士をつなぎ、必要な TCP/UDP サービスを通じてアプリを使います。`soba` を起動し、ローカル画面で相手を選んで、SSH/SFTP・Web・データベースなどのポートへ接続します。この端末のサービスも、相手と有効期間を決めて共有できます。文字・画像・ファイル・フォルダーの送信にも対応します。Go に埋め込んだ React 画面と CLI は同じ許可判定を使います。
 
-**この手順は検証用プレリリース `0.2.0-alpha.2` 向けです。** サービスから選ぶ探索、矢印キーによる選択・文字編集、用途候補と提供側の条件の案内を含みます。以下の導入は、該当版と署名付き配布物の公開を確認してから行ってください。公開前は[ソースビルド](#安全性と開発)で試せます。公開済み `0.2.0-alpha.1` にはこの探索・編集操作は含まれません。過去の配布結果を新しい版の公開・実導入・実 tailnet 受入の証拠にはしません。
+**実験的なソフトウェアです。** 公開版は [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) で版・ソース・署名付き資材と検証結果を確認してください。ソースの機能説明だけでは、その版での受入を示しません。実端末での認証・アプリ互換性・スマートフォン QR・ネイティブ IME・OS サインインとスリープ復帰は別の確認が必要です。[ソースごとの検証結果](docs/VERIFICATION.md)
 
-OS 全体の VPN・経路・DNS は変更しません。管理者権限なしでの導入・利用を目指す設計ですが、接続先の権限やアクセス許可は必要です。Windows 標準ユーザーでの実認証は未確認です。
+## まず使う
 
-> **実験段階の検証用プレリリースです。** 対象ソースの4環境ネイティブ試験とパッケージ確認は成功しました。実 tailnet への参加、スマートフォン QR 認証、実際の ACL・アプリ、OS ログイン／スリープ、RustDesk の双方向画面・入力は未検証です。`ready` は通信の準備を表し、アプリの成功を保証しません。[確認済みと未確認の範囲](docs/VERIFICATION.en.md)
+### 署名付き公開版を使う
 
-## 0.2.0-alpha.2 の確認範囲
+候補 `0.3.0-alpha.1` は、上の正規 Releases に `v0.3.0-alpha.1` の署名付き完全な資材一式が公開され、その版の検証結果を確認できる場合だけ、次の指定で導入できます。この例は公開済みという意味ではありません。必要な資材がない場合は、下のソースビルドを使います。[必要な資材・署名・対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
-[PR #1](https://github.com/webkaz-labs/tsnet-bridge/pull/1) の [変更 `ca9ad204` の通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36988386403) は全5ジョブ成功しました。これは公開準備文書の更新前の結果です。統合後の確定ソースに対する CI、署名付き公開・公開物検証・4対象の mise 実導入の結果は、[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)の該当版に記載された Verification の Actions 実行で確認してください。実 tailnet・実アプリ、実際の IME・フォントの組み合わせ、Windows Console／ConPTY の表示入力も未確認です。
-
-### 公開済み 0.2.0-alpha.1 の記録
-
-- [検証用プレリリースを公開済み](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.2.0-alpha.1)。2026-10-01 19:11:08 UTC、19配布物
-- [対象ソース `236bd8e` の通常 CI](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36910805666)は全5ジョブ成功。[公開ワークフロー](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36911703369)も全15ジョブ成功
-- 公開配布物を認証なしで取得し、署名・出所・内容を検証。Mac ARM64・Windows x64・Linux x64/ARM64 で mise の実導入と日英表示・OS 言語フォールバック・JSON の完全一致を確認
-- 署名検証やリリース経過時間の設定は変更していません。追加の Linux 非 root オフライン導入も成功
-
-公開・実導入の詳しい証拠と、未実施の実機試験は[配布記録](docs/DISTRIBUTION.md)・[検証報告](docs/VERIFICATION.en.md)で分けて示しています。
-
-## 0.2.0-alpha.2 の導入（公開確認後）
-
-Linux x64/ARM64、macOS Apple Silicon (ARM64)、Windows x64 が対象です。Intel Mac・Windows ARM64 は今回の配布対象に含みません。CI の OS は最小対応 OS や Windows 標準ユーザー動作の保証ではありません。
-
-[配布先](https://github.com/webkaz-labs/tsnet-bridge/releases)で `v0.2.0-alpha.2` が **Pre-release** として公開され、`packslip.sigstore.json` と対象の配布物がそろっていることを確認してから実行してください。未公開・ファイル不足なら先へ進みません。確認対象の [mise](https://mise.jdx.dev/getting-started.html) は **2026.9.18**。PowerShell、Mac、Linux で同じコマンドを使い、Go や手動展開は不要です。
+mise **2026.9.18** を用意した環境で実行します。`mise use -g` は通常使う版を設定します。
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/tsnet-bridge[prerelease=true]@0.2.0-alpha.2"
-mise exec -- tsnet-bridge version
-mise exec -- tsnet-bridge init
-mise exec -- tsnet-bridge login
-mise exec -- tsnet-bridge connect
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise exec -- soba version
+mise exec -- soba
 ```
 
-`version` で `tsnet-bridge 0.2.0-alpha.2` を確認します。`init` は空の設定の保存だけで、接続や共有を始めません。`login` は既存の Tailscale アプリと別のノードを開始し、正規の認証ページを案内します。参加先と権限を確認してください。`connect` ではこのノードに共有されたサービスを選び、実際の接続先を確認します。JSON 編集や RustDesk 公開鍵は不要です。
+### ソースからビルドする
 
-既存プロフィールは上書きしません。[移行・別プロフィールの手順](docs/GENERIC.ja.md#既存設定と持ち運び)を確認し、別の保存場所を使う場合は全コマンドの前に `--state-dir PATH` を指定します。
-
-`prerelease=true` と完全な版番号を指定し、`latest` は使いません。mise 2026.9.18 の完全な版指定は24時間の経過時間フィルターの対象外です。署名・識別・ダイジェスト検証は有効なままにします。Packslip の署名は OS コード署名・公証や実アプリの動作保証とは別です。OS のセキュリティ警告で止まったら、回避せず中断してください。
-
-## 0.2.0-alpha.2 での普段の使い方
-
-公開を確認して上記の版を導入してから使います。ソースビルドの場合は `mise exec -- tsnet-bridge` を実行ファイルのパスへ置き換えます。旧公開版では相手・用途から選ぶ従来の操作になります。
+このチェックアウトをビルドする場合は Go **1.27.1**、Node **24.19.0**、npm **11.9.0** を使います。画面の依存関係はロックファイルに固定しています。
 
 ```sh
-mise exec -- tsnet-bridge connect            # 相手のサービスを使う
-mise exec -- tsnet-bridge share              # 相手・サービス・期限を限定して渡す
-mise exec -- tsnet-bridge settings           # アプリへ入力する接続先を表示
-mise exec -- tsnet-bridge status
-mise exec -- tsnet-bridge doctor
-mise exec -- tsnet-bridge stop               # ノードを停止し、ログイン情報を保持
+npm --prefix web ci --no-audit --no-fund
+npm --prefix web run build
+go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba ./cmd/soba
+./bin/soba
 ```
 
-保存した接続は `connect web-demo`、個別停止は `stop web-demo` のように名前で操作します。名前は自分で保存したものへ置き換えます。共有は明示した loopback サービスだけを、選択した相手に必要な間だけ提供します。アプリ側の認証も必要です。期限・停止は既存通信も閉じますが、渡したデータの回収や遠隔ジョブの取消はできません。
+Windows のビルドは `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba`、起動は `./bin/soba.exe` です。導入後の実行に Node は不要です。
 
-- このノードに許可された共有を新しい認証済み応答から選び、相手・用途・通信方式・ポートを自動入力
-- 通常の Tailscale・旧 bridge・既知の接続先は `connect --manual`。探索結果はアプリの正常動作を保証しない
-- 新しい対話式共有では最小限の探索情報を確認。`share --no-discovery` で無効化し、既存設定は自動で公開しない
-- Web・SSH/SFTP・DB・AI API の用途候補と、複数の名前付き TCP/UDP 接続
-- 相手 ID 固定、共有の期限、グループ単位の開始・停止と部分失敗の巻き戻し
-- ルール別 JSON、準備待機、タスク所有者・リースによる後片付け
-- ↑↓ で候補選択、←→ で文字編集。番号・名前や、共有先のカンマ区切り入力も使え、保存・開始は別途明示的に確認
-- 入力間違いの再試行、編集・戻る・取消。同じ開始操作で意図せず範囲や期限を変えない
-- ブラウザー・端末内生成 QR・非公開リンクによる認証案内
-- 希望制のユーザー単位自動起動。起動するのはルール未開始のノードだけ
+### 起動後の操作
 
-探索できる共有には、提供側のアプリとサインイン済み bridge の実行、このノードを許可した期限内の共有、探索情報の確認が必要です。提供側の初回は `init` → `login` → `share`。設定済みなら `init` は省略します。通常の Tailscale ピアで公開済みのサービスには相手側の bridge は不要で、`connect --manual` を使います。用途候補はローカル AI API の `11434` など、変更できるポートの例であり、アプリの自動設定ではありません。[相手側の条件と用途候補](docs/GENERIC.ja.md#サービスを提供する相手側に必要なもの)
+1. 表示された `http://127.0.0.1:ポート` を同じ端末のブラウザーで開き、端末に表示された一回用コードを入力します。コードは URL に含みません。再発行は別の端末ウィンドウで `soba ui`
+2. ネットワークを選びます。既存の Tailnet を利用する場合は、sobalink の独立ノードを公式の Tailscale 認証ページで参加させます。Tailcat LAN は明示した信頼できる中継先とペアリングを使います。ローカル画面と CLI から設定できます。[LAN 手順](docs/LAN.ja.md)
+3. 相手・ポート・有効期間を確認してサービスを共有または接続します。表示された実際の接続先をアプリで使い、認証と動作を確認します
+4. 文字やファイルを送る場合は、現在の識別情報を確認して意図した送信者を信頼します。文字は明示して送り、画像・複数ファイル・フォルダーは一括内容を確認します
+5. 受信側は原則として一括ごとに保存先を決めて承認します。自動保存は、特定のバックエンド・信頼済み相手・信頼の世代・保存先を指定した場合だけ有効です
+6. 使い終わったら個別停止、受信共有を止める `soba stop-shares`、信頼取消、または本体を止める `soba stop` を使います
 
-通常は言語指定不要です。必要なときだけコマンドの前に `--lang ja` / `en` / `auto` を指定します。コマンド名・入力値・機械向け JSON は翻訳しません。[日英表示・認証・接続・共有の詳しい手順](docs/GENERIC.ja.md)
+例では `soba` を PATH 上の実行ファイルとして表記します。ソースビルドでは `./bin/soba`、Windows では `./bin/soba.exe` に読み替えます。起動した端末は開いたままにします。初回のネットワークは未選択で、勝手に認証や共有を始めません。[日英の画面・CLI手順](docs/GENERIC.ja.md)
 
-## 旧版と RustDesk の実験的手順
+## できることと境界
 
-`0.1.0-alpha.2` は従来の RustDesk 固定転送／SOCKS 向けの履歴です。新しい名前付き接続は含まれません。[公開版 alpha.2](https://github.com/webkaz-labs/tsnet-bridge/releases/tag/v0.1.0-alpha.2) の[署名・公開取得・4対象の mise 実導入](https://github.com/webkaz-labs/tsnet-bridge/actions/runs/36888899407)は2026-10-01に確認しました。この旧版の結果を新しい版の配布証拠にはしません。
+| 操作 | 範囲 |
+| --- | --- |
+| サービス共有 | 明示した相手、既定は有限の1時間、明示して解除までにも変更可能。TCP 範囲は予約入口を除いて扱う |
+| 接続 | 既定は停止まで。通常の Tailnet サービスにも接続でき、相手側の sobalink は不要 |
+| 保存した操作 | 停止状態の定義、プロフィール、グループ、確認付き入出力、リース付きローカルタスク。保存だけでは開始しない |
+| 容量 | 論理制限は既定・有限・無制限から選択。調整できる有限の資源予算は別に管理 |
+| 文字・画像・ファイル・フォルダー | 明示して送信。複数項目を一括確認。文字のコピーも手動 |
+| 受信 | 一括承認が既定。保存先を固定した相手別の自動保存は希望制 |
+| 再試行 | 同じ起動中の未完了ファイルを先頭から再送。途中バイト・再起動後の再開はしない |
+| ローカル操作 | 正確な `127.0.0.1` の一時ポート、一回用コード、セッション・Origin・CSRF の検査 |
 
-`0.2.0-alpha.1` のソースでも従来の設定を保持していますが、RustDesk の実画面・入力は未検証です。[旧 alpha.2 に固定した受入手順](docs/VERIFICATION.md)は比較用に残しています。RustDesk の設定を自動変更・復元しません。
+受信ファイルを自動で開く・実行する・既存ファイルを上書きすることはありません。フォルダーの実行属性やリンクは引き継ぎません。ブラウザーからの空フォルダー選択にはブラウザー API の制限があるため、完全なフォルダー構成が必要なら CLI でも確認してください。
 
-<details>
-<summary>従来の固定転送・SOCKS と制限を読む（実験的）</summary>
+TCP の広い共有範囲は、許可期間中にその範囲で新しく起動したアプリにも適用されます。必要な範囲まで狭め、除外を設定してください。探索 `54543`、ピア API `54544`、ペアリング `54545` とバックエンド内部の入口はサービス共有から除外します。UDP とローカル接続の実待受には、既定64件の調整可能な有限予算があります。共有相手32件や一括256項目・1 GiBは論理制限の初期値で、固定の製品上限ではありません。論理制限を外しても、本人確認・パス安全性・通信形式・資源の検査は残ります。[容量の選択](docs/CAPACITY.ja.md) · [安全性](docs/SECURITY.ja.md)
 
-### RustDesk 専用の初回設定
+Direct・Relay は暗号化された通信の経路、再接続は通信を作り直す状態です。経路が不明なら不明と表示し、遅延から推測しません。ネットワーク方式を自動交換せず、既存 TCP 接続の維持も保証しません。Tailcat に任意の公開中継先への自動フォールバックはありません。[ネットワークと設計](docs/ARCHITECTURE.md)
+
+## CLI の短い例
 
 ```sh
-mise exec -- tsnet-bridge setup
-mise exec -- tsnet-bridge
-mise exec -- tsnet-bridge login
+soba setup --network tailnet
+soba login --browser
+soba peers
+soba --dry-run share --preset ssh --peers PEER_ID
+soba share --preset ssh --peers PEER_ID
+soba connect --preset ssh --peer PEER_ID
+soba trust PEER_ID
+soba message PEER_ID "Hello"
+soba send PEER_ID ./image.png ./notes.txt ./sample-folder
+soba status
+soba stop
 ```
 
-`setup` は ID サーバーの tailnet 名または IP と、RustDesk の公開鍵を聞きます。設定保存だけではネットワーク認証しません。通常起動でノードを開始し、`login` で表示される Tailscale の認証ページから参加を承認します。既存の Tailscale アプリとは別のノードになります。
+`PEER_ID` は現在の相手に置き換えます。共有と接続はそれぞれ必要な端末で実行します。SSH プリセットは TCP 22、接続側のローカル入口は2222です。Web は `--preset web` で TCP 8080／入口8080を候補にし、`--ports`・`--local-port` で変更できます。アプリ自身の起動・認証は別に必要です。省略した名前には未使用名を選び、既存設定を上書きしません。
 
-ブラウザーを自動で開かない場合は `login --no-browser`。認証 URL は秘密として扱い、共有しないでください。認証キーを引数・設定・環境変数から受け取る方式は提供しません。
+ローカル画面または[案内付き CLI](docs/CLI_GUIDE.ja.md)でサービスを選択・編集・確認でき、明示した CLI オプションで自動処理も行えます。LAN のホスト／中継設定、招待のファイル入力、受信先、自動保存、サービスの保存・確認・コピー・再開始も JSON 編集なしで操作できます。[ブラウザー・リンク・QRによる認証](docs/SIGN_IN.ja.md)、[保存サービス・グループ・タスク](docs/SAVED_SERVICES.ja.md)、[起動・ログアウト](docs/LIFECYCLE.ja.md)も参照できます。`soba help examples`、`soba lan --help`、`soba service --help` を参照してください。`--dry-run` は適用前の入力確認で、到達性や空きポートの試験ではありません。言語は自動選択し、`soba --locale ja ...` / `en` で切り替えます。`status`・`peers`・グループ・サービス操作は日英の人向け表示を用意し、機械向け出力には `--json` を使います。詳細な型付き操作は構造化結果を返します。明示した認証表示では非公開の人向け案内を出します。`--json-errors` 指定時の失敗は標準エラーの `{code,error}` です。[詳しい CLI 手順](docs/GENERIC.ja.md#言語自動処理困ったとき)
 
-全てのコマンドで、別の保存場所を指定する場合はコマンドの前に `--state-dir PATH` を置きます。既存プロフィールの上書きは拒否します。変更時は停止してバックアップを取り、profile.json を編集します。
+任意の[認証付き TCP プロキシと診断](docs/PROXY_DIAGNOSTICS.ja.md)も用意しています。ブロードキャスト、永続的なオフライン送信箱、遠隔管理・遠隔ファイル一覧は現在の機能に含めません。
 
-### RustDesk の固定転送プロフィール
+[明示的な起動時接続・非公開プロキシ設定](docs/STARTUP.ja.md) · [アプリ設定・RustDesk](docs/CLIENT_HELPERS.ja.md) · [ローカル画面の操作](docs/WEB_CONTROLS.ja.md) · [機能対応と受入](docs/FEATURE_PARITY.ja.md) · [文書一覧](docs/README.md)
 
-**検証用の候補です。両方向の遠隔操作が確認済みという意味ではありません。**
+## 開発と検証
 
-既定値は次の通りです:
+[開発・使いやすさの基本方針](docs/DEVELOPMENT_PRINCIPLES.ja.md)を実装・文書・レビューの共通基準にします。[設計](docs/ARCHITECTURE.md)、[配布](docs/DISTRIBUTION.md)、[検証](docs/VERIFICATION.md)、[残る受入条件](docs/ROADMAP.ja.md)を参照してください。
 
-| 種別 | ローカル | 転送先 |
-| --- | --- | --- |
-| ID / 登録 | TCP と UDP 127.0.0.1:32116 | hbbs:21116 |
-| 状態照会 | TCP 127.0.0.1:32115 | hbbs:21115 |
-| リレー | TCP 127.0.0.1:32117 | hbbr:21117 |
-
-1. 現在の RustDesk サーバー設定とプロキシ設定を控える
-2. `mise exec -- tsnet-bridge settings` の ID サーバー、リレー、公開鍵を設定する
-3. プロキシは空欄、UDP は有効、WebSocket は無効にする
-4. このプロフィールを使う**全ての端点で同一の 127.0.0.1:32117** を使用する
-5. 接続先 ID に `/r` を付けてリレーを選ぶ
-
-relay アドレスは相手にも伝わるため、片側だけの導入・異なるローカル relay ポート・通常の tailnet 接続との混在は成立するとみなしません。hbbs 側の relay アドレス書換え設定も確認が必要です。`/r` は全ての直接試行がなくなる保証ではありません。UDP の NAT 判定やアドレス伝播も実測が必要です。
-
-別の hbbr は `setup --relay-host <tailnet-host>` で指定できます。固定ローカルポートは自動変更しません。競合時は原因を表示し停止します。
-
-#### SOCKS モードの制限
-
-`setup --mode socks` は認証付き TCP CONNECT プロキシです。資格情報は `settings --show-secrets` を私的なターミナルで実行した時だけ表示します。
-
-RustDesk 1.4.9 はプロキシ利用時に TCP 登録へ切り替わりますが、OSS server 1.1.16 は TCP RegisterPk に NOT_SUPPORT を返します。**SOCKS だけで接続される側の登録を満たすことはできません。** 操作側のみの用途も実測が必要です。アプリ全体のプロキシなので、更新確認・API など許可リスト外の通信は失敗し得ます。[技術的な根拠](docs/ARCHITECTURE.md)
-
-### 従来プロフィールの日常操作
-
-```sh
-mise exec -- tsnet-bridge                 # 起動済みなら状態を表示
-mise exec -- tsnet-bridge status --json
-mise exec -- tsnet-bridge doctor
-mise exec -- tsnet-bridge reconnect       # 保存ログインを維持して転送を再作成
-mise exec -- tsnet-bridge stop            # ログイン状態を残して停止
-mise exec -- tsnet-bridge logout          # 稼働中のノードをログアウトして停止
-mise exec -- tsnet-bridge run             # 前面実行。Ctrl+C で停止
-```
-
-`ready` は設定したピアと TCP ポートへの到達確認を意味します。RustDesk の画面表示・入力の成功は意味しません。状態は必ず `rustdesk: unverified` と区別します。
-
-一時障害では待受を閉じ、間隔を増やしながら再確認します。認証・承認・宛先・ポート競合を区別します。ログアウトの API が失敗した場合は「ローカル停止済み、サーバー側ログアウト未確認」としてエラーを返します。Tailscale 管理画面のノード削除は別操作です。
-
-停止や削除で RustDesk の設定は戻りません。控えた設定へ手動で戻してください。ログイン待機を Ctrl+C で中断した場合もバックグラウンドプロセスは残ります。必要なら `stop` してください。
-
-</details>
-
-## 安全性と開発
-
-通信は許可した現在の tailnet ピアとポートに限定し、OS DNS・通常経路へフォールバックしません。共有先は明示した数値 loopback のみです。GUI、サブネットルーター、Exit Node、汎用インターネットプロキシは含みません。
-
-保存状態は Unix でディレクトリ 0700／ファイル 0600、Windows でユーザー限定 DACL を使用します。暗号化や同一ユーザーのプロセス間の完全な隔離ではありません。固定転送に SOCKS 認証は付かないため、最小限の tailnet ポリシーとアプリ側の認証を併用してください。
-
-開発には mise と Go 1.27.1 を使います。ソースを取得してから:
-
-```sh
-mise install
-mise exec -- go test -race ./...
-mise exec -- go vet ./...
-mise exec -- go build -trimpath -o bin/tsnet-bridge ./cmd/tsnet-bridge
-```
-
-Windows の出力名は `bin/tsnet-bridge.exe` にします。ソースビルドは署名付き配布物とは別です。試すときは例の `mise exec -- tsnet-bridge` を、その実行ファイルのパスへ置き換えます。
-
-[開発・使いやすさの方針](docs/DEVELOPMENT_PRINCIPLES.ja.md) · [セキュリティ](SECURITY.md) · [設計](docs/ARCHITECTURE.md) · [検証](docs/VERIFICATION.en.md) · [配布](docs/DISTRIBUTION.md) · [活用案](docs/USE_CASES.ja.md) · [残る受入条件と計画](docs/ROADMAP.ja.md)
-
-MIT ライセンス。依存ソフトウェアのライセンスは各配布物の notices に同梱します。
+Go の race / vet と画面の単体試験に加え、Linux x64/ARM64・macOS ARM64・Windows x64 のネイティブ CI、ロック済み画面資材の再生成、配布物の反復ビルド・署名・provenance・実導入確認を維持します。旧版の合格結果を新しいソースの証拠にはしません。

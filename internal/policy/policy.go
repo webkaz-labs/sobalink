@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/webkaz-labs/tsnet-bridge/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/config"
 	"net"
 	"net/netip"
 	"strconv"
@@ -18,6 +18,7 @@ type Peer struct {
 	DNSName string       `json:"dns_name"`
 	IPs     []netip.Addr `json:"ips"`
 	Expired bool         `json:"expired"`
+	Online  bool         `json:"online"`
 }
 type Snapshot struct {
 	Running bool

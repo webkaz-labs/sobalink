@@ -3,7 +3,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/webkaz-labs/tsnet-bridge/internal/distribution"
+	"github.com/webkaz-labs/sobalink/internal/distribution"
 	"os"
 )
 
