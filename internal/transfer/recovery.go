@@ -77,6 +77,7 @@ func (m *Manager) ConfirmReceiveRecovery(ctx context.Context, reviewed bool) (Re
 	if err != nil {
 		return m.recoveryViewLocked(false), ErrReceiveRecovery
 	}
+	durableCommit := false
 	if initializeLegacy || len(next.Roots) != len(state.Roots) {
 		if err := ctx.Err(); err != nil {
 			return m.recoveryViewLocked(false), err
@@ -84,12 +85,14 @@ func (m *Manager) ConfirmReceiveRecovery(ctx context.Context, reviewed bool) (Re
 		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
 			return m.recoveryViewLocked(false), ErrReceiveRecovery
 		}
+		// A successful save is the durable commit point. Cancellation during
+		// Save cannot turn committed state into an unapplied result.
+		durableCommit = true
+	}
+	if !durableCommit {
 		if err := ctx.Err(); err != nil {
 			return m.recoveryViewLocked(false), err
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return m.recoveryViewLocked(false), err
 	}
 	m.accounting, m.retained, m.reserved, m.recoveryCode = next, retained, retained, ""
 	return m.recoveryViewLocked(true), nil

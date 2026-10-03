@@ -397,6 +397,81 @@ func TestLegacyReviewCancellationDuringMissingLoadDoesNotInitializeIndex(t *test
 	}
 }
 
+type cancelAfterAccountingCommitStore struct {
+	FileReceiveAccountingStore
+	cancelCaller   context.CancelFunc
+	cancelLifetime context.CancelFunc
+}
+
+func (s *cancelAfterAccountingCommitStore) SaveReceiveAccounting(state ReceiveAccounting) error {
+	if err := s.FileReceiveAccountingStore.SaveReceiveAccounting(state); err != nil {
+		return err
+	}
+	s.cancelCaller()
+	s.cancelLifetime()
+	return nil
+}
+
+func TestLegacyReviewCancellationAfterAccountingCommitReportsApplied(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "receive-accounting.json")
+	caller, cancelCaller := context.WithCancel(context.Background())
+	lifetime, cancelLifetime := context.WithCancel(context.Background())
+	store := &cancelAfterAccountingCommitStore{
+		FileReceiveAccountingStore: FileReceiveAccountingStore{Path: path},
+		cancelCaller:               cancelCaller,
+		cancelLifetime:             cancelLifetime,
+	}
+	options := Options{AccountingStore: store, ExistingState: true}
+	m, err := NewManager(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := m.ConfirmReceiveRecovery(dualRecoveryContext{Context: caller, caller: caller, lifetime: lifetime}, true)
+	if err != nil || !view.Applied || view.State != "ready" || view.ReservedBytes == nil || *view.ReservedBytes != 0 {
+		t.Fatalf("committed legacy review did not report applied: %+v %v", view, err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewManager(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if view := restarted.ReceiveRecovery(); view.State != "ready" || view.ReservedBytes == nil || *view.ReservedBytes != 0 {
+		t.Fatalf("committed legacy review did not survive restart: %+v", view)
+	}
+}
+
+func TestRecoveryRetirementCancellationAfterAccountingCommitReportsApplied(t *testing.T) {
+	dir, _, record := accountingFixture(t)
+	m := restarted(t, dir)
+	if err := os.RemoveAll(filepath.Join(record.OwnedRoot, record.Stage)); err != nil {
+		t.Fatal(err)
+	}
+	caller, cancelCaller := context.WithCancel(context.Background())
+	lifetime, cancelLifetime := context.WithCancel(context.Background())
+	store := &cancelAfterAccountingCommitStore{
+		FileReceiveAccountingStore: FileReceiveAccountingStore{Path: filepath.Join(dir, "receive-accounting.json")},
+		cancelCaller:               cancelCaller,
+		cancelLifetime:             cancelLifetime,
+	}
+	m.accountingStore = store
+	m.recoveryCode = "inventory_unavailable"
+	view, err := m.ConfirmReceiveRecovery(dualRecoveryContext{Context: caller, caller: caller, lifetime: lifetime}, true)
+	if err != nil || !view.Applied || view.State != "ready" || view.ReservedBytes == nil || *view.ReservedBytes != 0 {
+		t.Fatalf("committed retirement did not report applied: %+v %v", view, err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restartedManager := restarted(t, dir)
+	if view := restartedManager.ReceiveRecovery(); view.State != "ready" || view.ReservedBytes == nil || *view.ReservedBytes != 0 {
+		t.Fatalf("committed retirement did not survive restart: %+v", view)
+	}
+}
+
 type cancelStartupLoadStore struct {
 	FileReceiveAccountingStore
 	cancel context.CancelFunc
