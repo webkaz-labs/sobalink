@@ -465,6 +465,11 @@ func TestOwnedAtomicPostRenameDurabilityOutcome(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			oldData, readErr := io.ReadAll(prior)
+			closeErr := prior.Close()
+			if readErr != nil || closeErr != nil || string(oldData) != `{"generation":"old"}` {
+				t.Fatal("prior snapshot precondition failed", readErr, closeErr)
+			}
 			flushes := 0
 			beforeReplace := false
 			err = atomicWriteOwned(path, []byte(atomicTestSnapshot), &atomicHooks{
@@ -509,7 +514,7 @@ func TestOwnedAtomicPostRenameDurabilityOutcome(t *testing.T) {
 				},
 			})
 			if flushes != 1 {
-				t.Fatal("publication not flushed exactly once", flushes)
+				t.Fatal("publication not flushed exactly once", flushes, err)
 			}
 			if uncertain {
 				if !errors.Is(err, ErrAtomicCommitted) || !errors.Is(err, os.ErrPermission) {
@@ -522,10 +527,6 @@ func TestOwnedAtomicPostRenameDurabilityOutcome(t *testing.T) {
 			data, readErr := os.ReadFile(path)
 			if readErr != nil || string(data) != atomicTestSnapshot {
 				t.Fatal("published destination does not contain new snapshot", readErr)
-			}
-			oldData, readErr := io.ReadAll(prior)
-			if readErr != nil || string(oldData) != `{"generation":"old"}` {
-				t.Fatal("replacement altered held prior file", readErr)
 			}
 			if count, _ := atomicSnapshotState(t, dir); count != 0 {
 				t.Fatal("committed snapshot retained")
