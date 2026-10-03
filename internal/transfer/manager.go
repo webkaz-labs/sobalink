@@ -25,6 +25,7 @@ type batchState struct {
 	value      Batch
 	manifest   Manifest
 	root       *os.Root
+	stageInfo  os.FileInfo
 	stage      string
 	active     int
 	reserved   bool
@@ -37,22 +38,23 @@ type batchState struct {
 // Manager has no listeners or transport credentials. Calls may run concurrently.
 // Keep one Manager per local trust scope, and close it when that scope ends.
 type Manager struct {
-	mu               sync.Mutex
-	limits           Limits
-	diskSpace        *diskspace.Guard
-	store            PolicyStore
-	peers            map[string]*peerState
-	policies         map[string]ReceivePolicy
-	batches          map[string]*batchState
-	reserved         int64
-	retained         int64
-	accountingStore  ReceiveAccountingStore
-	accounting       ReceiveAccounting
-	accountingLimits AccountingLimits
-	recoveryCode     string
-	metadata         int64
-	active           int
-	closed           bool
+	mu                sync.Mutex
+	limits            Limits
+	diskSpace         *diskspace.Guard
+	store             PolicyStore
+	peers             map[string]*peerState
+	policies          map[string]ReceivePolicy
+	batches           map[string]*batchState
+	reserved          int64
+	retained          int64
+	accountingStore   ReceiveAccountingStore
+	accounting        ReceiveAccounting
+	accountingLimits  AccountingLimits
+	policySavePending bool
+	recoveryCode      string
+	metadata          int64
+	active            int
+	closed            bool
 }
 
 func NewManager(options Options) (*Manager, error) {
@@ -109,6 +111,30 @@ func NewManager(options Options) (*Manager, error) {
 				return nil, fmt.Errorf("%w: duplicate stored receive policy", ErrConflict)
 			}
 			m.policies[p.Peer.ID] = p
+		}
+		// Restore usable saved grants without a new approval/write. An unavailable
+		// granted destination blocks only receiving; remove its auto-accept grant
+		// durably so reconnect/review/restart cannot silently restore it.
+		changed := false
+		for id, policy := range m.policies {
+			if !policy.AutoAccept {
+				continue
+			}
+			root, err := openDestination(policy.Destination)
+			if err == nil {
+				root.Close()
+				continue
+			}
+			delete(m.policies, id)
+			changed = true
+			if m.recoveryCode == "" {
+				m.recoveryCode = "inventory_unavailable"
+			}
+		}
+		if changed {
+			if err := m.savePoliciesLocked(m.policies); err != nil {
+				m.policySavePending = true
+			}
 		}
 	}
 	return m, nil
@@ -411,6 +437,11 @@ func (m *Manager) acceptLocked(b *batchState, destination string) error {
 	if err != nil {
 		return err
 	}
+	stageInfo, err := root.Lstat(stage)
+	if err != nil {
+		root.Close()
+		return ErrReceiveRecovery
+	}
 	if m.accountingStore != nil {
 		record, recordErr := receiveRootRecord(destination, actual, stage, token, destinationIdentity, root)
 		if recordErr != nil {
@@ -430,7 +461,7 @@ func (m *Manager) acceptLocked(b *batchState, destination string) error {
 		m.accounting = next
 	}
 	b.root, b.stage, b.value.Destination = root, stage, actual
-	b.ownerToken = token
+	b.ownerToken, b.stageInfo = token, stageInfo
 	b.value.State = Accepted
 	for i := range b.value.Files {
 		if b.value.Files[i].Kind == Directory {
@@ -498,7 +529,7 @@ func (m *Manager) closeRootLocked(b *batchState) {
 		}
 		return
 	}
-	stageErr := b.root.Remove(b.stage) // Never remove saved output.
+	stageErr := removeReceiveStage(b.root, b.stage, b.ownerToken, b.stageInfo) // Never remove saved output.
 	if stageErr != nil && !errors.Is(stageErr, os.ErrNotExist) {
 		m.recoveryCode = "cleanup_unavailable"
 		if m.closed {
@@ -519,10 +550,6 @@ func (m *Manager) closeRootLocked(b *batchState) {
 		} else {
 			m.accounting = next
 		}
-	}
-	// Preserve ownership markers until the durable record is retired.
-	if m.recoveryCode == "" {
-		_ = b.root.Remove(".sobalink-owner")
 	}
 	_ = b.root.Close()
 	b.root = nil

@@ -54,8 +54,14 @@ func (r *cleanupFailureReader) Read(p []byte) (int, error) {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	names, err := dir.Readdirnames(-1)
+	allNames, err := dir.Readdirnames(-1)
 	dir.Close()
+	var names []string
+	for _, name := range allNames {
+		if name != receiveOwnerMarker {
+			names = append(names, name)
+		}
+	}
 	if err != nil || len(names) != 1 {
 		r.t.Fatalf("private fixture: %v %v", names, err)
 	}

@@ -85,7 +85,7 @@ func TestReceiveSpaceDropsFailClosedAndRetryPreservesSavedFiles(t *testing.T) {
 		}
 		stage := m.batches["batch"].stage
 		entries, err := os.ReadDir(filepath.Join(batch.Destination, stage))
-		if err != nil || len(entries) != 0 {
+		if err != nil || (len(entries) != 1 || entries[0].Name() != receiveOwnerMarker) {
 			t.Fatalf("active temporary file not cleaned: %v %v", entries, err)
 		}
 		// Saved acknowledgements work even when space cannot currently be read.

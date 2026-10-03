@@ -227,7 +227,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		}
 	}
 	accountingLimits := receiveAccountingLimits(limits)
-	m, err := transfer.NewManager(transfer.Options{Context: parent, Limits: receiveTransferLimits(limits), PolicyStore: receiveStore{c}, ExistingState: profileLoadErr == nil, AccountingLimits: accountingLimits, AccountingStore: transfer.FileReceiveAccountingStore{Path: filepath.Join(opts.Directory, "receive-accounting.json"), Limits: accountingLimits}})
+	m, err := transfer.NewManager(transfer.Options{Context: ctx, Limits: receiveTransferLimits(limits), PolicyStore: receiveStore{c}, ExistingState: profileLoadErr == nil, AccountingLimits: accountingLimits, AccountingStore: transfer.FileReceiveAccountingStore{Path: filepath.Join(opts.Directory, "receive-accounting.json"), Limits: accountingLimits}})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -351,11 +351,6 @@ func (c *Core) bindTransferPeer(p Trust) error {
 	peer := transfer.Peer{ID: p.ID, Generation: p.Generation}
 	if err := c.transfers.BindPeer(peer); err != nil {
 		return err
-	}
-	if p.Autosave {
-		if err := c.transfers.SetReceivePolicy(transfer.ReceivePolicy{Peer: peer, Destination: p.Directory, AutoAccept: true}); err != nil {
-			return err
-		}
 	}
 	return c.transfers.PausePeer(p.ID, p.Paused)
 }

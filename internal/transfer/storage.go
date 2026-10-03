@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/diskspace"
 )
+
+const receiveOwnerMarker = ".sobalink-owner"
 
 func randomName(prefix string) (string, error) {
 	var token [16]byte
@@ -108,7 +111,7 @@ func prepareDestinationWithSpace(destination string, entries []Entry, space *dis
 	if err != nil {
 		return nil, "", "", "", "", err
 	}
-	marker, err := root.OpenFile(".sobalink-owner", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	marker, err := root.OpenFile(filepath.Join(stage, receiveOwnerMarker), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return nil, "", "", "", "", err
 	}
@@ -223,4 +226,52 @@ func commitFileWithSpace(ctx context.Context, root *os.Root, temp, name string, 
 		return ErrUnsafePath
 	}
 	return nil
+}
+
+// Remove only a verified empty stage and its internal marker. Unknown files
+// remain accounted and retain their marker for a later startup inventory.
+func removeReceiveStage(root *os.Root, name, token string, original os.FileInfo) error {
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !os.SameFile(original, info) {
+		return ErrUnsafePath
+	}
+	stage, err := root.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	defer stage.Close()
+	opened, err := stage.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return ErrUnsafePath
+	}
+	dir, err := stage.Open(".")
+	if err != nil {
+		return err
+	}
+	names, readErr := dir.Readdirnames(2)
+	dir.Close()
+	if readErr != nil && readErr != io.EOF {
+		return readErr
+	}
+	for _, entry := range names {
+		if entry != receiveOwnerMarker {
+			return ErrReceiveRecovery
+		}
+	}
+	if len(names) != 0 {
+		if err := validateReceiveOwnerMarker(stage, token); err != nil {
+			return err
+		}
+		if err := stage.Remove(receiveOwnerMarker); err != nil {
+			return err
+		}
+	}
+	current, err := root.Lstat(name)
+	if err != nil || !os.SameFile(info, current) {
+		return ErrUnsafePath
+	}
+	return root.Remove(name)
 }

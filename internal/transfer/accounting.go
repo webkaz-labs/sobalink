@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
@@ -61,6 +62,9 @@ func (s FileReceiveAccountingStore) LoadReceiveAccounting() (ReceiveAccounting, 
 	if err != nil || int64(len(data)) > budget.MaxBytes {
 		return state, ErrLimit
 	}
+	if err := validateAccountingFields(data, budget); err != nil {
+		return state, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&state); err != nil {
@@ -78,12 +82,69 @@ func (s FileReceiveAccountingStore) SaveReceiveAccounting(state ReceiveAccountin
 	if err := validateAccounting(state, budget); err != nil {
 		return err
 	}
+	// Empty indexes are written as explicit arrays; omission is never an empty index.
+	if state.Roots == nil {
+		state.Roots = []ReceiveRoot{}
+	}
 	data, err := json.Marshal(state)
 	if err != nil || int64(len(data)) > budget.MaxBytes {
 		return ErrLimit
 	}
 	if err := config.AtomicWrite(s.Path, data); err != nil {
 		return ErrReceiveRecovery
+	}
+	return nil
+}
+
+// Required exact keys prevent omission, duplicate overwrite and case aliases
+// from turning damaged accounting into an apparently empty inventory.
+func accountingObject(data []byte, required ...string) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, ErrReceiveRecovery
+	}
+	fields := make(map[string]json.RawMessage, len(required))
+	for decoder.More() {
+		token, err := decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || !slices.Contains(required, key) || fields[key] != nil {
+			return nil, ErrReceiveRecovery
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, ErrReceiveRecovery
+		}
+		fields[key] = value
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, ErrReceiveRecovery
+	}
+	if len(fields) != len(required) {
+		return nil, ErrReceiveRecovery
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, ErrReceiveRecovery
+	}
+	return fields, nil
+}
+
+func validateAccountingFields(data []byte, budget AccountingLimits) error {
+	fields, err := accountingObject(data, "version", "roots")
+	if err != nil {
+		return err
+	}
+	var roots []json.RawMessage
+	if err := json.Unmarshal(fields["roots"], &roots); err != nil {
+		return ErrReceiveRecovery
+	}
+	if int64(len(roots)) > budget.MaxEntries {
+		return ErrLimit
+	}
+	for _, root := range roots {
+		if _, err := accountingObject(root, "destination", "destinationIdentity", "ownedRoot", "rootIdentity", "ownerToken", "stage", "stageIdentity"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -277,15 +338,6 @@ func inventoryReceiveRoot(ctx context.Context, record ReceiveRoot, budget Accoun
 	if err != nil || identity != record.RootIdentity {
 		return 0, 0, 0, ErrUnsafePath
 	}
-	marker, err := openAccountingFile(root, ".sobalink-owner")
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	token, readErr := io.ReadAll(io.LimitReader(marker, 129))
-	marker.Close()
-	if readErr != nil || string(token) != record.OwnerToken {
-		return 0, 0, 0, ErrUnsafePath
-	}
 	stageInfo, err := root.Lstat(record.Stage)
 	defer func() {
 		if resultErr != nil {
@@ -319,6 +371,9 @@ func inventoryReceiveRoot(ctx context.Context, record ReceiveRoot, budget Accoun
 	if err != nil || identity != record.StageIdentity {
 		return 0, 0, 0, ErrUnsafePath
 	}
+	if err := validateReceiveOwnerMarker(stage, record.OwnerToken); err != nil {
+		return 0, 0, 0, err
+	}
 	// Staging is flat by contract; directories (including nested leftovers) are
 	// indeterminate and fail closed rather than traversing an arbitrary tree.
 	dir, err := stage.Open(".")
@@ -335,6 +390,11 @@ func inventoryReceiveRoot(ctx context.Context, record ReceiveRoot, budget Accoun
 		for _, name := range names {
 			if err := ctx.Err(); err != nil {
 				return 0, 0, 0, err
+			}
+			// Only the exact, validated internal marker is metadata. Every other
+			// regular staging file counts, regardless of its name.
+			if name == receiveOwnerMarker {
+				continue
 			}
 			entries++
 			metadata += int64(len(name) + 128)
@@ -367,4 +427,17 @@ func inventoryReceiveRoot(ctx context.Context, record ReceiveRoot, budget Accoun
 		}
 	}
 	return total, entries, metadata, nil
+}
+
+func validateReceiveOwnerMarker(stage *os.Root, token string) error {
+	marker, err := openAccountingFile(stage, receiveOwnerMarker)
+	if err != nil {
+		return err
+	}
+	defer marker.Close()
+	value, err := io.ReadAll(io.LimitReader(marker, 129))
+	if err != nil || string(value) != token {
+		return ErrUnsafePath
+	}
+	return nil
 }

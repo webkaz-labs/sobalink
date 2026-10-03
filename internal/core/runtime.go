@@ -333,6 +333,23 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	return value, err
 }
 
+// The combined Done unblocks inventory waits; direct Err checks also observe
+// either cancellation before its asynchronous AfterFunc has run.
+type receiveRecoveryContext struct {
+	context.Context
+	caller, lifetime context.Context
+}
+
+func (ctx receiveRecoveryContext) Err() error {
+	if err := ctx.caller.Err(); err != nil {
+		return err
+	}
+	if err := ctx.lifetime.Err(); err != nil {
+		return err
+	}
+	return ctx.Context.Err()
+}
+
 func (c *Core) executeCommand(ctx context.Context, cmd webui.Command) (any, error) {
 	switch cmd.Name {
 	case "transfer.send", "services.renew", "application.stop":
@@ -362,7 +379,11 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if err := decodePayload(cmd.Payload, &input); err != nil {
 			return nil, err
 		}
-		view, err := c.transfers.ConfirmReceiveRecovery(ctx, input.Reviewed)
+		inventoryCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(c.ctx, cancel)
+		defer stop()
+		defer cancel()
+		view, err := c.transfers.ConfirmReceiveRecovery(receiveRecoveryContext{Context: inventoryCtx, caller: ctx, lifetime: c.ctx}, input.Reviewed)
 		if err != nil {
 			return view, &localCommandError{transfer.ErrorCode(err), "receive recovery could not be confirmed"}
 		}

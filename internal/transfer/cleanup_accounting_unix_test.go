@@ -60,7 +60,7 @@ func TestReceiveRetryCleansFailedRemovalBeforeWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 	names, err := os.ReadDir(stage)
-	if err != nil || len(names) != 0 {
+	if err != nil || (len(names) != 1 || names[0].Name() != receiveOwnerMarker) {
 		t.Fatalf("retry left old partial: %v %v", names, err)
 	}
 	if _, err := m.ReceiveFile(context.Background(), peer, "fixture", "file", strings.NewReader("12345678")); err != nil {

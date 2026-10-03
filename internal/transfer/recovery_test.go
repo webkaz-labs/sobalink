@@ -126,7 +126,7 @@ func TestReceiveAccountingUnknownIsNotZero(t *testing.T) {
 			}
 		},
 		"changed_marker": func(t *testing.T, dir string, r ReceiveRoot) {
-			mustWrite(t, filepath.Join(r.OwnedRoot, ".sobalink-owner"), "wrong-token")
+			mustWrite(t, filepath.Join(r.OwnedRoot, r.Stage, receiveOwnerMarker), "wrong-token")
 		},
 	}
 	for name, damage := range cases {
@@ -175,6 +175,10 @@ func TestReceiveAccountingDeletedChildVersusUnavailableDestination(t *testing.T)
 			if view.State != "ready" || view.ReservedBytes == nil || *view.ReservedBytes != 0 {
 				t.Fatalf("verified deletion not zero: %+v", view)
 			}
+			data, err := os.ReadFile(filepath.Join(dir, "receive-accounting.json"))
+			if err != nil || string(data) != `{"version":1,"roots":[]}` {
+				t.Fatalf("deleted stage/root not durably retired: %s %v", data, err)
+			}
 		})
 	}
 }
@@ -188,7 +192,7 @@ func TestReceiveAccountingSymlinksFailClosed(t *testing.T) {
 			name := filepath.Join(dir, "receive-accounting.json")
 			switch location {
 			case "marker":
-				name = filepath.Join(r.OwnedRoot, ".sobalink-owner")
+				name = filepath.Join(r.OwnedRoot, r.Stage, receiveOwnerMarker)
 			case "stage":
 				name = filepath.Join(r.OwnedRoot, r.Stage)
 			case "part":
@@ -198,6 +202,13 @@ func TestReceiveAccountingSymlinksFailClosed(t *testing.T) {
 			}
 			if location == "destination" {
 				if err := os.Rename(name, name+"-original"); err != nil {
+					t.Fatal(err)
+				}
+			} else if location == "stage" {
+				if err := os.Remove(filepath.Join(name, receiveOwnerMarker)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(name); err != nil {
 					t.Fatal(err)
 				}
 			} else if err := os.Remove(name); err != nil {
@@ -374,6 +385,9 @@ func TestReceiveAccountingCrashBoundariesChild(t *testing.T) {
 	if boundary == "unlinked" {
 		os.Exit(83)
 	}
+	if err := b.root.Remove(filepath.Join(b.stage, receiveOwnerMarker)); err != nil {
+		t.Fatal(err)
+	}
 	if err := b.root.Remove(b.stage); err != nil {
 		t.Fatal(err)
 	}
@@ -504,5 +518,186 @@ func TestReceiveMissingIndexWithExistingStateRequiresReview(t *testing.T) {
 	}
 	if data, err := os.ReadFile(retained); err != nil || string(data) != "1234567" {
 		t.Fatal("review gate altered old data")
+	}
+}
+
+func TestReceiveAccountingRejectsIncompleteAndDuplicateFields(t *testing.T) {
+	dir, state, record := accountingFixture(t)
+	addRetained(t, record, "part-fixture", "1234567")
+	root, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"version1-only":     `{"version":1}`,
+		"roots-omitted":     `{"version":1}`,
+		"version-omitted":   `{"roots":[]}`,
+		"roots-duplicate":   `{"version":1,"roots":[` + string(root) + `],"roots":[]}`,
+		"version-duplicate": `{"version":2,"version":1,"roots":[` + string(root) + `]}`,
+		"case-alias":        `{"Version":1,"roots":[` + string(root) + `]}`,
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(root, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range fields {
+		missing := make(map[string]json.RawMessage)
+		for k, v := range fields {
+			if k != key {
+				missing[k] = v
+			}
+		}
+		encoded, err := json.Marshal(missing)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases["missing-"+key] = `{"version":1,"roots":[` + string(encoded) + `]}`
+		// Even identical duplicate fields are ambiguous and must be rejected.
+		duplicate := strings.TrimSuffix(string(root), "}") + `,"` + key + `":` + string(value) + `}`
+		cases["duplicate-"+key] = `{"version":1,"roots":[` + duplicate + `]}`
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			index := filepath.Join(dir, "receive-accounting.json")
+			mustWrite(t, index, data)
+			m := restarted(t, dir)
+			if v := m.ReceiveRecovery(); v.State != "blocked" || v.ReservedBytes != nil {
+				t.Fatalf("incomplete/duplicate index appeared empty: %+v", v)
+			}
+			peer := Peer{ID: "fixture-peer", Generation: 1}
+			if err := m.BindPeer(peer); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Offer(peer, testManifest("new", testEntry("file", "payload", "12345678"))); !errors.Is(err, ErrReceiveRecovery) {
+				t.Fatalf("admitted eight bytes over retained seven: %v", err)
+			}
+			if _, err := m.ConfirmReceiveRecovery(context.Background(), true); !errors.Is(err, ErrReceiveRecovery) {
+				t.Fatalf("confirmation discarded invalid index: %v", err)
+			}
+			if after, err := os.ReadFile(index); err != nil || string(after) != data {
+				t.Fatal("invalid index was rewritten")
+			}
+			mustWrite(t, index, string(valid))
+		})
+	}
+}
+
+func TestReceiveAccountingEmptyIndexCanonicalAndNullCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	store := FileReceiveAccountingStore{Path: filepath.Join(dir, "receive-accounting.json")}
+	if err := store.SaveReceiveAccounting(ReceiveAccounting{Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(store.Path)
+	if err != nil || string(data) != `{"version":1,"roots":[]}` {
+		t.Fatalf("noncanonical empty index: %s %v", data, err)
+	}
+	for _, raw := range []string{`{"version":1,"roots":[]}`, `{"version":1,"roots":null}`} {
+		mustWrite(t, store.Path, raw)
+		state, err := store.LoadReceiveAccounting()
+		if err != nil || len(state.Roots) != 0 {
+			t.Fatalf("explicit empty roots: %+v %v", state, err)
+		}
+		if err := store.SaveReceiveAccounting(state); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(store.Path)
+		if err != nil || string(data) != `{"version":1,"roots":[]}` {
+			t.Fatalf("empty roots not canonicalized: %s %v", data, err)
+		}
+	}
+}
+
+func TestReceiveAccountingExcludesOnlyValidatedInternalMarker(t *testing.T) {
+	dir, _, r := accountingFixture(t)
+	addRetained(t, r, ".sobalink-owner-copy", "123")
+	addRetained(t, r, "unfamiliar-name", "4567")
+	view := restarted(t, dir).ReceiveRecovery()
+	if view.ReservedBytes == nil || *view.ReservedBytes != 7 {
+		t.Fatalf("unknown files excluded as metadata: %+v", view)
+	}
+}
+
+func TestUnavailableStartupPolicyRemovalMustPersistBeforeRecovery(t *testing.T) {
+	dir := t.TempDir()
+	destination := filepath.Join(dir, "missing")
+	store := &testPolicyStore{policies: []ReceivePolicy{{Peer: Peer{ID: "fixture-peer", Generation: 1}, Destination: destination, AutoAccept: true}}, saveErr: errors.New("save unavailable")}
+	opts := crashOptions(dir)
+	opts.PolicyStore = store
+	m, err := NewManager(opts)
+	if err != nil {
+		t.Fatal("receive policy stopped Manager", err)
+	}
+	defer m.Close()
+	if view := m.ReceiveRecovery(); view.State != "blocked" || len(m.ReceivePolicies()) != 0 {
+		t.Fatalf("failed removal re-enabled policy: %+v", view)
+	}
+	if err := os.Mkdir(destination, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if view, err := m.ConfirmReceiveRecovery(context.Background(), true); err == nil || view.Applied {
+		t.Fatalf("failed durable removal cleared gate: %+v %v", view, err)
+	}
+	store.saveErr = nil
+	if view, err := m.ConfirmReceiveRecovery(context.Background(), true); err != nil || !view.Applied {
+		t.Fatalf("retry removal: %+v %v", view, err)
+	}
+	if len(store.policies) != 0 || len(m.ReceivePolicies()) != 0 {
+		t.Fatal("confirmation revived removed policy")
+	}
+}
+
+func TestUnavailableLegacyPolicyRemovalPreservesExplicitReview(t *testing.T) {
+	dir := t.TempDir()
+	store := &testPolicyStore{policies: []ReceivePolicy{{Peer: Peer{ID: "fixture-peer", Generation: 1}, Destination: filepath.Join(dir, "missing"), AutoAccept: true}}, saveErr: errors.New("save unavailable")}
+	opts := crashOptions(dir)
+	opts.ExistingState = true
+	opts.PolicyStore = store
+	m, err := NewManager(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if m.ReceiveRecovery().Code != "legacy_review_required" {
+		t.Fatal("failed policy removal lost legacy gate")
+	}
+	store.saveErr = nil
+	if view, err := m.ConfirmReceiveRecovery(context.Background(), false); err != nil || view.Applied {
+		t.Fatalf("preview cleared legacy gate: %+v %v", view, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "receive-accounting.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("preview initialized legacy index")
+	}
+	if view, err := m.ConfirmReceiveRecovery(context.Background(), true); err != nil || !view.Applied {
+		t.Fatalf("legacy removal retry: %+v %v", view, err)
+	}
+	if len(store.policies) != 0 {
+		t.Fatal("legacy confirmation retained unavailable approval")
+	}
+}
+
+func TestDeletedStageRetiresIndexWithoutTouchingSavedMarkerName(t *testing.T) {
+	dir, _, r := accountingFixture(t)
+	saved := filepath.Join(r.OwnedRoot, ".sobalink-owner")
+	mustWrite(t, saved, "saved-output")
+	if err := os.RemoveAll(filepath.Join(r.OwnedRoot, r.Stage)); err != nil {
+		t.Fatal(err)
+	}
+	m := restarted(t, dir)
+	if v := m.ReceiveRecovery(); v.State != "ready" || v.ReservedBytes == nil || *v.ReservedBytes != 0 {
+		t.Fatalf("deleted stage: %+v", v)
+	}
+	m.Close()
+	data, err := os.ReadFile(saved)
+	if err != nil || string(data) != "saved-output" {
+		t.Fatal("retirement removed saved marker-name payload")
+	}
+	index, err := os.ReadFile(filepath.Join(dir, "receive-accounting.json"))
+	if err != nil || string(index) != `{"version":1,"roots":[]}` {
+		t.Fatalf("retirement not canonical: %s %v", index, err)
 	}
 }

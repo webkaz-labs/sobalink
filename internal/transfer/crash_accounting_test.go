@@ -64,12 +64,20 @@ func TestReceiveCrashRestartCannotReusePartialQuota(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 81 {
 		t.Fatalf("private crash helper exit: %v, %s", err, output)
 	}
+	state, err := (FileReceiveAccountingStore{Path: filepath.Join(root, "receive-accounting.json")}).LoadReceiveAccounting()
+	if err != nil {
+		t.Fatal(err)
+	}
+	markers := make(map[string]bool, len(state.Roots))
+	for _, record := range state.Roots {
+		markers[filepath.Join(record.OwnedRoot, record.Stage, receiveOwnerMarker)] = true
+	}
 	var partialBytes int64
 	err = filepath.WalkDir(destination, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "part-") {
+		if !entry.IsDir() && !markers[path] {
 			info, err := entry.Info()
 			if err != nil {
 				return err

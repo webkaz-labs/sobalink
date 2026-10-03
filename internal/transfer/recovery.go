@@ -54,6 +54,12 @@ func (m *Manager) ConfirmReceiveRecovery(ctx context.Context, reviewed bool) (Re
 	if m.active != 0 || len(m.batches) != 0 {
 		return m.recoveryViewLocked(false), ErrBusy
 	}
+	if m.policySavePending {
+		if err := m.savePoliciesLocked(m.policies); err != nil {
+			return m.recoveryViewLocked(false), ErrReceiveRecovery
+		}
+		m.policySavePending = false
+	}
 	state, err := m.accountingStore.LoadReceiveAccounting()
 	if m.recoveryCode == "legacy_review_required" && errors.Is(err, os.ErrNotExist) {
 		state = ReceiveAccounting{Version: 1}
@@ -71,6 +77,9 @@ func (m *Manager) ConfirmReceiveRecovery(ctx context.Context, reviewed bool) (Re
 		if err := m.accountingStore.SaveReceiveAccounting(next); err != nil {
 			return m.recoveryViewLocked(false), ErrReceiveRecovery
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return m.recoveryViewLocked(false), err
 	}
 	m.accounting, m.retained, m.reserved, m.recoveryCode = next, retained, retained, ""
 	return m.recoveryViewLocked(true), nil
