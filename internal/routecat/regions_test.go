@@ -196,3 +196,18 @@ func TestRelayCandidatesAreCopies(t *testing.T) {
 		t.Fatal("status exposes live configuration")
 	}
 }
+
+func TestRegionMigrationKeepsPublishedNodeViewsImmutable(t *testing.T) {
+	peer := &tailcfg.Node{ID: 2, Key: key.NewNode().Public(), HomeDERP: 1}
+	published := peer.View()
+	updated := peerWithHomeDERP(peer, 2)
+	if published.HomeDERP() != 1 || peer.HomeDERP != 1 {
+		t.Fatal("migration mutated the previously published network map")
+	}
+	if updated.HomeDERP != 2 || updated.Key != peer.Key || updated.ID != peer.ID {
+		t.Fatal("migration lost stable peer identity or new relay")
+	}
+	if published.Equal(updated.View()) {
+		t.Fatal("magicsock would skip the relay change as an unchanged NodeView")
+	}
+}

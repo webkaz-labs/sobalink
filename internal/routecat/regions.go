@@ -102,6 +102,12 @@ func regionMap(regions []*tailcfg.DERPRegion) *tailcfg.DERPMap {
 	return m
 }
 
+func peerWithHomeDERP(peer *tailcfg.Node, regionID tailcfg.DERPRegionID) *tailcfg.Node {
+	updated := peer.Clone()
+	updated.HomeDERP = regionID
+	return updated
+}
+
 func validateRuntime(privateOnly bool) error {
 	if buildfeatures.HasPortMapper || buildfeatures.HasCaptivePortal || buildfeatures.HasUseProxy {
 		return errors.New("routecat requires ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy")

@@ -1464,7 +1464,10 @@ func (b *locoBackend) onMeow(regionID tailcfg.DERPRegionID, src key.NodePublic, 
 			return false
 		}
 		if peer.HomeDERP != regionID {
-			peer.HomeDERP = regionID
+			// Previously published NodeViews share their node storage. Mutating
+			// it in place makes magicsock's old/new view comparison miss this
+			// change, leaving its actual endpoint routed to the previous relay.
+			b.clients[src] = peerWithHomeDERP(peer, regionID)
 			b.setNetworkMapLocked()
 			go b.advertiseEndpoints()
 		}

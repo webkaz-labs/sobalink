@@ -83,16 +83,25 @@ func TestMultipleRelayPresenceAndFreshClientRecovery(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	connect := func(r *tailcfg.DERPRegion) *Client {
+	connect := func(stage string, r *tailcfg.DERPRegion) *Client {
 		t.Helper()
 		ci := &ConnInfo{ServerPublic: NodePublic{serverKey.Public()}, ServerDiscoPublic: DiscoPublicForNode(serverKey), PresharedKey: s.PresharedKey, Region: []*tailcfg.DERPRegion{r}}
 		client := &Client{Key: role, Server: ci.Addr(), PrivateOnly: true, Logf: logger.Discard}
 		bounded, stop := context.WithTimeout(ctx, 15*time.Second)
 		defer stop()
+		if _, err := client.Ping(bounded); err != nil {
+			client.Close()
+			t.Fatalf("%s: relay registration failed: %v", stage, err)
+		}
+		s.lb.mu.Lock()
+		peer := s.lb.clients[role.Public()]
+		matches := peer != nil && s.lb.dm.Regions[peer.HomeDERP].Nodes[0].DERPPort == r.Nodes[0].DERPPort
+		s.lb.mu.Unlock()
+		t.Logf("%s: relay registration acknowledged; server candidate matches=%t", stage, matches)
 		c, err := client.DialTCP(bounded, netip.AddrPortFrom(s.Addr(), 54546))
 		if err != nil {
 			client.Close()
-			t.Fatal(err)
+			t.Fatalf("%s: authenticated TCP dial failed: %v", stage, err)
 		}
 		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
 		want := []byte("routecat isolated fixture")
@@ -136,12 +145,12 @@ func TestMultipleRelayPresenceAndFreshClientRecovery(t *testing.T) {
 		}
 		return client
 	}
-	c1 := connect(r1)
+	c1 := connect("first candidate", r1)
 	c1.Close()
 	// Stop the first relay, then use a fresh client with the same durable role
 	// key through the independent second relay. No application bytes are replayed.
 	close1()
-	c2 := connect(r2)
+	c2 := connect("second candidate after first relay closed", r2)
 	defer c2.Close()
 	if s.lb.priv.Public() != serverKey.Public() {
 		t.Fatal("server identity changed")
