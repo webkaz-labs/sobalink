@@ -13,7 +13,7 @@ const state: api.State = { csrfToken: 'fictional-csrf', self: { name: 'Notebook'
 const revision = 'a'.repeat(64)
 function setup(locale: api.Locale = 'en', failure?: string) {
   const requests: { name: string; payload: Record<string, any>; requestId: string }[] = []
-  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn().mockResolvedValue(state), run: vi.fn(), handleError: vi.fn(), updatedAt: null }
+  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn().mockResolvedValue(state), run: vi.fn(), handleError: vi.fn(), updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0 }
   let running = false
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/state') return new Response(JSON.stringify(state))
@@ -68,6 +68,28 @@ describe('advanced scoped proxy controls', () => {
     expect(screen.queryByLabelText('Runtime password')).not.toBeInTheDocument()
   })
   for (const locale of ['en', 'ja'] as const) {
+    it(`${locale}: moves keyboard focus to each new scope review without starting it`, async () => {
+      const { requests, props, p } = setup(locale); render(<AdvancedConnectionsDialog {...props} />)
+      await draft(p)
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await review(p)
+        const heading = screen.getByRole('heading', { name: p('reviewTitle') })
+        expect(heading).toHaveFocus()
+        await userEvent.tab()
+        expect(screen.getByRole('button', { name: p('back') })).toHaveFocus()
+        if (attempt === 0) await userEvent.keyboard('{Enter}')
+        else {
+          await userEvent.click(screen.getByRole('button', { name: p('authenticate') }))
+          expect(screen.getByLabelText(p('username'))).toHaveFocus()
+          await userEvent.tab()
+          expect(screen.getByLabelText(p('password'))).toHaveFocus()
+          await userEvent.click(screen.getByRole('button', { name: p('back') }))
+        }
+        expect(screen.getByLabelText(p('name'))).toHaveFocus()
+      }
+      expect(requests.filter(request => request.name === 'proxy.preview')).toHaveLength(2)
+      expect(requests.some(request => request.name === 'proxy.start')).toBe(false)
+    })
     it(`${locale}: reviews exact scope before credentials and starts once without retaining private fields`, async () => {
       const { requests, server, props, p } = setup(locale); render(<AdvancedConnectionsDialog {...props} />)
       await draft(p)
@@ -112,6 +134,22 @@ describe('advanced scoped proxy controls', () => {
       expect(requests.some(request => request.name === 'proxy.start')).toBe(false)
     })
   }
+  it.each([false, true])('keeps an enabled edit return target during a pending refresh (credentials=%s)', async credentials => {
+    const { props, p } = setup(); render(<AdvancedConnectionsDialog {...props} />)
+    await draft(p); await review(p)
+    if (credentials) await userEvent.click(screen.getByRole('button', { name: p('authenticate') }))
+    let finish: (response: Response) => void = () => {}
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { finish = resolve })))
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await userEvent.click(screen.getByRole('button', { name: p('back') }))
+    const heading = screen.getByRole('heading', { name: p('create') })
+    expect(screen.getByLabelText(p('name'))).toBeDisabled()
+    expect(heading).toHaveFocus()
+    await act(async () => finish(new Response(JSON.stringify({ ok: true, result: [] }))))
+    expect(heading).toHaveFocus()
+    await userEvent.tab()
+    expect(screen.getByLabelText(p('name'))).toHaveFocus()
+  })
   it('has aligned Japanese and English controls and only current identity target choices', async () => {
     expect(Object.keys(advancedJapanese)).toEqual(Object.keys(advancedEnglish))
     const { props, p, requests } = setup(); render(<AdvancedConnectionsDialog {...props} />); await draft(p)

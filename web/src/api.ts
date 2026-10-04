@@ -111,12 +111,28 @@ export interface Service {
 export interface LanAddress { interface: string; address: string }
 export interface LanInvitationPreview { recipientPublicKey: string; recipientMatches: true; hostPublicKey: string; hostName: string; expires: string; relay: { kind: 'relay'; address: string; certificateSHA256: string } }
 export interface LanRelay { kind: 'relay' | 'host'; address: string; certificateSHA256?: string }
+export interface ReceiveRecovery { state: string; code: string; reservedBytes: number | null; applied: boolean; review: string[] }
+export const RECEIVE_RECOVERY_REVIEW = ['previous_default_destinations', 'previous_peer_destinations', 'previous_manual_destinations', 'unfinished_staging', 'previously_saved_output', 'untracked_partials_resolved'] as const
+export function readReceiveRecovery(value: unknown): ReceiveRecovery | null {
+  if (!value || typeof value !== 'object') return null
+  const view = value as ReceiveRecovery
+  if (!['ready', 'blocked'].includes(view.state) || typeof view.code !== 'string' || typeof view.applied !== 'boolean' || !Array.isArray(view.review) || !view.review.every(item => typeof item === 'string')) return null
+  if (view.reservedBytes !== null && (!Number.isSafeInteger(view.reservedBytes) || view.reservedBytes < 0)) return null
+  if (view.state === 'ready' ? view.code !== '' || view.reservedBytes === null : !view.code || view.applied) return null
+  return view
+}
+export function receivingBlocked(state: Pick<State, 'receiveRecovery'>) {
+  // Older Core versions omit this field. A present but invalid view must never
+  // look ready or turn an unknown retained byte count into an empty inventory.
+  return state.receiveRecovery !== undefined && readReceiveRecovery(state.receiveRecovery)?.state !== 'ready'
+}
 export interface State {
   csrfToken: string
   self: { name: string; status: string; error?: string; errorCode?: string; receiveDirectory?: string; networks?: Network[] }
   peers: Peer[]
   messages: Message[]
   transfers: Transfer[]
+  receiveRecovery?: ReceiveRecovery
   services: Service[]
   shares: Service[]
   proxies?: ProxyView[]
@@ -211,6 +227,7 @@ export interface CommandPayloads {
   'service.list': { direction?: 'share' | 'forward'; cursor?: string; revision?: string }
   'message.send': { peerId: string; text: string }
   'transfer.accept': { transferId: string; destination?: string }
+  'receive.recovery.confirm': { reviewed: boolean }
   'transfer.decline': { transferId: string }
   'transfer.cancel': { transferId: string }
   'transfer.retry': { transferId: string }

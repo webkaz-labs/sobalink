@@ -45,6 +45,47 @@ function delayedFolder() {
 }
 beforeEach(() => { localStorage.setItem('sobalink.locale', 'en') })
 
+it.each([
+  ['en', 'message_history_unavailable'], ['en', 'message_peer_storage_unavailable'],
+  ['ja', 'message_history_unavailable'], ['ja', 'message_peer_storage_unavailable'],
+])('keeps a reviewable draft and blocks uncertain sends in %s for %s', async (locale, code) => {
+  const { fetch, requests } = setup()
+  fetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(initialState))
+    const request = JSON.parse(init!.body as string)
+    requests.push(request)
+    return request.name === 'message.send' && request.payload.text === 'Synthetic uncertain draft'
+      ? new Response(JSON.stringify({ code }), { status: 507 }) : new Response('{"ok":true}')
+  })
+  localStorage.setItem('sobalink.locale', locale)
+  render(<App />); await openPeer()
+  const input = screen.getByRole('textbox', { name: locale === 'ja' ? 'メッセージを入力…' : 'Write a message…' })
+  const send = screen.getByRole('button', { name: locale === 'ja' ? 'メッセージを送信' : 'Send message' })
+  fireEvent.change(input, { target: { value: 'Synthetic uncertain draft' } })
+  await userEvent.click(send)
+  await waitFor(() => expect(send).toBeDisabled())
+  expect(input).toHaveValue('Synthetic uncertain draft')
+  expect(input).toBeEnabled()
+  expect(screen.getAllByRole('alert').map(alert => alert.textContent).join(' ')).toMatch(locale === 'ja' ? /届いている可能性/ : /may already/)
+  expect(screen.getAllByRole('alert').map(alert => alert.textContent).join(' ')).not.toMatch(locale === 'ja' ? /受け付けられませんでした/ : /not accepted/)
+  await userEvent.click(screen.getByRole('button', { name: locale === 'ja' ? '閉じる' : 'Close' }))
+  fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+  await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+  await openPeer('Notebook'); await openPeer('Studio')
+  await waitFor(() => expect(screen.getByRole('button', { name: locale === 'ja' ? 'メッセージを送信' : 'Send message' })).toBeDisabled())
+  const currentInput = screen.getByRole('textbox', { name: locale === 'ja' ? 'メッセージを入力…' : 'Write a message…' })
+  expect(currentInput).toHaveValue('Synthetic uncertain draft')
+  expect(requests.filter(request => request.name === 'message.send')).toHaveLength(1)
+  fireEvent.change(currentInput, { target: { value: 'Different intended message' } })
+  const currentSend = screen.getByRole('button', { name: locale === 'ja' ? 'メッセージを送信' : 'Send message' })
+  await waitFor(() => expect(currentSend).toBeEnabled())
+  await userEvent.click(currentSend)
+  await waitFor(() => expect(currentInput).toHaveValue(''))
+  fireEvent.change(currentInput, { target: { value: 'Synthetic uncertain draft' } })
+  await waitFor(() => expect(currentSend).toBeDisabled())
+  expect(requests.filter(request => request.name === 'message.send')).toHaveLength(2)
+})
+
 describe('editable transfer batches', () => {
   it('reviews two separately pasted image.png captures with distinct filenames and uploads that exact manifest', async () => {
     setup()

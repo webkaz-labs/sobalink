@@ -77,7 +77,7 @@ for (const locale of ['en', 'ja']) for (const count of [3, 6, 12]) {
       await node(0).click()
       await selectedName(0)
       await expect(page.locator('.details-panel')).toBeVisible()
-      if (width > 760) {
+      if (width > 800) {
         await graphLayout(page, count)
         const height = await page.locator('.network-graph-canvas').evaluate(element => element.getBoundingClientRect().height)
         // Equal-height detail blocks move intervening rows without resizing
@@ -95,7 +95,7 @@ for (const locale of ['en', 'ja']) for (const count of [3, 6, 12]) {
       await page.keyboard.press('Escape')
       await expect(page.locator('.details-panel')).toHaveCount(0)
       await graphLayout(page, count)
-      const last = width > 760 ? count - 1 : 0
+      const last = width > 800 ? count - 1 : 0
       await expect(node(last)).toBeFocused()
       await page.keyboard.press('Enter')
       await selectedName(last)

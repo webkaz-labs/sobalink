@@ -6,7 +6,7 @@ import { errorText, type Translate } from '../i18n'
 import { serviceText } from '../service-i18n'
 import { MAX_SERVICE_TTL_SECONDS } from '../service-form'
 import type { Server } from '../useServer'
-import { Badge, Button, ErrorBanner, Modal, useAlive } from './ui'
+import { Badge, Button, ErrorBanner, Icon, Modal, useAlive } from './ui'
 function lifetimeText(locale: Locale, lifetime: ServiceLifetime, seconds: number) { return lifetime === 'finite' ? `${seconds.toLocaleString(locale)} ${serviceText(locale, 'customLifetime')}` : serviceText(locale, lifetime === 'until-revoked' ? 'untilRevoked' : 'untilStopped') }
 function Notices({ notices, locale }: { notices: ClientNotice[]; locale: Locale }) { return <ul className="client-notices">{notices.map((notice, index) => <li key={`${notice.code}:${index}`}>{locale === 'ja' ? notice.messageJa : notice.message}</li>)}</ul> }
 export function CopyValue({ label, value, locale }: { label: string; value: string; locale: Locale }) {
@@ -44,7 +44,7 @@ export function ClientSettingsDialog({ server, locale, t, onClose, target }: { s
 }
 export function ClientSettingsButton({ server, locale, t, id }: { server: Server; locale: Locale; t: Translate; id: string }) {
   const [open, setOpen] = useState(false)
-  return <><Button type="button" variant="ghost" disabled={server.stale} onClick={() => { server.setError(null); setOpen(true) }}>{clientText(locale, 'settings')}</Button>{open && <ClientSettingsDialog target={{ ids: [id] }} server={server} locale={locale} t={t} onClose={() => setOpen(false)} />}</>
+  return <><Button type="button" variant="ghost" disabled={server.stale} onClick={() => { server.setError(null); setOpen(true) }}><Icon name="settings" size={14} />{clientText(locale, 'settings')}</Button>{open && <ClientSettingsDialog target={{ ids: [id] }} server={server} locale={locale} t={t} onClose={() => setOpen(false)} />}</>
 }
 export function RustDeskSetupDialog({ server, locale, t, onClose, onSaved }: { server: Server; locale: Locale; t: Translate; onClose: () => void; onSaved: (group: string) => void }) {
   const c = (key: string) => clientText(locale, key)

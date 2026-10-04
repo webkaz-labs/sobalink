@@ -9,6 +9,12 @@ import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FOR
 
 export { expect }
 
+export async function openDetailsSection(section) {
+  await expect(section).toHaveCount(1)
+  if (await section.getAttribute('open') === null) await section.locator(':scope > summary').click()
+  await expect(section).toHaveAttribute('open', '')
+}
+
 function installInstrumentation() {
   if (window.__sobaQA) return
   const qa = { commands: [], errors: 0, cspViolations: 0, uploads: 0, uploadIDs: [], duplicateUploadIdentity: false }

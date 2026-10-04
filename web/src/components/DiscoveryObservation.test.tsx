@@ -11,7 +11,7 @@ import { DiscoveryObservation } from './DiscoveryObservation'
 import { ServiceDialog } from './Dialogs'
 const peer: Peer = { id: 'ordinary-peer', name: 'Service host', networks: ['tailnet'], online: true, verified: true, trusted: false, bridge: false, path: 'unknown' }
 const state: State = { csrfToken: 'fictional-token', self: { name: 'Notebook', status: 'online' }, settings: { network: 'tailnet' }, peers: [peer], services: [], shares: [], messages: [], transfers: [] }
-function server(): Server { return { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn(), run: vi.fn().mockResolvedValue({ ok: true }), handleError: vi.fn(), updatedAt: null } }
+function server(): Server { return { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn(), run: vi.fn().mockResolvedValue({ ok: true }), handleError: vi.fn(), updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0 } }
 describe('truthful discovery observations', () => {
   for (const locale of ['en', 'ja'] as const) {
     it.each(['pending', 'confirmed', 'unconfirmed', 'unsupported', 'limited', 'stale'] as const)(`${locale}: explains %s without making installation or reachability claims`, async status => {

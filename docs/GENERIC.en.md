@@ -2,17 +2,23 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-This guide describes the sobalink development draft and its `soba` executable. It is not an installation guide for the legacy `tsnet-bridge` releases. The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed.
+This guide describes the `0.3.0-alpha.2` source and its `soba` executable. Before using the install commands, check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for that exact version's signed assets and successful verification. Alpha.2 combines receive crash-accounting safeguards and bounded runtime resources with clearer, more compact Web controls. It remains a prerelease. Real-device enrollment, application compatibility, native IME, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery need separate checks. The [verification record](VERIFICATION.en.md#current-integration-and-published-baseline) keeps the published alpha.1 results separate from this source.
+
+The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
 [Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
 ## Start and open the local UI
 
-[Build this checkout](DISTRIBUTION.md#build-this-checkout), then run:
+After checking that version's complete signed release and verification results, use mise **2026.9.18** to select it, verify the version, then start it. If the release or required checks are unavailable, use a reviewed [source build](DISTRIBUTION.md#build-this-checkout) or wait:
 
 ```sh
-soba
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise exec -- soba version
+mise exec -- soba
 ```
+
+`mise use -g` changes the globally selected version. Keep signature and identity checks enabled. The examples below use `soba` directly when mise is activated; otherwise prefix each command with `mise exec --`. A [source build](DISTRIBUTION.md#build-this-checkout) is also available; use its `./bin/soba` executable (`./bin/soba.exe` on Windows).
 
 `soba start` is equivalent. It runs in the foreground. Keep that terminal open; Ctrl+C closes its active connections and shares. From another terminal:
 
@@ -190,6 +196,8 @@ Type or paste text, review it, then press Send. The Copy action copies selected 
 soba message PEER_ID "Hello from sample-node"
 ```
 
+If message history cannot be saved, the receiver may already have the text. The Web UI keeps the editable draft and warns you to check the receiver and storage. It blocks the same text to the same peer for the current page session, even after a refresh or another successful message. This protection is not persistent across page reloads or application restarts; check the outcome before resending. [Delivery uncertainty and its memory budget](CAPACITY.en.md#web-delivery-uncertainty)
+
 A pasted image enters the same reviewable file batch flow as a chosen image file. It is not sent merely because it was pasted. Images are transferred as files; received payloads are not automatically opened or executed.
 
 ### Several files or a folder
@@ -251,11 +259,9 @@ Retry sends unfinished files from their beginning while both agents retain the s
 
 Batch progress and acknowledgements are process-local. After either agent restarts, send a new batch and review what was already saved. A new batch can create a uniquely named copy. Forget removes terminal history and any retained sender staging copies, so that batch can no longer be retried. Original source files and files already saved by the receiver stay in place.
 
-Receiver accounting and retirement safeguards, including the explicit legacy review procedure, are described in [capacity and recovery](CAPACITY.en.md#receiver-recovery). Recovery never claims ambiguous roots, scans arbitrary folders, deletes saved output, or resumes a transfer.
-
 **Known crash-recovery limitation:** after an unexpected process exit, old sending copies in the private state directory’s `outgoing` subdirectory are inventoried and still count against the finite staging budget. The application does not automatically delete these orphan copies, and CLI/Web history clearing cannot remove batches from a previous process. Repeated interruptions can therefore exhaust the budget and block new sends even though growth remains bounded. Stop the matching instance, review and remove only confirmed orphan staging inside that `outgoing` directory, then restart so usage is inventoried again. Keep uncertain copies private; do not remove the identity/configuration files, original source files or received files. This is separate from a retryable batch retained by the currently running instance. A visible, reviewed orphan-cleanup control remains a usability follow-up.
 
-Receiver-owned unfinished staging is restored into the receive quota through its private index and bounded startup inventory. The [transfer free-space reserve](CAPACITY.en.md#transfer-free-space-margin) checks actual available disk space and stops new writes as that margin is reached; this is a separate defense from receive quota recovery. It does not silently delete those files or provide crash-resumable reception.
+Receiver-owned unfinished staging is restored into the receive quota through its private index and bounded startup inventory. Missing legacy records require an explicit review; damaged records, changed bindings or uncertain persistence keep receiving blocked. Sending and local management remain available. See [capacity and recovery](CAPACITY.en.md#receiver-recovery). Recovery never claims ambiguous roots, scans arbitrary folders, deletes saved output, or resumes a transfer. The [transfer free-space reserve](CAPACITY.en.md#transfer-free-space-margin) checks actual available disk space separately; it does not replace receive quota recovery.
 
 ## Stop, revoke and upgrade
 
@@ -269,7 +275,19 @@ soba stop
 
 Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
-No released sobalink upgrade path exists yet. For a new development build, stop the process, keep a private backup of state if needed, rebuild the frontend and binary from the intended source, run `soba version` and `soba start --offline` to inspect retained settings, then restart normally and explicitly restart the services you want. See `soba help upgrade` for the short workflow. Keep backups private because they contain identity and peer information. A fresh state directory requires its own enrollment and trust decisions. Legacy `tsnet-bridge` commands and configuration are not compatibility requirements for this new product.
+Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the alpha.2 release's signed assets and successful verification before using this pin; do not assume prerelease state is compatible with every upgrade or downgrade:
+
+```sh
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise exec -- soba version
+mise exec -- soba start --offline
+```
+
+Inspect retained settings and startup approvals in the local UI. A profile from alpha.1 without a receive recovery index blocks new file reception until you review its prior receive locations, unfinished staging and saved files. Open [Preferences → File receiving → Review receiving](WEB_CONTROLS.en.md#review-blocked-file-receiving), or use `soba receive recovery confirm` with local management running. Confirm the review in the UI, or add CLI `--reviewed`, only after completing the [legacy receive review](CAPACITY.en.md#receiver-recovery). It initializes a missing index, does not repair damaged records and does not delete saved files or resume transfers.
+
+Stop this offline instance before starting normally. Explicit outbound startup approvals may run again; inbound shares require a separate start. Keep the same `--state-dir` in every command when using a custom directory. Source-build users can rebuild the frontend and executable from a reviewed source instead. Use `soba help upgrade` for a short reminder and the signed-install instructions above for a published prerelease.
+
+Legacy `tsnet-bridge` 0.2.x commands and configuration are incompatible with sobalink, and there is no automatic migration of that schema. Keep the old state separately and use a sobalink state directory. A fresh directory requires its own enrollment and trust decisions.
 
 Saved-network startup failure can be recovered with `soba start --offline`. It keeps local management available, labels saved peers unverified/offline, and allows explicit pair revocation or relay reconfiguration without starting that network.
 

@@ -1,5 +1,11 @@
 import type { Locale } from './api'
 export const en = {
+  message_history_unavailable: 'Delivery is uncertain: local message history could not be saved reliably. The receiver may already have this message. Check the receiver and local history, available storage and state-folder permissions. Do not resend blindly.',
+  message_peer_storage_unavailable: 'Delivery is uncertain: the receiver could not confirm that its message history was saved reliably. It may already have this message. Check its history, available storage and state-folder permissions. Do not resend blindly.',
+  message_resend_blocked: 'Delivery is still uncertain. The other device may already have this text, so sending the same text to it again is blocked on this page. Your draft is kept for review. Check the receiver and message history. This protection resets when the page reloads or the app restarts.',
+  message_safety_limit: 'Message sending is paused because this page’s duplicate-send protection is full. No new message was sent. Keep the draft and check the receiver and history for earlier uncertain messages.',
+  message_safety_unavailable: 'Message sending is paused because duplicate-send protection could not be checked in this browser. No new message was sent. Keep the draft and check the receiver and message history.',
+  receive_recovery_required: 'File receiving is blocked. Open Preferences → File receiving → Review receiving to check previous folders or repair the recorded storage.',
   peer_storage_unavailable: 'The receiving device could not store this transfer. Check its storage and receive settings, then retry.',
   disk_space_low: 'Storage or its disk quota is full, or free space is below the transfer safety margin. Free space, check the quota or review diskReserveBytes in Capacity and history, then retry. Original and saved files stay in place.',
   disk_space_unknown: 'Available disk space could not be checked. Check the destination volume and permissions, then retry. Original and saved files stay in place.',
@@ -14,8 +20,10 @@ export const en = {
   serviceNetworkNeeded: 'Open network setup to activate or pair the selected network before using services.',
   lan_state_capacity: 'The LAN identity and pairing storage budget is full. Increase it in Capacity and history, or explicitly revoke an unused pairing.',
   sendFiles: 'Send files', effectiveMessageLimit: 'Message limit', effectiveFileLimit: 'Per-file limit', finiteResourceHint: 'These limits include this device’s finite resource budgets. The receiving device may have lower limits.', file_too_large: 'A file exceeds the selected per-file size limit. Review capacity settings or choose a smaller file.', deviceActions: 'Device actions', deviceOverview: 'Services and connection', deviceOverviewHint: 'Use a service on this device or share a service from here. Check its endpoint and lifetime before connecting.', filesAndMessages: 'Files & messages', openMessages: 'Write a message', discoveredServicesHint: 'Choose Connect to a service to review an advertised endpoint and start a local connection.', onlineDevices: 'Online devices', readyConnections: 'Ready connection services', activeShares: 'Active shares',
+  serviceActions: 'Manage service', connectionGuide: 'How to connect', clearFilters: 'Clear filters', responseUnconfirmed: 'Response not confirmed', awaitingResponse: 'A recent response from this device has not been confirmed. Try reconnecting before sending messages or files.',
   appTagline: 'Close, even from afar.', devices: 'Devices', all: 'All', nearby: 'LAN', tailnet: 'Tailnet', lan: 'LAN',
   searchDevices: 'Find a device', addDevice: 'Set up network', settings: 'Preferences', back: 'Back to devices',
+  displayPreferences: 'Display', receivingPreferences: 'File receiving', managementPreferences: 'Management', composerLabel: 'Message',
   language: 'Language', automatic: 'Automatic', appearance: 'Appearance', system: 'System', light: 'Light', dark: 'Dark',
   online: 'Online', offline: 'Offline', verified: 'Identity verified', unverified: 'Identity unverified', trusted: 'Trusted here',
   notTrusted: 'Permission needed', direct: 'Direct', relay: 'Relayed', unknown: 'Path unknown', ordinaryPeer: 'Tailscale device',
@@ -40,7 +48,7 @@ export const en = {
   invalid_response: 'The response could not be read. Refresh to check the current status.', request_failed: 'The request was not accepted. Check the details and try again.',
   upload_failed: 'The batch could not be staged. Check its status before trying again.', unauthenticated: 'Enter the current local access code to continue.',
   invalid_code: 'That code was not accepted. Use the current code shown by sobalink.', invalid_ports: 'Use ports from 1 to 65535, separated by commas or a range such as 8000-8004.',
-  empty_ports: 'Choose at least one port after exclusions.', too_many_ports: 'A connection can open at most 64 local ports. Choose a smaller range.',
+  empty_ports: 'Choose at least one port after exclusions.', too_many_ports: 'This selection exceeds the current listener budget. Reduce the ports, stop another service, or review resource limits.',
   invalid_mapping: 'Choose a local starting port from 1024 to 65535. The requested remote ports map in ascending order to consecutive local ports, ending at65535 or below.',
   unsafe_path: 'One selected path cannot be safely transferred. Rename it or choose another file.', too_many_files: 'This selection exceeds the batch entry limit.',
   too_large: 'This selection exceeds the batch size limit.', unreadable: 'The browser could not read an item. Select it again.', duplicate_path: 'Two items have the same path. Select them as separate batches.',
@@ -99,6 +107,12 @@ export const en = {
 } as const
 export type TextKey = keyof typeof en
 export const ja: Record<TextKey, string> = {
+  message_history_unavailable: '到達状況が不確かです。この端末のメッセージ履歴を確実に保存できませんでしたが、相手には届いている可能性があります。相手側とこの端末の履歴、空き容量、状態保存フォルダーの権限を確認してください。未確認のまま再送しないでください。',
+  message_peer_storage_unavailable: '到達状況が不確かです。受信側でメッセージ履歴の確実な保存を確認できませんでしたが、すでに届いている可能性があります。受信側の履歴、空き容量、状態保存フォルダーの権限を確認してください。未確認のまま再送しないでください。',
+  message_resend_blocked: '到達状況がまだ不確かです。相手には届いている可能性があるため、この画面では同じ相手への同じ文面の再送を止めています。下書きは確認用に残しています。相手側とメッセージ履歴を確認してください。この保護は画面の再読み込みやアプリの再起動でリセットされます。',
+  message_safety_limit: 'この画面の重複送信防止の記録が上限に達したため、メッセージ送信を止めています。新たな送信は行っていません。下書きを残し、到達状況が不確かな以前のメッセージを相手側と履歴で確認してください。',
+  message_safety_unavailable: 'このブラウザーで重複送信防止を確認できないため、メッセージ送信を止めています。新たな送信は行っていません。下書きを残し、相手側とメッセージ履歴を確認してください。',
+  receive_recovery_required: 'ファイル受信が停止中です。表示設定 → ファイルの受信 → 受信状態を確認から、以前の保存先の確認または記録されたストレージの修復を行ってください。',
   peer_storage_unavailable: '受信側で転送内容を保存できませんでした。受信側の保存容量と受信設定を確認して再試行してください。',
   disk_space_low: 'ディスク・ディスクquotaが満杯か、転送用に残す空き容量が不足しています。空き容量・quotaか「容量と履歴」の diskReserveBytes を確認して再試行してください。元のファイルと保存済みファイルは残ります。',
   disk_space_unknown: 'ディスクの空き容量を確認できません。保存先のボリュームとアクセス権を確認して再試行してください。元のファイルと保存済みファイルは残ります。',
@@ -112,8 +126,10 @@ export const ja: Record<TextKey, string> = {
   serviceNetworkNeeded: 'サービスを使う前に、接続設定で対象ネットワークの有効化またはペアリングを確認してください。',
   lan_state_capacity: 'LANの識別情報とペアリングの保存容量が上限に達しました。「容量と履歴」で予算を増やすか、不要なペアリングを確認して解除してください。',
   sendFiles: 'ファイルを送る', effectiveMessageLimit: 'メッセージの上限', effectiveFileLimit: 'ファイル単体の上限', finiteResourceHint: 'この端末の有限なリソース予算を含む上限です。受信側の上限はこれより小さい場合があります。', file_too_large: 'ファイル単体の容量が設定した上限を超えています。容量設定を見直すか、小さいファイルを選んでください。', deviceActions: 'デバイスの操作', deviceOverview: 'サービスと接続', deviceOverviewHint: '相手のサービスを利用したり、この端末のサービスを共有できます。接続先と有効期間を確認してから接続します。', filesAndMessages: 'ファイルとメッセージ', openMessages: 'メッセージを書く', discoveredServicesHint: '「サービスに接続」から公開された接続先を確認し、この端末の接続を開始できます。', onlineDevices: 'オンラインの端末', readyConnections: '待受準備済みの接続サービス', activeShares: '有効な共有',
+  serviceActions: 'サービスを管理', connectionGuide: '接続について', clearFilters: '絞り込みを解除', responseUnconfirmed: '応答未確認', awaitingResponse: 'このデバイスからの最近の応答を確認できていません。再接続してから、メッセージやファイルを送信してください。',
   appTagline: '離れていても、すぐそばに。', devices: 'デバイス', all: 'すべて', nearby: 'LAN', tailnet: 'Tailnet', lan: 'LAN',
   searchDevices: 'デバイスを検索', addDevice: 'ネットワークを設定', settings: '表示設定', back: 'デバイス一覧へ',
+  displayPreferences: '表示', receivingPreferences: 'ファイルの受信', managementPreferences: '管理', composerLabel: 'メッセージ',
   language: '言語', automatic: '自動', appearance: '外観', system: 'システム', light: 'ライト', dark: 'ダーク',
   online: 'オンライン', offline: 'オフライン', verified: '接続先の識別情報を確認済み', unverified: '識別情報が未確認', trusted: 'この端末で許可済み',
   notTrusted: '通信の許可が必要', direct: '直接接続', relay: '中継接続', unknown: '経路が未確認', ordinaryPeer: 'Tailscale デバイス',
@@ -138,7 +154,7 @@ export const ja: Record<TextKey, string> = {
   invalid_response: '応答を読み取れませんでした。更新して現在の状態を確認してください。', request_failed: '操作は受け付けられませんでした。内容を確認してやり直してください。',
   upload_failed: 'バッチを準備できませんでした。状態を確認してから再試行してください。', unauthenticated: '現在のローカルアクセスコードを入力してください。',
   invalid_code: 'コードが確認できません。sobalink に表示されている現在のコードを入力してください。', invalid_ports: '1〜65535 のポートを、カンマ区切りや 8000-8004 の形式で入力してください。',
-  empty_ports: '除外後にポートが1つ以上残るようにしてください。', too_many_ports: '1つの接続で開けるローカルポートは64個までです。範囲を狭めてください。',
+  empty_ports: '除外後にポートが1つ以上残るようにしてください。', too_many_ports: '現在の待受ポート数の上限を超えています。対象ポートを減らすか、他のサービスを停止するか、リソース上限を確認してください。',
   invalid_mapping: 'ローカルの開始ポートは1024〜65535で指定してください。相手のポートを小さい順に連続したローカルポートへ割り当て、最後も65535以内に収めます。',
   unsafe_path: '安全に転送できないパスが含まれています。名前を変更するか、別のファイルを選んでください。', too_many_files: 'バッチ内の項目数が上限を超えています。',
   too_large: 'バッチの容量が上限を超えています。', unreadable: 'ブラウザーが項目を読み取れませんでした。選び直してください。', duplicate_path: '同じパスの項目が重複しています。別々のバッチで送ってください。',
@@ -232,5 +248,5 @@ export function errorDetail(error: unknown, t: Translate) {
 }
 
 export function transferFailureText(value: string, t: Translate) {
-  return ['peer_storage_unavailable', 'disk_space_low', 'disk_space_unknown', 'peer_disk_space_low', 'peer_disk_space_unknown'].includes(value) ? t(value as TextKey) : value
+  return ['receive_recovery_required', 'peer_storage_unavailable', 'disk_space_low', 'disk_space_unknown', 'peer_disk_space_low', 'peer_disk_space_unknown'].includes(value) ? t(value as TextKey) : value
 }

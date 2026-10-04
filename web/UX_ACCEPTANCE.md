@@ -1,10 +1,56 @@
 # GUI workflow acceptance
 
-Reviewed 2026-10-02 against the current workflow candidate. Normal manual service setup now needs only ports: names are suggested, defaults are visible, drafts survive navigation, and saved rules offer explicit copy/edit. Attachment selections add to the existing batch, individual entries can be removed, and receiving folders can be changed directly. These new workflows are DOM-tested; their browser and real-device acceptance remains open.
+This log separates the current UI refinement from earlier workflow checkpoints. Earlier test counts and open integration notes below describe their dated candidates, not the released product or this later UI change.
 
 Apply the [development and usability principles](../docs/DEVELOPMENT_PRINCIPLES.en.md) ([日本語](../docs/DEVELOPMENT_PRINCIPLES.ja.md)). This document records workflow effort, evidence, and remaining acceptance work rather than duplicating those principles.
 
-## Evidence and integration boundaries
+## UI refinement — 2026-10-03
+
+The isolated UI work starts from the exact released `8e6cbb00d60757f701d7d453adb92590cc5d2544` source tree. It changes presentation, frontend regressions and the Japanese/English Web guide. Backend contracts, transport, storage and authorization logic are unchanged.
+
+| Screen family | Refinement | Evidence boundary |
+| --- | --- | --- |
+| Header, device list, device details | Compact navigation and identity rows; one search/filter scope; independent presence and stored permission | DOM tests cover filter/reset and permission state; real pixel/focus inspection remains required |
+| Network graph | Measured curved ports; compact peer lanes; selected information outside the canvas; no inferred Internet, OS or device form | Repeated selection and semantic graph regressions pass; synthetic Direct/Relay cases do not establish production route telemetry |
+| Services and saved definitions | Keep endpoint/state/lifetime and active Stop visible; disclose secondary management and diagnostics | Copy/edit/delete journeys now open the actual disclosure; existing Core permissions and revision checks are preserved |
+| Setup, login, Tailnet and LAN | Shared compact form rhythm, unchanged review/cancel paths, grouped settings | Form/component tests pass; real enrollment, pairing and relay activation are separate |
+| Messages, files, receiving and trust | Denser content rows; Tailcat missing response is not called offline; existing send/permission gates retained | DOM tests cover retained drafts and independent observation/pause states; delivery and native pickers are separate |
+| Preferences, capacity, startup and proxies | Topic rows and bounded dialog body; persistent heading/close; safe final action area | Formal tests add 375×844, 390×844 and 844×390 focus/input/cancel coverage; actual execution is pending |
+
+The full integrated DOM suite passed 460 tests, type checking and production build passed, eight fixture/evidence safety tests passed, and two exact-lock builds produced three byte-identical assets. The formal Playwright suite enumerates 53 tests. Enumeration is not execution: the local Chromium launch is blocked by an OS socket restriction. Existing private-preview visual checks use a synthetic adapter and do not replace production Go HTTP/CSRF/browser acceptance. Native CI and release verification are not results of this UI-only checkpoint.
+
+The visual review uses relevant accessibility, hierarchy, responsive layout and form guidance from the official [UI UX Pro Max reference](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill/blob/main/.claude/skills/ui-ux-pro-max/references/quick-reference.md). No external installer or design-search script was run. The product retains its own style and repository principles.
+
+### Hosted visual and interaction checks
+
+The final presentation was inspected with a synthetic, private preview adapter. Default fixtures use one Tailnet backend and Unknown paths; a separate Tailcat fixture is internally consistent, and hypothetical reported-path cases are explicitly simulated. These checks do not validate production command execution.
+
+| Actual combination | Result |
+| --- | --- |
+| Japanese, 3/6/12 peers, each at 375×844, 390×844, 1440×900 and an 844×390 frame | No horizontal overflow; measured connector-port offset 0 px |
+| English, 12 peers, at the same four sizes | Same geometry result |
+| Japanese/English, 3 peers, 1180×757 | Node switching, close/focus restoration and filter-clears-selection passed |
+| Capacity form, 13 forward controls at each mobile/landscape size | Controls remained visible; 12 reverse steps also checked at 375 px |
+| Service form, 14 reachable controls at 375 px | No viewport or sticky-footer occlusion; final labels and action area visually inspected |
+
+This is not the full Cartesian product of languages, counts and sizes. The 844 px frame had an 829 px document client width after its scrollbar. List, topology, details, services, exchange/receive offer, preferences, capacity and service forms were visually inspected, including a desktop dark graph. Saved services, client/RustDesk entry, startup guidance and advanced proxy review were checked through DOM/interaction in the synthetic adapter. Actual authentication/QR, native file chooser/drop/paste, OS actions and live network probes were not exercised. The embedding frame's focus boundary prevents accepting complete modal focus trapping; the formal top-level Go-backed Playwright cases remain required.
+
+### Topology evidence contract
+
+| State | Current source can establish | UI boundary |
+| --- | --- | --- |
+| Peer presence | Tailnet's presence report or a fresh authenticated discovery reply | Tailcat without a reply is unconfirmed, not definitely offline |
+| sobalink | Fresh supported service-discovery response | False does not mean not installed; it also covers stale, unavailable, unsupported or limited observations |
+| Permission | Stored local trust and pause state | Remote acceptance is unknown; service access has a separate gate |
+| Services | Scoped local listeners/rules and remote advertised metadata | A listener or grant is not application health or traffic |
+| Route | Production currently emits Unknown | Direct/Relay artwork is conditional on explicit reported values; Relay is not synonymous with Internet |
+| Selected relay | Explicit endpoint configuration | Configuration/readiness is not the peer's actual route |
+| Network mode | One selected Tailnet or Tailcat backend | No simultaneous-backend or automatic-switching claim |
+| Phone, tablet, OS, RTT | Not provided by the current API | Use neutral device artwork; do not infer from names or addresses |
+
+Future route or device-type rendering needs independently sourced metadata with provenance and freshness. This UI change does not add those backend fields. Test fixtures with hypothetical reported routes are labeled synthetic and do not change production capabilities.
+
+## Historical evidence and integration boundaries — 2026-10-02
 
 | Evidence | Current result | Limits |
 | --- | --- | --- |
@@ -85,3 +131,31 @@ Minimal follow-up: expose a read-only version and clearly labeled link to the su
 2. Execute the named Playwright Test suite on the integrated candidate and retain the exact revision, run and sanitized report. Cover service naming/copy/edit/restart, retained drafts, guided host review, whole-app stop, additive selection/removal, same-manifest retry, receiving folder override and autosave edit/pause/revoke. Keep real hosting, invitation inspection/join and device behavior separate; optional agent exploration is not a mandatory duplicate CI suite.
 3. Inspect actual new-form screenshots in Japanese/English, light/dark, narrow layouts, and at 1180 px with details open. Test keyboard focus, Escape/Back, validation, cancel, failure, and retry; synthetic events do not establish native IME/clipboard behavior.
 4. Keep real-device gates open until observed separately: enrollment and two-device pairing; trust boundaries; exact file contents and destination behavior; scoped TCP/UDP use; direct/relay reporting; installed binaries; OS login; and interruption/restart/suspend recovery. Saved settings, accepted commands, ready listeners, and preview animation do not establish application success or delivery.
+
+## Readability and density checkpoint — 2026-10-03
+
+The current UI candidate retains readable text, permanent search/composer labels, grouped service/preferences forms, full Japanese lifetime values and separate service/exchange action groups. It removes repeated toolbar headings, widespread button/icon frames and action underlines. Service name and kind share a line; compact sidebar rows retain the same font sizes. Selected tabs use a fill and type weight, secondary actions use a quiet tonal surface, and utilities use recognizable icons and readable text. Decorative separators remain subtle; editable fields retain a purposeful boundary and keyboard focus has its own indicator. These changes are not present in the published alpha.1 binary.
+
+Verified locally against the final runtime candidate: 482 DOM/token tests, typecheck, eight evidence-safety tests, two fresh exact-lock builds matching all three committed assets, and compilation of the Go embedded-UI fixture. The 59 formal Playwright cases enumerate successfully but were not executed in this environment. Six new cases exercise rendered control states at desktop, 375px touch and 1024px coarse-pointer/no-hover. They check actually painted text or icons at rest and accessible names, rather than demanding a contrasting perimeter around every button. Inputs, field text size, touch targets and keyboard focus remain checked. Compact cases also check complete tab labels and selected lifetime values. These remain an integration gate.
+
+Ten regression cases measure the actual light/dark/system-dark palette across neutral, selected and feedback surfaces: ordinary text pairs remain at least 4.5:1, and the dedicated input-boundary token at least 3:1. This verifies token pairs, not complete-page accessibility conformance. Rendered input samples retained 13.97:1 text and 3.60:1 boundary contrast in light mode; buttons retain a separate keyboard-focus ring. Inactive-control styling is an explicit usability choice, not a claim that WCAG requires disabled-control contrast.
+
+Actual private synthetic-preview inspection covered resting Japanese service screens at 1180px and 375px in light/dark, 375px settings in both themes, and the complete Japanese local-port/lifetime values. Resting samples were kept separate from keyboard-focus evidence so a retained focus ring did not dominate the appearance comparison. The lighter three-device graph was remeasured at 1180×757 and 375×844: connector anchor error was 0px and no horizontal overflow was observed. The earlier same-structure English graph/services/detail-close checks remain supplemental; the full language × theme × size × peer-count matrix was not repeated after the visual correction. A final settings-only class cleanup removes the obsolete second separator around the newly grouped form.
+
+The preview retains fictional responses. It does not establish Core authentication, real file operations, pairing, OS behavior, full modal focus trapping, real-device traffic or native-target acceptance. A cloud-browser iframe pointer dispatch inconsistency was observed in the earlier pass; keyboard activation and state inspection worked, and no product cause was established. Review the final integrated source with formal browser and native CI before publication. Visual samples communicate the new direction; passing automated checks does not establish the user's aesthetic acceptance.
+
+### Field-focus correction
+
+The previous generic 3px outline with a 3px gap also applied to clicked text inputs, producing a detached double contour beside the colored input border. Search, ordinary inputs, selects and standalone textareas now use one joined 2px contour at the existing field edge, without changing geometry. The message editor owns its outer contour only while the textarea is focused; focusing a toolbar button does not also highlight that container. Validation coloring and a system-color outline in forced-colors mode are preserved.
+
+The existing six readability browser profiles now assert pointer/keyboard focus, joined contours without a second shadow, unchanged field bounds/radius, composite-editor ownership, validation color and forced-colors visibility. They still require real execution with the integrated Go-backed candidate; test enumeration is not a pass. The field-focus-only revision passed the 478 DOM/token tests, typecheck, eight evidence-safety tests, two matching exact-lock builds and embedded-UI compilation.
+
+Actual synthetic-preview checks reproduced the old double contour and verified the correction: desktop receiving input by click in light/dark and by Tab/Shift+Tab in dark; desktop search by click in dark; standalone read-only textarea by click and Tab/Shift+Tab in dark; desktop composer in dark with focus moved to its attachment toolbar; 375px receiving input by click in both themes and Tab/Shift+Tab in light; 375px search and composer by click in light. Captured fields had a single 2px outline with -1px offset and no visible clipping; the composer’s inner textarea had no border/outline, and its outer contour cleared when focus moved to the toolbar. This is a targeted sample, not every theme/input/viewport combination. Invalid-red and forced-colors cases are authored but not runtime-verified in that preview.
+
+### Additional review of common flows
+
+A bounded synthetic-browser audit covered English saved-service selection/review/cancel at 1180px and 390px, a 390px empty state, Japanese 390px invalid-port feedback, an English 844×390 service form and its action area, and a Japanese 390px graph with 12 long device names. No clipping or horizontal overflow was observed in those samples; graph endpoint error remained 0px and closing details restored node focus. This is targeted evidence, not a complete scenario matrix.
+
+The audit reproduced lost focus when advanced connections replaced the scope form with its review, opened runtime credential fields, or returned to editing. The corrected flow focuses the review heading, then the first credential field, and returns to the name field on explicit edit. If a list refresh still disables that field, focus returns to the persistent edit heading and stays there when the request completes. Four DOM regressions cover repeated Japanese/English transitions and both pending-refresh return paths; the normal-flow cases failed before the fix. Existing formal browser cases also assert the focus targets without starting a proxy.
+
+Two optional copy follow-ups remain: explain the proxy name syntax beside its field, and distinguish the mobile searchable device list from the graph card-list view in their navigation labels. No additional redesign was applied.

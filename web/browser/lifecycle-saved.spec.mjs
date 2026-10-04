@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.mjs'
+import { test, expect, openDetailsSection } from './fixtures.mjs'
 
 for (const locale of ['en', 'ja']) {
   test(`${locale}: Tailnet logout review cancels and startup guidance stays read-only`, async ({ page, app }) => {
@@ -46,19 +46,23 @@ test.describe('offline saved definitions', () => {
       await app.capture(`offline-definition-review-${locale}-desktop`)
       await dialog.getByRole('button', { name: save, exact: true }).click()
       await app.expectState(state => state.services.some(service => service.name === 'offline-fixture' && service.status === 'saved'))
+      await openDetailsSection(page.locator('.definition-entry .definition-actions'))
       await page.getByRole('button', { name: ja ? '保存済み定義を編集' : 'Edit saved definition', exact: true }).click()
       await dialog.getByLabel(ja ? 'ポート' : 'Ports', { exact: true }).fill('8081')
       await dialog.getByRole('button', { name: review, exact: true }).click()
       await dialog.getByRole('button', { name: save, exact: true }).click()
       await app.expectState(state => state.services.some(service => service.name === 'offline-fixture' && service.ports === '8081' && service.status === 'saved'))
+      await openDetailsSection(page.locator('.definition-entry .definition-actions'))
       await page.getByRole('button', { name: ja ? '保存済み定義をコピー' : 'Copy saved definition', exact: true }).click()
       await dialog.getByRole('button', { name: review, exact: true }).click()
       await dialog.getByRole('button', { name: save, exact: true }).click()
       await app.expectState(state => state.services.some(service => service.name === 'offline-fixture-2' && service.status === 'saved'))
       const entry = page.locator('.definition-entry').filter({ hasText: 'offline-fixture-2' })
+      await openDetailsSection(entry.locator('.definition-actions'))
       await entry.getByRole('button', { name: ja ? '定義を削除' : 'Remove definition', exact: true }).click()
       await dialog.getByRole('button', { name: ja ? 'キャンセル' : 'Cancel', exact: true }).click()
       expect(await app.count('service.delete')).toBe(0)
+      await openDetailsSection(entry.locator('.definition-actions'))
       await entry.getByRole('button', { name: ja ? '定義を削除' : 'Remove definition', exact: true }).click()
       await dialog.getByRole('button', { name: ja ? '確認したルールを削除' : 'Remove reviewed rule', exact: true }).click()
       await app.expectState(state => !state.services.some(service => service.name === 'offline-fixture-2'))

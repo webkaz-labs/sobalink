@@ -11,7 +11,7 @@ function setup(locale: Locale, peerDirectory: string, draft?: string) {
   const peer: Peer = { id: 'fixture-peer', name: 'Fixture device', networks: ['tailnet'], online: true, verified: true, trusted: true, bridge: true, path: 'direct', autosave: { enabled: false, paused: false, directory: peerDirectory } }
   const state: State = { csrfToken: 'fixture', self: { name: 'This device', status: 'online', receiveDirectory: '/receiving/default' }, peers: [peer], messages: [], transfers: [], services: [], shares: [], settings: { receiveDirectory: '/receiving/default' } }
   const run = vi.fn<Server['run']>().mockResolvedValue({ ok: true })
-  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn().mockResolvedValue(state), run, updatedAt: null, handleError: vi.fn() }
+  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn().mockResolvedValue(state), run, updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0, handleError: vi.fn() }
   const t = translator(locale)
   function Harness() {
     const [directory, setDirectory] = useState<string | undefined>(draft)

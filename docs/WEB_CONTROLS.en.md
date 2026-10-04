@@ -4,11 +4,31 @@
 
 The local Web UI supports service connections, reviewed sharing, files and messages, saved definitions, diagnostics, optional scoped proxies, and Tailnet sign-out. The controls below use the same local command API as the CLI. Browser checks, real-device compatibility and OS sign-in behavior remain separate acceptance gates.
 
+## Use the device list and network graph
+
+These instructions describe the `0.3.0-alpha.2` source in this checkout. Some positions and labels differ from the published `0.3.0-alpha.1` UI. Check the [exact-source verification record](VERIFICATION.en.md#current-integration-and-published-baseline) before treating these changes as release-verified.
+
+**Device list** and **Network graph** use the same search and filter. Counts refer to remote devices and exclude this device. Use **Clear filters** when filtering hides the desired device. Select a node or line to open that peer's details; Close or Escape returns to the previous control. On narrow screens, details replace the graph.
+
+Online status, a confirmed sobalink response and local communication permission are separate facts. A Tailcat peer without a response is **Response not confirmed**, not necessarily offline or missing software. An ordinary Tailnet peer can still be used through manually entered approved service ports when discovery is unconfirmed. Messages and files require their separate permission.
+
+Lines represent relationships with this device. A backend that does not report its actual route remains **Path unknown**. A configured relay is not an observed route; Relay does not establish Internet use, and Direct does not establish the same LAN. The graph does not infer an OS, form factor or successful application operation.
+
+Service rows keep the endpoint, state and lifetime visible. Open **Manage service** for copy, edit, remove and diagnostic actions; active **Stop** remains directly available. Settings open by topic. Long forms scroll their contents while retaining the heading and close control. Closing an unapplied form does not change runtime or saved configuration. Language and theme take effect immediately and are stored in this browser.
+
+## Review blocked file receiving
+
+Open **Preferences → File receiving → Review receiving**, or select the **File receiving is blocked** notice in preferences or peer autosave settings. **Receive recovery** reads the current recovery state. Sending files, messages and service operations remain available while file reception is blocked; saved autosave permission is shown separately.
+
+For a missing legacy index, review all six items: previous default, per-peer and manual destinations, unfinished staging, saved output, and resolution of untracked partial data. Keep saved files and resolve only confirmed unfinished staging. Leave receiving blocked if a former destination is unknown or unavailable. After completing the review, select the acknowledgment checkbox and **Confirm review and resume receiving**. Opening or closing the dialog does not confirm anything. The confirmation initializes only the missing index; it does not delete files, resume old transfers or re-enable disabled autosave permission.
+
+Damaged or unknown records do not offer that confirmation. Follow the storage repair/reconnection and restart guidance; the UI does not discard the records or reset accounting to zero. The CLI alternative is `soba receive recovery confirm`, followed by `--reviewed` only after completing the same legacy review. [Recovery details and limits](CAPACITY.en.md#receiver-recovery)
+
 ## Save and manage a service while offline
 
 Open **Saved services** in the header, then **Save a connection** or **Save a share**. Choose the saved network and enter the exact device ID, ports, mapping and lifetime. The visible-device picker is optional. A missing device stays an explicit saved reference; saving neither verifies it nor grants current access.
 
-Choose **Review stopped definition**, check the complete scope, then **Save reviewed definition**. Use **Edit this draft** to correct it or **Cancel** to leave it unsaved. Definitions stay stopped. Each catalog entry provides **Edit saved definition**, **Copy saved definition** and **Remove definition**, including entries whose peers are unavailable. An active definition must be stopped before editing; a copy gets a separate identity. Changing an existing definition's network requires a copy.
+Choose **Review stopped definition**, check the complete scope, then **Save reviewed definition**. Use **Edit this draft** to correct it or **Cancel** to leave it unsaved. Definitions stay stopped. Open **Manage service** on a catalog entry for **Edit saved definition**, **Copy saved definition** and **Remove definition**, including entries whose peers are unavailable. An active definition must be stopped before editing; a copy gets a separate identity. Changing an existing definition's network requires a copy.
 
 Edits use the authoritative saved revision. After a conflict, reload the definition and review again. Removal reviews the current definition, any active service and affected groups; canceling leaves them intact. Task ownership and lease information appear when supplied. Manual operations cannot take another task's ownership; use the owning task or wait for its lease to end.
 
@@ -63,3 +83,11 @@ In **Preferences → Advanced connections**, review an exact proxy scope as usua
 Open **Saved proxy credentials → Manage saved proxies** to inspect sanitized scopes and state. **Review saved proxy start** rechecks current identities and shows the complete listener/targets before an explicit start. **Review disabling future launch** prevents later automatic starts and transient recovery but leaves a current listener and its credentials in place. **Review deleting saved credentials** permanently removes the record and stops its associated session; canceling either review changes nothing. A saved proxy may recover transient transport loss within its original expiry. Expiry, explicit stop or invalidated scope never silently restarts it; a separately approved future process launch may begin a new lifetime.
 
 **Reveal credentials temporarily** is the only display action. Hide/close and scope changes clear the private fields. Exports/history exclude them, and automated browser evidence capture rejects the private view. Copying is explicit and leaves the chosen value on the system clipboard until you replace it. Never include credentials in command arguments, source code, screenshots or shared files. Failed/uncertain saves clear input; reload the saved record and make a fresh scope review before retrying. All controls retain the local session/Host/Origin/CSRF boundary. Real installed startup, file ACL and external-client behavior still need their separate acceptance checks.
+
+## Readable, compact controls in alpha.2
+
+The device list keeps a visible search label and a persistent selected row. In the device view, service actions and file/message shortcuts form separate action groups without repeating the current tab heading. Service rows align the saved name and kind, runtime state and immediate actions; endpoint, lifetime and management details remain beneath them. The same row wraps into a compact two-line header in a narrow panel.
+
+Service forms group destination/access separately from service settings, followed by the exact review. Preferences groups display, receiving and management. Advanced options still open on request. Closing a form preserves the existing draft behavior; changing its grouping does not apply settings.
+
+Inputs and copyable values use a readable 16px scale. Secondary text and compact metadata retain separate sizes. Buttons and utilities use readable text/icons and restrained tonal fills before hover in both themes. Input boundaries remain distinct. Focus follows the field’s existing contour for both pointer and keyboard editing, without a detached second frame. The message editor highlights its outer container; its toolbar buttons retain their own keyboard indicator. Unavailable actions use neutral styling while retaining readable captions, and read-only values stay selectable. Selected tabs use a fill and type weight. Sparse dividers and aligned rows establish structure without framing every control or underlining every action. Touch layouts retain at least 44px principal controls while avoiding oversized cards. These presentation changes are absent from the published alpha.1 binary.

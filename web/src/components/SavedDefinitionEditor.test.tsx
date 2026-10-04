@@ -13,7 +13,7 @@ const configuration: ServiceConfiguration = { id: 'saved-one', name: 'offline-ex
 const state: State = { csrfToken: 'fixture', self: { name: 'Notebook', status: 'offline' }, settings: { network: 'none' }, peers: [], services: [], shares: [], transfers: [], messages: [] }
 function setup(locale: Locale = 'en', source?: 'edit' | 'copy') {
   const run = vi.fn<Server['run']>().mockImplementation(async (name, payload) => name === 'service.config' ? { ok: true, result: { configuration, revision, active: false } } : { ok: true, result: { configuration: { ...(payload as any).configuration, id: 'saved-result' }, revision, active: false } })
-  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn(), run, handleError: vi.fn(), updatedAt: null }
+  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn(), run, handleError: vi.fn(), updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0 }
   return { props: { server, locale, t: translator(locale), mode: 'connect' as const, services: source ? [configuration] : [], source: source ? { id: configuration.id, intent: source } : undefined, onSaved: vi.fn(), onClose: vi.fn() }, e: (key: string) => savedEditorText(locale, key), run }
 }
 describe('offline saved-definition management', () => {
@@ -84,9 +84,11 @@ describe('offline saved-definition management', () => {
     }))
     localStorage.setItem('sobalink.locale', 'en'); render(<App />)
     await userEvent.click(await screen.findByRole('button', { name: 'Saved services' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Copy saved definition' }))
+    await userEvent.click(await screen.findByText('Manage service'))
+    await userEvent.click(screen.getByRole('button', { name: 'Copy saved definition' }))
     await screen.findByDisplayValue('offline-example-2')
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    const management = screen.getByText('Manage service'); if (!management.closest('details')?.open) await userEvent.click(management)
     await userEvent.click(screen.getByRole('button', { name: 'Remove definition' }))
     await screen.findByRole('button', { name: serviceText('en', 'removeConfirm') })
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))

@@ -23,6 +23,18 @@ test('requires the exact scenario, capabilities and safe reserved port', () => {
   for (const localServicePort of [0, 22, 65536, 43919.5, sentinel]) rejected({ ...valid, localServicePort })
   rejected(valid, 'offline')
 })
+test('recovery scenarios require their own capabilities and isolated service port', () => {
+  for (const [scenario, capability] of [['receive-legacy', 'legacy-receive-review'], ['receive-damaged', 'damaged-receive-index']]) {
+    const recovery = { ...valid, scenario, capabilities: ['service-lifecycle', 'receive-recovery', 'saved-autosave', capability] }
+    assert.equal(validateSession(recovery, scenario).scenario, scenario)
+    rejected(recovery)
+    rejected({ ...valid, scenario }, scenario)
+    rejected({ ...recovery, localServicePort: 0 }, scenario)
+    rejected({ ...recovery, capabilities: recovery.capabilities.join(',') }, scenario)
+    for (const missing of recovery.capabilities) rejected({ ...recovery, capabilities: recovery.capabilities.filter(value => value !== missing) }, scenario)
+    rejected(recovery, scenario === 'receive-legacy' ? 'receive-damaged' : 'receive-legacy')
+  }
+})
 test('requires an absolute receiving root and nonempty access code', () => {
   rejected({ ...valid, receiveDirectory: `relative/${sentinel}` })
   rejected({ ...valid, code: '' })

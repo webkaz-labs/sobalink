@@ -13,7 +13,7 @@ function setup(mode: 'connect' | 'share', locale: Locale = 'en', budget = 100) {
   const state: State = { csrfToken: 'fixture', self: { name: 'Fixture device', status: 'online' }, peers: [{ id: 'fixture-peer', name: 'Fixture target', networks: ['tailnet'], online: true, verified: true, trusted: true, bridge: true, path: 'direct' }], messages: [], transfers: [], services: [], shares: [], settings: { network: 'tailnet' }, servicePresets: [{ id: 'server-example', purpose: 'custom', network: 'tcp', port: 8123, localPort: 18123, label: { en: 'Server example', ja: 'サーバーの例' } }], limits: { effective: { resources: { materializedListeners: { mode: 'limited', value: budget + 2 } } }, usage: { materializedListeners: 2 } } }
   const run = vi.fn<Server['run']>().mockResolvedValue({ ok: true })
   const onClose = vi.fn()
-  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn().mockResolvedValue(state), run, updatedAt: null, handleError: vi.fn() }
+  const server: Server = { state, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn().mockResolvedValue(state), run, updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0, handleError: vi.fn() }
   let savedDraft: ServiceDraft | undefined
   function Harness() {
     const [draft, onDraft] = useState<ServiceDraft | undefined>(newServiceDraft(state.peers[0], mode, state))

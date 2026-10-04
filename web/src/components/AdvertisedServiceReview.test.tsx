@@ -19,7 +19,7 @@ function setup(current: Service, locale: 'en' | 'ja' = 'en') {
     latestAdvertisement = advertisement
     const [draft, setDraft] = useState(newServiceDraft(peer, 'connect', state)); lastDraft = draft
     const next = { ...state, availableServices: [advertisement] }
-    const server: Server = { state: next, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn(), run, updatedAt: null, handleError: vi.fn() }
+    const server: Server = { state: next, auth: 'ready', stale: false, error: null, setError: vi.fn(), busy: new Set(), refresh: vi.fn(), run, updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0, handleError: vi.fn() }
     return <ServiceDialog server={server} t={translator(locale)} locale={locale} peer={peer} state={next} mode="connect" onClose={() => {}} draft={draft} onDraft={value => setDraft(value || newServiceDraft(peer, 'connect', state))} />
   }
   const view = render(<Harness advertisement={current} />)

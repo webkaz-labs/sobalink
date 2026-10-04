@@ -8,15 +8,15 @@ The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the ear
 
 ## Install a signed prerelease
 
-The candidate pin below is usable **only if `v0.3.0-alpha.1` is published at the canonical [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) with its complete signed asset set**. Check the release's source commit and linked workflow results first, including the public-download and four-target installed-binary checks. This conditional example does not assert that the candidate is published or verified. If those assets or results are missing, use a reviewed source build or wait for a verified release.
+These source instructions target prerelease `0.3.0-alpha.2`. Use the pin below **only after checking its complete signed assets and successful verification at the canonical [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases)**. Check the release's source commit and linked workflow results, including the public-download and four-target installed-binary checks. The instructions alone do not establish publication or acceptance. If those assets or results are missing, use a reviewed source build or wait for a verified release. [Earlier alpha.1 evidence](VERIFICATION.en.md#current-integration-and-published-baseline) applies only to that release.
 
 A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
 
 With mise **2026.9.18** available, the same explicit prerelease pin used by the publication workflow is:
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -116,6 +116,8 @@ The release workflow builds each native target twice and compares output digests
 The CycloneDX SBOM and notice index preserve module/package provenance and copied notice hashes without guessing a legal classification. Go replacements, missing provenance and missing notices fail packaging. Source-only terms outside conventional notice filenames still require review before distribution.
 
 Trusted-main Go caches bind runner, OS, architecture, toolchain, dependency manifests and source commit. Only successful canonical main CI saves that namespace. Prerelease restores the exact tested-commit key without fallback or saving. Cache misses build normally; caching never skips tests, package reproduction or signature checks.
+
+Native CI also has a separate development namespace for canonical same-repository pull requests and explicit non-main branch dispatches, with the canonical default branch required to remain `main`. Each PR or hashed branch ref has its own boundary, plus the same runner, toolchain, manifests and checked-out source dimensions. Fallback stays within that boundary; only successful native checks save. Forks, other events and main runs cannot write development caches. Logs distinguish exact hits, fallback hits, misses and skipped restores; a fallback can succeed with `cache-hit: false`. The manifest and browser jobs do not use development caches. Development entries share the repository cache capacity and can evict trusted-main entries; eviction only causes a cold build. Same-source cold/warm CI measurement, including confirmed saves and restores, is still required before claiming a speedup.
 
 ## LAN native acceptance
 

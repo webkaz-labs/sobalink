@@ -4,6 +4,17 @@
 
 **Verification applies to an exact source and version.** Device/service connectivity, transfers, saved workflows, capacity controls, private sign-in, the optional proxy and diagnostics are implemented. Implementation, local logic tests, native CI, browser execution, signed distribution and actual-device acceptance are separate results. For a published prerelease, also inspect its linked release workflow results.
 
+## Current integration and published baseline
+
+The `0.3.0-alpha.2` source combines receive crash-accounting safeguards, bounded persistence and transfer resources, UI improvements and development CI caching. Its final integrated-source CI, browser and signed-release results must be recorded separately; the earlier results below do not verify those changes. Real devices, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery remain separate acceptance work.
+
+| Source/category | Result and boundary |
+| --- | --- |
+| Published `0.3.0-alpha.1`, source `8e6cbb00d60757f701d7d453adb92590cc5d2544` | [Release workflow 37118184346](https://github.com/webkaz-labs/sobalink/actions/runs/37118184346) verified signatures, public download and actual installation on Linux x64/ARM64, macOS ARM64 and Windows x64. This belongs to the [alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.1), not the alpha.2 source |
+| Published alpha.1 Linux amd64 resource observation | [Run 37122354906](https://github.com/webkaz-labs/sobalink/actions/runs/37122354906) passed for the exact published binary: 15 minutes offline idle, ten clean restarts and one forced idle exit/restart. [Procedure and limits](RESOURCE_MEASUREMENT.en.md). No active receive crash, network-byte or later-source acceptance is established |
+| Source-built alpha.1 relay traffic observation | [Run 37122354935](https://github.com/webkaz-labs/sobalink/actions/runs/37122354935) passed with synthetic TCP echo traffic and a loopback relay, using test-only instrumentation and no OS UDP transport. [Procedure and limits](RELAY_TRAFFIC_MEASUREMENT.en.md). This is not the published executable, full file-transfer overhead or real WAN/device behavior |
+| Integrated `0.3.0-alpha.2` source | Exact-source native/browser CI, package reproduction, signatures/provenance, public download and four-target installed-binary checks are required before release acceptance. Preparation or earlier branch results alone do not complete these gates |
+
 ## Recorded source evidence
 
 | Source/category | Result and boundary |

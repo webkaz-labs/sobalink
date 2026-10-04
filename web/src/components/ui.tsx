@@ -54,9 +54,9 @@ export function Modal({ title, children, onClose, t, wide = false }: { title: st
     if (!element.open) element.showModal()
     const cancel = (event: Event) => { event.preventDefault(); onCloseRef.current() }
     element.addEventListener('cancel', cancel)
-    return () => { element.removeEventListener('cancel', cancel); element.close(); focusBefore?.focus() }
+    return () => { element.removeEventListener('cancel', cancel); element.close(); if (focusBefore?.isConnected) focusBefore.focus() }
   }, [])
-  return <dialog ref={dialog} aria-labelledby={id} className={`modal ${wide ? 'modal-wide' : ''}`} onClick={event => { if (event.target === dialog.current) { const rect = dialog.current.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose() } }}>
+  return <dialog ref={dialog} aria-labelledby={id} aria-modal="true" className={`modal ${wide ? 'modal-wide' : ''}`} onClick={event => { if (event.target === dialog.current) { const rect = dialog.current.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose() } }}>
     <div className="modal-heading"><h2 id={id}>{title}</h2><IconButton icon="close" label={t('close')} onClick={onClose} /></div><div className="modal-body">{children}</div>
   </dialog>
 }

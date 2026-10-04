@@ -21,14 +21,14 @@ function diagram() { return within(screen.getByRole('group', { name: 'Known conn
 describe('network diagram evidence and interaction', () => {
   it('keeps known, online, permitted app readiness, and transfer state distinct', () => {
     render(<NetworkGraph {...props({ state: state({ peers: [
-      peer('Known offline', { online: false }), peer('Needs permission', { trusted: false }), peer('Ready'),
+      peer('Known offline', { online: false, bridge: false }), peer('Needs permission', { trusted: false }), peer('Ready'),
       peer('Identity unknown', { verified: false }), peer('Service unknown', { bridge: false }),
     ] }) })} />)
     const graph = diagram()
-    expect(graph.getByRole('button', { name: /^Open device: Known offline;/ })).toHaveTextContent('Known deviceKnown offlineOfflineApp offline')
-    expect(graph.getByRole('button', { name: /^Open device: Needs permission;/ })).toHaveTextContent('OnlinePermission needed')
-    expect(graph.getByRole('button', { name: /^Open device: Ready;/ })).toHaveTextContent('Allowed here')
-    expect(graph.getByRole('button', { name: /^Open device: Identity unknown;/ })).toHaveTextContent('Identity unverified')
+    expect(graph.getByRole('button', { name: /^Open device: Known offline;/ })).toHaveTextContent('Known deviceKnown offlineOfflinesobalink service not confirmed')
+    expect(graph.getByRole('button', { name: /^Open device: Needs permission;/ })).toHaveAccessibleName(/Permission needed/)
+    expect(graph.getByRole('button', { name: /^Open device: Ready;/ })).toHaveClass('is-ready')
+    expect(graph.getByRole('button', { name: /^Open device: Identity unknown;/ })).toHaveAccessibleName(/Identity unverified/)
     expect(graph.getByRole('button', { name: /^Open device: Service unknown;/ })).toHaveTextContent('sobalink service not confirmed')
     expect(graph.queryByText('No file transfer in progress')).not.toBeInTheDocument()
     expect(graph.getAllByRole('button', { name: /^Open connection:/ }).every(button => button.getAttribute('aria-label')?.includes('No file transfer in progress'))).toBe(true)
@@ -68,7 +68,7 @@ describe('network diagram evidence and interaction', () => {
     expect(edge).toHaveAccessibleName(/Active sharing rules: 1/)
     expect(edge).not.toHaveTextContent('Ready connection services')
     expect(diagram().getByText('Listeners 1 · Sharing rules 1')).toBeInTheDocument()
-    expect(diagram().getByText('Listeners 0 · Sharing rules 0')).toBeInTheDocument()
+    expect(diagram().queryByText('Listeners 0 · Sharing rules 0')).not.toBeInTheDocument()
     expect(edge).toHaveAccessibleName(/No file transfer in progress/)
     expect(edge).toHaveAccessibleName(/App paused/)
     expect(diagram().getByRole('button', { name: /^Open connection: Local device — Other;/ })).toHaveAccessibleName(/No active connections or sharing rules/)
@@ -243,9 +243,9 @@ describe('network diagram evidence and interaction', () => {
     expect(a).toHaveFocus()
   })
 
-  it('remeasures moved rows when selection changes without a resize', () => {
-    // Switching equal-height details changes row positions, not observed sizes.
-    // ResizeObserver deliberately never fires in this regression.
+  it('keeps measured routes stable through repeated selection, switching, and closing details', () => {
+    // A regression to inline selected facts would move all following rows.
+    // ResizeObserver deliberately never fires in this selection regression.
     vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
     const rect = (x: number, y: number, width: number, height: number) => ({ x, y, left: x, top: y, right: x + width, bottom: y + height, width, height, toJSON: () => ({}) })
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
@@ -265,16 +265,20 @@ describe('network diagram evidence and interaction', () => {
     const handlers = props({ state: state({ peers: [peer('A'), peer('B'), peer('C')] }), selectedPeerId: 'A' })
     const { container, rerender } = render(<NetworkGraph {...handlers} />)
     const line = (id: string) => container.querySelector(`g[data-peer-id="${id}"] .network-graph-line`)!.getAttribute('d')!
-    const before = line('B')
-    expect(before).toMatch(/, 550 304$/)
-    rerender(<NetworkGraph {...handlers} selectedPeerId="B" />)
+    const before = ['A', 'B', 'C'].map(line)
+    const nodes = [...container.querySelectorAll('.network-graph-branch > .network-graph-node')]
     expect(line('B')).toMatch(/, 550 240$/)
-    expect(line('B')).not.toBe(before)
-    expect(line('C')).toMatch(/, 550 464$/)
-    rerender(<NetworkGraph {...handlers} selectedPeerId={null} />)
-    expect(line('C')).toMatch(/, 550 400$/)
-    rerender(<NetworkGraph {...handlers} selectedPeerId="A" />)
-    expect(line('B')).toBe(before)
+    for (const selection of ['B', 'B', 'C', null, 'A', null, 'A']) {
+      rerender(<NetworkGraph {...handlers} selectedPeerId={selection} />)
+      expect(['A', 'B', 'C'].map(line)).toEqual(before)
+      expect([...container.querySelectorAll('.network-graph-branch > .network-graph-node')]).toEqual(nodes)
+      expect(container.querySelectorAll('.network-graph-branches .network-graph-selected-facts')).toHaveLength(0)
+      expect(container.querySelectorAll('.network-graph-node[aria-pressed="true"]')).toHaveLength(selection ? 1 : 0)
+      expect(container.querySelectorAll('.network-graph-edge[aria-pressed="true"]')).toHaveLength(selection ? 1 : 0)
+      const summary = container.querySelector('.network-graph-selection')!
+      if (selection) expect(summary.querySelector('strong')).toHaveTextContent(selection)
+      else expect(summary).toHaveTextContent('Select a device for service and transfer details.')
+    }
   })
 
   it('has an honest actionable empty state and aligned Japanese labels', () => {
@@ -295,7 +299,7 @@ it('uses route markers only for reported paths and documents dashed uncertainty 
   expect(container.querySelectorAll('.network-graph-line.is-unconfirmed')).toHaveLength(2)
   expect(container.querySelector('.network-graph-edge[data-path="unknown"] .network-graph-route-glyph')).not.toBeInTheDocument()
   expect(container.querySelectorAll('.network-graph-edge[data-path="relay"] .network-graph-route-glyph rect')).toHaveLength(1)
-  expect(screen.getByText('Dashed: path unknown or device offline. Solid: reported path.')).toBeInTheDocument()
+  expect(screen.getByText('Solid: reported path to an online device. Dashed: other known relationships.')).toBeInTheDocument()
   expect(container.querySelectorAll('[data-direction], animate, animateMotion')).toHaveLength(0)
 })
 it('keeps waiting offers visible while omitting empty transfer and listener summaries', () => {
@@ -394,8 +398,73 @@ it.each(['en', 'ja'] as const)('shows factual lane counts and richer selected se
   expect(lane.querySelector('.network-graph-lane-meta')).toHaveTextContent(locale === 'ja' ? 'Tailnet接続待受 1 · 共有許可 1' : 'TailnetListeners 1 · Sharing rules 1')
   expect(lane.querySelector('.network-graph-selected-facts')).not.toBeInTheDocument()
   rerender(<NetworkGraph {...props({ locale, state: data, selectedPeerId: 'Studio' })} />)
-  const details = lane.querySelector('.network-graph-selected-facts')!
+  const details = container.querySelector('.network-graph-selection .network-graph-selected-facts')!
   expect(details).toHaveTextContent('Web preview (TCP) · Local service (UDP)')
   expect(details).not.toHaveTextContent(/Saved rule|Other scope/)
   expect(container.querySelectorAll('[data-direction], animate, animateMotion')).toHaveLength(0)
+})
+
+it.each(['en', 'ja'] as const)('separates Tailcat response uncertainty, bridge observation, and stored permission in %s', locale => {
+  const data = state({ self: { name: 'Local device', status: 'running', networks: ['lan'] }, settings: { network: 'lan' }, peers: [
+    peer('Unknown', { networks: ['lan'], online: false, bridge: false, trusted: true }),
+    peer('Paused', { networks: ['lan'], online: false, bridge: false, autosave: { enabled: false, paused: true } }),
+    peer('Confirmed', { networks: ['lan'], online: true, bridge: true, trusted: false, discovery: { state: 'confirmed', services: 0 } }),
+  ] })
+  const { container } = render(<NetworkGraph {...props({ locale, state: data, selectedPeerId: 'Paused' })} />)
+  const unknown = container.querySelector('.network-graph-branch[data-peer-id="Unknown"] .network-graph-node')!
+  const paused = container.querySelector('.network-graph-branch[data-peer-id="Paused"] .network-graph-node')!
+  expect(unknown).toHaveTextContent(locale === 'ja' ? '応答未確認' : 'Response not confirmed')
+  expect(unknown).toHaveTextContent(locale === 'ja' ? 'sobalink サービス未確認' : 'sobalink service not confirmed')
+  expect(unknown).toHaveAccessibleName(locale === 'ja' ? /この端末で許可/ : /Allowed here/)
+  expect(unknown).not.toHaveClass('is-ready')
+  expect(paused).toHaveAccessibleName(locale === 'ja' ? /アプリ通信を一時停止中/ : /App paused/)
+  expect(paused).toHaveAccessibleName(locale === 'ja' ? /sobalink サービス未確認/ : /sobalink service not confirmed/)
+  expect(container.querySelector('.network-graph-selection')).toHaveTextContent(locale === 'ja' ? 'アプリ通信を一時停止中' : 'App paused')
+  expect(container.querySelector('.network-graph-branch[data-peer-id="Confirmed"] .network-graph-node')).toHaveTextContent(locale === 'ja' ? 'sobalink 確認済み' : 'sobalink confirmed')
+  expect(container.querySelector('.network-graph-canvas')).not.toHaveTextContent(locale === 'ja' ? 'オフライン' : 'Offline')
+})
+
+it.each(['en', 'ja'] as const)('describes relay configuration outside the graph without claiming an observed route in %s', locale => {
+  const { container } = render(<NetworkGraph {...props({ locale, state: state({
+    settings: { network: 'lan' }, self: { name: 'Local device', status: 'running', networks: ['lan'] },
+    peers: [peer('Peer', { networks: ['lan'], path: 'unknown' })],
+    lan: { configured: true, pairingReady: true, relayReady: true, path: 'relay', relay: { kind: 'relay', address: 'relay.example.invalid:443' } },
+  }) })} />)
+  const configuration = container.querySelector('.network-graph-configuration')!
+  expect(configuration).toHaveTextContent(locale === 'ja' ? '設定済みの中継先' : 'Configured relay')
+  expect(configuration).toHaveTextContent(locale === 'ja' ? '実際の経路は報告されていません' : 'the route is not reported')
+  expect(configuration).toHaveTextContent('relay.example.invalid:443')
+  expect(container.querySelector('.network-graph-diagram')).not.toContainElement(configuration as HTMLElement)
+  expect(container.querySelectorAll('.network-graph-branches .network-graph-route-glyph')).toHaveLength(0)
+  expect(container.querySelectorAll('.network-graph-line.is-unconfirmed')).toHaveLength(1)
+  expect(container.querySelector('.network-graph-network-label')).toHaveTextContent('Tailcat')
+  expect(container.querySelector('.network-graph-self')).not.toHaveTextContent('Tailnet')
+})
+
+it('uses the selected backend without suggesting simultaneous networks or reusing inactive relay settings', () => {
+  const { container } = render(<NetworkGraph {...props({ state: state({
+    settings: { network: 'tailnet' }, self: { name: 'Local device', status: 'running', networks: ['lan', 'tailnet'] },
+    lan: { configured: true, pairingReady: true, path: 'unknown', relay: { kind: 'relay', address: 'relay.example.invalid:443' } },
+  }) })} />)
+  expect(container.querySelector('.network-graph-network-label')).toHaveTextContent('Tailscale · Tailnet')
+  expect(container.querySelector('.network-graph-self')).not.toHaveTextContent(/Tailcat|LAN/)
+  expect(container.querySelector('.network-graph-configuration')).not.toBeInTheDocument()
+})
+
+it('keeps filtered peers, counts, selection, and reset action consistent in diagram and list views', async () => {
+  const data = state({ peers: [peer('A'), peer('B', { bridge: false }), peer('C', { online: false, bridge: false })] })
+  const handlers = props({ state: data, visiblePeers: [data.peers[1]], selectedPeerId: 'A', onClearFilters: vi.fn() })
+  const { container, rerender } = render(<NetworkGraph {...handlers} />)
+  expect(container.querySelectorAll('.network-graph-branch')).toHaveLength(1)
+  expect([...container.querySelectorAll('.network-graph-legend strong')].map(node => node.textContent)).toEqual(['1', '1', '0'])
+  expect(container.querySelector('.network-graph-selection')).not.toHaveTextContent('Selected device')
+  expect(container.querySelectorAll('[aria-pressed="true"]')).toHaveLength(0)
+  rerender(<NetworkGraph {...handlers} view="list" />)
+  expect(container.querySelectorAll('.network-graph-list-peer')).toHaveLength(1)
+  expect(screen.getByRole('button', { name: /^Open device: B;/ })).toBeInTheDocument()
+  rerender(<NetworkGraph {...handlers} visiblePeers={[]} />)
+  expect(screen.getByRole('heading', { name: 'No matching devices' })).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'No known devices yet' })).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+  expect(handlers.onClearFilters).toHaveBeenCalledOnce()
 })

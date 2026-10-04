@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.mjs'
+import { test, expect, openDetailsSection } from './fixtures.mjs'
 
 // Only the existing fictional in-process peers are selected. These cases never
 // enroll an account, start a proxy, or claim application compatibility.
@@ -14,6 +14,10 @@ for (const locale of ['en', 'ja']) {
     await dialog.getByLabel(ja ? '接続先の端末 1' : 'Target device 1', { exact: true }).selectOption('fixture-studio')
     await dialog.getByLabel(ja ? 'ローカルのプロキシポート' : 'Local proxy port', { exact: true }).fill(String(app.localServicePort))
     await dialog.getByRole('button', { name: ja ? '正確な範囲を確認' : 'Review exact scope', exact: true }).click()
+    const reviewHeading = dialog.getByRole('heading', { name: ja ? 'プロキシの範囲を確認' : 'Review proxy scope', exact: true })
+    await expect(reviewHeading).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(dialog.getByRole('button', { name: ja ? '範囲を編集' : 'Edit scope', exact: true })).toBeFocused()
     await expect(dialog.locator('.proxy-review')).toContainText(`127.0.0.1:${app.localServicePort}`)
     await expect(dialog.locator('.proxy-review')).toContainText('fixture-studio')
     await expect(dialog.locator('.proxy-review')).toContainText('TCP 443')
@@ -23,13 +27,16 @@ for (const locale of ['en', 'ja']) {
     await page.setViewportSize({ width: 390, height: 844 })
     await app.capture(`proxy-review-${locale}-390`)
     await dialog.getByRole('button', { name: ja ? '認証情報の入力へ' : 'Continue to authentication', exact: true }).click()
+    await expect(dialog.getByLabel(ja ? '実行中のユーザー名' : 'Runtime username', { exact: true })).toBeFocused()
     // Fictional values only. The capture gate rejects this entire form, even
     // when inputs are empty, and traces/automatic error snapshots stay off.
     await dialog.getByLabel(ja ? '実行中のユーザー名' : 'Runtime username', { exact: true }).fill('fictional-proxy-user')
     await dialog.getByLabel(ja ? '実行中のパスワード' : 'Runtime password', { exact: true }).fill('fictional-proxy-password')
     await dialog.getByRole('button', { name: ja ? '範囲を編集' : 'Edit scope', exact: true }).click()
+    await expect(dialog.getByLabel(ja ? 'プロキシ名' : 'Proxy name', { exact: true })).toBeFocused()
     await expect(dialog.locator('.proxy-credentials')).toHaveCount(0)
     await dialog.getByRole('button', { name: ja ? '正確な範囲を確認' : 'Review exact scope', exact: true }).click()
+    await expect(reviewHeading).toBeFocused()
     await dialog.getByRole('button', { name: ja ? '認証情報の入力へ' : 'Continue to authentication', exact: true }).click()
     await expect(dialog.locator('[data-private=proxy-credential]')).toHaveCount(2)
     const cleared = await dialog.locator('[data-private=proxy-credential]').evaluateAll(fields => fields.every(field => field.value === ''))
@@ -51,6 +58,7 @@ test('explicit TCP check records transport failure and preserves runtime history
   await app.expectState(state => state.services.some(service => service.name === 'fixture-diagnostic-service' && service.status === 'active'))
   await app.closeDetails()
   const row = page.locator('.device-overview .service-row').filter({ has: page.locator('strong', { hasText: /^fixture-diagnostic-service$/ }) })
+  await openDetailsSection(row.locator('.service-tools'))
   await row.locator('.service-diagnostics summary').click()
   expect(await app.count('diagnostics.run')).toBe(0)
   await row.getByRole('button', { name: 'Check TCP connection', exact: true }).click()

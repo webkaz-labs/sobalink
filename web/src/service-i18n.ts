@@ -1,5 +1,6 @@
 import type { Locale } from './api'
 const en = {
+  connectionKind: 'Connection', shareKind: 'Share', connectionTarget: 'Connection target', sharingAccess: 'Sharing access', serviceSettings: 'Service settings',
   serviceSubmitting: 'The reviewed action was submitted. Closing this dialog does not undo it; check the service state for its result.',
   advertisedUnavailable: 'The current advertisement is unavailable. Starting will recheck this exact grant; if it is absent or changed, review the current scope again.',
   discovery_network_unavailable: 'Discovery could not use the current network. Reconnect that network and refresh the advertised review before starting.',
@@ -36,6 +37,7 @@ const en = {
   nameSuggested: 'A unique name is suggested. You can change it.', exclusions: 'Excluded ports', purpose: 'Purpose', discovery: 'Advertise this share',
 } as const
 const ja: Record<keyof typeof en, string> = {
+  connectionKind: '接続', shareKind: '共有', connectionTarget: '接続先', sharingAccess: '共有する相手', serviceSettings: 'サービス設定',
   serviceSubmitting: '確認した操作を送信しました。画面を閉じても操作は取り消されません。サービスの状態で結果を確認してください。',
   advertisedUnavailable: '現在の公開情報を取得できません。開始時にこの許可を再確認します。許可が存在しないか変わっている場合は、現在の範囲をもう一度確認してください。',
   discovery_network_unavailable: '現在のネットワークで公開情報を確認できませんでした。ネットワークへ再接続し、公開情報を更新して確認してから開始してください。',
