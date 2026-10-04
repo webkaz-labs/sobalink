@@ -248,7 +248,9 @@ for (const profile of profiles) {
         const enabled = await readable(send, { touch })
         expect([disabled.color, disabled.background, disabled.borderStyle]).not.toEqual([enabled.color, enabled.background, enabled.borderStyle])
         await keyboardFocus(page, send)
-        expect((await appearance(page.locator('.composer'))).outlineWidth, 'Toolbar focus must not add a second editor contour').toBe(0)
+        // An unpainted outline can retain a nonzero computed width. Its style
+        // must be none once the toolbar, rather than the textarea, has focus.
+        expect((await appearance(page.locator('.composer'))).outlineStyle, 'Toolbar focus must not add a second editor contour').toBe('none')
         await composer.fill('')
         await app.openPeer('services')
         await page.setViewportSize(profile.viewport)
