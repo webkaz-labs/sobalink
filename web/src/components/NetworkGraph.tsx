@@ -1,5 +1,6 @@
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { canExchange, type Locale, type Peer, type State, type Transfer } from '../api'
+import { type Locale, type Peer, type State, type Transfer } from '../api'
+import { peerCommunicationAllowed, peerPermissionKey, peerPresenceKey } from '../peer-status'
 import './NetworkGraph.css'
 
 export interface NetworkGraphProps {
@@ -10,48 +11,64 @@ export interface NetworkGraphProps {
   view: 'diagram' | 'list'
   onViewChange?: (view: 'diagram' | 'list') => void
   selectedPeerId?: string | null
+  visiblePeers?: Peer[]
+  onClearFilters?: () => void
 }
 
 const en = {
   heading: 'Network graph', intro: 'Select a device or connection to see its details.',
   diagram: 'Known connections from this device', list: 'Device list', showList: 'Show device list', showDiagram: 'Show network diagram',
   onlineCompact: 'Online', offlineCompact: 'Offline', self: 'This device', known: 'Known device', online: 'Network online', offline: 'Network offline', ready: 'Allowed here',
-  appUnknown: 'sobalink service not confirmed', identityNeeded: 'Identity unverified', permissionNeeded: 'Permission needed', paused: 'App paused', appOffline: 'App offline',
+  appUnknown: 'sobalink service not confirmed', identityNeeded: 'Identity unverified', permissionNeeded: 'Permission needed', paused: 'App paused', localPermission: 'Files & messages',
+  bridgeConfirmed: 'sobalink confirmed', presenceUnknown: 'Response not confirmed', presenceUnknownCompact: 'Response not confirmed',
+  network: 'Selected network', tailnet: 'Tailscale · Tailnet', lan: 'Tailcat', configuredRelay: 'Configured relay', configuredHost: 'Configured host', configurationOnly: 'Configuration only; the route is not reported.',
+  selected: 'Selected device', selectHint: 'Select a device for service and transfer details.', knownCount: 'Known devices', confirmedCount: 'sobalink confirmed',
+  filteredEmpty: 'No matching devices', filteredEmptyHint: 'Try a different search or network filter.', clearFilters: 'Clear filters',
   transferring: 'Transferring', direct: 'Direct path', relay: 'Relay path', unknown: 'Path unknown',
   listenersCompact: 'Listeners', sharesCompact: 'Sharing rules', activeServices: 'Active services',
   connections: 'Ready connection services', shares: 'Active sharing rules', noListeners: 'No active connections or sharing rules',
   sending: 'Sending', receiving: 'Receiving', progressUnknown: 'progress unknown', transfer: 'File transfer',
   noTransfer: 'No file transfer in progress', saving: 'Saving files', waiting: 'Transfers waiting',
   traffic: 'Network traffic is not measured. Arrows show file-transfer direction. Ready connections have listeners. Sharing rules grant scoped access. Neither confirms application success or traffic.',
-  explain: 'About these states', explanation: 'Known devices may be offline. Network online is reported by the network or an authenticated sobalink reply; it does not by itself confirm the sobalink service. Allowed here means a confirmed sobalink service, verified identity, local communication permission, and no pause. The receiving device must also allow communication; its permission is not reported here. Lines show this device’s known relationships, not connections between other devices. Paths are shown only when reported.',
+  explain: 'About these states', explanation: 'Network online is reported by the network or an authenticated sobalink reply; it does not by itself confirm the sobalink service. Tailcat does not report a separate offline state. An unconfirmed service may still be installed. Allowed here is this device’s stored permission for files and messages. Exchange also needs a confirmed sobalink service, verified network identity, and no pause. The receiving device must also allow communication; its permission is not reported here. Manual service connections have separate requirements. Lines show this device’s known relationships, not traffic or connections between other devices. Paths are shown only when reported; direct does not imply LAN and relay does not imply Internet.',
   empty: 'No known devices yet', emptyHint: 'Open this device to set up a network or pair a device.',
   open: 'Open device', openConnection: 'Open connection', status: 'Status', networkReady: 'Network ready', login: 'Sign-in required', starting: 'Connecting', disabled: 'Network not connected',
-  networkUnknown: 'Network unknown', networkUnavailable: 'Network unavailable', routeLegend: 'Dashed: path unknown or device offline. Solid: reported path.',
+  networkUnknown: 'Network unknown', networkUnavailable: 'Network unavailable', routeLegend: 'Solid: reported path to an online device. Dashed: other known relationships.',
 } as const
 type Labels = { [Key in keyof typeof en]: string }
 const ja: Labels = {
   heading: 'ネットワーク図', intro: 'デバイスや接続を選ぶと詳細を確認できます。',
   diagram: 'この端末から確認できる接続', list: 'デバイス一覧', showList: 'デバイス一覧を表示', showDiagram: 'ネットワーク図を表示',
   onlineCompact: 'オンライン', offlineCompact: 'オフライン', self: 'この端末', known: '検出・登録済み', online: 'ネットワーク上でオンライン', offline: 'ネットワーク上でオフライン', ready: 'この端末で許可',
-  appUnknown: 'sobalink サービス未確認', identityNeeded: '識別情報が未確認', permissionNeeded: '通信の許可が必要', paused: 'アプリ通信を一時停止中', appOffline: 'アプリはオフライン',
+  appUnknown: 'sobalink サービス未確認', identityNeeded: '識別情報が未確認', permissionNeeded: '通信の許可が必要', paused: 'アプリ通信を一時停止中', localPermission: 'ファイルとメッセージ',
+  bridgeConfirmed: 'sobalink 確認済み', presenceUnknown: '応答未確認', presenceUnknownCompact: '応答未確認',
+  network: '選択中のネットワーク', tailnet: 'Tailscale · Tailnet', lan: 'Tailcat', configuredRelay: '設定済みの中継先', configuredHost: '設定済みのホスト', configurationOnly: '設定情報です。実際の経路は報告されていません。',
+  selected: '選択中のデバイス', selectHint: 'デバイスを選ぶとサービスや転送の詳細を確認できます。', knownCount: '登録・検出済み', confirmedCount: 'sobalink 確認済み',
+  filteredEmpty: '一致するデバイスがありません', filteredEmptyHint: '検索語やネットワークの絞り込みを変更してください。', clearFilters: '絞り込みを解除',
   transferring: 'ファイル転送中', direct: '直接接続', relay: '中継接続', unknown: '経路不明',
   listenersCompact: '接続待受', sharesCompact: '共有許可', activeServices: '有効なサービス',
   connections: '接続サービスの待受準備完了', shares: '共有の許可', noListeners: '有効な接続・共有許可なし',
   sending: '送信', receiving: '受信', progressUnknown: '進捗不明', transfer: 'ファイル転送',
   noTransfer: '進行中のファイル転送なし', saving: 'ファイルを保存中', waiting: '転送待ち',
   traffic: '通信量は計測していません。矢印はファイル転送の方向を示します。接続の待受準備と共有の許可は、アプリの動作確認や通信中を意味しません。',
-  explain: '状態の見方', explanation: '検出・登録済みの端末がオンラインとは限りません。ネットワーク上でオンラインという表示は、ネットワーク側の状態通知または認証済みの sobalink 応答に基づきます。オンライン表示だけでは sobalink サービスの応答を確認できません。「この端末で許可」は sobalink サービスと識別情報の確認、この端末での通信許可、一時停止されていないことを表します。受信側でも通信の許可が必要です。相手側の許可状態はここでは確認できません。線はこの端末との既知の関係を示し、他の端末どうしの接続は示しません。経路は報告された場合のみ表示します。',
+  explain: '状態の見方', explanation: 'ネットワーク上でオンラインという表示は、ネットワーク側の状態通知または認証済みの sobalink 応答に基づきます。オンライン表示だけでは sobalink サービスを確認できません。Tailcat は独立したオフライン状態を報告しません。サービス未確認でも未導入とは限りません。「この端末で許可」はファイルとメッセージに対する、この端末に保存された許可です。通信には sobalink サービスとネットワークの識別情報の確認、一時停止されていないことも必要です。受信側の許可も必要ですが、相手側の許可はここでは確認できません。手動のサービス接続は別の条件です。線はこの端末との既知の関係を示し、通信中や他の端末どうしの接続を示しません。経路は報告された場合のみ表示します。直接接続は LAN、中継接続はインターネット経由とは限りません。',
   empty: 'まだデバイスがありません', emptyHint: 'この端末を開いて、ネットワークの設定やデバイスのペアリングを行えます。',
   open: 'デバイスを開く', openConnection: '接続の詳細を開く', status: '状態', networkReady: 'ネットワーク利用準備完了', login: 'ログインが必要', starting: '接続中', disabled: 'ネットワーク未接続',
-  networkUnknown: 'ネットワーク不明', networkUnavailable: 'ネットワークを利用できません', routeLegend: '破線：経路不明またはオフライン。実線：報告された経路。',
+  networkUnknown: 'ネットワーク不明', networkUnavailable: 'ネットワークを利用できません', routeLegend: '実線：オンライン端末への報告済み経路。破線：その他の既知の関係。',
 }
 
 function appLabel(peer: Peer, labels: Labels) {
-  if (!peer.bridge) return labels.appUnknown
-  if (!peer.verified) return labels.identityNeeded
-  if (!peer.trusted) return labels.permissionNeeded
-  if (peer.autosave?.paused) return labels.paused
-  return canExchange(peer) ? labels.ready : labels.appOffline
+  const permission = peerPermissionKey(peer)
+  return permission === 'paused' ? labels.paused : permission === 'trusted' ? labels.ready : labels.permissionNeeded
+}
+
+function presenceLabel(peer: Peer, labels: Labels, compact = false) {
+  const presence = peerPresenceKey(peer)
+  if (presence === 'online') return compact ? labels.onlineCompact : labels.online
+  // Only Tailnet supplies a network-level online bit. Tailcat's false value
+  // means no fresh authenticated discovery, not evidence of an offline host.
+  if (presence === 'responseUnconfirmed') return compact ? labels.presenceUnknownCompact : labels.presenceUnknown
+  return compact ? labels.offlineCompact : labels.offline
 }
 
 function selfStatus(status: string, labels: Labels) {
@@ -92,10 +109,10 @@ function peerFacts(peer: Peer, state: State, locale: Locale, labels: Labels) {
   const listeners = [connections ? `${labels.connections}: ${connections}` : '', shares ? `${labels.shares}: ${shares}` : ''].filter(Boolean)
   const path = labels[peer.path === 'direct' ? 'direct' : peer.path === 'relay' ? 'relay' : 'unknown']
   const app = appLabel(peer, labels)
-  const networks = peer.networks.map(network => network === 'lan' ? 'LAN' : 'Tailnet').join(' · ') || labels.networkUnknown
+  const networks = peer.networks.map(network => network === 'lan' ? labels.lan : 'Tailnet').join(' · ') || labels.networkUnknown
   return { incoming: incoming.length > 0, outgoing: outgoing.length > 0, active: active.length > 0, hasTransferWork: active.length > 0 || pending > 0 || saving > 0, transferLabel, listeners, path, app,
     networks, serviceSummary: `${labels.listenersCompact} ${connections} · ${labels.sharesCompact} ${shares}`,
-    serviceNames: [...activeConnections, ...activeShares].map(item => `${item.name} (${item.network.toUpperCase()})`), description: `${labels.known}; ${peer.online ? labels.online : labels.offline}; ${app}; ${networks}; ${path}; ${listeners.join('; ') || labels.noListeners}; ${transferLabel}` }
+    serviceNames: [...activeConnections, ...activeShares].map(item => `${item.name} (${item.network.toUpperCase()})`), description: `${labels.known}; ${presenceLabel(peer, labels)}; ${app}; ${networks}; ${path}; ${listeners.join('; ') || labels.noListeners}; ${transferLabel}; ${peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}${peer.verified ? '' : `; ${labels.identityNeeded}`}` }
 }
 
 type Point = { x: number; y: number }
@@ -188,7 +205,7 @@ function DeviceGlyph({ local = false }: { local?: boolean }) {
   </svg></span>
 }
 
-export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, onViewChange, selectedPeerId }: NetworkGraphProps) {
+export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, onViewChange, selectedPeerId, visiblePeers, onClearFilters }: NetworkGraphProps) {
   const labels = locale === 'ja' ? ja : en
   const id = useId()
   const [hoveredPeerId, setHoveredPeerId] = useState<string | null>(null)
@@ -196,13 +213,15 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
   const emphasisRank = (peerId: string) => hoveredPeerId === peerId || focusedPeerId === peerId ? 2 : selectedPeerId === peerId ? 1 : 0
   const emphasized = (peerId: string) => emphasisRank(peerId) > 0
   // Identity ordering keeps positions stable when polling changes names, statuses, or API order.
-  const peers = useMemo(() => [...state.peers].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), [state.peers])
+  const peers = useMemo(() => [...(visiblePeers ?? state.peers)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), [state.peers, visiblePeers])
   const geometry = useConnectors(JSON.stringify(peers.map(peer => peer.id)), view)
   const facts = peers.map(peer => ({ peer, facts: peerFacts(peer, state, locale, labels) }))
   const selfName = state.self.name || labels.self
   const localStatus = selfStatus(state.self.status, labels)
-  const selectedNetworks = state.self.networks || (state.settings?.network && state.settings.network !== 'none' ? [state.settings.network] : [])
-  const selfNetworks = selectedNetworks.map(network => network === 'lan' ? 'LAN' : 'Tailnet').join(' · ') || labels.networkUnknown
+  const selectedNetwork = state.settings?.network ?? (state.self.networks?.length === 1 ? state.self.networks[0] : undefined)
+  const selfNetworks = selectedNetwork === 'lan' ? labels.lan : selectedNetwork === 'tailnet' ? labels.tailnet : labels.networkUnknown
+  const relayConfiguration = selectedNetwork === 'lan' && state.lan?.configured ? state.lan.relay : undefined
+  const selected = facts.find(item => item.peer.id === selectedPeerId)
   const selfButton = <button ref={geometry.self} type="button" className="network-graph-node network-graph-self" onClick={onSelectSelf} aria-label={`${labels.open}: ${selfName}; ${labels.self}; ${localStatus}`}>
     <span className="network-graph-device-heading"><DeviceGlyph local /><span><span className="network-graph-node-kind">{labels.self}</span><strong title={selfName}>{selfName}</strong></span></span>
     <span className="network-graph-local-status">{localStatus}</span><span className="network-graph-node-meta">{selfNetworks}</span>
@@ -213,11 +232,14 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
       {onViewChange && <button className="button button-secondary network-graph-view-toggle" type="button" onClick={() => onViewChange(view === 'diagram' ? 'list' : 'diagram')} aria-controls={`${id}-content`}>{view === 'diagram' ? labels.showList : labels.showDiagram}</button>}
     </header>
     <ul className="network-graph-legend" aria-label={labels.explain}>
-      <li><span className="network-graph-key known" aria-hidden="true" />{labels.known}</li>
-      <li><span className="network-graph-key online" aria-hidden="true" />{labels.online}</li>
-      <li><span className="network-graph-key ready" aria-hidden="true" />{labels.ready}</li>
-      <li><span className="network-graph-key transferring" aria-hidden="true">→</span>{labels.transferring}</li>
+      <li><span className="network-graph-key known" aria-hidden="true" />{labels.knownCount}<strong>{peers.length}</strong></li>
+      <li><span className="network-graph-key online" aria-hidden="true" />{labels.onlineCompact}<strong>{peers.filter(peer => peer.online).length}</strong></li>
+      <li><span className="network-graph-key confirmed" aria-hidden="true" />{labels.confirmedCount}<strong>{peers.filter(peer => peer.bridge).length}</strong></li>
     </ul>
+    <div className="network-graph-context">
+      <span className="network-graph-network-label"><span>{labels.network}</span><strong>{selfNetworks}</strong></span>
+      {relayConfiguration && <details className="network-graph-configuration"><summary>{relayConfiguration.kind === 'relay' ? labels.configuredRelay : labels.configuredHost}</summary><p>{relayConfiguration.address}</p><p>{labels.configurationOnly}</p></details>}
+    </div>
     <div id={`${id}-content`}>
       {view === 'diagram' ? <div className="network-graph-diagram" role="group" aria-label={labels.diagram} aria-describedby={`${id}-traffic`}>
         <div className="network-graph-canvas" ref={geometry.canvas}>
@@ -243,39 +265,38 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
               onFocusCapture={() => setFocusedPeerId(peer.id)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusedPeerId(null) }}>
               <div className="network-graph-route-group">
                 <button ref={element => { if (element) geometry.edges.current.set(peer.id, element); else geometry.edges.current.delete(peer.id) }} type="button" data-path={peer.path}
-                  className={`network-graph-edge ${facts.active ? 'has-transfer' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.openConnection}: ${selfName} — ${peer.name}; ${facts.description}`} onClick={() => onSelectPeer(peer.id)}>
+                  className={`network-graph-edge ${facts.active ? 'has-transfer' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-pressed={selectedPeerId === peer.id} aria-label={`${labels.openConnection}: ${selfName} — ${peer.name}; ${facts.description}`} onClick={() => onSelectPeer(peer.id)}>
                   <span className="network-graph-route"><RouteGlyph path={peer.path} /><span className="network-graph-path">{facts.path}</span></span>
                 </button>
                 <span className="network-graph-wire-slot" aria-hidden="true" ref={element => { if (element) geometry.lanes.current.set(peer.id, element); else geometry.lanes.current.delete(peer.id) }} />
-                <span className="network-graph-lane-meta"><span>{facts.networks}</span><span>{facts.serviceSummary}</span></span>
+                <span className="network-graph-lane-meta"><span>{facts.networks}</span>{facts.listeners.length > 0 && <span className="network-graph-lane-counts">{facts.serviceSummary}</span>}</span>
                 {facts.hasTransferWork && <span className={`network-graph-transfer ${facts.active ? 'has-transfer' : ''}`}>{facts.transferLabel}</span>}
               </div>
-              <button ref={element => { if (element) geometry.nodes.current.set(peer.id, element); else geometry.nodes.current.delete(peer.id) }} type="button" className={`network-graph-node ${canExchange(peer) ? 'is-ready' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.open}: ${peer.name}; ${facts.description}`} aria-pressed={selectedPeerId === peer.id} onClick={() => onSelectPeer(peer.id)}>
+              <button ref={element => { if (element) geometry.nodes.current.set(peer.id, element); else geometry.nodes.current.delete(peer.id) }} type="button" className={`network-graph-node ${peerCommunicationAllowed(peer) ? 'is-ready' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.open}: ${peer.name}; ${facts.description}`} aria-pressed={selectedPeerId === peer.id} onClick={() => onSelectPeer(peer.id)}>
                 <span className="network-graph-device-heading"><DeviceGlyph /><span><span className="network-graph-node-kind">{labels.known}</span><strong title={peer.name}>{peer.name}</strong></span></span>
-                <span className="network-graph-node-meta"><span className="network-graph-online-status"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" /><span>{peer.online ? labels.onlineCompact : labels.offlineCompact}</span></span></span>
-                <span className={`network-graph-app ${canExchange(peer) ? 'is-ready' : ''}`}>{facts.app}</span>
+                <span className="network-graph-node-meta"><span className="network-graph-online-status"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" /><span>{presenceLabel(peer, labels, true)}</span></span></span>
+                <span className={`network-graph-app ${peer.bridge ? 'is-confirmed' : ''}`}>{peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}</span>
               </button>
-              {selectedPeerId === peer.id && <div className="network-graph-selected-facts">
-                <span>{facts.listeners.join(' · ') || labels.noListeners}</span>
-                {facts.serviceNames.length > 0 && <span><span className="network-graph-facts-label">{labels.activeServices}: </span>{facts.serviceNames.join(' · ')}</span>}
-                {!facts.hasTransferWork && <span>{facts.transferLabel}</span>}
-              </div>}
             </div>)}
           </div>
+        </div>
+        <div className="network-graph-selection" aria-live="polite" aria-atomic="true">
+          {selected ? <><span className="network-graph-selection-title"><span>{labels.selected}</span><strong>{selected.peer.name}</strong><span>{labels.localPermission}: {selected.facts.app}</span></span><div className="network-graph-selected-facts"><span>{selected.facts.listeners.join(' · ') || labels.noListeners}</span>{selected.facts.serviceNames.length > 0 && <span><span className="network-graph-facts-label">{labels.activeServices}: </span>{selected.facts.serviceNames.join(' · ')}</span>}<span>{selected.facts.transferLabel}</span></div></> : <p>{labels.selectHint}</p>}
         </div>
       </div> : <div className="network-graph-list" role="group" aria-label={labels.list}>
         {selfButton}
         <ul>{facts.map(({ peer, facts }) => <li key={peer.id}>
           <button type="button" className={`network-graph-list-peer ${selectedPeerId === peer.id ? 'is-selected' : ''}`} onClick={() => onSelectPeer(peer.id)} aria-pressed={selectedPeerId === peer.id} aria-label={`${labels.open}: ${peer.name}; ${facts.description}`}>
             <span className="network-graph-list-title"><strong>{peer.name}</strong><span className="network-graph-node-kind">{labels.known}</span></span>
-            <span className="network-graph-list-state"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" />{peer.online ? labels.online : labels.offline}<span>·</span><span className={`network-graph-app ${canExchange(peer) ? 'is-ready' : ''}`}>{facts.app}</span><span>·</span>{facts.path}<span className="network-graph-networks">{facts.networks}</span></span>
+            <span className="network-graph-list-state"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" />{presenceLabel(peer, labels)}<span>·</span><span className={`network-graph-app ${peer.bridge ? 'is-confirmed' : ''}`}>{peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}</span><span>·</span>{facts.path}<span className="network-graph-networks">{facts.networks}</span></span>
+            <span className="network-graph-list-permission">{labels.localPermission}: {facts.app}</span>
             <span className="network-graph-listeners">{facts.listeners.join(' · ') || labels.noListeners}</span>
             <span className={`network-graph-transfer ${facts.active ? 'has-transfer' : ''}`}>{facts.transferLabel}</span>
           </button>
         </li>)}</ul>
       </div>}
     </div>
-    {!peers.length && <div className="network-graph-empty"><h3>{labels.empty}</h3><p>{labels.emptyHint}</p></div>}
+    {!peers.length && <div className="network-graph-empty"><h3>{state.peers.length ? labels.filteredEmpty : labels.empty}</h3><p>{state.peers.length ? labels.filteredEmptyHint : labels.emptyHint}</p>{state.peers.length > 0 && onClearFilters && <button type="button" className="button button-secondary" onClick={onClearFilters}>{labels.clearFilters}</button>}</div>}
     <footer className="network-graph-footer"><p className="network-graph-route-legend"><span className="network-graph-line-sample" aria-hidden="true" />{labels.routeLegend}</p><p id={`${id}-traffic`}>{labels.traffic}</p><details><summary>{labels.explain}</summary><p>{labels.explanation}</p></details></footer>
   </section>
 }

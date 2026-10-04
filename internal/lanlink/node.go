@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tailscale/tailcat"
+	"github.com/webkaz-labs/sobalink/internal/config"
 	"tailscale.com/logtail"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -26,7 +27,8 @@ type NodeConfig struct {
 	Trust    *Book
 	Remotes  []RemotePeer
 	// Persist atomically saves both snapshots to the protected state file. It must
-	// not call back into Node or Book, and must return only after durable commit.
+	// not call back into Node or Book. Nil confirms durable commit;
+	// config.ErrAtomicCommitted means replacement with uncertain durability.
 	Persist       func(Snapshot, []RemotePeer) error
 	EmbeddedRelay bool
 }
@@ -46,14 +48,16 @@ type Node struct {
 	listenMu   sync.Mutex
 	admissions map[string]time.Time
 	bootstrap  map[string]relayBootstrap
-	revoked    map[string]uint64
 	attempts   map[string]map[*pairAttempt]struct{}
 	cfg        NodeConfig
 	server     *tailcat.Server
 	clients    map[string]*remoteClient
 	closed     bool
-	pairing    *PairingServer
-	fallback   func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)
+	// A published pairing with uncertain durability leaves runtime behind disk.
+	// Only reopening from saved state may clear this bounded persistence latch.
+	pairingRecovery bool
+	pairing         *PairingServer
+	fallback        func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)
 }
 
 // NewNode validates configuration without opening any listener, generating keys
@@ -75,7 +79,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	if e := validateEnvironment(os.Environ()); e != nil {
 		return nil, e
 	}
-	n := &Node{cfg: cfg, clients: make(map[string]*remoteClient), admissions: make(map[string]time.Time), bootstrap: make(map[string]relayBootstrap), revoked: make(map[string]uint64), attempts: make(map[string]map[*pairAttempt]struct{})}
+	n := &Node{cfg: cfg, clients: make(map[string]*remoteClient), admissions: make(map[string]time.Time), bootstrap: make(map[string]relayBootstrap), attempts: make(map[string]map[*pairAttempt]struct{})}
 	usedKeys := map[string]bool{cfg.Identity.PublicKey(): true}
 	for _, r := range cfg.Remotes {
 		if _, exists := n.clients[r.Peer.Key]; exists {
@@ -276,10 +280,13 @@ func (n *Node) Revoke(peer string) error {
 	}()
 	n.cfg.Trust.Revoke(peer)
 	n.mu.Lock()
-	n.revoked[peer]++
+	recovery, closed := n.pairingRecovery, n.closed
 	var cancellations []context.CancelFunc
 	for a := range n.attempts[peer] {
-		cancellations = append(cancellations, a.cancel)
+		a.invalidated = true
+		if a.cancel != nil {
+			cancellations = append(cancellations, a.cancel)
+		}
 	}
 	r := n.clients[peer]
 	delete(n.clients, peer)
@@ -303,7 +310,18 @@ func (n *Node) Revoke(peer string) error {
 	if n.cfg.Persist == nil {
 		return errors.New("peer revoked locally; durable persistence unavailable")
 	}
+	if recovery {
+		return fmt.Errorf("peer revoked locally without saving; inspect saved pairing state before reopening: %w", config.ErrAtomicRecovery)
+	}
+	if closed {
+		return net.ErrClosed
+	}
 	if e := n.cfg.Persist(n.cfg.Trust.Snapshot(), records); e != nil {
+		if errors.Is(e, config.ErrAtomicCommitted) {
+			n.mu.Lock()
+			n.pairingRecovery = true
+			n.mu.Unlock()
+		}
 		locked = false
 		n.pairMu.Unlock()
 		n.Close()
@@ -321,7 +339,10 @@ func (n *Node) Close() error {
 	var cancellations []context.CancelFunc
 	for _, attempts := range n.attempts {
 		for a := range attempts {
-			cancellations = append(cancellations, a.cancel)
+			a.invalidated = true
+			if a.cancel != nil {
+				cancellations = append(cancellations, a.cancel)
+			}
 		}
 	}
 	pairing := n.pairing

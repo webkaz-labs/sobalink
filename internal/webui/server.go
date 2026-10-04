@@ -53,6 +53,10 @@ type Server struct {
 	attemptWindow time.Time
 	slots         chan struct{}
 	done          chan error
+	closeSignal   chan struct{}
+	watcherDone   chan struct{}
+	serveDone     chan struct{}
+	closeOnce     sync.Once
 }
 
 func randomToken() (string, error) {
@@ -74,22 +78,30 @@ func Start(ctx context.Context, assets fs.FS, backend Backend) (*Server, error) 
 		return nil, err
 	}
 	ln = httpbound.New(32).Wrap(ln)
-	s := &Server{backend: backend, assets: assets, listener: ln, host: ln.Addr().String(), sessions: map[string]session{}, slots: make(chan struct{}, 16), done: make(chan error, 1)}
+	s := &Server{backend: backend, assets: assets, listener: ln, host: ln.Addr().String(), sessions: map[string]session{}, slots: make(chan struct{}, 16), done: make(chan error, 1), closeSignal: make(chan struct{}), watcherDone: make(chan struct{}), serveDone: make(chan struct{})}
 	s.url = "http://" + s.host
 	if _, err := s.IssueCode(); err != nil {
 		ln.Close()
 		return nil, err
 	}
-	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
+	s.http = &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }, ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+		return context.WithValue(ctx, bodyConnectionKey{}, conn)
+	}}
 	go func() {
 		err := s.http.Serve(ln)
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
 		s.done <- err
+		close(s.serveDone)
 	}()
 	go func() {
-		<-ctx.Done()
+		defer close(s.watcherDone)
+		select {
+		case <-ctx.Done():
+		case <-s.closeSignal:
+		case <-s.serveDone:
+		}
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.Close(closeCtx)
@@ -111,6 +123,7 @@ func (s *Server) IssueCode() (string, error) {
 	return code, nil
 }
 func (s *Server) Close(ctx context.Context) error {
+	s.closeOnce.Do(func() { close(s.closeSignal) })
 	s.mu.Lock()
 	s.code = ""
 	clear(s.sessions)
@@ -150,6 +163,18 @@ func commandErrorCode(err error) string {
 	return code
 }
 func decode(w http.ResponseWriter, r *http.Request, limit int64, v any) error {
+	body, err := BoundBody(w, r, 5*time.Second, false)
+	if err != nil {
+		return err
+	}
+	defer body.Finish(false)
+	if err := decodeJSON(w, r, limit, v); err != nil {
+		return err
+	}
+	return body.Finish(true)
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, v any) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("JSON content type required")
 	}
@@ -339,4 +364,195 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.sessions[token] = session{csrf: csrf, expires: now.Add(8 * time.Hour)}
 	http.SetCookie(w, &http.Cookie{Name: "soba_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 60 * 60})
 	jsonReply(w, 200, map[string]string{"csrfToken": csrf})
+}
+
+type bodyConnectionKey struct{}
+
+type bodyCancellation struct {
+	stop func() bool
+	done chan struct{}
+}
+
+// RequestBody bounds native socket reads without waiting for the HTTP body's
+// Read/Close mutex. Finish must join cancellation before connection reuse.
+type RequestBody struct {
+	source                                     io.ReadCloser
+	controller                                 *http.ResponseController
+	connection                                 net.Conn
+	writer                                     http.ResponseWriter
+	mu                                         sync.Mutex
+	window                                     time.Duration
+	rolling, library, cancelled, eof, finished bool
+	deadline                                   time.Time
+	progressDeadline                           time.Time
+	contexts                                   []context.Context
+	callbacks                                  []bodyCancellation
+	err                                        error
+}
+
+// BoundBody installs the read window before the first body read. A rolling
+// window advances only on bytes read; watched context deadlines cap that window.
+// Close interruption is retained for non-server library readers only.
+func BoundBody(w http.ResponseWriter, r *http.Request, window time.Duration, rolling bool) (*RequestBody, error) {
+	b := &RequestBody{source: r.Body, controller: http.NewResponseController(w), writer: w, window: window, rolling: rolling}
+	b.connection, _ = r.Context().Value(bodyConnectionKey{}).(net.Conn)
+	w.Header().Set("Connection", "close")
+	if window <= 0 {
+		return nil, errors.New("positive request read window required")
+	}
+	deadline := time.Now().Add(window)
+	b.progressDeadline = deadline
+	if err := b.controller.SetReadDeadline(deadline); err != nil {
+		if errors.Is(err, http.ErrNotSupported) && r.Context().Value(http.ServerContextKey) == nil {
+			b.library = true
+		} else {
+			if b.connection != nil {
+				_ = b.connection.Close()
+			}
+			return nil, err
+		}
+	}
+	if !rolling {
+		b.deadline = deadline
+	}
+	r.Body = b
+	if err := b.Watch(r.Context()); err != nil {
+		_ = b.Finish(false)
+		return nil, err
+	}
+	return b, nil
+}
+
+// Watch adds a cancellation source and its absolute deadline. Call only from
+// the request handler, before Finish, including when staging gains a batch life.
+func (b *RequestBody) Watch(ctx context.Context) error {
+	b.mu.Lock()
+	b.contexts = append(b.contexts, ctx)
+	if deadline, ok := ctx.Deadline(); ok && (b.deadline.IsZero() || deadline.Before(b.deadline)) {
+		b.deadline = deadline
+	}
+	err := b.refreshLocked()
+	b.mu.Unlock()
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(done)
+		b.mu.Lock()
+		b.cancelled = true
+		_ = b.setLocked(time.Now())
+		b.mu.Unlock()
+		if b.library {
+			_ = b.source.Close()
+		}
+	})
+	b.callbacks = append(b.callbacks, bodyCancellation{stop, done})
+	return err
+}
+
+func (b *RequestBody) setLocked(deadline time.Time) error {
+	if b.library {
+		return nil
+	}
+	err := b.controller.SetReadDeadline(deadline)
+	if err != nil {
+		b.err = err
+		if b.connection != nil {
+			_ = b.connection.Close()
+		}
+	}
+	return err
+}
+
+func (b *RequestBody) refreshLocked() error {
+	for _, ctx := range b.contexts {
+		if err := ctx.Err(); err != nil {
+			b.cancelled = true
+			b.err = err
+		}
+	}
+	if b.cancelled || b.err != nil {
+		_ = b.setLocked(time.Now())
+		if b.err != nil {
+			return b.err
+		}
+		return context.Canceled
+	}
+	deadline := b.progressDeadline
+	if !b.deadline.IsZero() && b.deadline.Before(deadline) {
+		deadline = b.deadline
+	}
+	return b.setLocked(deadline)
+}
+
+func (b *RequestBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	err := b.err
+	if b.cancelled && err == nil {
+		err = context.Canceled
+	}
+	b.mu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	n, err := b.source.Read(p)
+	b.mu.Lock()
+	if err == io.EOF {
+		b.eof = true
+	} else if err != nil {
+		b.err = err
+	}
+	if n > 0 && b.rolling && (err == nil || err == io.EOF) {
+		b.progressDeadline = time.Now().Add(b.window)
+		if refreshErr := b.refreshLocked(); refreshErr != nil {
+			err = refreshErr
+		}
+	}
+	b.mu.Unlock()
+	return n, err
+}
+
+func (b *RequestBody) Close() error {
+	b.mu.Lock()
+	b.cancelled = true
+	err := b.setLocked(time.Now())
+	b.mu.Unlock()
+	closeErr := b.source.Close()
+	return errors.Join(err, closeErr)
+}
+
+// Finish permits reuse only after complete successful input and after every
+// cancellation callback has stopped or returned. Failed input retains an expired
+// deadline through net/http's implicit body cleanup.
+func (b *RequestBody) Finish(success bool) error {
+	if b.finished {
+		return b.err
+	}
+	for _, callback := range b.callbacks {
+		if !callback.stop() {
+			<-callback.done
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.finished = true
+	for _, ctx := range b.contexts {
+		if err := ctx.Err(); err != nil {
+			b.cancelled = true
+			b.err = err
+		}
+	}
+	if success && b.eof && !b.cancelled && b.err == nil {
+		if err := b.setLocked(time.Time{}); err != nil {
+			return err
+		}
+		b.writer.Header().Del("Connection")
+		return nil
+	}
+	_ = b.setLocked(time.Now())
+	if b.err != nil {
+		return b.err
+	}
+	if success {
+		return errors.New("request body was not completed")
+	}
+	return nil
 }

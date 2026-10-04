@@ -33,9 +33,9 @@ func (c *Core) applyLANCapacityLocked(policy capacity.Policy, publish func() err
 	if bytes > limits.bytes {
 		return &localCommandError{"policy_in_use", fmt.Sprintf("lanStateBytes must hold the current %d-byte private LAN state; revoke unused pairs explicitly before reducing its storage budget", bytes)}
 	}
-	if err := publish(); err != nil {
-		return err
+	saveErr := publish()
+	if atomicPublished(saveErr) {
+		store.limits.Store(limits)
 	}
-	store.limits.Store(limits)
-	return nil
+	return saveErr
 }

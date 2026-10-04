@@ -45,7 +45,7 @@ function setup({ state = readyState(), draft = emptyLanDraft(), stale = false, l
   let currentDraft = draft
   const server: Server = {
     state, auth: 'ready', stale, error: null, setError, busy: new Set(),
-    refresh: vi.fn().mockResolvedValue(state), run: execute, updatedAt: null, handleError: vi.fn(),
+    refresh: vi.fn().mockResolvedValue(state), run: execute, updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0, handleError: vi.fn(),
   }
   function Harness({ nextState, visible = true }: { nextState: State; visible?: boolean }) {
     const [value, setDraft] = useState(draft)

@@ -10,13 +10,13 @@
 
 ### 署名付き公開版を使う
 
-候補 `0.3.0-alpha.1` は、上の正規 Releases に `v0.3.0-alpha.1` の署名付き完全な資材一式が公開され、その版の検証結果を確認できる場合だけ、次の指定で導入できます。この例は公開済みという意味ではありません。必要な資材がない場合は、下のソースビルドを使います。[必要な資材・署名・対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+このソースの手順はプレリリース `0.3.0-alpha.2` 向けです。次の指定を使う前に、上の正規 Releases で、その版の完全な署名付き資材と検証成功を確認してください。手順の記載だけでは公開や受入の証拠になりません。必要な資材や結果がない場合は、下の確認したソースからビルドするか、公開を待ってください。[必要な資材・署名・対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
 mise **2026.9.18** を用意した環境で実行します。`mise use -g` は通常使う版を設定します。
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
 mise exec -- soba version
 mise exec -- soba
 ```

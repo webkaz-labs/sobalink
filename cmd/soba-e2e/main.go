@@ -245,7 +245,7 @@ func (f *fixtureBackend) releaseServiceReservation() {
 }
 
 func (f *fixtureBackend) Upload(w http.ResponseWriter, r *http.Request) {
-	if f.scenario == "offline" || f.uploadFailed.CompareAndSwap(false, true) {
+	if f.scenario == "offline" || (f.scenario == "studio" && f.uploadFailed.CompareAndSwap(false, true)) {
 		defer r.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -266,7 +266,46 @@ type privateSession struct {
 	LocalServicePort uint16   `json:"localServicePort,omitempty"`
 }
 
-func validScenario(s string) bool { return s == "studio" || s == "offline" }
+func receiveRecoveryScenario(s string) bool { return s == "receive-legacy" || s == "receive-damaged" }
+func validScenario(s string) bool {
+	return s == "studio" || s == "offline" || receiveRecoveryScenario(s)
+}
+
+// Seed an existing, fictional saved profile before Core opens it. Recovery must
+// come from the production accounting reader, never a substituted API snapshot.
+// The supplied directories belong exclusively to this fixture's temporary root.
+func prepareReceiveRecoveryFixture(directory, receiveDirectory, scenario string) error {
+	if !receiveRecoveryScenario(scenario) {
+		return nil
+	}
+	profile := core.Profile{
+		Version:  1,
+		Settings: core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "Notebook", ReceiveDirectory: receiveDirectory},
+		Peers:    []core.Trust{{ID: "fixture-studio", Name: "Studio", Network: "tailnet", Generation: 1, Autosave: true, Directory: receiveDirectory}},
+		Services: []core.ServiceSpec{},
+	}
+	if err := config.SecureDir(directory); err != nil {
+		return err
+	}
+	if err := config.WriteJSON(filepath.Join(directory, "sobalink.json"), profile); err != nil {
+		return err
+	}
+	if scenario == "receive-damaged" {
+		return os.WriteFile(filepath.Join(directory, "receive-accounting.json"), []byte("{fictional-receive-index damaged}\n"), 0600)
+	}
+	return nil
+}
+
+func scenarioCapabilities(scenario string) []string {
+	if receiveRecoveryScenario(scenario) {
+		capabilities := []string{"service-lifecycle", "host-review", "application-stop", "receive-recovery", "saved-autosave"}
+		if scenario == "receive-legacy" {
+			return append(capabilities, "legacy-receive-review")
+		}
+		return append(capabilities, "damaged-receive-index")
+	}
+	return []string{"service-lifecycle", "offline-network", "failed-upload-retry", "host-review", "application-stop"}
+}
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "browser harness failed:", err)
@@ -275,13 +314,13 @@ func main() {
 }
 func run() (runErr error) {
 	file := flag.String("session-file", "", "private output file read by the browser test")
-	scenario := flag.String("scenario", "studio", "browser fixture: studio or offline")
+	scenario := flag.String("scenario", "studio", "browser fixture: studio, offline, receive-legacy or receive-damaged")
 	flag.Parse()
 	if *file == "" {
 		return errors.New("--session-file is required")
 	}
 	if !validScenario(*scenario) {
-		return errors.New("--scenario must be studio or offline")
+		return errors.New("--scenario must be studio, offline, receive-legacy or receive-damaged")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -290,6 +329,13 @@ func run() (runErr error) {
 		return e
 	}
 	defer os.RemoveAll(dir)
+	receiveDir := filepath.Join(dir, "received")
+	if e := os.Mkdir(receiveDir, 0700); e != nil {
+		return e
+	}
+	if e := prepareReceiveRecoveryFixture(filepath.Join(dir, "notebook"), receiveDir, *scenario); e != nil {
+		return e
+	}
 	netw := &network{listeners: map[netip.AddrPort]*listener{}}
 	managementPort := new(atomic.Uint32)
 	aIP, bIP := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.0.2")
@@ -305,14 +351,10 @@ func run() (runErr error) {
 		return e
 	}
 	defer func() { runErr = errors.Join(runErr, a.Close()) }()
-	receiveDir := filepath.Join(dir, "received")
-	if e := os.Mkdir(receiveDir, 0700); e != nil {
-		return e
-	}
 	if e := command(ctx, a, "settings.update", map[string]string{"receiveDirectory": receiveDir}); e != nil {
 		return e
 	}
-	if *scenario == "studio" {
+	if *scenario != "offline" {
 		b, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "studio"), Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return bNode, nil }})
 		if e != nil {
 			return e
@@ -350,12 +392,14 @@ func run() (runErr error) {
 		if e := command(ctx, a, "message.send", map[string]string{"peerId": "fixture-studio", "text": "Thanks. I will review the batch before saving."}); e != nil {
 			return e
 		}
-		notes := filepath.Join(dir, "design-notes.txt")
-		if e := os.WriteFile(notes, []byte("Fictional design notes for browser acceptance.\n"), 0600); e != nil {
-			return e
-		}
-		if _, e := b.SendPaths(ctx, "fixture-notebook", []string{notes}); e != nil {
-			return e
+		if *scenario == "studio" {
+			notes := filepath.Join(dir, "design-notes.txt")
+			if e := os.WriteFile(notes, []byte("Fictional design notes for browser acceptance.\n"), 0600); e != nil {
+				return e
+			}
+			if _, e := b.SendPaths(ctx, "fixture-notebook", []string{notes}); e != nil {
+				return e
+			}
 		}
 		if e := command(ctx, b, "service.share", map[string]any{"name": "sample-web", "network": "tcp", "ports": "8080", "peerIds": []string{"fixture-notebook"}, "lifetime": "finite", "ttlSeconds": 3600, "purpose": "web", "discoverable": true}); e != nil {
 			return e
@@ -371,7 +415,7 @@ func run() (runErr error) {
 		return e
 	}
 	backend := &fixtureBackend{Backend: a, scenario: *scenario, managementPort: managementPort}
-	if *scenario == "studio" {
+	if *scenario != "offline" {
 		// Reserve a numeric loopback port until the exact UI connect action.
 		// Core then owns the real listener and its ordinary stop lifecycle.
 		reservation, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -396,7 +440,7 @@ func run() (runErr error) {
 	if e != nil {
 		return e
 	}
-	metadata := privateSession{URL: server.URL(), Code: code, ReceiveDirectory: receiveDir, Scenario: *scenario, Capabilities: []string{"service-lifecycle", "offline-network", "failed-upload-retry", "host-review", "application-stop"}, LocalServicePort: backend.servicePort}
+	metadata := privateSession{URL: server.URL(), Code: code, ReceiveDirectory: receiveDir, Scenario: *scenario, Capabilities: scenarioCapabilities(*scenario), LocalServicePort: backend.servicePort}
 	if e := config.WriteJSON(*file, metadata); e != nil {
 		return e
 	}

@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.mjs'
+import { test, expect, openDetailsSection } from './fixtures.mjs'
 
 // Every test gets a fresh Studio process, authenticated context and private
 // receiving root. Actions use the UI; state predicates observe the real Go app.
@@ -351,15 +351,18 @@ test('manual service starts and stops, copies authoritative settings and restart
 
   const reads = await app.count('service.config')
   const starts = await app.count('service.connect')
+  await openDetailsSection(row.locator('.service-tools'))
   await row.getByRole('button', { name: 'Copy settings', exact: true }).click()
   await expect(serviceName(page)).toHaveValue('reviewed-service-2')
   expect(await app.count('service.config')).toBe(reads + 1)
   expect(await app.count('service.connect'), 'reading saved settings cannot start a listener').toBe(starts)
   await serviceName(page).fill('reviewed-copy-draft')
   await closeDialog(page)
+  await openDetailsSection(row.locator('.service-tools'))
   await row.getByRole('button', { name: 'Copy settings', exact: true }).click()
   await expect(serviceName(page)).toHaveValue('reviewed-copy-draft')
   await closeDialog(page)
+  await openDetailsSection(row.locator('.service-tools'))
   await row.getByRole('button', { name: 'Edit and start', exact: true }).click()
   await expect(serviceName(page)).toHaveValue('reviewed-service')
   await expect(servicePorts(page)).toHaveValue('8080')
@@ -409,6 +412,7 @@ test('advertised service selection locks its target and starts one reviewed list
   await showDetails(page, app)
   const row = serviceRow(page, 'advertised-service')
   const reads = await app.count('service.config')
+  await openDetailsSection(row.locator('.service-tools'))
   await row.getByRole('button', { name: 'Copy settings', exact: true }).click()
   await expect(serviceName(page)).toHaveValue('advertised-service-2')
   await expectPrivateValue(selection, advertisedID, 'authoritative settings retain the advertised service identity')
@@ -457,6 +461,7 @@ test('scoped sharing retains a bilingual review draft and copies its exact ports
   await showDetails(page, app)
   const row = serviceRow(page, 'reviewed-share')
   const reads = await app.count('service.config')
+  await openDetailsSection(row.locator('.service-tools'))
   await row.getByRole('button', { name: 'Copy settings', exact: true }).click()
   await expect(serviceName(page)).toHaveValue('reviewed-share-2')
   await expect(servicePorts(page)).toHaveValue('8081')
@@ -537,10 +542,12 @@ test('saved definitions open no listener and removal requires a separate review'
   expect(await app.count('service.save')).toBe(1)
   await showDetails(page, app)
   const row = serviceRow(page, 'saved-example')
+  await openDetailsSection(row.locator('.service-tools'))
   await row.getByRole('button', { name: 'Remove saved rule', exact: true }).click()
   await expect(dialog(page).getByRole('button', { name: 'Remove reviewed rule', exact: true })).toBeEnabled()
   await closeDialog(page)
   expect(await app.count('service.delete')).toBe(0)
+  await openDetailsSection(row.locator('.service-tools'))
   await row.getByRole('button', { name: 'Remove saved rule', exact: true }).click()
   await dialog(page).getByRole('button', { name: 'Remove reviewed rule', exact: true }).click()
   await app.expectState(state => !state.services.some(service => service.name === 'saved-example'), 'explicit reviewed deletion removes only the saved fixture definition')

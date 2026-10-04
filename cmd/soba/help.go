@@ -28,6 +28,10 @@ func helpTopic(topic string, ja bool) (string, bool) {
 		return help, true
 	}
 	switch topic {
+	case "receive":
+		return text(ja,
+			"soba receive recovery confirm [--reviewed] [--json]\n\nWithout --reviewed, preview only. Review previous default, per-peer and manual receive folders, unfinished staging, and saved output. Keep saved files. Resolve unfinished old receives before confirming so no untracked partial data remains. Unknown old locations need your own review. --reviewed durably initializes only a missing legacy index; it cannot discard damaged records. Start soba first; this operation uses local control only.",
+			"soba receive recovery confirm [--reviewed] [--json]\n\n--reviewed なしは確認対象の表示だけです。以前の既定・相手別・手動の受信先、途中保存の残骸、保存済みファイルを確認してください。保存済みファイルは残します。確認の前に未追跡の途中保存データを整理してください。不明な旧保存先はご自身で確認が必要です。--reviewed は旧版の未作成索引だけを永続初期化し、破損記録は破棄しません。先に soba を起動してください。ローカル操作のみです。"), true
 	case "proxy":
 		return text(ja, proxyHelpEN, proxyHelpJA), true
 	case "doctor":
@@ -269,27 +273,41 @@ pause/resume PEER_ID はメッセージ・転送を停止／再開し、stop-ser
 ポートの空きの確認ではありません。機密の招待内容は表示しません。
 すべてのコマンドで同じ --state-dir を使ってください。更新は soba help upgrade を参照します。`
 
-const upgradeEN = `Updating a development build
+const upgradeEN = `Updating sobalink
 
-No released sobalink upgrade path is available yet.
+Choose a published version and check its signatures and verification result:
+https://github.com/webkaz-labs/sobalink/releases
 1. Record soba version, then stop the agent with soba stop.
 2. Keep any state backup private; it contains identity and peer information.
-3. Build the intended source using its frontend and Go build instructions.
+3. Select the exact release with mise (replace VERSION with the chosen version):
+   mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@VERSION"
 4. Run soba version and soba start --offline to inspect retained settings.
 5. Restart normally after review and explicitly restart any desired services.
+
+If mise is not activated, prefix soba commands with mise exec --.
+Source-build users can instead follow the selected source's frontend and Go
+build instructions. Review release-specific state compatibility before updating
+or downgrading. If receiving needs recovery review, use soba help receive.
 
 Use the same --state-dir throughout. A fresh directory creates a separate
 identity and requires its own pairing and trust. Never restore a backup while
 the agent is running. No automatic upgrade or permission renewal occurs.`
 
-const upgradeJA = `開発ビルドの更新
+const upgradeJA = `sobalink の更新
 
-sobalink のリリース版更新経路はまだありません。
+公開版を選び、署名と検証結果を確認してください。
+https://github.com/webkaz-labs/sobalink/releases
 1. soba version で版を記録し、soba stop で本体を停止します。
 2. 状態のバックアップは非公開で保管します。秘密鍵・相手情報を含みます。
-3. 対象ソースの手順に従って画面とGo実行ファイルをビルドします。
+3. mise で公開版を明示して選択します。VERSION は選んだ版の番号へ置き換えます。
+   mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@VERSION"
 4. soba version と soba start --offline で保存済み設定を点検します。
 5. 確認後に通常起動し、必要なサービスは明示的に開始し直します。
+
+mise を有効化していない場合、soba コマンドの前に mise exec -- を付けてください。
+ソースビルドの場合は、対象ソースの画面とGo実行ファイルのビルド手順を使えます。
+更新・ダウングレード前に、その版の設定互換性を確認してください。
+受信の復旧確認が必要な場合は soba help receive を参照します。
 
 すべてのコマンドで同じ --state-dir を使ってください。新しいフォルダーは別の
 端末IDになり、ペアリング・信頼も別途必要です。稼働中にバックアップを戻さないでください。

@@ -22,7 +22,7 @@ function renderSetup(locale: Locale = 'en', handler?: (name: string, payload: un
   function Harness() {
     const [error, setError] = useState<unknown>(null)
     run.mockImplementation(async (name, payload) => { setError(null); if (handler) { try { return await handler(name, payload) } catch (value) { setError(value); return } }; return { ok: true, result: review((payload as { configuration: RustDeskSetup }).configuration, name === 'rustdesk.save') as unknown as CommandResult['result'] } })
-    const server: Server = { state, error, setError, run, auth: 'ready', stale: false, busy: new Set(), refresh: vi.fn(), handleError: vi.fn(), updatedAt: null }
+    const server: Server = { state, error, setError, run, auth: 'ready', stale: false, busy: new Set(), refresh: vi.fn(), handleError: vi.fn(), updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0 }
     return <RustDeskSetupDialog server={server} locale={locale} t={translator(locale)} onClose={onClose} onSaved={onSaved} />
   }
   return { ...render(<Harness />), run, onClose, onSaved }

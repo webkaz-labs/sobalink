@@ -8,11 +8,16 @@ export function validateSession(value, scenario) {
   assert.ok(url.protocol === 'http:' && url.hostname === '127.0.0.1', 'Fixture must use numeric loopback HTTP')
   assert.ok(!(url.username || url.password || url.search || url.hash), 'Fixture URL must not contain credentials or query data')
   assert.ok(typeof value.code === 'string' && value.code.length > 0 && value.code.length <= 256, 'Fixture must provide a private access code')
-  assert.ok(['studio', 'offline'].includes(scenario) && value.scenario === scenario, 'Fixture scenario must match the requested test')
+  assert.ok(['studio', 'offline', 'receive-legacy', 'receive-damaged'].includes(scenario) && value.scenario === scenario, 'Fixture scenario must match the requested test')
   assert.ok(typeof value.receiveDirectory === 'string' && isAbsolute(value.receiveDirectory), 'Fixture must provide an absolute receiving directory')
-  const required = scenario === 'studio' ? ['service-lifecycle', 'failed-upload-retry', 'application-stop'] : ['offline-network']
-  assert.ok(required.every(capability => value.capabilities?.includes(capability)), 'Fixture is missing required acceptance capabilities')
-  if (scenario === 'studio') assert.ok(Number.isInteger(value.localServicePort) && value.localServicePort >= 1024 && value.localServicePort <= 65535, 'Fixture must reserve a valid local service port')
+  const required = {
+    studio: ['service-lifecycle', 'failed-upload-retry', 'application-stop'],
+    offline: ['offline-network'],
+    'receive-legacy': ['service-lifecycle', 'receive-recovery', 'saved-autosave', 'legacy-receive-review'],
+    'receive-damaged': ['service-lifecycle', 'receive-recovery', 'saved-autosave', 'damaged-receive-index'],
+  }[scenario]
+  assert.ok(Array.isArray(value.capabilities) && required.every(capability => value.capabilities.includes(capability)), 'Fixture is missing required acceptance capabilities')
+  if (scenario !== 'offline') assert.ok(Number.isInteger(value.localServicePort) && value.localServicePort >= 1024 && value.localServicePort <= 65535, 'Fixture must reserve a valid local service port')
   return { ...value, url: url.href }
 }
 

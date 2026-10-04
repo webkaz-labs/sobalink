@@ -28,6 +28,7 @@ func (s receiveStore) SavePolicies(policies []transfer.ReceivePolicy) error {
 // policy/pause publication complete; the callback never reenters Manager.
 func (s receiveStore) savePolicies(policies []transfer.ReceivePolicy, updated *Trust) error {
 	p := s.core.profileCopy()
+	before := privateRevision(p)
 	for i := range p.Peers {
 		if p.Peers[i].Network == p.Settings.Network {
 			p.Peers[i].Autosave = false
@@ -63,13 +64,20 @@ func (s receiveStore) savePolicies(policies []transfer.ReceivePolicy, updated *T
 			return errors.New("receive policy peer changed")
 		}
 	}
-	if e := s.core.saveProfile(p); e != nil {
-		return e
+	// Revocation/binding may ask the policy store to persist the profile that
+	// its owner already replaced. Do not turn runtime reconciliation into a
+	// second write after an uncertain commit.
+	if privateRevision(p) == before {
+		return nil
+	}
+	saveErr := s.core.saveProfile(p)
+	if !atomicPublished(saveErr) {
+		return saveErr
 	}
 	s.core.mu.Lock()
 	s.core.profile = p
 	s.core.mu.Unlock()
-	return nil
+	return saveErr
 }
 
 // Called under c.op before the first backend construction, when an offline

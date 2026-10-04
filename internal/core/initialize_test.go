@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -20,11 +21,24 @@ func TestInitializeProfileCreatesOnlyMetadataAndPreservesExisting(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Name() != "sobalink.json" && entry.Name() != "process.lock" {
-			t.Fatal("unexpected initialization state", entry.Name())
-		}
+		names = append(names, entry.Name())
 	}
+	if !reflect.DeepEqual(names, []string{".sobalink-atomic-v1", "process.lock", "sobalink.json"}) {
+		t.Fatal("unexpected initialization state", names)
+	}
+	owned := filepath.Join(dir, ".sobalink-atomic-v1")
+	children, err := os.ReadDir(owned)
+	if err != nil || len(children) != 1 || children[0].Name() != "owner.lock" || !children[0].Type().IsRegular() {
+		t.Fatal("unexpected owned persistence metadata or retained snapshot", children, err)
+	}
+	marker, err := os.ReadFile(filepath.Join(owned, "owner.lock"))
+	if err != nil || string(marker) != "sobalink atomic persistence v1\n" {
+		t.Fatal("invalid owned marker", err)
+	}
+	assertLANStatePrivate(t, owned)
+	assertLANStatePrivate(t, filepath.Join(owned, "owner.lock"))
 	before, err := os.ReadFile(filepath.Join(dir, "sobalink.json"))
 	if err != nil {
 		t.Fatal(err)

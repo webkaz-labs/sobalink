@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.mjs'
+import { test, expect, openDetailsSection } from './fixtures.mjs'
 
 // All identities and public keys are fictional. The existing Go fixture runs
 // Core and the production UI; these cases never configure an external client.
@@ -67,6 +67,7 @@ test('saved HTTP hints retain TLS cautions and a reviewed runtime lifetime does 
   await dialog.getByLabel('Purpose', { exact: true }).fill('web')
   await dialog.getByRole('button', { name: 'Review stopped definition', exact: true }).click()
   await dialog.getByRole('button', { name: 'Save reviewed definition', exact: true }).click()
+  await openDetailsSection(dialog.locator('.definition-entry .definition-actions'))
   await dialog.getByRole('button', { name: 'Client settings', exact: true }).click()
   await expect(dialog.getByLabel('HTTP candidate', { exact: true })).toHaveValue(`http://127.0.0.1:${app.localServicePort}/`)
   await expect(dialog).toContainText('original TLS hostname, SNI, origin and certificate validation')

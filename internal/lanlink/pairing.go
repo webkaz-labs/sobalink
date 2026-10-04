@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/tailscale/tailcat"
+	"github.com/webkaz-labs/sobalink/internal/config"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 )
@@ -78,8 +79,11 @@ func (n *Node) IssueInvitation(ctx context.Context, recipient Peer, hostName str
 		return Invitation{}, errors.New("peer is already paired")
 	}
 	n.mu.Lock()
-	closed, busy := n.closed, len(n.attempts[recipient.Key]) > 0
+	closed, busy, recovery := n.closed, len(n.attempts[recipient.Key]) > 0, n.pairingRecovery
 	n.mu.Unlock()
+	if recovery {
+		return Invitation{}, config.ErrAtomicRecovery
+	}
 	if closed {
 		return Invitation{}, net.ErrClosed
 	}
@@ -236,9 +240,28 @@ func (n *Node) readReply(frame []byte, remote PeerOffer, req pairRequest, reques
 }
 
 // commitPair stages both snapshots and changes no in-memory approval until the
-// caller's atomic private-file save succeeds. Locks serialize pairing/revocation;
+// caller's atomic private-file save succeeds. A published error freezes snapshot
+// writes until reopen without activating the uncertain pair. Locks serialize pairing/revocation;
 // Persist must not re-enter either Node or Book.
-func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, expectedRevocation uint64, liveClient ...*tailcat.Client) error {
+// Outgoing commits require the exact registered attempt; inbound commits require
+// a valid invitation token and transport admission.
+func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, attempt *pairAttempt, liveClient ...*tailcat.Client) error {
+	if token == "" && attempt == nil {
+		return ErrUntrusted
+	}
+	n.pairMu.Lock()
+	defer n.pairMu.Unlock()
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.pairingRecovery {
+		return config.ErrAtomicRecovery
+	}
+	if token == "" {
+		_, registered := n.attempts[remote.Peer.Key][attempt]
+		if attempt.peer != remote.Peer.Key || attempt.invalidated || !registered {
+			return ErrUntrusted
+		}
+	}
 	if n.cfg.Persist == nil {
 		return errors.New("durable pairing persistence required")
 	}
@@ -255,18 +278,11 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 	if e != nil {
 		return e
 	}
-	n.pairMu.Lock()
-	defer n.pairMu.Unlock()
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	b := n.cfg.Trust
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if n.closed {
 		return net.ErrClosed
-	}
-	if token == "" && n.revoked[remote.Peer.Key] != expectedRevocation {
-		return ErrUntrusted
 	}
 	if e = ctx.Err(); e != nil {
 		return e
@@ -307,6 +323,11 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 	records = append(records, remote)
 	sort.Slice(records, func(i, j int) bool { return records[i].Peer.Key < records[j].Peer.Key })
 	if e = n.cfg.Persist(snapshot, records); e != nil {
+		if errors.Is(e, config.ErrAtomicCommitted) {
+			// Keep the published approval on disk without granting uncertain trust.
+			// pairMu makes the latch visible before any other snapshot writer runs.
+			n.pairingRecovery = true
+		}
 		return fmt.Errorf("pairing was not activated because private state could not be saved: %w", e)
 	}
 	b.generation++
@@ -478,7 +499,7 @@ func (p *PairingServer) handle(c net.Conn, transportKey string) {
 		return
 	}
 	remote := RemotePeer{Peer: peer, Address: req.Address, ClientPrivate: role, IncomingClientKey: transportKey}
-	if e = p.node.commitPair(requestCtx, remote, req.Token, 0); e != nil {
+	if e = p.node.commitPair(requestCtx, remote, req.Token, nil); e != nil {
 		return
 	}
 	writePairFrame(c, reply)
@@ -549,13 +570,19 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 	attempt := &pairAttempt{cancel: cancel}
 	n.mu.Lock()
+	if n.pairingRecovery {
+		n.mu.Unlock()
+		n.pairMu.Unlock()
+		cancel()
+		return config.ErrAtomicRecovery
+	}
 	if n.closed {
 		n.mu.Unlock()
 		n.pairMu.Unlock()
 		cancel()
 		return net.ErrClosed
 	}
-	epoch := n.revoked[remote.Peer.Key]
+	attempt.peer = remote.Peer.Key
 	if n.attempts[remote.Peer.Key] == nil {
 		n.attempts[remote.Peer.Key] = make(map[*pairAttempt]struct{})
 	}
@@ -563,13 +590,7 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 	n.mu.Unlock()
 	n.pairMu.Unlock()
 	defer func() {
-		cancel()
-		n.mu.Lock()
-		delete(n.attempts[remote.Peer.Key], attempt)
-		if len(n.attempts[remote.Peer.Key]) == 0 {
-			delete(n.attempts, remote.Peer.Key)
-		}
-		n.mu.Unlock()
+		n.retirePairAttempt(remote.Peer.Key, attempt)
 	}()
 	role := key.NewNode()
 	frame, plain, req, e := n.makeRequest(remote, token, role)
@@ -603,7 +624,7 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 	if e != nil {
 		return fmt.Errorf("%w: %w", ErrPairReplyUncertain, e)
 	}
-	e = n.acceptPairReply(bounded, replyFrame, remote, req, plain, role, epoch, c)
+	e = n.acceptPairReply(bounded, replyFrame, remote, req, plain, role, attempt, c)
 	if e == nil {
 		retained = true
 	}
@@ -611,16 +632,36 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 
 }
 
-type pairAttempt struct{ cancel context.CancelFunc }
+type pairAttempt struct {
+	peer        string
+	cancel      context.CancelFunc
+	invalidated bool
+}
 
-func (n *Node) acceptPairReply(ctx context.Context, frame []byte, remote PeerOffer, req pairRequest, plain []byte, role key.NodePrivate, epoch uint64, liveClient ...*tailcat.Client) error {
+func (n *Node) retirePairAttempt(peer string, attempt *pairAttempt) {
+	if attempt.cancel != nil {
+		attempt.cancel()
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.attempts[peer], attempt)
+	if len(n.attempts[peer]) == 0 {
+		delete(n.attempts, peer)
+	}
+}
+
+func (n *Node) acceptPairReply(ctx context.Context, frame []byte, remote PeerOffer, req pairRequest, plain []byte, role key.NodePrivate, attempt *pairAttempt, liveClient ...*tailcat.Client) error {
+	if attempt == nil {
+		return ErrUntrusted
+	}
 	reply, e := n.readReply(frame, remote, req, plain)
 	if e != nil {
 		return e
 	}
 	record := RemotePeer{Peer: remote.Peer, Address: remote.Address, ClientPrivate: role, IncomingClientKey: reply.RoleKey}
-	if e = n.commitPair(ctx, record, "", epoch, liveClient...); e != nil {
-		return fmt.Errorf("%w: %v", ErrRemotePairedLocalSave, e)
+	e = n.commitPair(ctx, record, "", attempt, liveClient...)
+	if e != nil {
+		return fmt.Errorf("%w: %w", ErrRemotePairedLocalSave, e)
 	}
 	return nil
 }

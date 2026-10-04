@@ -66,6 +66,44 @@ jobs:
           test "$(go env GOVERSION)" = go1.27.1
           echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      - name: Select isolated development Go cache scope
+        id: development-go-cache-scope
+        run: |
+          python - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as source:
+              event = json.load(source)
+          repository = os.environ["GITHUB_REPOSITORY"]
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          ref = os.environ["GITHUB_REF"]
+          metadata = event.get("repository") or {}
+          scope = ""
+          if (repository == "webkaz-labs/sobalink"
+                  and metadata.get("full_name") == repository
+                  and metadata.get("default_branch") == "main"
+                  and metadata.get("private") is False):
+              if (event_name == "workflow_dispatch" and ref.startswith("refs/heads/")
+                      and ref not in ("refs/heads/", "refs/heads/main")):
+                  # Fixed-width ref hashes prevent crafted branch names from
+                  # overlapping another branch's fallback prefix.
+                  scope = "branch-" + hashlib.sha256(ref.encode("utf-8")).hexdigest()
+              elif event_name == "pull_request":
+                  number = event.get("number")
+                  pull = event.get("pull_request") or {}
+                  head = (pull.get("head") or {}).get("repo") or {}
+                  base = (pull.get("base") or {}).get("repo") or {}
+                  if (type(number) is int and number > 0
+                          and pull.get("number") == number
+                          and ref == f"refs/pull/{number}/merge"
+                          and head.get("full_name") == repository
+                          and base.get("full_name") == repository):
+                      scope = f"pr-{number}"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"scope={scope}", file=output)
+          PYTHON
       # Only main CI writes this namespace. Release restores the exact tested SHA;
       # GitHub's branch scope and the release gate exclude PR and branch caches.
       - name: Restore trusted main Go caches
@@ -79,15 +117,49 @@ jobs:
           key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
           # Reuse only identical runner, toolchain, and dependency manifests.
           restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-
-      - name: Report Go cache result
-        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      # Development caches never restore from or save to trusted-main keys.
+      - name: Restore isolated development Go caches
+        id: development-go-cache
+        if: steps.development-go-cache-scope.outputs.scope != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-
+      - name: Report Go cache results
+        if: always()
         env:
-          CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
-          CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
-          CACHE_HIT: ${{ steps.go-cache.outputs.cache-hit }}
+          MAIN_CACHE_OUTCOME: ${{ steps.go-cache.outcome }}
+          MAIN_CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
+          MAIN_CACHE_MATCHED_KEY: ${{ steps.go-cache.outputs.cache-matched-key }}
+          MAIN_CACHE_HIT: ${{ steps.go-cache.outputs.cache-hit }}
+          DEVELOPMENT_CACHE_OUTCOME: ${{ steps.development-go-cache.outcome }}
+          DEVELOPMENT_CACHE_PRIMARY_KEY: ${{ steps.development-go-cache.outputs.cache-primary-key }}
+          DEVELOPMENT_CACHE_MATCHED_KEY: ${{ steps.development-go-cache.outputs.cache-matched-key }}
+          DEVELOPMENT_CACHE_HIT: ${{ steps.development-go-cache.outputs.cache-hit }}
         run: |
-          set -euo pipefail
-          printf 'Go cache exact hit: %s\nRequested key: %s\nMatched key: %s\n' "${CACHE_HIT:-miss}" "$CACHE_PRIMARY_KEY" "${CACHE_MATCHED_KEY:-none}"
+          python - <<'PYTHON'
+          import os
+
+          for namespace in ("MAIN", "DEVELOPMENT"):
+              outcome = os.environ.get(f"{namespace}_CACHE_OUTCOME", "")
+              primary = os.environ.get(f"{namespace}_CACHE_PRIMARY_KEY", "")
+              matched = os.environ.get(f"{namespace}_CACHE_MATCHED_KEY", "")
+              exact_output = os.environ.get(f"{namespace}_CACHE_HIT", "")
+              if outcome in ("", "skipped"):
+                  result = "skipped"
+              elif outcome != "success":
+                  result = f"restore {outcome}"
+              elif not matched:
+                  result = "miss"
+              elif matched == primary:
+                  result = "exact hit"
+              else:
+                  result = "fallback hit"
+              print(f"{namespace.lower()} Go cache: {result}\nRequested key: {primary or 'none'}\nMatched key: {matched or 'none'}\nAction exact-hit output: {exact_output or 'unset'}")
+          PYTHON
       - name: Check exact toolchain and native target
         run: |
           set -euo pipefail
@@ -96,6 +168,9 @@ jobs:
           test "$(go env GOARCH)" = '${{ matrix.goarch }}'
           go mod verify
           python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Verify Windows receive-retirement directory barriers
+        if: matrix.goos == 'windows'
+        run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail
@@ -159,6 +234,14 @@ jobs:
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
+      - name: Save development Go caches after all native checks pass
+        if: success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.go-cache-info.outputs.gomodcache }}
+            ${{ steps.go-cache-info.outputs.gocache }}
+          key: ${{ steps.development-go-cache.outputs.cache-primary-key }}
 
   manifest-smoke:
     needs: native

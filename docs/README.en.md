@@ -20,6 +20,7 @@ The development candidate `0.3.0-alpha.1` is unpublished. Start with a task belo
 | Development and usability principles | [DEVELOPMENT_PRINCIPLES.en.md](DEVELOPMENT_PRINCIPLES.en.md) |
 | Feature parity and acceptance | [FEATURE_PARITY.en.md](FEATURE_PARITY.en.md) |
 | Verification by source | [Verification](VERIFICATION.en.md) |
+| Resource and transport observations | [Published binary resources](RESOURCE_MEASUREMENT.en.md) · [Isolated relay traffic](RELAY_TRAFFIC_MEASUREMENT.en.md) |
 | Security boundaries | [Security](../SECURITY.md) |
 | Architecture and distribution | [Architecture](ARCHITECTURE.md) · [Distribution](DISTRIBUTION.md) |
 | Remaining acceptance work | [Roadmap (Japanese)](ROADMAP.ja.md) |

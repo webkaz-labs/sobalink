@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
 import type { Translate } from '../i18n'
 
 const paths = {
@@ -43,6 +43,34 @@ export function ErrorBanner({ message, detail, onDismiss, t }: { message: string
   useEffect(() => { ref.current?.focus() }, [message])
   return <div className="error-banner" role="alert" tabIndex={-1} ref={ref}><Icon name="alert" /><div className="error-copy"><p>{message}</p>{detail && <details><summary>{t('technicalDetails')}</summary><p>{detail}</p></details>}</div>{onDismiss && <IconButton icon="close" label={t('close')} onClick={onDismiss} />}</div>
 }
+function keepModalFocus(event: KeyboardEvent<HTMLDialogElement>) {
+  if (event.key !== 'Tab' || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return
+  const element = event.currentTarget
+  if (!(event.target instanceof Element) || event.target.closest('dialog') !== element) return
+  // Native dialogs can send focus to browser chrome at either end. Resolve the
+  // current controls on every keypress so validation and expanded details can
+  // change the boundaries without changing native navigation inside the form.
+  const controls = [...element.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], summary, [tabindex]')].filter(control => {
+    for (let parent = control.parentElement; parent && parent !== element; parent = parent.parentElement) {
+      if (parent instanceof HTMLDetailsElement && !parent.open && !parent.querySelector(':scope > summary')?.contains(control)) return false
+    }
+    const visibility = getComputedStyle(control).visibility
+    return control.tabIndex >= 0 && !control.matches(':disabled') && !control.closest('[hidden], [inert]') &&
+      control.getClientRects().length > 0 && visibility !== 'hidden' && visibility !== 'collapse'
+  }).filter((control, _, candidates) => {
+    if (!(control instanceof HTMLInputElement) || control.type !== 'radio' || !control.name) return true
+    const group = candidates.filter(candidate => candidate instanceof HTMLInputElement && candidate.type === 'radio' && candidate.name === control.name && candidate.form === control.form) as HTMLInputElement[]
+    return control === (group.find(radio => radio === document.activeElement) || group.find(radio => radio.checked) || (event.shiftKey ? group.at(-1) : group[0]))
+  }).sort((a, b) => (a.tabIndex || Number.MAX_SAFE_INTEGER) - (b.tabIndex || Number.MAX_SAFE_INTEGER))
+  const first = controls[0]
+  const last = controls.at(-1)
+  if (!first || !last) return
+  if (document.activeElement === (event.shiftKey ? first : last) || document.activeElement === element) {
+    event.preventDefault()
+    const next = event.shiftKey ? last : first
+    next.focus()
+  }
+}
 export function Modal({ title, children, onClose, t, wide = false }: { title: string; children: ReactNode; onClose: () => void; t: Translate; wide?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const id = useId()
@@ -54,9 +82,9 @@ export function Modal({ title, children, onClose, t, wide = false }: { title: st
     if (!element.open) element.showModal()
     const cancel = (event: Event) => { event.preventDefault(); onCloseRef.current() }
     element.addEventListener('cancel', cancel)
-    return () => { element.removeEventListener('cancel', cancel); element.close(); focusBefore?.focus() }
+    return () => { element.removeEventListener('cancel', cancel); element.close(); if (focusBefore?.isConnected) focusBefore.focus() }
   }, [])
-  return <dialog ref={dialog} aria-labelledby={id} className={`modal ${wide ? 'modal-wide' : ''}`} onClick={event => { if (event.target === dialog.current) { const rect = dialog.current.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose() } }}>
+  return <dialog ref={dialog} aria-labelledby={id} aria-modal="true" className={`modal ${wide ? 'modal-wide' : ''}`} onKeyDown={keepModalFocus} onClick={event => { if (event.target === dialog.current) { const rect = dialog.current.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose() } }}>
     <div className="modal-heading"><h2 id={id}>{title}</h2><IconButton icon="close" label={t('close')} onClick={onClose} /></div><div className="modal-body">{children}</div>
   </dialog>
 }

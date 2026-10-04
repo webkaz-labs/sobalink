@@ -26,7 +26,7 @@ function harness(locale: Locale = 'en', initial = empty, failure = '', selected 
       if (name === 'startup.disable') { stored = { ...stored, revision: 'e'.repeat(64), entries: stored.entries.map(entry => ({ ...entry, enabled: false, state: 'disabled' })) }; value = stored }
       return { ok: true, result: value as CommandResult['result'] }
     })
-    const server = { state: { ...state, startup: snapshot }, error, setError, run, auth: 'ready', stale: false, busy: new Set(), refresh: vi.fn(), handleError: vi.fn(), updatedAt: null } as Server
+    const server = { state: { ...state, startup: snapshot }, error, setError, run, auth: 'ready', stale: false, busy: new Set(), refresh: vi.fn(), handleError: vi.fn(), updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0 } as Server
     return <StartupProfilesDialog server={server} locale={locale} t={translator(locale)} onClose={onClose} target={{ ids: selected.map(item => item.id) }} selected={selected} />
   }
   const view = render(<Harness />)

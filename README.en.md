@@ -10,13 +10,13 @@
 
 ### Use a signed release
 
-Use the following candidate `0.3.0-alpha.1` pin only if the canonical Releases page above contains the complete signed asset set for `v0.3.0-alpha.1` and you have checked that version's verification results. This example does not assert publication. If the required assets are absent, build from source below. [Required assets, signatures and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+These source instructions target prerelease `0.3.0-alpha.2`. Before using the pin below, check the canonical Releases page above for that version's complete signed assets and successful verification. The instructions alone do not establish publication or acceptance. If the required assets or results are absent, build reviewed source below or wait. [Required assets, signatures and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
 Run with mise **2026.9.18** available. `mise use -g` selects the version for normal use.
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
 mise exec -- soba version
 mise exec -- soba
 ```

@@ -229,3 +229,20 @@ it('reviews the actual finite runtime when stopping a saved indefinite definitio
   await userEvent.click(within(region).getByRole('button', { name: 'Cancel' }))
   expect(requests.some(request => request.name === 'services.stop')).toBe(false)
 })
+
+
+it('keeps service selection visible while management opens without changing the selection', async () => {
+  const requests = setup(); await open()
+  const selection = screen.getByRole('checkbox', { name: /web-share/ })
+  const management = screen.getAllByText('Manage service')[0]
+  expect(selection).toBeVisible()
+  expect(management.closest('details')).not.toHaveAttribute('open')
+  await userEvent.click(selection)
+  const count = requests.length
+  await userEvent.click(management)
+  expect(management.closest('details')).toHaveAttribute('open')
+  expect(selection).toBeChecked()
+  await userEvent.click(management)
+  expect(selection).toBeChecked()
+  expect(requests).toHaveLength(count)
+})

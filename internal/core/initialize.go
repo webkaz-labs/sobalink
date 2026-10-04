@@ -17,7 +17,11 @@ type Initialization struct {
 
 // InitializeProfile creates only inert local metadata. It never constructs a
 // network engine, transfer store, credential, service grant or listener.
-func InitializeProfile(ctx context.Context, opts Options, hostname string) (_ Initialization, err error) {
+func InitializeProfile(ctx context.Context, opts Options, hostname string) (Initialization, error) {
+	return initializeProfile(ctx, opts, hostname, nil)
+}
+
+func initializeProfile(ctx context.Context, opts Options, hostname string, write func(string, []byte) error) (_ Initialization, err error) {
 	var result Initialization
 	if opts.Directory == "" {
 		return result, errors.New("private state directory required")
@@ -58,9 +62,10 @@ func InitializeProfile(ctx context.Context, opts Options, hostname string) (_ In
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	c := &Core{dir: opts.Directory, profile: p, capacity: limits}
-	if err := c.writeProfile(p); err != nil {
-		return result, err
+	c := &Core{dir: opts.Directory, profile: p, capacity: limits, atomicWrite: write}
+	saveErr := c.writeProfile(p)
+	if !atomicPublished(saveErr) {
+		return result, saveErr
 	}
-	return Initialization{State: "initialized", Hostname: p.Settings.Hostname, Network: "none"}, nil
+	return Initialization{State: "initialized", Hostname: p.Settings.Hostname, Network: "none"}, saveErr
 }

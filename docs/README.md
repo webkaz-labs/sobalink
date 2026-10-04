@@ -20,6 +20,7 @@
 | 開発・使いやすさの基本方針 | [DEVELOPMENT_PRINCIPLES.ja.md](DEVELOPMENT_PRINCIPLES.ja.md) |
 | 機能対応と受入 | [FEATURE_PARITY.ja.md](FEATURE_PARITY.ja.md) |
 | ソースごとの検証 | [確認範囲](VERIFICATION.md) |
+| 資源使用量と通信量の観測 | [公開実行ファイルの資源](RESOURCE_MEASUREMENT.ja.md) · [隔離した中継通信](RELAY_TRAFFIC_MEASUREMENT.ja.md) |
 | 安全性の境界 | [安全性](SECURITY.ja.md) |
 | 設計と配布 | [設計](ARCHITECTURE.md) · [配布](DISTRIBUTION.md) |
 | 残る受入 | [ロードマップ](ROADMAP.ja.md) |

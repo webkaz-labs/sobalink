@@ -1,12 +1,16 @@
 """Offline unit tests for release guards; these do not sign or publish anything."""
 import base64
 import copy
+import contextlib
+import io
 import importlib.util
 import json
+import os
 import pathlib
 import re
 import shlex
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -68,8 +72,8 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertEqual(len(matches), 1, "expected exactly one step containing: " + needle)
         return matches[0]
 
-    def key(self, workflow, job):
-        restore = self.step(workflow, job, "uses: actions/cache/restore@")
+    def key(self, workflow, job, cache_id="go-cache"):
+        restore = self.step(workflow, job, "id: " + cache_id + "\n")
         return re.search(r"^          key: (.+)$", restore, re.MULTILINE).group(1)
 
     def test_release_validation_artifact_contains_offline_install_dependency(self):
@@ -145,19 +149,23 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertNotRegex(self.workflow(workflow), r"uses: actions/cache@")
             for job in jobs:
                 with self.subTest(workflow=workflow, job=job):
-                    restore = self.step(workflow, job, "uses: actions/cache/restore@")
-                    self.assertIn("uses: actions/cache/restore@" + self.CACHE_PIN, restore)
-                    self.assertIn(self.CACHE_PATHS, restore)
+                    restores = re.findall(r"^      - .*?(?=^      - |\Z)", self.job(workflow, job), re.MULTILINE | re.DOTALL)
+                    restores = [step for step in restores if "uses: actions/cache/restore@" in step]
+                    self.assertEqual(len(restores), 2 if (workflow, job) == ("ci", "native") else 1)
+                    for restore in restores:
+                        self.assertIn("uses: actions/cache/restore@" + self.CACHE_PIN, restore)
+                        self.assertIn(self.CACHE_PATHS, restore)
                     paths = self.step(workflow, job, "id: go-cache-info")
                     self.assertIn('test "$(go env GOVERSION)" = go1.27.1', paths)
                     self.assertIn('echo "gomodcache=$(go env GOMODCACHE)"', paths)
                     self.assertIn('echo "gocache=$(go env GOCACHE)"', paths)
-                    self.assertLess(self.job(workflow, job).index(paths), self.job(workflow, job).index(restore))
+                    for restore in restores:
+                        self.assertLess(self.job(workflow, job).index(paths), self.job(workflow, job).index(restore))
 
     def test_only_successful_canonical_main_native_ci_can_save(self):
         ci = self.workflow("ci")
-        self.assertEqual(ci.count("uses: actions/cache/save@"), 1)
-        save = self.step("ci", "native", "uses: actions/cache/save@")
+        self.assertEqual(ci.count("uses: actions/cache/save@"), 2)
+        save = self.step("ci", "native", "name: Save Go caches after all native checks pass on main")
         self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
         self.assertIn("        if: success() && " + self.MAIN_GUARD + " && steps.go-cache.outputs.cache-hit != 'true'\n", save)
         self.assertIn(self.CACHE_PATHS, save)
@@ -165,9 +173,158 @@ class WorkflowCachePolicy(unittest.TestCase):
         native = self.job("ci", "native")
         self.assertGreater(native.index(save), native.index("uses: actions/upload-artifact@"))
         for job in ("native", "manifest-smoke"):
-            self.assertIn("        if: " + self.MAIN_GUARD + "\n", self.step("ci", job, "uses: actions/cache/restore@"))
-        fallback = re.findall(r"^          restore-keys: (.+)$", ci, re.MULTILINE)
+            self.assertIn("        if: " + self.MAIN_GUARD + "\n", self.step("ci", job, "id: go-cache\n"))
+        fallback = re.findall(r"^          restore-keys: (.+)$", self.step("ci", "native", "id: go-cache\n"), re.MULTILINE)
         self.assertEqual(fallback, [self.key("ci", "native").removesuffix("${{ github.sha }}")])
+
+    def inline_python(self, step):
+        match = re.search(r"^          python - <<'PYTHON'\n(.*?)^          PYTHON$", step, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match)
+        return textwrap.dedent(match.group(1))
+
+    def development_scope(self, event_name="workflow_dispatch", ref="refs/heads/feature/example", repository="webkaz-labs/sobalink", event=None):
+        if event is None:
+            event = self.development_event()
+        source = self.inline_python(self.step("ci", "native", "id: development-go-cache-scope\n"))
+        with tempfile.TemporaryDirectory() as directory:
+            event_path = pathlib.Path(directory) / "event.json"
+            output_path = pathlib.Path(directory) / "output.txt"
+            event_path.write_text(json.dumps(event), encoding="utf-8")
+            env = {"GITHUB_EVENT_PATH": str(event_path), "GITHUB_OUTPUT": str(output_path),
+                   "GITHUB_REPOSITORY": repository, "GITHUB_REF": ref, "GITHUB_EVENT_NAME": event_name}
+            with patch.dict(os.environ, env, clear=True):
+                exec(compile(source, "ci.yml development cache scope", "exec"), {})
+            output = output_path.read_text(encoding="utf-8")
+            self.assertRegex(output, r"^scope=([^\n]*)\n$")
+            return output.removeprefix("scope=").strip()
+
+    def development_event(self):
+        repository = {"full_name": "webkaz-labs/sobalink", "default_branch": "main", "private": False}
+        return {"repository": repository, "number": 42,
+                "pull_request": {"number": 42, "head": {"repo": copy.deepcopy(repository)},
+                                 "base": {"repo": copy.deepcopy(repository)}}}
+
+    def test_only_same_repository_prs_and_non_main_dispatches_get_development_scopes(self):
+        branch = self.development_scope()
+        self.assertRegex(branch, r"^branch-[0-9a-f]{64}$")
+        self.assertEqual(branch, self.development_scope())
+        self.assertEqual(self.development_scope("pull_request", "refs/pull/42/merge"), "pr-42")
+        for event_name, ref in (("push", "refs/heads/feature/example"), ("push", "refs/heads/main"),
+                                ("workflow_dispatch", "refs/heads/"),
+                                ("workflow_dispatch", "refs/heads/main"), ("workflow_dispatch", "refs/tags/v1.0.0"),
+                                ("workflow_dispatch", "refs/pull/42/merge"), ("schedule", "refs/heads/feature/example"),
+                                ("pull_request_target", "refs/pull/42/merge"), ("unknown", "refs/heads/feature/example"),
+                                ("pull_request", "refs/heads/main"), ("pull_request", "refs/pull/42/head"),
+                                ("pull_request", "refs/pull/43/merge")):
+            with self.subTest(event_name=event_name, ref=ref):
+                self.assertEqual(self.development_scope(event_name, ref), "")
+        for repository in ("example/sobalink", "webkaz-labs/other", ""):
+            with self.subTest(repository=repository):
+                for event_name, ref in (("workflow_dispatch", "refs/heads/feature/example"), ("pull_request", "refs/pull/42/merge")):
+                    self.assertEqual(self.development_scope(event_name, ref, repository=repository), "")
+
+    def test_development_scope_rejects_forks_missing_and_inconsistent_event_metadata(self):
+        changes = [("repository", "full_name", "example/sobalink"), ("repository", "default_branch", "other"),
+                   ("repository", "default_branch", None), ("repository", "private", True),
+                   ("repository", "private", "false"), ("repository", "private", None)]
+        for section, field, value in changes:
+            event = self.development_event()
+            event[section][field] = value
+            for event_name, ref in (("workflow_dispatch", "refs/heads/feature/example"), ("pull_request", "refs/pull/42/merge")):
+                with self.subTest(field=field, value=value, event_name=event_name):
+                    self.assertEqual(self.development_scope(event_name, ref, event=event), "")
+        for side in ("head", "base"):
+            for repository in ({"full_name": "example/sobalink"}, {}, None):
+                event = self.development_event()
+                event["pull_request"][side]["repo"] = repository
+                with self.subTest(side=side, repository=repository):
+                    self.assertEqual(self.development_scope("pull_request", "refs/pull/42/merge", event=event), "")
+        for number in (None, 0, -1, True, "42", 43):
+            event = self.development_event()
+            event["number"] = number
+            with self.subTest(number=number):
+                self.assertEqual(self.development_scope("pull_request", "refs/pull/42/merge", event=event), "")
+        for missing in ("repository", "pull_request", "number"):
+            event = self.development_event()
+            del event[missing]
+            self.assertEqual(self.development_scope("pull_request", "refs/pull/42/merge", event=event), "")
+        event = self.development_event()
+        event["pull_request"]["number"] = 43
+        self.assertEqual(self.development_scope("pull_request", "refs/pull/42/merge", event=event), "")
+
+    def test_development_keys_and_fallbacks_stay_inside_their_full_boundary(self):
+        restore = self.step("ci", "native", "id: development-go-cache\n")
+        prefix = "development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-"
+        boundary = prefix + "${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-"
+        self.assertEqual(self.key("ci", "native", "development-go-cache"), boundary + "${{ github.sha }}")
+        self.assertEqual(re.findall(r"^          restore-keys: (.+)$", restore, re.MULTILINE), [boundary])
+        self.assertNotIn("trusted-main-go", restore)
+        values = {"steps.development-go-cache-scope.outputs.scope": self.development_scope(),
+                  "runner.os": "Linux", "runner.arch": "X64", "matrix.runner": "ubuntu-24.04",
+                  "hashFiles('go.mod', 'go.sum')": "a" * 64, "github.sha": "b" * 40}
+
+        def render(template, values):
+            for expression, value in values.items():
+                template = template.replace("${{ " + expression + " }}", value)
+            self.assertNotIn("${{", template)
+            return template
+
+        old_prefix = render(boundary, values)
+        next_commit = dict(values, **{"github.sha": "c" * 40})
+        self.assertTrue(render(self.key("ci", "native", "development-go-cache"), next_commit).startswith(old_prefix))
+        other_scopes = [self.development_scope(ref="refs/heads/feature/other"),
+                        self.development_scope(ref="refs/heads/feature/example-Linux-X64-ubuntu-24.04-go1.27.1-" + "a" * 64),
+                        self.development_scope(ref="refs/heads/pr-42"), "pr-42", "pr-43"]
+        for expression, alternatives in (("steps.development-go-cache-scope.outputs.scope", other_scopes),
+                                         ("runner.os", ["Windows"]), ("runner.arch", ["ARM64"]),
+                                         ("matrix.runner", ["ubuntu-24.04-arm", "ubuntu-22.04"]),
+                                         ("hashFiles('go.mod', 'go.sum')", ["d" * 64])):
+            for alternative in alternatives:
+                with self.subTest(expression=expression, alternative=alternative):
+                    other = dict(values, **{expression: alternative})
+                    self.assertFalse(render(self.key("ci", "native", "development-go-cache"), other).startswith(old_prefix))
+        self.assertFalse(render(self.key("ci", "native"), values).startswith(old_prefix))
+        self.assertFalse(render(self.key("ci", "native", "development-go-cache"), values).replace("go1.27.1-", "go1.27.2-").startswith(old_prefix))
+
+    def test_development_cache_saves_only_after_successful_native_validation(self):
+        restore = self.step("ci", "native", "id: development-go-cache\n")
+        save = self.step("ci", "native", "name: Save development Go caches after all native checks pass")
+        self.assertIn("        if: steps.development-go-cache-scope.outputs.scope != ''\n", restore)
+        self.assertIn("        if: success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-hit != 'true'\n", save)
+        self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
+        self.assertIn(self.CACHE_PATHS, save)
+        self.assertIn("key: ${{ steps.development-go-cache.outputs.cache-primary-key }}", save)
+        self.assertNotIn("trusted-main-go", save)
+        native = self.job("ci", "native")
+        self.assertGreater(native.index(save), native.index("uses: actions/upload-artifact@"))
+        for job in ("manifest-smoke", "browser"):
+            self.assertNotIn("development-go-cache", self.job("ci", job))
+        self.assertNotIn("development-go", self.workflow("prerelease"))
+
+    def test_cache_reporting_distinguishes_fallback_miss_skip_and_failed_restore(self):
+        step = self.step("ci", "native", "name: Report Go cache results\n")
+        self.assertIn("        if: always()\n", step)
+        source = self.inline_python(step)
+        for namespace, cache_id in (("MAIN", "go-cache"), ("DEVELOPMENT", "development-go-cache")):
+            for suffix, output in (("OUTCOME", "outcome"), ("PRIMARY_KEY", "outputs.cache-primary-key"), ("MATCHED_KEY", "outputs.cache-matched-key"), ("HIT", "outputs.cache-hit")):
+                self.assertIn(namespace + "_CACHE_" + suffix + ": ${{ steps." + cache_id + "." + output + " }}", step)
+            for outcome, primary, matched, hit, expected in (("success", "key-new", "key-new", "true", "exact hit"),
+                                                           ("success", "key-new", "key-old", "false", "fallback hit"),
+                                                           ("success", "key-new", "", "false", "miss"),
+                                                           ("success", "key-new", "", "", "miss"),
+                                                           ("skipped", "", "", "", "skipped"),
+                                                           ("", "", "", "", "skipped"),
+                                                           ("failure", "key-new", "", "", "restore failure"),
+                                                           ("cancelled", "key-new", "", "", "restore cancelled")):
+                with self.subTest(namespace=namespace, outcome=outcome, matched=matched, hit=hit):
+                    env = {namespace + "_CACHE_OUTCOME": outcome, namespace + "_CACHE_PRIMARY_KEY": primary,
+                           namespace + "_CACHE_MATCHED_KEY": matched, namespace + "_CACHE_HIT": hit}
+                    output = io.StringIO()
+                    with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output):
+                        exec(compile(source, "ci.yml cache report", "exec"), {})
+                    self.assertIn(namespace.lower() + " Go cache: " + expected + "\n", output.getvalue())
+                    self.assertIn("Action exact-hit output: " + (hit or "unset") + "\n", output.getvalue())
+                    self.assertIn("Requested key: " + (primary or "none") + "\nMatched key: " + (matched or "none"), output.getvalue())
 
     def test_prerelease_restores_exact_tested_source_without_saving(self):
         release = self.workflow("prerelease")
@@ -196,6 +353,22 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("python -m unittest discover -s .github/scripts -p 'test_*.py' -v", self.job("ci", "native"))
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
+
+    def test_development_cache_keeps_existing_triggers_and_browser_gates(self):
+        workflow = self.workflow("ci")
+        self.assertIn("on:\n  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:\n", workflow)
+        browser = self.job("ci", "browser")
+        for command in ("go mod verify", "go build -tags=soba_e2e", "npm --prefix web run test:browser:safety",
+                        "npm --prefix web run test:browser", "git diff --exit-code -- web/dist"):
+            step = self.step("ci", "browser", command)
+            self.assertNotIn("        if:", step)
+            self.assertNotIn("cache-hit", step)
+        self.assertNotIn("actions/cache", browser)
+        relay = self.step("ci", "native", "name: Verify paired transport")
+        self.assertNotIn("cache-hit", relay)
+        self.assertIn('"go", "test", "-count=1", "-v"', relay)
+        self.assertIn('"-timeout=5m"', relay)
+        self.assertIn("timeout=9 * 60", relay)
 
     def test_native_ipc_regression_is_repeated_without_cache_skips(self):
         for workflow, command in (("ci", "go test -race -count=5 -timeout=2m ./internal/control"), ("prerelease", "go test -race -count=25 -timeout=3m ./internal/control")):

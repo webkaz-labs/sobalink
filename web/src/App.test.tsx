@@ -7,6 +7,8 @@ import type { ServiceConfigResult, State } from './api'
 import * as api from './api'
 import { translator } from './i18n'
 import { lanTranslator } from './lan-i18n'
+import { serviceText } from './service-i18n'
+import { policyText } from './policy-i18n'
 
 const state: State = {
   csrfToken: 'test-csrf', self: { name: 'This device', status: 'online', networks: ['tailnet'] },
@@ -417,6 +419,7 @@ describe('explicit and interrupted flows', () => {
 const savedShare: ServiceConfigResult = { revision: 'a'.repeat(64), active: false, configuration: { id: 'saved-share', backend: 'tailnet', name: 'Scoped-share', direction: 'share', network: 'udp', ports: '8080-8089', excludePorts: '8082,8084-8086', peerIds: ['peer-a', 'peer-c'], ttlSeconds: 120, purpose: 'custom', discoverable: true } }
 const savedState: State = { ...state, shares: [{ id: 'saved-share', peerId: '', peerIds: ['peer-a', 'peer-c'], name: 'Scoped-share', network: 'udp', ports: '8080-8089', status: 'stopped' }] }
 async function openDetails() { await openStudio(); await userEvent.click(screen.getByRole('button', { name: 'Open device details' })) }
+async function manageService() { const summary = screen.getByText('Manage service'); if (!summary.closest('details')?.open) await userEvent.click(summary) }
 describe('service drafts and authoritative saved settings', () => {
   it('offers editable unique names across connections and shares and refuses collisions', async () => {
     const { requests } = setup({ ...savedState, services: [{ id: 'existing', peerId: 'peer-c', name: 'connect-Studio', network: 'tcp', status: 'active' }] })
@@ -466,13 +469,13 @@ describe('service drafts and authoritative saved settings', () => {
   it('copies only authoritative complete settings and does not start on read or cancel under StrictMode', async () => {
     const { requests } = setup(savedState, { 'saved-share': savedShare })
     render(<StrictMode><App /></StrictMode>); await openDetails()
-    await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
+    await manageService(); await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
     expect(await screen.findByRole('textbox', { name: /^Connection name/ })).toHaveValue('Scoped-share-2')
     expect(screen.getByRole('combobox', { name: 'Lifetime' })).toHaveValue('custom')
     expect(screen.getByText('8082,8084-8086')).toBeInTheDocument()
     expect(requests.map(request => request.body.name)).toEqual(['service.config'])
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
+    await manageService(); await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
     await screen.findByRole('textbox', { name: 'Ports' })
     await userEvent.click(screen.getByRole('button', { name: 'Start sharing' }))
     const payload = requests.find(request => request.body.name === 'service.share')?.body.payload
@@ -481,12 +484,12 @@ describe('service drafts and authoritative saved settings', () => {
   it('edits an inactive saved rule with exact revision and rejects a changed saved draft on reopen', async () => {
     const configs = { 'saved-share': savedShare }
     const { requests } = setup(savedState, configs); render(<App />); await openDetails()
-    await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
+    await manageService(); await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
     await screen.findByRole('textbox', { name: 'Ports' })
     fireEvent.change(screen.getByRole('textbox', { name: 'Ports' }), { target: { value: '8080-8090' } })
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     configs['saved-share'] = { ...savedShare, revision: 'b'.repeat(64) }
-    await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
+    await manageService(); await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
     expect(await screen.findByText(/These saved settings have changed/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Apply and start' })).toBeDisabled()
     await userEvent.click(screen.getAllByRole('button', { name: 'Reload saved settings' })[0])
@@ -497,7 +500,7 @@ describe('service drafts and authoritative saved settings', () => {
   it.each(['active', 'backend', 'legacy'] as const)('blocks unsafe saved-rule %s use until reviewed', async reason => {
     const record = { ...savedShare, active: reason === 'active', configuration: { ...savedShare.configuration, backend: reason === 'backend' ? 'lan' as const : reason === 'legacy' ? undefined : 'tailnet' as const } }
     const { requests } = setup(savedState, { 'saved-share': record }); render(<App />); await openDetails()
-    await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
+    await manageService(); await userEvent.click(screen.getByRole('button', { name: 'Edit and start' }))
     expect(await screen.findByRole('button', { name: 'Apply and start' })).toBeDisabled()
     if (reason === 'legacy') {
       await userEvent.click(screen.getByRole('checkbox', { name: /I reviewed the selected network/ }))
@@ -507,7 +510,7 @@ describe('service drafts and authoritative saved settings', () => {
   })
   it('refuses a partial saved-rule response instead of guessing settings', async () => {
     setup(savedState); render(<App />); await openDetails()
-    await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
+    await manageService(); await userEvent.click(screen.getByRole('button', { name: 'Copy settings' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('The response could not be read')
     expect(screen.queryByRole('button', { name: 'Start sharing' })).not.toBeInTheDocument()
   })
@@ -578,5 +581,190 @@ describe('connectivity-first device view', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('displayed UTF-8 byte limit')
     expect(composer).toHaveValue('あ'.repeat(7000))
     expect(requests).toHaveLength(1)
+  })
+})
+
+
+describe('compact device presentation', () => {
+  it.each(['en', 'ja'] as const)('keeps key service facts visible and management reversible (%s)', async locale => {
+    const t = translator(locale)
+    localStorage.setItem('sobalink.locale', locale)
+    const { requests } = setup({ ...state, services: [{ id: 'fixture-service', name: 'Example web service', peerId: 'peer-a', status: 'active', network: 'tcp', endpoint: '127.0.0.1:8080', lifetime: 'until-stopped' }] })
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: /Studio/ }))
+    const overview = screen.getByRole('region', { name: t('deviceOverview') })
+    expect(within(overview).getByText('127.0.0.1:8080')).toBeVisible()
+    expect(within(overview).getByText(serviceText(locale, 'connectionKind'))).toBeVisible()
+    expect(within(overview).getByText(t('active'))).toBeVisible()
+    expect(within(overview).getByRole('button', { name: t('stop') })).toBeVisible()
+    const summary = within(overview).getByText(t('serviceActions'))
+    expect(summary.closest('details')).not.toHaveAttribute('open')
+    await userEvent.click(summary)
+    expect(summary.closest('details')).toHaveAttribute('open')
+    await userEvent.click(summary)
+    expect(summary.closest('details')).not.toHaveAttribute('open')
+    expect(requests).toHaveLength(0)
+  })
+  it('keeps sidebar search and network views in sync and clears an empty filter', async () => {
+    setup(); render(<App />)
+    await screen.findByRole('button', { name: /Studio/ })
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Find a device' }), 'Studio')
+    await userEvent.click(screen.getByRole('button', { name: /^Network graph$/ }))
+    const graph = screen.getByRole('region', { name: 'Network graph' })
+    expect(within(graph).getByRole('button', { name: /^Open device: Studio/ })).toBeInTheDocument()
+    expect(within(graph).queryByRole('button', { name: /^Open device: Notebook/ })).not.toBeInTheDocument()
+    await userEvent.clear(screen.getByRole('searchbox', { name: 'Find a device' }))
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Find a device' }), 'No matching fixture')
+    expect(within(graph).getByText('No matching devices')).toBeInTheDocument()
+    await userEvent.click(within(graph).getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByRole('searchbox', { name: 'Find a device' })).toHaveValue('')
+    expect(within(graph).getByRole('button', { name: /^Open device: Notebook/ })).toBeInTheDocument()
+  })
+  it('separates unanswered LAN presence from stored permission and pause', async () => {
+    setup({ ...state, peers: [{ ...state.peers[1], online: false, trusted: true, bridge: false }, { ...state.peers[0], autosave: { enabled: true, paused: true } }] })
+    render(<App />)
+    const unanswered = await screen.findByRole('button', { name: /Notebook/ })
+    expect(unanswered).toHaveTextContent('Response not confirmed')
+    expect(unanswered).toHaveTextContent('Trusted here')
+    expect(unanswered).toHaveTextContent('sobalink service not confirmed')
+    expect(unanswered).not.toHaveTextContent('Offline')
+    expect(unanswered.querySelector('.device-permission')).not.toHaveClass('is-trusted')
+    const paused = screen.getByRole('button', { name: /Studio/ })
+    expect(paused).toHaveTextContent('Paused')
+    expect(paused.querySelector('.device-permission')).not.toHaveClass('is-trusted')
+  })
+})
+
+
+describe('filtered network selection', () => {
+  it.each(['en', 'ja'] as const)('clears excluded details without stealing search focus or adding history (%s)', async locale => {
+    const t = translator(locale)
+    const { requests } = setup()
+    localStorage.setItem('sobalink.locale', locale)
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: t('networkView') }))
+    const graph = screen.getByRole('region', { name: t('networkView') })
+    const sidebar = screen.getByRole('navigation', { name: t('devices') })
+    const search = within(sidebar).getByRole('searchbox', { name: t('searchDevices') })
+    await userEvent.click(within(graph).getByRole('button', { name: /^(Open device|デバイスを開く): Studio;/ }))
+    const selectedRoute = history.state
+    const historyLength = history.length
+    expect(screen.getByRole('complementary', { name: t('details') })).toBeInTheDocument()
+    await userEvent.type(search, 'Notebook')
+    expect(search).toHaveValue('Notebook')
+    expect(search).toHaveFocus()
+    expect(screen.queryByRole('complementary', { name: t('details') })).not.toBeInTheDocument()
+    expect(history.length).toBe(historyLength)
+    expect(history.state).toEqual({ ...selectedRoute, sobalinkPeer: null, sobalinkDetails: false })
+    expect(within(graph).getByRole('button', { name: /^(Open device|デバイスを開く): Notebook;/ })).toHaveAttribute('aria-pressed', 'false')
+    // A restored route cannot reopen a device excluded by the still-active filter.
+    await act(async () => { history.replaceState(selectedRoute, ''); window.dispatchEvent(new PopStateEvent('popstate')) })
+    expect(screen.queryByRole('complementary', { name: t('details') })).not.toBeInTheDocument()
+    expect(history.state).toMatchObject({ sobalinkView: 'map', sobalinkNetworkView: 'diagram', sobalinkPeer: null, sobalinkDetails: false })
+    await userEvent.click(within(sidebar).getByRole('button', { name: t('clearFilters') }))
+    const studio = within(graph).getByRole('button', { name: /^(Open device|デバイスを開く): Studio;/ })
+    expect(studio).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('complementary', { name: t('details') })).not.toBeInTheDocument()
+    await userEvent.click(studio)
+    await userEvent.click(within(sidebar).getByRole('button', { name: t('nearby') }))
+    expect(screen.queryByRole('complementary', { name: t('details') })).not.toBeInTheDocument()
+    expect(history.state).toMatchObject({ sobalinkPeer: null, sobalinkDetails: false })
+    await userEvent.click(within(sidebar).getByRole('button', { name: t('clearFilters') }))
+    expect(within(graph).getByRole('button', { name: /^(Open device|デバイスを開く): Studio;/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(requests).toHaveLength(0)
+  })
+  it.each(['en', 'ja'] as const)('preserves a filtered conversation draft and restores it on Back (%s)', async locale => {
+    const t = translator(locale)
+    const { requests } = setup()
+    localStorage.setItem('sobalink.locale', locale)
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: /Studio/ }))
+    await userEvent.click(screen.getByRole('button', { name: t('filesAndMessages') }))
+    fireEvent.change(screen.getByRole('textbox', { name: t('messagePlaceholder') }), { target: { value: 'Unsent fixture draft' } })
+    const conversationRoute = history.state
+    await userEvent.type(screen.getByRole('searchbox', { name: t('searchDevices') }), 'Notebook')
+    expect(screen.getByRole('textbox', { name: t('messagePlaceholder') })).toHaveValue('Unsent fixture draft')
+    expect(history.state).toEqual(conversationRoute)
+    await userEvent.click(screen.getByRole('button', { name: t('networkView') }))
+    await act(async () => { history.replaceState(conversationRoute, ''); window.dispatchEvent(new PopStateEvent('popstate')) })
+    expect(screen.getByRole('textbox', { name: t('messagePlaceholder') })).toHaveValue('Unsent fixture draft')
+    expect(screen.getByRole('heading', { name: 'Studio' })).toBeInTheDocument()
+    expect(history.state).toEqual(conversationRoute)
+    expect(requests).toHaveLength(0)
+  })
+})
+
+
+describe('management control hierarchy', () => {
+  it.each(['en', 'ja'] as const)('keeps task groups and persistent input labels usable without submitting (%s)', async locale => {
+    const t = translator(locale)
+    localStorage.setItem('sobalink.locale', locale)
+    const { requests } = setup()
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: /Studio/ }))
+    const search = screen.getByRole('searchbox', { name: t('searchDevices') }) as HTMLInputElement
+    expect(search.labels?.[0]).toHaveTextContent(t('searchDevices'))
+    const overview = screen.getByRole('region', { name: t('deviceOverview') })
+    const services = within(overview).getByRole('group', { name: t('services') })
+    const exchange = within(overview).getByRole('group', { name: t('filesAndMessages') })
+    expect(within(services).getByRole('button', { name: t('connectService') })).toBeEnabled()
+    expect(within(services).getByRole('button', { name: t('shareService') })).toBeEnabled()
+    expect(within(exchange).getByRole('button', { name: t('sendFiles') })).toBeEnabled()
+    await userEvent.click(within(exchange).getByRole('button', { name: t('openMessages') }))
+    const composer = screen.getByRole('textbox', { name: t('messagePlaceholder') }) as HTMLTextAreaElement
+    expect(composer.labels?.[0]).toBeVisible()
+    expect(composer.labels?.[0]).toHaveTextContent(t('composerLabel'))
+    fireEvent.change(composer, { target: { value: 'Unsent review note' } })
+    await userEvent.click(screen.getByRole('button', { name: t('services') }))
+    await userEvent.click(screen.getByRole('button', { name: t('filesAndMessages') }))
+    expect(screen.getByRole('textbox', { name: t('messagePlaceholder') })).toHaveValue('Unsent review note')
+    expect(requests).toHaveLength(0)
+  })
+
+  it.each([
+    ['en', 'connect'], ['en', 'share'], ['ja', 'connect'], ['ja', 'share'],
+  ] as const)('groups target, configuration and review without losing a canceled draft (%s, %s)', async (locale, mode) => {
+    const t = translator(locale)
+    const s = (key: string) => serviceText(locale, key)
+    localStorage.setItem('sobalink.locale', locale)
+    const { requests } = setup()
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: /Studio/ }))
+    const action = t(mode === 'connect' ? 'connectService' : 'shareService')
+    await userEvent.click(screen.getByRole('button', { name: action }))
+    const dialog = screen.getByRole('dialog')
+    const target = within(dialog).getByRole('group', { name: s(mode === 'connect' ? 'connectionTarget' : 'sharingAccess') })
+    expect(within(target).getByText('Studio')).toBeVisible()
+    if (mode === 'share') expect(within(target).getByRole('checkbox', { name: /Studio/ })).toBeChecked()
+    const settings = within(dialog).getByRole('group', { name: s('serviceSettings') })
+    const ports = within(settings).getByRole('textbox', { name: t('ports') })
+    fireEvent.change(ports, { target: { value: '8080' } })
+    expect(within(settings).getByRole('combobox', { name: t('protocol') })).toHaveValue('tcp')
+    const preview = within(dialog).getByRole('group', { name: t('previewScope') })
+    expect(preview).toHaveTextContent('8080')
+    expect(preview).toHaveTextContent(t(mode === 'connect' ? 'loopbackOnly' : 'selectedPeersOnly'))
+    await userEvent.click(within(dialog).getByRole('button', { name: t('cancel') }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: action }))
+    expect(screen.getByRole('textbox', { name: t('ports') })).toHaveValue('8080')
+    expect(requests).toHaveLength(0)
+  })
+
+  it.each(['en', 'ja'] as const)('separates display, file receiving and management preferences (%s)', async locale => {
+    const t = translator(locale)
+    localStorage.setItem('sobalink.locale', locale)
+    const { requests } = setup()
+    render(<App />)
+    await screen.findByRole('button', { name: /Studio/ })
+    await userEvent.click(screen.getByRole('button', { name: t('settings') }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(within(dialog).getByRole('group', { name: t('displayPreferences') })).getByRole('combobox', { name: t('language') })).toHaveValue(locale)
+    const receiving = within(dialog).getByRole('group', { name: t('receivingPreferences') })
+    expect(within(receiving).getByRole('textbox', { name: t('receiveDirectory') })).toBeVisible()
+    expect(within(receiving).getByRole('button', { name: t('save') })).toBeVisible()
+    const management = within(dialog).getByRole('group', { name: t('managementPreferences') })
+    expect(within(management).getByRole('button', { name: policyText(locale, 'title') })).toBeVisible()
+    await userEvent.click(within(dialog).getByRole('button', { name: t('close') }))
+    expect(requests).toHaveLength(0)
   })
 })

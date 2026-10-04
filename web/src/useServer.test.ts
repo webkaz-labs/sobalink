@@ -1,7 +1,116 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { command, type State } from './api'
-import { useServer } from './useServer'
+import { MAX_UNCERTAIN_MESSAGES, useServer } from './useServer'
+
+const messageState: State = { csrfToken: 'synthetic-csrf', self: { name: 'Synthetic', status: 'online' }, peers: [], messages: [], transfers: [], services: [], shares: [] }
+
+it.each(['message_history_unavailable', 'message_peer_storage_unavailable'])('blocks an identical %s draft despite refresh, unrelated commands and a successful different message', async code => {
+  const requests: { name: string; payload: Record<string, unknown>; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    const request = JSON.parse(init!.body as string)
+    requests.push(request)
+    return request.name === 'message.send' && request.payload.text === 'Uncertain original' && request.payload.peerId === 'a'
+      ? new Response(JSON.stringify({ code }), { status: 507 }) : new Response('{"ok":true}')
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => { await result.current.run('message.send', { peerId: 'a', text: 'Uncertain original' }, 'first') })
+  expect(result.current.error).toMatchObject({ code })
+  await act(async () => {
+    result.current.setError(null)
+    await result.current.refresh(true)
+    // More successful commands than Core's 256-entry request cache can retain.
+    for (let i = 0; i < 260; i++) await result.current.run('peer.reconnect', { peerId: 'a' }, 'first')
+    await result.current.run('message.send', { peerId: 'a', text: 'Different intended message' }, 'first')
+    await result.current.run('message.send', { peerId: 'b', text: 'Uncertain original' }, 'other-peer')
+    await result.current.run('message.send', { peerId: 'a', text: 'Uncertain original' }, 'different-key')
+  })
+  expect(requests.filter(request => request.name === 'message.send')).toHaveLength(3)
+  expect(result.current.error).toMatchObject({ code: 'message_resend_blocked' })
+})
+
+it('bounds uncertainty memory without evicting old guards and fails closed at capacity', async () => {
+  let sends = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    if (JSON.parse(init!.body as string).name === 'message.send') {
+      sends++
+      return new Response('{"code":"message_history_unavailable"}', { status: 507 })
+    }
+    return new Response('{"ok":true}')
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    for (let i = 0; i < MAX_UNCERTAIN_MESSAGES; i++) await result.current.run('message.send', { peerId: 'a', text: `Synthetic draft ${i}` })
+    await result.current.run('message.send', { peerId: 'a', text: 'New draft after capacity' })
+  })
+  expect(sends).toBe(MAX_UNCERTAIN_MESSAGES)
+  expect(result.current.error).toMatchObject({ code: 'message_safety_limit' })
+  await act(async () => { await result.current.run('message.send', { peerId: 'a', text: 'Synthetic draft 0' }) })
+  expect(sends).toBe(MAX_UNCERTAIN_MESSAGES)
+  expect(result.current.error).toMatchObject({ code: 'message_resend_blocked' })
+  expect(await result.current.messageBlock('a', 'Synthetic draft 0')).toBe('message_resend_blocked')
+  expect(await result.current.messageBlock('b', 'New draft')).toBe('message_safety_limit')
+  await act(async () => { expect(await result.current.run('peer.reconnect', { peerId: 'a' })).toEqual({ ok: true }) })
+})
+
+it('fails closed if fingerprinting is unavailable and releases the action lock', async () => {
+  vi.stubGlobal('crypto', { randomUUID: () => 'synthetic-id' })
+  const fetch = vi.fn(async () => new Response(JSON.stringify(messageState)))
+  vi.stubGlobal('fetch', fetch)
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => { await result.current.run('message.send', { peerId: 'a', text: 'Keep local' }) })
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(result.current.error).toMatchObject({ code: 'message_safety_unavailable' })
+  expect(result.current.busy.size).toBe(0)
+})
+
+it('does not allow simultaneous uncertain sends to bypass the guard with different action keys', async () => {
+  let finish!: (response: Response) => void
+  const pending = new Promise<Response>(resolve => { finish = resolve })
+  const fetch = vi.fn((path: string) => path === '/api/state' ? Promise.resolve(new Response(JSON.stringify(messageState))) : pending)
+  vi.stubGlobal('fetch', fetch)
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  let first!: Promise<unknown>
+  let second!: Promise<unknown>
+  act(() => {
+    first = result.current.run('message.send', { peerId: 'a', text: 'Same intent' }, 'one')
+    second = result.current.run('message.send', { peerId: 'a', text: 'Same intent' }, 'two')
+  })
+  await waitFor(() => expect(fetch.mock.calls.filter(([path]) => path === '/api/command')).toHaveLength(1))
+  await act(async () => { finish(new Response('{"code":"message_peer_storage_unavailable"}', { status: 507 })); await Promise.all([first, second]) })
+  await act(async () => { await result.current.run('message.send', { peerId: 'a', text: 'Same intent' }, 'three') })
+  expect(fetch.mock.calls.filter(([path]) => path === '/api/command')).toHaveLength(1)
+})
+
+it.each(['network_error', 'invalid_response'])('preserves %s retry identity for messages and other commands', async code => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    requests.push(JSON.parse(init!.body as string))
+    if (requests.length % 2) {
+      if (code === 'network_error') throw new TypeError('Synthetic interruption')
+      return new Response('invalid synthetic JSON')
+    }
+    return new Response('{"ok":true}')
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('message.send', { peerId: 'a', text: 'Reviewable draft' }, 'message:a')
+    await result.current.run('message.send', { peerId: 'a', text: 'Reviewable draft' }, 'message:a')
+    await result.current.run('peer.reconnect', { peerId: 'a' })
+    await result.current.run('peer.reconnect', { peerId: 'a' })
+  })
+  expect(requests).toHaveLength(4)
+  expect(requests[0].requestId).toBe(requests[1].requestId)
+  expect(requests[2].requestId).toBe(requests[3].requestId)
+})
 
 it('never reapplies an authenticated snapshot or CSRF after a newer 401', async () => {
   const state: State = { csrfToken: 'old-token', self: { name: 'Test', status: 'online' }, peers: [], messages: [], transfers: [], services: [], shares: [] }

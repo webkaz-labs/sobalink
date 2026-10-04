@@ -214,15 +214,16 @@ func (c *Core) savedProxyCommand(ctx context.Context, name string, raw json.RawM
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := c.writePrivateSettings("saved-proxies.json", next); err != nil {
-			return nil, err
+		saveErr := c.writePrivateSettings("saved-proxies.json", next)
+		if !atomicPublished(saveErr) {
+			return nil, saveErr
 		}
 		c.mu.Lock()
 		c.savedProxies = next
 		delete(c.savedProxyPending, entry.Scope.Name)
 		delete(c.savedProxyRuns, entry.Scope.Name)
 		c.mu.Unlock()
-		return savedProxyPublic(entry), nil
+		return savedProxyPublic(entry), saveErr
 	}
 	var in struct {
 		Name             string `json:"name"`
@@ -256,8 +257,9 @@ func (c *Core) savedProxyCommand(ctx context.Context, name string, raw json.RawM
 			next.Entries[index].StartOnLaunch = false
 			next.Entries[index].Revision = randomID()
 		}
-		if err := c.writePrivateSettings("saved-proxies.json", next); err != nil {
-			return nil, err
+		saveErr := c.writePrivateSettings("saved-proxies.json", next)
+		if !atomicPublished(saveErr) {
+			return nil, saveErr
 		}
 		c.mu.Lock()
 		c.savedProxies = next
@@ -270,7 +272,7 @@ func (c *Core) savedProxyCommand(ctx context.Context, name string, raw json.RawM
 		if name == "proxy.saved.delete" && run.ID != "" {
 			c.stopProxyIDs([]string{run.ID})
 		}
-		return c.savedProxyView(), nil
+		return c.savedProxyView(), saveErr
 	}
 	return nil, errors.New("unknown saved proxy command")
 }

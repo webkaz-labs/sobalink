@@ -23,6 +23,18 @@ test('requires the exact scenario, capabilities and safe reserved port', () => {
   for (const localServicePort of [0, 22, 65536, 43919.5, sentinel]) rejected({ ...valid, localServicePort })
   rejected(valid, 'offline')
 })
+test('recovery scenarios require their own capabilities and isolated service port', () => {
+  for (const [scenario, capability] of [['receive-legacy', 'legacy-receive-review'], ['receive-damaged', 'damaged-receive-index']]) {
+    const recovery = { ...valid, scenario, capabilities: ['service-lifecycle', 'receive-recovery', 'saved-autosave', capability] }
+    assert.equal(validateSession(recovery, scenario).scenario, scenario)
+    rejected(recovery)
+    rejected({ ...valid, scenario }, scenario)
+    rejected({ ...recovery, localServicePort: 0 }, scenario)
+    rejected({ ...recovery, capabilities: recovery.capabilities.join(',') }, scenario)
+    for (const missing of recovery.capabilities) rejected({ ...recovery, capabilities: recovery.capabilities.filter(value => value !== missing) }, scenario)
+    rejected(recovery, scenario === 'receive-legacy' ? 'receive-damaged' : 'receive-legacy')
+  }
+})
 test('requires an absolute receiving root and nonempty access code', () => {
   rejected({ ...valid, receiveDirectory: `relative/${sentinel}` })
   rejected({ ...valid, code: '' })
@@ -47,12 +59,13 @@ test('result reports omit private error details and never mark discovery-only ru
     await reporter.onEnd({ status: 'passed' })
     const path = join(directory, 'playwright-report.json')
     assert.equal(JSON.parse(await readFile(path, 'utf8')).requiredCoverageComplete, false)
-    reporter.onTestEnd({ titlePath: () => ['fixture privacy'], location: { file: '/private/workspace/workflows.spec.mjs', line: 10 } }, { status: 'failed', duration: 1, errors: [{ message: sentinel, stack: sentinel }], attachments: [{ body: sentinel }] })
+    reporter.onTestEnd({ titlePath: () => ['fixture privacy'], location: { file: '/private/workspace/workflows.spec.mjs', line: 10 } }, { status: 'failed', duration: 1, errors: [{ message: sentinel, stack: `${sentinel}\n    at Object.test (/private/workspace/workflows.spec.mjs:123:7)\n    at privateValue (/private/workspace/${sentinel}.mjs:9:9)\n    at another (/private/workspace/other.spec.mjs:4:5)` }], attachments: [{ body: sentinel }] })
     await reporter.onEnd({ status: 'failed' })
     const result = await readFile(path, 'utf8')
     assert.equal(result.includes(sentinel), false)
     assert.equal(result.includes('/private/workspace'), false)
     assert.equal(JSON.parse(result).requiredCoverageComplete, false)
+    assert.deepEqual(JSON.parse(result).tests[0].failureLocations, [{ file: 'workflows.spec.mjs', line: 123, column: 7 }])
   } finally {
     if (previous === undefined) delete process.env.SOBA_SCREENSHOT_DIR
     else process.env.SOBA_SCREENSHOT_DIR = previous

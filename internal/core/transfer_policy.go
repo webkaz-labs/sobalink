@@ -97,3 +97,15 @@ func (c *Core) MessageTextBytes() int64 {
 	p := c.capacityPolicy()
 	return min(p.Number("logical", "messageBytes"), p.Number("resources", "messageTextBytes"))
 }
+
+func receiveAccountingLimits(p capacity.Policy) transfer.AccountingLimits {
+	p = policyOrDefault(p)
+	return transfer.AccountingLimits{
+		MaxBytes:   p.Number("resources", "transferMetadataBytes"),
+		MaxEntries: p.Number("resources", "stagingInventoryEntries"),
+		MaxDepth:   p.Number("resources", "stagingInventoryDepth"),
+		// Absolute local paths belong to the private metadata budget, not the
+		// sender-relative logical path choice.
+		MaxPathBytes: p.Number("resources", "transferMetadataBytes"),
+	}
+}

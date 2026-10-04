@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/webkaz-labs/sobalink/internal/diskspace"
 )
 
 func TestConcurrentDestinationCreationNeverOverwrites(t *testing.T) {
@@ -107,7 +109,12 @@ func TestStagingFileReplacementCannotCommitDifferentBytes(t *testing.T) {
 	if stage == "" {
 		t.Fatal("no staging directory")
 	}
-	parts := mustReadDir(t, stage)
+	var parts []os.DirEntry
+	for _, entry := range mustReadDir(t, stage) {
+		if entry.Name() != receiveOwnerMarker {
+			parts = append(parts, entry)
+		}
+	}
 	if len(parts) != 1 {
 		t.Fatalf("staged entries = %v", parts)
 	}
@@ -209,4 +216,95 @@ func TestReceivedFilesNeverGainExecutableOrSharedPermissions(t *testing.T) {
 			t.Errorf("executable received file: %o", info.Mode().Perm())
 		}
 	}
+}
+
+func TestOwnershipMarkerNamesRemainValidSavedPayload(t *testing.T) {
+	for _, name := range []string{".sobalink-owner", ".sobalink-owner/child", ".SOBALINK-OWNER", ".SOBALINK-OWNER/child", "nested/.sobalink-owner", "nested/.SOBALINK-OWNER"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			m, peer := testManager(t, crashOptions(dir))
+			manifest := testManifest("marker-name", testEntry("file", name, "payload"))
+			b := testAccepted(t, m, peer, manifest)
+			if _, err := m.ReceiveFile(context.Background(), peer, manifest.ID, "file", strings.NewReader("payload")); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			restarted(t, dir)
+			data, err := os.ReadFile(filepath.Join(b.Destination, filepath.FromSlash(name)))
+			if err != nil || string(data) != "payload" {
+				t.Fatalf("saved marker-name payload lost: %q %v", data, err)
+			}
+		})
+	}
+	for _, name := range []string{".sobalink-owner", ".SOBALINK-OWNER"} {
+		t.Run("directory-"+name, func(t *testing.T) {
+			m, peer := testManager(t, Options{})
+			b := testAccepted(t, m, peer, testManifest("directory", Entry{ID: "directory", Path: name, Kind: Directory}))
+			if err := m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(filepath.Join(b.Destination, name))
+			if err != nil || !info.IsDir() {
+				t.Fatalf("saved marker-name directory lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestStageSubstitutionCleanupPreservesSavedMarkerPayload(t *testing.T) {
+	for _, replacement := range []string{"directory", "symlink"} {
+		t.Run(replacement, func(t *testing.T) {
+			m, peer := testManager(t, Options{})
+			b := testAccepted(t, m, peer, testManifest("saved-marker", testEntry("saved", ".sobalink-owner", "payload"), testEntry("pending", "later", "1")))
+			if _, err := m.ReceiveFile(context.Background(), peer, b.ID, "saved", strings.NewReader("payload")); err != nil {
+				t.Fatal(err)
+			}
+			stage := filepath.Join(b.Destination, m.batches[b.ID].stage)
+			if err := os.Rename(stage, stage+"-original"); err != nil {
+				t.Fatal(err)
+			}
+			if replacement == "symlink" {
+				testSymlink(t, b.Destination, stage)
+			} else {
+				if err := os.Mkdir(stage, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(stage, receiveOwnerMarker), []byte(m.batches[b.ID].ownerToken), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := m.Cancel(b.ID); err != nil {
+				t.Fatal(err)
+			}
+			m.Close()
+			if data, err := os.ReadFile(filepath.Join(b.Destination, ".sobalink-owner")); err != nil || string(data) != "payload" {
+				t.Fatalf("cleanup removed saved payload via %s: %q %v", replacement, data, err)
+			}
+			if m.ReceiveRecovery().State != "blocked" {
+				t.Fatal("cleanup trusted substituted staging")
+			}
+		})
+	}
+}
+
+// Recovery fixtures create destinations independently of Manager acceptance.
+func prepareDestination(destination string, entries []Entry) (*os.Root, string, string, string, string, error) {
+	return prepareDestinationWithSpace(destination, entries, diskspace.Process, diskspace.DefaultReserveBytes)
+}
+
+func prepareDestinationWithSpace(destination string, entries []Entry, space *diskspace.Guard, reserve int64) (openedRoot *os.Root, actualDirectory, stagingName, ownerToken, parentIdentity string, resultErr error) {
+	p := &preparedDestination{}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, p.rollback())
+			p.close(false)
+		}
+	}()
+	if err := p.prepare(context.Background(), destination, entries, space, reserve, nil); err != nil {
+		return nil, "", "", "", "", err
+	}
+	p.commit()
+	return p.root, p.actual, p.stage.name, p.token, p.parentIdentity, nil
 }

@@ -217,12 +217,19 @@ func (c *Core) selectionCommand(ctx context.Context, name string, raw json.RawMe
 		rollback := func(cause error) (any, error) {
 			activation.Store(false)
 			c.stopServiceIDs(started)
-			if restore := c.saveProfile(before); restore != nil {
-				cause = errors.Join(cause, fmt.Errorf("could not restore saved definitions: %w", restore))
-			} else {
+			// An uncertain commit is not an unwritten save. Do not issue an
+			// automatic compensating write against its newly published file.
+			if errors.Is(cause, config.ErrAtomicCommitted) {
+				return nil, fmt.Errorf("multi-service start stopped; saved definitions were replaced with uncertain durability: %w", cause)
+			}
+			restore := c.saveProfile(before)
+			if atomicPublished(restore) {
 				c.mu.Lock()
 				c.profile = before
 				c.mu.Unlock()
+			}
+			if restore != nil {
+				cause = errors.Join(cause, fmt.Errorf("could not restore saved definitions: %w", restore))
 			}
 			return nil, fmt.Errorf("multi-service start failed; newly started services were stopped: %w", cause)
 		}

@@ -85,7 +85,7 @@ func TestReceiveSpaceDropsFailClosedAndRetryPreservesSavedFiles(t *testing.T) {
 		}
 		stage := m.batches["batch"].stage
 		entries, err := os.ReadDir(filepath.Join(batch.Destination, stage))
-		if err != nil || len(entries) != 0 {
+		if err != nil || (len(entries) != 1 || entries[0].Name() != receiveOwnerMarker) {
 			t.Fatalf("active temporary file not cleaned: %v %v", entries, err)
 		}
 		// Saved acknowledgements work even when space cannot currently be read.
@@ -163,31 +163,37 @@ func TestReceiveSpaceRechecksEmptyAndDeepDirectoryCreation(t *testing.T) {
 				if _, err := m.Offer(peer, manifest); err != nil {
 					t.Fatal(err)
 				}
-				_, err := m.Accept("batch", destination)
 				want := diskspace.ErrLow
 				if unknown {
 					want = diskspace.ErrUnknown
 				}
-				if !errors.Is(err, want) || calls != 4 {
-					t.Fatalf("metadata guard: calls=%d err=%v", calls, err)
-				}
-				directories := 0
-				if err := filepath.WalkDir(destination, func(path string, entry os.DirEntry, err error) error {
-					if err != nil {
-						return err
+				for attempt := 0; attempt < 100; attempt++ {
+					calls = 0
+					_, err := m.Accept("batch", destination)
+					if !errors.Is(err, want) || calls != 4 {
+						t.Fatalf("metadata guard: calls=%d err=%v", calls, err)
 					}
-					if path != destination && entry.IsDir() {
-						directories++
+					directories := 0
+					if err := filepath.WalkDir(destination, func(path string, entry os.DirEntry, err error) error {
+						if err != nil {
+							return err
+						}
+						if path != destination && entry.IsDir() {
+							directories++
+						}
+						return nil
+					}); err != nil {
+						t.Fatal(err)
 					}
-					return nil
-				}); err != nil {
-					t.Fatal(err)
-				}
-				if directories != 3 {
-					t.Fatalf("created %d directories after depletion; want only batch, staging and first parent", directories)
-				}
-				if data, err := os.ReadFile(filepath.Join(destination, "original")); err != nil || string(data) != "keep" {
-					t.Fatal("original changed")
+					if directories != 0 {
+						t.Fatalf("attempt %d retained %d provisional directories", attempt, directories)
+					}
+					if data, err := os.ReadFile(filepath.Join(destination, "original")); err != nil || string(data) != "keep" {
+						t.Fatal("original changed")
+					}
+					if b := m.batches["batch"]; b.value.State != Pending || !b.reserved || m.metadata == 0 {
+						t.Fatal("failed preparation released admission accounting")
+					}
 				}
 				restored = true
 				if _, err := m.Accept("batch", destination); err != nil {

@@ -21,6 +21,7 @@ function setup(conflict = false) {
 async function reviewRemoval() {
   render(<App />)
   await userEvent.click(await screen.findByRole('button', { name: /Studio/ }))
+  const summary = screen.getByText('Manage service'); if (!summary.closest('details')?.open) await userEvent.click(summary)
   await userEvent.click(screen.getByRole('button', { name: 'Remove saved rule' }))
   return await screen.findByRole('button', { name: 'Remove reviewed rule' })
 }
@@ -43,6 +44,7 @@ describe('saved definition consequences', () => {
     await reviewRemoval()
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
     expect(requests.some(item => item.name === 'service.delete')).toBe(false)
+    const summary = screen.getByText('Manage service'); if (!summary.closest('details')?.open) await userEvent.click(summary)
     await userEvent.click(screen.getByRole('button', { name: 'Remove saved rule' }))
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Stop this active service before removing it' }))
     await userEvent.click(screen.getByRole('checkbox', { name: /Remove this rule from the listed groups/ }))

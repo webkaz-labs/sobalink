@@ -6,6 +6,7 @@
 package transfer
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -27,6 +28,7 @@ var (
 	ErrIntegrity       = errors.New("received size or SHA-256 does not match manifest")
 	ErrCancelled       = errors.New("transfer was cancelled")
 	ErrClosed          = errors.New("transfer manager is closed")
+	ErrReceiveRecovery = errors.New("receive recovery is required")
 	ErrUnsafePath      = errors.New("transfer path is unsafe")
 )
 
@@ -154,8 +156,61 @@ type PolicyStore interface {
 	SavePolicies([]ReceivePolicy) error
 }
 
+// ReceiveAccountingStore persists only receiver-owned roots and names of
+// active temporary files. Implementations must not call back into Manager.
+// The independent singleton guard is mandatory for durable implementations.
+// WithReceiveAccountingLimits must preserve the adapter's behavior/dependencies;
+// decorators must override it rather than returning their embedded base store.
+type ReceiveAccountingStore interface {
+	LoadReceiveAccounting() (ReceiveAccounting, error)
+	SaveReceiveAccounting(ReceiveAccounting, ...ReceiveRetirementLease) error
+	WithReceiveAccountingLimits(AccountingLimits) ReceiveAccountingStore
+	LoadReceiveRetirementGuard(AccountingLimits) (*ReceiveRetirementGuard, ReceiveRetirementLease, error)
+	AcquireReceiveRetirementGuard(ReceiveRetirementGuard, AccountingLimits) (ReceiveRetirementLease, error)
+}
+
+// ReceiveAccounting is private local storage, never a wire or export contract.
+type ReceiveAccounting struct {
+	Version     int                 `json:"version"`
+	Roots       []ReceiveRoot       `json:"roots"`
+	Preparation *ReceivePreparation `json:"preparation,omitempty"`
+}
+
+// ReceivePreparation identifies a planned creation, never authority to delete it.
+type ReceivePreparation struct {
+	Destination         string `json:"destination"`
+	DestinationIdentity string `json:"destinationIdentity"`
+	Root                string `json:"root"`
+	Stage               string `json:"stage"`
+	OwnerToken          string `json:"ownerToken"`
+}
+
+type ReceiveRoot struct {
+	Destination         string `json:"destination"`
+	DestinationIdentity string `json:"destinationIdentity"`
+	OwnedRoot           string `json:"ownedRoot"`
+	RootIdentity        string `json:"rootIdentity"`
+	OwnerToken          string `json:"ownerToken"`
+	Stage               string `json:"stage"`
+	StageIdentity       string `json:"stageIdentity"`
+}
+
+// AccountingLimits bound the complete private index and inventory, including
+// unrecorded names in owned staging. Zero fields select finite defaults.
+type AccountingLimits struct {
+	MaxBytes     int64
+	MaxEntries   int64
+	MaxDepth     int64
+	MaxPathBytes int64
+}
+
 type Options struct {
-	Limits      Limits
-	PolicyStore PolicyStore
-	DiskSpace   *diskspace.Guard // nil uses the shared process guard.
+	Context          context.Context
+	Limits           Limits
+	PolicyStore      PolicyStore
+	DiskSpace        *diskspace.Guard // nil uses the shared process guard.
+	AccountingStore  ReceiveAccountingStore
+	AccountingLimits AccountingLimits
+	// ExistingState requires explicit local review when the index is absent.
+	ExistingState bool
 }

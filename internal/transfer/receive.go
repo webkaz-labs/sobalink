@@ -53,6 +53,10 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		m.mu.Unlock()
 		return ack, nil
 	}
+	if m.recoveryCode != "" {
+		m.mu.Unlock()
+		return FileAck{}, ErrReceiveRecovery
+	}
 	if terminal(b.value.State) || b.value.State == Pending || f.State != FilePending || b.root == nil {
 		m.mu.Unlock()
 		return FileAck{}, ErrState
@@ -92,11 +96,29 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 		if temp != nil {
 			_ = temp.Close()
 		}
-		if tempName != "" {
-			_ = root.Remove(tempName)
-		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		cleanupErr := error(nil)
+		if tempName != "" {
+			if m.guardPending {
+				cleanupErr = ErrReceiveRecovery
+			} else {
+				cleanupErr = root.Remove(tempName)
+			}
+		}
+		if tempName != "" && cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			if b.cleanup == nil {
+				b.cleanup = map[string]string{}
+			}
+			b.cleanup[tempName] = fileID
+			info, statErr := root.Lstat(tempName)
+			if statErr != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > entry.Size {
+				m.recoveryCode = "cleanup_unavailable"
+			}
+			if resultErr == nil {
+				resultErr = ErrReceiveRecovery
+			}
+		}
 		b.active--
 		m.active--
 		m.peers[peer.ID].active--
@@ -213,6 +235,9 @@ func (m *Manager) ReceiveFile(ctx context.Context, peer Peer, id, fileID string,
 	if f.State != FileReceiving || terminal(b.value.State) {
 		return FileAck{}, ErrCancelled
 	}
+	if m.recoveryCode != "" {
+		return FileAck{}, ErrReceiveRecovery
+	}
 	if err = commitFileWithSpace(streamCtx, root, tempName, entry.Path, original, m.diskSpace, m.limits.DiskReserveBytes, func() error { return receiveCancellation(ctx, streamCtx) }); err != nil {
 		return FileAck{}, transferError(streamCtx, err)
 	}
@@ -254,7 +279,7 @@ func ErrorCode(err error) string {
 		err  error
 		code string
 	}{
-		{ErrInvalidManifest, "invalid_manifest"}, {ErrLimit, "limit_exceeded"},
+		{ErrReceiveRecovery, "receive_recovery_required"}, {ErrInvalidManifest, "invalid_manifest"}, {ErrLimit, "limit_exceeded"},
 		{ErrUnknownPeer, "unknown_peer"}, {ErrPeerChanged, "peer_changed"},
 		{ErrPeerPaused, "peer_paused"}, {ErrNotFound, "not_found"},
 		{ErrConflict, "destination_conflict"}, {ErrState, "invalid_state"},
