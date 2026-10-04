@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      RELEASE_VERSION: 0.3.0-alpha.1
-      TESTED_COMMIT: 8e6cbb00d60757f701d7d453adb92590cc5d2544
-      RELEASE_ID: '402473839'
+      RELEASE_VERSION: 0.3.0-alpha.2
+      TESTED_COMMIT: 00cc6a99809df77bf1754936ea7bf5ca4c5d0741
+      RELEASE_ID: '402850401'
       RELEASE_IDENTITY: https://github.com/webkaz-labs/sobalink/.github/workflows/prerelease.yml@refs/heads/main
     defaults:
       run:
@@ -87,18 +87,18 @@ jobs:
           MISE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tool='packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1'
+          tool='packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2'
           mise install "$tool" > /dev/null 2>&1
           echo 'Exact published Packslip package installed with normal verification.'
       - name: Observe idle resources and bounded lifecycle recovery
         timeout-minutes: 24
         run: |
           set -euo pipefail
-          tool='packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.1'
+          tool='packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2'
           install_dir="$(mise where "$tool")"
           python .github/scripts/measure-release-resources.py \
             --install "$install_dir" \
-            --public-build "$RUNNER_TEMP/sobalink-resource-public/sobalink-0.3.0-alpha.1-linux-amd64.build.json" \
+            --public-build "$RUNNER_TEMP/sobalink-resource-public/sobalink-0.3.0-alpha.2-linux-amd64.build.json" \
             --control "$RUNNER_TEMP/sobalink-resource-control.json" \
             --report "$RUNNER_TEMP/sobalink-resource-reports/offline-linux-amd64.json"
       - name: Finish owned fixture cleanup after interruption
@@ -112,7 +112,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: released-0.3.0-alpha.1-offline-linux-amd64-resources
+          name: released-0.3.0-alpha.2-offline-linux-amd64-resources
           path: ${{ runner.temp }}/sobalink-resource-reports/offline-linux-amd64.json
           if-no-files-found: warn
           retention-days: 14

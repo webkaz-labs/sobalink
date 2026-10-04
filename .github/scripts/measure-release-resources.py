@@ -20,8 +20,8 @@ import time
 
 import resource_observer as observer
 
-VERSION = "0.3.0-alpha.1"
-COMMIT = "8e6cbb00d60757f701d7d453adb92590cc5d2544"
+VERSION = "0.3.0-alpha.2"
+COMMIT = "00cc6a99809df77bf1754936ea7bf5ca4c5d0741"
 TARGET = "linux-amd64"
 PHASE_SECONDS = (900, 10, 10, 60)
 
