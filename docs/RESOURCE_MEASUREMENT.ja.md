@@ -3,15 +3,15 @@
 [English](RESOURCE_MEASUREMENT.en.md) · [検証](VERIFICATION.md)
 
 専用の `Published binary resource observation` workflow は、公開済み
-`0.3.0-alpha.1` の Linux amd64 実行ファイルを測定します。対応するソースは
-`8e6cbb00d60757f701d7d453adb92590cc5d2544` です。workflow の追加自体は測定結果では
+`0.3.0-alpha.2` の Linux amd64 実行ファイルを測定します。対応するソースは
+`00cc6a99809df77bf1754936ea7bf5ca4c5d0741` です。workflow の追加自体は測定結果では
 ありません。完了した実行と集計 artifact を確認してから判断してください。
 既存のクロスプラットフォーム CI とリリース条件は変更しません。
 
 ## 手順と同一性の確認
 
 同じリポジトリ内の、測定用ファイルを変更する pull request で隔離された
-GitHub-hosted job が起動します。公開 release ID `402473839`、tag とソース、
+GitHub-hosted job が起動します。公開 release ID `402850401`、tag とソース、
 チェックサム、Packslip 署名、GitHub provenance を検証します。mise `2026.9.18`
 で通常の署名検証を有効にしたまま公開版を正確なバージョン指定でインストールし、
 インストール済み metadata と独立して検証した公開 metadata のバイト一致、

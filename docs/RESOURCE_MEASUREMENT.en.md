@@ -3,15 +3,15 @@
 [日本語](RESOURCE_MEASUREMENT.ja.md) · [Verification](VERIFICATION.en.md)
 
 The dedicated `Published binary resource observation` workflow measures the
-published `0.3.0-alpha.1` Linux amd64 executable from source
-`8e6cbb00d60757f701d7d453adb92590cc5d2544`. Adding the workflow is not a measurement
+published `0.3.0-alpha.2` Linux amd64 executable from source
+`00cc6a99809df77bf1754936ea7bf5ca4c5d0741`. Adding the workflow is not a measurement
 result: inspect its completed run and aggregate artifact before making a claim.
 The existing cross-platform CI and release gates are unchanged.
 
 ## Procedure and identity
 
 A same-repository pull request changing the measurement files starts the isolated
-GitHub-hosted job. It checks public release ID `402473839`, the tag/source,
+GitHub-hosted job. It checks public release ID `402850401`, the tag/source,
 checksums, Packslip signature, and GitHub provenance. It installs the exact
 published package with mise `2026.9.18`, keeping normal signature verification,
 then matches installed metadata byte-for-byte against the independently verified
