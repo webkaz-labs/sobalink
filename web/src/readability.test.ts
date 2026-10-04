@@ -27,6 +27,16 @@ function contrast(foreground: string, background: string) {
 }
 
 describe('readable semantic colors in all themes', () => {
+  it('keeps both parts of a focused invalid field contour in the validation color', () => {
+    const invalidFocus = styles.match(/input\[aria-invalid="true"\]:focus\s*\{([^}]+)\}/)!
+    // A grouped focus rule can acquire the composer's higher specificity when
+    // optimized. Restore both colors together after that rule, not just outline.
+    expect(invalidFocus.index).toBeGreaterThan(styles.indexOf('.composer:has(> textarea:focus)'))
+    for (const property of ['border-color', 'outline-color']) {
+      expect(invalidFocus[1]).toMatch(new RegExp(`${property}:\\s*var\\(--red\\)\\s*;`))
+    }
+  })
+
   it('defines a complete explicit dark theme and matching system-dark colors', () => {
     expect(darkBlocks).toHaveLength(2)
     for (const name of ['--text', '--muted', '--control-border', '--on-primary', '--disabled-text', '--surface', '--surface-hover']) {

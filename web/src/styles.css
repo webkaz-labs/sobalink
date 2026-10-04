@@ -708,7 +708,7 @@ html:has(dialog[open]) { overflow: hidden; }
 .composer:has(> textarea:focus) {
   border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: -1px; box-shadow: none;
 }
-input[aria-invalid="true"]:focus { outline-color: var(--red); }
+input[aria-invalid="true"]:focus { border-color: var(--red); outline-color: var(--red); }
 /* The composite editor owns its contour; toolbar buttons keep their own
    keyboard indicator without also highlighting the whole editor. */
 .composer textarea:focus { outline: none; box-shadow: none; }
