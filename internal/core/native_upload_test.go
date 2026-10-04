@@ -403,26 +403,36 @@ func TestNativeSlowUploadProgressAndUnlimited(t *testing.T) {
 		name     string
 		staging  capacity.Choice
 		duration time.Duration
+		idle     time.Duration
 		want     int
 	}{
-		{"progress-longer-than-json", capacity.Limited(10), 5200 * time.Millisecond, 200},
-		{"total-expired", capacity.Limited(1), 1300 * time.Millisecond, 400},
-		{"unlimited-progress", capacity.Choice{Mode: "unlimited"}, 350 * time.Millisecond, 200},
+		// Keep the upload longer than both JSON's fixed deadline and the idle
+		// window, while allowing native runners room for scheduling pauses.
+		{"progress-longer-than-json", capacity.Limited(10), 5200 * time.Millisecond, time.Second, 200},
+		{"total-expired", capacity.Limited(1), 1300 * time.Millisecond, 200 * time.Millisecond, 400},
+		{"unlimited-progress", capacity.Choice{Mode: "unlimited"}, 350 * time.Millisecond, 200 * time.Millisecond, 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newNativeUploadFixture(t, 200*time.Millisecond, tc.staging)
+			f := newNativeUploadFixture(t, tc.idle, tc.staging)
 			mustCommand(t, f.pair.b, "peer.autosave", map[string]any{"peerId": "peer-a", "enabled": true, "directory": t.TempDir()})
 			chunks := int(tc.duration / (50 * time.Millisecond))
 			data := strings.Repeat("d", 64*chunks)
 			prefix := nativeUploadPrefix("progress-native", len(data), "note.txt")
 			conn := f.openUpload(t, prefix, len(prefix)+len(data)+len(nativeUploadSuffix))
 			reader := bufio.NewReader(conn)
+			started := time.Now()
+			lastWrite := started
+			var maxWriteGap time.Duration
 			ticker := time.NewTicker(50 * time.Millisecond)
 			defer ticker.Stop()
 			writeFailed := false
 			for range chunks {
 				<-ticker.C
-				if _, err := io.WriteString(conn, strings.Repeat("d", 64)); err != nil {
+				_, err := io.WriteString(conn, strings.Repeat("d", 64))
+				written := time.Now()
+				maxWriteGap = max(maxWriteGap, written.Sub(lastWrite))
+				lastWrite = written
+				if err != nil {
 					writeFailed = true
 					break
 				}
@@ -434,7 +444,7 @@ func TestNativeSlowUploadProgressAndUnlimited(t *testing.T) {
 			resp := nativeUploadResponse(t, reader)
 			if resp.StatusCode != tc.want {
 				body, _ := io.ReadAll(resp.Body)
-				t.Fatalf("upload status=%d want=%d body=%s", resp.StatusCode, tc.want, body)
+				t.Fatalf("upload status=%d want=%d body=%s elapsed=%v max_write_gap=%v idle=%v", resp.StatusCode, tc.want, body, time.Since(started), maxWriteGap, tc.idle)
 			}
 			if tc.want == 200 {
 				if resp.Close {
