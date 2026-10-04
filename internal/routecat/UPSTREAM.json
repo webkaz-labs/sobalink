@@ -1,0 +1,14 @@
+{
+  "module": "github.com/tailscale/tailcat",
+  "version": "v0.7.1-0.20260929145319-b4dc28e8aa89",
+  "commit": "b4dc28e8aa89",
+  "source_url": "https://github.com/tailscale/tailcat/tree/b4dc28e8aa89",
+  "license": "BSD-3-Clause",
+  "files": {
+    "tailcat.go": "c93dc45dfe47f3a35bd026322ceb8bc011364641632b11134c74b7bf600ee6eb",
+    "wire.go": "24dfea08aef53fa49a5a3797a5243e52e8c9f5948ecef88c8329d6889d8b27b8",
+    "disco.go": "b5b970d0c76a6126504b9a1e130676dd97e2e88d0f460d0646c1daf023de2892",
+    "listen.go": "24e12e05c10b1dfd443b0a5cb8148e11c093b158ea2ed24e5cb43b73aa41652d",
+    "LICENSE": "a7ca6186a7963a0a60740f6047760eecd7a0234e8c38bd7e1e0bbcb324bda45b"
+  }
+}
