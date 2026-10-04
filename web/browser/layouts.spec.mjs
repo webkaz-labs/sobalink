@@ -167,40 +167,97 @@ async function typography(page, app, name) {
 async function edgeStyles(page, app, tag) {
   await page.setViewportSize(viewport(1440))
   await page.locator('.network-map-button').click()
+  await page.locator('.network-graph-view-toggle').focus()
   await page.mouse.move(5, 5)
   const edge = page.locator('.network-graph-edge').first()
-  const read = () => edge.evaluate(element => {
+  const read = () => edge.evaluate(async element => {
+    await Promise.allSettled(element.getAnimations().map(animation => animation.finished))
     const style = getComputedStyle(element)
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = 1
     const context = canvas.getContext('2d')
-    const rgba = color => { context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1); return [...context.getImageData(0, 0, 1, 1).data] }
-    return { borderWidth: parseFloat(style.borderTopWidth), borderColor: style.borderTopColor, border: rgba(style.borderTopColor), backgroundColor: style.backgroundColor, background: rgba(style.backgroundColor), outlineWidth: parseFloat(style.outlineWidth), outlineStyle: style.outlineStyle }
+    const rgba = color => { context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1); return [...context.getImageData(0, 0, 1, 1).data].map((value, index) => index === 3 ? value / 255 : value) }
+    const over = (front, back) => {
+      const alpha = front[3] + back[3] * (1 - front[3])
+      return [...front.slice(0, 3).map((value, index) => alpha ? (value * front[3] + back[index] * back[3] * (1 - front[3])) / alpha : 0), alpha]
+    }
+    // Composite each complete layer before applying its opacity, including
+    // transparent label/SVG backgrounds and opacity on any ancestor.
+    const composite = (node, paint) => {
+      for (let current = node; current; current = current.parentElement) {
+        const currentStyle = getComputedStyle(current)
+        paint = over(paint, rgba(currentStyle.backgroundColor))
+        paint[3] *= parseFloat(currentStyle.opacity)
+      }
+      return over(paint, [255, 255, 255, 1])
+    }
+    const luminance = color => color.slice(0, 3).map(value => value / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0)
+    const contrast = (a, b) => { const shades = [luminance(a), luminance(b)].sort((a, b) => a - b); return (shades[1] + .05) / (shades[0] + .05) }
+    const paintedContrast = (color, node, opacity = 1, underlay = [0, 0, 0, 0]) => {
+      const foreground = rgba(color)
+      foreground[3] *= opacity
+      return contrast(composite(node, over(foreground, underlay)), composite(node, underlay))
+    }
+    const box = element.getBoundingClientRect()
+    const label = element.querySelector('.network-graph-path')
+    const labelStyle = getComputedStyle(label)
+    const labelRange = document.createRange()
+    labelRange.selectNodeContents(label)
+    const labelVisible = Boolean(label.textContent.trim()) && labelStyle.visibility === 'visible' && parseFloat(labelStyle.fontSize) >= 14 && [...labelRange.getClientRects()].some(rect => rect.width > 0 && rect.height > 0 && rect.left >= box.left && rect.right <= box.right && rect.top >= box.top && rect.bottom <= box.bottom)
+    const glyph = element.querySelector('.network-graph-route-glyph')
+    const iconContrasts = [...element.querySelectorAll('.network-graph-route-glyph path, .network-graph-route-glyph circle, .network-graph-route-glyph rect')].flatMap(shape => {
+      const shapeStyle = getComputedStyle(shape)
+      const bounds = shape.getBoundingClientRect()
+      if (shapeStyle.visibility !== 'visible' || !(bounds.width > 0 || bounds.height > 0) || shapeStyle.stroke === 'none' || parseFloat(shapeStyle.strokeWidth) <= 0) return []
+      return [paintedContrast(shapeStyle.stroke, shape, parseFloat(shapeStyle.strokeOpacity))]
+    })
+    const peerId = element.closest('[data-peer-id]').getAttribute('data-peer-id')
+    const group = [...element.closest('.network-graph').querySelectorAll('.network-graph-connectors [data-peer-id]')].find(group => group.getAttribute('data-peer-id') === peerId)
+    const line = group.querySelector('.network-graph-line')
+    const lineStyle = getComputedStyle(line)
+    const trackStyle = getComputedStyle(group.querySelector('.network-graph-line-track'))
+    const underlay = rgba(trackStyle.stroke)
+    underlay[3] *= parseFloat(trackStyle.strokeOpacity) * parseFloat(trackStyle.opacity)
+    return {
+      borderColor: style.borderTopColor, backgroundColor: style.backgroundColor,
+      outlineWidth: parseFloat(style.outlineWidth), outlineStyle: style.outlineStyle,
+      width: box.width, height: box.height, labelVisible,
+      labelContrast: paintedContrast(labelStyle.color, label),
+      hasIcon: Boolean(glyph), iconContrast: Math.max(0, ...iconContrasts),
+      connectorVisible: lineStyle.visibility === 'visible' && lineStyle.stroke !== 'none' && parseFloat(lineStyle.strokeWidth) > 0 && line.getTotalLength() > 0,
+      lineContrast: paintedContrast(lineStyle.stroke, group, parseFloat(lineStyle.strokeOpacity) * parseFloat(lineStyle.opacity), underlay),
+    }
   })
+  const readableRoute = async () => {
+    await expect(edge).toBeVisible()
+    await expect(edge).toHaveAccessibleName(/\S/)
+    await expect.poll(async () => {
+      const metrics = await read()
+      return metrics.labelVisible && metrics.labelContrast >= 4.5 && (!metrics.hasIcon || metrics.iconContrast >= 3)
+    }, { message: 'The route button has an actually painted readable label and contrasting route icon when present' }).toBe(true)
+    const metrics = await read()
+    expect(metrics.width, 'The route button retains a 44 CSS px wide hit area').toBeGreaterThanOrEqual(44)
+    expect(metrics.height, 'The route button retains a 44 CSS px high hit area').toBeGreaterThanOrEqual(44)
+    expect(metrics.connectorVisible, 'The meaningful connector remains painted').toBe(true)
+    expect(metrics.lineContrast, 'Meaningful connector lines contrast with their effective surface').toBeGreaterThanOrEqual(3)
+    return metrics
+  }
   await expect(edge).not.toHaveClass(/is-selected/)
-  const normal = await read()
-  const luminance = rgba => rgba.slice(0, 3).map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
-  const shades = [luminance(normal.border), luminance(normal.background)].sort((a, b) => a - b)
-  expect(normal.borderWidth).toBeGreaterThanOrEqual(1)
-  expect((shades[1] + 0.05) / (shades[0] + 0.05), 'Route-badge outline contrasts with its surface').toBeGreaterThanOrEqual(3)
-  const connector = await page.locator('.network-graph-line').first().evaluate(element => getComputedStyle(element).stroke)
-  const lineContrast = await page.locator('.network-graph-diagram').evaluate((element, stroke) => {
-    const ctx = document.createElement('canvas').getContext('2d')
-    const luminance = color => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0) }
-    const shades = [luminance(stroke), luminance(getComputedStyle(element).backgroundColor)].sort((a, b) => a - b)
-    return (shades[1] + 0.05) / (shades[0] + 0.05)
-  }, connector)
-  expect(lineContrast, 'Meaningful connector lines contrast with the diagram surface').toBeGreaterThanOrEqual(3)
+  await expect(edge).toHaveAttribute('aria-pressed', 'false')
+  const normal = await readableRoute()
   await app.capture(`edge-${tag}-normal`)
   await edge.hover()
-  const hovered = await read()
-  expect(hovered.borderColor !== normal.borderColor || hovered.backgroundColor !== normal.backgroundColor, 'Hover visibly identifies the route badge').toBe(true)
+  await expect.poll(async () => {
+    const hovered = await read()
+    return hovered.borderColor !== normal.borderColor || hovered.backgroundColor !== normal.backgroundColor
+  }, { message: 'Hover visibly identifies the route badge' }).toBe(true)
+  await readableRoute()
   await app.capture(`edge-${tag}-hover`)
   await page.mouse.move(5, 5)
   await page.locator('.network-graph-self').focus()
   await page.keyboard.press('Tab')
   await expect(edge).toBeFocused()
-  const focused = await read()
+  const focused = await readableRoute()
   expect(focused.outlineWidth).toBeGreaterThanOrEqual(2)
   expect(focused.outlineStyle).not.toBe('none')
   await app.capture(`edge-${tag}-focus`)
@@ -209,6 +266,9 @@ async function edgeStyles(page, app, tag) {
   await app.closeDetails()
   await page.locator('.network-graph-view-toggle').focus()
   await expect(edge).toHaveClass(/is-selected/)
+  await expect(edge).toHaveAttribute('aria-pressed', 'true')
+  const selected = await readableRoute()
+  expect(selected.borderColor !== normal.borderColor || selected.backgroundColor !== normal.backgroundColor, 'Selection visibly identifies the route badge').toBe(true)
   await app.capture(`edge-${tag}-selected`)
 }
 

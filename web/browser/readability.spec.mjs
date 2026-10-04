@@ -124,6 +124,7 @@ async function keyboardFocus(page, locator, contour = locator) {
   await locator.focus()
   // Walk away and back with real keyboard navigation, retaining the same target.
   await page.keyboard.press('Tab')
+  await expect(locator).not.toBeFocused()
   await page.keyboard.press('Shift+Tab')
   await expect(locator).toBeFocused()
   await expect.poll(async () => {
@@ -135,6 +136,8 @@ async function keyboardFocus(page, locator, contour = locator) {
 async function fieldFocus(page, locator, contour = locator) {
   await locator.scrollIntoViewIfNeeded()
   const before = await appearance(contour)
+  const nativePicker = await locator.evaluate(element => element instanceof HTMLSelectElement && !element.multiple && element.size <= 1)
+  const value = nativePicker ? await locator.inputValue() : null
   const check = async () => {
     await expect.poll(async () => {
       const metrics = await appearance(contour)
@@ -154,6 +157,13 @@ async function fieldFocus(page, locator, contour = locator) {
   await locator.click()
   await expect(locator).toBeFocused()
   await check()
+  if (nativePicker) {
+    // A pointer click opens Chromium's native picker. Dismiss it before Tab:
+    // otherwise Tab only closes the popup and Shift+Tab reaches the prior field.
+    await page.keyboard.press('Escape')
+    await expect(locator).toBeFocused()
+    await expect(locator).toHaveValue(value)
+  }
   await keyboardFocus(page, locator, contour)
   await check()
 }

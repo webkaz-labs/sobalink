@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -225,7 +226,8 @@ export const test = base.extend({
         for (const name of ['network.login', 'lan.invite', 'lan.join']) assert.equal(await app.count(name), 0, 'Browser acceptance must not enroll or pair a real device')
         if (expectShutdown && !cleanShutdownVerified) await app.expectStopped()
       } else if (authenticated) {
-        const name = `failed-${testInfo.title.replace(/[^a-z0-9]+/gi, '-').slice(0, 80)}-${testInfo.line}`
+        const identity = createHash('sha256').update(testInfo.testId).digest('hex').slice(0, 12)
+        const name = `failed-${testInfo.title.replace(/[^a-z0-9]+/gi, '-').slice(0, 80)}-${testInfo.line}-${identity}`
         try { await app.capture(name) } catch { /* Never relax privacy checks for failure evidence. */ }
       }
     } finally {

@@ -15,14 +15,32 @@ function failureCategory(errors = []) {
   return 'fixture-or-test-error'
 }
 
+function failureLocations(errors, testFile) {
+  const allowed = new Set([basename(testFile), 'fixtures.mjs'])
+  const locations = new Map()
+  for (const error of errors || []) {
+    // Extract only allowlisted source basenames and numeric coordinates. Never
+    // publish assertion values, call logs, function names or private paths.
+    for (const frame of (error.stack || '').slice(-16_000).split('\n')) {
+      if (!/^\s+at\s/.test(frame)) continue
+      const match = frame.match(/[/\\]([a-z0-9_.-]+\.mjs):([1-9]\d{0,5}):([1-9]\d{0,5})\)?\s*$/i)
+      if (!match || !allowed.has(match[1])) continue
+      const location = { file: match[1], line: Number(match[2]), column: Number(match[3]) }
+      locations.set(JSON.stringify(location), location)
+      if (locations.size === 4) return [...locations.values()]
+    }
+  }
+  return [...locations.values()]
+}
+
 // Only this deliberately small report is an upload artifact. It never serializes
-// Playwright call logs, stacks, attachments, private fixture values or page state.
+// Playwright call logs, raw stacks, attachments, private values or page state.
 export default class SafeReporter {
   constructor() { this.tests = []; this.startedAt = new Date().toISOString() }
   onBegin(_config, suite) { this.expectedTests = suite.allTests().length; console.log(`Collected ${this.expectedTests} browser acceptance tests`) }
   onTestEnd(test, result) {
     const artifacts = (test.annotations || []).filter(annotation => annotation.type === 'safe-artifact' && /^[a-z0-9][a-z0-9_.-]*\.(png|json)$/i.test(annotation.description || '') && !annotation.description.includes('..')).map(annotation => annotation.description)
-    const record = { name: test.titlePath().filter(Boolean).join(' > '), status: result.status, durationMs: result.duration, file: basename(test.location.file), line: test.location.line, failureCategory: failureCategory(result.errors), artifacts }
+    const record = { name: test.titlePath().filter(Boolean).join(' > '), status: result.status, durationMs: result.duration, file: basename(test.location.file), line: test.location.line, failureCategory: failureCategory(result.errors), failureLocations: failureLocations(result.errors, test.location.file), artifacts }
     this.tests.push(record)
     console.log(`${result.status.toUpperCase()} ${record.name}`)
   }

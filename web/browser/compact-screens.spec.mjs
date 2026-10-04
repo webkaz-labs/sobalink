@@ -38,29 +38,38 @@ async function assertDialogLayout(page, readiness = 'form') {
       }
     })
     expect(controls.count, 'The reviewed compact form has a bounded complete focus cycle').toBeLessThanOrEqual(200)
-    // Walk the complete native focus cycle in both directions. In particular,
+    const close = dialog.locator('.modal-heading button')
+    await close.focus()
+    await page.keyboard.press('Shift+Tab')
+    expect(await dialog.evaluate(element => element.contains(document.activeElement)), 'Reverse Tab from close stays inside the modal').toBe(true)
+    if (controls.count > 1) await expect(close, 'Reverse Tab reaches the last available control').not.toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(close, 'Forward Tab from the last control returns directly to close').toBeFocused()
+    // Walk the complete focus cycle in both directions. In particular,
     // exercise the last controls beneath the sticky action row, not just the
     // first inputs at the top of a long service or capacity form.
     for (const direction of ['Tab', 'Shift+Tab']) {
-      await dialog.locator('.modal-heading button').focus()
+      await close.focus()
       const visitedFooter = new Set()
       let returned = false
       for (let index = 0; index < controls.count + 2; index++) {
         await page.keyboard.press(direction)
         const result = await dialog.evaluate(element => {
           const focused = document.activeElement
-          if (!element.contains(focused)) return { visible: false, returned: false, footer: -1 }
+          if (!element.contains(focused)) return { contained: false, visible: false, returned: false, footer: -1 }
           const bounds = focused.getBoundingClientRect()
           const x = Math.min(innerWidth - 1, Math.max(0, bounds.left + bounds.width / 2))
           const y = Math.min(innerHeight - 1, Math.max(0, bounds.top + bounds.height / 2))
           const hit = document.elementFromPoint(x, y)
           return {
+            contained: true,
             visible: bounds.width > 0 && bounds.height > 0 && bounds.top >= -1 && bounds.bottom <= innerHeight + 1 &&
               Boolean(hit && (focused === hit || focused.contains(hit))),
             returned: focused === element.querySelector('.modal-heading button'),
             footer: [...element.querySelectorAll('.modal-actions button')].indexOf(focused),
           }
         })
+        expect(result.contained, 'Tab stays inside the modal throughout the full keyboard cycle').toBe(true)
         expect(result.visible, 'Keyboard focus remains visible rather than hidden beneath a sticky heading or footer').toBe(true)
         if (result.footer >= 0) visitedFooter.add(result.footer)
         if (result.returned) { returned = true; break }
