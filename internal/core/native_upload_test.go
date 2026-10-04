@@ -32,15 +32,31 @@ type nativeUploadBackend struct {
 	ready         chan nativeUploadRead
 	finished      chan struct{}
 	requestCancel chan context.CancelFunc
+	statsMu       sync.Mutex
+	stats         nativeUploadReadStats
+}
+
+// Keep native-read diagnostics bounded and free of body data or raw errors.
+type nativeUploadReadStats struct {
+	Calls, Bytes, Timeouts, Canceled, EOFs, OtherErrors int
+	MaxReadGap, MaxReadTime, MaxReadInterval            time.Duration
+}
+
+func (b *nativeUploadBackend) readStats() nativeUploadReadStats {
+	b.statsMu.Lock()
+	defer b.statsMu.Unlock()
+	return b.stats
 }
 
 // The observer delegates to the actual net/http body; it never supplies bytes
 // or implements the cancellation behavior under test.
 type nativeUploadObserver struct {
 	io.ReadCloser
-	core  *Core
-	once  sync.Once
-	ready chan nativeUploadRead
+	core     *Core
+	once     sync.Once
+	ready    chan nativeUploadRead
+	lastRead time.Time
+	stats    nativeUploadReadStats
 }
 
 func (b *nativeUploadObserver) Read(p []byte) (int, error) {
@@ -57,15 +73,43 @@ func (b *nativeUploadObserver) Read(p []byte) (int, error) {
 	if staged.batch != nil {
 		b.once.Do(func() { b.ready <- staged })
 	}
-	return b.ReadCloser.Read(p)
+	started := time.Now()
+	b.stats.MaxReadGap = max(b.stats.MaxReadGap, started.Sub(b.lastRead))
+	n, err := b.ReadCloser.Read(p)
+	finished := time.Now()
+	b.stats.MaxReadTime = max(b.stats.MaxReadTime, finished.Sub(started))
+	b.stats.MaxReadInterval = max(b.stats.MaxReadInterval, finished.Sub(b.lastRead))
+	b.lastRead = finished
+	b.stats.Calls++
+	b.stats.Bytes += n
+	var networkErr net.Error
+	switch {
+	case err == nil:
+	case errors.Is(err, io.EOF):
+		b.stats.EOFs++
+	case errors.Is(err, context.Canceled):
+		b.stats.Canceled++
+	case errors.As(err, &networkErr) && networkErr.Timeout():
+		b.stats.Timeouts++
+	default:
+		b.stats.OtherErrors++
+	}
+	return n, err
 }
 func (b *nativeUploadBackend) Upload(w http.ResponseWriter, r *http.Request) {
-	defer func() { b.finished <- struct{}{} }()
+	observer := &nativeUploadObserver{ReadCloser: r.Body, core: b.Core, ready: b.ready, lastRead: time.Now()}
+	defer func() {
+		// The handler has finished its reads before publishing this snapshot.
+		b.statsMu.Lock()
+		b.stats = observer.stats
+		b.statsMu.Unlock()
+		b.finished <- struct{}{}
+	}()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	b.requestCancel <- cancel
 	r = r.WithContext(ctx)
-	r.Body = &nativeUploadObserver{ReadCloser: r.Body, core: b.Core, ready: b.ready}
+	r.Body = observer
 	b.Core.uploadWithIdle(w, r, b.Core.transferLimits(), b.idle)
 }
 
@@ -409,10 +453,17 @@ func TestNativeSlowUploadProgressAndUnlimited(t *testing.T) {
 		// Keep the upload longer than both JSON's fixed deadline and the idle
 		// window, while allowing native runners room for scheduling pauses.
 		{"progress-longer-than-json", capacity.Limited(10), 5200 * time.Millisecond, time.Second, 200},
-		{"total-expired", capacity.Limited(1), 1300 * time.Millisecond, 200 * time.Millisecond, 400},
-		{"unlimited-progress", capacity.Choice{Mode: "unlimited"}, 350 * time.Millisecond, 200 * time.Millisecond, 200},
+		// The total deadline must win even if no progress refresh occurred.
+		{"total-expired", capacity.Limited(1), 1300 * time.Millisecond, 2 * time.Second, 400},
+		{"unlimited-progress", capacity.Choice{Mode: "unlimited"}, 1500 * time.Millisecond, time.Second, 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.want == http.StatusOK && tc.duration <= tc.idle {
+				t.Fatal("successful upload must require idle deadline renewal")
+			}
+			if tc.want == http.StatusBadRequest && (tc.staging.Mode != "limited" || tc.staging.Value == nil || time.Duration(*tc.staging.Value)*time.Second >= tc.duration || tc.duration >= tc.idle) {
+				t.Fatal("total-expiry fixture requires staging deadline < upload duration < idle window")
+			}
 			f := newNativeUploadFixture(t, tc.idle, tc.staging)
 			mustCommand(t, f.pair.b, "peer.autosave", map[string]any{"peerId": "peer-a", "enabled": true, "directory": t.TempDir()})
 			chunks := int(tc.duration / (50 * time.Millisecond))
@@ -420,6 +471,15 @@ func TestNativeSlowUploadProgressAndUnlimited(t *testing.T) {
 			prefix := nativeUploadPrefix("progress-native", len(data), "note.txt")
 			conn := f.openUpload(t, prefix, len(prefix)+len(data)+len(nativeUploadSuffix))
 			reader := bufio.NewReader(conn)
+			// Start pacing only after staging has installed its deadline and is
+			// about to read file bytes, so setup time cannot hide total expiry.
+			select {
+			case <-f.backend.ready:
+			case <-f.backend.finished:
+				t.Fatalf("upload finished before payload pacing: reads=%+v", f.backend.readStats())
+			case <-time.After(3 * time.Second):
+				t.Fatal("upload did not reach payload staging")
+			}
 			started := time.Now()
 			lastWrite := started
 			var maxWriteGap time.Duration
@@ -444,7 +504,14 @@ func TestNativeSlowUploadProgressAndUnlimited(t *testing.T) {
 			resp := nativeUploadResponse(t, reader)
 			if resp.StatusCode != tc.want {
 				body, _ := io.ReadAll(resp.Body)
-				t.Fatalf("upload status=%d want=%d body=%s elapsed=%v max_write_gap=%v idle=%v", resp.StatusCode, tc.want, body, time.Since(started), maxWriteGap, tc.idle)
+				t.Fatalf("upload status=%d want=%d body=%s elapsed=%v max_write_gap=%v idle=%v reads=%+v", resp.StatusCode, tc.want, body, time.Since(started), maxWriteGap, tc.idle, f.backend.readStats())
+			}
+			if tc.want == http.StatusBadRequest {
+				// A long native-read interval could also have exhausted idle;
+				// reject that ambiguous result instead of crediting total expiry.
+				if stats := f.backend.readStats(); stats.MaxReadInterval >= tc.idle {
+					t.Fatalf("total-expiry result may also have exhausted idle=%v: reads=%+v", tc.idle, stats)
+				}
 			}
 			if tc.want == 200 {
 				if resp.Close {
