@@ -6,3 +6,5 @@
   .lan-setup .relay-review dl, .lan-setup .relay-stop-review dl { grid-template-columns: 1fr; gap: 5px; }
   .lan-setup .relay-review dd, .lan-setup .relay-stop-review dd { margin-bottom: 8px; }
 }
+.lan-policy select, .lan-policy textarea { width: 100%; }
+.lan-policy .button { white-space: normal; overflow-wrap: anywhere; }

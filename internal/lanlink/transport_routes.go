@@ -85,6 +85,9 @@ func configuredRegions(cfg NodeConfig) ([]*tailcfg.DERPRegion, error) {
 			return nil, ErrRouteUpdate
 		}
 		seen[candidate.Relay.Address] = true
+		if err := cfg.DestinationPolicy.CheckRelay(candidate.Relay.Address); err != nil {
+			return nil, err
+		}
 		anchor = anchor || candidate.Relay == cfg.Relay
 		regions = append(regions, candidate.Relay.region())
 	}
@@ -119,6 +122,11 @@ func (r *remoteClient) prepareRemote(ctx context.Context, remote RemotePeer, anc
 	if snapshot.Legacy {
 		candidates = []RouteCandidate{legacyCandidate(anchor)}
 	}
+	if r.destinationPolicy.Strict() {
+		candidates = slices.DeleteFunc(candidates, func(candidate RouteCandidate) bool {
+			return r.destinationPolicy.CheckRelay(candidate.Relay.Address) != nil
+		})
+	}
 	if len(candidates) == 0 {
 		return ErrRoutePermission
 	}
@@ -134,7 +142,7 @@ func (r *remoteClient) prepareRemote(ctx context.Context, remote RemotePeer, anc
 	role := remote.ClientPrivate
 	if r.makeClient == nil {
 		r.makeClient = func(address tailcat.Addr) peerTransport {
-			return &tailcat.Client{Server: address, Key: role, PrivateOnly: privateOnly, Logf: logger.Discard}
+			return &tailcat.Client{Server: address, Key: role, PrivateOnly: privateOnly, DestinationPrefixes: destinationPrefixes(r.destinationPolicy), Logf: logger.Discard}
 		}
 	}
 	// Keep the original authenticated identity and secret material. Candidate
@@ -379,7 +387,7 @@ func (r *remoteClient) retirementState() *transportRetirement {
 // start old's retirement after releasing it; no engine teardown runs under n.mu.
 func (n *Node) replaceRemoteLocked(peer string, old *remoteClient, remote RemotePeer) *remoteClient {
 	old.retired.Store(true)
-	next := &remoteClient{remote: remote, address: old.address, predecessor: old.retirementState()}
+	next := &remoteClient{remote: remote, address: old.address, destinationPolicy: n.cfg.DestinationPolicy, predecessor: old.retirementState()}
 	n.clients[peer] = next
 	return next
 }

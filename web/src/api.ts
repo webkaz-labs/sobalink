@@ -115,7 +115,8 @@ export interface LanRouteCandidate { candidateId: string; address: string; certi
 export interface LanOwnRoutes { candidates: LanRouteCandidate[]; primaryCandidateId?: string; editable?: boolean }
 export interface LanRouteReview { digest: string; issuer: string; recipient: string; sequence: number; issued: string; lifetime: LanRouteLifetime; expires: string | null; candidates: LanRouteCandidate[] }
 export interface LanPeerRoutes { lifetime?: LanRouteLifetime; observation?: LanRouteObservation; legacy: boolean; issuedSequence: number; receivedSequence: number; candidates: LanRouteCandidate[]; approvals: { candidateId: string; lifetime: LanRouteLifetime; expires: string | null }[]; permittedIds: string[]; expires: string | null; nextExpiry: string | null; recoveryRequired: boolean }
-export interface LanAddress { interface: string; address: string }
+export interface LanAddress { interface: string; address: string; prefix?: string }
+export interface LanPolicy { mode: 'trusted-relay' | 'allowed-lan-destinations'; prefixes: string[]; editable: boolean; restartRequired: boolean }
 export interface LanInvitationPreview { recipientPublicKey: string; recipientMatches: true; hostPublicKey: string; hostName: string; expires: string; relay: { kind: 'relay'; address: string; certificateSHA256: string } }
 export interface LanRelay { kind: 'relay' | 'host'; address: string; certificateSHA256?: string }
 export interface ReceiveRecovery { state: string; code: string; reservedBytes: number | null; applied: boolean; review: string[] }
@@ -149,7 +150,7 @@ export interface State {
   reservedPorts?: number[]
   servicePresets?: ServicePreset[]
   limits?: ServiceLimits
-  lan?: { configured: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; path: 'unknown' | 'direct' | 'relay' }
+  lan?: { configured: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }
 }
 export interface CommandResult { ok: boolean; result?: { authUrl?: string; [key: string]: unknown } }
@@ -247,7 +248,7 @@ export interface CommandPayloads {
   'service.share': ServicePayload
   'service.stop': { id: string }
   'service.config': { id: string }
-  'network.configure': { mode: 'none' | Network; hostname?: string; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
+  'network.configure': { mode: 'none' | Network; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
   'network.logout': Record<string, never>
   'network.login': { refresh?: boolean; qr?: boolean }
   'network.login.status': { qr?: boolean }
@@ -262,6 +263,8 @@ export interface CommandPayloads {
   'lan.routes.approve': { peerId: string; digest: string; candidateIds: string[]; lifetime: LanRouteLifetime; expires?: string }
   'lan.routes.revoke': { peerId: string; candidateIds: string[] }
   'lan.addresses': Record<string, never>
+  'lan.policy.get': Record<string, never>
+  'lan.policy.set': Pick<LanPolicy, 'mode' | 'prefixes'>
   'lan.identity': Record<string, never>
   'lan.inspect': { invitation: string }
   'lan.invite': { recipientPublicKey: string; name: string; ttlSeconds: 300 }

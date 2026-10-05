@@ -14,8 +14,7 @@ Their copyright/SPDX headers are retained in the adapted files, and the original
 BSD-3-Clause terms are preserved verbatim in `LICENSE`. The locally added
 `regions.go` has its own explicit MIT header; this package is not presented as an
 unmodified upstream module.
-The executable dependency remains the repository's pinned `tailscale.com v1.104.0`.
-No module replacement is used.
+The executable dependency is the repository's pinned `tailscale.com v1.104.0` with a separately inventoried, hash-verified generated-source adaptation. See `internal/engineadaptation/UPSTREAM.md`. No downloaded module-cache source is changed.
 
 Changes: remove network map fetching and implicit region defaults; validate and
 canonicalize up to four numeric certificate-pinned one-node regions; keep all
@@ -32,6 +31,8 @@ to private/loopback literals, disables region diagnostics, and never fetches a
 public/default map. Public/direct-enabled product builds cannot silently turn
 this into a runtime egress sandbox. The stricter build still needs captured
 traffic acceptance and packaging review before use.
+
+An optional per-engine `DestinationPrefixes` policy now wires the adapted engine before socket setup, restricts advertised endpoints, and revokes admitted UDP/TCP on retirement. Nil preserves the normal behavior; the policy does not bind a NIC or establish VPN isolation.
 
 There is intentionally no live UpdateRegions method: candidate removal, policy
 changes, key admission, active flow cancellation and durable configuration need

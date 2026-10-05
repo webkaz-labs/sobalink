@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"tailscale.com/logtail"
 	"tailscale.com/tailcfg"
@@ -28,8 +29,9 @@ type NodeConfig struct {
 	Trust    *Book
 	Remotes  []RemotePeer
 	// Candidates is the full explicitly configured server set, including Relay.
-	Candidates  []RouteCandidate
-	PrivateOnly bool
+	Candidates        []RouteCandidate
+	PrivateOnly       bool
+	DestinationPolicy lanpolicy.Config
 	// Persist atomically saves both snapshots to the protected state file. It must
 	// not call back into Node or Book. Nil confirms durable commit;
 	// config.ErrAtomicCommitted means replacement with uncertain durability.
@@ -37,29 +39,30 @@ type NodeConfig struct {
 	EmbeddedRelay bool
 }
 type remoteClient struct {
-	remote      RemotePeer
-	address     netip.Addr
-	client      peerTransport
-	startMu     transportGate
-	started     bool
-	closed      bool
-	runCtx      context.Context
-	cancel      context.CancelFunc
-	prepared    bool
-	managed     bool
-	candidates  []RouteCandidate
-	expires     time.Time
-	expiryTimer *time.Timer
-	retired     atomic.Bool
-	selected    int
-	selectedAt  time.Time
-	generation  *transportGeneration
-	observation atomic.Pointer[RouteObservation]
-	runCancel   atomic.Pointer[context.CancelFunc]
-	path        string
-	failures    map[string]time.Time
-	makeClient  func(tailcat.Addr) peerTransport
-	capability  tailcat.ConnInfo
+	remote            RemotePeer
+	destinationPolicy lanpolicy.Config
+	address           netip.Addr
+	client            peerTransport
+	startMu           transportGate
+	started           bool
+	closed            bool
+	runCtx            context.Context
+	cancel            context.CancelFunc
+	prepared          bool
+	managed           bool
+	candidates        []RouteCandidate
+	expires           time.Time
+	expiryTimer       *time.Timer
+	retired           atomic.Bool
+	selected          int
+	selectedAt        time.Time
+	generation        *transportGeneration
+	observation       atomic.Pointer[RouteObservation]
+	runCancel         atomic.Pointer[context.CancelFunc]
+	path              string
+	failures          map[string]time.Time
+	makeClient        func(tailcat.Addr) peerTransport
+	capability        tailcat.ConnInfo
 	// A replacement cannot start until its predecessor's engine is closed.
 	// Retirement state is initialized before publication and completed once.
 	predecessor     *transportRetirement
@@ -89,6 +92,14 @@ type Node struct {
 // or enrolling an account. Only one network backend may run in this process;
 // switching to/from tsnet requires process restart (upstream global netns state).
 func NewNode(cfg NodeConfig) (*Node, error) {
+	canonical, err := cfg.DestinationPolicy.Canonical()
+	if err != nil {
+		return nil, err
+	}
+	cfg.DestinationPolicy = canonical
+	if err := canonical.CheckRelay(cfg.Relay.Address); err != nil {
+		return nil, err
+	}
 	if e := cfg.Identity.Validate(); e != nil {
 		return nil, e
 	}
@@ -127,14 +138,14 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		if _, e := cfg.Trust.Epoch(r.Peer.Key); e != nil {
 			return nil, errors.New("remote and public trust snapshots disagree")
 		}
-		n.clients[r.Peer.Key] = &remoteClient{remote: r, address: ap}
+		n.clients[r.Peer.Key] = &remoteClient{remote: r, address: ap, destinationPolicy: cfg.DestinationPolicy}
 	}
 	if len(cfg.Trust.Snapshot().Peers) != len(cfg.Remotes) {
 		return nil, errors.New("remote and public trust snapshots disagree")
 	}
 	// Match the existing identity adapter's process-wide no-upload policy.
 	logtail.Disable()
-	n.server = &tailcat.Server{Key: cfg.Identity.Key, PresharedKey: cfg.Identity.PSK, Regions: regions, PrivateOnly: cfg.PrivateOnly, Logf: logger.Discard, UDPIdleTimeout: 5 * time.Minute, AllowClient: n.allowClient}
+	n.server = &tailcat.Server{Key: cfg.Identity.Key, PresharedKey: cfg.Identity.PSK, Regions: regions, PrivateOnly: cfg.PrivateOnly, DestinationPrefixes: destinationPrefixes(cfg.DestinationPolicy), Logf: logger.Discard, UDPIdleTimeout: 5 * time.Minute, AllowClient: n.allowClient}
 	n.server.OnTCP = n.onTCP
 	return n, nil
 }

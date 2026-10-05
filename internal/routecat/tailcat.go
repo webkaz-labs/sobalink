@@ -76,6 +76,7 @@ import (
 	"tailscale.com/net/netns"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/net/tsdial"
+	"tailscale.com/net/underlayguard"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsd"
 	"tailscale.com/types/ipproto"
@@ -300,24 +301,29 @@ type locoBackend struct {
 	// to allow all clients. Set before Start.
 	allowClient func(key.NodePublic) bool
 
-	mu             sync.Mutex
-	clients        map[key.NodePublic]*tailcfg.Node // for the server
-	nextClientID   tailcfg.NodeID                   // for the server; never reused after a removal
-	pendingAllow   map[key.NodePublic]bool          // client keys with an allowClient call in flight
-	nm             *netmap.NetworkMap
-	eps            []netip.AddrPort // our current local UDP endpoints, sorted
-	closeOnce      sync.Once
-	homeRegion     tailcfg.DERPRegionID
-	privateOnly    bool
-	presenceCancel context.CancelFunc
-	presenceDone   chan struct{}
-	closed         bool // guarded by mu
+	mu                  sync.Mutex
+	clients             map[key.NodePublic]*tailcfg.Node // for the server
+	nextClientID        tailcfg.NodeID                   // for the server; never reused after a removal
+	pendingAllow        map[key.NodePublic]bool          // client keys with an allowClient call in flight
+	nm                  *netmap.NetworkMap
+	eps                 []netip.AddrPort // our current local UDP endpoints, sorted
+	closeOnce           sync.Once
+	homeRegion          tailcfg.DERPRegionID
+	privateOnly         bool
+	underlayPolicy      *underlayguard.Policy
+	destinationPrefixes []netip.Prefix
+	presenceCancel      context.CancelFunc
+	presenceDone        chan struct{}
+	closed              bool // guarded by mu
 }
 
 func (b *locoBackend) derpRegionID() tailcfg.DERPRegionID { return b.homeRegion }
 
 func (b *locoBackend) Close() error {
 	b.closeOnce.Do(func() {
+		if b.underlayPolicy != nil {
+			b.underlayPolicy.Revoke()
+		}
 		b.mu.Lock()
 		b.closed = true
 		b.mu.Unlock()
@@ -390,6 +396,9 @@ type Server struct {
 	// PrivateOnly confines relay endpoints to private/loopback addresses and
 	// requires a build without UDP transport. Direct-enabled builds fail closed.
 	PrivateOnly bool
+	// DestinationPrefixes opts into immutable per-engine LAN destination admission.
+	// Nil retains trusted-relay behavior; an empty non-nil slice fails closed.
+	DestinationPrefixes []netip.Prefix
 
 	// AllowClient, if non-nil, reports whether the client with node
 	// key k may connect. It is consulted when a client that is not
@@ -583,6 +592,11 @@ func (s *Server) startLocked(ctx context.Context) error {
 	lb.dm = regionMap(regions)
 	lb.homeRegion = regions[0].RegionID
 	lb.privateOnly = s.PrivateOnly
+	lb.underlayPolicy, err = newUnderlayPolicy(s.DestinationPrefixes, regions)
+	if err != nil {
+		return err
+	}
+	lb.destinationPrefixes = slices.Clone(s.DestinationPrefixes)
 	lb.allowClient = s.AllowClient
 
 	sys := &lb.sys
@@ -1299,7 +1313,7 @@ func (b *locoBackend) advertiseEndpoints() {
 		b.mu.Unlock()
 		return
 	}
-	eps := slices.Clone(b.eps)
+	eps := selectedEndpoints(b.eps, b.destinationPrefixes)
 	var peers []tailcfg.NodeView
 	if b.nm != nil {
 		peers = b.nm.Peers
@@ -1620,15 +1634,16 @@ func newNetstack(logf logger.Logf, sys *tsd.System) (*netstack.Impl, error) {
 func createEngine(logf logger.Logf, lb *locoBackend) (err error) {
 	sys := &lb.sys
 	conf := wgengine.Config{
-		ListenPort:    0,
-		NetMon:        sys.NetMon.Get(),
-		Dialer:        sys.Dialer.Get(),
-		SetSubsystem:  sys.Set,
-		Metrics:       sys.UserMetricsRegistry(),
-		HealthTracker: sys.HealthTracker.Get(),
-		EventBus:      sys.Bus.Get(),
-		OnDERPRecv:    lb.onDERPRecv,
-		DERPAppName:   "tailcat-client",
+		ListenPort:     0,
+		UnderlayPolicy: lb.underlayPolicy,
+		NetMon:         sys.NetMon.Get(),
+		Dialer:         sys.Dialer.Get(),
+		SetSubsystem:   sys.Set,
+		Metrics:        sys.UserMetricsRegistry(),
+		HealthTracker:  sys.HealthTracker.Get(),
+		EventBus:       sys.Bus.Get(),
+		OnDERPRecv:     lb.onDERPRecv,
+		DERPAppName:    "tailcat-client",
 	}
 	if lb.isServer {
 		conf.DERPAppName = "tailcat-server"
@@ -1674,6 +1689,9 @@ type Client struct {
 
 	// PrivateOnly has the same fail-closed build requirement as Server.PrivateOnly.
 	PrivateOnly bool
+	// DestinationPrefixes opts into immutable per-engine LAN destination admission.
+	// Nil retains trusted-relay behavior; an empty non-nil slice fails closed.
+	DestinationPrefixes []netip.Prefix
 
 	lb       *locoBackend
 	ci       ConnInfo      // of server
@@ -1743,6 +1761,11 @@ func (c *Client) initLocked() error {
 	lb.logf = logf
 	lb.dm = &tailcfg.DERPMap{}
 	lb.privateOnly = c.PrivateOnly
+	lb.underlayPolicy, err = newUnderlayPolicy(c.DestinationPrefixes, ci.Region)
+	if err != nil {
+		return err
+	}
+	lb.destinationPrefixes = slices.Clone(c.DestinationPrefixes)
 	lb.homeRegion = ci.Region[0].RegionID
 	lb.serverPub = ci.ServerPublic.NodePublic
 	lb.serverDiscoPub = ci.ServerDiscoPublic.DiscoPublic

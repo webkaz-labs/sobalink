@@ -341,7 +341,7 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 		}
 	}
 	delete(n.admissions, remote.IncomingClientKey)
-	entry := &remoteClient{remote: remote, address: ap}
+	entry := &remoteClient{remote: remote, address: ap, destinationPolicy: n.cfg.DestinationPolicy}
 	if len(liveClient) == 1 && liveClient[0] != nil {
 		entry.client = liveClient[0]
 		entry.started = true
@@ -605,7 +605,7 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 			return e
 		}
 	}
-	c := &tailcat.Client{Server: remote.Address, Key: role, PrivateOnly: n.cfg.PrivateOnly, Logf: logger.Discard}
+	c := &tailcat.Client{Server: remote.Address, Key: role, PrivateOnly: n.cfg.PrivateOnly, DestinationPrefixes: destinationPrefixes(n.cfg.DestinationPolicy), Logf: logger.Discard}
 	retained := false
 	defer func() {
 		if !retained {
