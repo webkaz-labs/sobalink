@@ -16,6 +16,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
+	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
@@ -84,7 +85,7 @@ func (c *Core) startNetwork(ctx context.Context) error {
 		return nil
 	}
 	p := c.profileCopy()
-	if p.Settings.Network != "tailnet" && p.Settings.Network != "lan" {
+	if p.Settings.Network != "tailnet" && p.Settings.Network != "lan" && p.Settings.Network != "direct-lan" && p.Settings.Network != "mixed" {
 		return errors.New("choose a network before connecting")
 	}
 	if c.attemptedNetwork == "" && c.transferNetwork != p.Settings.Network {
@@ -104,6 +105,14 @@ func (c *Core) startNetwork(ctx context.Context) error {
 			factory = c.newLANBackend
 		}
 		n, e = factory(store)
+	} else if p.Settings.Network == "direct-lan" {
+		store := c.directLANStoreCopy()
+		if store == nil {
+			return &lanCommandError{"direct_lan_setup_required", "configure an exact direct LAN endpoint and prefixes first"}
+		}
+		n, e = c.newDirectLANBackend(store)
+	} else if p.Settings.Network == "mixed" {
+		n, e = c.newMixedBackend()
 	} else {
 		n, e = c.factory(c.dir, p.Settings.Hostname)
 	}
@@ -118,6 +127,9 @@ func (c *Core) startNetwork(ctx context.Context) error {
 	c.mu.Unlock()
 	if e = n.Start(); e != nil {
 		_ = n.Close()
+		if p.Settings.Network == "direct-lan" {
+			return e
+		}
 		return errors.New("could not start network; private identity state was retained")
 	}
 	c.mu.Lock()
@@ -175,6 +187,7 @@ func (c *Core) maintain() {
 					}
 				}
 				c.revalidateServices(st)
+				_ = c.syncWorkerTCPScopes()
 				c.revalidateProxies(st)
 				c.refreshPeers(st)
 				c.runStartup(c.ctx)
@@ -220,6 +233,11 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 				lanNames[peer.Key] = peer.Name
 			}
 		}
+		if node, ok := c.nodeCopy().(*directLANBackend); ok {
+			for _, peer := range node.Peers() {
+				lanNames[peer.Key] = peer.Name
+			}
+		}
 		for _, peer := range st.Snapshot.Peers {
 			if peer.Expired || peer.ID == "" {
 				continue
@@ -237,7 +255,11 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 				name = peer.ID
 			}
 			bridge := freshDiscoveryCheck(confirmed[peer.ID], time.Now())
-			peers = append(peers, map[string]any{"id": peer.ID, "name": name, "networks": []string{p.Settings.Network}, "online": peer.Online || bridge, "verified": st.Snapshot.Running, "trusted": ok, "path": "unknown", "bridge": bridge, "discovery": c.discoveryObservation(peer.ID), "address": address, "fingerprint": peer.ID, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
+			networks := []string{p.Settings.Network}
+			if mixed, ok := c.nodeCopy().(*mixedBackend); ok {
+				networks = mixed.peerNetworks(peer.ID)
+			}
+			peers = append(peers, map[string]any{"id": peer.ID, "name": name, "networks": networks, "online": peer.Online || bridge, "verified": st.Snapshot.Running, "trusted": ok, "path": "unknown", "bridge": bridge, "discovery": c.discoveryObservation(peer.ID), "address": address, "fingerprint": peer.ID, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
 			if provider, ok := c.nodeCopy().(interface{ routeControl() *lanlink.Node }); ok && provider.routeControl() != nil {
 				if observation, err := provider.routeControl().RouteObservation(peer.ID); err == nil {
 					peers[len(peers)-1]["route"] = publicRouteObservation(observation)
@@ -257,6 +279,14 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			}
 		}
 	}
+	if !networkRead && p.Settings.Network == "direct-lan" {
+		if saved := c.directLANStoreCopy(); saved != nil {
+			for _, peer := range saved.copy().Peers {
+				trusted, ok := c.trust(peer.Key)
+				peers = append(peers, map[string]any{"id": peer.Key, "name": peer.Name, "networks": []string{"direct-lan"}, "online": false, "verified": false, "trusted": ok, "path": "direct-lan", "bridge": false, "address": "", "endpoint": peer.Endpoint.String(), "fingerprint": peer.Key, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
+			}
+		}
+	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i]["name"].(string) < peers[j]["name"].(string) })
 	if messages == nil {
 		messages = []Message{}
@@ -269,7 +299,7 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			services = append(services, v)
 		}
 	}
-	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus()}, nil
+	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus(), "directLAN": c.directLANStatus(), "mixed": c.mixedStatus()}, nil
 }
 
 // Command deduplicates requests independently of the mutation lock. Slow file
@@ -421,8 +451,16 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.capacityCommand(cmd.Name, cmd.Payload)
 	case "service.list":
 		return c.listServices(cmd.Payload)
+	case "wan.candidates.get", "wan.candidates.set":
+		return c.wanCandidatesCommand(ctx, cmd.Name, cmd.Payload)
+	case "lan.policy.get", "lan.policy.set":
+		return c.lanPolicyCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.routes.list", "lan.routes.add", "lan.routes.remove", "lan.routes.export", "lan.routes.inspect", "lan.routes.apply", "lan.routes.review", "lan.routes.approve", "lan.routes.revoke":
 		return c.lanRoutesCommand(ctx, cmd.Name, cmd.Payload)
+	case "mixed.status", "mixed.bind", "mixed.unbind":
+		return c.mixedCommand(ctx, cmd.Name, cmd.Payload)
+	case "direct-lan.status", "direct-lan.identity", "direct-lan.invite", "direct-lan.inspect", "direct-lan.join", "direct-lan.cancel", "direct-lan.revoke":
+		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
 		return c.lanCommand(ctx, cmd.Name, cmd.Payload)
 	case "application.stop":
@@ -433,21 +471,31 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.stopApplication(), nil
 	case "network.configure":
 		var v struct {
-			Mode     string        `json:"mode"`
-			Hostname string        `json:"hostname"`
-			LAN      *LANSelection `json:"lan,omitempty"`
+			Mode              string              `json:"mode"`
+			Hostname          string              `json:"hostname"`
+			Mixed             *MixedSelection     `json:"mixed,omitempty"`
+			DirectLAN         *DirectLANSelection `json:"directLAN,omitempty"`
+			LAN               *LANSelection       `json:"lan,omitempty"`
+			RotateCertificate bool                `json:"rotateCertificate,omitempty"`
+			LANPolicy         *lanpolicy.Config   `json:"lanPolicy,omitempty"`
 		}
 		if e := decodePayload(cmd.Payload, &v); e != nil {
 			return nil, e
 		}
 		p := c.profileCopy()
-		if v.Mode != "tailnet" && v.Mode != "lan" && v.Mode != "none" {
-			return nil, errors.New("choose tailnet, lan or none")
+		if v.Mode != "tailnet" && v.Mode != "lan" && v.Mode != "direct-lan" && v.Mode != "mixed" && v.Mode != "none" {
+			return nil, errors.New("choose tailnet, lan, direct-lan, mixed or none")
 		}
 		if err := validateCapacityBackend(v.Mode, c.capacityPolicy()); err != nil {
 			return nil, err
 		}
-		if v.Mode != "lan" && v.LAN != nil {
+		if v.Mode != "mixed" && v.Mixed != nil {
+			return nil, errors.New("mixed settings require mixed mode")
+		}
+		if v.Mode != "direct-lan" && v.DirectLAN != nil {
+			return nil, errors.New("direct LAN settings require direct-lan mode")
+		}
+		if v.Mode != "lan" && (v.LAN != nil || v.RotateCertificate || v.LANPolicy != nil) {
 			return nil, errors.New("LAN relay settings require LAN mode")
 		}
 		c.mu.RLock()
@@ -467,8 +515,18 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, e
 		}
 		if v.Mode == "lan" {
-			if e := c.configureLAN(v.LAN); e != nil {
+			if e := c.configureLANWithPolicy(v.LAN, v.RotateCertificate, v.LANPolicy); e != nil {
 				return nil, codedLANError(e)
+			}
+		}
+		if v.Mode == "direct-lan" {
+			if err := c.configureDirectLAN(v.DirectLAN); err != nil {
+				return nil, err
+			}
+		}
+		if v.Mode == "mixed" {
+			if err := c.configureMixed(v.Mixed); err != nil {
+				return nil, err
 			}
 		}
 		saveErr := c.saveProfile(p)
@@ -481,7 +539,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if saveErr != nil {
 			return nil, saveErr
 		}
-		if v.Mode == "tailnet" || v.Mode == "lan" {
+		if v.Mode == "tailnet" || v.Mode == "lan" || v.Mode == "direct-lan" || v.Mode == "mixed" {
 			err := c.startNetwork(ctx)
 			if err != nil {
 				c.mu.Lock()
