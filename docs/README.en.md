@@ -2,7 +2,7 @@
 
 [日本語](README.md) · [Project overview](../README.en.md)
 
-The published baseline is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2). New prepared-route controls are unreleased and under verification. Start with a task below; the verification record distinguishes source implementation, automated evidence, signed distribution and physical-device acceptance.
+The published baseline is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), including prepared multi-relay recovery. Explicit LAN destination restrictions, relay operations, relayless LAN, WAN discovery and mixed-backend routing are development changes under verification. The direct-LAN cold-start regression is fixed and covered by localhost TCP/UDP lifecycle tests. Final four-target native/browser and release acceptance remain open. Start with a task below; the verification record distinguishes source implementation, automated evidence, signed distribution and physical-device acceptance.
 
 | Task | Guide |
 | --- | --- |
@@ -15,7 +15,10 @@ The published baseline is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalin
 | Run, stop, logout and OS sign-in | [LIFECYCLE.en.md](LIFECYCLE.en.md) |
 | Explicit outbound startup and private proxy profiles | [STARTUP.en.md](STARTUP.en.md) |
 | Scoped proxies and diagnostics | [PROXY_DIAGNOSTICS.en.md](PROXY_DIAGNOSTICS.en.md) |
-| Explicit LAN pairing and recovery | [LAN.en.md](LAN.en.md) |
+| Explicit relay pairing and recovery | [LAN.en.md](LAN.en.md) |
+| Development: LAN destination restrictions | [LAN destinations](LAN_DESTINATIONS.en.md) |
+| Development: relayless LAN | [Direct LAN](DIRECT_LAN.en.md) |
+| Development: mixed connections and new-flow routing | [Mixed connections](MIXED_CONNECTIONS.en.md) |
 | Prepared-route implementation and gates | [Route recovery](ROUTE_RECOVERY_DESIGN.en.md) |
 | Capacity, budgets and history | [CAPACITY.en.md](CAPACITY.en.md) |
 | Development and usability principles | [DEVELOPMENT_PRINCIPLES.en.md](DEVELOPMENT_PRINCIPLES.en.md) |

@@ -6,7 +6,7 @@ The local Web UI supports service connections, reviewed sharing, files and messa
 
 ## Use the device list and network graph
 
-These instructions cover the published `0.3.0-alpha.2` interface and clearly marked unreleased route controls. The [exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline) separates alpha.2 release verification from later integration work.
+The published baseline is `0.3.0-alpha.4`, including prepared multi-relay recovery. Development-only controls below are not yet released. The [exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline) distinguishes published acceptance from current integration work.
 
 **Device list** and **Network graph** use the same search and filter. Counts refer to remote devices and exclude this device. Use **Clear filters** when filtering hides the desired device. Select a node or line to open that peer's details; Close or Escape returns to the previous control. On narrow screens, details replace the graph.
 
@@ -16,7 +16,13 @@ Lines represent relationships with this device. A backend that does not report i
 
 Service rows keep the endpoint, state and lifetime visible. Open **Manage service** for copy, edit, remove and diagnostic actions; active **Stop** remains directly available. Settings open by topic. Long forms scroll their contents while retaining the heading and close control. Closing an unapplied form does not change runtime or saved configuration. Language and theme take effect immediately and are stored in this browser.
 
-## Prepare route recovery (unreleased)
+## Choose a development connection mode
+
+Start offline and open **Set up network**. [Direct LAN](DIRECT_LAN.en.md) pairs exact numeric private-network endpoints without a relay. [Mixed connections](MIXED_CONNECTIONS.en.md) explicitly selects backends and requires fresh authenticated binding before treating multiple routes as the same peer; unbound routes remain individually usable. [LAN destination restrictions](LAN_DESTINATIONS.en.md) constrain admitted destinations; they do not bind physical interfaces or override VPN routing. WAN discovery is a separate opt-in to selected numeric STUN destinations and/or IPv6 candidates, incompatible with strict LAN destination restrictions. None requires administrator privileges or LAN-router changes.
+
+Review configuration and network effects before applying. Local readiness is not confirmed peer response. The direct-LAN cold-start regression is fixed with localhost TCP/UDP lifecycle evidence. Final-source browser checks and four-target native release acceptance remain open; these controls do not establish release readiness.
+
+## Prepare route recovery
 
 In LAN setup, expand “Advanced: prepared relay candidates”. Add/remove up to three extra exact relay endpoint/pin/scope tuples while started with `--offline`, review the change, then restart. The original relay and paired identities remain. Adding a candidate does not host a new relay.
 

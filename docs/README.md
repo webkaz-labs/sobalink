@@ -2,7 +2,7 @@
 
 [English](README.en.md) · [概要](../README.md)
 
-公開済みの基準は [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2) です。新しい経路準備の操作は未公開で検証中です。目的に合う手順から始めてください。実装、自動試験、署名付き配布、実端末の受入を検証記録で区別します。
+公開済みの基準は [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4) で、複数中継の経路復旧を含みます。明示的なLAN送信先制限・中継運用・中継なしLAN・WAN探索・方式の併用は開発版で検証中です。中継なしLANの初回接続の不具合は修正し、localhostのTCP／UDP継続試験で確認しました。最終4対象native・ブラウザー・配布受入は未完了です。目的に合う手順から始めてください。実装、自動試験、署名付き配布、実端末の受入を検証記録で区別します。
 
 | 目的 | 手順 |
 | --- | --- |
@@ -15,7 +15,10 @@
 | 起動・停止・ログアウト・OSサインイン | [LIFECYCLE.ja.md](LIFECYCLE.ja.md) |
 | 明示的な外向き起動時接続・非公開プロキシ設定 | [STARTUP.ja.md](STARTUP.ja.md) |
 | 範囲を限定したプロキシ・診断 | [PROXY_DIAGNOSTICS.ja.md](PROXY_DIAGNOSTICS.ja.md) |
-| 明示的なLANペアリング・復旧 | [LAN.ja.md](LAN.ja.md) |
+| 明示的な中継ペアリング・復旧 | [LAN.ja.md](LAN.ja.md) |
+| 開発版：LAN送信先の制限 | [LAN送信先](LAN_DESTINATIONS.ja.md) |
+| 開発版：中継なしLAN | [Direct LAN](DIRECT_LAN.ja.md) |
+| 開発版：方式の併用・新しい接続の切替 | [接続方式の併用](MIXED_CONNECTIONS.ja.md) |
 | 準備した経路の実装と条件 | [経路復旧](ROUTE_RECOVERY_DESIGN.ja.md) |
 | 容量・予算・履歴 | [CAPACITY.ja.md](CAPACITY.ja.md) |
 | 開発・使いやすさの基本方針 | [DEVELOPMENT_PRINCIPLES.ja.md](DEVELOPMENT_PRINCIPLES.ja.md) |
