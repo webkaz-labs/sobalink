@@ -8,7 +8,7 @@ The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the ear
 
 ## Install a signed prerelease
 
-These source instructions target prerelease `0.3.0-alpha.2`. Use the pin below **only after checking its complete signed assets and successful verification at the canonical [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases)**. Check the release's source commit and linked workflow results, including the public-download and four-target installed-binary checks. The instructions alone do not establish publication or acceptance. If those assets or results are missing, use a reviewed source build or wait for a verified release. [Earlier alpha.1 evidence](VERIFICATION.en.md#current-integration-and-published-baseline) applies only to that release.
+[0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2) is published from `00cc6a99809df77bf1754936ea7bf5ca4c5d0741`. [Release run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed all 15 jobs, including the four native packages, signatures/provenance, unauthenticated public retrieval and actual mise installation on all four targets. The pin below installs that release. New prepared-route changes are unreleased source under verification, with no next version assigned here; they are not part of alpha.2. [Exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline)
 
 A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
 
@@ -107,6 +107,8 @@ The embedded frontend is included in the binary; build metadata records its lock
 
 The SBOM, build metadata and notices index are also emitted as assets. `SHA256SUMS` records present regular distribution files, excluding itself. The later signature bundle is independently verified and receives its own provenance. Checksums establish integrity, not publisher identity. Do not distribute private node state or generic-looking fixtures that reveal personal context.
 
+The route source includes a modified internal Tailcat component. When it is in a target's runtime package closure, packaging retains its original license, provenance metadata and [adaptation record](../internal/routecat/UPSTREAM.md), and records upstream and adapted input hashes separately. This does not change the normal single-executable package or establish route acceptance. No strict-egress helper executable is distributed.
+
 ## Reproducibility and provenance
 
 The packager pins the toolchain, required tags and target, disables cgo and workspace overrides, uses read-only module resolution, trims build paths, disables automatic VCS embedding, clears the linker build ID and sets an explicit version. Archives use sorted entries, normalized owners/modes and `SOURCE_DATE_EPOCH`; pre-1980 ZIP dates normalize to 1980. Symlinks and special archive entries are rejected.
@@ -126,6 +128,8 @@ The source includes a stock Tailcat two-peer test using a loopback TLS DERP fixt
 ```sh
 SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport -count=1 -v -timeout=5m ./internal/lanlink -run '^TestTrustedRelayTwoPeerIntegration$'
 ```
+
+The new route tests must additionally exercise two independent processes with actual sockets, controlled loss/recovery and externally unavailable LAN cold start while retaining the same pair and service entrance. Fixture-only `ts_omit_udptransport` is not the product configuration: native tests must also cover the normal direct-enabled build. Prepared-route unit tests, an internal transport prototype or an old alpha.2 run do not establish final Core/UI integration. [Route acceptance](VERIFICATION.en.md#route-recovery-gate)
 
 ## Publication gates
 

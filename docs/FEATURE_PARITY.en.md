@@ -2,7 +2,7 @@
 
 [日本語](FEATURE_PARITY.ja.md) · [All guides](README.en.md) · [Verification evidence](VERIFICATION.en.md)
 
-**Full parity and release acceptance are not yet established.** The development candidate is `0.3.0-alpha.1`, unpublished. This matrix tracks shipped capabilities from [v0.2.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.2.0-alpha.2), exact source `0b0a13c4edd2924de149650152445507cc709da7`. Stable F01–F56 row IDs distinguish underlying functionality from old command/config spelling. The current restoration includes human CLI workflows, reviewed discovery, client helpers and opt-in startup/private proxy settings. This source matrix does not substitute for the exact public commit’s CI and release records.
+**Full parity and release acceptance are not yet established.** The published baseline is `0.3.0-alpha.2`; newer prepared-route work remains unreleased and under verification. This matrix tracks shipped capabilities from [v0.2.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.2.0-alpha.2), exact source `0b0a13c4edd2924de149650152445507cc709da7`. Stable F01–F56 row IDs distinguish underlying functionality from old command/config spelling. The current restoration includes human CLI workflows, reviewed discovery, client helpers and opt-in startup/private proxy settings. This source matrix does not substitute for the exact public commit’s CI and release records.
 
 “Implemented” describes a source route, not real-device or release acceptance. Local mock/metadata/DOM tests, native CI, actual Go-backed browser execution, synthetic visual inspection and actual-device tests are separate evidence. Every implemented row still needs affected checks on the final integrated source.
 

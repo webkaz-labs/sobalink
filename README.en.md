@@ -10,7 +10,7 @@
 
 ### Use a signed release
 
-These source instructions target prerelease `0.3.0-alpha.2`. Before using the pin below, check the canonical Releases page above for that version's complete signed assets and successful verification. The instructions alone do not establish publication or acceptance. If the required assets or results are absent, build reviewed source below or wait. [Required assets, signatures and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+The latest published prerelease is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2), source `00cc6a99809df77bf1754936ea7bf5ca4c5d0741`. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed all 15 jobs, including signatures, public download and installation on all four native targets. Prepared multi-relay recovery below is newer, unreleased source under verification; it is not in alpha.2. [Assets and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
 Run with mise **2026.9.18** available. `mise use -g` selects the version for normal use.
 
@@ -64,6 +64,20 @@ A broad TCP share also permits applications started later inside that range whil
 
 Direct and Relay describe the encrypted traffic's route; reconnecting means communication is being re-established. Unknown routes remain unknown instead of being inferred from latency. Network backends are never exchanged automatically, and existing TCP sessions are not guaranteed to survive. Tailcat never falls back to arbitrary public relays. [Network design](docs/ARCHITECTURE.md)
 
+## Prepared route recovery (unreleased)
+
+Keep the same Tailcat pairing while preparing exact LAN-local and external relay candidates. Before changing networks, configure the candidates on both devices, privately exchange their authenticated offers, and approve the selected routes locally. The new CLI and local UI are implemented under verification. [Short route setup](docs/LAN.en.md#prepare-another-route-unreleased)
+
+```mermaid
+flowchart LR
+    A[Application reconnect] --> L[Same local service entrance]
+    L --> P[Same paired device]
+    P --> R[Approved local relay]
+    P --> E[Approved external relay]
+```
+
+The diagram describes the recovery target, not a verified availability guarantee. Saved-state LAN cold start with external services unavailable still needs native proof. Local means the relay address class; normal builds retain direct peer traffic, which may use public paths. Strict LAN/no-external-egress mode is deferred. Existing TCP may break, applications must reconnect, and file retry remains whole-item retry during the same process. [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
+
 ## Short CLI example
 
 ```sh
@@ -90,6 +104,6 @@ An optional [authenticated TCP proxy and diagnostics](docs/PROXY_DIAGNOSTICS.en.
 
 ## Development and verification
 
-Follow the shared [development and usability principles](docs/DEVELOPMENT_PRINCIPLES.en.md). See [architecture](docs/ARCHITECTURE.md), [distribution](docs/DISTRIBUTION.md), [verification](docs/VERIFICATION.en.md), and [roadmap (Japanese)](docs/ROADMAP.ja.md).
+Follow the shared [development and usability principles](docs/DEVELOPMENT_PRINCIPLES.en.md). See [architecture](docs/ARCHITECTURE.md), [distribution](docs/DISTRIBUTION.md), [verification](docs/VERIFICATION.en.md), and [roadmap](docs/ROADMAP.en.md).
 
 Retain Go race/vet checks and frontend unit tests, native Linux x64/ARM64, macOS ARM64 and Windows x64 CI, reproduction of locked frontend assets, repeated package builds, signing, provenance and actual installed-binary verification. Results from earlier releases are not evidence for this source.

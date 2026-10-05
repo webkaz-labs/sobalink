@@ -6,16 +6,20 @@
 
 ## Current integration and published baseline
 
-The `0.3.0-alpha.2` source combines receive crash-accounting safeguards, bounded persistence and transfer resources, UI improvements and development CI caching. Its final integrated-source CI, browser and signed-release results must be recorded separately; the earlier results below do not verify those changes. Real devices, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery remain separate acceptance work.
+The latest published release is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2), exact source `00cc6a99809df77bf1754936ea7bf5ca4c5d0741`. Prepared multi-route recovery is newer unreleased source; it is not covered by that release's results. No next version is assigned here.
 
 | Source/category | Result and boundary |
 | --- | --- |
-| Published `0.3.0-alpha.1`, source `8e6cbb00d60757f701d7d453adb92590cc5d2544` | [Release workflow 37118184346](https://github.com/webkaz-labs/sobalink/actions/runs/37118184346) verified signatures, public download and actual installation on Linux x64/ARM64, macOS ARM64 and Windows x64. This belongs to the [alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.1), not the alpha.2 source |
-| Published alpha.1 Linux amd64 resource observation | [Run 37122354906](https://github.com/webkaz-labs/sobalink/actions/runs/37122354906) passed for the exact published binary: 15 minutes offline idle, ten clean restarts and one forced idle exit/restart. [Procedure and limits](RESOURCE_MEASUREMENT.en.md). No active receive crash, network-byte or later-source acceptance is established |
-| Source-built alpha.1 relay traffic observation | [Run 37122354935](https://github.com/webkaz-labs/sobalink/actions/runs/37122354935) passed with synthetic TCP echo traffic and a loopback relay, using test-only instrumentation and no OS UDP transport. [Procedure and limits](RELAY_TRAFFIC_MEASUREMENT.en.md). This is not the published executable, full file-transfer overhead or real WAN/device behavior |
-| Integrated `0.3.0-alpha.2` source | Exact-source native/browser CI, package reproduction, signatures/provenance, public download and four-target installed-binary checks are required before release acceptance. Preparation or earlier branch results alone do not complete these gates |
+| Published alpha.2 | [Release run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed all 15 jobs: four native race/vet/package jobs, signing/provenance, unauthenticated public retrieval and actual mise-installed binaries on Linux x64/ARM64, macOS ARM64 and Windows x64. Its exact-main successful CI gate passed. Physical-device/application acceptance is separate |
+| Published alpha.2 resource observation; merged [PR #7](https://github.com/webkaz-labs/sobalink/pull/7), merge `11cd8285607c220962c97db725f36fdd00d653d7` | [Recorded report](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [observation 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) tested the exact released Linux amd64 binary through 15-minute offline idle, ten normal restarts and forced idle termination/recovery. [CI 37183542586 attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) passed four native targets, browser and manifest after an unchanged-code retry of one intermittent Windows frontend assertion. No active-transfer crash, packet capture, power-loss or later route acceptance |
+| New route implementation | [Draft PR #8](https://github.com/webkaz-labs/sobalink/pull/8). Helper, native prototype and final integration evidence are separated [below](#route-recovery-gate). Later working-tree changes are not the tested prototype SHA |
 
 ## Recorded source evidence
+
+Earlier alpha.1 observations remain scoped to their source: [published-binary resources](RESOURCE_MEASUREMENT.en.md) and [isolated relay traffic](RELAY_TRAFFIC_MEASUREMENT.en.md).
+
+<details>
+<summary>Historical source results (not the current release gate)</summary>
 
 | Source/category | Result and boundary |
 | --- | --- |
@@ -34,7 +38,9 @@ The `0.3.0-alpha.2` source combines receive crash-accounting safeguards, bounded
 
 A failed server launch or pre-login browser failure is a failed gate, not acceptance of the screens that follow. Do not carry results across changed source without rerunning affected checks. Cross-compilation is not native execution. Native loopback fixtures do not establish actual-device, direct LAN/WAN/NAT, sleep/wake, OS sign-in, native IME or application compatibility.
 
-The [feature parity matrix](FEATURE_PARITY.en.md) maps every fixed alpha.2 capability row to its current route and remaining gate. Later restored CLI `7263310` passed local synthetic workflow and Linux PTY checks; actual macOS/Windows terminal input, native IME and enrollment remain unverified. Synthetic hosted graph preview `d52a975` passed nine layout captures; those fixtures do not establish actual backend or Go-process browser behavior. Final integrated-source aggregate/native/browser checks and review remain open.
+The [feature parity matrix](FEATURE_PARITY.en.md) maps every fixed alpha.2 capability row to its current route and remaining gate. Later restored CLI `7263310` passed local synthetic workflow and Linux PTY checks; actual macOS/Windows terminal input, native IME and enrollment remain unverified. Synthetic hosted graph preview `d52a975` passed nine layout captures; those fixtures do not establish actual backend or Go-process browser behavior. New route changes require their own final integrated-source aggregate/native/browser checks and review.
+
+</details>
 
 ## Native and browser acceptance
 
@@ -70,7 +76,7 @@ Transport readiness, discovered metadata and local file staging are not applicat
 
 The implementation covers explicit relay selection, distinct server/client role keys bound to paired identity, sealed bootstrap admission, atomic secret-state persistence before acknowledgement, UDP multiplexing and durable revocation. [LAN commands and recovery](LAN.en.md) keep pairing separate from application trust, autosave and service grants. Paired-peer admission follows the selected logical choice; private LAN state has a separate finite storage budget and existing pairs survive lower count choices.
 
-Dependencies pin Tailscale `v1.104.0` and Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`. The native fixture uses real stock Tailcat/WireGuard with a TLS-pinned loopback DERP relay. Recorded four-target CI covers invalid invitations/unknown keys, bidirectional TCP/UDP, 130 seconds of existing TCP across an actual two-minute relay lease with re-admission, active revoke and cleanup, plus Core two-peer messages/files/shares. It omits UDP underlay and uses no external relay.
+Dependencies pin Tailscale `v1.104.0` and Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`. The recorded alpha.2 native fixture used real stock Tailcat/WireGuard with a TLS-pinned loopback DERP relay. Recorded four-target CI covers invalid invitations/unknown keys, bidirectional TCP/UDP, 130 seconds of existing TCP across an actual two-minute relay lease with re-admission, active revoke and cleanup, plus Core two-peer messages/files/shares. It omits UDP underlay and uses no external relay.
 
 This fixture does not establish real direct UDP, LAN/WAN/NAT migration, cross-relay migration, throughput or general TCP continuity. Production permits direct peer traffic and encrypted payload plus HTTPS/ICMP diagnostics to the explicit trusted relay endpoint. Loopback-only fixture restrictions are not a zero-egress promise.
 
@@ -79,6 +85,22 @@ Verify no default public relay map/DNS bootstrap, required omission tags and rej
 Application revoke closes its authorization and tracked flows immediately. The embedded relay's two-minute lease is a different boundary: an admitted relay session can remain until expiry, or about four minutes from initial bootstrap when temporary admission overlaps a lease. Verify both application closure and later relay re-admission rejection.
 
 Actual devices still need explicit setup/identity verification, consented service/file operations, canceled-send reselection after pause, offline repair, certificate expiry, interrupted/uncertain pairing, durable revocation and network recovery. No arbitrary public fallback or automatic backend exchange is allowed.
+
+## Route recovery gate
+
+The new source includes the adapted transport, authenticated offers, durable per-pair route state, independent finite approvals, Core/CLI and local UI. Implementation is not integrated acceptance. [Contract](ROUTE_RECOVERY_DESIGN.en.md) · [Commands](LAN.en.md#prepare-another-route-unreleased)
+
+| Evidence tier | Current result and boundary |
+| --- | --- |
+| Pure helpers / synthetic state and coordinator tests | Cover candidate validation, directional pair binding, tamper/replay/expiry, exact review and local approval, persistence faults, cancellation and bounded attempts. Focused CLI and Core fixture race tests passed locally; they do not open the production path between two independently running apps |
+| Initial native route prototype, `967fa58` | [Run 37218261408](https://github.com/webkaz-labs/sobalink/actions/runs/37218261408) failed cross-relay recovery by timeout. Its passing baseline browser and legacy relay tests do not make the run pass |
+| Corrected native prototype, `52b72b22868fe52261118675ba46555ea02cc756` | [Run 37219113173](https://github.com/webkaz-labs/sobalink/actions/runs/37219113173) completed successfully on 2026-10-04. This is native prototype evidence for that exact source, not the later full Core/CLI/UI/route-state integration |
+| Final application integration | Still requires exact-source two-process/socket proof of prepared-LAN cold start with external services unavailable, same-pair route loss/recovery, stable local application entrance, revoke/expiry, migration and cleanup; then four native targets and actual Go-backed route browser flows |
+| Physical devices | LAN/WAN/NAT changes, physical offline-LAN cold start, real application authentication/reconnect and OS suspend/wake are unperformed |
+
+The product remains a normal direct-enabled single binary. An isolated no-UDP fixture is narrower evidence and cannot verify normal direct transport or a strict-egress product. Native acceptance must exercise the actual product configuration as well as controlled relay fixtures. No strict LAN/no-external-egress mode is included. Local relay classification does not prevent public direct peer paths.
+
+Before a clearly labeled prerelease, pass the integrated automated gates, authentication/permission and privacy review, final-source native/browser checks and signed installed-binary distribution checks. Physical-device acceptance may remain explicitly pending so that users can install the prerelease through mise for those tests. Do not advertise established-TCP preservation, arbitrary request replay or byte-offset/restart file resume. Listener readiness, authenticated path evidence, application success and remote-job completion remain distinct.
 
 ## Release boundary
 

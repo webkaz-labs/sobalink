@@ -2,7 +2,7 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-This guide describes the `0.3.0-alpha.2` source and its `soba` executable. Before using the install commands, check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for that exact version's signed assets and successful verification. Alpha.2 combines receive crash-accounting safeguards and bounded runtime resources with clearer, more compact Web controls. It remains a prerelease. Real-device enrollment, application compatibility, native IME, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery need separate checks. The [verification record](VERIFICATION.en.md#current-integration-and-published-baseline) keeps the published alpha.1 results separate from this source.
+This guide covers `soba`. The published baseline is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2); [all 15 release jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713), including signed public retrieval and four-target mise installation, passed for its exact source. Sections marked unreleased describe newer source under verification. Real-device enrollment, application compatibility, native IME, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery remain separate checks. [Source-specific evidence](VERIFICATION.en.md#current-integration-and-published-baseline)
 
 The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
@@ -10,7 +10,7 @@ The local Web UI and guided CLI support normal service workflows; explicit CLI c
 
 ## Start and open the local UI
 
-After checking that version's complete signed release and verification results, use mise **2026.9.18** to select it, verify the version, then start it. If the release or required checks are unavailable, use a reviewed [source build](DISTRIBUTION.md#build-this-checkout) or wait:
+Use mise **2026.9.18** to select the published alpha.2 prerelease, verify the version, then start it. Keep signature verification enabled. To try the unreleased route changes, use a reviewed [source build](DISTRIBUTION.md#build-this-checkout):
 
 ```sh
 mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
@@ -62,7 +62,7 @@ Selecting a mode is explicit. Stop the agent and use `soba start --offline` to o
 
 For foreground/background startup, optional reviewed startup at user sign-in, saved autosave behavior and Tailnet logout, see [startup and logout](LIFECYCLE.en.md).
 
-Tailcat's permitted traffic includes direct peer traffic, encrypted payload via the explicitly selected relay, and HTTPS/ICMP diagnostics to that relay endpoint. A relay may be self-hosted or another endpoint explicitly trusted by the user. This is not a LAN egress sandbox. [Transport detail](ARCHITECTURE.md#network-boundaries)
+Tailcat permits direct peer traffic, encrypted payload and HTTPS/ICMP diagnostics to explicitly configured/approved relay endpoints. The normal direct-enabled binary can use public peer paths; `local` is a relay classification, not a LAN egress sandbox. The unreleased [prepared-route workflow](LAN.en.md#prepare-another-route-unreleased) keeps the same pair across reviewed candidates, with finite local approval on both devices. It requires new source and does not appear in alpha.2. [Transport detail](ARCHITECTURE.md#network-boundaries)
 
 ## Trust the peer you mean
 

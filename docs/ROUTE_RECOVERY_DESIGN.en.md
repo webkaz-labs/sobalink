@@ -1,189 +1,97 @@
-# Authenticated route recovery design
+# Authenticated route recovery
 
-[日本語](ROUTE_RECOVERY_DESIGN.ja.md) · [Current LAN behavior](LAN.en.md) · [Architecture](ARCHITECTURE.md) · [Security](../SECURITY.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
+[日本語](ROUTE_RECOVERY_DESIGN.ja.md) · [LAN steps](LAN.en.md#prepare-another-route-unreleased) · [Architecture](ARCHITECTURE.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#route-recovery-gate)
 
-**Status: design and investigation only; not implemented or accepted for release.** This document proposes recovery between LAN-local and external relay candidates for the **same Tailcat peer and pairing**. It does not change current commands, state formats or guarantees. Current code selects one exact numeric relay endpoint and certificate pin; changing it requires stopping the backend and revoking existing LAN pairs. Stock Tailcat integration does not yet establish a safe multi-route implementation.
+**Status: implemented in the unreleased source, integration verification in progress.** This is recovery between prepared relay candidates for the **same Tailcat device and pairing**. Published `0.3.0-alpha.2` remains the single-relay baseline. The new implementation has not completed the two-process, four-native-target and distribution gates; no new release version or physical-device acceptance is claimed.
 
-## 1. Intended result and limits
+## Result and boundaries
 
-After one explicit pairing and local review of exact route candidates, a peer should be reachable through an eligible LAN-local or external relay without repeating pairing. A previously prepared LAN must support cold start with Internet access absent. An already running, authorized local application entrance should retain its exact loopback address and port while the route is recovering, so the application can reconnect there.
-
-These are acceptance targets, not current functionality:
-
-- Prefer a healthy, eligible LAN-local relay, with hysteresis rather than reacting to every probe
-- Fall back only to a previously authorized, authenticated external candidate; never to a public/default relay map
-- Preserve the paired identity, application target and existing permission expiry across route changes
-- Keep recovery attempts, probes, concurrency, stored candidates and update messages bounded
-- Explain whether the listener, transport, application connection or remote job is ready; do not infer one from another
-
-The stable application entrance is an existing explicitly selected **service listener**, not the management UI's ephemeral port. A route change must not silently choose another local port. A process restart follows existing startup approval rules; it does not revive stopped services.
-
-No seamless TCP guarantee is made. A connection may fail and the application may need to reconnect. sobalink must not replay arbitrary TCP bytes, HTTP requests, shell commands, remote jobs or application transactions. UDP datagrams may be lost; stale datagrams must not be replayed. File transfer retains only its existing in-process retry of unfinished **whole items from byte zero**, with the existing batch acknowledgement behavior. There is no byte-offset resume, durable restart resume or offline outbox.
-
-Switching Tailnet/tsnet and Tailcat, MCP, fleet administration, synchronization and an outbox are outside this design.
-
-## 2. What the current source actually does
-
-| Source | Current boundary | Consequence for this proposal |
-| --- | --- | --- |
-| [`trusted.go`](../internal/lanlink/trusted.go), `TrustedRelay.region`, `validateRemote` | One numeric endpoint/pin; a peer capability must contain exactly the expected one-node region | A list of endpoints cannot simply be appended to the existing capability |
-| [`node.go`](../internal/lanlink/node.go), `NodeConfig`, `NewNode`, `Address` | One relay in configuration and server construction; saved per-peer clients use their original capabilities | A selection policy alone does not update live transport |
-| [`pairing.go`](../internal/lanlink/pairing.go) | Authenticated, recipient-bound pairing transcript binds relay, role keys, capability hashes and fresh request/reply data | A new route update needs its own domain, freshness and authority rules; it cannot weaken pairing validation |
-| [`peers.go`](../internal/lanlink/peers.go) | Exact public peer key, distinct role mapping and revocation epochs authorize tracked flows | An endpoint, name or relay membership must never become peer identity |
-| [`core/lan.go`](../internal/core/lan.go) | Private state version 1 contains one selection; changing relay with saved pairs is refused | Migration and local review must precede any broader runtime behavior |
-| [`backend.go`](../internal/lanlink/backend.go) | Application outbound traffic uses the userspace stack, with no OS route/DNS fallback | Recovery must retain this boundary |
-
-The pinned dependency is `github.com/tailscale/tailcat v0.7.1-0.20260929145319-b4dc28e8aa89` in [`go.mod`](../go.mod). API investigation finds a single `Server.Region`, a maximum of one region in `ConnInfo`, and no supported runtime region-update API. Underlying map-first region selection is not deterministic route preference. Multiple DERP nodes or a reordered Go map are not proof of LAN-first failover, peer rendezvous or offline cold start. These observations must be rechecked against any dependency change.
-
-Existing pairing/atomic-persistence and loopback integration tests establish useful regression boundaries. They do **not** verify the proposed route-update protocol, offline-LAN startup, LAN/WAN migration or real-device application continuity. See [verification](VERIFICATION.en.md).
-
-Preparatory work in [`routes.go`](../internal/lanlink/routes.go) defines recipient-sealed route-update helpers, a pair binding derived from existing device-to-outgoing-role associations, canonical authenticated-payload validation, a sequence check, exact candidate IDs and an intersection with separately supplied local approvals. Its current draft bounds are four candidates and a 30-day maximum offer lifetime. These are helper-level bounds, not measured recovery-policy defaults. The helpers perform no network I/O or persistence and are not a delivered route-recovery feature. Durable high-water marks, pair-scoped local approval ownership/expiry, acknowledgement reconciliation, delivery and runtime activation remain caller/integration obligations. Pure helper tests cannot clear those gates.
-
-## 3. Separate identity, route offers and local permission
+Prepare the exact candidates on both devices, exchange recipient-authenticated offers privately, then approve the selected routes locally. A new application connection can try an eligible LAN-local or external relay without pairing again. The intended same-process service entrance retains its exact loopback address and port while the underlying path recovers. This is an existing authorized service listener, not the management UI's ephemeral port.
 
 ```mermaid
 flowchart LR
-    P[Paired public identity] --> O[Authenticated route offer]
-    O --> V[Validate identity and freshness]
+    P[Same paired public identity] --> O[Authenticated private offer]
+    O --> V[Validate pair and freshness]
     V --> E[Eligible exact candidate]
-    L[Separate local route permission] --> E
-    E --> T[Transport adapter: unresolved]
-    A[Existing application permission] --> G[Authorize each new flow]
+    L[Separate local finite approval] --> E
+    E --> T[Bounded transport coordinator]
+    A[Existing application permission] --> G[Authorize new flow]
     T --> G
     G --> S[Same local service entrance]
 ```
 
-The proposed model separates four records. Names below are conceptual, not a wire schema or public JSON contract.
+- An existing TCP connection can fail; the application must reconnect. Healthy active flows are not interrupted for optional preferred-route probes; a failed transport generation is retired, including hung flows, so new connections can recover
+- No arbitrary TCP bytes, HTTP requests, commands, jobs or transactions are replayed. UDP can lose datagrams; there is no stale-datagram replay
+- File retry remains in-process retry of unfinished **whole items from byte zero**. No partial-byte resume, restart resume or durable offline outbox is added
+- Route recovery never switches Tailcat to Tailnet, renews application permissions, changes a receive directory or starts a stopped definition
+- `local` classifies a relay address. The normal single executable retains direct UDP and can use public peer paths. Strict LAN/no-external-egress mode is deferred; no helper binary or traffic-isolation promise is included
 
-| Record | Required binding |
+Prepared LAN cold start with the Internet/external relay unavailable is a required integration scenario, not yet a proven result. It must use locally saved valid identity, pins, offers and approvals without a fresh login, pairing or remote configuration fetch. Staggered startup and asymmetric route preference also need proof.
+
+## Implementation map
+
+| Source | Responsibility |
 | --- | --- |
-| Pair identity | Existing public peer key, local identity, protected role keys/capability and a durable pair incarnation or equivalent anti-replay boundary |
-| Route offer | Issuer's paired public identity, intended recipient, pair incarnation, protocol version, monotonically increasing revision, validity interval and bounded candidate set |
-| Exact candidate | Stable candidate identifier, numeric unicast IP and port, exact TLS certificate SHA-256 pin, relay kind, candidate validity and its offer issuer/revision |
-| Local route permission | Exact pair/incarnation and candidate tuple, authorized purpose, lifetime, enabled/revoked state and local revision; held separately from remote offers |
+| [`routes.go`](../internal/lanlink/routes.go) | Dedicated versioned, recipient-sealed update; directional pair binding; canonical payload and sequence/expiry validation; exact candidate IDs and local-first ordering |
+| [`route_state.go`](../internal/lanlink/route_state.go) | Durable issued/received high-water marks, retained authenticated proof, separate finite local approvals, exact review digest, expiry/revoke and uncertain-save handling |
+| [`transport_routes.go`](../internal/lanlink/transport_routes.go) | Serialized per-peer candidate attempts, cancellation, finite deadlines/hold-down, outgoing generations and current authorization checks |
+| [`core/lan_routes.go`](../internal/core/lan_routes.go) | Local management API; offline configuration edits, private state validation and secret-free route snapshots |
+| [`cmd/soba/lan_routes.go`](../cmd/soba/lan_routes.go) | Bilingual `soba lan routes` help and typed commands, private file/stdin input and reviewed candidate selection |
+| [`LanRoutes.tsx`](../web/src/components/LanRoutes.tsx) | Local reviewed setup, private offer exchange, explicit candidate selection, expiry and revoke controls |
+| [`internal/routecat`](../internal/routecat/UPSTREAM.md) | Attributed, bounded adaptation of pinned Tailcat transport; prepared server regions and single-candidate clients |
 
-The offer issuer is the authenticated paired peer, not a display name, relay operator or transport source address. A peer may advertise routes for its own paired endpoint only. It cannot introduce a third peer, replace a server identity/PSK or change transport role keys through a route-only update. Any permitted capability refresh must bind the same identity, existing role relationship and exact candidate; its format remains a transport gate.
+The upstream pin is Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`, with Tailscale `v1.104.0`. Upstream's single-region capability and lack of live region-update API cannot supply the required behavior by reordering a map. The internal adaptation keeps prepared server regions in one engine, uses the relay carrying authenticated role discovery for rendezvous, and retains WireGuard plus outer pair/trust authorization. Discovery alone is not application authentication. Packaging records the adaptation and retained licenses separately; see [UPSTREAM](../internal/routecat/UPSTREAM.md).
 
-Eligibility is the intersection of current pair approval, authenticated unexpired offer, exact local permission, valid pin/certificate and route policy. Authentication answers who sent the offer; it does not authorize local network access, relay hosting or application access. A newly offered endpoint, changed port/pin, new external destination or longer permission lifetime requires explicit local review. An already reviewed exact candidate may be selected repeatedly without repeated pairing or prompts. A fresh offer cannot extend local permission. Removing or disabling a local permission cannot be undone remotely.
+## Identity, offers and local approval
 
-Review shows peer, issuer, numeric endpoint, pin, LAN-local/external kind, validity and intended change. It does not expose PSKs, private keys or capabilities. Route offers, DNS, discovery and advertisements are never instructions to bind a new local listener. Hosting a relay retains explicit exact-interface/address/port permission and admission policy. No wildcard binding, automatic firewall changes or arbitrary numeric-address scanning is introduced.
+The original bootstrap anchor, public device identity, PSK and server/client role keys do not change during candidate recovery. Original pairing still requires the exact bootstrap relay. Route updates cannot replace identity, introduce a third peer or grant application access.
 
-Transport pairing, application trust, file consent/autosave, share/connect scopes, proxy grants and startup approvals remain separate. Route recovery cannot add peers/ports, change receive destinations, renew grants, clear pause, re-enable receiving or activate stopped definitions. Recovery preserves original finite expiries and revocation generations.
+A candidate binds numeric unicast IP/port, exact TLS certificate SHA-256 pin and `local`/`external` scope. Its ID changes if any of those change. `local` accepts private/loopback literals only. There are at most four candidates including the original anchor; additional configuration is limited to three and duplicate endpoints are rejected.
 
-## 4. Authenticated updates and failure handling
+An offer binds the issuer and intended recipient to the existing directional role-key relationship, its protocol domain/version, sequence, issue/expiry times and full candidate set. It is encrypted for that recipient and authenticated by the paired identity. Tampered, stale, expired, reflected, cross-pair, malformed and oversized input must fail without broadening authority. Re-pairing changes the role binding even when device keys survive.
 
-The future protocol must meet these requirements before its encoding is selected:
+Local authorization is a separate exact-candidate record. Eligibility is the intersection of the current pair, a valid authenticated offer and an unexpired local approval. The CLI's default offer is seven days; its default approval is 24 hours, capped by the offer expiry. Both maximum lifetimes are 30 days. Higher sequences and repeated reconnects never extend a local approval. Applying a new offer replaces the local selection rather than silently carrying approvals forward. Explicit `--current` review can reapprove a still-valid saved offer after local withdrawal.
 
-1. Use a dedicated versioned domain, authenticated confidentiality under the existing paired identities, and strict bounded decoding. Reject unsupported versions, unknown fields, malformed/duplicate fields, extra trailing data and ambiguous representations. Define canonical authenticated bytes and hashes; reuse reviewed cryptographic primitives, not a new ad hoc signature scheme.
-2. Bind sender, recipient, pair incarnation, revision, full candidate content and validity interval. If transport bootstrap/capability data is needed, bind its digest and keep the data protected. Bind acknowledgements to the exact update hash and revision.
-3. Reject tampering, cross-peer/cross-profile reflection, revoked identities, expired/not-yet-valid offers and stale revisions. An identical retransmission may receive the existing durable acknowledgement; equal revision with different content is a conflict and cannot overwrite state. Higher revision alone cannot grant authority.
-4. Persist the highest accepted revision/content hash, local permissions and revocation barriers coherently. The current in-memory trust epoch is not a durable replay counter. Specify counter overflow, concurrent senders, crash recovery and pair re-creation so old updates cannot resurrect an earlier relationship.
-5. Distinguish offer receipt, durable acceptance, local authorization and actual activation. A transport acknowledgement must not claim the other device approved a route or established an application connection. A lost acknowledgement is uncertain; query/retransmit the same bounded update identity, never invent success or blindly start a new authorization transaction.
-6. Serialize update activation against peer/route revocation, expiry and shutdown. Capture an authorization generation before dialing and recheck before exposing a new flow. Late probes and delayed callbacks must not reactivate an old candidate.
+The command/UI review shows the peer, recipient, endpoint, pin, scope, sequence and expiry, without exposing private keys or capabilities. No candidate is approved just because it was received. An unapproved peer offer is not probed. Explicitly configuring this device's own server candidate set separately permits that exact server transport configuration. Relay hosting still requires explicit exact-address/port setup; an offer or `routes add` does not start a relay, alter its admission policy, bind a wildcard or change the firewall.
 
-Proposed persistence behavior follows the existing private atomic writer contract:
+Offer export/import is a local API operation and manual private exchange, not an automatic peer protocol delivery service. It neither sends an external message nor runs a command. The result confirms local storage, not remote receipt, remote approval or connectivity. Both devices must support the new workflow; no automatic negotiation with an old binary is assumed. `routes withdraw` (local API export with `withdraw: true`) creates a recipient-authenticated empty offer without changing local candidates or approvals. The recipient must inspect and explicitly apply it using `approve --withdrawal`; that records the sequence and removes local route approvals. Normal nonempty approval still requires exact candidate IDs.
 
-| Outcome | Required behavior |
+## Persistence, revocation and failure
+
+Private state version 2 adds candidates and pair-scoped route records without replacing original identity material. Issued sequence is saved before export returns. Apply revalidates the exact reviewed envelope under the save lock, retains the received proof/high-water mark and publishes the approved selection before runtime activation. Expiry or withdrawal does not erase anti-replay evidence.
+
+| Outcome | Current boundary / required verification |
 | --- | --- |
-| Rejected/malformed update | No permission or route change; bounded diagnostic without secret payload |
-| Save fails before publication | Do not activate or acknowledge durable acceptance; preserve the last durable valid state |
-| Replacement published, durability uncertain (`ErrAtomicCommitted`) | Do not claim rollback or activate uncertain new authorization; reconcile the recorded state and freeze affected mutations pending explicit recovery |
-| Revocation cannot be durably confirmed | Disable affected admission/flows immediately; stop the affected transport when safe isolation cannot be proven; report recovery required |
-| Crash/restart or corrupt state | Load and validate a complete supported state before dialing; never silently fall back to older, broader permissions |
-| Clock invalid or moved backward | Fail closed on uncertain validity; show a clock/review action rather than extending expiry |
+| Invalid offer or review mismatch | Reject without widening permission; keep errors bounded and redacted |
+| Save fails before publication | No new route activation or durable-success claim |
+| Replacement published but durability uncertain | Freeze subsequent route-state writers/outgoing reconnects; reconcile private storage before restart; do not claim rollback |
+| Route approval revoked | Stop the affected outgoing generation before persistence; preserve pair and unrelated application grants; failed persistence latches recovery in Core, including offline management, before another node can reactivate saved authority |
+| Pair revoked | Invalidate route authority and affected application work; preserve existing fail-closed pair-revocation behavior |
+| Expired/fully withdrawn managed offer | No silent return to legacy singleton permission; obtain/review a fresh valid offer or explicitly reapprove a still-valid one |
 
-This is not a distributed atomic commit promise. Either side can be offline or fail after saving. The recovery protocol must represent asymmetric state without discarding pair identity or granting speculative permission. A locally denied route stays denied even if the peer reports successful activation.
+Removing a prepared extra candidate edits future server configuration/offers after restart. It does not retract a peer's already received offer. Remove approval on the relevant peer when that authority should end. Relay admission lease lag is separate from current application authorization.
 
-Candidate revocation removes eligibility and closes affected route resources; remaining routes are usable only if independently authorized. Pair revocation invalidates all candidates, update authority and related application approvals, and cancels outstanding recovery work. Relay connection lease lag is distinct from application admission; existing residual relay-session limits must not be described as continued application permission.
+This is not distributed atomic commit. A timeout or lost local response requires inspecting saved state; it is not proof neither side changed. Sequence records do not detect every whole-profile rollback to an older backup. Never strip route fields, lower the state version or restore old authorization merely to make downgrade work. Corrupt/unsupported state stays blocked; use compatible offline management and preserve backups privately.
 
-Durable anti-replay state does not by itself detect a whole-profile rollback to an old backup. Define a fail-closed restore/review procedure and the limits of local rollback detection before release. Do not claim rollback resistance from a revision field alone.
+## Recovery policy and service entrance
 
-## 5. Recovery policy and offline-LAN cold start
+Current implementation bounds are five-second route checks and connection attempts within a per-dial budget of five seconds times the candidate count, at most four candidates per dial and a 30-second failure/preference hold-down. Local candidates precede external candidates deterministically. Dials serialize per peer, are bounded by caller and permission deadlines, and cancel with the runtime generation. These are code defaults, not a measured latency or reconnection SLA.
 
-```mermaid
-stateDiagram-v2
-    [*] --> ValidateSavedState
-    ValidateSavedState --> Blocked: invalid, revoked or uncertain
-    ValidateSavedState --> ProbeLAN: eligible LAN candidate
-    ValidateSavedState --> ProbeExternal: only external candidate eligible
-    ValidateSavedState --> Unavailable: no eligible candidate
-    ProbeLAN --> LANReady: authenticated route ready
-    ProbeLAN --> ProbeExternal: bounded failure and external authorized
-    ProbeLAN --> Unavailable: no authorized fallback
-    ProbeExternal --> ExternalReady: authenticated route ready
-    ProbeExternal --> Unavailable: deadline or attempt budget exhausted
-    ExternalReady --> ProbeLAN: cooldown and stable LAN evidence
-    LANReady --> Recovering: route failure
-    ExternalReady --> Recovering: route failure
-    Recovering --> ProbeLAN: budget allows
-    Recovering --> Unavailable: budget exhausted
-    Unavailable --> ValidateSavedState: explicit retry or permitted network event
-    LANReady --> Blocked: revoke, expiry or stop
-    ExternalReady --> Blocked: revoke, expiry or stop
-```
+The coordinator preserves healthy active flows during optional LAN-preference probes. When fresh transport checks establish that a generation has failed, it retires that generation, including hung flows, and can try another approved candidate for a new connection. A refused application port alone is insufficient: a successful follow-up health check preserves the healthy transport. With no active flows, a later dial can reconsider the preferred local candidate after hold-down. There is no arbitrary-byte queue or application/job replay. Route evidence can become stale; Unknown remains Unknown without reliable evidence.
 
-This is an application recovery policy sketch, **not** a claim that Tailcat exposes these state transitions today.
+The Core service listener is separate from the selected outgoing engine. Recovery must retain its exact address/port and existing grant expiry; new connections can still fail when no route is usable. Conflicts must remain visible instead of causing silent port changes. A process restart follows existing startup approval rules and never resumes transfer progress. Verify the entrance with a real application/socket connection, not only a route snapshot or pure coordinator test.
 
-- Determine eligible candidates before network I/O. An unapproved candidate is not even probed. Restrict relay probes to exact authorized tuples; retain permitted direct-peer traffic and existing selected-relay diagnostics rather than claiming LAN-only egress isolation
-- Prefer LAN on startup when valid cached LAN bootstrap is available. Use explicit time budgets so an unavailable LAN does not block an authorized external candidate indefinitely
-- Use consecutive success/failure evidence, a minimum dwell time, a failback cooldown and bounded jittered backoff. Exact defaults and observation signals require the transport spike and real-device measurements; no unmeasured latency or reconnection SLA is promised
-- Keep a usable current route while probing a preferred candidate wherever the adapter can do so safely; a successful probe is not itself a switch. Require authenticated readiness before selection. If preparing a candidate requires tearing down the old engine, record that interruption explicitly
-- Cap simultaneous candidate work, per-attempt deadline, attempts per recovery cycle and overall cycle duration. Exhaustion produces a visible unavailable state. Further work needs an explicit retry or a defined, rate-limited network-change trigger while permission remains valid; no unbounded busy retry
-- Coalesce concurrent dials behind one peer recovery operation. Do not queue arbitrary application bytes for later replay. Any waiting new connection is bounded, cancelable and reauthorized before use
-- Expiry, revoke, stop and permission changes preempt probe/backoff timers. A network event is a retry trigger, never a permission renewal
+## Migration and release gates
 
-Offline-LAN cold start means both devices and any required local relay start from saved state while the external relay and Internet are unavailable. All required identity, candidate, pin, validity and local permission must already be usable locally. No public DNS/map, online login, external relay contact, new pairing or remote-only configuration lookup may be necessary. A local relay host must start with its reviewed listener and valid saved identity. A changed interface/address or expired certificate requires explicit recovery, not a wildcard bind or bypass.
+A valid alpha.2 version-1 state remains an unchanged singleton. A pair with no applied incoming route offer keeps legacy behavior, even after issuing an offer. Additional candidates require explicit offline edits and restart; additional outgoing permission requires local review on each side. Older binaries reject version 2 instead of silently dropping route records. Full alpha.2 fixture migration, interrupted saves, old-peer singleton compatibility and attempted downgrade need exact-source evidence.
 
-The peers must rendezvous on a common authorized route even when they start at different times or initially prefer different candidates. A control message available only over the failed old route cannot solve this cold-start problem. If no shared valid candidate exists, report that fact and the exact local review/recovery needed. Do not silently exchange new endpoints or pins through unauthenticated discovery.
+[Verification](VERIFICATION.en.md#route-recovery-gate) records pure tests separately from real native transport prototypes and final Core/UI integration. The prototype had a cross-relay recovery timeout; corrected code and integration changes must pass their own runs. Earlier relay/browser successes do not clear these gates.
 
-## 6. Transport design remains an open gate
+For a clearly labeled prerelease, require:
 
-The following options require experiments; none is selected or implemented here:
+1. Two independent processes with actual sockets demonstrating same-pair rendezvous, externally unavailable prepared-LAN cold start, controlled route loss/recovery and a stable service entrance for new connections
+2. Reviewed authentication, finite exact approval, durable anti-replay, revoke/expiry/cancellation, uncertain persistence, migration and privacy tests
+3. Final-source native Linux x64/ARM64, macOS ARM64 and Windows x64 regressions, real Go-backed bilingual browser flows and reproducible packages
+4. A separately selected version/source and successful signing, provenance, public retrieval and four-target installed-binary verification
 
-| Investigation | Evidence required before selection |
-| --- | --- |
-| Supported upstream extension or reviewed minimal dependency change | Deterministic candidate control, authenticated capability/bootstrap updates, cancellation, listener lifecycle and stable identity behavior |
-| Serialized transport recreation behind stable service listeners | Proven close/reopen safety with the same protected keys, loss/duplication boundaries, inbound reattachment, peer rendezvous and bounded asymmetric recovery |
-| Multiple prepared transport paths | Proof that simultaneous server/client roles, key reuse, relay admission and resource accounting do not conflict; never assume two engines with one identity are safe |
-
-For every option, demonstrate how both peers obtain compatible relay bootstrap, how the sender and receiver select a common path, and how current `validateRemote` protections survive. Do not replace the exact-relay check with “any advertised relay.” Show that changing a route does not replace the peer endpoint identity or accidentally change all unrelated peers. Record whether the capability or disco material changes and how it is authenticated.
-
-The stable local listener may outlive a failed transport connection, but new connections can fail while recovery is unavailable. If the adapter cannot retain that listener, the implementation must document the narrower result and must not pass the stable-entrance gate. Application success and remote-job completion need separate evidence. Direct-versus-relayed path labels stay unknown until measured.
-
-## 7. Old peers and alpha.2 migration
-
-This migration target is the sobalink `0.3.0-alpha.2` single-relay state model, not the unrelated legacy `tsnet-bridge` release. Release publication/installation evidence is separate; see [distribution](DISTRIBUTION.md).
-
-- Treat a valid version-1 selection as a **singleton** exact candidate with its existing scope. Preserve private identity, PSK, paired role keys and public peer identity. Do not infer permission for any second relay, changed pin, route hosting or recovery mode
-- Keep old-peer operation single-relay. Authenticated capability negotiation is required before sending a new route-update protocol; unknown/missing capability means unsupported, not permission to weaken checks. A mixed-version pair remains usable only on its existing compatible route
-- Enabling additional candidates requires local review on each affected device. A verified offer can be retained as pending information without being activated; pending data is bounded and must not trigger probes
-- Design a versioned private-state migration with validation, atomic persistence, interruption recovery and explicit behavior for older binaries. Do not silently rewrite a newer state to version 1, strip revocation barriers or restore an older backup merely to make downgrade work
-- Preserve legacy service, receive, trust, pause and startup semantics. Missing/invalid legacy state stays blocked under existing recovery rules. An upgrade cannot invent receive approval or consider an offline peer currently verified
-- Do not run a speculative migration in this documentation-only change. Until the migration and transport gates pass, current stop/revoke/reconfigure recovery remains authoritative
-
-No new CLI command, API endpoint, JSON field or wire version is committed by this document. Final schema and bilingual command/UI wording require implementation review together.
-
-## 8. Acceptance matrix and release gates
-
-All integrated route-recovery scenarios below remain **unimplemented and unverified**; preparatory helper tests are narrower evidence. A passing mock or loopback test is not real-device acceptance. Record exact source/dependency revision, build tags, OS/architecture, scenario, observations and remaining limits for each future result.
-
-| Area | Required scenarios | Pass criterion |
-| --- | --- | --- |
-| Identity and permission | Same pair across approved LAN/external candidates; offer without local permission; changed endpoint/pin; third-party offer | Identity unchanged; no redundant pairing; unapproved destinations receive no probes or traffic |
-| Protocol security | Tamper, replay, equal-revision conflict, stale incarnation, reflection, malformed/oversize input, unsupported version | Rejection without state widening; bounded work and redacted errors |
-| Durability | Pre-publication failure, published uncertainty, crash at each transition, lost ACK, restart replay, rollback recovery | No speculative activation or false success; no resurrected revoked permission |
-| Revocation and expiry | During dial, probe, backoff, activation and active traffic; route-only and pair-wide removal | No late authorization; tracked work stops; remaining routes require independent permission |
-| Offline cold start | Both fresh processes, no Internet, saved LAN relay; staggered startup; external endpoint blackholed | Common LAN route established within the agreed budget without external bootstrap or re-pairing |
-| Route transitions | LAN loss, WAN loss/return, interface change, intermittent failure, asymmetric candidate preference | Bounded recovery and LAN failback; no flapping, arbitrary fallback or key/role collision |
-| Application entrance | Existing local TCP/UDP listener, port conflict, concurrent connects, route switch | Exact entrance retained during same-process recovery; conflict visible; no silent port change or replay |
-| Applications and files | Real application reconnect; interrupted request/job; unfinished file retry; stop/restart | No TCP/job guarantee; existing whole-item retry only; no byte/restart resume or duplicate-success claim |
-| Migration and old peers | Valid alpha.2 state, corrupt/missing state, mixed versions, interrupted migration, attempted downgrade | Singleton scope preserved; explicit additional approval; safe incompatibility/recovery message |
-| Resource and observability | Many peers/candidates, repeated updates, cancellation, sleep/wake, clock changes | Finite storage/work bounds; truthful path state, distinct readiness and actionable errors |
-| Platform/distribution | Native Linux x64/ARM64, macOS ARM64, Windows x64; installed signed binary | Native race/vet/regression evidence and packaged-binary checks; actual LAN/WAN/NAT and sleep/wake recorded separately |
-| Human interfaces | Japanese/English automatic locale, override/fallback, narrow UI, keyboard navigation, cancel/retry | Equivalent review and recovery meaning; stable language-independent machine JSON; no leaked private data |
-
-For a **clearly labeled prerelease**, hard gates are: (1) functional rendezvous, offline cold start and reconnect demonstrated by two separate processes using real sockets with controlled topology failure and recovery; (2) reviewed identity, update authentication, durable anti-replay/revocation and failure handling; (3) exact local permission, privacy and backward-state migration; (4) bounded retry/resource behavior and tested policy defaults; and (5) native Linux x64/ARM64, macOS ARM64 and Windows x64 regressions plus signed installed-binary verification for the exact candidate. Mocks, a single successful loopback connection or documentation review cannot replace these gates. Authentication, permission and privacy failures cannot be deferred as prerelease limitations.
-
-**Physical-device acceptance is a separate later tier.** Actual LAN/WAN/NAT movement, physical-device offline cold start, target-application compatibility and OS suspend/wake must remain explicitly unverified until measured. A prerelease that passes the automated hard gates may be published for those tests, including installation through mise, without claiming physical acceptance. Publication does not establish seamless TCP or strict no-external-egress behavior; neither may be advertised without supporting evidence. Record automated topology results and physical results separately in the matrix above.
-
-All examples and diagrams here are generic. Do not add real endpoints, private state, pairing material, personal usage history or environment-identifying details to implementation fixtures, screenshots or release evidence.
+Physical LAN/WAN/NAT movement, physical-device offline cold start, real application compatibility and OS suspend/wake are a separate tier. A prerelease that passes the automated hard gates can support those later tests through mise without claiming physical acceptance. Authentication/permission failures cannot be deferred as limitations. All examples, diagrams, fixtures and published evidence must remain generic and free of private endpoints, keys or personal context.
