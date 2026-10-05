@@ -152,6 +152,7 @@ type Core struct {
 	closing                    bool
 	closeOnce                  sync.Once
 	closeErr                   error
+	directLAN                  *directLANStore
 	lan                        *lanStore
 	lanFactory                 func(*lanStore) (lanNetworkBackend, error)
 	lanAddresses               func() ([]LANLocalAddress, error)
@@ -227,6 +228,16 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		return nil, err
 	}
 	c.lan = lan
+	direct, err := readDirectLANStore(filepath.Join(opts.Directory, "direct-lan.json"), limits.Number("resources", "lanStateBytes"), limits.Number("logical", "trustedPeers"))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	c.directLAN = direct
+	if err := c.reconcileDirectLANTrust(); err != nil {
+		cancel()
+		return nil, err
+	}
 	if err := c.reconcileLANTrust(); err != nil {
 		cancel()
 		return nil, err
@@ -264,7 +275,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	go c.maintain()
 	// Explicit saved network choice permits reconnect; no saved service grant
 	// or transfer is restarted or renewed after process restart.
-	if !opts.SkipNetworkStart && (p.Settings.Network == "tailnet" || p.Settings.Network == "lan") {
+	if !opts.SkipNetworkStart && (p.Settings.Network == "tailnet" || p.Settings.Network == "lan" || p.Settings.Network == "direct-lan" || p.Settings.Network == "mixed") {
 		if err := c.startNetwork(ctx); err != nil {
 			c.mu.Lock()
 			c.networkState = "error"
@@ -280,8 +291,8 @@ func validateProfile(p Profile) error {
 	if p.Version != 1 {
 		return errors.New("unsupported sobalink profile version")
 	}
-	if p.Settings.Network != "none" && p.Settings.Network != "tailnet" && p.Settings.Network != "lan" {
-		return errors.New("network must be none, tailnet or lan")
+	if p.Settings.Network != "none" && p.Settings.Network != "tailnet" && p.Settings.Network != "lan" && p.Settings.Network != "direct-lan" && p.Settings.Network != "mixed" {
+		return errors.New("network must be none, tailnet, lan, direct-lan or mixed")
 	}
 	if p.Settings.Locale != "auto" && p.Settings.Locale != "ja" && p.Settings.Locale != "en" {
 		return errors.New("locale must be auto, ja or en")
@@ -294,7 +305,7 @@ func validateProfile(p Profile) error {
 	}
 	seen := map[string]bool{}
 	for _, p := range p.Peers {
-		if !config.ValidPeerID(p.ID) || p.Generation == 0 || seen[p.ID] || len(p.Name) > 253 || (p.Network != "tailnet" && p.Network != "lan") {
+		if !config.ValidPeerID(p.ID) || p.Generation == 0 || seen[p.ID] || len(p.Name) > 253 || (p.Network != "tailnet" && p.Network != "lan" && p.Network != "direct-lan" && p.Network != "mixed") {
 			return errors.New("invalid trusted peer")
 		}
 		seen[p.ID] = true

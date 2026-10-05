@@ -204,6 +204,9 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		p.connections[conn] = peerID
 		p.mu.Unlock()
 	}
+	if c.serveMixedIdentity(w, r) {
+		return
+	}
 	if r.Method == "GET" && r.URL.Path == "/v1/hello" {
 		reply(w, 200, map[string]any{"protocol": 1, "product": "sobalink", "capabilities": []string{"text", "batch", "ranges", "discovery-v3"}})
 		return

@@ -35,7 +35,7 @@ func ReadLaunchReview(dir string) (LaunchReview, error) {
 	result.Startup, result.SavedProxies = c.startupView(), c.savedProxyView()
 	delete(result.Startup, "suppressed")
 	delete(result.SavedProxies, "suppressed")
-	if profile.Settings.Network != "tailnet" && profile.Settings.Network != "lan" {
+	if profile.Settings.Network != "tailnet" && profile.Settings.Network != "lan" && profile.Settings.Network != "direct-lan" && profile.Settings.Network != "mixed" {
 		return result, nil
 	}
 	for _, entry := range c.startup.Entries {
