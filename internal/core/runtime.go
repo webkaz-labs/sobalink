@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
@@ -237,6 +238,12 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			}
 			bridge := freshDiscoveryCheck(confirmed[peer.ID], time.Now())
 			peers = append(peers, map[string]any{"id": peer.ID, "name": name, "networks": []string{p.Settings.Network}, "online": peer.Online || bridge, "verified": st.Snapshot.Running, "trusted": ok, "path": "unknown", "bridge": bridge, "discovery": c.discoveryObservation(peer.ID), "address": address, "fingerprint": peer.ID, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
+			if provider, ok := c.nodeCopy().(interface{ routeControl() *lanlink.Node }); ok && provider.routeControl() != nil {
+				if observation, err := provider.routeControl().RouteObservation(peer.ID); err == nil {
+					peers[len(peers)-1]["route"] = publicRouteObservation(observation)
+					peers[len(peers)-1]["path"] = observation.Path
+				}
+			}
 		}
 	}
 	if !networkRead && p.Settings.Network == "lan" {
@@ -414,6 +421,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.capacityCommand(cmd.Name, cmd.Payload)
 	case "service.list":
 		return c.listServices(cmd.Payload)
+	case "lan.routes.list", "lan.routes.add", "lan.routes.remove", "lan.routes.export", "lan.routes.inspect", "lan.routes.apply", "lan.routes.review", "lan.routes.approve", "lan.routes.revoke":
+		return c.lanRoutesCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
 		return c.lanCommand(ctx, cmd.Name, cmd.Payload)
 	case "application.stop":

@@ -195,7 +195,7 @@ func (f *fixtureBackend) Command(ctx context.Context, cmd webui.Command) (any, e
 		if err := json.Unmarshal(cmd.Payload, &choice); err != nil {
 			return nil, errors.New("invalid command payload")
 		}
-		if choice.Mode == "lan" || (f.scenario == "offline" && choice.Mode != "none") {
+		if choice.Mode == "lan" || (offlineScenario(f.scenario) && choice.Mode != "none") {
 			return nil, errors.New("network activation is unavailable in the offline browser fixture")
 		}
 	}
@@ -245,7 +245,7 @@ func (f *fixtureBackend) releaseServiceReservation() {
 }
 
 func (f *fixtureBackend) Upload(w http.ResponseWriter, r *http.Request) {
-	if f.scenario == "offline" || (f.scenario == "studio" && f.uploadFailed.CompareAndSwap(false, true)) {
+	if offlineScenario(f.scenario) || (f.scenario == "studio" && f.uploadFailed.CompareAndSwap(false, true)) {
 		defer r.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -264,11 +264,14 @@ type privateSession struct {
 	Scenario         string   `json:"scenario"`
 	Capabilities     []string `json:"capabilities"`
 	LocalServicePort uint16   `json:"localServicePort,omitempty"`
+	RouteUpdateFile  string   `json:"routeUpdateFile,omitempty"`
+	RoutePeerID      string   `json:"routePeerId,omitempty"`
 }
 
 func receiveRecoveryScenario(s string) bool { return s == "receive-legacy" || s == "receive-damaged" }
+func offlineScenario(s string) bool         { return s == "offline" || s == "routes" }
 func validScenario(s string) bool {
-	return s == "studio" || s == "offline" || receiveRecoveryScenario(s)
+	return s == "studio" || offlineScenario(s) || receiveRecoveryScenario(s)
 }
 
 // Seed an existing, fictional saved profile before Core opens it. Recovery must
@@ -297,6 +300,9 @@ func prepareReceiveRecoveryFixture(directory, receiveDirectory, scenario string)
 }
 
 func scenarioCapabilities(scenario string) []string {
+	if scenario == "routes" {
+		return []string{"offline-network", "route-authorization", "prepared-route-edit"}
+	}
 	if receiveRecoveryScenario(scenario) {
 		capabilities := []string{"service-lifecycle", "host-review", "application-stop", "receive-recovery", "saved-autosave"}
 		if scenario == "receive-legacy" {
@@ -314,13 +320,13 @@ func main() {
 }
 func run() (runErr error) {
 	file := flag.String("session-file", "", "private output file read by the browser test")
-	scenario := flag.String("scenario", "studio", "browser fixture: studio, offline, receive-legacy or receive-damaged")
+	scenario := flag.String("scenario", "studio", "browser fixture: studio, offline, routes, receive-legacy or receive-damaged")
 	flag.Parse()
 	if *file == "" {
 		return errors.New("--session-file is required")
 	}
 	if !validScenario(*scenario) {
-		return errors.New("--scenario must be studio, offline, receive-legacy or receive-damaged")
+		return errors.New("--scenario must be studio, offline, routes, receive-legacy or receive-damaged")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -336,13 +342,23 @@ func run() (runErr error) {
 	if e := prepareReceiveRecoveryFixture(filepath.Join(dir, "notebook"), receiveDir, *scenario); e != nil {
 		return e
 	}
+	routePeerID, routeUpdateFile := "", ""
+	if *scenario == "routes" {
+		routeUpdateFile = filepath.Join(filepath.Dir(*file), "route-update.json")
+		defer os.Remove(routeUpdateFile)
+		var err error
+		routePeerID, err = core.PrepareRouteBrowserFixture(filepath.Join(dir, "notebook"), routeUpdateFile)
+		if err != nil {
+			return err
+		}
+	}
 	netw := &network{listeners: map[netip.AddrPort]*listener{}}
 	managementPort := new(atomic.Uint32)
 	aIP, bIP := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.0.2")
 	aNode := &node{network: netw, ip: aIP, remoteIP: bIP, id: "fixture-notebook", remoteID: "fixture-studio", remoteName: "Studio", managementPort: managementPort}
 	bNode := &node{network: netw, ip: bIP, remoteIP: aIP, id: "fixture-studio", remoteID: "fixture-notebook", remoteName: "Notebook"}
 	a, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "notebook"), Version: "browser-acceptance", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
-		if *scenario == "offline" {
+		if offlineScenario(*scenario) {
 			return nil, errors.New("offline browser fixture cannot activate a network")
 		}
 		return aNode, nil
@@ -354,7 +370,7 @@ func run() (runErr error) {
 	if e := command(ctx, a, "settings.update", map[string]string{"receiveDirectory": receiveDir}); e != nil {
 		return e
 	}
-	if *scenario != "offline" {
+	if !offlineScenario(*scenario) {
 		b, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "studio"), Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return bNode, nil }})
 		if e != nil {
 			return e
@@ -407,15 +423,17 @@ func run() (runErr error) {
 		if e := command(ctx, a, "discovery.refresh", map[string]string{"peerId": "fixture-studio"}); e != nil {
 			return e
 		}
-	} else if e := command(ctx, a, "network.configure", map[string]string{"mode": "none", "hostname": "Notebook"}); e != nil {
-		return e
+	} else if *scenario != "routes" {
+		if e := command(ctx, a, "network.configure", map[string]string{"mode": "none", "hostname": "Notebook"}); e != nil {
+			return e
+		}
 	}
 	files, e := assets.Assets()
 	if e != nil {
 		return e
 	}
 	backend := &fixtureBackend{Backend: a, scenario: *scenario, managementPort: managementPort}
-	if *scenario != "offline" {
+	if !offlineScenario(*scenario) {
 		// Reserve a numeric loopback port until the exact UI connect action.
 		// Core then owns the real listener and its ordinary stop lifecycle.
 		reservation, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -440,7 +458,7 @@ func run() (runErr error) {
 	if e != nil {
 		return e
 	}
-	metadata := privateSession{URL: server.URL(), Code: code, ReceiveDirectory: receiveDir, Scenario: *scenario, Capabilities: scenarioCapabilities(*scenario), LocalServicePort: backend.servicePort}
+	metadata := privateSession{URL: server.URL(), Code: code, ReceiveDirectory: receiveDir, Scenario: *scenario, Capabilities: scenarioCapabilities(*scenario), LocalServicePort: backend.servicePort, RoutePeerID: routePeerID, RouteUpdateFile: routeUpdateFile}
 	if e := config.WriteJSON(*file, metadata); e != nil {
 		return e
 	}
