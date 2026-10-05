@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/config"
+
 	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 )
 
@@ -141,7 +143,7 @@ func TestRouteHandoffCloseErrorKeepsSuccessorsBlocked(t *testing.T) {
 		if conn != nil {
 			conn.Close()
 		}
-		if started || !errors.Is(err, ErrRoutePermission) || !errors.Is(err, closeErr) {
+		if started || (!errors.Is(err, config.ErrAtomicRecovery) && (!errors.Is(err, ErrRoutePermission) || !errors.Is(err, closeErr))) {
 			t.Fatal("replacement started after unconfirmed engine closure", err)
 		}
 	}
@@ -283,6 +285,11 @@ func TestRouteHandoffWaitsForRetiredEngineClose(t *testing.T) {
 				case <-time.After(time.Second):
 					t.Fatal("route mutation did not finish after teardown release")
 				}
+				// A reduction uses an unapproved staging generation while saving.
+				// Attach the synthetic factory to the committed generation too.
+				receiver.mu.Lock()
+				receiver.clients[peer].makeClient = replacement.makeClient
+				receiver.mu.Unlock()
 				// Teardown serialization must delay a legitimate replacement, not leave
 				// its gate locked forever or silently discard the remaining permission.
 				connected, err := receiver.DialPeer(context.Background(), peer, network, 8080)

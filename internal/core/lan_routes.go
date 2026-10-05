@@ -256,17 +256,9 @@ func (c *Core) lanRoutesCommand(ctx context.Context, name string, raw json.RawMe
 			return nil, lanlink.ErrRouteUpdate
 		}
 		err = node.ApplyRouteUpdateWithLifetime(input.PeerID, []byte(input.Update), input.Digest, input.CandidateIDs, input.Lifetime, input.Expires)
-		if errors.Is(err, config.ErrAtomicRecovery) {
-			if store := c.lanStoreCopy(); store != nil {
-				store.requireRouteRecovery()
-			}
-		}
 	case "lan.routes.revoke":
 		err = node.RevokeRoutes(input.PeerID, input.CandidateIDs)
 		if err != nil && !errors.Is(err, lanlink.ErrRouteUpdate) && !errors.Is(err, lanlink.ErrUntrusted) && !errors.Is(err, lanlink.ErrRoutePermission) {
-			if store := c.lanStoreCopy(); store != nil {
-				store.requireRouteRecovery()
-			}
 			err = errors.Join(err, config.ErrAtomicRecovery)
 		}
 	case "lan.routes.review":
@@ -279,6 +271,12 @@ func (c *Core) lanRoutesCommand(ctx context.Context, name string, raw json.RawMe
 		err = node.ApproveRoutesWithLifetime(input.PeerID, input.Digest, input.CandidateIDs, input.Lifetime, input.Expires)
 	default:
 		return nil, errors.New("unknown paired-route action")
+	}
+	// Keep failed reductions blocked after a disposable offline Node closes.
+	if errors.Is(err, config.ErrAtomicRecovery) {
+		if store := c.lanStoreCopy(); store != nil {
+			store.requireRouteRecovery()
+		}
 	}
 	if err != nil {
 		return nil, routeCommandError(err)
@@ -318,7 +316,7 @@ func publicRouteSnapshot(node *lanlink.Node, peer string) (any, error) {
 
 func routeCommandError(err error) error {
 	if errors.Is(err, config.ErrAtomicCommitted) || errors.Is(err, config.ErrAtomicRecovery) {
-		return privateAtomicError(&lanCommandError{"lan_routes_recovery", "route changes are paused because private state durability is unconfirmed; stop soba and inspect the saved state before restarting"}, err)
+		return privateAtomicError(&lanCommandError{"lan_routes_recovery", "route changes are paused because private state durability is unconfirmed; stop soba; a failed save may leave old permissions on disk, so inspect and reconcile the saved state before restarting"}, err)
 	}
 	if errors.Is(err, lanlink.ErrRouteUpdate) {
 		return &lanCommandError{"lan_routes_invalid", "route update is invalid, expired, stale or belongs to a different pairing; obtain and review a fresh update"}

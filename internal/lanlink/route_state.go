@@ -363,33 +363,7 @@ func (n *Node) applyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDig
 	s.ReceivedSequence, s.Received, s.ReceivedProof, s.Approvals = u.Sequence, &u, slices.Clone(raw), approvals
 	next := r.remote
 	next.Routes = s
-	if len(u.Candidates) == 0 {
-		// A reviewed withdrawal only removes authority. Stop it locally even
-		// when durable storage cannot record the newer proof/high-water mark.
-		// Core must preserve the recovery latch across disposable offline Nodes.
-		n.replaceRemoteLocked(peer, r, next)
-		n.mu.Unlock()
-		stopErr := r.shutdown()
-		n.mu.Lock()
-		if n.closed {
-			err = net.ErrClosed
-		} else {
-			err = n.persistRouteLocked(next)
-		}
-		if err != nil {
-			n.pairingRecovery = true
-			err = errors.Join(err, config.ErrAtomicRecovery)
-		}
-		n.mu.Unlock()
-		return errors.Join(err, stopErr)
-	}
-	if err := n.persistRouteLocked(next); err != nil {
-		n.mu.Unlock()
-		return err
-	}
-	n.replaceRemoteLocked(peer, r, next)
-	n.mu.Unlock()
-	return r.shutdown()
+	return n.commitRouteChangeLocked(peer, r, next, now)
 }
 
 func selectedApprovals(u RouteUpdate, ids []string, expiry, now time.Time) ([]RouteApproval, error) {
@@ -499,13 +473,80 @@ func (n *Node) approveRoutesWithLifetime(peer, reviewedDigest string, selectedID
 		return err
 	}
 	next.Routes.Approvals = approvals
-	if err := n.persistRouteLocked(next); err != nil {
-		n.mu.Unlock()
-		return err
+	return n.commitRouteChangeLocked(peer, r, next, now)
+}
+
+// routeAuthority contains only authority effective now, with its final deadline.
+// A zero deadline is until-revoked, not an already expired finite permission.
+func routeAuthority(remote RemotePeer, anchor TrustedRelay, now time.Time) map[string]time.Time {
+	snapshot := routeSnapshot(remote, now)
+	if snapshot.Legacy {
+		return map[string]time.Time{legacyCandidate(anchor).ID(): {}}
 	}
-	n.replaceRemoteLocked(peer, r, next)
+	out := make(map[string]time.Time, len(snapshot.Permitted))
+	for _, candidate := range snapshot.Permitted {
+		deadline := remote.Routes.Received.Expires
+		for _, approval := range remote.Routes.Approvals {
+			if approval.CandidateID == candidate.ID() && approval.active(now) {
+				if !approval.Expires.IsZero() && (deadline.IsZero() || approval.Expires.Before(deadline)) {
+					deadline = approval.Expires
+				}
+				out[candidate.ID()] = deadline
+			}
+		}
+	}
+	return out
+}
+
+func reducesRouteAuthority(before, after RemotePeer, anchor TrustedRelay, now time.Time) bool {
+	next := routeAuthority(after, anchor, now)
+	for id, oldDeadline := range routeAuthority(before, anchor, now) {
+		deadline, exists := next[id]
+		if !exists || !deadline.IsZero() && (oldDeadline.IsZero() || deadline.Before(oldDeadline)) {
+			return true
+		}
+	}
+	return false
+}
+
+// commitRouteChangeLocked consumes n.mu; callers retain n.pairMu. Reductions
+// retire the old generation before attempting a durable save. The interim
+// state grants no outgoing route, including new grants in a mixed replacement.
+// Pure grants still become effective only after confirmed persistence.
+func (n *Node) commitRouteChangeLocked(peer string, old *remoteClient, next RemotePeer, now time.Time) error {
+	withdrawal := next.Routes != nil && next.Routes.Received != nil && len(next.Routes.Received.Candidates) == 0
+	if !withdrawal && !reducesRouteAuthority(old.remote, next, n.cfg.Relay, now) {
+		if err := n.persistRouteLocked(next); err != nil {
+			n.mu.Unlock()
+			return err
+		}
+		n.replaceRemoteLocked(peer, old, next)
+		n.mu.Unlock()
+		return old.shutdown()
+	}
+	blocked := next
+	blocked.Routes = cloneRouteState(next.Routes)
+	blocked.Routes.Approvals = nil
+	pending := n.replaceRemoteLocked(peer, old, blocked)
 	n.mu.Unlock()
-	return r.shutdown()
+	stopErr := old.shutdown()
+	n.mu.Lock()
+	var err error
+	if n.closed {
+		err = net.ErrClosed
+	} else if stopErr != nil {
+		err = stopErr
+	} else {
+		err = n.persistRouteLocked(next)
+	}
+	if err != nil {
+		n.pairingRecovery = true
+		n.mu.Unlock()
+		return errors.Join(err, stopErr, config.ErrAtomicRecovery)
+	}
+	n.replaceRemoteLocked(peer, pending, next)
+	n.mu.Unlock()
+	return pending.shutdown()
 }
 
 // RevokeRoutes removes exact local permissions without changing application

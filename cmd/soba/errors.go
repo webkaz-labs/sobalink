@@ -74,3 +74,15 @@ type localizedDiskSpaceError struct {
 
 func (e *localizedDiskSpaceError) Error() string { return e.message }
 func (e *localizedDiskSpaceError) Unwrap() error { return e.cause }
+
+// Preserve machine codes while explaining the restart boundary in human output.
+func localizeRouteRecoveryError(ja bool, err error) error {
+	if !ja {
+		return err
+	}
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) && coded.ErrorCode() == "lan_routes_recovery" {
+		return &localizedDiskSpaceError{err, "経路の保存が失敗したか確定していないため、変更を停止しています。soba を停止してください。ディスクに以前の許可が残る可能性があります。保存状態を確認・修正してから再起動してください"}
+	}
+	return err
+}

@@ -60,6 +60,10 @@ Until-revoked describes authorization lifetime, not perpetual availability. Loca
 
 ## Persistence, revocation and failure
 
+Reducing route permission (removing/replacing candidates or shortening a deadline) stops the old outgoing generation before saving. Mixed changes grant nothing new until the complete desired state is durably confirmed. If stopping or saving fails, current-process route changes and reconnects remain blocked, including stop/start and disposable offline Nodes. Pure additions/extensions still require confirmed saving before activation.
+
+**A failed write is not a durable revocation.** Stop soba after a recovery error. Older permissions may remain on disk when replacement never occurred; a new process can read those old permissions. Inspect and reconcile the saved approvals before restarting. An uncertain committed write may instead contain the desired state and requires the same inspection. Do not treat a process-local recovery latch as proof across a process restart.
+
 Authenticated route updates and pair-scoped route records now use version 2 with an explicit lifetime. Their containing private LAN file uses version 3; prepared candidates without new route records can still use version 2. Migration preserves original identity material and exact existing finite deadlines. Issued protocol version and sequence are saved before export returns. Apply revalidates the exact reviewed envelope under the save lock, rejects received-version regression and stale sequences, and retains authenticated proof/high-water marks before activating approved authority. Expiry, withdrawal and restart do not erase anti-replay evidence. Re-pairing changes the role binding. Missing lifetime/zero expiry cannot manufacture permanent authority; legacy v1 is decoded as finite under its original rules.
 
 | Outcome | Current boundary / required verification |
