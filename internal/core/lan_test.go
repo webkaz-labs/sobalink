@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tailscale/tailcat"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 

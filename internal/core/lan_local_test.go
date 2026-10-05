@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tailscale/tailcat"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"tailscale.com/tailcfg"
 )
 

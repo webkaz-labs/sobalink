@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/tailscale/tailcat"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -114,6 +114,7 @@ type RemotePeer struct {
 	Address           tailcat.Addr    `json:"address"`
 	ClientPrivate     key.NodePrivate `json:"client_private"`
 	IncomingClientKey string          `json:"incoming_client_key"`
+	Routes            *RouteState     `json:"routes,omitempty"`
 }
 
 func (r RemotePeer) Offer() PeerOffer { return PeerOffer{Peer: r.Peer, Address: r.Address} }

@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tailscale/tailcat"
 	"github.com/webkaz-labs/sobalink/internal/config"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 )
@@ -246,6 +246,9 @@ func (n *Node) readReply(frame []byte, remote PeerOffer, req pairRequest, reques
 // Outgoing commits require the exact registered attempt; inbound commits require
 // a valid invitation token and transport admission.
 func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, attempt *pairAttempt, liveClient ...*tailcat.Client) error {
+	if remote.Routes != nil {
+		return ErrRouteUpdate
+	}
 	if token == "" && attempt == nil {
 		return ErrUntrusted
 	}
@@ -602,7 +605,7 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 			return e
 		}
 	}
-	c := &tailcat.Client{Server: remote.Address, Key: role, Logf: logger.Discard}
+	c := &tailcat.Client{Server: remote.Address, Key: role, PrivateOnly: n.cfg.PrivateOnly, Logf: logger.Discard}
 	retained := false
 	defer func() {
 		if !retained {
