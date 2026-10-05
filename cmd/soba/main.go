@@ -28,6 +28,9 @@ func main() {
 }
 
 func mainExitCode() int {
+	if code, ok := runBackendWorkerProcess(); ok {
+		return code
+	}
 	out, errorOut, closeOutput, err := backgroundCommandOutput(os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil {
 		writeCommandError(os.Stderr, err)
@@ -83,7 +86,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		} else if err != nil && jsonErrors {
 			err = &jsonCommandError{err}
 		} else if err != nil {
-			err = localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err))
+			err = localizeLANSetupError(japanese(locale), localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err)))
 		}
 	}()
 	var dir string
@@ -135,7 +138,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
@@ -251,7 +254,17 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			return e
 		}
 		return request("network.configure", payload)
+	case "mixed":
+		return mixedCLI(args, ja, *dryRun, out, queryAction, request)
+	case "direct-lan":
+		return directLANCLI(ctx, args, ja, out, stdin, *dryRun, queryAction, request)
 	case "lan":
+		if len(args) > 0 && args[0] == "wan" {
+			return wanCandidatesCommand(args[1:], ja, *dryRun, out, queryAction, request)
+		}
+		if len(args) > 0 && args[0] == "policy" {
+			return lanPolicyCommand(args[1:], ja, *dryRun, out, queryAction, request)
+		}
 		if len(args) > 0 && args[0] == "routes" {
 			return lanRoutesCommand(ctx, args[1:], ja, *dryRun, out, stdin, queryAction, request)
 		}
@@ -366,6 +379,9 @@ func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool
 	}
 	if args[0] == "proxy.reveal" {
 		return nil, errors.New(text(ja, "Use proxy reveal with --private-file; generic command output cannot reveal credentials", "認証情報の確認には proxy reveal --private-file を使ってください。汎用コマンドでは認証情報を出力できません"))
+	}
+	if (args[0] == "direct-lan.inspect" || args[0] == "direct-lan.join" || args[0] == "direct-lan.cancel") && args[1] != "--stdin" && args[1] != "--json-file" {
+		return nil, errors.New(text(ja, "Private invitations require --json-file or --stdin", "機密の招待には --json-file または --stdin を使ってください"))
 	}
 	if (args[0] == "lan.routes.inspect" || args[0] == "lan.routes.apply") && args[1] != "--stdin" && args[1] != "--json-file" {
 		return nil, errors.New(text(ja, "Private route updates require --json-file or --stdin", "機密の経路更新には --json-file または --stdin を使ってください"))

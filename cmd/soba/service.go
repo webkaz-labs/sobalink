@@ -42,7 +42,7 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 		return usageError(ja, "service "+operation+" SERVICE_ID [OPTIONS]")
 	}
 	if args[1] == "--help" || args[1] == "-h" {
-		return usageHelp(out, ja, "service "+operation+" SERVICE_ID [--name NAME] [--network tcp|udp] [--ports PORTS] [--exclude PORTS] [--peer ID | --peers IDS] [--local-port PORT] [--loopback-host 127.0.0.1|::1] [--lifetime MODE] [--ttl DURATION] [--discoverable=true|false] [--backend tailnet|lan]")
+		return usageHelp(out, ja, "service "+operation+" SERVICE_ID [--name NAME] [--network tcp|udp] [--ports PORTS] [--exclude PORTS] [--peer ID | --peers IDS] [--local-port PORT] [--loopback-host 127.0.0.1|::1] [--lifetime MODE] [--ttl DURATION] [--discoverable=true|false] [--backend tailnet|lan|direct-lan|mixed]")
 	}
 	if operation == "show" {
 		f := commandFlags("service show NAME_OR_ID", ja, out)
@@ -121,8 +121,8 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 		}
 		backend = selected
 	}
-	if backend != "tailnet" && backend != "lan" {
-		return errors.New(text(ja, "This saved service has no known backend; review it and specify --backend tailnet|lan", "この保存済みサービスはネットワークが不明です。確認して --backend tailnet|lan を指定してください"))
+	if backend != "tailnet" && backend != "lan" && backend != "direct-lan" && backend != "mixed" {
+		return errors.New(text(ja, "This saved service has no known backend; review it and specify --backend tailnet|lan|direct-lan|mixed", "この保存済みサービスはネットワークが不明です。確認して --backend tailnet|lan|direct-lan|mixed を指定してください"))
 	}
 	for key, value := range map[string]*string{"name": &config.Name, "network": &config.Network, "ports": &config.Ports, "exclude": &config.ExcludePorts, "peer": &config.PeerID, "loopback-host": &config.LoopbackHost, "lifetime": &config.Lifetime} {
 		if changed[key] {

@@ -120,3 +120,7 @@ Transfer history is separate. `soba forget TRANSFER_ID` explicitly removes a ter
 ## Web delivery uncertainty
 
 The local Web page keeps up to 256 SHA-256 fingerprints of peer/text pairs whose message storage outcome was uncertain. This guard stores no extra message text and does not limit ordinary successful messages. It does not evict an earlier uncertain pair: at capacity, new message sends pause for that page session. Check the receiver, message history and storage before resuming in a new page session. A page reload or application restart resets this in-memory guard; it does not prove that an earlier message failed or provide durable exactly-once delivery. Ordinary network-error retries retain their existing request identity.
+
+## Isolated network workers
+
+`workerFrameBytes`, `workerRequests` and `workerHandles` are adjustable finite resource budgets for mixed-mode backend workers. Defaults are 1 MiB, 128 concurrent requests and 1,024 open handles. The frame must fit one complete legal UDP datagram (minimum 128 KiB); larger TCP/file streams use multiple frames. One quarter of request slots, at least two, is reserved for control work. These are not logical peer/service/file limits. Worker allocations are selected at startup; mixed status reports effective values and whether changed budgets require restart. Raising a worker budget does not grant access to another peer, port or backend.
