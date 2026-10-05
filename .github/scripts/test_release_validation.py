@@ -115,7 +115,7 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertNotIn("        if:", engine_step)
             self.assertIn('env["SOBALINK_RUN_UNDERLAY_NATIVE"] = "1"', engine_step)
             self.assertIn('cwd=".sobalink-deps/tailscale"', engine_step)
-            self.assertIn('"-run=^TestUnderlayGuard"', engine_step)
+            self.assertIn('"-run=^Test(UnderlayGuard|WANCandidate)"', engine_step)
             self.assertIn('"./net/underlayguard"', engine_step)
             self.assertIn("python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale", engine_step)
             self.assertIn("go run ./cmd/prepare-engine --verify", engine_step)
@@ -125,6 +125,32 @@ class WorkflowCachePolicy(unittest.TestCase):
         scripts = pathlib.Path(__file__).parent
         for name in ("smoke-package.py", "verify-installed.py"):
             self.assertIn("verify_sources(share,", (scripts / name).read_text())
+
+    def test_direct_and_wan_native_extension_gates(self):
+        for workflow in ("ci", "prerelease"):
+            direct = self.step(workflow, "native", "name: Verify direct LAN WireGuard and Core native applications")
+            self.assertNotIn("        if:", direct)
+            self.assertIn("go test -race -count=2 -timeout=120s", direct)
+            self.assertIn("-run='^TestDirectLAN' ./internal/core", direct)
+            self.assertIn("-count=5 -timeout=5m", direct)
+            lifecycle = self.step(workflow, "native", "name: Verify direct LAN session rekey and idle lifecycle")
+            self.assertNotIn("        if:", lifecycle)
+            self.assertIn("-count=1 -timeout=8m", lifecycle)
+            self.assertIn("directlan_integration,directlan_lifecycle", lifecycle)
+            self.assertIn("-run='^TestNativeSessionLifecycle$'", lifecycle)
+            self.assertNotIn("directlan_lifecycle", direct)
+            self.assertNotIn("sudo", lifecycle)
+            self.assertIn("go test -race -count=5", direct)
+            self.assertIn("go vet -tags=directlan_integration", direct)
+            self.assertNotIn("sudo", direct)
+            wan = self.step(workflow, "native", "name: Verify explicit WAN discovery with isolated native STUN")
+            self.assertNotIn("        if:", wan)
+            self.assertIn('env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"', wan)
+            self.assertIn("TestWANCandidateNativeLoopbackSTUN", wan)
+            self.assertNotIn("ts_omit_udptransport", wan)
+            native = self.job(workflow, "native")
+            self.assertIn("./internal/backendworker ./internal/connectionroute", native)
+            self.assertIn("./internal/core -run '^TestMixed'", native)
 
     def test_release_product_identity_and_paired_transport_gate_match_packages(self):
         release = self.workflow("prerelease")

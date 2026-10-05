@@ -10,7 +10,7 @@
 
 ### Use a signed release
 
-The latest published prerelease is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), source `ded32f73c0d198294548120a38bcaf03e088bd6a`. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) passed all 15 jobs, including signatures, public download and installation on all four native targets. Prepared multi-relay recovery is included in alpha.4. The new explicit LAN destination policy and certificate-operation changes in this checkout are unreleased and under verification. [Assets and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+The latest published prerelease is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), source `ded32f73c0d198294548120a38bcaf03e088bd6a`. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) passed all 15 jobs, including signatures, public download and installation on all four native targets. Prepared multi-relay recovery is included in alpha.4. The explicit LAN destination policy, relay operations, relayless LAN, opt-in WAN discovery and mixed-backend routing in this checkout are unreleased and under verification. The direct-LAN cold-start regression is fixed and covered by localhost TCP/UDP lifecycle tests; final four-target native/browser and release acceptance remain open. [Assets and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
 Run with mise **2026.9.18** available. `mise use -g` selects the version for normal use.
 
@@ -38,7 +38,7 @@ On Windows, build with `go build -tags ts_omit_portmapper,ts_omit_captiveportal,
 ### After starting
 
 1. Open the printed `http://127.0.0.1:PORT` in a browser on the same device, then enter the one-time code shown in the terminal. The code is never part of the URL. Run `soba ui` in another terminal to issue a new code
-2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. Tailcat LAN setup is available in the local UI and CLI, using an explicit trusted relay and pairing. See the [LAN guide](docs/LAN.en.md)
+2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. Tailcat LAN setup is available in the local UI and CLI, using an explicit trusted relay and pairing. See the [LAN guide](docs/LAN.en.md). Development builds also provide explicit [relayless LAN](docs/DIRECT_LAN.en.md) and [mixed connections](docs/MIXED_CONNECTIONS.en.md); review their current verification limits before use
 3. Review the peer, ports and lifetime before sharing or connecting a service. Use the actual endpoint in your application and verify its authentication and operation
 4. To exchange messages or files, review the current identity and trust the intended sender. Send text explicitly; review images, multiple files and folders as a batch
 5. The receiver normally chooses a directory and accepts each batch. Autosave requires an explicit choice of backend, trusted peer, current trust generation and destination
@@ -63,11 +63,11 @@ Received files are never automatically opened, executed or allowed to overwrite 
 
 A broad TCP share also permits applications started later inside that range while the permission remains active. Keep the range narrow and use exclusions. Discovery `54543`, peer API `54544`, pairing `54545` and backend-internal endpoints are excluded from service sharing. UDP and local connection listeners use a separately adjustable finite budget, initially 64 listeners. Counts such as 32 share peers and batches of 256 entries / 1 GiB are initial logical defaults, not fixed product maxima. Removing a logical limit never removes identity, path-safety, protocol or resource checks. [Capacity choices](docs/CAPACITY.en.md) · [Security boundaries](SECURITY.md)
 
-Direct and Relay describe the encrypted traffic's route; reconnecting means communication is being re-established. Unknown routes remain unknown instead of being inferred from latency. Network backends are never exchanged automatically, and existing TCP sessions are not guaranteed to survive. Tailcat never falls back to arbitrary public relays. [Network design](docs/ARCHITECTURE.md)
+Direct and Relay describe the encrypted traffic's route; reconnecting means communication is being re-established. Unknown routes remain unknown instead of being inferred from latency. A single-backend profile never changes its selected network. In the unreleased mixed mode, only new connections may choose another explicitly approved route for the same authenticated peer when availability failure is positively established; permission denial or unknown state never triggers fallback. Existing TCP sessions are not migrated or replayed. Tailcat never falls back to arbitrary public relays. [Network design](docs/ARCHITECTURE.md)
 
-## Prepared route recovery (unreleased)
+## Prepared route recovery
 
-Keep the same Tailcat pairing while preparing exact LAN-local and external relay candidates. Before changing networks, configure the candidates on both devices, privately exchange their authenticated offers, and approve the selected routes locally. The new CLI and local UI are implemented under verification. [Short route setup](docs/LAN.en.md#prepare-another-route-unreleased)
+Keep the same Tailcat pairing while preparing exact LAN-local and external relay candidates. Before changing networks, configure the candidates on both devices, privately exchange their authenticated offers, and approve the selected routes locally. The CLI and local UI for prepared multi-relay recovery are included in alpha.4. [Short route setup](docs/LAN.en.md#prepare-another-route-unreleased)
 
 ```mermaid
 flowchart LR
@@ -77,7 +77,7 @@ flowchart LR
     P --> E[Approved external relay]
 ```
 
-The diagram describes the recovery target, not a verified availability guarantee. Saved-state LAN cold start with external services unavailable still needs native proof. Local means the relay address class; normal builds retain direct peer traffic, which may use public paths. Strict LAN/no-external-egress mode remains unimplemented. Existing TCP may break, applications must reconnect, and file retry remains whole-item retry during the same process. [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
+The diagram describes approved recovery relationships, not guaranteed availability on every network. See the exact-source record for native evidence and remaining real-device checks. Local means the relay address class; ordinary relay mode retains direct peer traffic, which may use public paths. The development [LAN destination policy](docs/LAN_DESTINATIONS.en.md) adds explicit destination admission; it does not promise whole-process zero egress or physical NIC/VPN isolation. Existing TCP may break, applications must reconnect, and file retry remains whole-item retry during the same process. [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
 
 ## Short CLI example
 
