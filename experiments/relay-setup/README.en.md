@@ -6,6 +6,8 @@ The smallest useful path is explicit **“use this device as the relay”**, sel
 
 ## Evidence and limits
 
+The source hashes were reviewed against the alpha.4 production changes in the current PR merge checkout. A historical PR #9 head alone can intentionally fail this guard. The relay listener, bootstrap and native lease fixture retain their previously reviewed hashes; the refreshed core files add route-state/recovery wiring and the internal routecat import. Do not bypass the guard or switch to a stale checkout to make it pass.
+
 - The native lifecycle test creates only ephemeral loopback listeners. It checks occupied-port failure, mandatory authenticated bootstrap, cancelled start, reserved admission port, TLS readiness, stop, closed listener, and restart with the same identity. A changed address rejects the old certificate; explicitly replacing identity changes its pin.
 - The bootstrap fixture exercises the production function through in-memory TLS: exact numeric destination, certificate pin rejection before sending proof, redirect rejection, and synthetic proxy variables having no effect. Authentication/cancel tests confirm provisional relay admission never grants application trust. The short lease/slot test is simulated.
 - The existing opt-in integration test uses real stock Tailcat/WireGuard and loopback TLS DERP, bidirectional TCP/UDP, denied-key admission, revocation, clean stop, and ordered traffic over the real two-minute relay connection lease. Direct UDP underlay is compiled out for this test.

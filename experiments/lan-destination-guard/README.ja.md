@@ -33,6 +33,8 @@ namespace・route・FW・capability・起動設定・アカウント・OSセキ�
 ディレクトリにコピーして試験hookを追加します。3packageの上流テストを除き、限定fixtureを配置。
 製品package全体と実依存はcompileしますが、上流の全回帰試験ではありません。
 constructorへpolicyを接続していないため、そのまま配布できる実装ではありません。
+TCPの失効は新しいdialの拒否だけで、既存streamは切断しません。policy更新・既存接続の停止・
+経路変更との同期には統一した有効期間の設計が必要です。
 
 Go 1.27.1／Python 3で[英語版の再現手順](README.en.md#isolation-and-reproduction)を利用します。
 native socket試験は `LAN_GUARD_REAL_SOCKETS=1` による明示的有効化が必要です。

@@ -42,7 +42,9 @@ full pinned module to a new directory, and injects bounded experiment hooks. It 
 upstream tests from the three tested packages and adds the fixtures. All their production
 code and real dependencies compile; this is not extracted source. The complete upstream
 regression suite is not run. Hooks are not wired to production constructors: they are a
-feasibility experiment, not a shippable enforcement API.
+feasibility experiment, not a shippable enforcement API. TCP revocation here prevents
+new dials only: it does not close previously admitted TCP streams. Policy replacement,
+existing-connection shutdown and route-change synchronization still need a unified lifecycle.
 
 Use Go 1.27.1 and Python 3:
 

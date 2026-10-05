@@ -52,6 +52,7 @@ func (c *RebindingUDPConn) checkLANDestination(addr netip.AddrPort) error {
     # Build all production package code, but execute only this bounded fixture.
     # The upstream regression suite has unrelated network-bearing tests.
     for test in (destination / "wgengine/magicsock").glob("*_test.go"):
+        test.chmod(0o644)  # Windows also requires clearing the copied read-only bit.
         test.unlink()
     fixture = Path(__file__).with_name("engine_test.go.txt")
     shutil.copyfile(fixture, destination / "wgengine/magicsock/lan_guard_experiment_test.go")

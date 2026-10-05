@@ -3,8 +3,8 @@
   "internal/lanlink/relay_bootstrap.go": "e81b610458046dcfb38e0b50a53dcb62a907cb6a1966d3190a38bad16b23d775",
   "internal/lanlink/local_relay_test.go": "d745c09670b37f89073568921a932f74e6aec8dc48a4f77aebd96b9f2edd0e10",
   "internal/lanlink/integration_test.go": "e7c3a204dc958d0c6466109e4e9e2cd8f852a38125e75b6dc4cf9abd5d2d6f88",
-  "internal/core/lan.go": "074d89bbcde235d14dcba28cd9e73bca651efa296db2dcd8d98952374ed40b96",
+  "internal/core/lan.go": "3578b1085bdb5b5a143f73515ea84374f997680395ec9f407efc3dc373cd9dd3",
   "internal/core/lan_local.go": "d051472e884df7ef202eb8222531b829c82d84bcdb738bac6eff575717be4986",
-  "internal/core/lan_test.go": "b852731f9639754b7259b4ad06d34393d2e494b00e4200465c7847af04c0dafc",
-  "internal/core/lan_local_test.go": "b9396de7b3fa3d151d04e2e5cadedba92d2e28da875c10131253aea3f0fc4391"
+  "internal/core/lan_test.go": "16a521469b8cf30341ad3c036c1de6db196737082c5c3124854b96878cab9d55",
+  "internal/core/lan_local_test.go": "6d5e95154c894f66c7bd703f21c031269d0f92825f8ea7dd77b017148258c168"
 }

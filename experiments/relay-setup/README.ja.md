@@ -6,6 +6,8 @@
 
 ## 検証内容と限界
 
+source hashは、現在のPR merge checkoutに含まれるalpha.4の製品コードを確認して更新しています。過去のPR #9 headだけをcheckoutすると、このguardが意図どおり失敗する場合があります。中継listener・bootstrap・native lease fixtureのhashは従来どおりで、更新したcoreファイルは経路状態・復旧の接続と内部routecat importの変更です。guardを回避したり古いcheckoutへ戻したりして成功させません。
+
 - native lifecycle試験は一時的なloopback listenerだけを使用します。ポート競合、認証bootstrap必須、起動取消、管理用ポートの予約、TLS待受、停止、同じIDでの再起動を確認します。IP変更では旧証明書を拒否し、明示的なID更新ではpinが変わることも確認します。
 - bootstrap試験は実装の関数をメモリ内TLSで実行します。数値IPの固定宛先、proof送信前のpin検証、redirect拒否、架空proxy設定の影響がないことを確認します。招待取消と仮の中継認証がアプリ権限を付与しないことも確認します。短時間のlease・slot解放は模擬試験です。
 - 既存のopt-in統合試験は、実Tailcat/WireGuardとloopback TLS DERP、双方向TCP/UDP、未許可キー拒否、取消、停止、実際の2分間の接続leaseをまたぐ順序付き通信を確認します。この試験では直接UDP underlayをコンパイル時に無効化します。

@@ -78,6 +78,8 @@ func (c *Client) lanExperimentGuardedDial(ctx context.Context, network, address 
     text+='\nvar lanExperimentRawDisabled = true\n';write(destination,name,text)
     here=Path(__file__).parent
     for package,fixture in [('derp/derphttp','derp_test.go.txt'),('net/netcheck','netcheck_test.go.txt')]:
-        for test in (destination/package).glob('*_test.go'): test.unlink()
+        for test in (destination/package).glob('*_test.go'):
+            test.chmod(0o644)  # Only fresh copies; never the module cache.
+            test.unlink()
         shutil.copyfile(here/fixture,destination/package/'lan_remaining_experiment_test.go')
     shutil.copyfile(here/'raw_linux_test.go.txt',destination/'wgengine/magicsock/lan_raw_experiment_linux_test.go')

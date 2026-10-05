@@ -9,5 +9,5 @@ hashes=json.loads(Path(__file__).with_name('source_hashes.json').read_text())
 for path, expected in hashes.items():
     content=(root/path).read_bytes().replace(b'\r\n', b'\n')
     if hashlib.sha256(content).hexdigest() != expected:
-        raise SystemExit('Audited source changed; review and refresh relay experiment fixture hashes')
+        raise SystemExit('Audited source changed: ' + path + '; review before refreshing fixture hashes')
 print('Relay experiment source hashes verified')
