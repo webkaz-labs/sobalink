@@ -1,4 +1,5 @@
-export type Network = 'lan' | 'tailnet'
+export type TransportBackend = 'lan' | 'tailnet' | 'direct-lan'
+export type Network = TransportBackend | 'mixed'
 export type Locale = 'en' | 'ja'
 export type Theme = 'system' | 'light' | 'dark'
 export interface Peer {
@@ -134,6 +135,9 @@ export function receivingBlocked(state: Pick<State, 'receiveRecovery'>) {
   // look ready or turn an unknown retained byte count into an empty inventory.
   return state.receiveRecovery !== undefined && readReceiveRecovery(state.receiveRecovery)?.state !== 'ready'
 }
+export interface DirectLanStatus { configured: boolean; listenerReady: boolean; publicKey?: string; endpoint?: string; prefixes?: string[]; recoveryRequired?: boolean; resourceRestartRequired?: boolean }
+export interface DirectLanInvitationPreview { hostPublicKey: string; hostName: string; endpoint: string; recipientPublicKey: string; recipientMatches: true; expires: string }
+export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string }[] }
 export interface State {
   csrfToken: string
   self: { name: string; status: string; error?: string; errorCode?: string; receiveDirectory?: string; networks?: Network[] }
@@ -151,6 +155,8 @@ export interface State {
   servicePresets?: ServicePreset[]
   limits?: ServiceLimits
   lan?: { configured: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
+  mixed?: MixedStatus
+  directLAN?: DirectLanStatus
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }
 }
 export interface CommandResult { ok: boolean; result?: { authUrl?: string; [key: string]: unknown } }
@@ -248,11 +254,23 @@ export interface CommandPayloads {
   'service.share': ServicePayload
   'service.stop': { id: string }
   'service.config': { id: string }
-  'network.configure': { mode: 'none' | Network; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
+  'network.configure': { mode: 'none' | Network; mixed?: { backends: TransportBackend[] }; directLAN?: { listen: string; prefixes: string[] }; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
   'network.logout': Record<string, never>
   'network.login': { refresh?: boolean; qr?: boolean }
   'network.login.status': { qr?: boolean }
   'application.stop': Record<string, never>
+  'mixed.status': Record<string, never>
+  'mixed.bind': { peers: string[] }
+  'mixed.unbind': { peerId: string }
+  'wan.candidates.get': Record<string, never>
+  'wan.candidates.set': { enabled: true; stunEndpoints: string[]; advertiseIPv6: boolean; probeBudget?: number } | { enabled: false }
+  'direct-lan.status': Record<string, never>
+  'direct-lan.identity': Record<string, never>
+  'direct-lan.invite': { recipientPublicKey: string; name: string; ttlSeconds: number; qr?: boolean }
+  'direct-lan.inspect': { invitation: string }
+  'direct-lan.join': { invitation: string }
+  'direct-lan.cancel': { invitation: string }
+  'direct-lan.revoke': { peerId: string }
   'lan.routes.list': { peerId?: string }
   'lan.routes.add': { address: string; certificateSHA256: string; scope: 'local' | 'external' }
   'lan.routes.remove': { candidateId: string }
@@ -385,6 +403,8 @@ export function upload(peerId: string, selection: UploadSelection, id: string, o
 
 export function canExchange(peer: Peer) { return peer.online && peer.verified && peer.trusted && peer.bridge && !peer.autosave?.paused }
 export function canUseServices(peer: Peer, state: State) {
+  if (peer.networks.includes('mixed')) return state.settings?.network === 'mixed' && Boolean(state.mixed?.configured)
+  if (peer.networks.includes('direct-lan')) return state.settings?.network === 'direct-lan' && Boolean(state.directLAN?.configured && state.directLAN?.listenerReady && !state.directLAN?.recoveryRequired)
   if (peer.networks.includes('lan')) return state.settings?.network === 'lan' && Boolean(state.lan?.configured && state.lan?.pairingReady)
   return peer.networks.includes('tailnet')
 }
