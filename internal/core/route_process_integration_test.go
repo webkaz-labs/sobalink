@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -118,6 +119,23 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 							relay, callErr = lanlink.StartLocalRelay(ctx, ap, id, node.AllowRelayKey, node.AuthorizeRelayBootstrap)
 							if callErr == nil {
 								closers = append(closers, relay)
+								// Listener readiness is not peer rendezvous. In a
+								// direct-enabled build the surviving A flow could
+								// otherwise race ahead of B's server registration.
+								ready, stopReady := context.WithTimeout(ctx, 30*time.Second)
+								tick := time.NewTicker(100 * time.Millisecond)
+								for !lanlink.RelayHasNodeForIntegration(relay, node) {
+									select {
+									case <-tick.C:
+									case <-ready.Done():
+										callErr = errors.New("alternative server registration unavailable")
+									}
+									if callErr != nil {
+										break
+									}
+								}
+								tick.Stop()
+								stopReady()
 							}
 						}
 						done()
@@ -135,6 +153,28 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 					backend.relay = nil
 				}
 				backend.mu.Unlock()
+			}
+		case "fixture.probe":
+			var probe struct {
+				Peer string
+				Port int
+			}
+			callErr = json.Unmarshal(request.Payload, &probe)
+			if callErr == nil {
+				call, stop := context.WithTimeout(ctx, 3*time.Second)
+				stream, e := c.dial(call, probe.Peer, "tcp", probe.Port)
+				stop()
+				result := map[string]any{"connected": e == nil, "networkReady": c.networkReady.Load()}
+				if stream != nil {
+					stream.Close()
+				}
+				if e != nil {
+					result["errorType"] = fmt.Sprintf("%T", e)
+					result["timeout"] = errors.Is(e, context.DeadlineExceeded)
+					result["permission"] = errors.Is(e, lanlink.ErrRoutePermission)
+					result["code"] = networkErrorCode(e)
+				}
+				value = result
 			}
 		case "fixture.echo":
 			var listener net.Listener
@@ -421,6 +461,13 @@ func TestCoreTwoProcessRouteRecoveryIntegration(t *testing.T) {
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
+		var snapshot map[string]any
+		json.Unmarshal(guest.invoke(t, "lan.routes.list", map[string]any{"peerId": hk}), &snapshot)
+		observation, _ := snapshot["observation"].(map[string]any)
+		t.Logf("failed recovery route: state=%v path=%v alternative=%t permitted=%d", observation["state"], observation["path"], observation["candidateId"] == alternativeID, len(snapshot["permittedIds"].([]any)))
+		var probe map[string]any
+		json.Unmarshal(guest.invoke(t, "fixture.probe", map[string]any{"Peer": hk, "Port": targetPort}), &probe)
+		t.Logf("failed recovery direct Core dial: connected=%v ready=%v errorType=%v timeout=%v permission=%v code=%v", probe["connected"], probe["networkReady"], probe["errorType"], probe["timeout"], probe["permission"], probe["code"])
 		t.Fatalf("same localhost endpoint did not recover: %s", label)
 	}
 	await("offline LAN cold start with alternative unavailable")
