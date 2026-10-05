@@ -115,8 +115,8 @@ func (c *Core) normalizeDefinition(s ServiceSpec) (ServiceSpec, error) {
 	if !config.ValidName(s.Name) || !config.ValidPeerID(s.ID) {
 		return s, errors.New("saved service needs a valid name and ID")
 	}
-	if s.Backend != "tailnet" && s.Backend != "lan" {
-		return s, &localCommandError{"service_backend_required", "select tailnet or lan for the saved service"}
+	if s.Backend != "tailnet" && s.Backend != "lan" && s.Backend != "direct-lan" && s.Backend != "mixed" {
+		return s, &localCommandError{"service_backend_required", "select an explicit connection backend for the saved service"}
 	}
 	if s.Direction != "share" && s.Direction != "forward" || s.Network != "tcp" && s.Network != "udp" {
 		return s, errors.New("choose share or forward and TCP or UDP")
