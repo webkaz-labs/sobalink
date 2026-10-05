@@ -87,6 +87,10 @@ func (h *engineHost) add(c io.Closer) (uint64, error) {
 		_ = c.Close()
 		return 0, ErrBusy
 	}
+	if h.next == ^uint64(0) {
+		_ = c.Close()
+		return 0, ErrClosed
+	}
 	h.next++
 	if h.next == 0 {
 		_ = c.Close()
@@ -104,6 +108,7 @@ func (h *engineHost) remove(id uint64) error {
 	h.mu.Unlock()
 	if f != nil {
 		f.mu.Lock()
+		delete(f.streams, f.handles[id])
 		delete(f.handles, id)
 		f.mu.Unlock()
 	}
@@ -120,6 +125,16 @@ func (h *engineHost) handle(ctx context.Context, method string, raw json.RawMess
 	if strings.HasPrefix(method, "fallback-") {
 		return h.fallbackHandle(ctx, method, q)
 	}
+	if e := ctx.Err(); e != nil {
+		return nil, e
+	}
+	switch method {
+	case "read", "write", "read-packet", "write-packet", "accept":
+		if target := h.get(q.Handle); target != nil {
+			stop := context.AfterFunc(ctx, func() { _ = h.remove(q.Handle) })
+			defer stop()
+		}
+	}
 	var out engineResponse
 	var err error
 	switch method {
@@ -129,6 +144,24 @@ func (h *engineHost) handle(ctx context.Context, method string, raw json.RawMess
 		err = h.engine.Login(ctx)
 	case "logout":
 		err = h.engine.Logout(ctx)
+	case "connection-identity":
+		c, ok := h.get(q.Handle).(net.Conn)
+		if !ok {
+			return nil, ErrClosed
+		}
+		if pinned, ok := c.(interface{ PeerIdentity() (string, bool) }); ok {
+			var valid bool
+			out.Identity, valid = pinned.PeerIdentity()
+			if !valid || out.Identity == "" {
+				return nil, ErrProtocol
+			}
+		} else {
+			ap, e := netip.ParseAddrPort(c.RemoteAddr().String())
+			if e != nil {
+				return nil, e
+			}
+			out.Identity, err = h.engine.WhoIs(ctx, ap)
+		}
 	case "whois":
 		var ap netip.AddrPort
 		ap, err = netip.ParseAddrPort(q.Address)
@@ -289,6 +322,12 @@ func (h *engineHost) handle(ctx context.Context, method string, raw json.RawMess
 			return nil, err
 		}
 	}
+	if e := ctx.Err(); e != nil {
+		if out.Handle != 0 {
+			_ = h.remove(out.Handle)
+		}
+		return nil, e
+	}
 	return json.Marshal(out)
 }
 
@@ -321,11 +360,7 @@ func ServeEngine(ctx context.Context, in io.ReadCloser, out io.WriteCloser, e En
 		case <-done:
 		}
 	}()
-	var watch sync.Once
-	return Serve(ctx, in, out, func(ctx context.Context, m string, b json.RawMessage) (json.RawMessage, error) {
-		watch.Do(func() { go func() { <-ctx.Done(); h.close() }() })
-		return h.handle(ctx, m, b)
-	}, limits)
+	return serveRequests(ctx, in, out, h.handle, func(id uint64) { _ = h.remove(id) }, h.close, limits)
 }
 
 type RemoteEngine struct {
@@ -334,7 +369,9 @@ type RemoteEngine struct {
 }
 
 func NewRemoteEngine(ctx context.Context, in io.ReadCloser, out io.WriteCloser, selected ...Limits) *RemoteEngine {
-	return &RemoteEngine{client: NewClient(in, out, selected...), ctx: ctx}
+	client := NewClient(in, out, selected...)
+	client.abandonedHandle = abandonedEngineHandle
+	return &RemoteEngine{client: client, ctx: ctx}
 }
 func (e *RemoteEngine) Start() error { return nil }
 func (e *RemoteEngine) State(ctx context.Context) (json.RawMessage, error) {
@@ -540,4 +577,27 @@ func (c *remotePacket) Write(p []byte) (int, error) {
 		return 0, ErrProtocol
 	}
 	return c.remoteConn.Write(p)
+}
+
+func (c *remoteConn) AuthenticatedPeer(ctx context.Context) (string, error) {
+	var out engineResponse
+	err := c.engine.client.Call(ctx, "connection-identity", engineRequest{Handle: c.id}, &out)
+	if err == nil && out.Identity == "" {
+		err = ErrProtocol
+	}
+	return out.Identity, err
+}
+
+func abandonedEngineHandle(method string, request json.RawMessage, response Message) uint64 {
+	var q engineRequest
+	_ = json.Unmarshal(request, &q)
+	var r engineResponse
+	_ = json.Unmarshal(response.Body, &r)
+	switch method {
+	case "dial", "listen", "listen-packet", "accept", "fallback-accept":
+		return r.Handle
+	case "read", "write", "read-packet", "write-packet", "deadline", "read-deadline", "write-deadline", "close-write":
+		return q.Handle
+	}
+	return 0
 }

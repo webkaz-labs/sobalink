@@ -53,18 +53,22 @@ func TestConcurrentOwnerPipeRequests(t *testing.T) {
 		t.Fatal("worker did not exit on owner EOF")
 	}
 }
-func TestCancelClosesGeneration(t *testing.T) {
+func TestCancellationPreservesOtherRequests(t *testing.T) {
 	serverIn, clientOut := io.Pipe()
 	clientIn, serverOut := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	entered := make(chan struct{})
+	entered, retired := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(ctx, serverIn, serverOut, func(ctx context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
-			close(entered)
-			<-ctx.Done()
-			return nil, ctx.Err()
+		done <- Serve(ctx, serverIn, serverOut, func(ctx context.Context, method string, body json.RawMessage) (json.RawMessage, error) {
+			if method == "read" {
+				close(entered)
+				<-ctx.Done()
+				close(retired)
+				return nil, ctx.Err()
+			}
+			return body, nil
 		})
 	}()
 	client := NewClient(clientIn, clientOut)
@@ -76,18 +80,25 @@ func TestCancelClosesGeneration(t *testing.T) {
 	select {
 	case e := <-result:
 		if e == nil {
-			t.Fatal("cancel succeeded")
+			t.Fatal("cancel returned success")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("call leaked")
 	}
 	select {
+	case <-retired:
+	case <-time.After(time.Second):
+		t.Fatal("child request not canceled")
+	}
+	var got string
+	if e := client.Call(ctx, "echo", "still-alive", &got); e != nil || got != "still-alive" {
+		t.Fatal(got, e)
+	}
+	_ = client.Close()
+	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("worker handler leaked")
-	}
-	if e := client.Call(ctx, "echo", nil, nil); !errors.Is(e, ErrClosed) {
-		t.Fatal(e)
+		t.Fatal("owner EOF did not end worker")
 	}
 }
 

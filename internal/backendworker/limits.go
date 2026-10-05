@@ -19,3 +19,6 @@ func (l Limits) Validate() error {
 	return nil
 }
 func (l Limits) ioBytes() int { return min(MaxIO, (l.FrameBytes-4096)*3/4) }
+
+func (l Limits) controlSlots() int { return max(2, l.Requests/4) }
+func (l Limits) dataSlots() int    { return l.Requests - l.controlSlots() }

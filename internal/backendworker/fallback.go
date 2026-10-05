@@ -33,12 +33,13 @@ type fallbackIncoming struct {
 type fallbackState struct {
 	mu         sync.Mutex
 	policies   atomic.Pointer[fallbackPolicies]
-	incoming   chan fallbackIncoming
+	incoming   chan *fallbackIncoming
 	done       chan struct{}
 	unregister func()
 	closed     bool
 	generation uint64
-	handles    map[uint64]bool
+	handles    map[uint64]*fallbackIncoming
+	streams    map[*fallbackIncoming]bool
 }
 
 func validateTCPPolicies(policies []TCPPolicy) error {
@@ -98,12 +99,14 @@ func (f *fallbackState) selector(source, destination netip.AddrPort) (func(net.C
 	return func(c net.Conn) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if f.closed {
+		if f.closed || snapshot.generation != f.generation {
 			_ = c.Close()
 			return
 		}
+		item := &fallbackIncoming{c, source, destination, snapshot.generation}
 		select {
-		case f.incoming <- fallbackIncoming{c, source, destination, snapshot.generation}:
+		case f.incoming <- item:
+			f.streams[item] = true
 		default:
 			_ = c.Close()
 		}
@@ -125,7 +128,7 @@ func (h *engineHost) fallbackHandle(ctx context.Context, method string, q engine
 		if !ok {
 			return nil, errors.New("worker backend lacks scoped TCP dispatch")
 		}
-		f = &fallbackState{incoming: make(chan fallbackIncoming, 16), done: make(chan struct{}), handles: map[uint64]bool{}}
+		f = &fallbackState{incoming: make(chan *fallbackIncoming, max(1, h.limits.Requests/4)), done: make(chan struct{}), handles: map[uint64]*fallbackIncoming{}, streams: map[*fallbackIncoming]bool{}}
 		f.policies.Store(&fallbackPolicies{})
 		unregister, e := register.RegisterTCPFallback(f.selector)
 		if e != nil {
@@ -177,8 +180,25 @@ func (h *engineHost) fallbackHandle(ctx context.Context, method string, q engine
 		for id := range f.handles {
 			ids = append(ids, id)
 		}
-		f.handles = map[uint64]bool{}
+		f.handles = map[uint64]*fallbackIncoming{}
+		var queued []net.Conn
+		for item := range f.streams {
+			queued = append(queued, item.conn)
+		}
+		f.streams = map[*fallbackIncoming]bool{}
+	drain:
+		for {
+			select {
+			case item := <-f.incoming:
+				_ = item
+			default:
+				break drain
+			}
+		}
 		f.mu.Unlock()
+		for _, conn := range queued {
+			_ = conn.Close()
+		}
 		for _, id := range ids {
 			_ = h.remove(id)
 		}
@@ -211,7 +231,7 @@ func (h *engineHost) fallbackHandle(ctx context.Context, method string, q engine
 					_ = h.remove(id)
 					continue
 				}
-				f.handles[id] = true
+				f.handles[id] = incoming
 				f.mu.Unlock()
 				return json.Marshal(engineResponse{Handle: id, Network: "tcp", Local: incoming.destination.String(), Remote: incoming.source.String()})
 			}
@@ -243,8 +263,16 @@ func (h *engineHost) closeFallback() {
 	for id := range f.handles {
 		ids = append(ids, id)
 	}
-	f.handles = map[uint64]bool{}
+	f.handles = map[uint64]*fallbackIncoming{}
+	var streams []net.Conn
+	for item := range f.streams {
+		streams = append(streams, item.conn)
+	}
+	f.streams = map[*fallbackIncoming]bool{}
 	f.mu.Unlock()
+	for _, conn := range streams {
+		_ = conn.Close()
+	}
 	f.unregister()
 	for _, id := range ids {
 		_ = h.remove(id)
