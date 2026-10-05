@@ -136,7 +136,7 @@ func TestRouteUpdateUnknownFieldsAndWrongDomainRejected(t *testing.T) {
 	a, b, ab, ba := routePairFixture()
 	now := time.Now().UTC()
 	binding, _ := PairRouteBinding(a, ab)
-	u := RouteUpdate{RouteUpdateVersion, routeUpdateDomain, a.PublicKey(), b.PublicKey(), binding, 1, now, now.Add(time.Hour), nil}
+	u := RouteUpdate{RouteUpdateVersion, routeUpdateDomain, a.PublicKey(), b.PublicKey(), binding, 1, now, now.Add(time.Hour), nil, RouteLifetimeFinite}
 	raw, _ := json.Marshal(u)
 	var m map[string]any
 	json.Unmarshal(raw, &m)
@@ -156,7 +156,7 @@ func TestRouteUpdateCanonicalEncodingAndDirectionalBinding(t *testing.T) {
 	a, b, ab, ba := routePairFixture()
 	now := time.Now().UTC()
 	binding, _ := PairRouteBinding(a, ab)
-	u := RouteUpdate{RouteUpdateVersion, routeUpdateDomain, a.PublicKey(), b.PublicKey(), binding, 1, now, now.Add(time.Hour), nil}
+	u := RouteUpdate{RouteUpdateVersion, routeUpdateDomain, a.PublicKey(), b.PublicKey(), binding, 1, now, now.Add(time.Hour), nil, RouteLifetimeFinite}
 	raw, _ := json.Marshal(u)
 	for _, plain := range [][]byte{
 		bytes.Replace(raw, []byte(`"sequence":1`), []byte(`"sequence":1,"sequence":1`), 1),

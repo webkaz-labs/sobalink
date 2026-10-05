@@ -167,12 +167,12 @@ jobs:
           subprocess.run([
               "go", "test", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration)$",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
               "-timeout=5m", "./internal/lanlink", "./internal/core", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PY
       - name: Verify recovery with the ordinary direct-enabled transport
-        timeout-minutes: 6
+        timeout-minutes: 9
         run: |
           set -euo pipefail
           python - <<'PYTHON'
@@ -189,9 +189,9 @@ jobs:
           subprocess.run([
               "go", "test", "-race", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration$",
-              "-timeout=3m", "./internal/routecat",
-          ], env=env, check=True, timeout=5 * 60)
+              "-run=^(TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
+              "-timeout=5m", "./internal/routecat", "./internal/core",
+          ], env=env, check=True, timeout=8 * 60)
           PYTHON
       - name: Native vet and formatting
         run: |

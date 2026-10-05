@@ -9,6 +9,7 @@ test.describe('paired route recovery', () => {
     const text = {
       title: ja ? '接続経路の復旧' : 'Route recovery', receive: ja ? '受け取った更新情報を確認' : 'Review received update',
       inspect: ja ? '更新情報を検証' : 'Inspect update', review: ja ? '経路の承認内容を確認' : 'Review route approval',
+      approvePermanent: ja ? '選択した経路を取り消すまで承認' : 'Approve selected routes until revoked', approvalLifetime: ja ? '手元での承認の有効期間' : 'Local approval lifetime', noExpiry: ja ? '自動の期限切れなし' : 'No automatic expiry', nextExpiry: ja ? '次の承認期限' : 'Next approval expiry', exportLifetime: ja ? '更新情報の有効期間' : 'Update lifetime', offerExpiry: ja ? '更新情報の期限' : 'Update expires',
       approve: ja ? '選択した経路を承認' : 'Approve selected routes', cancel: ja ? 'キャンセル' : 'Cancel',
       saved: ja ? '経路の承認を保存しました。接続できるかは未確認です。' : 'Route approval saved. Reachability is not yet verified.',
       revoke: ja ? '経路の承認を取り消す' : 'Revoke route approvals', confirmRevoke: ja ? 'すべての承認を取り消す' : 'Revoke all approvals',
@@ -20,7 +21,7 @@ test.describe('paired route recovery', () => {
       candidateReview: ja ? 'リレー候補の確認' : 'Review relay candidate', saveCandidate: ja ? '候補を保存' : 'Save candidate',
       remove: ja ? '候補を削除' : 'Remove candidate', confirmRemove: ja ? 'この候補を削除' : 'Remove this candidate',
     }
-    test(`${locale}: inspect, cancel, finite explicit approval, reload, reapproval and revoke`, async ({ page, app }) => {
+    test(`${locale}: inspect, cancel, permanent and finite approval, reload and revoke`, async ({ page, app }) => {
       await app.appearance(locale, ja ? 'dark' : 'light')
       await app.openPeer('services'); await app.openDetails()
       const disclosure = page.locator('.details-panel .route-disclosure')
@@ -37,7 +38,7 @@ test.describe('paired route recovery', () => {
       await expect(panel.locator('input[data-private=route-update]')).toHaveCount(0)
       await expect(panel.getByRole('checkbox')).toHaveCount(2)
       for (const checkbox of await panel.getByRole('checkbox').all()) await expect(checkbox).not.toBeChecked()
-      await expect(panel.getByRole('button', { name: text.approve, exact: true })).toBeDisabled()
+      await expect(panel.getByRole('button', { name: text.approvePermanent, exact: true })).toBeDisabled()
       await expect(panel).toContainText('192.0.2.20:443')
       await expect(panel).toContainText('b'.repeat(64))
       await app.capture(`route-review-${locale}-desktop`)
@@ -48,22 +49,32 @@ test.describe('paired route recovery', () => {
       await panel.getByRole('button', { name: text.inspect, exact: true }).click()
       await panel.getByRole('checkbox', { name: /192\.0\.2\.20:443/ }).check()
       await page.setViewportSize({ width: 390, height: 844 })
-      await panel.getByRole('button', { name: text.approve, exact: true }).scrollIntoViewIfNeeded()
+      await panel.getByRole('button', { name: text.approvePermanent, exact: true }).scrollIntoViewIfNeeded()
       await app.capture(`route-review-${locale}-390`)
-      await panel.getByRole('button', { name: text.approve, exact: true }).click()
+      await panel.getByRole('button', { name: text.approvePermanent, exact: true }).click()
       await expect(panel.getByText(text.saved, { exact: true })).toBeVisible()
       expect(await app.count('lan.routes.apply')).toBe(1)
       await app.expectState(state => state.peers.length === 1 && state.peers[0].trusted === false && !state.peers[0].autosave?.enabled && state.services.length === 0 && state.shares.length === 0)
       await page.reload(); await expect(page.locator('.workspace')).toBeVisible()
       await app.openPeer('services'); await app.openDetails(); await openDetailsSection(page.locator('.details-panel .route-disclosure'))
       await expect(panel).toContainText('192.0.2.20:443')
+      await expect(panel.getByText(text.noExpiry, { exact: true })).toBeVisible()
       await panel.getByRole('button', { name: text.savedReview, exact: true }).click()
+      await expect(panel.getByRole('combobox', { name: text.approvalLifetime, exact: true })).toHaveValue('until-revoked')
+      await panel.getByRole('combobox', { name: text.approvalLifetime, exact: true }).selectOption('finite')
+      const finiteUntil = await page.evaluate(() => { const future = new Date(Date.now() + 90 * 86400000); return new Date(future.getTime() - future.getTimezoneOffset() * 60000).toISOString().slice(0, 16) })
+      await panel.locator('input[type=datetime-local]').fill(finiteUntil)
       await expect(panel.getByRole('checkbox')).toHaveCount(2)
       for (const checkbox of await panel.getByRole('checkbox').all()) await expect(checkbox).not.toBeChecked()
       await panel.getByRole('checkbox', { name: /192\.0\.2\.20:443/ }).check()
       await panel.getByRole('button', { name: text.approve, exact: true }).click()
       await expect(panel.getByText(text.saved, { exact: true })).toBeVisible()
       expect(await app.count('lan.routes.approve')).toBe(1)
+      await expect(panel).toContainText(text.nextExpiry)
+      await expect(panel.getByText(text.noExpiry, { exact: true })).toHaveCount(0)
+      await page.reload(); await expect(page.locator('.workspace')).toBeVisible()
+      await app.openPeer('services'); await app.openDetails(); await openDetailsSection(page.locator('.details-panel .route-disclosure'))
+      await expect(panel).toContainText(text.nextExpiry)
       await panel.getByRole('button', { name: text.revoke, exact: true }).click()
       await panel.getByRole('button', { name: text.cancel, exact: true }).click()
       expect(await app.count('lan.routes.revoke')).toBe(0)
@@ -77,6 +88,7 @@ test.describe('paired route recovery', () => {
       await app.capture(`route-revoked-${locale}-desktop`)
       await openDetailsSection(panel.locator('.route-more'))
       await panel.getByRole('button', { name: text.export, exact: true }).click()
+      await expect(panel.getByRole('combobox', { name: text.exportLifetime, exact: true })).toHaveValue('until-revoked')
       await expect(panel.getByRole('checkbox', { name: text.withdrawOption, exact: true })).not.toBeChecked()
       await panel.getByRole('checkbox', { name: text.withdrawOption, exact: true }).check()
       await panel.getByRole('button', { name: text.exportWithdrawal, exact: true }).click()
@@ -86,6 +98,15 @@ test.describe('paired route recovery', () => {
       await panel.getByRole('button', { name: text.hide, exact: true }).click()
       await expect(panel.locator('[data-private=route-update]')).toHaveCount(0)
       expect(await app.count('lan.routes.revoke')).toBe(1)
+      await openDetailsSection(panel.locator('.route-more'))
+      await panel.getByRole('button', { name: text.export, exact: true }).click()
+      await panel.getByRole('combobox', { name: text.exportLifetime, exact: true }).selectOption('finite')
+      await panel.getByLabel(text.offerExpiry, { exact: true }).fill(finiteUntil)
+      await panel.getByRole('button', { name: text.export, exact: true }).click()
+      await expect.poll(() => panel.locator('textarea[data-private=route-update]').evaluate(element => element.value.length > 0), { message: 'A private finite update should be available without exposing its contents' }).toBe(true)
+      expect(await app.count('lan.routes.export')).toBe(2)
+      await panel.getByRole('button', { name: text.hide, exact: true }).click()
+      await expect(panel.locator('[data-private=route-update]')).toHaveCount(0)
 
     })
     test(`${locale}: offline candidate review, cancel, save and remove preserve original relay`, async ({ page, app }) => {
@@ -100,7 +121,11 @@ test.describe('paired route recovery', () => {
       await expect(panel.getByLabel(text.address, { exact: true })).toBeFocused()
       await panel.getByLabel(text.address, { exact: true }).fill('192.0.2.30:443')
       await panel.getByLabel(text.pin, { exact: true }).fill('c'.repeat(64))
-      await panel.getByLabel(text.scope, { exact: true }).selectOption('external')
+      // Label-text matching includes nested option text; use the select's accessible name.
+      const scope = panel.getByRole('combobox', { name: text.scope, exact: true })
+      await expect(scope).toHaveAccessibleName(text.scope)
+      await scope.selectOption('external')
+      await expect(scope).toHaveValue('external')
       await panel.getByRole('button', { name: text.candidateReview, exact: true }).click()
       await expect(panel.getByRole('heading', { name: text.candidateReview, exact: true })).toBeFocused()
       await panel.getByRole('button', { name: text.cancel, exact: true }).click()

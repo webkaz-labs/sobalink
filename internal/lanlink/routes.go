@@ -15,10 +15,15 @@ import (
 // They are sealed to an existing pair and must be committed by the caller before
 // activation. This contract performs no network I/O or persistence.
 const (
-	RouteUpdateVersion     = 1
-	MaxRouteCandidates     = 4
-	MaxRouteUpdateLifetime = 30 * 24 * time.Hour
-	routeUpdateDomain      = "sobalink paired route update v1"
+	RouteUpdateVersion = 2
+	MaxRouteCandidates = 4
+	// MaxRouteUpdateLifetime applies only to the original finite v1 protocol.
+	MaxRouteUpdateLifetime    = 30 * 24 * time.Hour
+	RouteLifetimeFinite       = "finite"
+	RouteLifetimeUntilRevoked = "until-revoked"
+	legacyRouteUpdateVersion  = 1
+	legacyRouteUpdateDomain   = "sobalink paired route update v1"
+	routeUpdateDomain         = "sobalink paired route update v2"
 )
 
 var ErrRouteUpdate = errors.New("route update is invalid, stale, expired or belongs to another pairing")
@@ -61,6 +66,40 @@ type RouteUpdate struct {
 	Issued      time.Time        `json:"issued"`
 	Expires     time.Time        `json:"expires"`
 	Candidates  []RouteCandidate `json:"candidates"`
+	// Omitted only in original v1 proofs. Never infer permanent permission from
+	// a missing lifetime or zero expiry. Appending this optional field preserves
+	// the exact canonical bytes of every previously signed v1 payload.
+	Lifetime string `json:"lifetime,omitempty"`
+}
+
+func (u RouteUpdate) EffectiveLifetime() string {
+	if u.Version == legacyRouteUpdateVersion && u.Lifetime == "" {
+		return RouteLifetimeFinite
+	}
+	return u.Lifetime
+}
+
+// finiteRouteLifetime rejects overflow rather than silently shortening or
+// wrapping an explicitly chosen deadline. Version 2 has no policy duration cap.
+func finiteRouteLifetime(start, expires time.Time) bool {
+	if start.IsZero() || expires.IsZero() || !expires.After(start) {
+		return false
+	}
+	duration := expires.Sub(start)
+	return duration > 0 && start.Add(duration).Equal(expires)
+}
+
+func (u RouteUpdate) active(now time.Time) bool {
+	if u.Issued.IsZero() || u.Issued.After(now) {
+		return false
+	}
+	switch u.EffectiveLifetime() {
+	case RouteLifetimeFinite:
+		return !u.Expires.IsZero() && u.Expires.After(now)
+	case RouteLifetimeUntilRevoked:
+		return u.Version == RouteUpdateVersion && u.Expires.IsZero()
+	}
+	return false
 }
 
 // PairRouteBinding changes after re-pairing even if both device keys survive.
@@ -84,11 +123,35 @@ func PairRouteBinding(identity Identity, remote RemotePeer) (string, error) {
 }
 
 func validateRouteUpdate(update RouteUpdate, issuer, recipient, binding string, now time.Time) error {
-	if !validKey(issuer) || !validKey(recipient) || issuer == recipient || !validKey(binding) || update.Version != RouteUpdateVersion || update.Domain != routeUpdateDomain || update.Issuer != issuer || update.Recipient != recipient || update.PairBinding != binding || update.Sequence == 0 {
+	if !validKey(issuer) || !validKey(recipient) || issuer == recipient || !validKey(binding) || update.Issuer != issuer || update.Recipient != recipient || update.PairBinding != binding || update.Sequence == 0 {
+		return ErrRouteUpdate
+	}
+	switch update.Version {
+	case legacyRouteUpdateVersion:
+		if update.Domain != legacyRouteUpdateDomain || update.Lifetime != "" || !finiteRouteLifetime(update.Issued, update.Expires) || update.Expires.Sub(update.Issued) > MaxRouteUpdateLifetime {
+			return ErrRouteUpdate
+		}
+	case RouteUpdateVersion:
+		if update.Domain != routeUpdateDomain {
+			return ErrRouteUpdate
+		}
+		switch update.Lifetime {
+		case RouteLifetimeFinite:
+			if !finiteRouteLifetime(update.Issued, update.Expires) {
+				return ErrRouteUpdate
+			}
+		case RouteLifetimeUntilRevoked:
+			if !update.Expires.IsZero() {
+				return ErrRouteUpdate
+			}
+		default:
+			return ErrRouteUpdate
+		}
+	default:
 		return ErrRouteUpdate
 	}
 	// Reject future claims rather than increasing the lifetime after a clock jump.
-	if update.Issued.IsZero() || update.Issued.After(now) || !update.Expires.After(now) || !update.Expires.After(update.Issued) || update.Expires.Sub(update.Issued) > MaxRouteUpdateLifetime {
+	if !update.active(now) {
 		return ErrRouteUpdate
 	}
 	if len(update.Candidates) > MaxRouteCandidates {
@@ -109,11 +172,25 @@ func validateRouteUpdate(update RouteUpdate, issuer, recipient, binding string, 
 // SealRouteUpdate requires the next monotonic sequence chosen by the caller's
 // atomic store. An empty candidate set is an authenticated route withdrawal.
 func SealRouteUpdate(identity Identity, remote RemotePeer, sequence uint64, candidates []RouteCandidate, issued, expires time.Time) ([]byte, error) {
+	return sealRouteUpdate(identity, remote, sequence, candidates, legacyRouteUpdateVersion, "", issued, expires)
+}
+
+// SealRouteUpdateWithLifetime uses the explicit v2 contract. The finite-only
+// compatibility function above retains the original v1 wire and lifetime rules.
+func SealRouteUpdateWithLifetime(identity Identity, remote RemotePeer, sequence uint64, candidates []RouteCandidate, lifetime string, issued, expires time.Time) ([]byte, error) {
+	return sealRouteUpdate(identity, remote, sequence, candidates, RouteUpdateVersion, lifetime, issued, expires)
+}
+
+func sealRouteUpdate(identity Identity, remote RemotePeer, sequence uint64, candidates []RouteCandidate, version int, lifetime string, issued, expires time.Time) ([]byte, error) {
 	binding, err := PairRouteBinding(identity, remote)
 	if err != nil {
 		return nil, err
 	}
-	update := RouteUpdate{RouteUpdateVersion, routeUpdateDomain, identity.PublicKey(), remote.Peer.Key, binding, sequence, issued.UTC(), expires.UTC(), slices.Clone(candidates)}
+	domain := routeUpdateDomain
+	if version == legacyRouteUpdateVersion {
+		domain = legacyRouteUpdateDomain
+	}
+	update := RouteUpdate{Version: version, Domain: domain, Issuer: identity.PublicKey(), Recipient: remote.Peer.Key, PairBinding: binding, Sequence: sequence, Issued: issued.UTC(), Expires: expires.UTC(), Candidates: slices.Clone(candidates), Lifetime: lifetime}
 	if err := validateRouteUpdate(update, identity.PublicKey(), remote.Peer.Key, binding, issued); err != nil {
 		return nil, err
 	}
@@ -153,7 +230,7 @@ func PermittedRoutes(update RouteUpdate, approvedIDs []string, now time.Time) ([
 	if len(approvedIDs) > MaxRouteCandidates || len(update.Candidates) > MaxRouteCandidates {
 		return nil, ErrRouteUpdate
 	}
-	if !update.Expires.After(now) {
+	if !update.active(now) {
 		return nil, nil
 	}
 	approved := make(map[string]bool, len(approvedIDs))

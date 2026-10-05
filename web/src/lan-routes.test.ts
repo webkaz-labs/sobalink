@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localRouteExpiry, readOwnRoutes, readPeerRoutes, readRouteReview, routeAddress, routeTimestamp, currentRouteObservation, readRouteObservation } from './lan-routes'
+import { localRouteExpiry, readOwnRoutes, readPeerRoutes, readRouteReview, routeAddress, routeTimestamp, currentRouteObservation, readRouteObservation, readRouteLifetime, currentRoutePermission } from './lan-routes'
 import { routeEnglish, routeJapanese } from './route-i18n'
 
 const candidate = { candidateId: '1'.repeat(64), address: '192.0.2.20:443', certificateSHA256: '2'.repeat(64), scope: 'external' }
@@ -21,7 +21,7 @@ describe('paired route contracts', () => {
     for (const value of [{ candidates: [candidate] }, { candidates: [candidate], primaryCandidateId: 'other', editable: true }, { candidates: [candidate, candidate], primaryCandidateId: candidate.candidateId, editable: true }]) expect(() => readOwnRoutes(value)).toThrow()
   })
   it('binds review to exact pair and validates bounded candidate identity', () => {
-    expect(readRouteReview(offer, offer.issuer, offer.recipient)).toEqual(offer)
+    expect(readRouteReview(offer, offer.issuer, offer.recipient)).toEqual({ ...offer, lifetime: 'finite' })
     expect(readRouteReview({ ...offer, candidates: [] }, offer.issuer, offer.recipient).candidates).toEqual([])
     for (const value of [{ ...offer, sequence: -1 }, { ...offer, sequence: Number.MAX_SAFE_INTEGER + 1 }, { ...offer, candidates: [candidate, candidate] }, { ...offer, candidates: [{ ...candidate, scope: 'strict' }] }, { ...offer, expires: 'invalid' }, { ...offer, digest: 'untrusted' }]) expect(() => readRouteReview(value, offer.issuer, offer.recipient)).toThrow()
     expect(() => readRouteReview(offer, '6'.repeat(64), offer.recipient)).toThrow()
@@ -47,6 +47,23 @@ describe('paired route contracts', () => {
     expect(currentRouteObservation(undefined, now)).toEqual({ state: 'unknown', path: 'unknown' })
     expect(currentRouteObservation({ ...ready, path: 'LAN-only' }, now).path).toBe('unknown')
     expect(() => readRouteObservation({ ...ready, state: 'unrecognized' })).toThrow()
+  })
+  it('requires an explicit permanent mode and preserves omitted legacy finite deadlines', () => {
+    expect(readRouteLifetime({ expires: offer.expires })).toEqual({ lifetime: 'finite', expires: offer.expires })
+    expect(readRouteReview({ ...offer, lifetime: 'until-revoked', expires: null }, offer.issuer, offer.recipient)).toMatchObject({ lifetime: 'until-revoked', expires: null })
+    for (const lifetime of [{ expires: null }, { lifetime: 'finite', expires: null }, { lifetime: 'until-revoked', expires: offer.expires }, { lifetime: 'unknown', expires: null }, { lifetime: 'until-revoked' }]) expect(() => readRouteLifetime(lifetime)).toThrow()
+    const now = Date.now() + 365 * 86400000
+    expect(currentRoutePermission({ lifetime: 'until-revoked', expires: null }, now)).toBe(true)
+    expect(currentRoutePermission({ lifetime: 'finite', expires: offer.expires }, now)).toBe(false)
+    expect(currentRoutePermission({ expires: null }, now)).toBe(false)
+  })
+  it('supports mixed permanent and finite approvals while rejecting permanent approval beyond a finite offer', () => {
+    const second = { ...candidate, candidateId: '6'.repeat(64), address: '192.0.2.21:443' }
+    const view = { legacy: false, issuedSequence: 0, receivedSequence: 1, lifetime: 'until-revoked', expires: null, nextExpiry: offer.expires, candidates: [candidate, second], approvals: [{ candidateId: candidate.candidateId, lifetime: 'until-revoked', expires: null }, { candidateId: second.candidateId, lifetime: 'finite', expires: offer.expires }], permittedIds: [candidate.candidateId, second.candidateId], recoveryRequired: false }
+    expect(readPeerRoutes(view)).toEqual(view)
+    expect(() => readPeerRoutes({ ...view, lifetime: 'finite', expires: offer.expires })).toThrow()
+    expect(() => readPeerRoutes({ ...view, lifetime: undefined })).toThrow()
+    expect(() => readPeerRoutes({ ...view, approvals: [{ candidateId: candidate.candidateId, expires: null }] })).toThrow()
   })
   it('shows the expiry date and time zone in both interface languages', () => {
     for (const locale of ['en', 'ja'] as const) {

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
+import { localRouteExpiry } from '../lan-routes'
 import { translator } from '../i18n'
 import { routeTranslator } from '../route-i18n'
 import type { Server } from '../useServer'
@@ -11,22 +12,29 @@ const peerId = '1'.repeat(64), selfId = '2'.repeat(64), pin = 'a'.repeat(64), ca
 const token = 'PRIVATE_ROUTE_UPDATE_FIXTURE'
 const candidate: api.LanRouteCandidate = { candidateId, address: '192.0.2.20:443', certificateSHA256: pin, scope: 'external' }
 const local: api.LanRouteCandidate = { candidateId: '4'.repeat(64), address: '127.0.0.1:54446', certificateSHA256: 'b'.repeat(64), scope: 'local' }
-const offer = (): api.LanRouteReview => ({ digest: '5'.repeat(64), issuer: peerId, recipient: selfId, sequence: 1, issued: new Date(Date.now() - 1000).toISOString(), expires: new Date(Date.now() + 7 * 86400000).toISOString(), candidates: [candidate, local] })
-const snapshot = (approved = false): api.LanPeerRoutes => ({ legacy: !approved, issuedSequence: 0, receivedSequence: approved ? 1 : 0, candidates: approved ? [candidate, local] : [], approvals: approved ? [{ candidateId, expires: offer().expires }] : [], permittedIds: approved ? [candidateId] : [], expires: offer().expires, nextExpiry: offer().expires, recoveryRequired: false })
+const offer = (): api.LanRouteReview & { expires: string } => ({ digest: '5'.repeat(64), issuer: peerId, recipient: selfId, sequence: 1, lifetime: 'finite', issued: new Date(Date.now() - 1000).toISOString(), expires: new Date(Date.now() + 7 * 86400000).toISOString(), candidates: [candidate, local] })
+const snapshot = (approved = false): api.LanPeerRoutes => ({ lifetime: approved ? 'finite' : undefined, legacy: !approved, issuedSequence: 0, receivedSequence: approved ? 1 : 0, candidates: approved ? [candidate, local] : [], approvals: approved ? [{ candidateId, lifetime: 'finite', expires: offer().expires }] : [], permittedIds: approved ? [candidateId] : [], expires: offer().expires, nextExpiry: offer().expires, recoveryRequired: false })
 const result = (value: unknown) => ({ ok: true, result: value } as api.CommandResult)
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
 const r = routeTranslator('en')
-function setup(own = false, locale: api.Locale = 'en', editable = true) {
+function setup(own = false, locale: api.Locale = 'en', editable = true, permanent = false) {
   const peer: api.Peer = { id: peerId, name: 'Route peer', online: false, networks: ['lan'], verified: true, trusted: false, bridge: true, path: 'unknown' }
   const state: api.State = { csrfToken: 'test', self: { name: 'Route notebook', status: 'idle' }, peers: [peer], messages: [], transfers: [], services: [], shares: [], settings: { network: 'lan' }, lan: { publicKey: selfId, configured: true, pairingReady: false, path: 'unknown' } }
   const server = { state, auth: 'ready', stale: false, busy: new Set(), run: vi.fn(), refresh: vi.fn(), handleError: vi.fn(), setError: vi.fn() } as unknown as Server
-  const command = vi.spyOn(api, 'command').mockImplementation(async (name) => {
-    if (name === 'lan.routes.list') return result(own ? { candidates: [local], primaryCandidateId: local.candidateId, editable } : snapshot())
-    if (name === 'lan.routes.inspect' || name === 'lan.routes.review') return result(offer())
-    if (name === 'lan.routes.apply' || name === 'lan.routes.approve') return result(snapshot(true))
+  const fixtureOffer: api.LanRouteReview = permanent ? { ...offer(), lifetime: 'until-revoked', expires: null } : offer()
+  let routes: api.LanPeerRoutes = snapshot()
+  const command = vi.spyOn(api, 'command').mockImplementation(async (name, payload) => {
+    if (name === 'lan.routes.list') return result(own ? { candidates: [local], primaryCandidateId: local.candidateId, editable } : routes)
+    if (name === 'lan.routes.inspect' || name === 'lan.routes.review') return result(fixtureOffer)
+    if (name === 'lan.routes.apply' || name === 'lan.routes.approve') {
+      const approval = payload as api.CommandPayloads['lan.routes.approve']
+      routes = { ...snapshot(true), lifetime: fixtureOffer.lifetime, expires: fixtureOffer.expires, nextExpiry: approval.expires || null, approvals: approval.candidateIds.map(candidateId => ({ candidateId, lifetime: approval.lifetime, expires: approval.expires || null })), permittedIds: approval.candidateIds }
+      return result(routes)
+    }
     if (name === 'lan.routes.revoke') return result({ ...snapshot(true), approvals: [], permittedIds: [] })
     if (name === 'lan.routes.add' || name === 'lan.routes.remove') return result({ saved: true, restartRequired: true })
-    return result({ update: token, peerId, expires: offer().expires })
+    const exported = payload as api.CommandPayloads['lan.routes.export']
+    return result({ update: token, peerId, lifetime: exported.lifetime, expires: exported.lifetime === 'finite' ? new Date(Date.now() + exported.ttlSeconds! * 1000).toISOString() : null })
   })
   const element = () => own ? <PreparedLanRoutes server={server} state={server.state!} locale={locale} t={translator(locale)} /> : <PeerLanRoutes peer={server.state!.peers[0]} server={server} state={server.state!} locale={locale} t={translator(locale)} />
   const view = render(element())
@@ -91,7 +99,7 @@ describe('paired route approval', () => {
     const form = screen.getByRole('button', { name: view.r('applyWithdrawal') }).closest('form')!
     fireEvent.submit(form); fireEvent.submit(form)
     expect(calls(view, 'lan.routes.apply')).toHaveLength(1)
-    expect(calls(view, 'lan.routes.apply')[0][1]).toEqual({ peerId, update: token, digest: withdrawal.digest, candidateIds: [], expires: withdrawal.expires })
+    expect(calls(view, 'lan.routes.apply')[0][1]).toEqual({ peerId, update: token, digest: withdrawal.digest, candidateIds: [], lifetime: 'finite', expires: withdrawal.expires })
     await act(async () => { pending.resolve(result({ ...snapshot(), legacy: false, receivedSequence: withdrawal.sequence })); await pending.promise })
     expect(await screen.findByText(view.r('withdrawalResult'))).toBeVisible()
     expect(view.container.querySelector('.route-observation')).toHaveTextContent(translator(locale)('unknown'))
@@ -121,6 +129,109 @@ describe('paired route approval', () => {
     expect(view.container.querySelector('.route-observation')).toHaveTextContent('Path unknown')
     expect(view.container.querySelector('.route-observation')).not.toHaveTextContent('Direct')
   })
+  for (const locale of ['en', 'ja'] as const) it(`${locale}: explicitly approves a permanent offer, preserves it after reopening, and keeps revoke available`, async () => {
+    const view = setup(false, locale, true, true); await review(view)
+    expect(screen.getByRole('combobox', { name: view.r('approvalLifetime') })).toHaveValue('until-revoked')
+    expect(screen.getByText(view.r('permanentHint'))).toBeVisible()
+    expect(screen.getByText(view.r('certificateAvailability'))).toBeVisible()
+    expect(screen.queryByLabelText(new RegExp(view.r('approvalExpiry')))).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: view.r('applyPermanent') })).toBeDisabled()
+    await view.user.click(screen.getAllByRole('checkbox')[0])
+    await view.user.click(screen.getByRole('button', { name: view.r('cancel') }))
+    expect(calls(view, 'lan.routes.apply')).toHaveLength(0)
+    await view.user.click(screen.getByRole('button', { name: view.r('receive') }))
+    fireEvent.change(screen.getByLabelText(new RegExp(view.r('input'))), { target: { value: token } })
+    await view.user.click(screen.getByRole('button', { name: view.r('inspect') }))
+    expect(screen.getAllByRole('checkbox').every(input => !(input as HTMLInputElement).checked)).toBe(true)
+    await view.user.click(screen.getAllByRole('checkbox')[0])
+    await view.user.click(screen.getByRole('button', { name: view.r('applyPermanent') }))
+    expect(calls(view, 'lan.routes.apply')[0][1]).toEqual({ peerId, update: token, digest: offer().digest, candidateIds: [candidateId], lifetime: 'until-revoked' })
+    expect(await screen.findByText(view.r('noExpiry'))).toBeVisible()
+    await view.user.click(screen.getByText(view.r('routes'), { exact: true }))
+    await view.user.click(screen.getByText(view.r('routes'), { exact: true }))
+    expect(await screen.findByText(view.r('noExpiry'))).toBeVisible()
+    expect(screen.getByRole('button', { name: view.r('revoke') })).toBeEnabled()
+    expect(view.server.run).not.toHaveBeenCalled()
+  })
+  it('permits a chosen expiry beyond 30 days for a permanent offer and clears selections on lifetime change', async () => {
+    const view = setup(false, 'en', true, true); await review(view)
+    await view.user.click(screen.getAllByRole('checkbox')[0])
+    await view.user.selectOptions(screen.getByRole('combobox', { name: r('approvalLifetime') }), 'finite')
+    expect(screen.getAllByRole('checkbox').every(input => !(input as HTMLInputElement).checked)).toBe(true)
+    const expiry = localRouteExpiry(new Date(Date.now() + 90 * 86400000).toISOString())
+    const field = screen.getByLabelText(new RegExp(r('approvalExpiry')))
+    expect(field).not.toHaveAttribute('max')
+    fireEvent.change(field, { target: { value: expiry } })
+    await view.user.click(screen.getAllByRole('checkbox')[0])
+    await view.user.click(screen.getByRole('button', { name: r('apply') }))
+    expect(calls(view, 'lan.routes.apply')[0][1]).toMatchObject({ lifetime: 'finite', expires: new Date(expiry).toISOString() })
+    expect(screen.queryByText(r('noExpiry'))).not.toBeInTheDocument()
+    await view.user.click(screen.getByRole('button', { name: r('savedReview') }))
+    expect(screen.getByRole('combobox', { name: r('approvalLifetime') })).toHaveValue('until-revoked')
+    expect(screen.getByRole('button', { name: r('applyPermanent') })).toBeDisabled()
+  })
+  it('keeps permanent candidates active when a separate finite approval expires', async () => {
+    const view = setup()
+    const expiry = new Date(Date.now() + 60000).toISOString()
+    view.command.mockResolvedValueOnce(result({ ...snapshot(true), lifetime: 'until-revoked', expires: null, nextExpiry: expiry, approvals: [{ candidateId, lifetime: 'until-revoked', expires: null }, { candidateId: local.candidateId, lifetime: 'finite', expires: expiry }], permittedIds: [candidateId, local.candidateId] }))
+    await open(view)
+    expect(view.container.querySelectorAll('.route-list > li')).toHaveLength(2)
+    expect(view.container.querySelector('.route-list')).toHaveTextContent(r('untilRevoked'))
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 61000)
+    await waitFor(() => expect(view.container.querySelectorAll('.route-list > li')).toHaveLength(1), { timeout: 2000 })
+    expect(view.container.querySelector('.route-list')).toHaveTextContent(candidate.address)
+    expect(screen.getByText(r('noExpiry'))).toBeVisible()
+    now.mockRestore()
+  })
+  it('keeps a finite authenticated offer finite and never offers permanent approval', async () => {
+    const view = setup(); await review(view)
+    expect(screen.getByRole('combobox', { name: r('approvalLifetime') })).toHaveValue('finite')
+    expect(screen.queryByRole('option', { name: r('untilRevoked') })).not.toBeInTheDocument()
+    expect(screen.getByText(r('finiteOfferHint'))).toBeVisible()
+    await view.user.click(screen.getAllByRole('checkbox')[0])
+    await view.user.click(screen.getByRole('button', { name: r('apply') }))
+    expect(calls(view, 'lan.routes.apply')[0][1]).toHaveProperty('lifetime', 'finite')
+  })
+  it('exports an explicitly chosen future lifetime beyond 30 days without a permanent fallback', async () => {
+    const view = setup(); await open(view)
+    await view.user.click(screen.getByText(r('export'), { selector: 'summary' }))
+    await view.user.click(screen.getByRole('button', { name: r('export') }))
+    expect(screen.getByRole('combobox', { name: r('exportLifetime') })).toHaveValue('until-revoked')
+    expect(screen.getByText(r('permanentExportHint'))).toBeVisible()
+    await view.user.selectOptions(screen.getByRole('combobox', { name: r('exportLifetime') }), 'finite')
+    fireEvent.change(screen.getByLabelText(r('offerExpiry')), { target: { value: '' } })
+    await view.user.click(screen.getByRole('button', { name: r('export') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(r('exportExpiryInvalid'))
+    expect(calls(view, 'lan.routes.export')).toHaveLength(0)
+    fireEvent.change(screen.getByLabelText(r('offerExpiry')), { target: { value: localRouteExpiry(new Date(Date.now() + 90 * 86400000).toISOString()) } })
+    await view.user.click(screen.getByRole('button', { name: r('export') }))
+    const payload = calls(view, 'lan.routes.export')[0][1] as api.CommandPayloads['lan.routes.export']
+    expect(payload.lifetime).toBe('finite')
+    expect(payload.ttlSeconds).toBeGreaterThan(30 * 86400)
+    expect(screen.getByLabelText(r('input'))).toHaveValue(token)
+  })
+  it('rejects an export response that omits permanent lifetime without revealing its token', async () => {
+    const view = setup(); await open(view)
+    await view.user.click(screen.getByText(r('export'), { selector: 'summary' }))
+    await view.user.click(screen.getByRole('button', { name: r('export') }))
+    view.command.mockResolvedValueOnce(result({ update: token, peerId, expires: null }))
+    await view.user.click(screen.getByRole('button', { name: r('export') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(r('failed'))
+    expect(screen.getByLabelText(r('input'))).toHaveValue('')
+    expect(screen.queryByRole('button', { name: r('copy') })).not.toBeInTheDocument()
+  })
+  it('applies a permanent withdrawal with explicit lifetime and no permissions or deadline', async () => {
+    const view = setup(false, 'en', true, true); await open(view)
+    await view.user.click(screen.getByRole('button', { name: r('receive') }))
+    fireEvent.change(screen.getByLabelText(new RegExp(r('input'))), { target: { value: token } })
+    view.command.mockResolvedValueOnce(result({ ...offer(), lifetime: 'until-revoked', expires: null, candidates: [] }))
+    await view.user.click(screen.getByRole('button', { name: r('inspect') }))
+    view.command.mockResolvedValueOnce(result({ ...snapshot(), legacy: false, receivedSequence: 1, lifetime: 'until-revoked', expires: null, nextExpiry: null }))
+    await view.user.click(screen.getByRole('button', { name: r('applyWithdrawal') }))
+    expect(calls(view, 'lan.routes.apply')[0][1]).toEqual({ peerId, update: token, digest: offer().digest, candidateIds: [], lifetime: 'until-revoked' })
+    expect(await screen.findByText(r('withdrawalResult'))).toBeVisible()
+    expect(view.container.querySelectorAll('.route-list > li')).toHaveLength(0)
+  })
   it('applies exact selected IDs and finite expiry once even with repeated submit', async () => {
     const view = setup(); await review(view)
     await view.user.click(screen.getAllByRole('checkbox')[0])
@@ -130,8 +241,8 @@ describe('paired route approval', () => {
     expect(calls(view, 'lan.routes.apply')).toHaveLength(1)
     const payload = calls(view, 'lan.routes.apply')[0][1] as api.CommandPayloads['lan.routes.apply']
     expect(payload).toMatchObject({ peerId, update: token, digest: offer().digest, candidateIds: [candidateId] })
-    expect(Date.parse(payload.expires)).toBeGreaterThan(Date.now())
-    expect(Date.parse(payload.expires)).toBeLessThanOrEqual(Date.parse(offer().expires))
+    expect(Date.parse(payload.expires!)).toBeGreaterThan(Date.now())
+    expect(Date.parse(payload.expires!)).toBeLessThanOrEqual(Date.parse(offer().expires))
     expect(view.container.innerHTML).not.toContain(token)
     await act(async () => { pending.resolve(result(snapshot(true))); await pending.promise })
     expect(await screen.findByText(r('approvedResult'))).toBeVisible()
@@ -230,7 +341,7 @@ describe('paired route approval', () => {
     await view.user.click(screen.getByRole('button', { name: r('export') }))
     expect(screen.getByLabelText(r('input'))).toHaveValue(token)
     expect(screen.getByLabelText(r('input'))).toHaveAttribute('data-private', 'route-update')
-    expect(calls(view, 'lan.routes.export')[0][1]).toEqual({ peerId, ttlSeconds: 604800 })
+    expect(calls(view, 'lan.routes.export')[0][1]).toEqual({ peerId, lifetime: 'until-revoked' })
     await view.user.click(screen.getByRole('button', { name: r('hide') }))
     expect(view.container.innerHTML).not.toContain(token)
     await view.user.click(screen.getByText(r('export'), { selector: 'summary' }))
@@ -251,7 +362,7 @@ describe('paired route approval', () => {
     expect(screen.getByText(view.r('withdrawExportHint'))).toBeVisible()
     expect(calls(view, 'lan.routes.export')).toHaveLength(0)
     await view.user.click(screen.getByRole('button', { name: view.r('exportWithdrawal') }))
-    expect(calls(view, 'lan.routes.export')[0][1]).toEqual({ peerId, ttlSeconds: 604800, withdraw: true })
+    expect(calls(view, 'lan.routes.export')[0][1]).toEqual({ peerId, lifetime: 'until-revoked', withdraw: true })
     expect(choice).toBeDisabled()
     expect(calls(view, 'lan.routes.apply')).toHaveLength(0)
     expect(calls(view, 'lan.routes.approve')).toHaveLength(0)

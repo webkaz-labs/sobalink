@@ -1,4 +1,4 @@
-import type { LanOwnRoutes, LanPeerRoutes, LanRouteCandidate, LanRouteReview, Locale, LanRouteObservation } from './api'
+import type { LanOwnRoutes, LanPeerRoutes, LanRouteCandidate, LanRouteReview, Locale, LanRouteObservation, LanRouteLifetime } from './api'
 
 export const routeKey = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 const date = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value))
@@ -16,16 +16,37 @@ export function readOwnRoutes(value: unknown): LanOwnRoutes {
   if (!view || !candidates(view.candidates) || view.candidates.length && (!view.candidates.some(item => item.candidateId === view.primaryCandidateId) || typeof view.editable !== 'boolean')) throw new Error('invalid_response')
   return view
 }
+export function readRouteLifetime(value: { lifetime?: unknown; expires?: unknown }): { lifetime: LanRouteLifetime; expires: string | null } {
+  // Old finite views may omit lifetime. A missing deadline never implies permission.
+  if ((value.lifetime === 'finite' || value.lifetime === undefined) && date(value.expires) && Date.parse(value.expires) > 0) return { lifetime: 'finite', expires: value.expires }
+  if (value.lifetime === 'until-revoked' && value.expires === null) return { lifetime: 'until-revoked', expires: null }
+  throw new Error('invalid_response')
+}
+export function currentRoutePermission(value: { lifetime?: LanRouteLifetime; expires: string | null }, now: number) {
+  return value.lifetime === 'until-revoked' ? value.expires === null : value.lifetime === 'finite' && value.expires !== null && Date.parse(value.expires) > now
+}
 export function readRouteReview(value: unknown, peerId: string, selfId?: string): LanRouteReview {
   const view = value as LanRouteReview
-  if (!view || !routeKey(view.digest) || view.issuer !== peerId || !routeKey(view.recipient) || view.recipient !== selfId || !Number.isSafeInteger(view.sequence) || view.sequence < 1 || !date(view.issued) || !date(view.expires) || Date.parse(view.expires) <= Date.parse(view.issued) || !candidates(view.candidates)) throw new Error('invalid_response')
-  return view
+  if (!view || !routeKey(view.digest) || view.issuer !== peerId || !routeKey(view.recipient) || view.recipient !== selfId || !Number.isSafeInteger(view.sequence) || view.sequence < 1 || !date(view.issued) || !candidates(view.candidates)) throw new Error('invalid_response')
+  const lifetime = readRouteLifetime(view)
+  if (lifetime.expires !== null && Date.parse(lifetime.expires) <= Date.parse(view.issued)) throw new Error('invalid_response')
+  return { ...view, ...lifetime }
 }
 export function readPeerRoutes(value: unknown): LanPeerRoutes {
   const view = value as LanPeerRoutes
-  if (!view || typeof view.legacy !== 'boolean' || typeof view.recoveryRequired !== 'boolean' || !Number.isSafeInteger(view.issuedSequence) || view.issuedSequence < 0 || !Number.isSafeInteger(view.receivedSequence) || view.receivedSequence < 0 || !candidates(view.candidates) || !date(view.expires) || !date(view.nextExpiry) || !Array.isArray(view.approvals) || view.approvals.length > 4 || !view.approvals.every(item => item && view.candidates.some(candidate => candidate.candidateId === item.candidateId) && date(item.expires)) || !Array.isArray(view.permittedIds) || !view.permittedIds.every(id => view.candidates.some(item => item.candidateId === id))) throw new Error('invalid_response')
+  if (!view || typeof view.legacy !== 'boolean' || typeof view.recoveryRequired !== 'boolean' || !Number.isSafeInteger(view.issuedSequence) || view.issuedSequence < 0 || !Number.isSafeInteger(view.receivedSequence) || view.receivedSequence < 0 || !candidates(view.candidates) || view.expires !== null && !date(view.expires) || view.nextExpiry !== null && !date(view.nextExpiry) || !Array.isArray(view.approvals) || view.approvals.length > 4 || !view.approvals.every(item => item && view.candidates.some(candidate => candidate.candidateId === item.candidateId)) || !Array.isArray(view.permittedIds) || !view.permittedIds.every(id => view.candidates.some(item => item.candidateId === id))) throw new Error('invalid_response')
   if (view.observation !== undefined) readRouteObservation(view.observation)
-  return view
+  if (view.legacy) {
+    if (view.approvals.length || view.permittedIds.length) throw new Error('invalid_response')
+    return view
+  }
+  const lifetime = readRouteLifetime(view)
+  const approvals = view.approvals.map(item => {
+    const approval = { ...item, ...readRouteLifetime(item) }
+    if (lifetime.lifetime === 'finite' && (approval.expires === null || Date.parse(approval.expires) > Date.parse(lifetime.expires!))) throw new Error('invalid_response')
+    return approval
+  })
+  return { ...view, ...lifetime, approvals }
 }
 export function localRouteExpiry(value: string) {
   const time = new Date(value)

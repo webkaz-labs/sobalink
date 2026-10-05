@@ -50,11 +50,15 @@ func PrepareRouteBrowserFixture(directory, updateFile string) (string, error) {
 	}
 	now := time.Now().UTC()
 	offered := []lanlink.RouteCandidate{{Relay: relay, Scope: "local"}, {Relay: lanlink.TrustedRelay{Address: netip.MustParseAddrPort("192.0.2.20:443"), CertificateSHA256: strings.Repeat("b", 64)}, Scope: "external"}}
-	frame, err := lanlink.SealRouteUpdate(b, ba, 1, offered, now, now.Add(7*24*time.Hour))
+	frame, err := lanlink.SealRouteUpdateWithLifetime(b, ba, 1, offered, lanlink.RouteLifetimeUntilRevoked, now, time.Time{})
 	if err != nil {
 		return "", err
 	}
-	if err := config.WriteJSON(updateFile, map[string]string{"update": string(frame)}); err != nil {
+	withdrawal, err := lanlink.SealRouteUpdateWithLifetime(b, ba, 2, nil, lanlink.RouteLifetimeUntilRevoked, now, time.Time{})
+	if err != nil {
+		return "", err
+	}
+	if err := config.WriteJSON(updateFile, map[string]string{"update": string(frame), "withdrawal": string(withdrawal)}); err != nil {
 		return "", err
 	}
 	return b.PublicKey(), nil

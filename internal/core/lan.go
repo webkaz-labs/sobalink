@@ -141,7 +141,7 @@ func strictLANJSON(raw []byte, value any) error {
 }
 
 func validateLANState(s lanState) error {
-	if (s.Version != 1 && s.Version != 2) || s.Identity.Validate() != nil {
+	if (s.Version != 1 && s.Version != 2 && s.Version != 3) || s.Identity.Validate() != nil {
 		return errors.New("invalid private LAN state")
 	}
 	if err := validateLANRoutes(s); err != nil {
@@ -271,7 +271,7 @@ func (s *lanStore) saveLocked(next lanState) error {
 		s.state = cloneLANState(next)
 	}
 	if errors.Is(saveErr, config.ErrAtomicCommitted) {
-		if next.Version == 2 {
+		if next.Version >= 2 {
 			s.routeRecovery = true
 		}
 		return fmt.Errorf("private LAN state was replaced, but durability could not be confirmed; inspect private state before retrying: %w", config.ErrAtomicCommitted)
@@ -296,8 +296,12 @@ func (s *lanStore) persist(trust lanlink.Snapshot, remotes []lanlink.RemotePeer)
 	next.Trust, next.Remotes = trust, lanlink.CloneRemotePeers(remotes)
 	for _, remote := range remotes {
 		if remote.Routes != nil {
-			next.Version = 2
-			break
+			if next.Version < 2 {
+				next.Version = 2
+			}
+			if remote.Routes.Version >= 2 {
+				next.Version = 3
+			}
 		}
 	}
 	return s.saveLocked(next)

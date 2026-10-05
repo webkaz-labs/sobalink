@@ -16,20 +16,23 @@ const routeHelpEN = `Prepared routes for the same paired device
   soba lan routes list [PEER_ID]
   soba lan routes add --relay IP:PORT --certificate SHA256 --scope local|external
   soba lan routes remove CANDIDATE_ID
-  soba lan routes offer PEER_ID [--ttl 168h]
-  soba lan routes withdraw PEER_ID [--ttl 168h]
+  soba lan routes offer PEER_ID (--until-revoked | --ttl 168h)
+  soba lan routes withdraw PEER_ID (--until-revoked | --ttl 168h)
   soba lan routes inspect PEER_ID --json-file UPDATE_FILE
   soba lan routes approve PEER_ID --json-file UPDATE_FILE --withdrawal
-  soba lan routes approve PEER_ID --json-file UPDATE_FILE --candidates ID[,ID] [--ttl 24h]
-  soba lan routes approve PEER_ID --current --candidates ID[,ID] [--ttl 24h]
+  soba lan routes approve PEER_ID --json-file UPDATE_FILE --candidates ID[,ID] (--until-revoked | --ttl 168h)
+  soba lan routes approve PEER_ID --current --candidates ID[,ID] (--until-revoked | --ttl 168h)
   soba lan routes revoke PEER_ID [--candidates ID[,ID]]
 
 Add/remove prepared relays while running soba --offline, then restart. Existing
 pair identities stay unchanged. Configure both devices before changing networks.
-Exchange an offer privately; inspect its peer, endpoint, pin and expiry before
+Exchange an offer privately; inspect its peer, endpoint, pin and lifetime before
 approving exact candidate IDs. Authentication alone never approves a route.
-Approve defaults to 24 hours and never exceeds the offer expiry. Offer lifetime
-is at most 720 hours. Revoke without --candidates removes every local route grant.
+Choose --until-revoked for no scheduled expiry, or --ttl 168h for a finite lifetime.
+No lifetime is selected by default. A finite approval ends no later than a finite
+offer. Until-revoked approval requires an until-revoked offer. Withdraw produces
+an empty update; apply it on the recipient to remove the offered routes.
+Revoke without --candidates removes every local route grant.
 Use --stdin instead of --json-file for piped input; never pass an update as an
 argument. A local relay candidate is not a strict no-external-egress mode.
 Existing TCP connections may need application reconnect; bytes are not replayed.`
@@ -39,23 +42,39 @@ const routeHelpJA = `同じペアの端末へ戻るための経路
   soba lan routes list [PEER_ID]
   soba lan routes add --relay IP:PORT --certificate SHA256 --scope local|external
   soba lan routes remove CANDIDATE_ID
-  soba lan routes offer PEER_ID [--ttl 168h]
-  soba lan routes withdraw PEER_ID [--ttl 168h]
+  soba lan routes offer PEER_ID (--until-revoked | --ttl 168h)
+  soba lan routes withdraw PEER_ID (--until-revoked | --ttl 168h)
   soba lan routes inspect PEER_ID --json-file UPDATE_FILE
   soba lan routes approve PEER_ID --json-file UPDATE_FILE --withdrawal
-  soba lan routes approve PEER_ID --json-file UPDATE_FILE --candidates ID[,ID] [--ttl 24h]
-  soba lan routes approve PEER_ID --current --candidates ID[,ID] [--ttl 24h]
+  soba lan routes approve PEER_ID --json-file UPDATE_FILE --candidates ID[,ID] (--until-revoked | --ttl 168h)
+  soba lan routes approve PEER_ID --current --candidates ID[,ID] (--until-revoked | --ttl 168h)
   soba lan routes revoke PEER_ID [--candidates ID[,ID]]
 
 追加の中継は soba --offline で起動中に追加・削除して再起動します。
 ペアの識別は維持します。ネットワークを移動する前に両端を準備してください。
-経路情報は安全な方法で渡し、相手・接続先・証明書・期限を確認してから
+経路情報は安全な方法で渡し、相手・接続先・証明書・有効期間を確認してから
 候補IDを明示して許可します。認証できたことだけでは通信を許可しません。
-許可は既定24時間で、相手の情報の期限を超えません。提供期限は最大720時間。
+期限なしは --until-revoked、期限付きは --ttl 168h のように明示して選びます。
+有効期間の既定値はありません。期限付きの許可は期限付きの提供情報を超えません。
+期限なしの許可には、相手の提供情報も期限なしである必要があります。
+withdraw は空の更新を作ります。相手側で適用して、提供した経路を取り消します。
 revoke の --candidates 省略時は、その相手への経路許可をすべて取り消します。
 パイプ入力には --json-file の代わりに --stdin を使い、経路情報を引数へ
 貼り付けないでください。local は中継の区分で、外部通信ゼロの保証ではありません。
 既存TCPはアプリ側の再接続が必要な場合があり、データを自動再送しません。`
+
+func routeLifetimeSelection(ttl time.Duration, ttlSet, untilRevoked, ja bool) (string, error) {
+	if ttlSet == untilRevoked {
+		return "", errors.New(text(ja, "Choose exactly one lifetime: --until-revoked or --ttl 168h", "有効期間を一つ選んでください: --until-revoked または --ttl 168h"))
+	}
+	if untilRevoked {
+		return "until-revoked", nil
+	}
+	if ttl <= 0 {
+		return "", errors.New(text(ja, "Use a positive duration, such as --ttl 168h", "--ttl 168h のように、正の有効期間を指定してください"))
+	}
+	return "finite", nil
+}
 
 func routeIDs(value string) ([]string, error) {
 	if value == "" {
@@ -150,14 +169,23 @@ func lanRoutesCommand(ctx context.Context, args []string, ja, dryRun bool, out i
 	f := commandFlags("lan routes "+operation, ja, out)
 	switch operation {
 	case "offer", "withdraw":
-		ttl := f.Duration("ttl", 168*time.Hour, text(ja, "offer lifetime, at most 720h", "提供期限（最大720時間）"))
+		ttl := f.Duration("ttl", 0, text(ja, "explicit finite offer lifetime, for example 168h", "期限付きの提供期間を明示（例: 168h）"))
+		untilRevoked := f.Bool("until-revoked", false, text(ja, "explicitly offer routes without a scheduled expiry", "提供する経路を期限なしにすることを明示"))
 		if err := parseFlags(f, flags, ja); err != nil {
 			return err
 		}
-		if *ttl < time.Second || *ttl > 720*time.Hour || *ttl%time.Second != 0 {
-			return errors.New(text(ja, "Use whole seconds from 1s through 720h", "1秒〜720時間の整数秒で指定してください"))
+		lifetime, err := routeLifetimeSelection(*ttl, hasFlag(flags, "ttl"), *untilRevoked, ja)
+		if err != nil {
+			return err
 		}
-		return request("lan.routes.export", map[string]any{"peerId": peer, "ttlSeconds": int(ttl.Seconds()), "withdraw": operation == "withdraw"})
+		payload := map[string]any{"peerId": peer, "lifetime": lifetime, "withdraw": operation == "withdraw"}
+		if lifetime == "finite" {
+			if *ttl%time.Second != 0 {
+				return errors.New(text(ja, "Use whole seconds for offers, such as --ttl 168h", "提供期間は --ttl 168h のように整数秒で指定してください"))
+			}
+			payload["ttlSeconds"] = int64(*ttl / time.Second)
+		}
+		return request("lan.routes.export", payload)
 	case "revoke":
 		value := f.String("candidates", "", text(ja, "comma-separated IDs; omit to revoke all", "候補IDをカンマ区切りで指定（省略時は全件取消）"))
 		if err := parseFlags(f, flags, ja); err != nil {
@@ -174,12 +202,34 @@ func lanRoutesCommand(ctx context.Context, args []string, ja, dryRun bool, out i
 		withdrawal := f.Bool("withdrawal", false, text(ja, "explicitly apply an authenticated empty withdrawal", "認証済みの空の経路取消を明示して適用"))
 		current := f.Bool("current", false, text(ja, "review the current saved offer", "保存済みの現在の提供情報を確認"))
 		value := f.String("candidates", "", text(ja, "exact reviewed candidate IDs, comma-separated", "確認した候補IDをカンマ区切りで指定"))
-		ttl := f.Duration("ttl", 24*time.Hour, text(ja, "local approval lifetime, at most 720h", "この端末での許可期限（最大720時間）"))
+		ttl := f.Duration("ttl", 0, text(ja, "explicit finite local approval lifetime, for example 168h", "この端末での期限付きの許可期間を明示（例: 168h）"))
+		untilRevoked := f.Bool("until-revoked", false, text(ja, "explicitly approve until locally revoked; requires an until-revoked offer", "この端末で取り消すまで許可することを明示（期限なしの提供情報が必要）"))
 		if err := parseFlags(f, flags, ja); err != nil {
 			return err
 		}
 		if *current && (*path != "" || *pipe) {
 			return errors.New(text(ja, "--current cannot be combined with update input", "--current と更新情報の入力は併用できません"))
+		}
+		var ids []string
+		lifetime := ""
+		if operation == "approve" {
+			var err error
+			ids, err = routeIDs(*value)
+			if err != nil || (!*withdrawal && len(ids) == 0) || (*withdrawal && len(ids) != 0) {
+				return errors.New(text(ja, "Approve requires explicit --candidates from the reviewed update", "許可には確認済みの候補を --candidates で明示してください"))
+			}
+			if *withdrawal {
+				if hasFlag(flags, "ttl") || hasFlag(flags, "until-revoked") {
+					return errors.New(text(ja, "Apply --withdrawal without lifetime flags; it removes the offered routes", "--withdrawal は有効期間を指定せずに使ってください。提供された経路を取り消します"))
+				}
+			} else {
+				lifetime, err = routeLifetimeSelection(*ttl, hasFlag(flags, "ttl"), *untilRevoked, ja)
+				if err != nil {
+					return err
+				}
+			}
+		} else if hasFlag(flags, "ttl") || hasFlag(flags, "until-revoked") {
+			return errors.New(text(ja, "Use lifetime flags with approve; inspect only reviews the offer", "有効期間は approve で指定してください。inspect は提供情報を確認する操作です"))
 		}
 		update := ""
 		var err error
@@ -199,15 +249,9 @@ func lanRoutesCommand(ctx context.Context, args []string, ja, dryRun bool, out i
 		if operation == "inspect" {
 			return request(inspect, payload)
 		}
-		ids, err := routeIDs(*value)
-		if err != nil || (!*withdrawal && len(ids) == 0) || (*withdrawal && len(ids) != 0) {
-			return errors.New(text(ja, "Approve requires explicit --candidates from the reviewed update", "許可には確認済みの候補を --candidates で明示してください"))
-		}
-		if *ttl < time.Second || *ttl > 720*time.Hour {
-			return errors.New(text(ja, "Approval lifetime must be 1s through 720h", "許可期限は1秒〜720時間で指定してください"))
-		}
 		var review struct {
 			Digest     string    `json:"digest"`
+			Lifetime   string    `json:"lifetime"`
 			Expires    time.Time `json:"expires"`
 			Candidates []struct {
 				CandidateID string `json:"candidateId"`
@@ -216,6 +260,15 @@ func lanRoutesCommand(ctx context.Context, args []string, ja, dryRun bool, out i
 		if !dryRun {
 			if err := query(inspect, payload, &review); err != nil {
 				return err
+			}
+			if review.Lifetime == "" {
+				review.Lifetime = "finite" // Legacy v1 reviews always had a finite expiry.
+			}
+			if (review.Lifetime == "finite" && (review.Expires.IsZero() || !review.Expires.After(time.Now()))) || (review.Lifetime == "until-revoked" && !review.Expires.IsZero()) || (review.Lifetime != "finite" && review.Lifetime != "until-revoked") {
+				return errors.New(text(ja, "Offer lifetime is invalid or expired; inspect a fresh update", "提供情報の有効期間が不正か期限切れです。新しい更新を確認してください"))
+			}
+			if !*withdrawal && lifetime == "until-revoked" && review.Lifetime != "until-revoked" {
+				return errors.New(text(ja, "This offer expires; use --ttl 168h or obtain an until-revoked offer", "この提供情報には期限があります。--ttl 168h を使うか、期限なしの提供情報を受け取ってください"))
 			}
 			if *withdrawal && len(review.Candidates) != 0 {
 				return errors.New(text(ja, "Withdrawal approval requires an authenticated empty offer", "取消の適用には認証済みの空の提供情報が必要です"))
@@ -230,15 +283,19 @@ func lanRoutesCommand(ctx context.Context, args []string, ja, dryRun bool, out i
 				}
 			}
 		}
-		expires := time.Now().UTC().Add(*ttl)
-		if !review.Expires.IsZero() && review.Expires.Before(expires) {
-			expires = review.Expires
-		}
+		var expires any
 		if *withdrawal {
-			expires = time.Time{}
+			lifetime = review.Lifetime
+		} else if lifetime == "finite" {
+			deadline := time.Now().UTC().Add(*ttl)
+			if review.Lifetime == "finite" && review.Expires.Before(deadline) {
+				deadline = review.Expires
+			}
+			expires = deadline
 		}
 		payload["digest"] = review.Digest
 		payload["candidateIds"] = ids
+		payload["lifetime"] = lifetime
 		payload["expires"] = expires
 		action := "lan.routes.apply"
 		if *current {

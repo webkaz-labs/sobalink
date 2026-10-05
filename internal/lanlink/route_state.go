@@ -14,16 +14,38 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
-const RouteStateVersion = 1
+const RouteStateVersion = 2
 
 var ErrRoutePermission = errors.New("no locally approved current route")
 
-// RouteApproval is an independent, finite local permission for one exact
-// endpoint, certificate and scope. A remote update can never extend it.
+// RouteApproval is independent local permission for one exact endpoint,
+// certificate and scope. Permanent permission requires an explicit lifetime;
+// omitted lifetime is finite only when reading original version-1 state.
 type RouteApproval struct {
 	CandidateID string    `json:"candidate_id"`
 	Granted     time.Time `json:"granted"`
 	Expires     time.Time `json:"expires"`
+	Lifetime    string    `json:"lifetime,omitempty"`
+}
+
+func (a RouteApproval) EffectiveLifetime() string {
+	if a.Lifetime == "" {
+		return RouteLifetimeFinite
+	}
+	return a.Lifetime
+}
+
+func (a RouteApproval) active(now time.Time) bool {
+	if a.Granted.IsZero() || a.Granted.After(now) {
+		return false
+	}
+	switch a.EffectiveLifetime() {
+	case RouteLifetimeFinite:
+		return !a.Expires.IsZero() && a.Expires.After(now)
+	case RouteLifetimeUntilRevoked:
+		return a.Expires.IsZero()
+	}
+	return false
 }
 
 // RouteState is protected pairing state. ReceivedSequence and its authenticated
@@ -34,6 +56,7 @@ type RouteState struct {
 	Version          int             `json:"version"`
 	PairBinding      string          `json:"pair_binding"`
 	IssuedSequence   uint64          `json:"issued_sequence"`
+	IssuedVersion    int             `json:"issued_version,omitempty"`
 	ReceivedSequence uint64          `json:"received_sequence"`
 	Received         *RouteUpdate    `json:"received,omitempty"`
 	ReceivedProof    []byte          `json:"received_proof,omitempty"`
@@ -58,6 +81,7 @@ type RouteSnapshot struct {
 	Approvals        []RouteApproval  `json:"approvals"`
 	Permitted        []RouteCandidate `json:"permitted"`
 	Expires          time.Time        `json:"expires,omitempty"`
+	Lifetime         string           `json:"lifetime,omitempty"`
 	NextExpiry       time.Time        `json:"next_expiry,omitempty"`
 	RecoveryRequired bool             `json:"recovery_required"`
 }
@@ -93,7 +117,17 @@ func newRouteState(identity Identity, remote RemotePeer) (*RouteState, error) {
 		return nil, err
 	}
 	if remote.Routes != nil {
-		return cloneRouteState(remote.Routes), nil
+		out := cloneRouteState(remote.Routes)
+		if out.Version == 1 {
+			out.Version = RouteStateVersion
+			if out.IssuedSequence != 0 {
+				out.IssuedVersion = legacyRouteUpdateVersion
+			}
+			for i := range out.Approvals {
+				out.Approvals[i].Lifetime = RouteLifetimeFinite
+			}
+		}
+		return out, nil
 	}
 	return &RouteState{Version: RouteStateVersion, PairBinding: binding}, nil
 }
@@ -107,7 +141,14 @@ func ValidateRouteState(identity Identity, remote RemotePeer) error {
 		return nil
 	}
 	binding, err := PairRouteBinding(identity, remote)
-	if err != nil || s.Version != RouteStateVersion || s.PairBinding != binding || len(s.Approvals) > MaxRouteCandidates {
+	if err != nil || (s.Version != 1 && s.Version != RouteStateVersion) || s.PairBinding != binding || len(s.Approvals) > MaxRouteCandidates {
+		return ErrRouteUpdate
+	}
+	if s.Version == 1 {
+		if s.IssuedVersion != 0 || s.Received != nil && s.Received.Version != legacyRouteUpdateVersion {
+			return ErrRouteUpdate
+		}
+	} else if s.IssuedSequence == 0 && s.IssuedVersion != 0 || s.IssuedSequence != 0 && s.IssuedVersion != legacyRouteUpdateVersion && s.IssuedVersion != RouteUpdateVersion {
 		return ErrRouteUpdate
 	}
 	if s.Received == nil {
@@ -134,7 +175,13 @@ func ValidateRouteState(identity Identity, remote RemotePeer) error {
 	}
 	seen := make(map[string]bool, len(s.Approvals))
 	for _, approval := range s.Approvals {
-		if !candidates[approval.CandidateID] || seen[approval.CandidateID] || approval.Granted.Before(verified.Issued) || approval.Granted.IsZero() || !approval.Expires.After(approval.Granted) || approval.Expires.After(verified.Expires) || approval.Expires.Sub(approval.Granted) > MaxRouteUpdateLifetime {
+		if !candidates[approval.CandidateID] || seen[approval.CandidateID] || approval.Granted.Before(verified.Issued) || approval.Granted.IsZero() {
+			return ErrRouteUpdate
+		}
+		if s.Version == 1 && approval.Lifetime != "" || s.Version == RouteStateVersion && approval.Lifetime == "" {
+			return ErrRouteUpdate
+		}
+		if err := validateRouteApproval(verified, approval.EffectiveLifetime(), approval.Granted, approval.Expires); err != nil {
 			return ErrRouteUpdate
 		}
 		seen[approval.CandidateID] = true
@@ -189,7 +236,7 @@ func (n *Node) persistRouteLocked(remote RemotePeer) error {
 	}
 	sort.Slice(snapshot.Peers, func(i, j int) bool { return snapshot.Peers[i].Key < snapshot.Peers[j].Key })
 	if err := n.cfg.Persist(snapshot, records); err != nil {
-		if errors.Is(err, config.ErrAtomicCommitted) {
+		if errors.Is(err, config.ErrAtomicCommitted) || errors.Is(err, config.ErrAtomicRecovery) {
 			n.pairingRecovery = true
 		}
 		return fmt.Errorf("route state durable save unconfirmed: %w", err)
@@ -203,6 +250,14 @@ func (n *Node) ExportRouteUpdate(peer string, candidates []RouteCandidate, expir
 	return n.exportRouteUpdate(peer, candidates, expires, time.Time{})
 }
 func (n *Node) exportRouteUpdate(peer string, candidates []RouteCandidate, expires, now time.Time) ([]byte, error) {
+	return n.exportRouteUpdateWithLifetime(peer, candidates, legacyRouteUpdateVersion, "", expires, now)
+}
+
+func (n *Node) ExportRouteUpdateWithLifetime(peer string, candidates []RouteCandidate, lifetime string, expires time.Time) ([]byte, error) {
+	return n.exportRouteUpdateWithLifetime(peer, candidates, RouteUpdateVersion, lifetime, expires, time.Time{})
+}
+
+func (n *Node) exportRouteUpdateWithLifetime(peer string, candidates []RouteCandidate, version int, lifetime string, expires, now time.Time) ([]byte, error) {
 	n.pairMu.Lock()
 	defer n.pairMu.Unlock()
 	n.mu.Lock()
@@ -215,14 +270,15 @@ func (n *Node) exportRouteUpdate(peer string, candidates []RouteCandidate, expir
 		return nil, err
 	}
 	s, err := newRouteState(n.cfg.Identity, r.remote)
-	if err != nil || s.IssuedSequence == math.MaxUint64 {
+	if err != nil || s.IssuedSequence == math.MaxUint64 || version < s.IssuedVersion {
 		return nil, ErrRouteUpdate
 	}
-	frame, err := SealRouteUpdate(n.cfg.Identity, r.remote, s.IssuedSequence+1, candidates, now, expires)
+	frame, err := sealRouteUpdate(n.cfg.Identity, r.remote, s.IssuedSequence+1, candidates, version, lifetime, now, expires)
 	if err != nil {
 		return nil, err
 	}
 	s.IssuedSequence++
+	s.IssuedVersion = version
 	next := r.remote
 	next.Routes = s
 	if err := n.persistRouteLocked(next); err != nil {
@@ -253,6 +309,9 @@ func (n *Node) inspectRouteUpdate(peer string, raw []byte, now time.Time) (Route
 	if err != nil {
 		return RouteReview{}, err
 	}
+	if r.remote.Routes != nil && r.remote.Routes.Received != nil && u.Version < r.remote.Routes.Received.Version {
+		return RouteReview{}, ErrRouteUpdate
+	}
 	return RouteReview{Digest: routeReviewDigest(raw), Update: u}, nil
 }
 
@@ -264,6 +323,14 @@ func (n *Node) ApplyRouteUpdate(peer string, raw []byte, reviewedDigest string, 
 	return n.applyRouteUpdate(peer, raw, reviewedDigest, selectedIDs, approvalExpiry, time.Time{})
 }
 func (n *Node) applyRouteUpdate(peer string, raw []byte, reviewedDigest string, selectedIDs []string, approvalExpiry, now time.Time) error {
+	return n.applyRouteUpdateWithLifetime(peer, raw, reviewedDigest, selectedIDs, RouteLifetimeFinite, approvalExpiry, now)
+}
+
+func (n *Node) ApplyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDigest string, selectedIDs []string, lifetime string, expiry time.Time) error {
+	return n.applyRouteUpdateWithLifetime(peer, raw, reviewedDigest, selectedIDs, lifetime, expiry, time.Time{})
+}
+
+func (n *Node) applyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDigest string, selectedIDs []string, lifetime string, approvalExpiry, now time.Time) error {
 	if len(raw) == 0 || len(raw) > maxPairMessage || !validKey(reviewedDigest) || reviewedDigest != routeReviewDigest(raw) || len(selectedIDs) > MaxRouteCandidates {
 		return ErrRouteUpdate
 	}
@@ -284,11 +351,11 @@ func (n *Node) applyRouteUpdate(peer string, raw []byte, reviewedDigest string, 
 		return err
 	}
 	u, err := OpenRouteUpdate(n.cfg.Identity, r.remote, raw, s.ReceivedSequence, now)
-	if err != nil {
+	if err != nil || s.Received != nil && u.Version < s.Received.Version {
 		n.mu.Unlock()
-		return err
+		return ErrRouteUpdate
 	}
-	approvals, err := selectedApprovals(u, selectedIDs, approvalExpiry, now)
+	approvals, err := selectedApprovalsWithLifetime(u, selectedIDs, lifetime, approvalExpiry, now)
 	if err != nil {
 		n.mu.Unlock()
 		return err
@@ -296,6 +363,26 @@ func (n *Node) applyRouteUpdate(peer string, raw []byte, reviewedDigest string, 
 	s.ReceivedSequence, s.Received, s.ReceivedProof, s.Approvals = u.Sequence, &u, slices.Clone(raw), approvals
 	next := r.remote
 	next.Routes = s
+	if len(u.Candidates) == 0 {
+		// A reviewed withdrawal only removes authority. Stop it locally even
+		// when durable storage cannot record the newer proof/high-water mark.
+		// Core must preserve the recovery latch across disposable offline Nodes.
+		n.clients[peer] = &remoteClient{remote: next, address: r.address}
+		n.mu.Unlock()
+		stopErr := r.shutdown()
+		n.mu.Lock()
+		if n.closed {
+			err = net.ErrClosed
+		} else {
+			err = n.persistRouteLocked(next)
+		}
+		if err != nil {
+			n.pairingRecovery = true
+			err = errors.Join(err, config.ErrAtomicRecovery)
+		}
+		n.mu.Unlock()
+		return errors.Join(err, stopErr)
+	}
 	if err := n.persistRouteLocked(next); err != nil {
 		n.mu.Unlock()
 		return err
@@ -306,7 +393,27 @@ func (n *Node) applyRouteUpdate(peer string, raw []byte, reviewedDigest string, 
 }
 
 func selectedApprovals(u RouteUpdate, ids []string, expiry, now time.Time) ([]RouteApproval, error) {
-	if len(ids) > MaxRouteCandidates || len(ids) > 0 && (expiry.IsZero() || !expiry.After(now) || expiry.Sub(now) > MaxRouteUpdateLifetime || expiry.After(u.Expires)) {
+	return selectedApprovalsWithLifetime(u, ids, RouteLifetimeFinite, expiry, now)
+}
+
+func validateRouteApproval(u RouteUpdate, lifetime string, granted, expiry time.Time) error {
+	switch lifetime {
+	case RouteLifetimeFinite:
+		if !finiteRouteLifetime(granted, expiry) || u.EffectiveLifetime() == RouteLifetimeFinite && expiry.After(u.Expires) || u.Version == legacyRouteUpdateVersion && expiry.Sub(granted) > MaxRouteUpdateLifetime {
+			return ErrRouteUpdate
+		}
+	case RouteLifetimeUntilRevoked:
+		if !expiry.IsZero() || u.Version != RouteUpdateVersion || u.EffectiveLifetime() != RouteLifetimeUntilRevoked {
+			return ErrRouteUpdate
+		}
+	default:
+		return ErrRouteUpdate
+	}
+	return nil
+}
+
+func selectedApprovalsWithLifetime(u RouteUpdate, ids []string, lifetime string, expiry, now time.Time) ([]RouteApproval, error) {
+	if (lifetime != RouteLifetimeFinite && lifetime != RouteLifetimeUntilRevoked) || lifetime == RouteLifetimeUntilRevoked && !expiry.IsZero() || len(ids) > MaxRouteCandidates || len(ids) > 0 && validateRouteApproval(u, lifetime, now, expiry) != nil {
 		return nil, ErrRouteUpdate
 	}
 	available := make(map[string]bool, len(u.Candidates))
@@ -320,7 +427,7 @@ func selectedApprovals(u RouteUpdate, ids []string, expiry, now time.Time) ([]Ro
 			return nil, ErrRouteUpdate
 		}
 		seen[id] = true
-		approvals = append(approvals, RouteApproval{id, now.UTC(), expiry.UTC()})
+		approvals = append(approvals, RouteApproval{CandidateID: id, Granted: now.UTC(), Expires: expiry.UTC(), Lifetime: lifetime})
 	}
 	return approvals, nil
 }
@@ -356,6 +463,14 @@ func (n *Node) ApproveRoutes(peer, reviewedDigest string, selectedIDs []string, 
 	return n.approveRoutes(peer, reviewedDigest, selectedIDs, expiry, time.Time{})
 }
 func (n *Node) approveRoutes(peer, reviewedDigest string, selectedIDs []string, expiry, now time.Time) error {
+	return n.approveRoutesWithLifetime(peer, reviewedDigest, selectedIDs, RouteLifetimeFinite, expiry, now)
+}
+
+func (n *Node) ApproveRoutesWithLifetime(peer, reviewedDigest string, selectedIDs []string, lifetime string, expiry time.Time) error {
+	return n.approveRoutesWithLifetime(peer, reviewedDigest, selectedIDs, lifetime, expiry, time.Time{})
+}
+
+func (n *Node) approveRoutesWithLifetime(peer, reviewedDigest string, selectedIDs []string, lifetime string, expiry, now time.Time) error {
 	n.pairMu.Lock()
 	defer n.pairMu.Unlock()
 	n.mu.Lock()
@@ -372,13 +487,17 @@ func (n *Node) approveRoutes(peer, reviewedDigest string, selectedIDs []string, 
 		n.mu.Unlock()
 		return ErrRouteUpdate
 	}
-	approvals, err := selectedApprovals(review.Update, selectedIDs, expiry, now)
+	approvals, err := selectedApprovalsWithLifetime(review.Update, selectedIDs, lifetime, expiry, now)
 	if err != nil {
 		n.mu.Unlock()
 		return err
 	}
 	next := r.remote
-	next.Routes = cloneRouteState(r.remote.Routes)
+	next.Routes, err = newRouteState(n.cfg.Identity, r.remote)
+	if err != nil {
+		n.mu.Unlock()
+		return err
+	}
 	next.Routes.Approvals = approvals
 	if err := n.persistRouteLocked(next); err != nil {
 		n.mu.Unlock()
@@ -462,13 +581,14 @@ func routeSnapshot(remote RemotePeer, now time.Time) RouteSnapshot {
 	}
 	out.Candidates = slices.Clone(s.Received.Candidates)
 	out.Expires = s.Received.Expires
+	out.Lifetime = s.Received.EffectiveLifetime()
 	var ids []string
-	if s.Received.Expires.After(now) {
+	if s.Received.active(now) {
 		out.NextExpiry = s.Received.Expires
 		for _, a := range s.Approvals {
-			if !a.Granted.After(now) && a.Expires.After(now) {
+			if a.active(now) {
 				ids = append(ids, a.CandidateID)
-				if a.Expires.Before(out.NextExpiry) {
+				if !a.Expires.IsZero() && (out.NextExpiry.IsZero() || a.Expires.Before(out.NextExpiry)) {
 					out.NextExpiry = a.Expires
 				}
 			}

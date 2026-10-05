@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 )
@@ -48,6 +49,9 @@ func validateLANRoutes(state lanState) error {
 		return lanlink.ErrRouteUpdate
 	}
 	for _, remote := range state.Remotes {
+		if remote.Routes != nil && remote.Routes.Version >= 2 && state.Version < 3 {
+			return errors.New("persistent route permissions require private state version 3")
+		}
 		if err := lanlink.ValidateRouteState(state.Identity, remote); err != nil {
 			return err
 		}
@@ -133,7 +137,9 @@ func (c *Core) editLANRoute(candidate lanlink.RouteCandidate, removeID string) e
 		}
 		next.RouteCandidates = append(next.RouteCandidates, candidate)
 	}
-	next.Version = 2
+	if next.Version < 2 {
+		next.Version = 2
+	}
 	err := store.save(next)
 	if err != nil && removeID != "" {
 		store.requireRouteRecovery()
@@ -181,7 +187,8 @@ func (c *Core) lanRoutesCommand(ctx context.Context, name string, raw json.RawMe
 		Digest       string    `json:"digest,omitempty"`
 		CandidateIDs []string  `json:"candidateIds,omitempty"`
 		Expires      time.Time `json:"expires,omitempty"`
-		TTLSeconds   int       `json:"ttlSeconds,omitempty"`
+		TTLSeconds   int64     `json:"ttlSeconds,omitempty"`
+		Lifetime     string    `json:"lifetime,omitempty"`
 		Withdraw     bool      `json:"withdraw,omitempty"`
 	}
 	if err := decodePayload(raw, &input); err != nil {
@@ -214,7 +221,19 @@ func (c *Core) lanRoutesCommand(ctx context.Context, name string, raw json.RawMe
 	case "lan.routes.list":
 		return publicRouteSnapshot(node, input.PeerID)
 	case "lan.routes.export":
-		if input.TTLSeconds < 1 || input.TTLSeconds > int(lanlink.MaxRouteUpdateLifetime/time.Second) {
+		var expires time.Time
+		switch input.Lifetime {
+		case lanlink.RouteLifetimeFinite:
+			duration, err := capacity.Duration(input.TTLSeconds)
+			if err != nil || !input.Expires.IsZero() {
+				return nil, lanlink.ErrRouteUpdate
+			}
+			expires = time.Now().UTC().Add(duration)
+		case lanlink.RouteLifetimeUntilRevoked:
+			if input.TTLSeconds != 0 || !input.Expires.IsZero() {
+				return nil, lanlink.ErrRouteUpdate
+			}
+		default:
 			return nil, lanlink.ErrRouteUpdate
 		}
 		candidates, err := ownLANCandidates(c.lanStoreCopy().copy())
@@ -224,17 +243,24 @@ func (c *Core) lanRoutesCommand(ctx context.Context, name string, raw json.RawMe
 		if input.Withdraw {
 			candidates = nil
 		}
-		expires := time.Now().UTC().Add(time.Duration(input.TTLSeconds) * time.Second)
-		frame, err := node.ExportRouteUpdate(input.PeerID, candidates, expires)
+		frame, err := node.ExportRouteUpdateWithLifetime(input.PeerID, candidates, input.Lifetime, expires)
 		if err != nil {
 			return nil, routeCommandError(err)
 		}
-		return map[string]any{"update": string(frame), "peerId": input.PeerID, "expires": expires}, nil
+		return map[string]any{"update": string(frame), "peerId": input.PeerID, "expires": publicRouteExpiry(expires), "lifetime": input.Lifetime, "withdrawalPendingDelivery": input.Withdraw}, nil
 	case "lan.routes.inspect":
 		review, err := node.InspectRouteUpdate(input.PeerID, []byte(input.Update))
 		return publicRouteReview(review), routeCommandError(err)
 	case "lan.routes.apply":
-		err = node.ApplyRouteUpdate(input.PeerID, []byte(input.Update), input.Digest, input.CandidateIDs, input.Expires)
+		if input.TTLSeconds != 0 {
+			return nil, lanlink.ErrRouteUpdate
+		}
+		err = node.ApplyRouteUpdateWithLifetime(input.PeerID, []byte(input.Update), input.Digest, input.CandidateIDs, input.Lifetime, input.Expires)
+		if errors.Is(err, config.ErrAtomicRecovery) {
+			if store := c.lanStoreCopy(); store != nil {
+				store.requireRouteRecovery()
+			}
+		}
 	case "lan.routes.revoke":
 		err = node.RevokeRoutes(input.PeerID, input.CandidateIDs)
 		if err != nil && !errors.Is(err, lanlink.ErrRouteUpdate) && !errors.Is(err, lanlink.ErrUntrusted) && !errors.Is(err, lanlink.ErrRoutePermission) {
@@ -247,7 +273,10 @@ func (c *Core) lanRoutesCommand(ctx context.Context, name string, raw json.RawMe
 		review, err := node.ReviewRoutes(input.PeerID)
 		return publicRouteReview(review), routeCommandError(err)
 	case "lan.routes.approve":
-		err = node.ApproveRoutes(input.PeerID, input.Digest, input.CandidateIDs, input.Expires)
+		if input.TTLSeconds != 0 {
+			return nil, lanlink.ErrRouteUpdate
+		}
+		err = node.ApproveRoutesWithLifetime(input.PeerID, input.Digest, input.CandidateIDs, input.Lifetime, input.Expires)
 	default:
 		return nil, errors.New("unknown paired-route action")
 	}
@@ -265,7 +294,7 @@ func routeCandidateViews(candidates []lanlink.RouteCandidate) []map[string]any {
 	return out
 }
 func publicRouteReview(review lanlink.RouteReview) map[string]any {
-	return map[string]any{"digest": review.Digest, "issuer": review.Update.Issuer, "recipient": review.Update.Recipient, "sequence": review.Update.Sequence, "issued": review.Update.Issued, "expires": review.Update.Expires, "candidates": routeCandidateViews(review.Update.Candidates)}
+	return map[string]any{"digest": review.Digest, "issuer": review.Update.Issuer, "recipient": review.Update.Recipient, "sequence": review.Update.Sequence, "issued": review.Update.Issued, "lifetime": review.Update.EffectiveLifetime(), "expires": publicRouteExpiry(review.Update.Expires), "candidates": routeCandidateViews(review.Update.Candidates)}
 }
 func publicRouteSnapshot(node *lanlink.Node, peer string) (any, error) {
 	s, err := node.RouteSnapshot(peer)
@@ -274,14 +303,17 @@ func publicRouteSnapshot(node *lanlink.Node, peer string) (any, error) {
 	}
 	approvals := make([]map[string]any, 0, len(s.Approvals))
 	for _, a := range s.Approvals {
-		approvals = append(approvals, map[string]any{"candidateId": a.CandidateID, "expires": a.Expires})
+		if a.Lifetime == "" && !a.Expires.IsZero() {
+			a.Lifetime = lanlink.RouteLifetimeFinite
+		}
+		approvals = append(approvals, map[string]any{"candidateId": a.CandidateID, "lifetime": a.Lifetime, "expires": publicRouteExpiry(a.Expires)})
 	}
 	permitted := make([]string, 0, len(s.Permitted))
 	for _, candidate := range s.Permitted {
 		permitted = append(permitted, candidate.ID())
 	}
 	observation, _ := node.RouteObservation(peer)
-	return map[string]any{"observation": publicRouteObservation(observation), "legacy": s.Legacy, "issuedSequence": s.IssuedSequence, "receivedSequence": s.ReceivedSequence, "candidates": routeCandidateViews(s.Candidates), "approvals": approvals, "permittedIds": permitted, "expires": s.Expires, "nextExpiry": s.NextExpiry, "recoveryRequired": s.RecoveryRequired}, nil
+	return map[string]any{"observation": publicRouteObservation(observation), "legacy": s.Legacy, "issuedSequence": s.IssuedSequence, "receivedSequence": s.ReceivedSequence, "candidates": routeCandidateViews(s.Candidates), "approvals": approvals, "permittedIds": permitted, "lifetime": s.Lifetime, "expires": publicRouteExpiry(s.Expires), "nextExpiry": publicRouteExpiry(s.NextExpiry), "recoveryRequired": s.RecoveryRequired}, nil
 }
 
 func routeCommandError(err error) error {
@@ -312,4 +344,11 @@ func publicRouteObservation(o lanlink.RouteObservation) map[string]any {
 		out["expires"] = o.Expires
 	}
 	return out
+}
+
+func publicRouteExpiry(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value
 }
