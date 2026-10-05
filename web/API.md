@@ -30,7 +30,10 @@ The React client uses only same-origin `/api` requests. The Go host is responsib
 - `service.share`: `{name,peerIds,network,ports,excludePorts?,localPort?,loopbackHost?,lifetime?,ttlSeconds,purpose,discoverable,backend?,replaceId?,expectedRevision?}`; one exposed port may map to a different application port. Shared ranges retain same-port mapping; reserved control ports are excluded
 - `service.config`: `{id}` returns `{configuration,revision,active}` to authenticated local management only. The full saved configuration is not peer discovery metadata. Create rejects existing names; copy starts a new name. Replacement requires a stopped `replaceId`, its complete `expectedRevision` and the reviewed `backend`; stale revisions, another existing name and backend changes are rejected before changing saved settings
 - `service.stop`: `{id}`
-- `network.configure`: `{mode:"none"|"tailnet"|"lan",hostname?,lan?}`; LAN is either `{kind:"host",address}` for an exact private local listener or `{kind:"relay",address,certificateSHA256}` for a trusted numeric relay. Changing a running network/hostname requires stopping and restarting the process, which the UI explains
+- `network.configure`: `{mode:"none"|"tailnet"|"lan",hostname?,lan?,rotateCertificate?,lanPolicy?:{mode,prefixes}}`; LAN is either `{kind:"host",address}` for an exact private local listener or `{kind:"relay",address,certificateSHA256}` for a trusted numeric relay. Changing a running network/hostname requires stopping and restarting the process, which the UI explains
+- Host setup preserves a valid saved certificate for an unchanged IP, including a port-only change. IP change or unusable certificate requires explicit `rotateCertificate:true`; saved pairs and active engines block replacement. Public `lan.certificate` exposes `{state,notBefore,notAfter}` only, with `valid`, `expiring` (within 30 days), `expired`, or `not-yet-valid`. No private certificate material is returned
+- `lan.policy.get`: `{}` returns `{mode,prefixes,editable,restartRequired}`. `lan.policy.set`: `{mode:"trusted-relay"|"allowed-lan-destinations",prefixes:string[]}` requires an offline engine. Allowed mode requires explicit canonical private/ULA/loopback prefixes covering selected and prepared relays; trusted mode requires no prefixes. Initial `network.configure.lanPolicy` saves the same policy atomically with relay setup before starting. Status exposes `lan.policy`. A failed policy save does not establish a durable restriction and latches recovery for an existing store
+- `lan.addresses` includes optional `prefix` on each read-only `{interface,address}` choice. Suggestions never automatically enable a destination range; prefix membership is not physical interface/VPN isolation
 - `network.logout`: `{}` is exposed through an explicit Tailnet impact review. It stops local traffic and requests backend logout before application exit; the Web result distinguishes acknowledgement, cleanup uncertainty and an unconfirmed result without claiming process exit or administrator node removal. It uses the authenticated command boundary directly so the response is not obscured by an immediate state refresh. Startup registration has no Core command: the Web guide provides the existing CLI preview/apply instructions and truthfully reports OS registration status unavailable
 - `application.stop`: `{}` returns `{state:"stopping"}` before the agent closes the local UI, hosted relay and active work. The UI reviews impact and does not claim shutdown is complete from this acknowledgement
 - `network.login`: `{refresh?,qr?}`; `network.login.status`: `{qr?}`. Both return `{state:"waiting"|"connected"|"approval-required",authUrl?,qr?}` only on explicit local requests. The client polls status only after an explicit waiting result and stops on dismissal, completion or an error. It aborts pending reads when closed. Existing links are reused unless the user selects a new-link request. Connected or approval-pending state does not restart login. Only bounded official HTTPS `login.tailscale.com/a/...` links are rendered; links are never opened automatically or persisted. Optional QR data is a server-generated boolean matrix rendered locally, without a third-party image service
@@ -139,3 +142,64 @@ The exact ordinary proxy review additionally offers **Save this reviewed proxy**
 `proxy.reveal {name,expectedRevision}` is requested only by **Reveal credentials temporarily**. Its response bypasses the shared request retry cache and is copied directly into private uncontrolled fields; the returned object is erased immediately. Secret values never enter React state, normal snapshot, history, URL, logs or export. Automated browser evidence capture rejects the whole private view. Hide, close, unmount, scope/revision change and late-response cancellation clear the fields. Copy is separate and explicit; the system clipboard retains the selected credential until replaced by the user. The existing capture guard excludes the whole credential/reveal view, even while empty, and all nonempty private values. Only fictional credentials are used in DOM/browser test inputs.
 
 Both new paths show localized failure recovery and distinguish an acknowledgement from an unconfirmed persistence result. Private settings are stored outside portable exports; this is intentional durable storage only after explicit opt-in, not browser persistence. Native ACL, installed startup, suspend/recovery and external-app verification remain separate acceptance gates.
+
+## Direct LAN and explicit mixed modes (development)
+
+`Network` additionally accepts `direct-lan` and `mixed`. Direct mode keeps
+application traffic in WireGuard/gVisor userspace TCP/native UDP; the separate
+mutual-Ed25519 TLS listener carries only pairing/control. Never infer a current
+identity from an IP, display name or saved configuration alone.
+
+- `network.configure`: `{mode:"direct-lan",hostname?,directLAN:{listen,prefixes}}`.
+  `listen` is an exact private/loopback numeric IP with an unreserved high port;
+  `prefixes` are explicitly selected canonical private/loopback CIDRs. TCP
+  pairing and UDP WireGuard use the same port. No DNS/relay/STUN fallback exists
+- `direct-lan.status`, `direct-lan.identity`: `{}`. These reads do not generate
+  identity; explicit configure does. Snapshot `directLAN` includes `configured`,
+  `listenerReady`, `publicKey`, `endpoint`, `prefixes`, `recoveryRequired`, and
+  optional `resourceRestartRequired`. Local readiness does not prove remote
+  reachability. A known missing/down exact local interface is unavailable;
+  inspection errors are unknown and cannot authorize fallback
+- `direct-lan.invite`: `{recipientPublicKey,name,ttlSeconds,qr?}` returns private
+  `{invitation,expires,recipientPublicKey,qr?}`. Lifetime is 1–600 whole seconds;
+  Web defaults to 300. Optional `qr` is a locally generated boolean pixel matrix
+  for exactly that invitation. It is subject to the same private-display and
+  expiry/consumption cleanup as the invitation text
+- `direct-lan.inspect`: `{invitation}` returns token-free
+  `{hostPublicKey,hostName,endpoint,recipientPublicKey,recipientMatches:true,expires}`
+  only after recipient and selected endpoint scope validation. Inspection does
+  not prove the host is online or the token is unused
+- `direct-lan.join`, `direct-lan.cancel`: `{invitation}`. Join returns
+  `{paired:true,trusted:false,peerId}` after the protected state commit. Cancel
+  applies only to the issuing node's current invitation
+- `direct-lan.revoke`: `{peerId}` closes affected streams and application scopes.
+  Ambiguous pairing/save errors are distinct from ordinary rejection; never
+  claim the remote pair was rolled back
+- `wan.candidates.get`: `{}` returns explicit trusted-relay WAN settings and
+  `editable`/`restartRequired`. `wan.candidates.set` enables with
+  `{enabled:true,stunEndpoints:[numeric IP:port...],advertiseIPv6,probeBudget}`
+  or disables with exactly `{enabled:false}`. The positive finite probe budget
+  bounds each discovery pass; it is not a permanent four-endpoint metadata cap.
+  There is no implicit STUN server. Saving does not start discovery. Strict LAN
+  destination permission is incompatible; approved encrypted relay fallback
+  remains available in this separate `lan` mode
+- `network.configure`: `{mode:"mixed",mixed:{backends:[...]}}` selects two or
+  three separately prepared backends in explicit order, from `direct-lan`,
+  `tailnet`, `lan`. Their external traffic permissions must be reviewed. Strict
+  LAN-only permission cannot be silently broadened into mixed mode
+- `mixed.status`: `{}` and snapshot `mixed` report configured backends, the
+  device identity/public key, bindings, eligible route metadata and backend
+  states. `backendReady` means backend readiness, never application health or
+  measured traffic. No authentication URL or invitation is present in status
+- `mixed.bind`: `{peers:[current unbound peer IDs from distinct backend routes]}`
+  requires fresh cryptographic proof on every selected route. Matching names or
+  IP addresses are insufficient. Old route approvals pause; the logical peer
+  requires a new application approval. `mixed.unbind:{peerId}` removes only the
+  specified binding and does not reactivate former approvals
+
+Mixed route selection concerns new connections/reconnects only. There is no
+established-TCP migration, byte replay or automatic scope expansion. A positively
+unavailable backend may be skipped for a bound peer; unknown, permission,
+identity, expired/revoked binding and authentication failures remain terminal.
+An arbitrary dial timeout is not reclassified as safe backend unavailability.
+The Web does not expose standalone direct pairing controls while mixed is active.
