@@ -8,7 +8,7 @@ export interface ServiceDraft {
   serviceId: string; serviceRevision?: string; serviceCheckedAt?: string; serviceExpiresAt?: string | null; serviceLifetime?: ServiceLifetime; backend: Network; legacyReviewed: boolean
   source?: { id: string; revision: string; backend: Network | ''; intent: 'copy' | 'edit' }
 }
-export const currentBackend = (state: State): Network => state.settings?.network === 'lan' ? 'lan' : 'tailnet'
+export const currentBackend = (state: State): Network => state.settings?.network === 'mixed' ? 'mixed' : state.settings?.network === 'direct-lan' ? 'direct-lan' : state.settings?.network === 'lan' ? 'lan' : 'tailnet'
 export const savedRules = (state: State) => [...state.services, ...state.shares]
 export function validServiceName(name: string) { return /^[\p{L}\p{N}][\p{L}\p{N}_-]{0,63}$/u.test(name) }
 export function uniqueServiceName(base: string, state: State, omitId?: string) {
@@ -33,7 +33,7 @@ export function readServiceConfig(value: unknown, id: string, mode: ServiceMode)
       !validLifetime(config.lifetime || 'finite', config.ttlSeconds, mode) ||
       typeof config.purpose !== 'string' || typeof config.discoverable !== 'boolean' ||
       (config.loopbackHost !== undefined && !['', '127.0.0.1', '::1'].includes(config.loopbackHost)) ||
-      (config.backend !== undefined && !['', 'tailnet', 'lan'].includes(config.backend)) ||
+      (config.backend !== undefined && !['', 'tailnet', 'lan', 'direct-lan', 'mixed'].includes(config.backend)) ||
       (config.excludePorts !== undefined && typeof config.excludePorts !== 'string') ||
       (config.serviceId !== undefined && typeof config.serviceId !== 'string') ||
       (config.serviceRevision !== undefined && typeof config.serviceRevision !== 'string') ||
