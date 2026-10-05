@@ -119,6 +119,23 @@ export const test = base.extend({
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), { message: 'The page must not overflow horizontally' }).toBe(true)
       }
       const app = {
+        // This helper alone reads the sealed synthetic update. It never returns
+        // it, adds it to session metadata, or emits raw Playwright fill errors.
+        async fillRouteUpdate(input) {
+          try {
+            assert.equal(scenario, 'routes')
+            const root = await realpath(privateRoot)
+            const path = await realpath(session.routeUpdateFile)
+            const childPath = relative(root, path)
+            assert.ok(childPath && childPath !== '..' && !childPath.startsWith(`..${sep}`) && !childPath.startsWith(sep))
+            assert.equal(path, resolve(session.routeUpdateFile), 'Fixture input must not traverse a symlink')
+            const info = await stat(path)
+            assert.ok(info.isFile() && (info.mode & 0o077) === 0 && info.size > 0 && info.size <= 131072)
+            const envelope = JSON.parse(await readFile(path, 'utf8'))
+            assert.ok(typeof envelope.update === 'string' && envelope.update.length > 0 && Buffer.byteLength(envelope.update, 'utf8') <= 65536)
+            await input.fill(envelope.update)
+          } catch { throw new Error('Private route fixture input could not be prepared; details withheld') }
+        },
         receiveDirectory: session.receiveDirectory,
         localServicePort: session.localServicePort,
         async expectState(predicate, description = 'Real Go state confirms the reviewed result') {

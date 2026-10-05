@@ -11,6 +11,7 @@ export interface Peer {
   bridge: boolean
   discovery?: { state: 'pending' | 'confirmed' | 'unconfirmed' | 'unsupported' | 'limited' | 'stale'; checkedAt?: string; code?: string; services: number }
   path: 'direct' | 'relay' | 'unknown'
+  route?: LanRouteObservation
   address?: string
   fingerprint?: string
   autosave?: { enabled: boolean; paused: boolean; directory?: string }
@@ -108,6 +109,11 @@ export interface Service {
   lastFailure?: ServiceFailure
   error?: string
 }
+export interface LanRouteObservation { state: 'idle' | 'connecting' | 'reconnecting' | 'ready' | 'unavailable' | 'closed' | 'expired' | 'unknown'; path: 'unknown' | 'direct' | 'relay'; candidateId?: string; scope?: 'local' | 'external'; observedAt?: string; expires?: string }
+export interface LanRouteCandidate { candidateId: string; address: string; certificateSHA256: string; scope: 'local' | 'external' }
+export interface LanOwnRoutes { candidates: LanRouteCandidate[]; primaryCandidateId?: string; editable?: boolean }
+export interface LanRouteReview { digest: string; issuer: string; recipient: string; sequence: number; issued: string; expires: string; candidates: LanRouteCandidate[] }
+export interface LanPeerRoutes { observation?: LanRouteObservation; legacy: boolean; issuedSequence: number; receivedSequence: number; candidates: LanRouteCandidate[]; approvals: { candidateId: string; expires: string }[]; permittedIds: string[]; expires: string; nextExpiry: string; recoveryRequired: boolean }
 export interface LanAddress { interface: string; address: string }
 export interface LanInvitationPreview { recipientPublicKey: string; recipientMatches: true; hostPublicKey: string; hostName: string; expires: string; relay: { kind: 'relay'; address: string; certificateSHA256: string } }
 export interface LanRelay { kind: 'relay' | 'host'; address: string; certificateSHA256?: string }
@@ -245,6 +251,15 @@ export interface CommandPayloads {
   'network.login': { refresh?: boolean; qr?: boolean }
   'network.login.status': { qr?: boolean }
   'application.stop': Record<string, never>
+  'lan.routes.list': { peerId?: string }
+  'lan.routes.add': { address: string; certificateSHA256: string; scope: 'local' | 'external' }
+  'lan.routes.remove': { candidateId: string }
+  'lan.routes.export': { peerId: string; ttlSeconds: number; withdraw?: boolean }
+  'lan.routes.inspect': { peerId: string; update: string }
+  'lan.routes.apply': { peerId: string; update: string; digest: string; candidateIds: string[]; expires: string }
+  'lan.routes.review': { peerId: string }
+  'lan.routes.approve': { peerId: string; digest: string; candidateIds: string[]; expires: string }
+  'lan.routes.revoke': { peerId: string; candidateIds: string[] }
   'lan.addresses': Record<string, never>
   'lan.identity': Record<string, never>
   'lan.inspect': { invitation: string }

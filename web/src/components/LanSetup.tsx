@@ -3,6 +3,7 @@ import { messageByteLength, type LanAddress, type LanInvitationPreview, type Loc
 import { timestamp, type Translate } from '../i18n'
 import { lanTranslator } from '../lan-i18n'
 import './LanSetup.css'
+import { PreparedLanRoutes } from './LanRoutes'
 import type { Server } from '../useServer'
 import { Badge, Button, ErrorBanner, Icon, useAlive } from './ui'
 
@@ -269,6 +270,7 @@ export function LanSetup({ server, state, t, locale, hostname, setHostname, draf
       {section === 'join' && !ready && <p className="small muted">{lt('joinSetupHint')}</p>}
       <details className="relay-config"><summary>{lt('manualRelay')}</summary><p className="small muted">{t('relayScope')}</p>
       <form className="form-stack" onSubmit={configure}><label className="field">{t('deviceName')}<input value={hostname} onChange={event => setHostname(event.target.value)} maxLength={63} pattern="[\p{L}\p{N}](?:[\p{L}\p{N}]|-){0,62}" title={t('hostnameHint')} required /></label><label className="field">{t('relayAddress')}<input value={address} onChange={event => { setAddress(event.target.value); setValidation('') }} placeholder="192.0.2.10:443" autoComplete="off" spellCheck={false} maxLength={80} required /><small className="muted">{t('relayAddressHint')}</small></label><label className="field">{t('certificatePin')}<input className="code-value" value={pin} onChange={event => { setPin(event.target.value); setValidation('') }} autoComplete="off" spellCheck={false} maxLength={64} required /><small className="muted">{t('certificateHint')}</small></label><Button type="submit" variant="primary" disabled={blocked || joinProgress} busy={server.busy.has('network.configure')}>{t('activateRelay')}<Icon name="arrow" size={15} /></Button></form></details>
+      {state.lan?.configured && <PreparedLanRoutes server={server} state={state} t={t} locale={locale} disabled={blocked || joinProgress} />}
       {showStopControl && state.settings?.network === 'lan' && <StopApplication server={server} state={state} t={t} locale={locale} blocked={blocked || joinProgress} onStopping={() => setStopping(true)} />}
       {stopping && <p role="status" className="scope-note">{lt('stopping')}</p>}
     </section>

@@ -1,5 +1,8 @@
 import type { Locale } from './api'
 export const en = {
+  lan_routes_invalid: 'The route update is invalid, expired, stale or for a different pair. Obtain and review a fresh update.',
+  lan_routes_unavailable: 'No current locally approved route. Review the paired device’s latest route update.',
+  lan_routes_recovery: 'Route changes are paused because saved state is uncertain. Stop sobalink and inspect the saved state before restarting.',
   message_history_unavailable: 'Delivery is uncertain: local message history could not be saved reliably. The receiver may already have this message. Check the receiver and local history, available storage and state-folder permissions. Do not resend blindly.',
   message_peer_storage_unavailable: 'Delivery is uncertain: the receiver could not confirm that its message history was saved reliably. It may already have this message. Check its history, available storage and state-folder permissions. Do not resend blindly.',
   message_resend_blocked: 'Delivery is still uncertain. The other device may already have this text, so sending the same text to it again is blocked on this page. Your draft is kept for review. Check the receiver and message history. This protection resets when the page reloads or the app restarts.',
@@ -107,6 +110,9 @@ export const en = {
 } as const
 export type TextKey = keyof typeof en
 export const ja: Record<TextKey, string> = {
+  lan_routes_invalid: '経路の更新情報が無効、期限切れ、古い、または別のペア宛てです。新しい情報を受け取り、確認してください。',
+  lan_routes_unavailable: '手元で承認済みの有効な経路がありません。ペアの相手からの最新情報を確認してください。',
+  lan_routes_recovery: '保存状態が確定していないため、経路の変更を停止しています。sobalink を停止し、保存状態を確認してから再起動してください。',
   message_history_unavailable: '到達状況が不確かです。この端末のメッセージ履歴を確実に保存できませんでしたが、相手には届いている可能性があります。相手側とこの端末の履歴、空き容量、状態保存フォルダーの権限を確認してください。未確認のまま再送しないでください。',
   message_peer_storage_unavailable: '到達状況が不確かです。受信側でメッセージ履歴の確実な保存を確認できませんでしたが、すでに届いている可能性があります。受信側の履歴、空き容量、状態保存フォルダーの権限を確認してください。未確認のまま再送しないでください。',
   message_resend_blocked: '到達状況がまだ不確かです。相手には届いている可能性があるため、この画面では同じ相手への同じ文面の再送を止めています。下書きは確認用に残しています。相手側とメッセージ履歴を確認してください。この保護は画面の再読み込みやアプリの再起動でリセットされます。',
