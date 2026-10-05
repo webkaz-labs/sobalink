@@ -10,13 +10,13 @@
 
 ### Use a signed release
 
-The latest published prerelease is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2), source `00cc6a99809df77bf1754936ea7bf5ca4c5d0741`. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed all 15 jobs, including signatures, public download and installation on all four native targets. Prepared multi-relay recovery below is newer, unreleased source under verification; it is not in alpha.2. [Assets and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+The latest published prerelease is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), source `ded32f73c0d198294548120a38bcaf03e088bd6a`. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) passed all 15 jobs, including signatures, public download and installation on all four native targets. Prepared multi-relay recovery is included in alpha.4. The new explicit LAN destination policy and certificate-operation changes in this checkout are unreleased and under verification. [Assets and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
 Run with mise **2026.9.18** available. `mise use -g` selects the version for normal use.
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -28,6 +28,7 @@ Build this checkout with Go **1.27.1**, Node **24.19.0** and npm **11.9.0**. Fro
 ```sh
 npm --prefix web ci --no-audit --no-fund
 npm --prefix web run build
+go run ./cmd/prepare-engine
 go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba ./cmd/soba
 ./bin/soba
 ```

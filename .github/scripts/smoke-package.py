@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from source_provenance import verify_sources
 
 archive = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
@@ -59,6 +60,7 @@ with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
         for entry in module["notices"]:
             notice = share / entry["path"]
             assert hashlib.sha256(notice.read_bytes()).hexdigest() == entry["sha256"]
+    verify_sources(share, build, notices, bom)
     binary.chmod(0o755)
     result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
     assert version in result.stdout, result.stdout

@@ -10,13 +10,13 @@
 
 ### 署名付き公開版を使う
 
-最新の公開済みプレリリースは [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2)、ソースは `00cc6a99809df77bf1754936ea7bf5ca4c5d0741` です。[公開 workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格し、署名・公開取得・4ネイティブ対象の実導入を確認しました。下記の複数中継を準備する経路復旧は、検証中の未公開ソースであり alpha.2 には含まれません。[資材と対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+最新の公開済みプレリリースは [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4)、ソースは `ded32f73c0d198294548120a38bcaf03e088bd6a` です。[公開 workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) の全15ジョブが合格し、署名・公開取得・4ネイティブ対象の実導入を確認しました。複数中継を準備する経路復旧は alpha.4 に含まれます。このチェックアウトの明示的な LAN 送信先制限と証明書運用の変更は未公開・検証中です。[資材と対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
 mise **2026.9.18** を用意した環境で実行します。`mise use -g` は通常使う版を設定します。
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -28,6 +28,7 @@ mise exec -- soba
 ```sh
 npm --prefix web ci --no-audit --no-fund
 npm --prefix web run build
+go run ./cmd/prepare-engine
 go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba ./cmd/soba
 ./bin/soba
 ```
