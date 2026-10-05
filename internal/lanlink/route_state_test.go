@@ -185,9 +185,14 @@ func TestRouteStatePrepublicationFailureDoesNotActivate(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			a, b, now, candidates := routeNodesFixture(t)
 			raw, review := routeExportReview(t, a, b, candidates, now)
-			if operation == "approve" {
+			if operation != "export" {
+				// Begin with managed empty authority: moving from a legacy
+				// anchor to a different endpoint is a reduction, not a grant.
 				if err := b.applyRouteUpdate(a.PublicKey(), raw, review.Digest, nil, time.Time{}, now); err != nil {
 					t.Fatal(err)
+				}
+				if operation == "apply" {
+					raw, review = routeExportReview(t, a, b, candidates, now)
 				}
 			}
 			n := b
@@ -286,7 +291,7 @@ func TestRouteStateConcurrentUncertainSaveFreezesWriterAndReopens(t *testing.T) 
 			t.Fatal("route writer deadlocked")
 		}
 	}
-	if writes != 1 || b.RemoteSnapshot()[0].Routes != nil || !b.pairingRecovery {
+	if writes != 1 || len(routeSnapshot(b.RemoteSnapshot()[0], now).Permitted) != 0 || !b.pairingRecovery {
 		t.Fatal("uncertain update activated or overwritten")
 	}
 	if _, err := b.client(context.Background(), a.PublicKey()); !errors.Is(err, config.ErrAtomicRecovery) {

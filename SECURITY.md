@@ -111,3 +111,7 @@ There is no unrequested application launch, remote administration/command endpoi
 Retain native Linux x64/ARM64, macOS ARM64 and Windows x64 race tests, vet, frontend tests and actual packaged-binary checks. Signed artifacts, provenance and repeatable builds are separate from OS code signing/notarization and real-device acceptance. Do not disable signature, identity, digest or OS security checks to make an installation pass.
 
 Report security issues privately through the repository's available private reporting mechanism; do not put credentials or a working exploit against a private endpoint in a public issue. If private reporting is unavailable, ask for a private channel before sharing sensitive details. There is no claim of a completed external security audit or stable support for this draft.
+
+### Route permission save failures
+
+Route reductions stop the affected outgoing generation before persistence and block current-process recovery on failure; new grants wait for confirmed saving. Failed disk writes cannot guarantee durable revocation across a new process. Stop soba and inspect/reconcile saved approvals before restarting after a route recovery error. See [route recovery failure boundaries](docs/ROUTE_RECOVERY_DESIGN.en.md#persistence-revocation-and-failure).

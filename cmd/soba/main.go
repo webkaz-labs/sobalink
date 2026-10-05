@@ -83,7 +83,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		} else if err != nil && jsonErrors {
 			err = &jsonCommandError{err}
 		} else if err != nil {
-			err = localizeDiskSpaceError(japanese(locale), err)
+			err = localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err))
 		}
 	}()
 	var dir string

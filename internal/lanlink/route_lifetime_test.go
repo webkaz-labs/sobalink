@@ -399,8 +399,14 @@ func TestPermanentRouteGrantRequiresConfirmedCommit(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if operation == "approve" {
+				{
 					if err := b.applyRouteUpdateWithLifetime(a.PublicKey(), raw, routeReviewDigest(raw), nil, RouteLifetimeUntilRevoked, time.Time{}, now); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if operation == "apply" {
+					raw, err = a.exportRouteUpdateWithLifetime(b.PublicKey(), candidates, RouteUpdateVersion, RouteLifetimeUntilRevoked, time.Time{}, now)
+					if err != nil {
 						t.Fatal(err)
 					}
 				}

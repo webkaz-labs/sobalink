@@ -434,6 +434,7 @@ jobs:
           if release is None:
               notes = "\n".join([
                   "実験的なプレリリースです。安定版ではありません。",
+                  "経路許可の縮小時は旧接続を保存前に停止します。保存失敗後はsobaを停止してください。以前の許可がディスクに残る可能性があるため、保存状態を確認・修正してから再起動してください。失敗した取消の永続性は保証しません。",
                   "sobalink（コマンド soba）は端末間でサービス・ファイル・メッセージを扱うツールです。ローカルのWeb画面とCLIを備え、既存Tailnetと明示指定した信頼できる中継先を利用するペア接続に対応します。",
                   "認証済みの同じペアで、個別に許可したLAN内・外部リレー候補の間を復旧します。経路の許可は任意の期限または取消までを明示して選び、既存の有限許可は自動延長しません。",
                   "既存TCP接続の無停止や途中バイトからの再送は保証しません。アプリケーションによる再接続が必要です。LAN内の候補を使っていても外部送信ゼロを保証するモードではありません。",
@@ -443,6 +444,7 @@ jobs:
                   "公開後に4対象環境で実際のmiseインストールと署名・来歴を検証します。結果はこのリリースのActions実行で確認してください。",
                   "",
                   "Experimental prerelease; this is not a stable release.",
+                  "Route permission reductions stop old connections before saving. After a save failure, stop soba: old permissions may remain on disk. Inspect and reconcile saved state before restarting; failed revocation is not guaranteed durable.",
                   "sobalink, with the soba command, connects devices for services, files and messages through a local Web UI and CLI. It supports an existing Tailnet and explicit peer pairing through a selected trusted relay.",
                   "The same authenticated pair can recover across individually approved LAN-local and external relay candidates. Route authorization has an explicitly chosen expiry or lasts until revoked; existing finite permissions are never automatically extended.",
                   "Established TCP connections may fail and applications must reconnect; partial-byte resumption is not provided. A LAN-local relay candidate is not a strict no-external-egress mode.",
