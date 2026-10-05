@@ -67,6 +67,7 @@ type LANSelection struct {
 // All private transport material belongs to this one protected atomic file.
 // Application trust is a separate explicit approval in the ordinary profile.
 type lanState struct {
+	WANCandidates     *WANCandidateConfig      `json:"wan_candidates,omitempty"`
 	Version           int                      `json:"version"`
 	DestinationPolicy lanpolicy.Config         `json:"destination_policy,omitzero"`
 	Identity          lanlink.Identity         `json:"identity"`
@@ -143,8 +144,11 @@ func strictLANJSON(raw []byte, value any) error {
 }
 
 func validateLANState(s lanState) error {
-	if (s.Version < 1 || s.Version > 4) || s.Identity.Validate() != nil {
+	if (s.Version < 1 || s.Version > 5) || s.Identity.Validate() != nil {
 		return errors.New("invalid private LAN state")
+	}
+	if err := validateWANCandidateState(s); err != nil {
+		return err
 	}
 	if err := validateLANDestinationPolicy(s); err != nil {
 		return err
@@ -233,6 +237,7 @@ func (s *lanStore) copy() lanState {
 }
 
 func cloneLANState(s lanState) lanState {
+	s.WANCandidates = cloneWANCandidates(s.WANCandidates)
 	s.DestinationPolicy.Prefixes = append([]string(nil), s.DestinationPolicy.Prefixes...)
 	if s.Selection != nil {
 		selection := *s.Selection
@@ -507,7 +512,11 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, DestinationPolicy: state.DestinationPolicy, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
+	wan, err := wanTransportConfig(state.WANCandidates)
+	if err != nil {
+		return nil, err
+	}
+	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, WANCandidates: wan, DestinationPolicy: state.DestinationPolicy, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +612,19 @@ func (b *lanBackend) DialIP(ctx context.Context, network string, ap netip.AddrPo
 	}
 	for _, peer := range b.PublicPeers() {
 		if ap.Addr() == peer.Endpoint {
-			return b.DialPeer(ctx, peer.Key, network, ap.Port())
+			conn, err := b.DialPeer(ctx, peer.Key, network, ap.Port())
+			if err != nil {
+				return nil, err
+			}
+			id := peer.Key
+			return &exactPeerConn{Conn: conn, id: id, valid: func() bool {
+				for _, current := range b.PublicPeers() {
+					if current.Key == id {
+						return true
+					}
+				}
+				return false
+			}}, nil
 		}
 	}
 	return nil, errors.New("destination is not a current paired LAN server endpoint")
@@ -888,10 +909,8 @@ func (r offlineLANRevoker) Revoke(id string) error {
 }
 
 func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
-	revocationErr := c.revokeStartupPeer(id)
-	if revocationErr != nil && !errors.Is(revocationErr, config.ErrAtomicCommitted) {
-		return revocationErr
-	}
+	revocationErr := errors.Join(c.retireMixedTransport("lan", id), c.revokeStartupPeer(id))
+	// Even a pre-publication journal failure must not retain inbound authority.
 	p := c.profileCopy()
 	peers := p.Peers[:0]
 	removedAppTrust := false

@@ -89,6 +89,7 @@ import (
 	"tailscale.com/util/mak"
 	"tailscale.com/wgengine"
 	"tailscale.com/wgengine/filter"
+	"tailscale.com/wgengine/magicsock"
 	"tailscale.com/wgengine/netstack"
 	"tailscale.com/wgengine/router"
 	"tailscale.com/wgengine/wgcfg"
@@ -312,6 +313,7 @@ type locoBackend struct {
 	privateOnly         bool
 	underlayPolicy      *underlayguard.Policy
 	destinationPrefixes []netip.Prefix
+	wanCandidates       *WANConfig
 	presenceCancel      context.CancelFunc
 	presenceDone        chan struct{}
 	closed              bool // guarded by mu
@@ -399,6 +401,9 @@ type Server struct {
 	// DestinationPrefixes opts into immutable per-engine LAN destination admission.
 	// Nil retains trusted-relay behavior; an empty non-nil slice fails closed.
 	DestinationPrefixes []netip.Prefix
+	// WANCandidates explicitly enables bounded WAN discovery in trusted-relay mode.
+	// Nil preserves existing behavior; selected LAN destinations reject it.
+	WANCandidates *WANConfig
 
 	// AllowClient, if non-nil, reports whether the client with node
 	// key k may connect. It is consulted when a client that is not
@@ -577,10 +582,14 @@ func (s *Server) startLocked(ctx context.Context) error {
 	if s.RegionID != 0 {
 		return ErrExplicitRegions
 	}
+	wan, err := ValidateWANConfig(s.WANCandidates, s.PrivateOnly, s.DestinationPrefixes)
+	if err != nil {
+		return err
+	}
 	if err := validateRuntime(s.PrivateOnly); err != nil {
 		return err
 	}
-	regions, err := validateRegions(regions, s.PrivateOnly)
+	regions, err = validateRegions(regions, s.PrivateOnly)
 	if err != nil {
 		return err
 	}
@@ -592,6 +601,7 @@ func (s *Server) startLocked(ctx context.Context) error {
 	lb.dm = regionMap(regions)
 	lb.homeRegion = regions[0].RegionID
 	lb.privateOnly = s.PrivateOnly
+	lb.wanCandidates = wan
 	lb.underlayPolicy, err = newUnderlayPolicy(s.DestinationPrefixes, regions)
 	if err != nil {
 		return err
@@ -1645,6 +1655,9 @@ func createEngine(logf logger.Logf, lb *locoBackend) (err error) {
 		OnDERPRecv:     lb.onDERPRecv,
 		DERPAppName:    "tailcat-client",
 	}
+	if lb.wanCandidates != nil {
+		conf.WANCandidates = &magicsock.WANConfig{STUNEndpoints: slices.Clone(lb.wanCandidates.STUNEndpoints), AdvertiseIPv6: lb.wanCandidates.AdvertiseIPv6, ProbeBudget: lb.wanCandidates.ProbeBudget}
+	}
 	if lb.isServer {
 		conf.DERPAppName = "tailcat-server"
 	}
@@ -1692,6 +1705,9 @@ type Client struct {
 	// DestinationPrefixes opts into immutable per-engine LAN destination admission.
 	// Nil retains trusted-relay behavior; an empty non-nil slice fails closed.
 	DestinationPrefixes []netip.Prefix
+	// WANCandidates explicitly enables bounded WAN discovery in trusted-relay mode.
+	// Nil preserves existing behavior; selected LAN destinations reject it.
+	WANCandidates *WANConfig
 
 	lb       *locoBackend
 	ci       ConnInfo      // of server
@@ -1744,6 +1760,10 @@ func (c *Client) initLocked() error {
 	if err != nil {
 		return err
 	}
+	wan, err := ValidateWANConfig(c.WANCandidates, c.PrivateOnly, c.DestinationPrefixes)
+	if err != nil {
+		return err
+	}
 	if err := validateRuntime(c.PrivateOnly); err != nil {
 		return err
 	}
@@ -1761,6 +1781,7 @@ func (c *Client) initLocked() error {
 	lb.logf = logf
 	lb.dm = &tailcfg.DERPMap{}
 	lb.privateOnly = c.PrivateOnly
+	lb.wanCandidates = wan
 	lb.underlayPolicy, err = newUnderlayPolicy(c.DestinationPrefixes, ci.Region)
 	if err != nil {
 		return err

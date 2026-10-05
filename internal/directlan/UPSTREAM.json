@@ -1,0 +1,13 @@
+{
+  "module": "github.com/tailscale/wireguard-go",
+  "version": "v0.0.0-20260928213032-417aef361226",
+  "commit": "417aef361226c869ab29e15fe3539b01173c4719",
+  "source_url": "https://github.com/tailscale/wireguard-go/blob/417aef361226c869ab29e15fe3539b01173c4719/tun/netstack/tun.go",
+  "license": "MIT",
+  "files": {
+    "LICENSE": "91276db973f25602d1aa43491f59cbc84cb88e6f151e1d0cc82a755563ce0195",
+    "tun/netstack/tun.go": "dc8bdff07b29630c2e0867c0b2b56d6e4de1035049be89c5979c6cffe4b7623b"
+  },
+  "module_sum": "h1:v3Lpj2iHPWQDqeCwemQPz4fWweIEMLqBkwJqCjRyJQc=",
+  "go_mod_sum": "h1:rUelGmuK4UnSJYM5gl5Mknp6YbwwcL8+VAPMhNYe+jg="
+}

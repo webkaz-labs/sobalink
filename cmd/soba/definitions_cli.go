@@ -54,9 +54,9 @@ func definitionCLI(ctx context.Context, command string, args []string, dir strin
 	}
 	if len(args) < 2 || args[1] != "share" && args[1] != "connect" {
 		if len(args) == 1 || args[1] == "--help" || args[1] == "-h" {
-			return true, usageHelp(out, ja, "service save share|connect --backend tailnet|lan [--replace SERVICE_ID] [share/connect options]")
+			return true, usageHelp(out, ja, "service save share|connect --backend tailnet|lan|direct-lan|mixed [--replace SERVICE_ID] [share/connect options]")
 		}
-		return true, usageError(ja, "service save share|connect --backend tailnet|lan [share/connect options]")
+		return true, usageError(ja, "service save share|connect --backend tailnet|lan|direct-lan|mixed [share/connect options]")
 	}
 	backend, replace, forwarded, err := definitionSaveOptions(args[2:], ja)
 	if err != nil {
@@ -66,8 +66,8 @@ func definitionCLI(ctx context.Context, command string, args []string, dir strin
 	if err != nil {
 		return true, err
 	}
-	if backend != "tailnet" && backend != "lan" {
-		return true, errors.New(text(ja, "Saving offline requires --backend tailnet|lan", "オフラインで保存するには --backend tailnet|lan を指定してください"))
+	if backend != "tailnet" && backend != "lan" && backend != "direct-lan" && backend != "mixed" {
+		return true, errors.New(text(ja, "Saving offline requires --backend tailnet|lan|direct-lan|mixed", "オフラインで保存するには --backend tailnet|lan|direct-lan|mixed を指定してください"))
 	}
 	if err := resolveNamedPeerPayload(payload, ja, func(result any) error { return client(ctx, dir, "status", result) }); err != nil {
 		return true, err
@@ -117,7 +117,7 @@ func definitionSaveOptions(args []string, ja bool) (backend, replace string, for
 		if !equals {
 			i++
 			if i >= len(args) {
-				return "", "", nil, usageError(ja, "service save share|connect --backend tailnet|lan [--replace ID]")
+				return "", "", nil, usageError(ja, "service save share|connect --backend tailnet|lan|direct-lan|mixed [--replace ID]")
 			}
 			value = args[i]
 		}

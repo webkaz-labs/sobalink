@@ -62,10 +62,10 @@ func clientHelperCLI(ctx context.Context, command string, args []string, dir str
 }
 
 func rustDeskSetupCLI(args []string, dir string, ja, dryRun bool, out io.Writer, query commandQuery) error {
-	f := commandFlags("rustdesk setup --backend tailnet|lan --id-peer ID --key PUBLIC_KEY [options]", ja, out)
+	f := commandFlags("rustdesk setup --backend tailnet|lan|direct-lan|mixed --id-peer ID --key PUBLIC_KEY [options]", ja, out)
 	var setup core.RustDeskSetup
 	f.StringVar(&setup.Name, "name", "rustdesk", text(ja, "saved group name", "保存するグループ名"))
-	f.StringVar(&setup.Backend, "backend", "", text(ja, "explicit tailnet or lan backend", "tailnet または lan を明示"))
+	f.StringVar(&setup.Backend, "backend", "", text(ja, "explicit connection backend", "接続方式を明示"))
 	f.StringVar(&setup.IDPeerID, "id-peer", "", text(ja, "immutable ID-server peer ID", "ID サーバーの不変な相手 ID"))
 	f.StringVar(&setup.RelayPeerID, "relay-peer", "", text(ja, "immutable relay peer ID; defaults to ID peer", "リレーの不変な相手 ID（省略時は ID サーバーと同じ）"))
 	f.StringVar(&setup.PublicKey, "key", "", text(ja, "RustDesk public key (base64, 32 bytes)", "RustDesk 公開鍵（32 バイトの Base64）"))
@@ -91,8 +91,8 @@ func rustDeskSetupCLI(args []string, dir string, ja, dryRun bool, out io.Writer,
 		return errors.New(text(ja, "Use --lifetime until-stopped without --ttl, or a positive whole-second --ttl for finite lifetime", "--lifetime until-stopped は --ttl なしで、有限の期間は正の整数秒の --ttl を指定してください"))
 	}
 	setup.TTLSeconds = int(*ttl / time.Second)
-	if setup.Name == "" || setup.Backend != "tailnet" && setup.Backend != "lan" || setup.IDPeerID == "" || setup.PublicKey == "" {
-		return errors.New(text(ja, "Specify a name, --backend tailnet|lan, --id-peer ID and --key PUBLIC_KEY", "名前、--backend tailnet|lan、--id-peer ID、--key PUBLIC_KEY を指定してください"))
+	if setup.Name == "" || setup.Backend != "tailnet" && setup.Backend != "lan" && setup.Backend != "direct-lan" && setup.Backend != "mixed" || setup.IDPeerID == "" || setup.PublicKey == "" {
+		return errors.New(text(ja, "Specify a name, --backend tailnet|lan|direct-lan|mixed, --id-peer ID and --key PUBLIC_KEY", "名前、--backend tailnet|lan|direct-lan|mixed、--id-peer ID、--key PUBLIC_KEY を指定してください"))
 	}
 	// Zero is meaningful only as an omitted Core default, not an explicitly
 	// selected CLI port. Catch it before a preview could silently default it.

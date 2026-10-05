@@ -171,7 +171,7 @@ func collectNotices(root, destination string, skipToolSources bool) ([]Notice, e
 }
 
 func collectInventory(packages []goPackage, goRoot, out string, reviewedRoot ...string) (NoticeInventory, error) {
-	inventory := NoticeInventory{ArchiveBasePath: "share/sobalink", Scope: "Target-filtered Go package/module inventory (CGO_ENABLED=0), excluding test dependencies. Module-level notice files are preserved without license classification. Explicit adapted main-module source components are inventoried separately from upstream Go modules; other embedded source-only licenses still require release review."}
+	inventory := NoticeInventory{ArchiveBasePath: "share/sobalink", Scope: "Target-filtered Go package/module inventory (CGO_ENABLED=0), excluding test dependencies. Module-level notice files are preserved without license classification. Explicit adapted source components are inventoried separately from upstream Go modules; other embedded source-only licenses still require release review."}
 	modules := map[string]goModule{}
 	for _, p := range packages {
 		if p.Module == nil || p.Module.Main {

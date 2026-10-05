@@ -46,10 +46,15 @@ func (c *Core) loginCommand(ctx context.Context, start bool, raw json.RawMessage
 	if !start && input.Refresh {
 		return LoginView{}, errors.New("refresh requires an explicit login request")
 	}
-	if c.profileCopy().Settings.Network != "tailnet" || c.nodeCopy() == nil {
+	mode := c.profileCopy().Settings.Network
+	loginNode := c.nodeCopy()
+	if mixed, ok := loginNode.(*mixedBackend); ok {
+		loginNode = mixed.nodes["tailnet"]
+	}
+	if (mode != "tailnet" && mode != "mixed") || loginNode == nil {
 		return LoginView{}, &localCommandError{"login_network_required", "activate the Tailnet network before signing in"}
 	}
-	state, err := c.current(ctx)
+	state, err := loginNode.State(ctx)
 	if err != nil {
 		return LoginView{}, err
 	}
@@ -60,10 +65,10 @@ func (c *Core) loginCommand(ctx context.Context, start bool, raw json.RawMessage
 		return LoginView{State: "approval-required"}, nil
 	}
 	if start && (state.AuthURL == "" || input.Refresh) {
-		if err := c.nodeCopy().Login(ctx); err != nil {
+		if err := loginNode.Login(ctx); err != nil {
 			return LoginView{}, &localCommandError{"login_request_failed", "could not request interactive login; check the network and retry"}
 		}
-		state, err = c.current(ctx)
+		state, err = loginNode.State(ctx)
 		if err != nil {
 			return LoginView{}, err
 		}

@@ -200,6 +200,7 @@ var logicalDefinitions = map[string]Definition{
 	"stagingSeconds": {600, "seconds"},
 }
 var resourceDefinitions = map[string]Definition{
+	"workerFrameBytes": {1 << 20, "bytes"}, "workerRequests": {128, "requests"}, "workerHandles": {1024, "handles"},
 	"stagingInventoryEntries": {100000, "entries"}, "stagingInventoryDepth": {64, "levels"},
 	"messageStorageBytes": {4 << 20, "bytes"}, "messageTextBytes": {16 << 10, "bytes"},
 	"profileBytes": {4 << 20, "bytes"}, "lanStateBytes": {2 << 20, "bytes"}, "discoveryBytes": {256 << 10, "bytes"},

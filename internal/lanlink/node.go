@@ -32,6 +32,7 @@ type NodeConfig struct {
 	Candidates        []RouteCandidate
 	PrivateOnly       bool
 	DestinationPolicy lanpolicy.Config
+	WANCandidates     *tailcat.WANConfig
 	// Persist atomically saves both snapshots to the protected state file. It must
 	// not call back into Node or Book. Nil confirms durable commit;
 	// config.ErrAtomicCommitted means replacement with uncertain durability.
@@ -41,6 +42,7 @@ type NodeConfig struct {
 type remoteClient struct {
 	remote            RemotePeer
 	destinationPolicy lanpolicy.Config
+	wanCandidates     *tailcat.WANConfig
 	address           netip.Addr
 	client            peerTransport
 	startMu           transportGate
@@ -97,6 +99,10 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		return nil, err
 	}
 	cfg.DestinationPolicy = canonical
+	cfg.WANCandidates, err = tailcat.ValidateWANConfig(cfg.WANCandidates, cfg.PrivateOnly, destinationPrefixes(canonical))
+	if err != nil {
+		return nil, err
+	}
 	if err := canonical.CheckRelay(cfg.Relay.Address); err != nil {
 		return nil, err
 	}
@@ -138,14 +144,14 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		if _, e := cfg.Trust.Epoch(r.Peer.Key); e != nil {
 			return nil, errors.New("remote and public trust snapshots disagree")
 		}
-		n.clients[r.Peer.Key] = &remoteClient{remote: r, address: ap, destinationPolicy: cfg.DestinationPolicy}
+		n.clients[r.Peer.Key] = &remoteClient{remote: r, address: ap, destinationPolicy: cfg.DestinationPolicy, wanCandidates: cfg.WANCandidates}
 	}
 	if len(cfg.Trust.Snapshot().Peers) != len(cfg.Remotes) {
 		return nil, errors.New("remote and public trust snapshots disagree")
 	}
 	// Match the existing identity adapter's process-wide no-upload policy.
 	logtail.Disable()
-	n.server = &tailcat.Server{Key: cfg.Identity.Key, PresharedKey: cfg.Identity.PSK, Regions: regions, PrivateOnly: cfg.PrivateOnly, DestinationPrefixes: destinationPrefixes(cfg.DestinationPolicy), Logf: logger.Discard, UDPIdleTimeout: 5 * time.Minute, AllowClient: n.allowClient}
+	n.server = &tailcat.Server{Key: cfg.Identity.Key, PresharedKey: cfg.Identity.PSK, Regions: regions, PrivateOnly: cfg.PrivateOnly, DestinationPrefixes: destinationPrefixes(cfg.DestinationPolicy), WANCandidates: cfg.WANCandidates, Logf: logger.Discard, UDPIdleTimeout: 5 * time.Minute, AllowClient: n.allowClient}
 	n.server.OnTCP = n.onTCP
 	return n, nil
 }

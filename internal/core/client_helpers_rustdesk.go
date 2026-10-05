@@ -89,8 +89,8 @@ func normalizeRustDeskSetup(in RustDeskSetup) (RustDeskSetup, error) {
 	if !config.ValidName(in.Name + "-heartbeat") {
 		return in, &localCommandError{"rustdesk_name_invalid", "choose a valid group name short enough for the -heartbeat service suffix"}
 	}
-	if in.Backend != "tailnet" && in.Backend != "lan" {
-		return in, &localCommandError{"service_backend_required", "choose tailnet or lan explicitly"}
+	if in.Backend != "tailnet" && in.Backend != "lan" && in.Backend != "direct-lan" && in.Backend != "mixed" {
+		return in, &localCommandError{"service_backend_required", "choose an explicit connection backend"}
 	}
 	if in.RelayPeerID == "" {
 		in.RelayPeerID = in.IDPeerID

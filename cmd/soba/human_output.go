@@ -55,9 +55,10 @@ type humanService struct {
 	Diagnostic *core.ServiceDiagnostic `json:"diagnostic"`
 }
 type humanSnapshot struct {
-	LAN       *humanLANStatus `json:"lan"`
-	State     string          `json:"state"`
-	ProcessID int             `json:"processId"`
+	DirectLAN *humanDirectLANStatus `json:"directLAN"`
+	LAN       *humanLANStatus       `json:"lan"`
+	State     string                `json:"state"`
+	ProcessID int                   `json:"processId"`
 	Self      struct {
 		Name      string `json:"name"`
 		Status    string `json:"status"`
@@ -135,6 +136,9 @@ func snapshotCommand(ctx context.Context, command string, args []string, dir str
 	}
 	fmt.Fprintf(out, "%s: %d; %s: %d; %s: %d\n", text(ja, "Peers", "相手"), len(snapshot.Peers), text(ja, "connections", "接続"), len(snapshot.Services), text(ja, "shares", "共有"), len(snapshot.Shares))
 	writeHumanLANStatus(out, ja, snapshot.LAN)
+	if snapshot.Settings.Network == "direct-lan" {
+		writeHumanDirectLANStatus(out, ja, snapshot.DirectLAN)
+	}
 	names := map[string]string{}
 	for _, peer := range snapshot.Peers {
 		names[peer.ID] = peer.Name

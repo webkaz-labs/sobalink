@@ -142,7 +142,7 @@ func (r *remoteClient) prepareRemote(ctx context.Context, remote RemotePeer, anc
 	role := remote.ClientPrivate
 	if r.makeClient == nil {
 		r.makeClient = func(address tailcat.Addr) peerTransport {
-			return &tailcat.Client{Server: address, Key: role, PrivateOnly: privateOnly, DestinationPrefixes: destinationPrefixes(r.destinationPolicy), Logf: logger.Discard}
+			return &tailcat.Client{Server: address, Key: role, PrivateOnly: privateOnly, DestinationPrefixes: destinationPrefixes(r.destinationPolicy), WANCandidates: r.wanCandidates, Logf: logger.Discard}
 		}
 	}
 	// Keep the original authenticated identity and secret material. Candidate
@@ -387,7 +387,7 @@ func (r *remoteClient) retirementState() *transportRetirement {
 // start old's retirement after releasing it; no engine teardown runs under n.mu.
 func (n *Node) replaceRemoteLocked(peer string, old *remoteClient, remote RemotePeer) *remoteClient {
 	old.retired.Store(true)
-	next := &remoteClient{remote: remote, address: old.address, destinationPolicy: n.cfg.DestinationPolicy, predecessor: old.retirementState()}
+	next := &remoteClient{remote: remote, address: old.address, destinationPolicy: n.cfg.DestinationPolicy, wanCandidates: n.cfg.WANCandidates, predecessor: old.retirementState()}
 	n.clients[peer] = next
 	return next
 }

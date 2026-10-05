@@ -12,6 +12,9 @@ import (
 )
 
 func validateLANDestinationPolicy(state lanState) error {
+	if err := validateWANCandidateState(state); err != nil {
+		return err
+	}
 	policy, err := state.DestinationPolicy.Canonical()
 	if err != nil {
 		return err
@@ -94,8 +97,11 @@ func (c *Core) lanPolicyCommand(ctx context.Context, name string, raw json.RawMe
 	if reflect.DeepEqual(previous, canonical) {
 		return c.lanPolicyView(previous), nil
 	}
-	next.Version = 4
+	next.Version = max(next.Version, 4)
 	next.DestinationPolicy = canonical
+	if err := validateWANCandidateState(next); err != nil {
+		return nil, err
+	}
 	if err := validateLANDestinationPolicy(next); err != nil {
 		return nil, &lanCommandError{"lan_policy_relay_outside", "include the selected and prepared relay addresses in the allowed prefixes, or remove those relay candidates first"}
 	}

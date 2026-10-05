@@ -45,6 +45,9 @@ def verify_sources(share, build, notices, bom):
         ancestor = component["pedigree"]["ancestors"][0]
         upstream = source["upstream"]
         assert ancestor["name"] == upstream["module"] and ancestor["version"] == upstream["version"]
+    direct = [s for s in sources if s["package"] == "github.com/webkaz-labs/sobalink/internal/directlan"]
+    assert len(direct) == 1, "reviewed direct LAN source provenance is required"
+    verify_direct_source(share, direct[0])
     source = engine[0]
     raw = read_regular(share, "licenses/source/internal/engineadaptation/manifest.json")
     assert digest(raw) == source["manifest_sha256"]
@@ -73,3 +76,31 @@ def verify_sources(share, build, notices, bom):
                         ("source:upstream-module:sum", source["upstream"]["module_sum"]),
                         ("source:upstream-go-mod:sum", source["upstream"]["go_mod_sum"])):
         assert properties[prop] == value
+
+
+def verify_direct_source(share, source):
+    upstream = source["upstream"]
+    assert source["source_path"] == "internal/directlan"
+    assert upstream["module"] == "github.com/tailscale/wireguard-go"
+    assert upstream["version"] == "v0.0.0-20260928213032-417aef361226"
+    assert upstream["commit"] == "417aef361226c869ab29e15fe3539b01173c4719"
+    assert upstream["license"] == "MIT"
+    assert upstream["module_sum"] == "h1:v3Lpj2iHPWQDqeCwemQPz4fWweIEMLqBkwJqCjRyJQc="
+    assert upstream["go_mod_sum"] == "h1:rUelGmuK4UnSJYM5gl5Mknp6YbwwcL8+VAPMhNYe+jg="
+    assert upstream["files"] == {
+        "LICENSE": "91276db973f25602d1aa43491f59cbc84cb88e6f151e1d0cc82a755563ce0195",
+        "tun/netstack/tun.go": "dc8bdff07b29630c2e0867c0b2b56d6e4de1035049be89c5979c6cffe4b7623b",
+    }
+    inputs = {i["path"]: i["sha256"] for i in source["build_inputs"]}
+    assert "internal/directlan/stack.go" in inputs
+    for name in ("WIREGUARD_LICENSE", "UPSTREAM.json", "UPSTREAM.md", "stack.go"):
+        raw = read_regular(share, "licenses/source/internal/directlan/" + name)
+        assert inputs["internal/directlan/" + name] == digest(raw)
+        if name == "WIREGUARD_LICENSE":
+            assert digest(raw) == upstream["files"]["LICENSE"]
+        elif name == "UPSTREAM.json":
+            assert json.loads(raw) == upstream
+        elif name == "stack.go":
+            assert raw.startswith(b"/* SPDX-License-Identifier: MIT\n * Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.\n")
+    for name in ("go.mod", "go.sum"):
+        assert inputs[name] == digest(read_regular(share, name))

@@ -1,0 +1,37 @@
+import { test, expect } from './fixtures.mjs'
+
+test.describe('direct LAN and mixed reviewed setup', () => {
+  test.use({ scenario: 'offline' })
+  for (const locale of ['en', 'ja']) {
+    test(`${locale}: exact direct scope and mixed order remain review-only on desktop and narrow layout`, async ({ page, app }) => {
+      await app.appearance(locale, locale === 'ja' ? 'dark' : 'light')
+      await page.locator('.sidebar-title button').click()
+      await page.locator('dialog input[value="direct-lan"]').check()
+      const direct = page.locator('.direct-lan-setup')
+      await direct.getByRole('textbox', { name: locale === 'ja' ? /^この端末の数値LAN接続先/ : /^This device’s numeric LAN endpoint/ }).fill('192.168.50.10:48444')
+      await direct.getByRole('textbox', { name: locale === 'ja' ? /^許可するLANプレフィックス/ : /^Allowed LAN prefixes/ }).fill('192.168.50.0/24')
+      await direct.getByRole('button', { name: locale === 'ja' ? '直接LANの開始内容を確認' : 'Review direct LAN start', exact: true }).click()
+      await expect(direct.getByRole('region')).toContainText('192.168.50.10:48444')
+      await expect(direct.getByRole('region')).toContainText('192.168.50.0/24')
+      expect(await app.count('network.configure')).toBe(0)
+      await app.captureForm(`direct-lan-review-${locale}-desktop`)
+      await page.setViewportSize({ width: 390, height: 844 })
+      await direct.getByRole('region').scrollIntoViewIfNeeded()
+      await app.captureForm(`direct-lan-review-${locale}-390`)
+      await direct.getByRole('button', { name: locale === 'ja' ? 'キャンセル' : 'Cancel', exact: true }).click()
+      await page.locator('dialog input[value="mixed"]').check()
+      const mixed = page.getByRole('region', { name: locale === 'ja' ? '複合接続' : 'Mixed connections', exact: true })
+      await mixed.getByRole('combobox').nth(0).selectOption('direct-lan')
+      await mixed.getByRole('combobox').nth(1).selectOption('tailnet')
+      await mixed.getByRole('button', { name: locale === 'ja' ? '複合接続の開始を確認' : 'Review mixed activation', exact: true }).click()
+      await expect(mixed).toContainText(locale === 'ja' ? '外部サービスへ通信' : 'may contact external services')
+      await app.captureForm(`mixed-review-${locale}-390`)
+      await page.setViewportSize({ width: 1440, height: 960 })
+      await app.captureForm(`mixed-review-${locale}-desktop`)
+      expect(await app.count('network.configure')).toBe(0)
+      expect(await app.count('mixed.bind')).toBe(0)
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+    })
+  }
+})

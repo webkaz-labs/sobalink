@@ -8,7 +8,7 @@ The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the ear
 
 ## Install a signed prerelease
 
-[0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4) is published from `ded32f73c0d198294548120a38bcaf03e088bd6a`. [Release run 37269441102 (attempt 2)](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) passed all 15 jobs, including the four native packages, signatures/provenance, unauthenticated public retrieval and actual mise installation on all four targets. The pin below installs that release. The new LAN engine guard is unreleased source under verification, with no next version assigned here; it is not part of alpha.4. [Exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline)
+[0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4) is published from `ded32f73c0d198294548120a38bcaf03e088bd6a`. [Release run 37269441102 (attempt 2)](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) passed all 15 jobs, including the four native packages, signatures/provenance, unauthenticated public retrieval and actual mise installation on all four targets. The pin below installs that release. The new connection-mode and engine changes are unreleased source under verification, with no next version assigned here; they are not part of alpha.4. [Exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline)
 
 A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
 
@@ -118,13 +118,15 @@ The SBOM, build metadata and notices index are also emitted as assets. `SHA256SU
 
 The route source includes a modified internal Tailcat component. When it is in a target's runtime package closure, packaging retains its original license, provenance metadata and [adaptation record](../internal/routecat/UPSTREAM.md), and records upstream and adapted input hashes separately. This does not change the normal single-executable package or establish route acceptance. No strict-egress helper executable is distributed.
 
+The relayless direct LAN adapter also contains a narrowly adapted WireGuard userspace stack in `internal/directlan/stack.go`. Its separate source component records the original `github.com/tailscale/wireguard-go` version, module checksums, original stack/license hashes, and every selected local runtime input. Packaging verifies the independent original pin and exact MIT license, checks the runtime input inventory before and after compilation, and retains the attribution-bearing adapted `stack.go`, `WIREGUARD_LICENSE`, `UPSTREAM.json` and `UPSTREAM.md`. This preserves original and modified identities without treating the adapted stack as an unmodified upstream package or requiring a kernel TUN, administrator access or OS/router changes.
+
 ## Reproducibility and provenance
 
 The packager pins the toolchain, required tags and target, disables cgo and workspace overrides, uses read-only module resolution, trims build paths, disables automatic VCS embedding, clears the linker build ID and sets an explicit version. Archives use sorted entries, normalized owners/modes and `SOURCE_DATE_EPOCH`; pre-1980 ZIP dates normalize to 1980. Symlinks and special archive entries are rejected.
 
 The release workflow builds each native target twice and compares output digests. Locked frontend reproduction is a separate input check. This establishes repeatability of the selected inputs on that runner, not independent-builder reproduction, OS code signing/notarization or live application compatibility.
 
-The CycloneDX SBOM and notice index preserve module/package provenance and copied notice hashes without guessing a legal classification. Unreviewed Go replacements, missing provenance and missing notices fail packaging. The sole exception is the exact, version-qualified Tailscale replacement described below; its complete source digest is checked before and after compilation. Source-only terms outside conventional notice filenames still require review before distribution.
+The CycloneDX SBOM and notice index preserve module/package provenance and copied notice hashes without guessing a legal classification. Unreviewed Go replacements, missing provenance and missing notices fail packaging. The sole exception is the exact, version-qualified Tailscale replacement described above; its complete source digest is checked before and after compilation. Source-only terms outside conventional notice filenames still require review before distribution.
 
 Trusted-main Go caches bind runner, OS, architecture, toolchain, dependency manifests and source commit. Only successful canonical main CI saves that namespace. Prerelease restores the exact tested-commit key without fallback or saving. Cache misses build normally; caching never skips tests, package reproduction or signature checks.
 

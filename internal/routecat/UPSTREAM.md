@@ -34,6 +34,26 @@ traffic acceptance and packaging review before use.
 
 An optional per-engine `DestinationPrefixes` policy now wires the adapted engine before socket setup, restricts advertised endpoints, and revokes admitted UDP/TCP on retirement. Nil preserves the normal behavior; the policy does not bind a NIC or establish VPN isolation.
 
+`WANCandidates` is a separate, explicit local opt-in for trusted-relay transport.
+It accepts exact numeric STUN destinations and/or native IPv6 candidate
+advertisement. Metadata is bounded by the configurable private-state byte
+budget and the inherent nonzero 16-bit discovery-ID namespace. An adjustable
+per-netcheck destination budget defaults to four; a rotating subset and bounded
+retries keep each run finite without imposing a four-endpoint metadata cap. Nil preserves existing behavior. Both `PrivateOnly`
+and any non-nil `DestinationPrefixes` reject this option before engine setup.
+Discovery settings never enter a peer capability, pinned relay map, or relay
+presence connection. The generated engine uses a separate STUN-only netcheck
+map, admits only those exact discovery destinations at its STUN writer, removes
+synthetic discovery-region information before relay selection, and uses the
+actual IPv6 socket port for opted-in interface candidates. Opt-in discovery
+does not query cloud metadata or introduce DNS, HTTPS/ICMP diagnostic fallback,
+port mapping, router configuration, or privileged network changes. STUN reveals
+the source address and port to each selected discovery service and does not
+authenticate a peer or establish direct-path reachability. The authorized
+certificate-pinned encrypted relay remains required and available as fallback.
+Socket-free validation and a separately opted-in loopback STUN fixture do not
+prove WAN NAT traversal, relayless WAN operation, or real-device compatibility.
+
 There is intentionally no live UpdateRegions method: candidate removal, policy
 changes, key admission, active flow cancellation and durable configuration need
 one outer transaction. Restarting with unchanged identities is the bounded first

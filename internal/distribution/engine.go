@@ -57,7 +57,7 @@ func engineInventory(root string, packages []goPackage, share string) ([]SourceC
 			upstream.Files[c.Path] = c.OriginalSHA256
 		}
 	}
-	component := SourceComponent{Package: engineadaptation.Module, Path: engineadaptation.SourceDirectory, Modification: "Reviewed local Tailscale source adaptation for per-engine underlay admission. Not the unmodified upstream module. Original module checksums, exact changes and complete adapted source digest are retained.", Upstream: upstream, AdaptedTreeSHA256: m.AdaptedTreeSHA256, ManifestSHA256: engineadaptation.ManifestSHA256}
+	component := SourceComponent{Package: engineadaptation.Module, Path: engineadaptation.SourceDirectory, Modification: "Reviewed local Tailscale source adaptation for per-engine underlay admission and explicit bounded WAN candidate discovery. Not the unmodified upstream module. Original module checksums, exact changes and complete adapted source digest are retained.", Upstream: upstream, AdaptedTreeSHA256: m.AdaptedTreeSHA256, ManifestSHA256: engineadaptation.ManifestSHA256}
 	inputs := map[string]string{}
 	for _, rel := range []string{"go.mod", "go.sum", engineadaptation.SourceDirectory + "/manifest.json", engineadaptation.SourceDirectory + "/UPSTREAM.md"} {
 		data, err := readSourceFile(root, rel)

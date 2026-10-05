@@ -34,7 +34,33 @@ class SourceProvenanceTests(unittest.TestCase):
                  "source:upstream-module:sum": manifest["module_sum"], "source:upstream-go-mod:sum": manifest["go_mod_sum"]}
         component = {"bom-ref": "source:internal/engineadaptation", "properties": [{"name": k, "value": v} for k, v in props.items()],
                      "pedigree": {"ancestors": [{"name": "tailscale.com", "version": "v1.104.0"}]}}
-        return {"source_components": [copy.deepcopy(source)]}, {"source_components": [source], "modules": []}, {"components": [component]}
+        build, notices, bom = {"source_components": [copy.deepcopy(source)]}, {"source_components": [source], "modules": []}, {"components": [component]}
+        self.add_direct_source(root, build, notices, bom)
+        return build, notices, bom
+
+    def add_direct_source(self, root, build, notices, bom):
+        originals = pathlib.Path(__file__).resolve().parents[2] / "internal/directlan"
+        inputs = {"go.mod": digest((root / "go.mod").read_bytes()), "go.sum": digest((root / "go.sum").read_bytes()),
+                  "internal/directlan/stack.go": "e" * 64}
+        retained = []
+        for name in ("WIREGUARD_LICENSE", "UPSTREAM.json", "UPSTREAM.md", "stack.go"):
+            raw = (originals / name).read_bytes()
+            path = "licenses/source/internal/directlan/" + name
+            destination = root / path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(raw)
+            inputs["internal/directlan/" + name] = digest(raw)
+            retained.append({"path": path, "sha256": digest(raw)})
+        upstream = json.loads((originals / "UPSTREAM.json").read_text())
+        inputs = [{"path": p, "sha256": h} for p, h in sorted(inputs.items())]
+        source = {"package": "github.com/webkaz-labs/sobalink/internal/directlan", "source_path": "internal/directlan",
+                  "build_inputs": inputs, "build_inputs_sha256": digest(json.dumps(inputs, separators=(",", ":")).encode()),
+                  "notices": retained, "upstream": upstream}
+        build["source_components"].append(copy.deepcopy(source))
+        notices["source_components"].append(source)
+        props = {"source:modified": "true", "source:build-inputs:sha256": source["build_inputs_sha256"], "source:build-inputs": json.dumps(inputs)}
+        bom["components"].append({"bom-ref": "source:internal/directlan", "properties": [{"name": k, "value": v} for k, v in props.items()],
+                                  "pedigree": {"ancestors": [{"name": upstream["module"], "version": upstream["version"]}]}})
 
     def test_intact_sources(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -42,7 +68,7 @@ class SourceProvenanceTests(unittest.TestCase):
             verify_sources(root, *self.fixture(root))
 
     def test_rejects_inconsistent_or_missing_records(self):
-        for case in ("metadata", "notice", "missing engine", "upstream runtime", "sbom digest", "input digest", "upstream purl", "notice traversal"):
+        for case in ("metadata", "notice", "missing engine", "upstream runtime", "sbom digest", "input digest", "upstream purl", "notice traversal", "missing direct", "direct license", "direct original hash"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
                 root = pathlib.Path(temp)
                 build, notices, bom = self.fixture(root)
@@ -63,6 +89,14 @@ class SourceProvenanceTests(unittest.TestCase):
                 elif case == "notice traversal":
                     for target in (build, notices):
                         target["source_components"][0]["notices"][0]["path"] = "../outside"
+                elif case == "missing direct":
+                    for target in (build, notices):
+                        target["source_components"].pop()
+                elif case == "direct license":
+                    (root / "licenses/source/internal/directlan/WIREGUARD_LICENSE").write_text("changed")
+                elif case == "direct original hash":
+                    for target in (build, notices):
+                        target["source_components"][1]["upstream"]["files"]["tun/netstack/tun.go"] = "0" * 64
                 with self.assertRaises((AssertionError, KeyError)):
                     verify_sources(root, build, notices, bom)
 

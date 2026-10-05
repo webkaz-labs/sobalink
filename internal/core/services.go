@@ -325,7 +325,7 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	}
 	id := randomID()
 	if in.ReplaceID != "" {
-		if in.Backend != "tailnet" && in.Backend != "lan" {
+		if in.Backend != "tailnet" && in.Backend != "lan" && in.Backend != "direct-lan" && in.Backend != "mixed" {
 			return nil, &localCommandError{"service_backend_required", "review and explicitly select the backend for this saved service"}
 		}
 		found := false
@@ -625,6 +625,9 @@ func (c *Core) startServiceTransport(ctx context.Context, st identity.State, act
 				if err != nil {
 					return rollback(err)
 				}
+				if filtered, ok := packet.(interface{ SetPeerFilter(func(string) bool) }); ok {
+					filtered.SetPeerFilter(func(id string) bool { return slices.Contains(spec.PeerIDs, id) && active.guard() == nil })
+				}
 				authorize := func(ctx context.Context, source netip.AddrPort) error {
 					id, err := c.authenticated(ctx, source)
 					if err != nil {
@@ -658,7 +661,9 @@ func (c *Core) startServiceTransport(ctx context.Context, st identity.State, act
 			var plan *ranges.Plan
 			plan, err = c.rangePlan(st.IPs, nil)
 			if err == nil {
-				err = c.rangeState.engine.Apply(plan)
+				if err = c.syncWorkerTCPScopes(); err == nil {
+					err = c.rangeState.engine.Apply(plan)
+				}
 			}
 		}
 		if err != nil {
@@ -777,6 +782,9 @@ func (c *Core) stopServiceIDs(ids []string) {
 	if c.rangeState != nil {
 		c.rangeState.engine.RevokeIDs(ids)
 	}
+	if len(stopped) > 0 {
+		_ = c.syncWorkerTCPScopes()
+	}
 	// Every selected permission is cancelled before potentially slow listener drain.
 	for _, a := range stopped {
 		for _, s := range a.servers {
@@ -846,6 +854,7 @@ func (c *Core) suspendServiceTransport(a *activeService) {
 	a.ready.Store(false)
 	if c.rangeState != nil && a.spec.Direction == "share" && a.spec.Network == "tcp" {
 		c.rangeState.engine.RevokeIDs([]string{a.spec.ID})
+		_ = c.syncWorkerTCPScopes()
 	}
 	c.mu.Lock()
 	cancel, servers := a.transportCancel, a.servers

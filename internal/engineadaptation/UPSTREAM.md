@@ -39,3 +39,12 @@ reviewed path allowlist, deleted files, symlinks, module graph changes and
 unrelated outputs. Review the complete diff, license notices and separate
 manifest pin; rerun all preparation, packaging and native guard tests. This
 command is never part of normal builds or release publication.
+
+
+The optional WAN extension permits bounded explicit numeric STUN destinations
+and/or native IPv6 candidates only when separately opted in. It does not select
+relays, install routes, request privileged network changes, or provide a
+relayless WAN guarantee. A configured LAN destination policy rejects WAN
+candidates before engine setup. Nil policy and nil WAN configuration retain
+ordinary upstream behavior. Original and adapted hashes include the separately
+reviewed WAN source and tests; the upstream module graph remains unchanged.

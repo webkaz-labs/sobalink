@@ -18,6 +18,7 @@ import (
 )
 
 type State struct {
+	SelfID        string `json:"selfId,omitempty"`
 	IPs           []netip.Addr
 	Backend       string
 	AuthURL       string
@@ -88,6 +89,7 @@ func (n *Node) State(ctx context.Context) (State, error) {
 	}
 	out := State{Backend: s.BackendState, AuthURL: s.AuthURL, Snapshot: policy.Snapshot{Running: s.BackendState == "Running"}}
 	if s.Self != nil {
+		out.SelfID = string(s.Self.ID)
 		out.IPs = append([]netip.Addr(nil), s.Self.TailscaleIPs...)
 		for _, raw := range s.Self.PeerAPIURL {
 			u, err := url.Parse(raw)

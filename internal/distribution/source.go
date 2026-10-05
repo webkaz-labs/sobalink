@@ -137,9 +137,9 @@ func uniqueSourceObject(raw []byte) (map[string]json.RawMessage, error) {
 	return fields, nil
 }
 
-// sourceInventory augments the Go module inventory only when the adapted
+// routecatInventory augments the Go module inventory only when the adapted
 // main-module package is actually in the target's non-test dependency closure.
-func sourceInventory(root string, packages []goPackage, share string) ([]SourceComponent, error) {
+func routecatInventory(root string, packages []goPackage, share string) ([]SourceComponent, error) {
 	var linked *goPackage
 	for i := range packages {
 		if packages[i].ImportPath == routecatPackage {
@@ -282,7 +282,7 @@ func sourceSBOMComponent(component SourceComponent, version string) map[string]a
 			"externalReferences": []any{map[string]string{"type": "vcs", "url": upstream.SourceURL}},
 			"properties":         []any{map[string]string{"name": "source:commit", "value": upstream.Commit}, map[string]string{"name": "source:original-files:sha256", "value": string(originalHashes)}},
 		}}},
-		"licenses": []any{map[string]any{"license": map[string]string{"name": "See retained source licenses and per-file notices; adapted main-module inputs have separate provenance"}}},
+		"licenses": []any{map[string]any{"license": map[string]string{"name": "See retained source licenses and per-file notices; adapted source inputs have separate provenance"}}},
 		"properties": []any{
 			map[string]string{"name": "source:path", "value": component.Path},
 			map[string]string{"name": "source:modified", "value": "true"},

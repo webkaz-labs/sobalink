@@ -24,8 +24,11 @@ func canonicalLANSetupPolicy(policy *lanpolicy.Config) (*lanpolicy.Config, error
 
 func applyLANSetupPolicy(state *lanState, policy *lanpolicy.Config) error {
 	if policy != nil {
-		state.Version = 4
+		state.Version = max(state.Version, 4)
 		state.DestinationPolicy = *policy
+	}
+	if err := validateWANCandidateState(*state); err != nil {
+		return err
 	}
 	if err := validateLANDestinationPolicy(*state); err != nil {
 		return &lanCommandError{"lan_policy_relay_outside", "include the selected and prepared relay addresses in the allowed prefixes, or remove those relay candidates first"}

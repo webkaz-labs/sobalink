@@ -6,7 +6,7 @@ func previewPayload(name string, raw json.RawMessage) json.RawMessage {
 	if privateProxyCommand(name) {
 		return redactProxyPayload(raw)
 	}
-	if name != "lan.inspect" && name != "lan.join" && name != "lan.cancel" && name != "lan.routes.inspect" && name != "lan.routes.apply" {
+	if name != "direct-lan.inspect" && name != "direct-lan.join" && name != "direct-lan.cancel" && name != "lan.inspect" && name != "lan.join" && name != "lan.cancel" && name != "lan.routes.inspect" && name != "lan.routes.apply" {
 		return raw
 	}
 	var fields map[string]json.RawMessage
@@ -47,6 +47,8 @@ func helpTopic(topic string, ja bool) (string, bool) {
 		return text(ja, upgradeEN, upgradeJA), true
 	case "lan":
 		return text(ja, lanHelpEN, lanHelpJA), true
+	case "mixed":
+		return text(ja, mixedHelpEN, mixedHelpJA), true
 	case "service":
 		return text(ja, serviceHelpEN, serviceHelpJA), true
 	}

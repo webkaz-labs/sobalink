@@ -10,12 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/core"
 	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 )
 
 func setupPayload(args []string, ja bool, out io.Writer) (map[string]any, error) {
 	f := commandFlags("setup", ja, out)
-	network := f.String("network", "tailnet", text(ja, "tailnet, lan or none", "tailnet、lan、none"))
+	network := f.String("network", "tailnet", text(ja, "tailnet, lan, direct-lan or none", "tailnet、lan、direct-lan、none"))
+	listen := f.String("listen", "", text(ja, "exact private direct LAN tunnel IP:port", "direct LANトンネルの正確なプライベートIP:ポート"))
 	hostname := f.String("name", "", text(ja, "node name; omit to keep the current name", "端末名（省略時は現在の名前を維持）"))
 	host := f.String("host", "", text(ja, "explicit private local relay IP:port (LAN mode)", "明示するプライベートIP:ポートのローカル中継（LAN用）"))
 	relay := f.String("relay", "", text(ja, "explicit trusted relay IP:port (LAN mode)", "明示する信頼済み中継のIP:ポート（LAN用）"))
@@ -27,8 +29,24 @@ func setupPayload(args []string, ja bool, out io.Writer) (map[string]any, error)
 	if err := parseFlags(f, args, ja); err != nil {
 		return nil, err
 	}
-	if *network != "tailnet" && *network != "lan" && *network != "none" {
-		return nil, errors.New(text(ja, "--network must be tailnet, lan or none", "--network は tailnet、lan、none から選んでください"))
+	if *network != "tailnet" && *network != "lan" && *network != "direct-lan" && *network != "none" {
+		return nil, errors.New(text(ja, "--network must be tailnet, lan, direct-lan or none", "--network は tailnet、lan、direct-lan、none から選んでください"))
+	}
+	if *network == "direct-lan" {
+		if *host != "" || *relay != "" || *certificate != "" || *rotateCertificate || *policyMode != "" {
+			return nil, errors.New(text(ja, "Direct LAN requires --listen and --prefix without relay settings", "direct LANはリレー設定を指定せず --listen と --prefix を使ってください"))
+		}
+		if *listen == "" && len(prefixes) == 0 {
+			return map[string]any{"mode": "direct-lan", "hostname": *hostname}, nil
+		}
+		selection := core.DirectLANSelection{Listen: *listen, Prefixes: prefixes}
+		if err := core.ValidateDirectLANSelection(selection); err != nil {
+			return nil, errors.New(text(ja, "Choose an exact private listen endpoint and canonical allowed prefixes", "正確なプライベート待受アドレスと正規表記の許可範囲を指定してください"))
+		}
+		return map[string]any{"mode": "direct-lan", "hostname": *hostname, "directLAN": selection}, nil
+	}
+	if *listen != "" {
+		return nil, errors.New(text(ja, "--listen requires --network direct-lan", "--listen は --network direct-lan で指定してください"))
 	}
 	if *rotateCertificate && (*network != "lan" || *host == "" || *relay != "" || *certificate != "") {
 		return nil, errors.New(text(ja, "--rotate-certificate requires --network lan --host IP:PORT", "--rotate-certificate には --network lan --host IP:PORT が必要です"))
