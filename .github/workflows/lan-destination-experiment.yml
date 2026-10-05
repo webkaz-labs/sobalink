@@ -1,0 +1,87 @@
+name: Experimental LAN write boundaries
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - experiments/lan-destination-guard/**
+      - .github/workflows/lan-destination-experiment.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lan-write-experiment-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-engine-linux:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Check socket-free policy model
+        working-directory: experiments/lan-destination-guard
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l guard.go guard_test.go)"
+          go test -race ./...
+          go vet ./...
+          python -m unittest -v test_tools.py
+      - name: Prepare full SHA-pinned engine copy
+        run: |
+          set -euo pipefail
+          go mod download tailscale.com@v1.104.0
+          python experiments/lan-destination-guard/prepare_engine.py \
+            --source "$(go env GOMODCACHE)/tailscale.com@v1.104.0" \
+            --destination "$RUNNER_TEMP/lan-engine"
+          gofmt -w "$RUNNER_TEMP/lan-engine/wgengine/magicsock/rebinding_conn.go" \
+            "$RUNNER_TEMP/lan-engine/wgengine/magicsock/lan_guard_experiment_test.go"
+      - name: Compile actual engine tests with race detector
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/lan-engine"
+          go test -race -c -o "$RUNNER_TEMP/lan-engine.test" ./wgengine/magicsock
+      - name: Verify fake entrypoints and native loopback sockets
+        run: |
+          python experiments/lan-destination-guard/run_native.py \
+            --binary "$RUNNER_TEMP/lan-engine.test" \
+            --report "$RUNNER_TEMP/lan-experiment-report/summary.json"
+      - name: Require guard-removal negative control to fail
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP/lan-engine/wgengine/magicsock/rebinding_conn.go" <<'PY'
+          import sys
+          from pathlib import Path
+          p=Path(sys.argv[1]);s=p.read_text()
+          marker='func (c *RebindingUDPConn) checkLANDestination(addr netip.AddrPort) error {'
+          start=s.index(marker);end=s.index('\n}',start)+2
+          p.write_text(s[:start]+marker+'\n return nil\n}'+s[end:])
+          PY
+          cd "$RUNNER_TEMP/lan-engine"
+          set +e
+          go test -race -run '^TestLANExperimentFakeEntryPoints$' ./wgengine/magicsock > "$RUNNER_TEMP/lan-negative-control.log" 2>&1
+          result=$?
+          set -e
+          test "$result" -eq 1
+          grep -q -- '--- FAIL: TestLANExperimentFakeEntryPoints' "$RUNNER_TEMP/lan-negative-control.log"
+          echo 'Guard-removal negative control failed the expected fake-writer boundary test.'
+      - name: Preserve only allowlisted aggregate result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lan-write-boundaries-linux-amd64
+          path: ${{ runner.temp }}/lan-experiment-report/summary.json
+          if-no-files-found: warn
+          retention-days: 14
