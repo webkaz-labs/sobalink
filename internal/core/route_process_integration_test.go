@@ -15,6 +15,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,11 +222,12 @@ type processReply struct {
 	Error string
 }
 type routeCoreProcess struct {
-	cmd     *exec.Cmd
-	input   io.WriteCloser
-	output  *json.Decoder
-	done    chan error
-	stopped bool
+	cmd         *exec.Cmd
+	input       io.WriteCloser
+	output      *json.Decoder
+	done        chan error
+	stopped     bool
+	diagnostics *routeProcessDiagnostics
 }
 
 func startRouteCoreProcess(t *testing.T, ctx context.Context, dir string, offline bool) *routeCoreProcess {
@@ -247,12 +250,13 @@ func startRouteCoreProcess(t *testing.T, ctx context.Context, dir string, offlin
 	if err != nil {
 		t.Fatal("open fixture output")
 	}
-	// Do not retain diagnostics that might contain synthetic private frames.
-	cmd.Stderr = io.Discard
+	// Retain bounded runtime diagnostics; output filtering below excludes payloads.
+	diagnostics := new(routeProcessDiagnostics)
+	cmd.Stderr = diagnostics
 	if cmd.Start() != nil {
 		t.Fatal("start independent Core process")
 	}
-	p := &routeCoreProcess{cmd: cmd, input: in, output: json.NewDecoder(out), done: make(chan error, 1)}
+	p := &routeCoreProcess{cmd: cmd, input: in, output: json.NewDecoder(out), done: make(chan error, 1), diagnostics: diagnostics}
 	go func() { p.done <- cmd.Wait() }()
 	t.Cleanup(func() {
 		in.Close()
@@ -277,7 +281,7 @@ func (p *routeCoreProcess) invoke(t *testing.T, name string, payload any) json.R
 		Name    string
 		Payload json.RawMessage
 	}{name, raw}) != nil {
-		t.Fatalf("subprocess command write %s", name)
+		t.Fatalf("subprocess command write %s; %s; runtime diagnostics:\n%s", name, p.exitSummary(), p.diagnostics.safeSummary())
 	}
 	ch := make(chan processReply, 1)
 	go func() {
@@ -290,7 +294,7 @@ func (p *routeCoreProcess) invoke(t *testing.T, name string, payload any) json.R
 	select {
 	case reply := <-ch:
 		if reply.Error != "" {
-			t.Fatalf("subprocess command %s: %s", name, reply.Error)
+			t.Fatalf("subprocess command %s: %s; %s; runtime diagnostics:\n%s", name, reply.Error, p.exitSummary(), p.diagnostics.safeSummary())
 		}
 		return reply.Value
 	case <-time.After(40 * time.Second):
@@ -543,4 +547,79 @@ func routeFixtureListener() (net.Listener, error) {
 		listener.Close()
 	}
 	return nil, errors.New("no unreserved loopback fixture port")
+}
+
+// This is a synthetic fixture, but still do not publish arbitrary error strings
+// or captured protocol frames. Keep only runtime categories and source locations.
+type routeProcessDiagnostics struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (d *routeProcessDiagnostics) Write(p []byte) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := len(p)
+	remaining := (64 << 10) - len(d.data)
+	if remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		d.data = append(d.data, p...)
+	}
+	return n, nil
+}
+func (d *routeProcessDiagnostics) safeSummary() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []string
+	for _, line := range strings.Split(string(d.data), "\n") {
+		trim := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trim, "panic:"):
+			out = append(out, "panic reported (payload omitted)")
+		case strings.HasPrefix(trim, "fatal error:"):
+			out = append(out, "fatal runtime error (payload omitted)")
+		case strings.Contains(line, "WARNING: DATA RACE"):
+			out = append(out, "WARNING: DATA RACE")
+		case strings.Contains(line, ".go:"):
+			// Stack source locations contain neither argument values nor frames.
+			fields := strings.Fields(trim)
+			if len(fields) > 0 {
+				out = append(out, fields[0])
+			}
+		case strings.HasPrefix(trim, "goroutine "):
+			out = append(out, trim)
+		}
+	}
+	if len(out) == 0 {
+		return "no runtime panic/race/source-location diagnostics"
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestRouteProcessDiagnosticsRemainBoundedAndPrivate(t *testing.T) {
+	d := new(routeProcessDiagnostics)
+	d.Write([]byte("private-frame-value\npanic: private-frame-value\n\tfixture.go:123 +0x42\ngoroutine 7 [running]:\nWARNING: DATA RACE\n"))
+	summary := d.safeSummary()
+	if strings.Contains(summary, "private-frame-value") || !strings.Contains(summary, "fixture.go:123") || !strings.Contains(summary, "panic reported") {
+		t.Fatal("unsafe or missing runtime classifications")
+	}
+	d.Write([]byte(strings.Repeat("x", 128<<10)))
+	if len(d.data) != 64<<10 {
+		t.Fatal("unbounded child diagnostics")
+	}
+}
+
+func (p *routeCoreProcess) exitSummary() string {
+	select {
+	case err := <-p.done:
+		p.stopped = true
+		if err == nil {
+			return "child exited successfully"
+		}
+		return "child " + err.Error()
+	case <-time.After(time.Second):
+		return "child termination unconfirmed"
+	}
 }
