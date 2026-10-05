@@ -73,3 +73,20 @@ func TestNoticeCollectionWindowsRootJunction(t *testing.T) {
 		t.Fatal("included excluded tool sources")
 	}
 }
+
+func TestSourceInventoryWindowsRejectsJunctions(t *testing.T) {
+	for _, rel := range []string{"internal", routecatPath} {
+		t.Run(rel, func(t *testing.T) {
+			root, packages := sourceFixture(t)
+			original := filepath.Join(root, filepath.FromSlash(rel))
+			target := filepath.Join(t.TempDir(), "original")
+			if err := os.Rename(original, target); err != nil {
+				t.Fatal(err)
+			}
+			makeJunction(t, original, target)
+			if _, err := sourceInventory(root, packages, t.TempDir()); err == nil {
+				t.Fatal("accepted a source input directory junction")
+			}
+		})
+	}
+}

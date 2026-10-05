@@ -1,15 +1,19 @@
-# Internal transport prototype
+# Adapted internal transport source
 
-This package is an unused, bounded adaptation of Tailcat. It is not a released
-transport or evidence of real-device, direct-path, migration, or strict-egress
-acceptance.
+This package is a bounded adaptation of Tailcat used by the LAN transport
+implementation currently under verification. Implementation and packaging
+inventory do not establish release, real-device, direct-path, migration, or
+strict-egress acceptance.
 
 Source: https://github.com/tailscale/tailcat/tree/b4dc28e8aa89
 
 Pinned module: `github.com/tailscale/tailcat v0.7.1-0.20260929145319-b4dc28e8aa89`
 
 Copied source files: `tailcat.go`, `wire.go`, `disco.go`, `listen.go`.
-Their copyright notices and BSD-3-Clause terms are preserved in `LICENSE`.
+Their copyright/SPDX headers are retained in the adapted files, and the original
+BSD-3-Clause terms are preserved verbatim in `LICENSE`. The locally added
+`regions.go` has its own explicit MIT header; this package is not presented as an
+unmodified upstream module.
 The executable dependency remains the repository's pinned `tailscale.com v1.104.0`.
 No module replacement is used.
 
@@ -32,7 +36,18 @@ changes, key admission, active flow cancellation and durable configuration need
 one outer transaction. Restarting with unchanged identities is the bounded first
 implementation. No established-TCP preservation is promised.
 
-Release integration must explicitly include this source-only component and its
-license/provenance in the package's notices/SBOM. The current module inventory
-skips main-module packages, so merely copying LICENSE here is not sufficient for
-binary distribution.
+Release packaging inventories this adaptation separately from module
+dependencies when it appears in the target's runtime package closure. It retains
+`LICENSE`, `UPSTREAM.json` and this document under the archive's
+`share/sobalink/licenses/source/internal/routecat/` directory. Notice JSON and
+build metadata record the original upstream hashes separately from the hashes
+of selected adapted source/build inputs. CycloneDX records this main-module
+component as modified and identifies Tailcat only as its upstream ancestor.
+
+The reviewed upstream pin and exact license bytes are checked independently of
+`UPSTREAM.json`; changing upstream requires a corresponding packaging review.
+Selected compile/embed inputs, `go.mod`, `go.sum`, and retained provenance are
+hashed deterministically. Target-filtered source inventory does not itself prove
+which functions survive linking or that any network behavior has been accepted.
+The product archive still contains only its existing executable; no additional
+helper executable is packaged by this source-component inventory.
