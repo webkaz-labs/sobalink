@@ -92,7 +92,7 @@ func buildAutostartReview(opts autostart.SobaOptions) (autostartReview, error) {
 		mode = "saved"
 	}
 	startup := startupReview{Mode: mode, SavedNetwork: profile.Settings.Network, Hostname: profile.Settings.Hostname, AutosaveReceivers: []core.Trust{}}
-	startup.NetworkStarts = mode == "saved" && (startup.SavedNetwork == "tailnet" || startup.SavedNetwork == "lan")
+	startup.NetworkStarts = mode == "saved" && (startup.SavedNetwork == "tailnet" || startup.SavedNetwork == "lan" || startup.SavedNetwork == "direct-lan" || startup.SavedNetwork == "mixed")
 	for _, peer := range profile.Peers {
 		if startup.NetworkStarts && peer.Network == startup.SavedNetwork && peer.Autosave && !peer.Paused {
 			startup.AutosaveReceivers = append(startup.AutosaveReceivers, peer)

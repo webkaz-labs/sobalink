@@ -78,7 +78,7 @@ class WorkflowCachePolicy(unittest.TestCase):
 
     def test_release_validation_artifact_contains_offline_install_dependency(self):
         upload = self.step("prerelease", "gate", "name: release-validation-tools")
-        for filename in ("release-validation.py", "verify-installed.py", "offline-smoke.py"):
+        for filename in ("release-validation.py", "verify-installed.py", "offline-smoke.py", "source_provenance.py"):
             self.assertIn("            .github/scripts/" + filename + "\n", upload)
         root = pathlib.Path(__file__).parent
         for filename in ("verify-installed.py", "smoke-package.py"):
@@ -101,6 +101,49 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn('assert first == inventory()', frontend)
         self.assertIn('assert first == checked_in', frontend)
 
+    def test_reviewed_engine_preparation_and_guarded_gates_are_required(self):
+        for workflow, jobs in (("ci", ("native", "manifest-smoke", "browser")), ("prerelease", ("native", "provenance"))):
+            for job in jobs:
+                source = self.job(workflow, job)
+                self.assertLess(source.index("go run ./cmd/prepare-engine\n"), source.index("go mod verify"))
+                self.assertIn("go run ./cmd/prepare-engine --verify", source)
+        for workflow in ("ci", "prerelease"):
+            step = self.step(workflow, "native", "name: Verify guarded production direct and relay underlays")
+            self.assertNotIn("        if:", step)
+            self.assertNotIn("ts_omit_udptransport", step)
+            engine_step = self.step(workflow, "native", "name: Verify adapted engine admission and native underlay denial")
+            self.assertNotIn("        if:", engine_step)
+            self.assertIn('env["SOBALINK_RUN_UNDERLAY_NATIVE"] = "1"', engine_step)
+            self.assertIn('cwd=".sobalink-deps/tailscale"', engine_step)
+            self.assertIn('"-run=^Test(UnderlayGuard|WANCandidate)"', engine_step)
+            self.assertIn('"./net/underlayguard"', engine_step)
+            self.assertIn("python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale", engine_step)
+            self.assertIn("go run ./cmd/prepare-engine --verify", engine_step)
+            self.assertIn('env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"', step)
+            self.assertIn("TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration", step)
+            self.assertIn('"go", "test", "-race", "-count=1"', step)
+        scripts = pathlib.Path(__file__).parent
+        for name in ("smoke-package.py", "verify-installed.py"):
+            self.assertIn("verify_sources(share,", (scripts / name).read_text())
+
+    def test_direct_and_wan_native_extension_gates(self):
+        for workflow in ("ci", "prerelease"):
+            direct = self.step(workflow, "native", "name: Verify direct LAN WireGuard and Core native applications")
+            self.assertNotIn("        if:", direct)
+            self.assertIn("go test -race -count=2 -timeout=120s", direct)
+            self.assertIn("TestDirectLANCoreNativePairMessageAndScopedTCP", direct)
+            self.assertIn("go test -race -count=5", direct)
+            self.assertIn("go vet -tags=directlan_integration", direct)
+            self.assertNotIn("sudo", direct)
+            wan = self.step(workflow, "native", "name: Verify explicit WAN discovery with isolated native STUN")
+            self.assertNotIn("        if:", wan)
+            self.assertIn('env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"', wan)
+            self.assertIn("TestWANCandidateNativeLoopbackSTUN", wan)
+            self.assertNotIn("ts_omit_udptransport", wan)
+            native = self.job(workflow, "native")
+            self.assertIn("./internal/backendworker ./internal/connectionroute", native)
+            self.assertIn("./internal/core -run '^TestMixed'", native)
+
     def test_release_product_identity_and_paired_transport_gate_match_packages(self):
         release = self.workflow("prerelease")
         self.assertNotIn("dist/tsnet-bridge-", release)
@@ -118,7 +161,7 @@ class WorkflowCachePolicy(unittest.TestCase):
 
     def test_cache_keys_include_exact_runner_toolchain_manifests_and_source(self):
         prefix = "trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-"
-        suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-"
+        suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-"
         for job, runner in (("native", "${{ matrix.runner }}"), ("manifest-smoke", "ubuntu-24.04")):
             release_job = "native" if job == "native" else "provenance"
             with self.subTest(job=job):
@@ -255,13 +298,13 @@ class WorkflowCachePolicy(unittest.TestCase):
     def test_development_keys_and_fallbacks_stay_inside_their_full_boundary(self):
         restore = self.step("ci", "native", "id: development-go-cache\n")
         prefix = "development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-"
-        boundary = prefix + "${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-"
+        boundary = prefix + "${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-"
         self.assertEqual(self.key("ci", "native", "development-go-cache"), boundary + "${{ github.sha }}")
         self.assertEqual(re.findall(r"^          restore-keys: (.+)$", restore, re.MULTILINE), [boundary])
         self.assertNotIn("trusted-main-go", restore)
         values = {"steps.development-go-cache-scope.outputs.scope": self.development_scope(),
                   "runner.os": "Linux", "runner.arch": "X64", "matrix.runner": "ubuntu-24.04",
-                  "hashFiles('go.mod', 'go.sum')": "a" * 64, "github.sha": "b" * 40}
+                  "hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**')": "a" * 64, "github.sha": "b" * 40}
 
         def render(template, values):
             for expression, value in values.items():
@@ -278,7 +321,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         for expression, alternatives in (("steps.development-go-cache-scope.outputs.scope", other_scopes),
                                          ("runner.os", ["Windows"]), ("runner.arch", ["ARM64"]),
                                          ("matrix.runner", ["ubuntu-24.04-arm", "ubuntu-22.04"]),
-                                         ("hashFiles('go.mod', 'go.sum')", ["d" * 64])):
+                                         ("hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**')", ["d" * 64])):
             for alternative in alternatives:
                 with self.subTest(expression=expression, alternative=alternative):
                     other = dict(values, **{expression: alternative})

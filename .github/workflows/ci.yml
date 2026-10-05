@@ -114,9 +114,9 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.sha }}
           # Reuse only identical runner, toolchain, and dependency manifests.
-          restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-
+          restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-
       # Development caches never restore from or save to trusted-main keys.
       - name: Restore isolated development Go caches
         id: development-go-cache
@@ -126,8 +126,8 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
-          restore-keys: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-
+          key: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.sha }}
+          restore-keys: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-
       - name: Report Go cache results
         if: always()
         env:
@@ -166,6 +166,8 @@ jobs:
           test "$(go env GOVERSION)" = go1.27.1
           test "$(go env GOOS)" = '${{ matrix.goos }}'
           test "$(go env GOARCH)" = '${{ matrix.goarch }}'
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
           go mod verify
           python -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Verify Windows receive-retirement directory barriers
@@ -177,6 +179,8 @@ jobs:
           go test -race -count=1 -timeout=10m ./...
           # Enforce offline route-revocation recovery using the real protected fixture.
           go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
+          go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
+          go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
           # Repeat real native IPC cleanup; exact timer policy is tested virtually.
           go test -race -count=5 -timeout=2m ./internal/control
           go vet ./...
@@ -185,6 +189,77 @@ jobs:
             printf 'Go files need gofmt (check checkout line endings):\n%s\n' "$unformatted" >&2
             exit 1
           fi
+      - name: Verify adapted engine admission and native underlay denial
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+
+          # Upstream test-only dependencies stay in the original immutable
+          # upstream module graph; product tests use the product graph above.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_UNDERLAY_NATIVE"] = "1"
+          base = ["go", "test", "-mod=readonly", "-race", "-count=1", "-v", "-timeout=5m",
+                  "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"]
+          subprocess.run(base + ["./net/underlayguard"],
+                         cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
+          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate)", "./wgengine", "./wgengine/magicsock", "./derp/derphttp", "./net/netcheck"],
+                         cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
+          PYTHON
+          python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
+          go run ./cmd/prepare-engine --verify
+      - name: Verify direct LAN WireGuard and Core native applications
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          go test -race -count=2 -timeout=120s -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
+          go vet -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
+          go test -race -count=5 -timeout=120s -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestDirectLANCoreNativePairMessageAndScopedTCP$' ./internal/core
+      - name: Verify explicit WAN discovery with isolated native STUN
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+
+          # Synthetic native loopback fixture only; this does not establish
+          # real NAT traversal, physical IPv6 routes, or device acceptance.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-race", "-count=1", "-v", "-timeout=120s",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^TestWANCandidateNativeLoopbackSTUN$", "./internal/routecat",
+          ], env=env, check=True, timeout=4 * 60)
+          PYTHON
+      - name: Verify guarded production direct and relay underlays
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+
+          # Normal production build with explicit synthetic loopback grants.
+          # Clear overrides only for the child test process, never the runner.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-race", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^(TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
+          ], env=env, check=True, timeout=8 * 60)
+          PYTHON
       - name: Verify paired transport and Core applications over an isolated relay
         timeout-minutes: 10
         run: |
@@ -296,7 +371,7 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ github.sha }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.sha }}
       - name: Report Go cache result and require an exact source key
         if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
@@ -315,6 +390,8 @@ jobs:
       - name: Prepare complete Packslip signing input and checksums
         run: |
           set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
           go mod verify
           go run ./cmd/package-tool manifest "0.0.0-dev.${GITHUB_RUN_NUMBER}"
           go run ./cmd/package-tool checksums
@@ -387,6 +464,8 @@ jobs:
         timeout-minutes: 15
         run: |
           set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
           go mod verify
           go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
           npm --prefix web run test:browser:safety
