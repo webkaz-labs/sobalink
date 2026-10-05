@@ -1,9 +1,9 @@
-# Backend worker pipe protocol
+# Isolated backend worker transport
 
-This package is a bounded owner-pipe RPC foundation for process-isolated network engines. It does not launch an engine or enable mixed networking by itself.
+This package carries a typed network engine over inherited owner pipes. It supports numeric netstack dialing, listeners, current identity checks, TCP streams, UDP datagrams, half-close and explicitly scoped TCP fallback admission. It does not expose an OS-network application fallback, execute shell commands or launch a network engine by itself.
 
-Messages use a length-prefixed JSON envelope with a 256 KiB maximum and 128 outstanding requests. The owning application supplies a fixed typed handler and closes worker resources when the owner disappears. No shell execution or generic management command is provided. Cancellation terminates the affected worker generation rather than replaying data or retaining abandoned operations.
+Worker framing, request concurrency and open handles are finite configurable resource budgets. Large streams are chunked, so frame size is not a file-size limit. The minimum frame preserves one full legal UDP datagram. Reserved control capacity prevents data reads from blocking revocation and closure. Budget changes apply to a new worker generation after restart.
 
-Application integration must launch the same verified executable with separate backend state, pipe ownership, reserved ports and generations. It must implement typed state, identity, stream and datagram operations with finite resource budgets. Backend authentication, resource grants and route boundaries remain independent checks. A worker crash can close active streams; no transparent TCP migration is claimed.
+A scope reduction closes old child streams before acknowledgment. A stale accepted connection is rejected after its permission generation is retired. Owner EOF closes worker-owned listeners and streams. Cancellation of an unfinished call retires its generation; canceling a completed call does not. No application bytes are replayed, and an existing TCP stream may fail if its worker exits.
 
-Socket-free pipe tests cover concurrent calls, owner EOF, cancellation and oversized-frame rejection. Native process/engine integration is still required.
+Tests include socket-free framing, cancellation, peer-stream data, owner shutdown and real helper-process isolation. Synthetic helpers do not establish real Tailnet enrollment or NAT compatibility. The surrounding application must still bind exact backend identities, independently enforce resource grants and obtain explicit cross-backend route approval.

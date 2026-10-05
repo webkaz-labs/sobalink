@@ -27,12 +27,16 @@ type Message struct {
 	Error  string          `json:"error,omitempty"`
 }
 
-func writeMessage(w io.Writer, m Message) error {
+func writeMessage(w io.Writer, m Message, maximum ...int) error {
+	limit := MaxFrame
+	if len(maximum) > 0 {
+		limit = maximum[0]
+	}
 	raw, e := json.Marshal(m)
 	if e != nil {
 		return e
 	}
-	if len(raw) > MaxFrame {
+	if len(raw) > limit {
 		return ErrProtocol
 	}
 	var header [4]byte
@@ -58,13 +62,17 @@ func writeAll(w io.Writer, p []byte) error {
 	}
 	return nil
 }
-func readMessage(r io.Reader) (Message, error) {
+func readMessage(r io.Reader, maximum ...int) (Message, error) {
+	limit := MaxFrame
+	if len(maximum) > 0 {
+		limit = maximum[0]
+	}
 	var header [4]byte
 	if _, e := io.ReadFull(r, header[:]); e != nil {
 		return Message{}, e
 	}
 	size := binary.BigEndian.Uint32(header[:])
-	if size == 0 || size > MaxFrame {
+	if size == 0 || uint64(size) > uint64(limit) {
 		return Message{}, ErrProtocol
 	}
 	raw := make([]byte, size)
@@ -85,7 +93,14 @@ type Handler func(context.Context, string, json.RawMessage) (json.RawMessage, er
 // Serve supports concurrent blocking stream reads while maintaining a finite
 // request budget. Cancellation of the owner closes all worker-owned resources
 // through the caller's lifecycle; a transport error is terminal for this worker.
-func Serve(ctx context.Context, in io.ReadCloser, out io.WriteCloser, handler Handler) error {
+func Serve(ctx context.Context, in io.ReadCloser, out io.WriteCloser, handler Handler, selected ...Limits) error {
+	limits := DefaultLimits()
+	if len(selected) > 0 {
+		limits = selected[0]
+	}
+	if e := limits.Validate(); e != nil {
+		return e
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer in.Close()
@@ -103,9 +118,10 @@ func Serve(ctx context.Context, in io.ReadCloser, out io.WriteCloser, handler Ha
 	var writers sync.Mutex
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	slots := make(chan struct{}, MaxPending)
+	dataSlots := make(chan struct{}, limits.Requests)
+	controlSlots := make(chan struct{}, 8)
 	for {
-		m, e := readMessage(in)
+		m, e := readMessage(in, limits.FrameBytes)
 		if e != nil {
 			cancel()
 			return e
@@ -114,6 +130,10 @@ func Serve(ctx context.Context, in io.ReadCloser, out io.WriteCloser, handler Ha
 			cancel()
 			return ErrProtocol
 		}
+		slots := dataSlots
+		if controlMethod(m.Method) {
+			slots = controlSlots
+		}
 		select {
 		case slots <- struct{}{}:
 		default:
@@ -121,7 +141,7 @@ func Serve(ctx context.Context, in io.ReadCloser, out io.WriteCloser, handler Ha
 			return ErrBusy
 		}
 		wg.Add(1)
-		go func(m Message) {
+		go func(m Message, slots chan struct{}) {
 			defer wg.Done()
 			defer func() { <-slots }()
 			body, e := handler(ctx, m.Method, m.Body)
@@ -134,14 +154,14 @@ func Serve(ctx context.Context, in io.ReadCloser, out io.WriteCloser, handler Ha
 				}
 			}
 			writers.Lock()
-			e = writeMessage(out, response)
+			e = writeMessage(out, response, limits.FrameBytes)
 			writers.Unlock()
 			if e != nil {
 				cancel()
 				_ = in.Close()
 				_ = out.Close()
 			}
-		}(m)
+		}(m, slots)
 	}
 }
 
@@ -158,16 +178,27 @@ type Client struct {
 	closed  bool
 	next    atomic.Uint64
 	once    sync.Once
+	limits  Limits
 }
 
-func NewClient(in io.ReadCloser, out io.WriteCloser) *Client {
-	c := &Client{in: in, out: out, pending: make(map[uint64]chan result)}
+func NewClient(in io.ReadCloser, out io.WriteCloser, selected ...Limits) *Client {
+	limits := DefaultLimits()
+	if len(selected) > 0 {
+		limits = selected[0]
+	}
+	c := &Client{in: in, out: out, pending: make(map[uint64]chan result), limits: limits}
+	if limits.Validate() != nil {
+		c.closed = true
+		_ = in.Close()
+		_ = out.Close()
+		return c
+	}
 	go c.read()
 	return c
 }
 func (c *Client) read() {
 	for {
-		m, e := readMessage(c.in)
+		m, e := readMessage(c.in, c.limits.FrameBytes)
 		if e != nil {
 			_ = c.Close()
 			return
@@ -204,7 +235,11 @@ func (c *Client) Call(ctx context.Context, method string, body, out any) error {
 		c.mu.Unlock()
 		return ErrClosed
 	}
-	if len(c.pending) >= MaxPending {
+	limit := c.limits.Requests
+	if controlMethod(method) {
+		limit += 8
+	}
+	if len(c.pending) >= limit {
 		c.mu.Unlock()
 		return ErrBusy
 	}
@@ -215,16 +250,19 @@ func (c *Client) Call(ctx context.Context, method string, body, out any) error {
 	// cancels during a blocked operation, terminate this generation rather than
 	// leave an unbounded abandoned stream request or replay application bytes.
 	done := make(chan struct{})
-	defer close(done)
+	var completed atomic.Uint32
+	defer func() { completed.CompareAndSwap(0, 1); close(done) }()
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = c.Close()
+			if completed.CompareAndSwap(0, 2) {
+				_ = c.Close()
+			}
 		case <-done:
 		}
 	}()
 	c.writeMu.Lock()
-	e = writeMessage(c.out, Message{ID: id, Method: method, Body: raw})
+	e = writeMessage(c.out, Message{ID: id, Method: method, Body: raw}, c.limits.FrameBytes)
 	c.writeMu.Unlock()
 	if e != nil {
 		_ = c.Close()
@@ -232,8 +270,13 @@ func (c *Client) Call(ctx context.Context, method string, body, out any) error {
 	}
 	select {
 	case <-ctx.Done():
+		completed.CompareAndSwap(0, 2)
+		_ = c.Close()
 		return ctx.Err()
 	case r := <-ch:
+		if !completed.CompareAndSwap(0, 1) {
+			return ctx.Err()
+		}
 		if r.err != nil {
 			return r.err
 		}
@@ -260,4 +303,14 @@ func (c *Client) Close() error {
 		}
 	})
 	return nil
+}
+
+// Reserve control capacity so full data reads cannot block revocation, close or
+// identity checks. Excess control work still fails closed at a finite bound.
+func controlMethod(method string) bool {
+	switch method {
+	case "close", "close-write", "deadline", "read-deadline", "write-deadline", "fallback-scopes", "fallback-disable", "state", "whois", "logout":
+		return true
+	}
+	return false
 }

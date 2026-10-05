@@ -90,3 +90,27 @@ func TestCancelClosesGeneration(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestCompletedCallCancellationDoesNotRetireWorker(t *testing.T) {
+	serverIn, clientOut := io.Pipe()
+	clientIn, serverOut := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = Serve(ctx, serverIn, serverOut, func(_ context.Context, _ string, b json.RawMessage) (json.RawMessage, error) { return b, nil })
+	}()
+	client := NewClient(clientIn, clientOut)
+	defer client.Close()
+	for i := 0; i < 200; i++ {
+		callctx, stop := context.WithCancel(ctx)
+		var result int
+		if e := client.Call(callctx, "echo", i, &result); e != nil {
+			stop()
+			t.Fatal(e)
+		}
+		stop()
+		if result != i {
+			t.Fatal(result)
+		}
+	}
+}
