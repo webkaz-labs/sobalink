@@ -2,7 +2,7 @@
 
 [日本語](LAN.ja.md) · [Main guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#tailcat-gate)
 
-Published `0.3.0-alpha.2` provides explicit single-relay pairing. This checkout adds prepared-route recovery for the same pair; the new sections are **unreleased and under verification**. The published baseline, native prototype results and remaining two-process/native gates are separate in [verification](VERIFICATION.en.md#route-recovery-gate). Actual devices, direct LAN/WAN/NAT, sleep/wake and native IME remain unverified.
+Published `0.3.0-alpha.4` includes explicit pinned-relay pairing and prepared-route recovery. The new [LAN destination policy](LAN_DESTINATIONS.en.md) and [relay certificate controls](RELAY_OPERATIONS.en.md) in this checkout are **unreleased and under verification**. Physical devices, LAN/WAN/NAT topology, sleep/wake and native IME remain separate acceptance work.
 
 ## Use the local UI
 
@@ -139,7 +139,7 @@ soba lan routes revoke PEER_ID
 
 In the local UI, open LAN setup → “Advanced: prepared relay candidates” to review additions/removals. A paired device's details → “Route recovery” provides private offer creation, inspect/approve, expiry and revoke controls. New offers and eligible approval reviews start with Until revoked selected; finite/v1 offers allow only finite approval. The chosen lifetime and its impact still require confirmation. Select exact candidates explicitly; none is checked automatically. Saving reports configuration, not proven reachability.
 
-`local` is a relay address classification. Direct peer traffic can leave the LAN; there is no strict LAN/no-external-egress mode in this scope. Saved-state cold start with external services unavailable, stable service entrances and route transitions require the [native integration gate](VERIFICATION.en.md#route-recovery-gate), not just configuration success. Existing TCP preservation, automatic application replay and byte-offset/restart file resume are not provided.
+`local` is a relay address classification. Direct peer traffic can leave the LAN; use the separate [explicit destination policy](LAN_DESTINATIONS.en.md) to restrict permitted destinations. It still does not prove NIC/VPN isolation or whole-process zero egress. Saved-state cold start with external services unavailable, stable service entrances and route transitions require the [native integration gate](VERIFICATION.en.md#route-recovery-gate), not just configuration success. Existing TCP preservation, automatic application replay and byte-offset/restart file resume are not provided.
 
 ### Withdraw an advertised offer
 
@@ -202,7 +202,7 @@ Peer Pause blocks messages/files and cancels active sends. After unpausing, sele
 
 ## Traffic and remaining limits
 
-The mode permits direct peer traffic, encrypted payload through the selected relay and HTTPS/ICMP diagnostics to that relay endpoint. It is not strict LAN isolation or zero external traffic. Required build tags omit port mapping, captive-portal probes and system-proxy support; unsupported proxy/backend override environments are rejected.
+The default trusted-relay mode permits direct peer traffic, encrypted payload through the selected relay and HTTPS/ICMP diagnostics to that relay endpoint. It is not strict LAN isolation or zero external traffic. Required build tags omit port mapping, captive-portal probes and system-proxy support; unsupported proxy/backend override environments are rejected.
 
 The embedded relay authenticates a sealed HTTPS bootstrap before admitting the invited transport role. Unknown keys have no blanket exception. Its two-minute relay connection lease rechecks admission; a previously admitted relay session can persist for up to two minutes after removal, or about four minutes from initial bootstrap when temporary admission overlaps a lease. Application authorization and tracked application flows are revoked immediately.
 

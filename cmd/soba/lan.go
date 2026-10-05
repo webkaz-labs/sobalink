@@ -9,6 +9,8 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 )
 
 func setupPayload(args []string, ja bool, out io.Writer) (map[string]any, error) {
@@ -18,13 +20,33 @@ func setupPayload(args []string, ja bool, out io.Writer) (map[string]any, error)
 	host := f.String("host", "", text(ja, "explicit private local relay IP:port (LAN mode)", "明示するプライベートIP:ポートのローカル中継（LAN用）"))
 	relay := f.String("relay", "", text(ja, "explicit trusted relay IP:port (LAN mode)", "明示する信頼済み中継のIP:ポート（LAN用）"))
 	certificate := f.String("certificate", "", text(ja, "relay SHA-256 certificate fingerprint, 64 hexadecimal characters", "中継証明書のSHA-256指紋（16進64文字）"))
+	rotateCertificate := f.Bool("rotate-certificate", false, text(ja, "replace an existing host certificate and pin; revoke old pairs first and pair again", "既存ホストの証明書・指紋を更新（先に旧ペアを解除し、更新後に再ペアリング）"))
+	policyMode := f.String("policy-mode", "", text(ja, "explicit trusted-relay or allowed-lan-destinations policy, saved before connecting", "接続前に保存する trusted-relay または allowed-lan-destinations を明示"))
+	var prefixes policyPrefixes
+	f.Var(&prefixes, "prefix", text(ja, "explicit private/ULA or loopback CIDR for --policy-mode; repeatable", "--policy-mode 用のプライベート・ULA・ループバックCIDR（複数可）"))
 	if err := parseFlags(f, args, ja); err != nil {
 		return nil, err
 	}
 	if *network != "tailnet" && *network != "lan" && *network != "none" {
 		return nil, errors.New(text(ja, "--network must be tailnet, lan or none", "--network は tailnet、lan、none から選んでください"))
 	}
+	if *rotateCertificate && (*network != "lan" || *host == "" || *relay != "" || *certificate != "") {
+		return nil, errors.New(text(ja, "--rotate-certificate requires --network lan --host IP:PORT", "--rotate-certificate には --network lan --host IP:PORT が必要です"))
+	}
 	payload := map[string]any{"mode": *network, "hostname": *hostname}
+	if *rotateCertificate {
+		payload["rotateCertificate"] = true
+	}
+	if *policyMode != "" || len(prefixes) != 0 {
+		if *network != "lan" || *policyMode == "" {
+			return nil, errors.New(text(ja, "--policy-mode and --prefix require LAN mode and an explicit policy mode", "--policy-mode と --prefix には LAN モードと明示的なポリシーモードが必要です"))
+		}
+		chosen, err := (lanpolicy.Config{Mode: *policyMode, Prefixes: prefixes}).Canonical()
+		if err != nil {
+			return nil, errors.New(text(ja, "Use a valid policy mode and canonical private/ULA or loopback prefixes", "有効なポリシーモードと正規表記のプライベート・ULA・ループバック範囲を使ってください"))
+		}
+		payload["lanPolicy"] = map[string]any{"mode": chosen.Mode, "prefixes": append([]string{}, chosen.Prefixes...)}
+	}
 	if *host == "" && *relay == "" && *certificate == "" {
 		return payload, nil
 	}

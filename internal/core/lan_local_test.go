@@ -40,7 +40,7 @@ func TestLANAddressChoicesArePrivateUpBoundedAndReadOnly(t *testing.T) {
 		return []net.Addr{localTestAddress("192.168.50.10/24"), localTestAddress("192.168.50.10/24"), localTestAddress("::ffff:192.168.50.10/120"), localTestAddress("127.0.0.1/8"), localTestAddress("169.254.1.2/16"), localTestAddress("fe80::10/64"), localTestAddress("192.0.2.10/24"), localTestAddress("100.64.0.1/10"), localTestAddress("0.0.0.0/0"), localTestAddress("224.0.0.1/4"), localTestAddress("invalid")}, nil
 	}
 	choices, err := readLANAddresses(interfaces, addrs)
-	want := []LANLocalAddress{{"fixture0", "fd00::10"}, {"fixture1", "192.168.50.10"}}
+	want := []LANLocalAddress{{Interface: "fixture0", Address: "fd00::10", Prefix: "fd00::/64"}, {Interface: "fixture1", Address: "192.168.50.10", Prefix: "192.168.50.0/24"}}
 	if err != nil || !reflect.DeepEqual(choices, want) {
 		t.Fatalf("address choices = %v, %v", choices, err)
 	}

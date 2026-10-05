@@ -19,12 +19,15 @@ import (
 // SourceProvenance records the original, unmodified upstream inputs. Its hashes
 // must never be interpreted as the hashes of our adapted runtime sources.
 type SourceProvenance struct {
-	Module    string            `json:"module"`
-	Version   string            `json:"version"`
-	Commit    string            `json:"commit"`
-	SourceURL string            `json:"source_url"`
-	License   string            `json:"license"`
-	Files     map[string]string `json:"files"`
+	Module     string            `json:"module"`
+	Version    string            `json:"version"`
+	Commit     string            `json:"commit"`
+	SourceURL  string            `json:"source_url"`
+	License    string            `json:"license"`
+	Files      map[string]string `json:"files"`
+	ModuleSum  string            `json:"module_sum,omitempty"`
+	GoModSum   string            `json:"go_mod_sum,omitempty"`
+	TreeSHA256 string            `json:"tree_sha256,omitempty"`
 }
 
 type SourceComponent struct {
@@ -35,6 +38,8 @@ type SourceComponent struct {
 	Notices           []Notice         `json:"notices"`
 	BuildInputs       []Notice         `json:"build_inputs"`
 	BuildInputsSHA256 string           `json:"build_inputs_sha256"`
+	AdaptedTreeSHA256 string           `json:"adapted_tree_sha256,omitempty"`
+	ManifestSHA256    string           `json:"manifest_sha256,omitempty"`
 }
 
 const routecatPath = "internal/routecat"
@@ -281,6 +286,11 @@ func sourceSBOMComponent(component SourceComponent, version string) map[string]a
 		"properties": []any{
 			map[string]string{"name": "source:path", "value": component.Path},
 			map[string]string{"name": "source:modified", "value": "true"},
+			map[string]string{"name": "source:adapted-tree:sha256", "value": component.AdaptedTreeSHA256},
+			map[string]string{"name": "source:manifest:sha256", "value": component.ManifestSHA256},
+			map[string]string{"name": "source:upstream-module:sum", "value": upstream.ModuleSum},
+			map[string]string{"name": "source:upstream-go-mod:sum", "value": upstream.GoModSum},
+			map[string]string{"name": "source:upstream-tree:sha256", "value": upstream.TreeSHA256},
 			map[string]string{"name": "source:build-inputs:sha256", "value": component.BuildInputsSHA256},
 			map[string]string{"name": "source:build-inputs", "value": string(inputs)},
 			map[string]string{"name": "source:notices", "value": "See third-party-notices.json and licenses/source/" + component.Path + "/"},

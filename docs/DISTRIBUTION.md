@@ -8,15 +8,15 @@ The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the ear
 
 ## Install a signed prerelease
 
-[0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2) is published from `00cc6a99809df77bf1754936ea7bf5ca4c5d0741`. [Release run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed all 15 jobs, including the four native packages, signatures/provenance, unauthenticated public retrieval and actual mise installation on all four targets. The pin below installs that release. New prepared-route changes are unreleased source under verification, with no next version assigned here; they are not part of alpha.2. [Exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline)
+[0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4) is published from `ded32f73c0d198294548120a38bcaf03e088bd6a`. [Release run 37269441102 (attempt 2)](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) passed all 15 jobs, including the four native packages, signatures/provenance, unauthenticated public retrieval and actual mise installation on all four targets. The pin below installs that release. The new LAN engine guard is unreleased source under verification, with no next version assigned here; it is not part of alpha.4. [Exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline)
 
 A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
 
 With mise **2026.9.18** available, the same explicit prerelease pin used by the publication workflow is:
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -34,11 +34,12 @@ With the pinned tools already available:
 ```sh
 npm --prefix web ci --no-audit --no-fund
 npm --prefix web run build
+go run ./cmd/prepare-engine
 go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba ./cmd/soba
 ./bin/soba version
 ```
 
-For Windows, change the output to `bin/soba.exe` and run `./bin/soba.exe version`. Alternatively, `mise run build` runs the locked frontend build before the Go build. The resulting binary embeds `web/dist`; end users do not need Node or a development server.
+For Windows, change the output to `bin/soba.exe` and run `./bin/soba.exe version`. Alternatively, `mise run build` prepares the reviewed engine and runs the locked frontend build before the Go build. The resulting binary embeds `web/dist`; end users do not need Node or a development server.
 
 The three omission tags are part of the supported build boundary, not optional performance tuning. They remove port mapping, captive-portal probes and system-proxy support. Tailcat activation also validates its runtime environment. A build without required tags must not be represented as a working trusted-relay configuration.
 
@@ -54,6 +55,14 @@ python .github/scripts/check-frontend.py
 ```
 
 The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. A socket-restricted environment cannot establish native runtime acceptance. Each changed source needs its own affected checks; enumeration and DOM tests do not replace browser execution. Keep exact run outcomes in the [verification record](VERIFICATION.en.md#recorded-source-evidence).
+
+## Reviewed engine preparation
+
+Run `go run ./cmd/prepare-engine` before direct Go builds, tests or packaging. It downloads the original `tailscale.com@v1.104.0` module (or uses the warm module cache), independently checks its original `go.sum` archive and `go.mod` checksums, and applies only the hash-pinned, exact source edits in `internal/engineadaptation/manifest.json`. The generated module is atomically installed in `.sobalink-deps/tailscale`, outside `GOMODCACHE`; no downloaded source is patched in place and no upstream source tree is vendored. The manifest records original and adapted file hashes and both complete tree digests.
+
+Preparation is idempotent. `go run ./cmd/prepare-engine --verify` checks the manifest, original checksums and complete generated tree without downloading or changing files. Existing changed output is rejected rather than repaired silently; inspect it, remove the generated `.sobalink-deps/tailscale` directory, then prepare again. With the pinned Go toolchain and original module archive already cached, `GOPROXY=off go run ./cmd/prepare-engine` reproduces the same source offline. A missing preparation or unadapted upstream dependency fails compilation because production routing uses the adaptation-only API.
+
+The only permitted replacement is `tailscale.com v1.104.0 => ./.sobalink-deps/tailscale`. The package tool rejects alternate paths, versions, other replacements, links and source drift. Its SBOM identifies the adapted engine separately, retaining upstream only as an ancestor. Packages keep the complete original notice inventory, adaptation manifest and explanation; metadata records the manifest, original checksums, runtime build inputs and adapted whole-tree digest. Smoke and actual-installed-binary verification check these retained records as well as the binary digest. All native test, repeated-build, signing, provenance, public-download and installation gates still apply.
 
 ## Native targets
 
@@ -115,7 +124,7 @@ The packager pins the toolchain, required tags and target, disables cgo and work
 
 The release workflow builds each native target twice and compares output digests. Locked frontend reproduction is a separate input check. This establishes repeatability of the selected inputs on that runner, not independent-builder reproduction, OS code signing/notarization or live application compatibility.
 
-The CycloneDX SBOM and notice index preserve module/package provenance and copied notice hashes without guessing a legal classification. Go replacements, missing provenance and missing notices fail packaging. Source-only terms outside conventional notice filenames still require review before distribution.
+The CycloneDX SBOM and notice index preserve module/package provenance and copied notice hashes without guessing a legal classification. Unreviewed Go replacements, missing provenance and missing notices fail packaging. The sole exception is the exact, version-qualified Tailscale replacement described below; its complete source digest is checked before and after compilation. Source-only terms outside conventional notice filenames still require review before distribution.
 
 Trusted-main Go caches bind runner, OS, architecture, toolchain, dependency manifests and source commit. Only successful canonical main CI saves that namespace. Prerelease restores the exact tested-commit key without fallback or saving. Cache misses build normally; caching never skips tests, package reproduction or signature checks.
 
@@ -129,7 +138,7 @@ The source includes a stock Tailcat two-peer test using a loopback TLS DERP fixt
 SOBALINK_RUN_LAN_INTEGRATION=1 go test -tags lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport -count=1 -v -timeout=5m ./internal/lanlink -run '^TestTrustedRelayTwoPeerIntegration$'
 ```
 
-The new route tests must additionally exercise two independent processes with actual sockets, controlled loss/recovery and externally unavailable LAN cold start while retaining the same pair and service entrance. Fixture-only `ts_omit_udptransport` is not the product configuration: native tests must also cover the normal direct-enabled build. Prepared-route unit tests, an internal transport prototype or an old alpha.2 run do not establish final Core/UI integration. [Route acceptance](VERIFICATION.en.md#route-recovery-gate)
+The new route tests must additionally exercise two independent processes with actual sockets, controlled loss/recovery and externally unavailable LAN cold start while retaining the same pair and service entrance. Fixture-only `ts_omit_udptransport` is not the product configuration: native tests must also cover the normal direct-enabled build. Prepared-route unit tests, an internal transport prototype or an earlier release run do not establish final Core/UI integration. [Route acceptance](VERIFICATION.en.md#route-recovery-gate)
 
 ## Publication gates
 

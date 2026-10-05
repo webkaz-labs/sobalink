@@ -83,7 +83,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		} else if err != nil && jsonErrors {
 			err = &jsonCommandError{err}
 		} else if err != nil {
-			err = localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err))
+			err = localizeLANSetupError(japanese(locale), localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err)))
 		}
 	}()
 	var dir string
@@ -252,6 +252,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		}
 		return request("network.configure", payload)
 	case "lan":
+		if len(args) > 0 && args[0] == "policy" {
+			return lanPolicyCommand(args[1:], ja, *dryRun, out, queryAction, request)
+		}
 		if len(args) > 0 && args[0] == "routes" {
 			return lanRoutesCommand(ctx, args[1:], ja, *dryRun, out, stdin, queryAction, request)
 		}

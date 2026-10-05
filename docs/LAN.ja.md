@@ -2,7 +2,7 @@
 
 [English](LAN.en.md) · [基本手順](GENERIC.ja.md) · [安全性](SECURITY.ja.md) · [確認範囲](VERIFICATION.md#tailcat-の条件)
 
-公開済み `0.3.0-alpha.2` は、明示した単一中継によるペアリングに対応します。このチェックアウトは同じペア向けの経路復旧を追加し、新しい節は**未公開・検証中**です。公開版の結果、ネイティブ試作の結果、残る2プロセス・ネイティブ条件は[検証記録](VERIFICATION.md#経路復旧の条件)で区別します。実端末、direct LAN/WAN/NAT、スリープ復帰、ネイティブ IME は未確認です。
+公開済み `0.3.0-alpha.4` は明示した pin 付き中継によるペアリングと準備済み経路の復旧に対応します。このチェックアウトの新しい[LAN 送信先ポリシー](LAN_DESTINATIONS.ja.md)と[中継証明書の操作](RELAY_OPERATIONS.ja.md)は**未公開・検証中**です。実端末、LAN/WAN/NAT の topology、休止復帰、ネイティブ IME の受入は別に確認します。
 
 ## ローカル画面で設定する
 

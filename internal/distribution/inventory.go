@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/webkaz-labs/sobalink/internal/engineadaptation"
 )
 
 type goModule struct {
@@ -168,7 +170,7 @@ func collectNotices(root, destination string, skipToolSources bool) ([]Notice, e
 	return notices, nil
 }
 
-func collectInventory(packages []goPackage, goRoot, out string) (NoticeInventory, error) {
+func collectInventory(packages []goPackage, goRoot, out string, reviewedRoot ...string) (NoticeInventory, error) {
 	inventory := NoticeInventory{ArchiveBasePath: "share/sobalink", Scope: "Target-filtered Go package/module inventory (CGO_ENABLED=0), excluding test dependencies. Module-level notice files are preserved without license classification. Explicit adapted main-module source components are inventoried separately from upstream Go modules; other embedded source-only licenses still require release review."}
 	modules := map[string]goModule{}
 	for _, p := range packages {
@@ -177,6 +179,9 @@ func collectInventory(packages []goPackage, goRoot, out string) (NoticeInventory
 		}
 		m := *p.Module
 		if m.Replace != nil {
+			if len(reviewedRoot) == 1 && allowedEngineModule(reviewedRoot[0], &m) {
+				continue
+			}
 			return inventory, fmt.Errorf("release packaging refuses module replacements: %s", m.Path)
 		}
 		if m.Path == "" || m.Version == "" || m.Dir == "" || m.Sum == "" {
@@ -249,6 +254,9 @@ func moduleRef(m *goModule) string {
 	}
 	if m.Main {
 		return "application:sobalink"
+	}
+	if m.Path == engineadaptation.Module && m.Replace != nil {
+		return "source:" + engineadaptation.SourceDirectory
 	}
 	return "golang:" + moduleKey(m.Path, m.Version)
 }

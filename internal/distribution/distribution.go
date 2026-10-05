@@ -200,7 +200,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
-	licenses, err := collectInventory(packages, strings.TrimSpace(string(goRoot)), filepath.Join(share, "licenses"))
+	licenses, err := collectInventory(packages, strings.TrimSpace(string(goRoot)), filepath.Join(share, "licenses"), t.Root)
 	if err != nil {
 		return err
 	}
@@ -208,6 +208,11 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
+	engineSources, err := engineInventory(t.Root, packages, share)
+	if err != nil {
+		return err
+	}
+	licenses.Sources = append(licenses.Sources, engineSources...)
 	// Snapshot the adapted source before compilation and re-list afterwards.
 	// Refuse to publish provenance for bytes or target inputs changed mid-build.
 	if _, err = t.run(env, "build", "-tags", BuildTags, "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", bin, "./cmd/soba"); err != nil {
@@ -228,6 +233,11 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
+	verifiedEngine, err := engineInventory(t.Root, packages, share)
+	if err != nil {
+		return err
+	}
+	verifiedSources = append(verifiedSources, verifiedEngine...)
 	if !reflect.DeepEqual(licenses.Sources, verifiedSources) {
 		return errors.New("adapted source inputs changed during package build")
 	}

@@ -65,6 +65,7 @@ const lanHelpEN = `LAN identity and pairing
   soba lan cancel --json-file INVITATION_FILE
   soba lan revoke PEER_ID
   soba lan routes --help
+  soba lan policy --help
 
 The IP above is fictional: choose an address returned by lan addresses.
 identity explicitly creates a local identity if none exists and returns only
@@ -76,7 +77,11 @@ inspect reviews the recipient/host/expiry/relay without joining.
 Configure the exact inspected relay before join; join never changes relay or
 grants application trust. Approve that identity separately with soba trust.
 cancel invalidates your outgoing invitation; revoke removes a saved LAN pair.
-For changed network settings, stop soba and restart with start --offline.`
+For changed network settings, stop soba and restart with start --offline.
+The host certificate is IP-bound. A port-only change keeps a valid certificate.
+For a changed IP or expired certificate, revoke saved pairs first, then explicitly
+add --rotate-certificate to host setup. Verify the new pin and pair again;
+application trust needs separate approval. Check the clock before replacement.`
 
 const lanHelpJA = `LANの公開ID・ペアリング
 
@@ -90,6 +95,7 @@ const lanHelpJA = `LANの公開ID・ペアリング
   soba lan cancel --json-file INVITATION_FILE
   soba lan revoke PEER_ID
   soba lan routes --help
+  soba lan policy --help
 
 上のIPは架空の例です。lan addresses が表示したアドレスから選んでください。
 identity は未作成ならローカルIDを明示的に作成し、公開コードだけを返します。
@@ -101,7 +107,11 @@ inspect は参加せず、受取人・ホスト・有効期限・中継の情報
 join の前に確認した正確な中継を設定してください。join は中継を自動変更せず、
 アプリの信頼も与えません。soba trust でその端末を別途許可してください。
 cancel は自分が発行した招待を無効にし、revoke は保存済みLANペアを解除します。
-ネットワークを変更する場合は本体を停止し、start --offline で起動し直してください。`
+ネットワークを変更する場合は本体を停止し、start --offline で起動し直してください。
+ホスト証明書はIPに対応します。ポートだけの変更では有効な証明書を維持します。
+IP変更・期限切れの更新では、先に保存済みペアを解除し、ホスト設定に明示的に
+--rotate-certificate を追加してください。新しい指紋を確認して再ペアリングし、
+アプリの信頼も別途許可します。更新前に時計を確認してください。`
 
 const serviceHelpEN = `Create, inspect and reuse service settings
 

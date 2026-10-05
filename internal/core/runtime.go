@@ -16,6 +16,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
+	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
@@ -421,6 +422,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.capacityCommand(cmd.Name, cmd.Payload)
 	case "service.list":
 		return c.listServices(cmd.Payload)
+	case "lan.policy.get", "lan.policy.set":
+		return c.lanPolicyCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.routes.list", "lan.routes.add", "lan.routes.remove", "lan.routes.export", "lan.routes.inspect", "lan.routes.apply", "lan.routes.review", "lan.routes.approve", "lan.routes.revoke":
 		return c.lanRoutesCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
@@ -433,9 +436,11 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.stopApplication(), nil
 	case "network.configure":
 		var v struct {
-			Mode     string        `json:"mode"`
-			Hostname string        `json:"hostname"`
-			LAN      *LANSelection `json:"lan,omitempty"`
+			Mode              string            `json:"mode"`
+			Hostname          string            `json:"hostname"`
+			LAN               *LANSelection     `json:"lan,omitempty"`
+			RotateCertificate bool              `json:"rotateCertificate,omitempty"`
+			LANPolicy         *lanpolicy.Config `json:"lanPolicy,omitempty"`
 		}
 		if e := decodePayload(cmd.Payload, &v); e != nil {
 			return nil, e
@@ -447,7 +452,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if err := validateCapacityBackend(v.Mode, c.capacityPolicy()); err != nil {
 			return nil, err
 		}
-		if v.Mode != "lan" && v.LAN != nil {
+		if v.Mode != "lan" && (v.LAN != nil || v.RotateCertificate || v.LANPolicy != nil) {
 			return nil, errors.New("LAN relay settings require LAN mode")
 		}
 		c.mu.RLock()
@@ -467,7 +472,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, e
 		}
 		if v.Mode == "lan" {
-			if e := c.configureLAN(v.LAN); e != nil {
+			if e := c.configureLANWithPolicy(v.LAN, v.RotateCertificate, v.LANPolicy); e != nil {
 				return nil, codedLANError(e)
 			}
 		}

@@ -101,7 +101,7 @@ func (c *Core) routeControl() (*lanlink.Node, func(), error) {
 	if err := book.Restore(state.Trust); err != nil {
 		return nil, nil, err
 	}
-	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, Relay: relay, Trust: book, Remotes: state.Remotes, Persist: store.persist})
+	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, DestinationPolicy: state.DestinationPolicy, Relay: relay, Trust: book, Remotes: state.Remotes, Persist: store.persist})
 	if err != nil {
 		return nil, nil, codedLANError(err)
 	}
