@@ -66,24 +66,19 @@ func lanPolicyCommand(args []string, ja, dryRun bool, out io.Writer, query comma
 		if dryRun {
 			return request("lan.policy.get", map[string]any{})
 		}
-		var response struct {
-			OK     bool           `json:"ok"`
-			Result humanLANPolicy `json:"result"`
-		}
+		var response humanLANPolicy
 		if err := query("lan.policy.get", map[string]any{}, &response); err != nil {
 			return err
 		}
-		if !response.OK {
-			return errors.New(text(ja, "Policy status was not confirmed", "ポリシー状態を確認できませんでした"))
-		}
+
 		if *structured {
-			return json.NewEncoder(out).Encode(response.Result)
+			return json.NewEncoder(out).Encode(response)
 		}
-		fmt.Fprintf(out, "%s: %s\n", text(ja, "Destination policy", "接続先ポリシー"), displayText(response.Result.Mode))
-		for _, prefix := range response.Result.Prefixes {
+		fmt.Fprintf(out, "%s: %s\n", text(ja, "Destination policy", "接続先ポリシー"), displayText(response.Mode))
+		for _, prefix := range response.Prefixes {
 			fmt.Fprintf(out, "  %s\n", displayText(prefix))
 		}
-		if !response.Result.Editable {
+		if !response.Editable {
 			fmt.Fprintln(out, text(ja, "Stop soba and start --offline before changing this policy.", "この設定を変更するには、soba を停止して start --offline で起動してください。"))
 		}
 		fmt.Fprintln(out, text(ja, "Prefix membership does not prove physical LAN or VPN isolation.", "アドレス範囲への一致は、物理LANやVPNの隔離を証明しません。"))

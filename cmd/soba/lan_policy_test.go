@@ -83,7 +83,7 @@ func TestLANPolicyShowReadOnlyAndLocalized(t *testing.T) {
 				if json.Unmarshal([]byte(request), &command) != nil || command.Name != "lan.policy.get" || len(command.Payload) != 0 {
 					t.Fatal("show attempted mutation", request)
 				}
-				return json.Unmarshal([]byte(`{"ok":true,"result":{"mode":"allowed-lan-destinations","prefixes":["192.168.50.0/24"],"editable":false,"restartRequired":true}}`), target)
+				return json.Unmarshal([]byte(`{"mode":"allowed-lan-destinations","prefixes":["192.168.50.0/24"],"editable":false,"restartRequired":true}`), target)
 			})
 			if err != nil {
 				t.Fatal(err)
