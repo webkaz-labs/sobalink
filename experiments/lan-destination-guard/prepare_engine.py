@@ -6,6 +6,7 @@ import argparse
 import hashlib
 from pathlib import Path
 import shutil
+import prepare_remaining
 
 PIN = "33fa42f7385928c729bf02f093a13537f03f8548e8d07268e47450c4af72acee"
 
@@ -13,6 +14,7 @@ def prepare(source: Path, destination: Path):
     original = (source / "wgengine/magicsock/rebinding_conn.go").read_bytes()
     if hashlib.sha256(original).hexdigest() != PIN:
         raise SystemExit("pinned rebinding source hash mismatch")
+    prepare_remaining.verify(source)
     if destination.exists():
         raise SystemExit("destination must not exist")
     shutil.copytree(source, destination)
@@ -53,6 +55,7 @@ func (c *RebindingUDPConn) checkLANDestination(addr netip.AddrPort) error {
         test.unlink()
     fixture = Path(__file__).with_name("engine_test.go.txt")
     shutil.copyfile(fixture, destination / "wgengine/magicsock/lan_guard_experiment_test.go")
+    prepare_remaining.prepare(source, destination)
     print("Pinned engine fixture prepared; application dependencies unchanged.")
 
 if __name__ == "__main__":

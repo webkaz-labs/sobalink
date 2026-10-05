@@ -1,62 +1,75 @@
-# LAN宛先ガードの分離実験
+# LAN送信境界の分離実験
 
-[English](README.en.md)
+[English](README.en.md) · [中継配置・運用の検証](../relay-setup/README.ja.md)
 
-これは製品機能やリリース変更ではなく、分離した検証用fixtureです。
-成功しても「物理LAN限定」「プロセス全体の外部送信ゼロ」の証明にはなりません。
-固定した `tailscale.com v1.104.0` の実パッケージに小さな試験用変更を加え、
-送信境界の挙動とLinux CI上の実loopback UDP通信を確認します。
+固定した `tailscale.com v1.104.0` のコピーで、一部の送信境界を検証する独立fixtureです。
+**製品機能、物理LAN／VPNの隔離、process全体の外部送信ゼロの証明ではありません。**
+アプリの依存・リリースは変更しません。各OSの実際の合否はCIの許可項目限定artifactで
+確認します。この説明自体は成功記録ではありません。以前のLinux限定UDP実証はPR #9に残ります。
 
-## 検証内容
+## 検証する範囲
 
-1. socket-freeポリシーモデルでIPv4/ULA、global・別private宛先の拒否、無効・空の
-   ポリシー、宛先変更、batch、relay TCPのexact-match、並行更新、経路不明時の拒否を確認
-   経路証明callbackはfakeであり、OSの経路判定は実装していません
-2. `prepare_engine.py` が上流 `rebinding_conn.go` のSHA-256を確認して固定moduleを
-   新しいディレクトリへコピーし、低位のsingle/batch送信retry境界にhookを追加
-   コピー内の上流magicsockテストは除き、限定fixtureのみを配置します。製品コード全体と
-   実依存をcompileし、ソース抽出shimsは使いません。上流の全回帰試験ではありません
-3. 実パッケージ内のfake writerで通常送信、disco用transport経路、UDP netcheck、batch、
-   lazyEndpoint cookie-style返信、高速batch/fallback、nilポリシー、retry中の失効を確認
-4. 明示的に有効にしたnative CIでは、権限不要のloopback listenerを利用。
-   `127.0.0.1` の許可先に7datagramが届き、`127.0.0.2` の拒否先への5entrypointが
-   ポリシーエラーになり、拒否側受信が規定時間内で空のままtimeoutになることを確認
-   失効後の送信拒否も確認します。実kernel用batch adapterの利用可否を結果に記録します
-5. ガードを外したnegative controlではfake entrypointテストが失敗することを必須にします
-   negative controlでは実ソケットや公開宛先への送信を実行しません
+- 通常UDP、batch、disco用transport、netcheck送信、lazy-endpointのcookie-style入口。
+  高速batch／fallback、policy未設定、retry時の失効を含む
+- IPv4／IPv6のfake writerでprivate／ULA、別prefix、global、mapped IPv4、zone、portを判定
+- native IPv4／IPv6 loopback UDPを各familyで許可7datagram・拒否5入口・失効1件確認。
+  OS設定を変えずに動かすため、同じloopbackアドレスの異なる一時portを利用。
+  別アドレスの拒否はfakeで確認し、以前のLinux実証では別アドレスを使用
+- DERP URL／region TCPを選択済み数値relayへ限定。family違い、hostname／DNS fallback、
+  proxy、独自URL dialerによる迂回、失効後の次回dialを検証。native IPv4／IPv6で合計
+  許可4接続・拒否4入口・失効2件。TCP接続の検証でありTLS／DERP handshakeの検証ではない
+- HTTPS／HTTP-only／ICMP診断とstandalone UDP初期化は、client／resolver／pinger／socket
+  構築前に停止。DNS fallbackはcache有無の両方で拒否。数値STUN宛先もmagicsockの送信guardが必要
+- Linux raw-discoveryはraw socket構築前に無効化。ICMP packetやraw socketは実際には使わない
+- UDP／TCPのguardを取り除いたnegative controlがfake-boundary試験で失敗することを必須にする
 
-アプリのgo.mod、製品constructor、リリースworkflowは変更しません。
-namespace・route・firewall・capability・セキュリティ設定・アカウント・端末の変更は
-不要です。実通信はloopbackのみで、global/privateの試験アドレスはfakeにだけ渡します。
+専用workflowはLinux x64／ARM64、macOS ARM64、Windows x64でrace付きnative試験を実行します。
+必須試験のskip・欠落は失敗。IPv6が利用できなくても成功扱いにしません。
+namespace・route・FW・capability・起動設定・アカウント・OSセキュリティ設定は変更しません。
 
-## 再現
+## 分離と再現
 
-Go 1.27.1とPython 3を用い、[英語版の手順](README.en.md#reproduce)を実行します。
-コピー先は未作成のディレクトリにしてください。
-`LAN_GUARD_REAL_SOCKETS=1` がnative loopback試験の明示的な有効化です。
-workflowは `run_native.py` で試験を実行し、許可した項目だけの集計JSONを保存します。
-生ログ、端末一覧、実環境アドレス、ユーザー設定、資格情報は公開しません。
+`prepare_engine.py` は変更対象の各上流ファイルのSHA-256を確認し、固定module全体を新しい
+ディレクトリにコピーして試験hookを追加します。3packageの上流テストを除き、限定fixtureを配置。
+製品package全体と実依存はcompileしますが、上流の全回帰試験ではありません。
+constructorへpolicyを接続していないため、そのまま配布できる実装ではありません。
 
-## 低位の2境界が必要な理由
+Go 1.27.1／Python 3で[英語版の再現手順](README.en.md#isolation-and-reproduction)を利用します。
+native socket試験は `LAN_GUARD_REAL_SOCKETS=1` による明示的有効化が必要です。
+確認済みの実行経路はhosted CI。artifactはhash、架空の試験名、固定OS名、集計結果だけです。
+端末一覧、実アドレス、資格情報、ユーザー設定、生ログは公開しません。
 
-- lazyEndpointのcookie返信はsendUDP/sendUDPBatchを通らず低位batchに直接到達
-- 高速batchはsingle writerを通らず、fallbackは各packetでsingle writerを利用
-- 接続交換後のretryでも、送信直前のポリシー再判定が必要
+## 残る通信経路の静的監査
 
-試験hookは製品用APIとして未完成です。constructorへの接続はなく、未設定時は拒否し、
-判定とOS経路変更の間の競合は解決していません。製品化ではポリシーの有効期間、
-同期、エラー分類、rebind設計を別途レビューする必要があります。
+- UDPは低位single／batch retry境界。netcheckのSendPacketもmagicsock writerへ接続
+- DERP URLはdialURL、regionはdialNode／dialContextを介し、各接続を数値relay exact-matchで判定
+- HTTP CONNECTはdialNodeUsingProxy入口で拒否。製品のtrusted-relay buildもproxy機能をomit
+- netcheckのHTTPS／HTTP-only、ICMPの全体・個別入口は停止。nodeAddrPortはDNS fallback拒否、
+  Standaloneも停止して独立UDP writerを作らない
+- LinuxのlistenRawDiscoはAF_PACKETと独立loopback self-testより前に停止
+- portmapper／captiveportalは製品のValidateBuildがomit tagを要求。logtailはアプリ初期化で無効化。
+  このfixtureはそれら全体の動的な無通信証明ではない
+- bootstrap、overlay HTTP、明示的loopbackサービス橋渡し、ローカル管理は
+  [別のアプリ送信元一覧](../relay-setup/README.ja.md)とbootstrap試験で整理
+- tailnet backendは別経路であり、LAN modeから無断で切り替える対象ではない
 
-## 未証明の範囲
+これは全依存・callback・将来の上流変更の完全性証明ではありません。製品化では全constructorへ
+統一policyを接続し、更新時の再監査とprocess全体の観測が必要です。診断を早期停止する試験は、
+全診断経路のpacket captureと同じ証拠ではありません。
 
-- 物理的な同一リンク、重複するVPN経路、route lookup後の経路変更
-- 2台のLAN端末間のpairingと暗号化アプリ通信
-- 実discoメッセージ生成やhandshake負荷。今回は対応する送信entrypointを直接呼出し
-- 独立したDERP TCP、bootstrap、HTTPS/ICMP診断、Linux raw-disco self-test
-- プロセス全体のsyscallと全interfaceのpacket capture
-- macOS、Windows、ARM64、実ネットワーク切替
-- 上流・アプリ全体の回帰試験
+## interface／VPN／実端末で残る条件
 
-より強い検証には、interface強制の設計と専用topology、または明示的に承認された
-使い捨てrunnerのネットワーク構成変更が必要です。この限定試験の成功を、その証明に
-読み替えないでください。
+prefixや数値アドレスだけでは送信NICを保証できません。socket-freeモデルは同じCIDRでもVPNへ
+流れる例を明示しています。今回のsocketは選択NICへ固定せず、route lookupだけでも判定後の
+経路変更との競合が残ります。ULAも同一リンクを意味しません。link-local zoneは別設計が必要で、
+この試作では拒否します。
+
+物理LAN限定を主張する前に、承認した検証topology／端末で、選択NICと他NIC、on-linkとrouted、
+重複VPN、判定と書込みの間のroute変更、NIC消失、アドレス更新、失効、IPv4／IPv6、zone、
+休止復帰、中継停止を確認します。架空payload・拒否側receiver・観測器の陽性対照を用い、
+全egress interfaceと相手側を同時に観測する必要があります。
+
+実端末へ進むには端末・ネットワーク・port・一時binary／serviceを明示して承認が必要です。
+capture権限、route／VPN／FW変更、ログイン時起動はそれぞれ別承認。このPRでは変更しません。
+生captureや実環境情報は非公開のまま、確認済みの一般的な結果だけを共有します。
+[2台の中継受入手順](../relay-setup/README.ja.md)は運用確認であり、guardの製品統合やNIC隔離の証明ではありません。
