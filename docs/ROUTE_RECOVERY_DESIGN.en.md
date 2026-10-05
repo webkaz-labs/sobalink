@@ -26,7 +26,7 @@ flowchart LR
 - Route recovery never switches Tailcat to Tailnet, renews application permissions, changes a receive directory or starts a stopped definition
 - `local` classifies a relay address. The normal single executable retains direct UDP and can use public peer paths. Strict LAN/no-external-egress mode remains unimplemented; no helper binary or traffic-isolation promise is included
 
-Prepared LAN cold start with the Internet/external relay unavailable is a required integration scenario, not yet a proven result. It must use locally saved valid identity, pins, offers and approvals without a fresh login, pairing or remote configuration fetch. Staggered startup and asymmetric route preference also need proof.
+The two-Core-process CI fixture proves a prepared LAN-local cold start from saved identity, pins, offers and approvals while its external-labelled loopback alternative is unavailable. No fresh login or pairing occurs. This bounded synthetic topology does not prove physical Internet-disconnected devices, WAN/NAT movement, staggered startup or every asymmetric preference; those checks remain open.
 
 ## Implementation map
 
@@ -87,7 +87,7 @@ The Core service listener is separate from the selected outgoing engine. Recover
 
 A valid alpha.2 private LAN version-1 state remains a legacy singleton. Earlier private LAN version-2 route data contains v1 finite proofs/approvals; loading or migrating it keeps the original exact deadlines and v1 validation limits. Explicit v2 lifetime records require LAN file version 3. A pair without an applied incoming offer stays legacy even after export. Additional candidates still require explicit offline edits/restart, and outgoing grants require local review on each side. Old binaries reject unsupported versions rather than stripping records. Never lower stored versions or restore old authority to bypass the checks. Exact-source acceptance must cover migration, interruption, legacy peers, version/counter regression, re-pair replay and attempted downgrade.
 
-[Verification](VERIFICATION.en.md#route-recovery-gate) records pure tests separately from real native transport prototypes and final Core/UI integration. The initial prototype had a cross-relay timeout, followed by a successful corrected prototype. Later integration `10e836ca` passed four native jobs but failed two browser selector cases. The selector fix, explicit-lifetime v2 and the drafted two-Core-process fixture require fresh proof; the new fixture has not run. Earlier successes do not clear these gates.
+[Verification](VERIFICATION.en.md#route-recovery-gate) separates pure tests, transport prototypes and integrated Core/UI evidence. The earlier `10e836ca` had two browser selector failures. Integrated `15d878ea` passed [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553): four native targets, 69/69 browser cases and manifest, including the independent Core-process fixture in both transport builds. Later strengthened saved-authority/service-identity assertions still need their own exact-source run. Physical acceptance and signed publication remain separate.
 
 For a clearly labeled prerelease, require:
 

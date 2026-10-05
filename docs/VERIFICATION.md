@@ -96,7 +96,7 @@
 | 初回のネイティブ経路試作 `967fa58` | [run 37218261408](https://github.com/webkaz-labs/sobalink/actions/runs/37218261408) は中継間復旧の時間切れで失敗。既存ブラウザー・旧単一中継の成功を run 全体の成功としない |
 | 修正後のネイティブ試作 `52b72b22868fe52261118675ba46555ea02cc756` | [run 37219113173](https://github.com/webkaz-labs/sobalink/actions/runs/37219113173) は2026-10-04に成功。正確なソースのネイティブ試作の証拠であり、後続の Core/CLI/UI・経路状態を含む完全統合の結果ではない |
 | 以前の統合ソース `10e836cadf827cb9bf433c8faacd5f5198c04127` | [run 37250381716](https://github.com/webkaz-labs/sobalink/actions/runs/37250381716) は全体で不合格。4ネイティブジョブとmanifestは合格し、実Go本体ブラウザー69件中67件が合格、経路候補のselectorに関する2件が時間切れ。ローカルのselector修正には別のCIが必要。このソースは後続の明示期間への再設計や新しい2Coreプロセスfixtureを含まない |
-| 明示期間v2と独立Coreプロセス | finite/until-revokedの情報・許可、v1期限保持、版・順序の後戻り検査、非公開LAN状態v3を統合中。新しい試験専用の[2Coreプロセスfixture](../internal/core/route_process_integration_test.go)は作成済みだが未実行。新しいnative/browserとfixtureの証拠は未完了 |
+| 明示期間の統合 `15d878eaf78ffab13875e3282fc23c71d7a575cf` | [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553) の全6ジョブが合格。4ネイティブ対象、実Go本体Playwright69/69、manifestを確認。[2Coreプロセスfixture](../internal/core/route_process_integration_test.go)は全4対象のUDP省略版と通常UDP有効版で実行し、保護されたペア・経路状態の再起動、代替候補が停止中のLAN内起動、同じlocalhostサービス入口での実echo、主リレー停止、手元取消を確認。リレー停止後も直接UDPが生きる場合があり、物理WAN移動の証拠ではない。後続の正確なgrant/serviceID比較の強化には別の実行結果が必要 |
 | 最終アプリ統合 | 正確なソースの2プロセス・実ソケットで、外部不通時の準備済み LAN 起動、同じペアの経路断・復旧、ローカルアプリ入口、取消・期限、移行、後片付けが必要。その後に4対象と実 Go 本体の経路ブラウザー操作を確認 |
 | 実端末 | LAN/WAN/NAT の変化、実端末のオフライン LAN 起動、実アプリ認証・再接続、OS スリープ復帰は未実施 |
 

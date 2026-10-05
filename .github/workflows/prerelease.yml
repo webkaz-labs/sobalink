@@ -435,6 +435,8 @@ jobs:
               notes = "\n".join([
                   "実験的なプレリリースです。安定版ではありません。",
                   "sobalink（コマンド soba）は端末間でサービス・ファイル・メッセージを扱うツールです。ローカルのWeb画面とCLIを備え、既存Tailnetと明示指定した信頼できる中継先を利用するペア接続に対応します。",
+                  "認証済みの同じペアで、個別に許可したLAN内・外部リレー候補の間を復旧します。経路の許可は任意の期限または取消までを明示して選び、既存の有限許可は自動延長しません。",
+                  "既存TCP接続の無停止や途中バイトからの再送は保証しません。アプリケーションによる再接続が必要です。LAN内の候補を使っていても外部送信ゼロを保証するモードではありません。",
                   "サービスの公開先・ポート・期限、ファイルの受信先と自動保存は明示的に選びます。保存済みサービスを起動時に自動公開しません。",
                   "3種類のOS、4対象環境でネイティブのrace test・vet・同一入力2回ビルド・日英の配布物smoke testを実行しました。正確なソースに対するPlaywrightの実ブラウザー試験はリンク先のCIで確認できます。",
                   "実機間のTailnet・ACL・アプリ互換性、スマートフォンQR、実際のIME・フォント、Windows Console／ConPTY、OSログイン・スリープは別途確認が必要です。模擬ピアと隔離されたループバック中継の試験は、実利用環境全体の保証ではありません。",
@@ -442,6 +444,8 @@ jobs:
                   "",
                   "Experimental prerelease; this is not a stable release.",
                   "sobalink, with the soba command, connects devices for services, files and messages through a local Web UI and CLI. It supports an existing Tailnet and explicit peer pairing through a selected trusted relay.",
+                  "The same authenticated pair can recover across individually approved LAN-local and external relay candidates. Route authorization has an explicitly chosen expiry or lasts until revoked; existing finite permissions are never automatically extended.",
+                  "Established TCP connections may fail and applications must reconnect; partial-byte resumption is not provided. A LAN-local relay candidate is not a strict no-external-egress mode.",
                   "Service recipients, ports and lifetimes, receiving destinations and automatic saving are explicit choices. Saved services are not automatically exposed on startup.",
                   "Native race tests, vet, matching repeated builds and bilingual archive smoke tests ran on four targets across three operating systems. See the linked exact-source CI for Playwright browser acceptance.",
                   "Real-device Tailnet/ACL/application compatibility, phone QR, actual IME/font combinations, Windows Console/ConPTY, OS login and suspend remain separate acceptance checks. Synthetic peers and an isolated loopback relay do not establish compatibility with every real environment.",

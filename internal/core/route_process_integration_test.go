@@ -324,7 +324,7 @@ func TestCoreTwoProcessRouteRecoveryIntegration(t *testing.T) {
 	guest.stop(t)
 	host, guest = startRouteCoreProcess(t, ctx, hostDir, true), startRouteCoreProcess(t, ctx, guestDir, true)
 	host.invoke(t, "lan.routes.add", alt)
-	alternativeID := ""
+	alternativeID, primaryID := "", ""
 	guest.invoke(t, "lan.routes.add", alt)
 	for _, pair := range []struct {
 		from, to          *routeCoreProcess
@@ -340,15 +340,36 @@ func TestCoreTwoProcessRouteRecoveryIntegration(t *testing.T) {
 			ids = append(ids, id)
 			if view["scope"] == "external" {
 				alternativeID = id
+			} else {
+				primaryID = id
 			}
 		}
 		pair.to.invoke(t, "lan.routes.apply", map[string]any{"peerId": pair.issuer, "update": offer["update"], "digest": review["digest"], "candidateIds": ids, "expires": review["expires"], "lifetime": "until-revoked"})
 	}
+	grantEvidence := func(p *routeCoreProcess, peer string) string {
+		var snapshot map[string]any
+		if json.Unmarshal(p.invoke(t, "lan.routes.list", map[string]any{"peerId": peer}), &snapshot) != nil {
+			t.Fatal("decode route evidence")
+		}
+		stable := map[string]any{}
+		for _, key := range []string{"issuedSequence", "receivedSequence", "candidates", "approvals", "permittedIds", "lifetime", "expires", "nextExpiry"} {
+			stable[key] = snapshot[key]
+		}
+		raw, err := json.Marshal(stable)
+		if err != nil {
+			t.Fatal("encode route evidence")
+		}
+		return string(raw)
+	}
+	beforeHostGrants, beforeGuestGrants := grantEvidence(host, gk), grantEvidence(guest, hk)
 	host.stop(t)
 	guest.stop(t)
 	host, guest = startRouteCoreProcess(t, ctx, hostDir, false), startRouteCoreProcess(t, ctx, guestDir, false)
 	if string(host.invoke(t, "fixture.identity", nil)) != beforeHost || string(guest.invoke(t, "fixture.identity", nil)) != beforeGuest {
 		t.Fatal("process cold start changed pair identity or role keys")
+	}
+	if grantEvidence(host, gk) != beforeHostGrants || grantEvidence(guest, hk) != beforeGuestGrants {
+		t.Fatal("cold start changed exact offer or local approval evidence")
 	}
 	for _, pair := range []struct {
 		p    *routeCoreProcess
@@ -416,7 +437,40 @@ func TestCoreTwoProcessRouteRecoveryIntegration(t *testing.T) {
 	if !buildfeatures.HasUDPTransport && observation["candidateId"] != alternativeID {
 		t.Fatal("relay-only recovery did not reach approved alternative")
 	}
-	guest.invoke(t, "service.list", map[string]any{})
+	// Direct UDP can legitimately remain healthy after relay A disappears.
+	// Separately prove a deliberate grant reduction selects B in that build.
+	if buildfeatures.HasUDPTransport {
+		guest.invoke(t, "lan.routes.revoke", map[string]any{"peerId": hk, "candidateIds": []string{primaryID}})
+		await("explicit primary grant removal with direct UDP enabled")
+		json.Unmarshal(guest.invoke(t, "lan.routes.list", map[string]any{"peerId": hk}), &routes)
+		observation, _ = routes["observation"].(map[string]any)
+		if observation["candidateId"] != alternativeID {
+			t.Fatal("normal build did not select remaining approved candidate")
+		}
+	}
+	var servicePage struct {
+		Items []map[string]any `json:"items"`
+	}
+	if json.Unmarshal(guest.invoke(t, "service.list", map[string]any{}), &servicePage) != nil {
+		t.Fatal("decode recovered service")
+	}
+	sameService := false
+	for _, service := range servicePage.Items {
+		if service["id"] != forward["id"] {
+			continue
+		}
+		sameService = true
+		for _, key := range []string{"endpoint", "lifetime", "expiresAt", "ttlSeconds", "peerId", "ports", "localPort"} {
+			a, _ := json.Marshal(service[key])
+			b, _ := json.Marshal(forward[key])
+			if string(a) != string(b) {
+				t.Fatalf("recovery changed service authority or endpoint: %s", key)
+			}
+		}
+	}
+	if !sameService {
+		t.Fatal("recovery replaced the original local service")
+	}
 	// The echo above uses the exact initial endpoint, without another start call.
 	guest.invoke(t, "lan.routes.revoke", map[string]any{"peerId": hk})
 	if exchange() {
