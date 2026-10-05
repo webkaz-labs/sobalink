@@ -6,16 +6,20 @@
 
 ## 現在の統合と公開済みの基準
 
-`0.3.0-alpha.2` のソースは、異常終了後の受信容量計上の安全策、保存・転送資源の有限化、画面改善、開発用 CI キャッシュを統合します。最終統合ソースの CI・ブラウザー・署名付き配布の結果は別途記録が必要で、下記の過去の結果ではこれらの変更を検証できません。実端末、Windows の一般ユーザープロセス、OS サインイン・スリープ、実際の電源断からの復旧は別の受入項目です。
+最新の公開版は [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2)、正確なソースは `00cc6a99809df77bf1754936ea7bf5ca4c5d0741` です。複数の準備済み経路による復旧は後続の未公開ソースで、この公開版の結果には含めません。ここでは次の版番号を割り当てません。
 
 | ソース・区分 | 結果と限界 |
 | --- | --- |
-| 公開済み `0.3.0-alpha.1`、ソース `8e6cbb00d60757f701d7d453adb92590cc5d2544` | [公開 workflow 37118184346](https://github.com/webkaz-labs/sobalink/actions/runs/37118184346) で署名・公開取得・Linux x64/ARM64・macOS ARM64・Windows x64 の実導入を検証。[alpha.1 公開版](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.1)の結果であり、alpha.2 のソースの結果ではない |
-| 公開済み alpha.1 Linux amd64 の資源観測 | [run 37122354906](https://github.com/webkaz-labs/sobalink/actions/runs/37122354906) が、正確な公開バイナリで15分のオフライン待機・10回の正常再起動・1回の待機中強制終了と再起動に合格。[手順と限界](RESOURCE_MEASUREMENT.ja.md)。受信中の異常終了、通信量、後続ソースの受入の証拠ではない |
-| alpha.1 ソースビルドの中継通信量観測 | [run 37122354935](https://github.com/webkaz-labs/sobalink/actions/runs/37122354935) が、試験専用の計測と OS UDP transport の無効化を使い、模擬 TCP echo と loopback 中継で合格。[手順と限界](RELAY_TRAFFIC_MEASUREMENT.ja.md)。公開バイナリ、ファイル転送全体の増分、実 WAN・実端末の結果ではない |
-| 統合した `0.3.0-alpha.2` のソース | 正確なソースのネイティブ・ブラウザー CI、パッケージの反復ビルド、署名・provenance、公開取得、4対象の実導入検査が公開受入に必要。準備や統合前のブランチの結果だけでは完了しない |
+| 公開済み alpha.2 | [公開 run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格。4対象の native race/vet/package、署名・provenance、認証なしの公開取得、Linux x64/ARM64・macOS ARM64・Windows x64 の実 mise 導入を確認。正確な main の CI 成功ゲートも合格。実端末・実アプリ受入は別 |
+| 公開済み alpha.2 の資源観測。統合済み [PR #7](https://github.com/webkaz-labs/sobalink/pull/7)、merge `11cd8285607c220962c97db725f36fdd00d653d7` | [確認報告](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [観測 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) で正確な公開 Linux amd64 バイナリを15分オフライン待機、10回正常再起動、待機中の強制終了・復旧で検査。[CI 37183542586 attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) は Windows frontend の非決定的な1アサーションをコード変更なしで再実行し、4対象・ブラウザー・manifest が合格。受信中の異常終了、packet capture、電源断、後続経路の受入ではない |
+| 新しい経路実装 | [draft PR #8](https://github.com/webkaz-labs/sobalink/pull/8)。helper、ネイティブ試作、最終統合の結果は[下記](#経路復旧の条件)で区別。後続の作業中変更は、試験済み試作と同じ SHA ではない |
 
 ## ソースごとの記録
+
+過去の alpha.1 観測はそのソースに限定します。[公開バイナリの資源](RESOURCE_MEASUREMENT.ja.md)・[隔離中継の通信量](RELAY_TRAFFIC_MEASUREMENT.ja.md)。
+
+<details>
+<summary>過去のソース結果（現在の公開条件ではない）</summary>
 
 | ソース・区分 | 結果と限界 |
 | --- | --- |
@@ -35,6 +39,8 @@
 サーバー起動やログイン前のブラウザー失敗はゲートの失敗であり、その後の画面の受入ではありません。変更したソースへ過去の結果を流用せず、影響する確認をやり直します。クロスコンパイルはネイティブ実行ではありません。ネイティブ loopback fixture も実端末、direct LAN/WAN/NAT、スリープ復帰、OS サインイン、ネイティブ IME、アプリ互換性の確認ではありません。
 
 [機能対応表](FEATURE_PARITY.ja.md)でalpha.2の固定機能行すべてを現在の操作経路と残る条件へ対応付けています。後続CLI `7263310` はローカルの模擬操作・Linux PTY試験に合格しましたが、実macOS/Windows端末・ネイティブIME・認証は未確認です。模擬データのホスト型接続図プレビュー `d52a975` は9レイアウトの画像確認に合格しましたが、実バックエンドやGo本体ブラウザーの証拠ではありません。最終統合ソースの集約・ネイティブ・ブラウザー検査とレビューは未完了です。
+
+</details>
 
 ## ネイティブとブラウザーの受入
 
@@ -70,7 +76,7 @@
 
 明示中継先、ペアに結び付けた別々のサーバー・クライアント鍵、sealed bootstrap、成功応答前の秘密状態の atomic 保存、UDP 多重化、永続的解除を実装しています。[LAN の操作と復旧](LAN.ja.md)では、ペアリング・アプリ信頼・自動保存・サービス許可を分けます。ペア受付は選んだ論理設定に従い、秘密状態の保存容量は別の有限予算です。件数を下げても既存ペアは残します。
 
-依存先は Tailscale `v1.104.0`、Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89` です。ネイティブ fixture は実 stock Tailcat/WireGuard と TLS ピン付き loopback DERP を使います。記録した4対象 CI は、不正招待・不明鍵、双方向 TCP/UDP、実際の2分リースをまたぐ130秒の既存 TCP と再認可、稼働中の解除・片付け、Core の2ピア文字・ファイル・共有を含みます。UDP underlay は除き、外部中継は使いません。
+依存先は Tailscale `v1.104.0`、Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89` です。記録した alpha.2 のネイティブ fixture は実 stock Tailcat/WireGuard と TLS ピン付き loopback DERP を使います。記録した4対象 CI は、不正招待・不明鍵、双方向 TCP/UDP、実際の2分リースをまたぐ130秒の既存 TCP と再認可、稼働中の解除・片付け、Core の2ピア文字・ファイル・共有を含みます。UDP underlay は除き、外部中継は使いません。
 
 この fixture は実 direct UDP、LAN/WAN/NAT の移動、中継先変更、速度、既存 TCP 全般の維持を証明しません。本番は相手への直接通信、明示した信頼済み中継への暗号化ペイロードと HTTPS/ICMP 診断を許します。loopback 限定の fixture は外部通信ゼロの保証ではありません。
 
@@ -79,6 +85,24 @@
 アプリの解除は許可と追跡中通信を直ちに閉じます。中継の2分リースは別で、許可済みセッションが期限まで、一時許可と重なる場合は初回 bootstrap から約4分まで残る可能性があります。アプリの遮断と後の中継再入場拒否をそれぞれ確認します。
 
 実機では明示設定と識別、承認済みのサービス・ファイル操作、一時停止後の取消済みファイルの選び直し、オフライン修復、証明書期限、不確かなペアリング、永続解除、ネットワーク復旧を確認します。任意の公開中継や方式の自動交換はしません。
+
+## 経路復旧の条件
+
+新ソースは改変した transport、認証済み情報、永続的なペアごとの経路状態、独立した明示期間の許可、Core/CLI、ローカル画面を含みます。実装と統合受入は別です。[契約](ROUTE_RECOVERY_DESIGN.ja.md) · [操作](LAN.ja.md#別の経路を準備する未公開)
+
+| 証拠の段階 | 現在の結果と限界 |
+| --- | --- |
+| 純粋 helper・模擬状態・経路制御試験 | 以前の有限期間だけの試験は候補、ペア対応、改ざん・再送・期限、正確な確認、保存失敗、中断、有限の試行を対象にした。過去の CLI/Core の重点試験成功は、新しい明示期間v2や独立したアプリ2プロセスを検証しない |
+| 初回のネイティブ経路試作 `967fa58` | [run 37218261408](https://github.com/webkaz-labs/sobalink/actions/runs/37218261408) は中継間復旧の時間切れで失敗。既存ブラウザー・旧単一中継の成功を run 全体の成功としない |
+| 修正後のネイティブ試作 `52b72b22868fe52261118675ba46555ea02cc756` | [run 37219113173](https://github.com/webkaz-labs/sobalink/actions/runs/37219113173) は2026-10-04に成功。正確なソースのネイティブ試作の証拠であり、後続の Core/CLI/UI・経路状態を含む完全統合の結果ではない |
+| 以前の統合ソース `10e836cadf827cb9bf433c8faacd5f5198c04127` | [run 37250381716](https://github.com/webkaz-labs/sobalink/actions/runs/37250381716) は全体で不合格。4ネイティブジョブとmanifestは合格し、実Go本体ブラウザー69件中67件が合格、経路候補のselectorに関する2件が時間切れ。ローカルのselector修正には別のCIが必要。このソースは後続の明示期間への再設計や新しい2Coreプロセスfixtureを含まない |
+| 明示期間の統合 `15d878eaf78ffab13875e3282fc23c71d7a575cf` | [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553) の全6ジョブが合格。4ネイティブ対象、実Go本体Playwright69/69、manifestを確認。[2Coreプロセスfixture](../internal/core/route_process_integration_test.go)は全4対象のUDP省略版と通常UDP有効版で実行し、保護されたペア・経路状態の再起動、代替候補が停止中のLAN内起動、同じlocalhostサービス入口での実echo、主リレー停止、手元取消を確認。リレー停止後も直接UDPが生きる場合があり、物理WAN移動の証拠ではない。後続の正確なgrant/serviceID比較の強化には別の実行結果が必要 |
+| 最終アプリ統合 | 正確なソースの2プロセス・実ソケットで、外部不通時の準備済み LAN 起動、同じペアの経路断・復旧、ローカルアプリ入口、取消・期限、移行、後片付けが必要。その後に4対象と実 Go 本体の経路ブラウザー操作を確認 |
+| 実端末 | LAN/WAN/NAT の変化、実端末のオフライン LAN 起動、実アプリ認証・再接続、OS スリープ復帰は未実施 |
+
+製品は direct を有効にした通常の単一バイナリです。UDP を除いた隔離 fixture は狭い証拠であり、通常の直接通信や外向き通信を厳密に限定する製品を検証しません。ネイティブ受入は制御した中継 fixture と実際の製品構成の両方を必要とします。厳密な LAN 限定・外部通信ゼロのモードは含めません。local 中継の区分は相手への公開された直接経路を止めません。
+
+明示したプレリリースの前に、統合自動試験、認証・許可・非公開情報のレビュー、最終ソースの native/browser、署名付き実導入を通します。実端末受入は未実施と明示して残し、その試験のために mise 導入を提供できます。既存 TCP の維持、任意要求の再実行、ファイルの途中バイト・再起動後の再開を宣伝しません。待受準備、認証済み経路の証拠、アプリ成功、遠隔ジョブ完了を区別します。
 
 ## 公開の条件
 

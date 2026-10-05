@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tailscale/tailcat"
 	"github.com/webkaz-labs/sobalink/internal/config"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"tailscale.com/types/key"
 )
 

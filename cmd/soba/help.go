@@ -6,7 +6,7 @@ func previewPayload(name string, raw json.RawMessage) json.RawMessage {
 	if privateProxyCommand(name) {
 		return redactProxyPayload(raw)
 	}
-	if name != "lan.inspect" && name != "lan.join" && name != "lan.cancel" {
+	if name != "lan.inspect" && name != "lan.join" && name != "lan.cancel" && name != "lan.routes.inspect" && name != "lan.routes.apply" {
 		return raw
 	}
 	var fields map[string]json.RawMessage
@@ -16,6 +16,10 @@ func previewPayload(name string, raw json.RawMessage) json.RawMessage {
 	if _, ok := fields["invitation"]; ok {
 		replacement, _ := json.Marshal("[private input omitted]")
 		fields["invitation"] = replacement
+	}
+	if _, ok := fields["update"]; ok {
+		replacement, _ := json.Marshal("[private input omitted]")
+		fields["update"] = replacement
 	}
 	scrubbed, err := json.Marshal(fields)
 	if err != nil {
@@ -60,6 +64,7 @@ const lanHelpEN = `LAN identity and pairing
   soba lan join --json-file INVITATION_FILE
   soba lan cancel --json-file INVITATION_FILE
   soba lan revoke PEER_ID
+  soba lan routes --help
 
 The IP above is fictional: choose an address returned by lan addresses.
 identity explicitly creates a local identity if none exists and returns only
@@ -84,6 +89,7 @@ const lanHelpJA = `LANの公開ID・ペアリング
   soba lan join --json-file INVITATION_FILE
   soba lan cancel --json-file INVITATION_FILE
   soba lan revoke PEER_ID
+  soba lan routes --help
 
 上のIPは架空の例です。lan addresses が表示したアドレスから選んでください。
 identity は未作成ならローカルIDを明示的に作成し、公開コードだけを返します。

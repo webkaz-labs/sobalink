@@ -2,7 +2,7 @@
 
 [日本語](README.md) · [Project overview](../README.en.md)
 
-The development candidate `0.3.0-alpha.1` is unpublished. Start with a task below; implementation, automated checks and actual-device acceptance are distinguished in the verification record.
+The published baseline is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2). New prepared-route controls are unreleased and under verification. Start with a task below; the verification record distinguishes source implementation, automated evidence, signed distribution and physical-device acceptance.
 
 | Task | Guide |
 | --- | --- |
@@ -16,6 +16,7 @@ The development candidate `0.3.0-alpha.1` is unpublished. Start with a task belo
 | Explicit outbound startup and private proxy profiles | [STARTUP.en.md](STARTUP.en.md) |
 | Scoped proxies and diagnostics | [PROXY_DIAGNOSTICS.en.md](PROXY_DIAGNOSTICS.en.md) |
 | Explicit LAN pairing and recovery | [LAN.en.md](LAN.en.md) |
+| Prepared-route implementation and gates | [Route recovery](ROUTE_RECOVERY_DESIGN.en.md) |
 | Capacity, budgets and history | [CAPACITY.en.md](CAPACITY.en.md) |
 | Development and usability principles | [DEVELOPMENT_PRINCIPLES.en.md](DEVELOPMENT_PRINCIPLES.en.md) |
 | Feature parity and acceptance | [FEATURE_PARITY.en.md](FEATURE_PARITY.en.md) |
@@ -23,4 +24,4 @@ The development candidate `0.3.0-alpha.1` is unpublished. Start with a task belo
 | Resource and transport observations | [Published binary resources](RESOURCE_MEASUREMENT.en.md) · [Isolated relay traffic](RELAY_TRAFFIC_MEASUREMENT.en.md) |
 | Security boundaries | [Security](../SECURITY.md) |
 | Architecture and distribution | [Architecture](ARCHITECTURE.md) · [Distribution](DISTRIBUTION.md) |
-| Remaining acceptance work | [Roadmap (Japanese)](ROADMAP.ja.md) |
+| Remaining acceptance work | [Roadmap](ROADMAP.en.md) |

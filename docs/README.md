@@ -2,7 +2,7 @@
 
 [English](README.en.md) · [概要](../README.md)
 
-開発候補 `0.3.0-alpha.1` は未公開です。目的に合う手順から始めてください。実装・自動試験・実端末の受入は検証記録で区別します。
+公開済みの基準は [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2) です。新しい経路準備の操作は未公開で検証中です。目的に合う手順から始めてください。実装、自動試験、署名付き配布、実端末の受入を検証記録で区別します。
 
 | 目的 | 手順 |
 | --- | --- |
@@ -16,6 +16,7 @@
 | 明示的な外向き起動時接続・非公開プロキシ設定 | [STARTUP.ja.md](STARTUP.ja.md) |
 | 範囲を限定したプロキシ・診断 | [PROXY_DIAGNOSTICS.ja.md](PROXY_DIAGNOSTICS.ja.md) |
 | 明示的なLANペアリング・復旧 | [LAN.ja.md](LAN.ja.md) |
+| 準備した経路の実装と条件 | [経路復旧](ROUTE_RECOVERY_DESIGN.ja.md) |
 | 容量・予算・履歴 | [CAPACITY.ja.md](CAPACITY.ja.md) |
 | 開発・使いやすさの基本方針 | [DEVELOPMENT_PRINCIPLES.ja.md](DEVELOPMENT_PRINCIPLES.ja.md) |
 | 機能対応と受入 | [FEATURE_PARITY.ja.md](FEATURE_PARITY.ja.md) |

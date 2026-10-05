@@ -1,0 +1,20 @@
+.route-disclosure { margin-top: 16px; min-width: 0; }
+.route-disclosure > summary, .route-more > summary { cursor: pointer; font-weight: 600; }
+.route-panel { padding-top: 12px; min-width: 0; }
+.route-panel h4, .route-candidate p { margin: 0; }
+.route-panel .code-value { overflow-wrap: anywhere; word-break: break-word; }
+.route-panel dl { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 6px 12px; margin: 10px 0; }
+.route-panel dt { color: var(--muted); }
+.route-panel dd { margin: 0; min-width: 0; }
+.route-list { display: grid; gap: 12px; list-style: none; margin: 0; padding: 0; }
+.route-list > li { min-width: 0; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+.route-list .checkbox-field { align-items: flex-start; margin-bottom: 10px; }
+.route-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.route-actions .button { white-space: normal; }
+.route-panel input, .route-panel select, .route-panel textarea { min-width: 0; max-width: 100%; }
+.details-panel .route-panel dl { grid-template-columns: 1fr; gap: 5px; }
+.details-panel .route-panel dd { margin-bottom: 8px; }
+@media (max-width: 480px) {
+  .route-panel dl { grid-template-columns: 1fr; gap: 5px; }
+  .route-panel dd { margin-bottom: 8px; }
+}

@@ -175,6 +175,8 @@ jobs:
         run: |
           set -euo pipefail
           go test -race -count=1 -timeout=10m ./...
+          # Enforce offline route-revocation recovery using the real protected fixture.
+          go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
           # Repeat real native IPC cleanup; exact timer policy is tested virtually.
           go test -race -count=5 -timeout=2m ./internal/control
           go vet ./...
@@ -200,10 +202,32 @@ jobs:
           subprocess.run([
               "go", "test", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration)$",
-              "-timeout=5m", "./internal/lanlink", "./internal/core",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/core", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PY
+      - name: Verify recovery with the ordinary direct-enabled transport
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+
+          # Real production UDP behavior with synthetic peers and exactly two
+          # pinned loopback TLS relays. No account or public bootstrap map.
+          # This is distinct from the UDP-omitted relay-only proof above.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_DIRECT_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-race", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^(TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
+              "-timeout=5m", "./internal/routecat", "./internal/core",
+          ], env=env, check=True, timeout=8 * 60)
+          PYTHON
       - name: Build native package and smoke archive contents
         run: |
           set -euo pipefail

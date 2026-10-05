@@ -227,6 +227,7 @@ func mockTool(t *testing.T) (*Tool, *int) {
 	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "package.json"), `{"name":"react","version":"1.0.0"}`)
 	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "LICENSE"), "React license")
 	writeFixture(t, filepath.Join(root, "web", "dist", "index.html"), "<!doctype html><html></html>")
+	writeSourceFixture(t, root)
 	goRoot := filepath.Join(root, "toolchain")
 	writeFixture(t, filepath.Join(goRoot, "LICENSE"), "Go license")
 	builds := new(int)
@@ -257,7 +258,14 @@ func mockTool(t *testing.T) (*Tool, *int) {
 			return nil, nil
 		}
 		if args[0] == "list" {
-			return []byte(`{"ImportPath":"app","Module":{"Main":true},"Imports":["fmt"]}{"ImportPath":"fmt"}`), nil
+			var inventory bytes.Buffer
+			encoder := json.NewEncoder(&inventory)
+			for _, pkg := range []goPackage{{ImportPath: "app", Module: &goModule{Main: true}, Imports: []string{routecatPackage}}, sourcePackageFixture(root), {ImportPath: "fmt"}} {
+				if err := encoder.Encode(pkg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return inventory.Bytes(), nil
 		}
 		return nil, errors.New("unexpected command")
 	}

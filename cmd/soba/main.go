@@ -252,6 +252,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		}
 		return request("network.configure", payload)
 	case "lan":
+		if len(args) > 0 && args[0] == "routes" {
+			return lanRoutesCommand(ctx, args[1:], ja, *dryRun, out, stdin, queryAction, request)
+		}
 		return lanCommand(ctx, args, ja, out, stdin, request)
 	case "login":
 		if len(args) == 0 {
@@ -363,6 +366,9 @@ func commandPayload(ctx context.Context, args []string, stdin io.Reader, ja bool
 	}
 	if args[0] == "proxy.reveal" {
 		return nil, errors.New(text(ja, "Use proxy reveal with --private-file; generic command output cannot reveal credentials", "認証情報の確認には proxy reveal --private-file を使ってください。汎用コマンドでは認証情報を出力できません"))
+	}
+	if (args[0] == "lan.routes.inspect" || args[0] == "lan.routes.apply") && args[1] != "--stdin" && args[1] != "--json-file" {
+		return nil, errors.New(text(ja, "Private route updates require --json-file or --stdin", "機密の経路更新には --json-file または --stdin を使ってください"))
 	}
 	if privateProxyCommand(args[0]) {
 		if err := validatePrivateProxyInput(args, ja); err != nil {

@@ -22,10 +22,23 @@ type goModule struct {
 	Replace                 *goModule
 }
 type goPackage struct {
-	ImportPath string
-	Imports    []string
-	Module     *goModule
-	Error      *struct{ Err string }
+	ImportPath   string
+	Dir          string
+	GoFiles      []string
+	CgoFiles     []string
+	CFiles       []string
+	CXXFiles     []string
+	MFiles       []string
+	HFiles       []string
+	FFiles       []string
+	SFiles       []string
+	SwigFiles    []string
+	SwigCXXFiles []string
+	SysoFiles    []string
+	EmbedFiles   []string
+	Imports      []string
+	Module       *goModule
+	Error        *struct{ Err string }
 }
 
 func parsePackages(data []byte) ([]goPackage, error) {
@@ -65,11 +78,12 @@ type ModuleNotices struct {
 	Notices []Notice `json:"notices"`
 }
 type NoticeInventory struct {
-	ArchiveBasePath string           `json:"archive_base_path"`
-	Scope           string           `json:"scope"`
-	Modules         []ModuleNotices  `json:"modules"`
-	Go              ModuleNotices    `json:"go_standard_library"`
-	Frontend        []FrontendModule `json:"frontend_modules"`
+	ArchiveBasePath string            `json:"archive_base_path"`
+	Scope           string            `json:"scope"`
+	Modules         []ModuleNotices   `json:"modules"`
+	Go              ModuleNotices     `json:"go_standard_library"`
+	Frontend        []FrontendModule  `json:"frontend_modules"`
+	Sources         []SourceComponent `json:"source_components"`
 }
 
 func noticeName(name string) bool {
@@ -155,7 +169,7 @@ func collectNotices(root, destination string, skipToolSources bool) ([]Notice, e
 }
 
 func collectInventory(packages []goPackage, goRoot, out string) (NoticeInventory, error) {
-	inventory := NoticeInventory{ArchiveBasePath: "share/sobalink", Scope: "Target-filtered Go package/module inventory (CGO_ENABLED=0), excluding test dependencies. Module-level notice files are preserved without license classification. Embedded source-only licenses still require release review."}
+	inventory := NoticeInventory{ArchiveBasePath: "share/sobalink", Scope: "Target-filtered Go package/module inventory (CGO_ENABLED=0), excluding test dependencies. Module-level notice files are preserved without license classification. Explicit adapted main-module source components are inventoried separately from upstream Go modules; other embedded source-only licenses still require release review."}
 	modules := map[string]goModule{}
 	for _, p := range packages {
 		if p.Module == nil || p.Module.Main {
@@ -252,6 +266,9 @@ func makeSBOM(packages []goPackage, notices NoticeInventory, version string, tar
 	for _, m := range notices.Modules {
 		components = append(components, map[string]any{"type": "library", "bom-ref": "golang:" + moduleKey(m.Module, m.Version), "name": m.Module, "version": m.Version, "purl": purl(m.Module, m.Version), "properties": []any{map[string]string{"name": "go:module:sum", "value": m.Sum}}, "licenses": []any{map[string]any{"license": map[string]string{"name": "See third-party-notices.json for original notices (not classified)"}}}})
 	}
+	for _, component := range notices.Sources {
+		components = append(components, sourceSBOMComponent(component, version))
+	}
 	for _, m := range notices.Frontend {
 		components = append(components, map[string]any{"type": "library", "bom-ref": "npm:" + moduleKey(m.Name, m.Version), "name": m.Name, "version": m.Version, "purl": npmPURL(m.Name, m.Version), "properties": []any{map[string]string{"name": "npm:integrity", "value": m.Integrity}}, "licenses": []any{map[string]any{"license": map[string]string{"name": "See third-party-notices.json for original notices (not classified)"}}}})
 	}
@@ -262,8 +279,18 @@ func makeSBOM(packages []goPackage, notices NoticeInventory, version string, tar
 		edges[root][ref] = true
 		edges[ref] = map[string]bool{}
 	}
+	sourceRefs := map[string]string{}
+	for _, component := range notices.Sources {
+		ref := sourceRef(component)
+		sourceRefs[component.Package] = ref
+		edges[root][ref] = true
+		edges[ref] = map[string]bool{}
+	}
 	for _, p := range packages {
 		ref := moduleRef(p.Module)
+		if source, ok := sourceRefs[p.ImportPath]; ok {
+			ref = source
+		}
 		refs[p.ImportPath] = ref
 		if edges[ref] == nil {
 			edges[ref] = map[string]bool{}

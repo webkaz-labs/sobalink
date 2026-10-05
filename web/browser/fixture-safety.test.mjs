@@ -81,3 +81,12 @@ test('capture excludes credential forms and all nonempty private values without 
   assert.equal(privateControlsAreEmpty([{ value: sentinel, textContent: '' }]), false)
   assert.equal(privateControlsAreEmpty([{ value: '', textContent: sentinel }]), false)
 })
+
+test('paired routes require their own offline capabilities and private input location', () => {
+  const routes = { ...valid, scenario: 'routes', localServicePort: 0, capabilities: ['offline-network', 'route-authorization', 'prepared-route-edit'], routePeerId: '1'.repeat(64), routeUpdateFile: '/tmp/fixture/route-update.json' }
+  assert.equal(validateSession(routes, 'routes').routePeerId, routes.routePeerId)
+  rejected(routes)
+  for (const missing of routes.capabilities) rejected({ ...routes, capabilities: routes.capabilities.filter(value => value !== missing) }, 'routes')
+  for (const routePeerId of ['', 'A'.repeat(64), sentinel]) rejected({ ...routes, routePeerId }, 'routes')
+  for (const routeUpdateFile of ['', `relative/${sentinel}`]) rejected({ ...routes, routeUpdateFile }, 'routes')
+})

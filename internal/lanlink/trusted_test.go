@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tailscale/tailcat"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"tailscale.com/types/key"
 )
 
@@ -361,7 +361,7 @@ func TestSuccessfulPairPromotesExistingClientObject(t *testing.T) {
 	if e = client.acceptPairReply(context.Background(), reply, inv.Host, req, plain, role, registeredPairAttemptFixture(t, client, host.PublicKey()), live); e != nil {
 		t.Fatal(e)
 	}
-	r, e := client.client(host.PublicKey())
+	r, e := client.client(context.Background(), host.PublicKey())
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -3,7 +3,7 @@ package lanlink
 import (
 	"context"
 	"errors"
-	"github.com/tailscale/tailcat"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"net"
 	"os"
 	"sync"

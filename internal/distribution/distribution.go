@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -187,12 +188,6 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		return err
 	}
 	flags := "-s -w -buildid= -X main.version=" + version
-	if _, err = t.run(env, "build", "-tags", BuildTags, "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", bin, "./cmd/soba"); err != nil {
-		return err
-	}
-	if err = os.Chmod(bin, 0o755); err != nil {
-		return err
-	}
 	packagesJSON, err := t.run(env, "list", "-tags", BuildTags, "-mod=readonly", "-buildvcs=false", "-deps", "-json", "./cmd/soba")
 	if err != nil {
 		return err
@@ -208,6 +203,33 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	licenses, err := collectInventory(packages, strings.TrimSpace(string(goRoot)), filepath.Join(share, "licenses"))
 	if err != nil {
 		return err
+	}
+	licenses.Sources, err = sourceInventory(t.Root, packages, share)
+	if err != nil {
+		return err
+	}
+	// Snapshot the adapted source before compilation and re-list afterwards.
+	// Refuse to publish provenance for bytes or target inputs changed mid-build.
+	if _, err = t.run(env, "build", "-tags", BuildTags, "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", bin, "./cmd/soba"); err != nil {
+		return err
+	}
+	if err = os.Chmod(bin, 0o755); err != nil {
+		return err
+	}
+	packagesJSON, err = t.run(env, "list", "-tags", BuildTags, "-mod=readonly", "-buildvcs=false", "-deps", "-json", "./cmd/soba")
+	if err != nil {
+		return err
+	}
+	packages, err = parsePackages(packagesJSON)
+	if err != nil {
+		return err
+	}
+	verifiedSources, err := sourceInventory(t.Root, packages, share)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(licenses.Sources, verifiedSources) {
+		return errors.New("adapted source inputs changed during package build")
 	}
 	frontend, assets, err := frontendInventory(t.Root, share)
 	if err != nil {
@@ -248,7 +270,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
-	metadata := map[string]any{"project": Project, "product": Product, "version": version, "source_commit": commit, "target": target.String(), "go_version": GoVersion, "build_tags": BuildTags, "cgo_enabled": false, "trimpath": true, "buildvcs": false, "ldflags": flags, "go_sum_sha256": sumHash, "frontend": map[string]any{"node_version": "24.19.0", "npm_version": "11.9.0", "lock_sha256": frontendLockHash, "assets": assets}, "binary": map[string]string{"path": "bin/" + target.Binary(), "sha256": binaryHash}}
+	metadata := map[string]any{"project": Project, "product": Product, "version": version, "source_commit": commit, "target": target.String(), "go_version": GoVersion, "build_tags": BuildTags, "cgo_enabled": false, "trimpath": true, "buildvcs": false, "ldflags": flags, "go_sum_sha256": sumHash, "source_components": licenses.Sources, "frontend": map[string]any{"node_version": "24.19.0", "npm_version": "11.9.0", "lock_sha256": frontendLockHash, "assets": assets}, "binary": map[string]string{"path": "bin/" + target.Binary(), "sha256": binaryHash}}
 	if err = writeJSON(filepath.Join(share, "build.json"), metadata); err != nil {
 		return err
 	}

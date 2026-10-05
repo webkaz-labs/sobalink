@@ -66,20 +66,22 @@ type LANSelection struct {
 // All private transport material belongs to this one protected atomic file.
 // Application trust is a separate explicit approval in the ordinary profile.
 type lanState struct {
-	Version       int                    `json:"version"`
-	Identity      lanlink.Identity       `json:"identity"`
-	Selection     *LANSelection          `json:"selection,omitempty"`
-	RelayIdentity *lanlink.RelayIdentity `json:"relayIdentity,omitempty"`
-	Trust         lanlink.Snapshot       `json:"trust"`
-	Remotes       []lanlink.RemotePeer   `json:"remotes"`
+	Version         int                      `json:"version"`
+	Identity        lanlink.Identity         `json:"identity"`
+	Selection       *LANSelection            `json:"selection,omitempty"`
+	RelayIdentity   *lanlink.RelayIdentity   `json:"relayIdentity,omitempty"`
+	Trust           lanlink.Snapshot         `json:"trust"`
+	Remotes         []lanlink.RemotePeer     `json:"remotes"`
+	RouteCandidates []lanlink.RouteCandidate `json:"route_candidates,omitempty"`
 }
 
 type lanStore struct {
-	mu     sync.Mutex
-	path   string
-	write  func(string, []byte) error
-	state  lanState
-	limits atomic.Pointer[lanStoreLimits]
+	mu            sync.Mutex
+	path          string
+	write         func(string, []byte) error
+	state         lanState
+	routeRecovery bool
+	limits        atomic.Pointer[lanStoreLimits]
 }
 
 type lanStoreLimits struct{ peers, bytes int64 }
@@ -139,8 +141,11 @@ func strictLANJSON(raw []byte, value any) error {
 }
 
 func validateLANState(s lanState) error {
-	if s.Version != 1 || s.Identity.Validate() != nil {
+	if (s.Version != 1 && s.Version != 2 && s.Version != 3) || s.Identity.Validate() != nil {
 		return errors.New("invalid private LAN state")
+	}
+	if err := validateLANRoutes(s); err != nil {
+		return err
 	}
 	book := lanlink.NewBook()
 	if err := book.Restore(s.Trust); err != nil {
@@ -234,11 +239,15 @@ func cloneLANState(s lanState) lanState {
 		s.RelayIdentity = &relay
 	}
 	s.Trust.Peers = append([]lanlink.Peer(nil), s.Trust.Peers...)
-	s.Remotes = append([]lanlink.RemotePeer(nil), s.Remotes...)
+	s.Remotes = lanlink.CloneRemotePeers(s.Remotes)
+	s.RouteCandidates = append([]lanlink.RouteCandidate(nil), s.RouteCandidates...)
 	return s
 }
 
 func (s *lanStore) saveLocked(next lanState) error {
+	if s.routeRecovery {
+		return config.ErrAtomicRecovery
+	}
 	limits := s.currentLimits()
 	if len(next.Remotes) > len(s.state.Remotes) && int64(len(next.Remotes)) > limits.peers {
 		return &lanlink.PeerCapacityError{Limit: limits.peers}
@@ -262,6 +271,9 @@ func (s *lanStore) saveLocked(next lanState) error {
 		s.state = cloneLANState(next)
 	}
 	if errors.Is(saveErr, config.ErrAtomicCommitted) {
+		if next.Version >= 2 {
+			s.routeRecovery = true
+		}
 		return fmt.Errorf("private LAN state was replaced, but durability could not be confirmed; inspect private state before retrying: %w", config.ErrAtomicCommitted)
 	}
 	if saveErr != nil {
@@ -281,7 +293,17 @@ func (s *lanStore) persist(trust lanlink.Snapshot, remotes []lanlink.RemotePeer)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneLANState(s.state)
-	next.Trust, next.Remotes = trust, remotes
+	next.Trust, next.Remotes = trust, lanlink.CloneRemotePeers(remotes)
+	for _, remote := range remotes {
+		if remote.Routes != nil {
+			if next.Version < 2 {
+				next.Version = 2
+			}
+			if remote.Routes.Version >= 2 {
+				next.Version = 3
+			}
+		}
+	}
 	return s.saveLocked(next)
 }
 
@@ -410,16 +432,20 @@ type lanEngine interface {
 
 type lanBackend struct {
 	lanEngine
-	mu       sync.Mutex
-	ctx      context.Context
-	start    func() (io.Closer, error)
-	relay    io.Closer
-	ready    bool
-	closed   bool
-	reserved []uint16
+	mu        sync.Mutex
+	ctx       context.Context
+	start     func() (io.Closer, error)
+	relay     io.Closer
+	ready     bool
+	closed    bool
+	reserved  []uint16
+	routeNode *lanlink.Node
 }
 
 func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
+	if store.routesNeedRecovery() {
+		return nil, config.ErrAtomicRecovery
+	}
 	state := store.copy()
 	relay, err := savedLANRelay(state)
 	if err != nil {
@@ -429,11 +455,15 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	if err := book.Restore(state.Trust); err != nil {
 		return nil, err
 	}
-	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, Relay: relay, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
+	candidates, err := ownLANCandidates(state)
 	if err != nil {
 		return nil, err
 	}
-	b := &lanBackend{lanEngine: node, ctx: c.ctx, reserved: []uint16{lanlink.PairingPort}}
+	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
+	if err != nil {
+		return nil, err
+	}
+	b := &lanBackend{lanEngine: node, routeNode: node, ctx: c.ctx, reserved: []uint16{lanlink.PairingPort}}
 	if state.Selection.Kind == "host" {
 		b.reserved = append(b.reserved, relay.Address.Port())
 	}
@@ -593,9 +623,11 @@ func (c *Core) lanStatus() map[string]any {
 	if saved := c.lanStoreCopy(); saved != nil {
 		state := saved.copy()
 		status["publicKey"] = state.Identity.PublicKey()
+		status["routeRecoveryRequired"] = saved.routesNeedRecovery()
 		status["configured"] = state.Selection != nil
 		if state.Selection != nil {
 			status["relay"] = *state.Selection
+			status["routeCandidates"] = state.RouteCandidates
 			host = state.Selection.Kind == "host"
 		}
 	}

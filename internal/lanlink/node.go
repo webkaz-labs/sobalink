@@ -9,10 +9,11 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/tailscale/tailcat"
 	"github.com/webkaz-labs/sobalink/internal/config"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"tailscale.com/logtail"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -26,6 +27,9 @@ type NodeConfig struct {
 	Relay    TrustedRelay
 	Trust    *Book
 	Remotes  []RemotePeer
+	// Candidates is the full explicitly configured server set, including Relay.
+	Candidates  []RouteCandidate
+	PrivateOnly bool
 	// Persist atomically saves both snapshots to the protected state file. It must
 	// not call back into Node or Book. Nil confirms durable commit;
 	// config.ErrAtomicCommitted means replacement with uncertain durability.
@@ -33,14 +37,35 @@ type NodeConfig struct {
 	EmbeddedRelay bool
 }
 type remoteClient struct {
-	remote  RemotePeer
-	address netip.Addr
-	client  *tailcat.Client
-	startMu sync.Mutex
-	started bool
-	closed  bool
-	runCtx  context.Context
-	cancel  context.CancelFunc
+	remote      RemotePeer
+	address     netip.Addr
+	client      peerTransport
+	startMu     transportGate
+	started     bool
+	closed      bool
+	runCtx      context.Context
+	cancel      context.CancelFunc
+	prepared    bool
+	managed     bool
+	candidates  []RouteCandidate
+	expires     time.Time
+	expiryTimer *time.Timer
+	retired     atomic.Bool
+	selected    int
+	selectedAt  time.Time
+	generation  *transportGeneration
+	observation atomic.Pointer[RouteObservation]
+	runCancel   atomic.Pointer[context.CancelFunc]
+	path        string
+	failures    map[string]time.Time
+	makeClient  func(tailcat.Addr) peerTransport
+	capability  tailcat.ConnInfo
+	// A replacement cannot start until its predecessor's engine is closed.
+	// Retirement state is initialized before publication and completed once.
+	predecessor     *transportRetirement
+	retirementInit  sync.Once
+	retirementStart sync.Once
+	retirement      *transportRetirement
 }
 type Node struct {
 	mu         sync.Mutex
@@ -79,9 +104,13 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	if e := validateEnvironment(os.Environ()); e != nil {
 		return nil, e
 	}
+	regions, e := configuredRegions(cfg)
+	if e != nil {
+		return nil, e
+	}
 	n := &Node{cfg: cfg, clients: make(map[string]*remoteClient), admissions: make(map[string]time.Time), bootstrap: make(map[string]relayBootstrap), attempts: make(map[string]map[*pairAttempt]struct{})}
 	usedKeys := map[string]bool{cfg.Identity.PublicKey(): true}
-	for _, r := range cfg.Remotes {
+	for _, r := range CloneRemotePeers(cfg.Remotes) {
 		if _, exists := n.clients[r.Peer.Key]; exists {
 			return nil, errors.New("duplicate remote")
 		}
@@ -90,6 +119,9 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 			return nil, e
 		}
 		if e := distinctRoleKeys(r, usedKeys); e != nil {
+			return nil, e
+		}
+		if e := ValidateRouteState(cfg.Identity, r); e != nil {
 			return nil, e
 		}
 		if _, e := cfg.Trust.Epoch(r.Peer.Key); e != nil {
@@ -102,7 +134,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	}
 	// Match the existing identity adapter's process-wide no-upload policy.
 	logtail.Disable()
-	n.server = &tailcat.Server{Key: cfg.Identity.Key, PresharedKey: cfg.Identity.PSK, Region: cfg.Relay.region(), Logf: logger.Discard, UDPIdleTimeout: 5 * time.Minute, AllowClient: n.allowClient}
+	n.server = &tailcat.Server{Key: cfg.Identity.Key, PresharedKey: cfg.Identity.PSK, Regions: regions, PrivateOnly: cfg.PrivateOnly, Logf: logger.Discard, UDPIdleTimeout: 5 * time.Minute, AllowClient: n.allowClient}
 	n.server.OnTCP = n.onTCP
 	return n, nil
 }
@@ -111,19 +143,45 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 func (n *Node) Address() tailcat.Addr {
 	return (&tailcat.ConnInfo{ServerPublic: tailcat.NodePublic{NodePublic: n.cfg.Identity.Key.Public()}, ServerDiscoPublic: tailcat.DiscoPublicForNode(n.cfg.Identity.Key), PresharedKey: n.cfg.Identity.PSK, Region: []*tailcfg.DERPRegion{n.cfg.Relay.region()}}).Addr()
 }
-func (n *Node) client(peer string) (*remoteClient, error) {
+func (n *Node) client(ctx context.Context, peer string) (*remoteClient, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	n.mu.Lock()
-	defer n.mu.Unlock()
+	if n.pairingRecovery {
+		n.mu.Unlock()
+		return nil, config.ErrAtomicRecovery
+	}
 	if n.closed {
+		n.mu.Unlock()
 		return nil, net.ErrClosed
 	}
 	r := n.clients[peer]
 	if r == nil {
+		n.mu.Unlock()
 		return nil, ErrUntrusted
 	}
-	if r.client == nil {
-		r.client = &tailcat.Client{Server: r.remote.Address, Key: r.remote.ClientPrivate, Logf: logger.Discard}
-		r.runCtx, r.cancel = context.WithCancel(context.Background())
+	remote := CloneRemotePeers([]RemotePeer{r.remote})[0]
+	snapshot := routeSnapshot(remote, time.Now())
+	var old *remoteClient
+	if observation := r.observation.Load(); observation != nil && !observation.Expires.IsZero() && !time.Now().Before(observation.Expires) {
+		old = r
+		r = n.replaceRemoteLocked(peer, r, remote)
+	}
+	n.mu.Unlock()
+	if old != nil {
+		// Expiry can be noticed by a dial with a short deadline. Start the
+		// single cleanup task and wait cancellably during preparation below.
+		old.beginRetirement()
+	}
+	if err := r.prepareRemote(ctx, remote, n.cfg.Relay, n.cfg.PrivateOnly, snapshot); err != nil {
+		return nil, err
+	}
+	n.mu.Lock()
+	current := !n.closed && !n.pairingRecovery && n.clients[peer] == r
+	n.mu.Unlock()
+	if !current {
+		return nil, ErrRoutePermission
 	}
 	return r, nil
 }
@@ -141,19 +199,15 @@ func (n *Node) DialPeer(ctx context.Context, peer, network string, port uint16) 
 	if e != nil {
 		return nil, e
 	}
-	r, e := n.client(peer)
+	r, e := n.client(ctx, peer)
 	if e != nil {
 		return nil, e
 	}
-	client, e := r.open(ctx)
+	c, e := r.dial(ctx, "tcp", port)
 	if e != nil {
 		return nil, e
 	}
-	c, e := client.DialTCP(ctx, netip.AddrPortFrom(r.address, port))
-	if e != nil {
-		return nil, e
-	}
-	return n.track(peer, epoch, c)
+	return n.trackOutgoing(peer, epoch, r, c)
 }
 func (n *Node) DialPacketPeer(ctx context.Context, peer string, port uint16) (ConnPacketConn, error) {
 	if port == 0 || port == PairingPort {
@@ -166,19 +220,15 @@ func (n *Node) DialPacketPeer(ctx context.Context, peer string, port uint16) (Co
 	if e != nil {
 		return nil, e
 	}
-	r, e := n.client(peer)
+	r, e := n.client(ctx, peer)
 	if e != nil {
 		return nil, e
 	}
-	client, e := r.open(ctx)
+	c, e := r.dial(ctx, "udp", port)
 	if e != nil {
 		return nil, e
 	}
-	c, e := client.DialUDP(ctx, netip.AddrPortFrom(r.address, port))
-	if e != nil {
-		return nil, e
-	}
-	wrapped, e := n.track(peer, epoch, c)
+	wrapped, e := n.trackOutgoing(peer, epoch, r, c)
 	if e != nil {
 		return nil, e
 	}
@@ -303,9 +353,7 @@ func (n *Node) Revoke(peer string) error {
 		if k, e := parseNodePublic(r.remote.IncomingClientKey); e == nil {
 			n.server.DisconnectClient(k)
 		}
-		if r.client != nil {
-			r.shutdown()
-		}
+		r.shutdown()
 	}
 	if n.cfg.Persist == nil {
 		return errors.New("peer revoked locally; durable persistence unavailable")
@@ -348,9 +396,7 @@ func (n *Node) Close() error {
 	pairing := n.pairing
 	var clients []*remoteClient
 	for _, r := range n.clients {
-		if r.client != nil {
-			clients = append(clients, r)
-		}
+		clients = append(clients, r)
 	}
 	n.mu.Unlock()
 	for _, cancel := range cancellations {
@@ -449,7 +495,7 @@ func (n *Node) OverlayAddr() netip.Addr { return overlayAddress(n.cfg.Identity.K
 func (n *Node) remoteSnapshotLocked() []RemotePeer {
 	out := make([]RemotePeer, 0, len(n.clients))
 	for _, r := range n.clients {
-		out = append(out, r.remote)
+		out = append(out, CloneRemotePeers([]RemotePeer{r.remote})[0])
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Peer.Key < out[j].Peer.Key })
 	return out
@@ -553,40 +599,6 @@ func (n *Node) PublicPeers() []PublicPeerSnapshot {
 		out = append(out, PublicPeerSnapshot{r.Peer.Key, r.Peer.Name, endpoint, []netip.Addr{endpoint, source}})
 	}
 	return out
-}
-
-func (r *remoteClient) open(ctx context.Context) (*tailcat.Client, error) {
-	r.startMu.Lock()
-	defer r.startMu.Unlock()
-	if r.closed {
-		return nil, net.ErrClosed
-	}
-	if e := ctx.Err(); e != nil {
-		return nil, e
-	}
-	if !r.started {
-		bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
-		stop := context.AfterFunc(r.runCtx, cancel)
-		defer stop()
-		defer cancel()
-		if _, e := r.client.Ping(bounded); e != nil {
-			return nil, e
-		}
-		r.started = true
-	}
-	return r.client, nil
-}
-func (r *remoteClient) shutdown() error {
-	if r.cancel != nil {
-		r.cancel()
-	}
-	r.startMu.Lock()
-	defer r.startMu.Unlock()
-	r.closed = true
-	if r.client != nil {
-		return r.client.Close()
-	}
-	return nil
 }
 
 func (c *trackedStream) Valid() bool { return c.valid != nil && c.valid() }
