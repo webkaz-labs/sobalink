@@ -142,3 +142,75 @@ The exact ordinary proxy review additionally offers **Save this reviewed proxy**
 `proxy.reveal {name,expectedRevision}` is requested only by **Reveal credentials temporarily**. Its response bypasses the shared request retry cache and is copied directly into private uncontrolled fields; the returned object is erased immediately. Secret values never enter React state, normal snapshot, history, URL, logs or export. Automated browser evidence capture rejects the whole private view. Hide, close, unmount, scope/revision change and late-response cancellation clear the fields. Copy is separate and explicit; the system clipboard retains the selected credential until replaced by the user. The existing capture guard excludes the whole credential/reveal view, even while empty, and all nonempty private values. Only fictional credentials are used in DOM/browser test inputs.
 
 Both new paths show localized failure recovery and distinguish an acknowledgement from an unconfirmed persistence result. Private settings are stored outside portable exports; this is intentional durable storage only after explicit opt-in, not browser persistence. Native ACL, installed startup, suspend/recovery and external-app verification remain separate acceptance gates.
+
+## Direct LAN and explicit mixed modes (development)
+
+`Network` additionally accepts `direct-lan` and `mixed`. Direct mode keeps
+application traffic in WireGuard/gVisor userspace TCP/native UDP; the separate
+mutual-Ed25519 TLS listener carries only pairing/control. Never infer a current
+identity from an IP, display name or saved configuration alone.
+
+- `network.configure`: `{mode:"direct-lan",hostname?,directLAN:{listen,prefixes}}`.
+  `listen` is an exact private/loopback numeric IP with an unreserved high port;
+  `prefixes` are explicitly selected canonical private/loopback CIDRs. TCP
+  pairing/session control and UDP WireGuard use the same port. No DNS/relay/STUN fallback exists
+- `direct-lan.status`, `direct-lan.identity`: `{}`. These reads do not generate
+  identity; explicit configure does. Snapshot `directLAN` includes `configured`,
+  `listenerReady`, `publicKey`, `endpoint`, `prefixes`, `recoveryRequired`, and
+  optional `resourceRestartRequired`. Local readiness does not prove remote
+  reachability. A known missing/down exact local interface is unavailable;
+  inspection errors are unknown and cannot authorize fallback
+- `direct-lan.invite`: `{recipientPublicKey,name,ttlSeconds,qr?}` returns private
+  `{invitation,expires,recipientPublicKey,qr?}`. Lifetime is 1–600 whole seconds;
+  Web defaults to 300. Optional `qr` is a locally generated boolean pixel matrix
+  for exactly that invitation. It is subject to the same private-display and
+  expiry/consumption cleanup as the invitation text
+- `direct-lan.inspect`: `{invitation}` returns token-free
+  `{hostPublicKey,hostName,endpoint,recipientPublicKey,recipientMatches:true,expires}`
+  only after recipient and selected endpoint scope validation. Inspection does
+  not prove the host is online or the token is unused
+- `direct-lan.join`, `direct-lan.cancel`: `{invitation}`. Join returns
+  `{paired:true,trusted:false,peerId}` after the protected state commit. Cancel
+  applies only to the issuing node's current invitation
+- `direct-lan.revoke`: `{peerId}` closes affected streams and application scopes.
+  Ambiguous pairing/save errors are distinct from ordinary rejection; never
+  claim the remote pair was rolled back
+- `wan.candidates.get`: `{}` returns explicit trusted-relay WAN settings and
+  `editable`/`restartRequired`. `wan.candidates.set` enables with
+  `{enabled:true,stunEndpoints:[numeric IP:port...],advertiseIPv6,probeBudget}`
+  or disables with exactly `{enabled:false}`. The positive finite probe budget
+  bounds each discovery pass; it is not a permanent four-endpoint metadata cap.
+  An empty STUN list is valid when `advertiseIPv6:true`; `probeBudget` is
+  an integer from 1 to 65535. There is no implicit STUN server. Saving does not start discovery. Strict LAN
+  destination permission is incompatible; approved encrypted relay fallback
+  remains available in this separate `lan` mode
+- `network.configure`: `{mode:"mixed",mixed:{backends:[...]}}` selects two or
+  three separately prepared backends in explicit order, from `direct-lan`,
+  `tailnet`, `lan`. Their external traffic permissions must be reviewed. Strict
+  LAN-only permission cannot be silently broadened into mixed mode
+- `mixed.status`: `{}` and snapshot `mixed` report configured backends, the
+  device identity/public key, bindings, eligible route metadata and backend
+  states. `backendReady` means backend readiness, never application health or
+  measured traffic. Active status also reports `workerResources:{frameBytes,requests,handles}`
+  and `resourceRestartRequired`; effective budgets remain in use until restart.
+  No authentication URL or invitation is present in status
+- `mixed.bind`: `{peers:[current unbound peer IDs from distinct backend routes]}`
+  requires fresh cryptographic proof on every selected route. Matching names or
+  IP addresses are insufficient. Old route approvals pause; the logical peer
+  requires a new application approval. `mixed.unbind:{peerId}` removes only the
+  specified binding and does not reactivate former approvals
+
+Mixed route selection concerns new connections/reconnects only. There is no
+established-TCP migration, byte replay or automatic scope expansion. A positively
+unavailable backend may be skipped for a bound peer; unknown, permission,
+identity, expired/revoked binding and authentication failures remain terminal.
+An arbitrary dial timeout is not reclassified as safe backend unavailability.
+The Web does not expose standalone direct pairing controls while mixed is active.
+
+New direct application dials wait for the pinned WireGuard session. A bounded
+mutually authenticated TLS control request can ask the deterministic lower-key
+initiator to activate it; responder readiness requires authenticated WireGuard
+transport confirmation. No application bytes use the control connection.
+Cancellation, revocation and current-generation checks remain authoritative.
+Independent WireGuard timers still govern existing flows and do not guarantee
+TCP continuity across suspend, network loss or long idle.
