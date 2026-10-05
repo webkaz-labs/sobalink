@@ -88,13 +88,15 @@ Actual devices still need explicit setup/identity verification, consented servic
 
 ## Route recovery gate
 
-The new source includes the adapted transport, authenticated offers, durable per-pair route state, independent finite approvals, Core/CLI and local UI. Implementation is not integrated acceptance. [Contract](ROUTE_RECOVERY_DESIGN.en.md) · [Commands](LAN.en.md#prepare-another-route-unreleased)
+The new source includes the adapted transport, authenticated offers, durable per-pair route state, independent explicit-lifetime approvals, Core/CLI and local UI. Implementation is not integrated acceptance. [Contract](ROUTE_RECOVERY_DESIGN.en.md) · [Commands](LAN.en.md#prepare-another-route-unreleased)
 
 | Evidence tier | Current result and boundary |
 | --- | --- |
-| Pure helpers / synthetic state and coordinator tests | Cover candidate validation, directional pair binding, tamper/replay/expiry, exact review and local approval, persistence faults, cancellation and bounded attempts. Focused CLI and Core fixture race tests passed locally; they do not open the production path between two independently running apps |
+| Pure helpers / synthetic state and coordinator tests | Earlier finite-only checks covered candidate validation, pair binding, tamper/replay/expiry, exact review, persistence faults, cancellation and bounded attempts. Historical focused CLI/Core passes do not verify the new explicit-lifetime v2 changes or two independent application processes |
 | Initial native route prototype, `967fa58` | [Run 37218261408](https://github.com/webkaz-labs/sobalink/actions/runs/37218261408) failed cross-relay recovery by timeout. Its passing baseline browser and legacy relay tests do not make the run pass |
 | Corrected native prototype, `52b72b22868fe52261118675ba46555ea02cc756` | [Run 37219113173](https://github.com/webkaz-labs/sobalink/actions/runs/37219113173) completed successfully on 2026-10-04. This is native prototype evidence for that exact source, not the later full Core/CLI/UI/route-state integration |
+| Earlier integrated snapshot, `10e836cadf827cb9bf433c8faacd5f5198c04127` | [Run 37250381716](https://github.com/webkaz-labs/sobalink/actions/runs/37250381716) failed overall: four native jobs and manifest passed; the actual Go-backed browser suite had 67 passes and two timed-out route-candidate selector cases out of 69. A local selector fix needs its own CI. This snapshot does not include the later explicit-lifetime redesign or new two-Core-process fixture |
+| Explicit-lifetime v2 and independent Core processes | Finite/until-revoked offers and approvals, preserved v1 deadlines, version/counter regression checks and private LAN state v3 are being integrated. The new test-only [two-Core-process fixture](../internal/core/route_process_integration_test.go) is drafted but has not run. New native/browser and fixture proof remain pending |
 | Final application integration | Still requires exact-source two-process/socket proof of prepared-LAN cold start with external services unavailable, same-pair route loss/recovery, stable local application entrance, revoke/expiry, migration and cleanup; then four native targets and actual Go-backed route browser flows |
 | Physical devices | LAN/WAN/NAT changes, physical offline-LAN cold start, real application authentication/reconnect and OS suspend/wake are unperformed |
 

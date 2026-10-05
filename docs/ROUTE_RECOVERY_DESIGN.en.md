@@ -13,7 +13,7 @@ flowchart LR
     P[Same paired public identity] --> O[Authenticated private offer]
     O --> V[Validate pair and freshness]
     V --> E[Eligible exact candidate]
-    L[Separate local finite approval] --> E
+    L[Separate local lifetime approval] --> E
     E --> T[Bounded transport coordinator]
     A[Existing application permission] --> G[Authorize new flow]
     T --> G
@@ -24,7 +24,7 @@ flowchart LR
 - No arbitrary TCP bytes, HTTP requests, commands, jobs or transactions are replayed. UDP can lose datagrams; there is no stale-datagram replay
 - File retry remains in-process retry of unfinished **whole items from byte zero**. No partial-byte resume, restart resume or durable offline outbox is added
 - Route recovery never switches Tailcat to Tailnet, renews application permissions, changes a receive directory or starts a stopped definition
-- `local` classifies a relay address. The normal single executable retains direct UDP and can use public peer paths. Strict LAN/no-external-egress mode is deferred; no helper binary or traffic-isolation promise is included
+- `local` classifies a relay address. The normal single executable retains direct UDP and can use public peer paths. Strict LAN/no-external-egress mode remains unimplemented; no helper binary or traffic-isolation promise is included
 
 Prepared LAN cold start with the Internet/external relay unavailable is a required integration scenario, not yet a proven result. It must use locally saved valid identity, pins, offers and approvals without a fresh login, pairing or remote configuration fetch. Staggered startup and asymmetric route preference also need proof.
 
@@ -33,7 +33,7 @@ Prepared LAN cold start with the Internet/external relay unavailable is a requir
 | Source | Responsibility |
 | --- | --- |
 | [`routes.go`](../internal/lanlink/routes.go) | Dedicated versioned, recipient-sealed update; directional pair binding; canonical payload and sequence/expiry validation; exact candidate IDs and local-first ordering |
-| [`route_state.go`](../internal/lanlink/route_state.go) | Durable issued/received high-water marks, retained authenticated proof, separate finite local approvals, exact review digest, expiry/revoke and uncertain-save handling |
+| [`route_state.go`](../internal/lanlink/route_state.go) | Durable issued/received high-water marks, retained authenticated proof, separate explicit-lifetime local approvals, exact review digest, expiry/revoke and uncertain-save handling |
 | [`transport_routes.go`](../internal/lanlink/transport_routes.go) | Serialized per-peer candidate attempts, cancellation, finite deadlines/hold-down, outgoing generations and current authorization checks |
 | [`core/lan_routes.go`](../internal/core/lan_routes.go) | Local management API; offline configuration edits, private state validation and secret-free route snapshots |
 | [`cmd/soba/lan_routes.go`](../cmd/soba/lan_routes.go) | Bilingual `soba lan routes` help and typed commands, private file/stdin input and reviewed candidate selection |
@@ -48,17 +48,19 @@ The original bootstrap anchor, public device identity, PSK and server/client rol
 
 A candidate binds numeric unicast IP/port, exact TLS certificate SHA-256 pin and `local`/`external` scope. Its ID changes if any of those change. `local` accepts private/loopback literals only. There are at most four candidates including the original anchor; additional configuration is limited to three and duplicate endpoints are rejected.
 
-An offer binds the issuer and intended recipient to the existing directional role-key relationship, its protocol domain/version, sequence, issue/expiry times and full candidate set. It is encrypted for that recipient and authenticated by the paired identity. Tampered, stale, expired, reflected, cross-pair, malformed and oversized input must fail without broadening authority. Re-pairing changes the role binding even when device keys survive.
+An offer binds the issuer and intended recipient to the existing directional role-key relationship, its protocol domain/version, sequence, issue time, lifetime/expiry and full candidate set. It is encrypted for that recipient and authenticated by the paired identity. Tampered, stale, expired, reflected, cross-pair, malformed and oversized input must fail without broadening authority. Re-pairing changes the role binding even when device keys survive.
 
-Local authorization is a separate exact-candidate record. Eligibility is the intersection of the current pair, a valid authenticated offer and an unexpired local approval. The CLI's default offer is seven days; its default approval is 24 hours, capped by the offer expiry. Both maximum lifetimes are 30 days. Higher sequences and repeated reconnects never extend a local approval. Applying a new offer replaces the local selection rather than silently carrying approvals forward. Explicit `--current` review can reapprove a still-valid saved offer after local withdrawal.
+Local authorization is a separate exact-candidate record. Eligibility is the intersection of the current pair, an active authenticated offer and an active local approval. Version 2 gives both records an explicit `finite` or `until-revoked` lifetime. Finite lifetime has no arbitrary 30-day ceiling; positive, representable dates/durations remain required. Finite approval cannot exceed a finite offer. Until-revoked approval requires an until-revoked offer; a shorter finite approval is also possible. The CLI requires exactly one of `--ttl` or `--until-revoked` for offer/withdraw and nonempty approval. The Web defaults new offers and eligible approvals to until-revoked with a clearly labeled confirmation, but all exact candidates remain unchecked. A finite/v1 offer restricts approval to finite. Higher sequences, reconnects and reloads never refresh permission automatically. Until-revoked approval reopens as the same saved authority, without creating a new grant or expiry timer; finite deadlines never restart on reopen. Applying a fresh offer replaces the local selection rather than inheriting grants. Explicit `--current` review can reapprove a still-active saved offer after local withdrawal.
 
 The command/UI review shows the peer, recipient, endpoint, pin, scope, sequence and expiry, without exposing private keys or capabilities. No candidate is approved just because it was received. An unapproved peer offer is not probed. Explicitly configuring this device's own server candidate set separately permits that exact server transport configuration. Relay hosting still requires explicit exact-address/port setup; an offer or `routes add` does not start a relay, alter its admission policy, bind a wildcard or change the firewall.
 
 Offer export/import is a local API operation and manual private exchange, not an automatic peer protocol delivery service. It neither sends an external message nor runs a command. The result confirms local storage, not remote receipt, remote approval or connectivity. Both devices must support the new workflow; no automatic negotiation with an old binary is assumed. `routes withdraw` (local API export with `withdraw: true`) creates a recipient-authenticated empty offer without changing local candidates or approvals. The recipient must inspect and explicitly apply it using `approve --withdrawal`; that records the sequence and removes local route approvals. Normal nonempty approval still requires exact candidate IDs.
 
+Until-revoked describes authorization lifetime, not perpetual availability. Locally generated relay certificates currently last 365 days. Certificate expiry or a changed pin can make a route unavailable while its permission still exists; renewal/pin changes need explicit reviewed configuration and never silently renew a permission or replace the original pairing anchor. Original-anchor replacement retains its existing recovery requirements.
+
 ## Persistence, revocation and failure
 
-Private state version 2 adds candidates and pair-scoped route records without replacing original identity material. Issued sequence is saved before export returns. Apply revalidates the exact reviewed envelope under the save lock, retains the received proof/high-water mark and publishes the approved selection before runtime activation. Expiry or withdrawal does not erase anti-replay evidence.
+Authenticated route updates and pair-scoped route records now use version 2 with an explicit lifetime. Their containing private LAN file uses version 3; prepared candidates without new route records can still use version 2. Migration preserves original identity material and exact existing finite deadlines. Issued protocol version and sequence are saved before export returns. Apply revalidates the exact reviewed envelope under the save lock, rejects received-version regression and stale sequences, and retains authenticated proof/high-water marks before activating approved authority. Expiry, withdrawal and restart do not erase anti-replay evidence. Re-pairing changes the role binding. Missing lifetime/zero expiry cannot manufacture permanent authority; legacy v1 is decoded as finite under its original rules.
 
 | Outcome | Current boundary / required verification |
 | --- | --- |
@@ -83,14 +85,14 @@ The Core service listener is separate from the selected outgoing engine. Recover
 
 ## Migration and release gates
 
-A valid alpha.2 version-1 state remains an unchanged singleton. A pair with no applied incoming route offer keeps legacy behavior, even after issuing an offer. Additional candidates require explicit offline edits and restart; additional outgoing permission requires local review on each side. Older binaries reject version 2 instead of silently dropping route records. Full alpha.2 fixture migration, interrupted saves, old-peer singleton compatibility and attempted downgrade need exact-source evidence.
+A valid alpha.2 private LAN version-1 state remains a legacy singleton. Earlier private LAN version-2 route data contains v1 finite proofs/approvals; loading or migrating it keeps the original exact deadlines and v1 validation limits. Explicit v2 lifetime records require LAN file version 3. A pair without an applied incoming offer stays legacy even after export. Additional candidates still require explicit offline edits/restart, and outgoing grants require local review on each side. Old binaries reject unsupported versions rather than stripping records. Never lower stored versions or restore old authority to bypass the checks. Exact-source acceptance must cover migration, interruption, legacy peers, version/counter regression, re-pair replay and attempted downgrade.
 
-[Verification](VERIFICATION.en.md#route-recovery-gate) records pure tests separately from real native transport prototypes and final Core/UI integration. The prototype had a cross-relay recovery timeout; corrected code and integration changes must pass their own runs. Earlier relay/browser successes do not clear these gates.
+[Verification](VERIFICATION.en.md#route-recovery-gate) records pure tests separately from real native transport prototypes and final Core/UI integration. The initial prototype had a cross-relay timeout, followed by a successful corrected prototype. Later integration `10e836ca` passed four native jobs but failed two browser selector cases. The selector fix, explicit-lifetime v2 and the drafted two-Core-process fixture require fresh proof; the new fixture has not run. Earlier successes do not clear these gates.
 
 For a clearly labeled prerelease, require:
 
 1. Two independent processes with actual sockets demonstrating same-pair rendezvous, externally unavailable prepared-LAN cold start, controlled route loss/recovery and a stable service entrance for new connections
-2. Reviewed authentication, finite exact approval, durable anti-replay, revoke/expiry/cancellation, uncertain persistence, migration and privacy tests
+2. Reviewed authentication, explicit finite/until-revoked exact approval, durable anti-replay, revoke/expiry/cancellation, uncertain persistence, migration and privacy tests
 3. Final-source native Linux x64/ARM64, macOS ARM64 and Windows x64 regressions, real Go-backed bilingual browser flows and reproducible packages
 4. A separately selected version/source and successful signing, provenance, public retrieval and four-target installed-binary verification
 

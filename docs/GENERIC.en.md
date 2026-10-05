@@ -62,7 +62,7 @@ Selecting a mode is explicit. Stop the agent and use `soba start --offline` to o
 
 For foreground/background startup, optional reviewed startup at user sign-in, saved autosave behavior and Tailnet logout, see [startup and logout](LIFECYCLE.en.md).
 
-Tailcat permits direct peer traffic, encrypted payload and HTTPS/ICMP diagnostics to explicitly configured/approved relay endpoints. The normal direct-enabled binary can use public peer paths; `local` is a relay classification, not a LAN egress sandbox. The unreleased [prepared-route workflow](LAN.en.md#prepare-another-route-unreleased) keeps the same pair across reviewed candidates, with finite local approval on both devices. It requires new source and does not appear in alpha.2. [Transport detail](ARCHITECTURE.md#network-boundaries)
+Tailcat permits direct peer traffic, encrypted payload and HTTPS/ICMP diagnostics to explicitly configured/approved relay endpoints. The normal direct-enabled binary can use public peer paths; `local` is a relay classification, not a LAN egress sandbox. The unreleased [prepared-route workflow](LAN.en.md#prepare-another-route-unreleased) keeps the same pair across reviewed candidates, with an explicitly reviewed finite or until-revoked local approval on both devices. It requires new source and does not appear in alpha.2. [Transport detail](ARCHITECTURE.md#network-boundaries)
 
 ## Trust the peer you mean
 

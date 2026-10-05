@@ -76,7 +76,7 @@ flowchart LR
     P --> E[Approved external relay]
 ```
 
-The diagram describes the recovery target, not a verified availability guarantee. Saved-state LAN cold start with external services unavailable still needs native proof. Local means the relay address class; normal builds retain direct peer traffic, which may use public paths. Strict LAN/no-external-egress mode is deferred. Existing TCP may break, applications must reconnect, and file retry remains whole-item retry during the same process. [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
+The diagram describes the recovery target, not a verified availability guarantee. Saved-state LAN cold start with external services unavailable still needs native proof. Local means the relay address class; normal builds retain direct peer traffic, which may use public paths. Strict LAN/no-external-egress mode remains unimplemented. Existing TCP may break, applications must reconnect, and file retry remains whole-item retry during the same process. [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
 
 ## Short CLI example
 
