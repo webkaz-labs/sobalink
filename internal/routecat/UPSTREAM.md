@@ -21,7 +21,9 @@ Changes: remove network map fetching and implicit region defaults; validate and
 canonicalize up to four numeric certificate-pinned one-node regions; keep all
 server regions present in one engine; update each peer's relay from the DERP
 connection carrying its key-checked meow; keep clients single-candidate; bound
-presence work by server lifetime. A meow is relay-authenticated discovery, not
+presence work by server lifetime; normalize failed concrete TCP dial results
+before converting them to connection interfaces so cleanup cannot dereference
+a typed-nil connection. A meow is relay-authenticated discovery, not
 end-to-end application authentication. WireGuard plus the outer pairing/trust
 coordinator remains responsible for that boundary.
 

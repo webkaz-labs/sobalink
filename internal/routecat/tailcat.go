@@ -690,7 +690,7 @@ func (s *Server) startLocked(ctx context.Context) error {
 		return ok
 	}
 	dialer.NetstackDialTCP = func(ctx context.Context, dst netip.AddrPort) (net.Conn, error) {
-		return ns.DialContextTCP(ctx, dst)
+		return normalizeTCPDial(ns.DialContextTCP(ctx, dst))
 	}
 	dialer.NetstackDialUDP = func(ctx context.Context, dst netip.AddrPort) (net.Conn, error) {
 		panic("unreachable from tailcat") // but required by Dialer currently
@@ -1815,7 +1815,7 @@ func (c *Client) initLocked() error {
 		return ok
 	}
 	dialer.NetstackDialTCP = func(ctx context.Context, dst netip.AddrPort) (net.Conn, error) {
-		return ns.DialContextTCP(ctx, dst)
+		return normalizeTCPDial(ns.DialContextTCP(ctx, dst))
 	}
 	dialer.NetstackDialUDP = func(ctx context.Context, dst netip.AddrPort) (net.Conn, error) {
 		udpConn, err := ns.DialContextUDPWithBind(ctx, lb.addr, dst)
@@ -2078,7 +2078,22 @@ func (c *Client) DialTCP(ctx context.Context, ap netip.AddrPort) (net.Conn, erro
 		copy(a[12:], a4[:])
 		ap = netip.AddrPortFrom(netip.AddrFrom16(a), ap.Port())
 	}
-	return c.lb.ns.DialContextTCP(ctx, ap)
+	return normalizeTCPDial(c.lb.ns.DialContextTCP(ctx, ap))
+}
+
+// normalizeTCPDial must run before converting the concrete gVisor pointer to
+// net.Conn. A failed DialContextTCP returns (*gonet.TCPConn)(nil); returning that
+// pointer directly as an interface makes conn != nil and callers can panic while
+// cleaning up the failed dial. Preserve an actual connection/error pair, but
+// never expose a typed-nil connection from any TCP entry point.
+func normalizeTCPDial(conn *gonet.TCPConn, err error) (net.Conn, error) {
+	if conn == nil {
+		if err == nil {
+			err = errors.New("netstack TCP dial returned no connection")
+		}
+		return nil, err
+	}
+	return conn, err
 }
 
 // DialUDPPort opens a connected UDP packet connection to the given port on the

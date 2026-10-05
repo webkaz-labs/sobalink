@@ -60,6 +60,12 @@ type remoteClient struct {
 	failures    map[string]time.Time
 	makeClient  func(tailcat.Addr) peerTransport
 	capability  tailcat.ConnInfo
+	// A replacement cannot start until its predecessor's engine is closed.
+	// Retirement state is initialized before publication and completed once.
+	predecessor     *transportRetirement
+	retirementInit  sync.Once
+	retirementStart sync.Once
+	retirement      *transportRetirement
 }
 type Node struct {
 	mu         sync.Mutex
@@ -160,14 +166,13 @@ func (n *Node) client(ctx context.Context, peer string) (*remoteClient, error) {
 	var old *remoteClient
 	if observation := r.observation.Load(); observation != nil && !observation.Expires.IsZero() && !time.Now().Before(observation.Expires) {
 		old = r
-		r = &remoteClient{remote: remote, address: r.address}
-		n.clients[peer] = r
+		r = n.replaceRemoteLocked(peer, r, remote)
 	}
 	n.mu.Unlock()
 	if old != nil {
-		if err := old.shutdown(); err != nil {
-			return nil, err
-		}
+		// Expiry can be noticed by a dial with a short deadline. Start the
+		// single cleanup task and wait cancellably during preparation below.
+		old.beginRetirement()
 	}
 	if err := r.prepareRemote(ctx, remote, n.cfg.Relay, n.cfg.PrivateOnly, snapshot); err != nil {
 		return nil, err

@@ -367,7 +367,7 @@ func (n *Node) applyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDig
 		// A reviewed withdrawal only removes authority. Stop it locally even
 		// when durable storage cannot record the newer proof/high-water mark.
 		// Core must preserve the recovery latch across disposable offline Nodes.
-		n.clients[peer] = &remoteClient{remote: next, address: r.address}
+		n.replaceRemoteLocked(peer, r, next)
 		n.mu.Unlock()
 		stopErr := r.shutdown()
 		n.mu.Lock()
@@ -387,7 +387,7 @@ func (n *Node) applyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDig
 		n.mu.Unlock()
 		return err
 	}
-	n.clients[peer] = &remoteClient{remote: next, address: r.address}
+	n.replaceRemoteLocked(peer, r, next)
 	n.mu.Unlock()
 	return r.shutdown()
 }
@@ -503,7 +503,7 @@ func (n *Node) approveRoutesWithLifetime(peer, reviewedDigest string, selectedID
 		n.mu.Unlock()
 		return err
 	}
-	n.clients[peer] = &remoteClient{remote: next, address: r.address}
+	n.replaceRemoteLocked(peer, r, next)
 	n.mu.Unlock()
 	return r.shutdown()
 }
@@ -548,7 +548,7 @@ func (n *Node) RevokeRoutes(peer string, ids []string) error {
 	next := r.remote
 	next.Routes = cloneRouteState(r.remote.Routes)
 	next.Routes.Approvals = slices.DeleteFunc(next.Routes.Approvals, func(a RouteApproval) bool { return len(ids) == 0 || remove[a.CandidateID] })
-	n.clients[peer] = &remoteClient{remote: next, address: r.address}
+	n.replaceRemoteLocked(peer, r, next)
 	recovery, closed := n.pairingRecovery, n.closed
 	n.mu.Unlock()
 	stopErr := r.shutdown()

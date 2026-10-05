@@ -3,6 +3,7 @@ package lanlink
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -371,10 +372,17 @@ func TestRouteStateProofHighWaterCloningAndPairBinding(t *testing.T) {
 		t.Fatal("mutable snapshot alias")
 	}
 	for name, mutate := range map[string]func(*RemotePeer){
-		"version":             func(r *RemotePeer) { r.Routes.Version++ },
-		"high-water":          func(r *RemotePeer) { r.Routes.ReceivedSequence++ },
-		"missing-proof":       func(r *RemotePeer) { r.Routes.ReceivedProof = nil },
-		"changed-proof":       func(r *RemotePeer) { r.Routes.ReceivedProof[len(r.Routes.ReceivedProof)-4] ^= 1 },
+		"version":       func(r *RemotePeer) { r.Routes.Version++ },
+		"high-water":    func(r *RemotePeer) { r.Routes.ReceivedSequence++ },
+		"missing-proof": func(r *RemotePeer) { r.Routes.ReceivedProof = nil },
+		"changed-proof": func(r *RemotePeer) {
+			// Flip an authenticated ciphertext byte, not a base64 character:
+			// unused trailing base64 bits may decode to the same ciphertext.
+			var envelope pairEnvelope
+			_ = json.Unmarshal(r.Routes.ReceivedProof, &envelope)
+			envelope.Box[len(envelope.Box)-1] ^= 1
+			r.Routes.ReceivedProof, _ = json.Marshal(envelope)
+		},
 		"changed-current":     func(r *RemotePeer) { r.Routes.Received.Candidates[0].Relay.CertificateSHA256 = strings.Repeat("b", 64) },
 		"unknown-approval":    func(r *RemotePeer) { r.Routes.Approvals[0].CandidateID = strings.Repeat("f", 64) },
 		"duplicate-approval":  func(r *RemotePeer) { r.Routes.Approvals = append(r.Routes.Approvals, r.Routes.Approvals[0]) },

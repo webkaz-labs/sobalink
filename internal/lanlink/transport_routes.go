@@ -102,6 +102,9 @@ func (r *remoteClient) prepare(anchor TrustedRelay, privateOnly bool, snapshot R
 	return r.prepareRemote(context.Background(), r.remote, anchor, privateOnly, snapshot)
 }
 func (r *remoteClient) prepareRemote(ctx context.Context, remote RemotePeer, anchor TrustedRelay, privateOnly bool, snapshot RouteSnapshot) error {
+	if err := r.waitForPredecessor(ctx); err != nil {
+		return err
+	}
 	if err := r.startMu.LockContext(ctx); err != nil {
 		return err
 	}
@@ -158,7 +161,7 @@ func (r *remoteClient) prepareRemote(ctx context.Context, remote RemotePeer, anc
 		if !time.Now().Before(r.expires) {
 			return ErrRoutePermission
 		}
-		r.expiryTimer = time.AfterFunc(time.Until(r.expires), func() { _ = r.shutdown() })
+		r.expiryTimer = time.AfterFunc(time.Until(r.expires), func() { r.beginRetirement() })
 	}
 	return nil
 }
@@ -193,6 +196,9 @@ func (r *remoteClient) closeClientLocked() {
 // proof retires the old generation (including hung flows); payload is never
 // replayed. A healthy application-port failure does not condemn its relay.
 func (r *remoteClient) dial(ctx context.Context, network string, port uint16) (net.Conn, error) {
+	if err := r.waitForPredecessor(ctx); err != nil {
+		return nil, err
+	}
 	if err := r.startMu.LockContext(ctx); err != nil {
 		return nil, err
 	}
@@ -356,12 +362,69 @@ func (r *remoteClient) dialLegacyLocked(ctx context.Context, network string, por
 	return r.wrapOutgoing(conn), nil
 }
 
-func (r *remoteClient) shutdown() error {
+// transportRetirement publishes its result by closing done. Every generation
+// has at most one cleanup task, shared by timers, mutations and Node.Close.
+type transportRetirement struct {
+	done chan struct{}
+	err  error // read only after done is closed
+}
+
+func (r *remoteClient) retirementState() *transportRetirement {
+	r.retirementInit.Do(func() { r.retirement = &transportRetirement{done: make(chan struct{})} })
+	return r.retirement
+}
+
+// replaceRemoteLocked immediately denies old flows and publishes a replacement
+// whose setup waits for the old engine to close. The caller holds n.mu and must
+// start old's retirement after releasing it; no engine teardown runs under n.mu.
+func (n *Node) replaceRemoteLocked(peer string, old *remoteClient, remote RemotePeer) *remoteClient {
+	old.retired.Store(true)
+	next := &remoteClient{remote: remote, address: old.address, predecessor: old.retirementState()}
+	n.clients[peer] = next
+	return next
+}
+
+func (r *remoteClient) waitForPredecessor(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.predecessor == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-r.predecessor.done:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if r.predecessor.err != nil {
+			// A failed Close does not prove the previous engine is gone.
+			return errors.Join(ErrRoutePermission, r.predecessor.err)
+		}
+		return nil
+	}
+}
+
+func (r *remoteClient) beginRetirement() *transportRetirement {
 	r.retired.Store(true)
 	if cancel := r.runCancel.Load(); cancel != nil {
 		(*cancel)()
 	}
+	result := r.retirementState()
+	r.retirementStart.Do(func() { go r.finishRetirement(result) })
+	return result
+}
+
+func (r *remoteClient) finishRetirement(result *transportRetirement) {
+	// A replacement may itself be revoked before setup. Preserve the entire
+	// retirement chain so a third generation cannot bypass the first Close.
+	if r.predecessor != nil {
+		<-r.predecessor.done
+		result.err = r.predecessor.err
+	}
 	r.startMu.Lock()
+	defer close(result.done)
 	defer r.startMu.Unlock()
 	r.closed = true
 	if r.cancel != nil {
@@ -375,9 +438,14 @@ func (r *remoteClient) shutdown() error {
 		r.expiryTimer.Stop()
 	}
 	if r.client != nil {
-		return r.client.Close()
+		result.err = errors.Join(result.err, r.client.Close())
 	}
-	return nil
+}
+
+func (r *remoteClient) shutdown() error {
+	result := r.beginRetirement()
+	<-result.done
+	return result.err
 }
 
 func (n *Node) trackOutgoing(peer string, epoch uint64, r *remoteClient, c net.Conn) (net.Conn, error) {
