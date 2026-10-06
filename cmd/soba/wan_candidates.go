@@ -17,6 +17,8 @@ const wanCandidatesHelpEN = `WAN address candidates (explicit opt-in)
   soba lan wan set --advertise-ipv6
   soba lan wan disable
 
+For ordinary outside-LAN use, choose Tailscale. This advanced feature requires
+an already reachable compatible pinned relay; public relay deployment is not provided.
 The STUN address above is fictional. Choose exact numeric IP:port endpoints
 you trust; repeat --stun for more. There is no built-in/default STUN server.
 --probe-budget is an adjustable resource limit (default 4 destinations per
@@ -37,6 +39,8 @@ const wanCandidatesHelpJA = `WANアドレス候補（明示的に選択）
   soba lan wan set --advertise-ipv6
   soba lan wan disable
 
+通常のLAN外接続にはTailscaleを使います。この詳細設定には到達可能な互換中継と
+固定pinが必要です。公開中継の配備機能は提供しません。
 上のSTUNアドレスは架空の例です。信頼する相手の数値IP:portを明示してください。
 --stun は繰り返し指定できます。既定のSTUNサーバーはありません。
 --probe-budget は調整可能な資源上限です（既定は診断1回につき4接続先）。

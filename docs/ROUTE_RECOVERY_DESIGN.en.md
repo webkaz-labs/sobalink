@@ -2,7 +2,7 @@
 
 [日本語](ROUTE_RECOVERY_DESIGN.ja.md) · [LAN steps](LAN.en.md#prepare-another-route-unreleased) · [Architecture](ARCHITECTURE.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#route-recovery-gate)
 
-**Status: implemented in the unreleased source, integration verification in progress.** This is recovery between prepared relay candidates for the **same Tailcat device and pairing**. Published `0.3.0-alpha.2` remains the single-relay baseline. The new implementation has not completed the two-process, four-native-target and distribution gates; no new release version or physical-device acceptance is claimed.
+**Status: prepared-route recovery is published in `0.3.0-alpha.4`.** It recovers between prepared relay candidates for the **same Tailcat device and pairing**. This checkout adds adjustable relay resources, removes the fixed candidate-permission ceiling, and tightens failure classification. These extensions remain unreleased and await final same-source native/browser CI and distribution acceptance. Historical alpha.2 is the single-relay baseline; no physical-device acceptance is claimed.
 
 ## Result and boundaries
 
@@ -24,7 +24,7 @@ flowchart LR
 - No arbitrary TCP bytes, HTTP requests, commands, jobs or transactions are replayed. UDP can lose datagrams; there is no stale-datagram replay
 - File retry remains in-process retry of unfinished **whole items from byte zero**. No partial-byte resume, restart resume or durable offline outbox is added
 - Route recovery never switches Tailcat to Tailnet, renews application permissions, changes a receive directory or starts a stopped definition
-- `local` classifies a relay address. The normal single executable retains direct UDP and can use public peer paths. Strict LAN/no-external-egress mode remains unimplemented; no helper binary or traffic-isolation promise is included
+- `local` classifies a relay address. The normal single executable retains direct UDP and can use public peer paths. The optional [LAN destination policy](LAN_DESTINATIONS.en.md) restricts selected transport destinations; it does not promise physical-interface/VPN isolation or whole-process/host zero egress
 
 The two-Core-process CI fixture proves a prepared LAN-local cold start from saved identity, pins, offers and approvals while its external-labelled loopback alternative is unavailable. No fresh login or pairing occurs. This bounded synthetic topology does not prove physical Internet-disconnected devices, WAN/NAT movement, staggered startup or every asymmetric preference; those checks remain open.
 
@@ -46,7 +46,7 @@ The upstream pin is Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`, with Tailsca
 
 The original bootstrap anchor, public device identity, PSK and server/client role keys do not change during candidate recovery. Original pairing still requires the exact bootstrap relay. Route updates cannot replace identity, introduce a third peer or grant application access.
 
-A candidate binds numeric unicast IP/port, exact TLS certificate SHA-256 pin and `local`/`external` scope. Its ID changes if any of those change. `local` accepts private/loopback literals only. There are at most four candidates including the original anchor; additional configuration is limited to three and duplicate endpoints are rejected.
+A candidate binds numeric unicast IP/port, exact TLS certificate SHA-256 pin and `local`/`external` scope. Its ID changes if any of those change. `local` accepts private/loopback literals only. The original anchor remains required, and duplicate endpoints are rejected. Candidate permission has no fixed four-entry ceiling. Saved metadata must fit `lanStateBytes`, signed offers must fit the existing 24 KiB plaintext/64 KiB envelope bounds, and DERP region IDs use a nonzero 16-bit namespace. Runtime presence and attempt counts have separate adjustable [resource budgets](RELAY_OPERATIONS.en.md). Older releases reject offers containing more than four candidates; update both ends before using larger offers.
 
 An offer binds the issuer and intended recipient to the existing directional role-key relationship, its protocol domain/version, sequence, issue time, lifetime/expiry and full candidate set. It is encrypted for that recipient and authenticated by the paired identity. Tampered, stale, expired, reflected, cross-pair, malformed and oversized input must fail without broadening authority. Re-pairing changes the role binding even when device keys survive.
 
@@ -81,7 +81,7 @@ This is not distributed atomic commit. A timeout or lost local response requires
 
 ## Recovery policy and service entrance
 
-Current implementation bounds are five-second route checks and connection attempts within a per-dial budget of five seconds times the candidate count, at most four candidates per dial and a 30-second failure/preference hold-down. Local candidates precede external candidates deterministically. Dials serialize per peer, are bounded by caller and permission deadlines, and cancel with the runtime generation. These are code defaults, not a measured latency or reconnection SLA.
+Current implementation bounds are five-second route checks and connection attempts, with a total dial deadline of five seconds times the smaller of the eligible candidate count and the configured `relayCandidateAttempts` budget. This adjustable budget defaults to four attempts; it does not cap saved or permitted candidates. Bounded attempts advance through the candidate set across later dials, with a 30-second failure/preference hold-down. Candidate ordering initially places local before external; retries retain their position. Dials serialize per peer, are bounded by caller and permission deadlines, and cancel with the runtime generation. These are code defaults, not a measured latency or reconnection SLA.
 
 The coordinator preserves healthy active flows during optional LAN-preference probes. When fresh transport checks establish that a generation has failed, it retires that generation, including hung flows, and can try another approved candidate for a new connection. A refused application port alone is insufficient: a successful follow-up health check preserves the healthy transport. With no active flows, a later dial can reconsider the preferred local candidate after hold-down. There is no arbitrary-byte queue or application/job replay. Route evidence can become stale; Unknown remains Unknown without reliable evidence.
 
@@ -91,7 +91,7 @@ The Core service listener is separate from the selected outgoing engine. Recover
 
 A valid alpha.2 private LAN version-1 state remains a legacy singleton. Earlier private LAN version-2 route data contains v1 finite proofs/approvals; loading or migrating it keeps the original exact deadlines and v1 validation limits. Explicit v2 lifetime records require LAN file version 3. A pair without an applied incoming offer stays legacy even after export. Additional candidates still require explicit offline edits/restart, and outgoing grants require local review on each side. Old binaries reject unsupported versions rather than stripping records. Never lower stored versions or restore old authority to bypass the checks. Exact-source acceptance must cover migration, interruption, legacy peers, version/counter regression, re-pair replay and attempted downgrade.
 
-[Verification](VERIFICATION.en.md#route-recovery-gate) separates pure tests, transport prototypes and integrated Core/UI evidence. The earlier `10e836ca` had two browser selector failures. Integrated `15d878ea` passed [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553): four native targets, 69/69 browser cases and manifest, including the independent Core-process fixture in both transport builds. Later strengthened saved-authority/service-identity assertions still need their own exact-source run. Physical acceptance and signed publication remain separate.
+[Verification](VERIFICATION.en.md#route-recovery-gate) separates pure tests, transport prototypes and integrated Core/UI evidence. The earlier `10e836ca` had two browser selector failures. Integrated `15d878ea` passed [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553): four native targets, 69/69 browser cases and manifest, including the independent Core-process fixture in both transport builds. The later alpha.4 release completed its own signed distribution and four-target installation gates; see the verification record for its exact source. The current resource/failure-classification extensions still require final same-source CI and a separately selected signed release. Historical runs do not establish those extensions or physical-device acceptance.
 
 For a clearly labeled prerelease, require:
 

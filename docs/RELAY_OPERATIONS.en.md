@@ -4,6 +4,12 @@
 
 Choose this device's private address explicitly, start its relay, and privately pair the other devices. A saved configuration, a running listener, and successful peer/application traffic are different states. Native loopback tests do not establish physical LAN reachability, sleep/wake behavior, or application compatibility.
 
+## LAN and outside-LAN use
+
+Use Tailscale for the supported outside-LAN workflow. This setup hosts a relay only on a selected private or loopback address and an unprivileged TCP port. It supplies no standalone public-relay daemon or external deployment workflow. Existing advanced trusted-relay settings can name a reachable compatible numeric endpoint with a certificate pin; that capability does not provide the server or its bootstrap authorization. A LAN relay must be reachable from both peers over the existing network; no router, firewall or administrator changes are required or performed.
+
+Direct application traffic can bypass the relay after establishment, but Tailcat still uses it for initial pairing/presence and endpoint-change notifications. A successful already-established loopback path after relay shutdown does not establish relay-free cold start or recovery after network changes. For a relay-free LAN connection, use the separately paired direct-LAN mode, whose fixed control TCP and WireGuard UDP endpoints both need reachability.
+
 ## Normal setup
 
 1. Start `soba start --offline`, then inspect `soba lan addresses`. In the local Web UI, choose **Host a relay on this device**. An eligible address can belong to a VPN; review its interface rather than assuming it is the intended network.
@@ -44,3 +50,28 @@ Use `--relay ADDRESS:PORT --certificate SHA256` instead of `--host` on a joining
 For an existing configuration, stop and reopen offline, inspect `soba lan policy show`, then use `soba lan policy set --mode allowed-lan-destinations --prefix PRIVATE_CIDR`. Saving this command does not start the network. The Web UI reviews the same offline change before saving. To widen deliberately, choose `--mode trusted-relay` without prefixes; its review explains the broader destination behavior. Peer trust and route grants remain separate.
 
 Prefixes describe destination addresses, not physical interface binding. A matching address may route through a VPN, a tunnel, or another network. This mode is not evidence of physical LAN isolation or whole-machine zero external egress. A failed policy save stops further changes in that process until recovery; a fresh process reads the actual file, which may still contain the prior policy. Do not treat a failed request as a durable restriction.
+
+## Candidate metadata and adjustable relay resources
+
+There is no fixed four-candidate permission limit. More than four exact candidates may be saved, exchanged and explicitly approved. Saved metadata must fit `lanStateBytes`; the unchanged signed exchange format supports 24 KiB of plaintext within a 64 KiB envelope, and DERP uses nonzero 16-bit region IDs. These are storage/protocol bounds, not statements about what NATs support. Older releases still reject offers containing more than four candidates; upgrade both ends before using larger offers. They also do not recognize explicitly saved new relay-resource keys; review compatibility before downgrading that state. Existing pairs, finite/permanent lifetimes, pins and explicit grants do not change when loading old state.
+
+The server keeps a presence connection for every configured relay. Its active relay map also bounds relay-diagnostic destinations. Starting more relays than the selected presence budget fails before networking starts, with saved metadata and grants intact. Raise the budget explicitly rather than treating it as permission to contact new destinations.
+
+```sh
+soba lan resources show
+soba lan resources set --presence-connections 8 --candidate-attempts 8
+soba lan resources set --tls-connections 128 --admission-connections 32
+```
+
+First stop networking and reopen with `soba start --offline`. Add the same `--state-dir PATH` before each command when using a selected profile. `set` reviews the current capacity revision and preserves all unrelated choices. `--dry-run` shows the requested edits without contacting the agent. `default` resets an individual value. The local Web UI exposes the same budgets under **Capacity and history → More limits and resource budgets**, with next-start guidance. Active network engines must be stopped before relay-budget changes.
+
+| Resource key | Safe default | Effect |
+| --- | ---: | --- |
+| `relayPresenceConnections` | 4 | Maximum simultaneous configured server relay-presence connections and relay-map diagnostic targets; increase explicitly for a larger active map |
+| `relayCandidateAttempts` | 4 | Maximum sequential approved candidates attempted by one managed dial; the cursor advances fairly after typed availability failures so later candidates can be tried on another call |
+| `relayTLSConnections` | 64 | Maximum accepted TLS connections to this device's embedded relay |
+| `relayAdmissionConnections` | 16 | Maximum accepted connections to its private loopback admission controller |
+
+Budgets require finite positive integers. Presence and attempt budgets cannot exceed the nonzero 16-bit DERP identifier space (65535); connection counts must fit the platform counter and JSON integer representation. An exhausted inbound slot closes only the excess connection, and closure returns its slot. Existing handshake/header timeouts and the two-minute relay-connection lease remain in force. Raising a budget can increase socket, memory and CPU use; it does not enable startup installation, new relay endpoints, OS routes, or external discovery.
+
+Recovery is availability-only, sequential and still bounded by the existing caller deadlines. Explicit TCP refusal/unreachable/reset errors may select another approved candidate. A generic timeout, unknown proof error, cancellation, pin/authentication/permission error, or a joined error containing any of those is terminal. The maintained engine reports typed dial, TLS and protocol failures for the current connection epoch. Only positively classified dial failures permit another candidate; TLS, admission and protocol failures stay terminal. Stale callbacks cannot replace current state, and an observed terminal failure survives internal reconnects until actual relay admission succeeds. Without a classified cause, recovery stops rather than guessing. Native failure-delivery and final-source recovery tests remain required release gates.

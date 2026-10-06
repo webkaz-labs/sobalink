@@ -108,7 +108,7 @@ flowchart LR
     A --> R[Reconnect using eligible routes]
 ```
 
-1. Stop the running agent and start `soba start --offline`. Keep it running; in another terminal use `soba lan routes list`, then add the exact endpoint/pin and `local` or `external` scope. The original relay plus at most three extra candidates are supported
+1. Stop the running agent and start `soba start --offline`. Keep it running; in another terminal use `soba lan routes list`, then add the exact endpoint/pin and `local` or `external` scope. The original relay remains required; additional exact candidates are limited by saved-state and exchange-format capacity, with separate adjustable runtime budgets. See [relay resources](RELAY_OPERATIONS.en.md)
 2. Stop and restart normally on both devices so their saved relay sets take effect. This preserves the paired identity and keys. Ordinary saved services still require their existing explicit start/startup approval
 3. Create an offer for the exact paired peer and exchange the result privately. On the receiving device, inspect it and compare the issuer, recipient, endpoint, certificate pin and expiry
 4. Approve only candidate IDs from that inspection, with an explicitly chosen finite or until-revoked local lifetime. Do the same in the other direction. Authentication alone is not approval; an unapproved offer causes no route probe

@@ -76,6 +76,32 @@ func mixedCLI(args []string, ja, dryRun bool, out io.Writer, query commandQuery,
 		fmt.Fprintln(out, text(ja, "Mixed connection settings", "複数方式の接続設定"))
 		fmt.Fprintf(out, "%s: %v\n", text(ja, "Backends", "接続方式"), state["backends"])
 		fmt.Fprintf(out, "%s: %v\n", text(ja, "Stable identity", "アプリの識別子"), state["identity"])
+
+		statusUnconfirmed := state["backendStatusAvailable"] == false
+		if statusUnconfirmed {
+			fmt.Fprintln(out, text(ja, "Backend status could not be confirmed. Run soba mixed show again and check each backend; readiness, automatic switching and the active traffic route are not confirmed.", "接続方式の状態を確認できません。soba mixed show で再確認し、各方式の状態を確認してください。準備完了・自動切替・現在の通信経路は確認できていません。"))
+		}
+		if backends, ok := state["backendStates"].([]any); ok && !statusUnconfirmed {
+			for _, raw := range backends {
+				backend, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				label := text(ja, "Readiness unconfirmed; automatic fallback is blocked", "準備状態を未確認：自動切替を停止しています")
+				switch backend["availability"] {
+				case "ready":
+					label = text(ja, "Ready", "準備完了")
+				case "confirmed-unavailable":
+					label = text(ja, "Confirmed unavailable; another approved route may serve new connections", "利用不可を確認済み：新規接続は別の許可済み経路を選べます")
+				case "authorization-required":
+					label = text(ja, "Authorization requires review before connecting", "接続前に認証・許可の確認が必要です")
+				}
+				fmt.Fprintf(out, "%v: %s\n", backend["backend"], label)
+				if restart, _ := backend["restartRequired"].(bool); restart {
+					fmt.Fprintln(out, text(ja, "Restore the configured local network or reconfigure while stopped, then restart soba to activate this backend.", "設定したローカルネットワークに戻すか、停止中に再設定し、soba を再起動してこの方式を有効にしてください。"))
+				}
+			}
+		}
 		if resources, ok := state["workerResources"]; ok {
 			fmt.Fprintf(out, "%s: %v\n", text(ja, "Worker resource allocation", "ワーカーのリソース割り当て"), resources)
 		}

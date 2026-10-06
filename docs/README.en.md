@@ -4,6 +4,8 @@
 
 The published baseline is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), including prepared multi-relay recovery. Explicit LAN destination restrictions, relay operations, relayless LAN, WAN discovery and mixed-backend routing are development changes under verification. The direct-LAN cold-start regression is fixed and covered by localhost TCP/UDP lifecycle tests. Final four-target native/browser and release acceptance remain open. Start with a task below; the verification record distinguishes source implementation, automated evidence, signed distribution and physical-device acceptance.
 
+For outside-LAN connections, use Tailscale. Relay hosting and upcoming placement improvements focus on LAN hosts; external relay deployment is out of scope for now. Advanced opt-in WAN candidates require an already reachable compatible pinned relay.
+
 | Task | Guide |
 | --- | --- |
 | Get started | [GENERIC.en.md](GENERIC.en.md) |
