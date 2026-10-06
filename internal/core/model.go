@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -143,6 +144,7 @@ type Core struct {
 	proxies                    map[string]*activeProxy
 	proxyStart                 proxyStarter
 	diagnosticsDial            transport.Dialer
+	portProposalListen         func(context.Context, string, string) (io.Closer, error)
 	rangeState                 *rangeState
 	requestMu                  sync.Mutex
 	inflightRequests           map[string]*pendingRequest

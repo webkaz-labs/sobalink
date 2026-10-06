@@ -316,7 +316,9 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	}
 	// These explicit reads are never retained in request history. A device
 	// card must reflect the current component identity/configuration on retry.
-	if cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" {
+	// Port availability is an observation, not a reservation; never retain large
+	// raised-budget proposal results or replay stale bind observations.
+	if cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" {
 		return c.executeCommand(ctx, cmd)
 	}
 	digest := sha256.Sum256(append([]byte(cmd.Name+"\x00"), cmd.Payload...))
@@ -775,6 +777,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.SendPaths(ctx, v.PeerID, v.Paths)
 	case "service.share", "service.connect":
 		return c.startServiceCommand(ctx, cmd.Name, cmd.Payload)
+	case "service.ports":
+		return c.servicePortProposals(ctx, cmd.Payload)
 	case "service.config":
 		return c.serviceConfiguration(cmd.Payload)
 	case "service.stop":

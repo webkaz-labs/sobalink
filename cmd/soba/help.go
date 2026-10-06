@@ -151,10 +151,17 @@ Saved settings do not automatically start after an application restart.
 
 
   soba service show SERVICE_ID
+  soba service ports NAME_OR_ID [--from-port PORT] [--count N] [--attempts N] [--json]
   soba --dry-run service copy SERVICE_ID [--name NAME] [OPTIONS]
   soba service copy SERVICE_ID [--name NAME] [OPTIONS]
   soba --dry-run service restart SERVICE_ID [OPTIONS]
   soba service restart SERVICE_ID [OPTIONS]
+
+service ports explicitly checks transient loopback binds for stopped connections.
+It suggests checked alternatives only for a confirmed address-in-use conflict;
+no saved port is changed. Proposals are not reservations. Choose a port with
+restart --local-port PORT --expected-revision REVISION after reviewing the full
+service and lifetime. See service ports --help for finite adjustable check budgets.
 
 copy explicitly starts a new service, with an unused name by default.
 restart explicitly replaces and starts a stopped service with its saved
@@ -199,10 +206,17 @@ web、ssh（SSH/SFTP）、postgres、local-ai は変更できる入力例です�
 
 
   soba service show SERVICE_ID
+  soba service ports NAME_OR_ID [--from-port PORT] [--count N] [--attempts N] [--json]
   soba --dry-run service copy SERVICE_ID [--name NAME] [OPTIONS]
   soba service copy SERVICE_ID [--name NAME] [OPTIONS]
   soba --dry-run service restart SERVICE_ID [OPTIONS]
   soba service restart SERVICE_ID [OPTIONS]
+
+service ports は停止中の接続で、一時的なループバック待受を明示的に確認します。
+使用中のアドレスが確認された場合だけ、確認済みの候補を提示します。
+保存済みのポートは変更せず、候補も予約ではありません。サービス全体と有効期間を
+確認後、restart --local-port PORT --expected-revision REVISION で選択します。
+有限で変更可能な確認容量は service ports --help を参照してください。
 
 copy は新しいサービスを明示的に開始します。既定では未使用の名前を選びます。
 restart は停止中のサービスを保存済み設定で置き換え、明示的に開始します。

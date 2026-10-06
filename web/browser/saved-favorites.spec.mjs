@@ -55,15 +55,34 @@ for (const locale of ['en', 'ja']) {
     await expect(group).toHaveCount(0); await expect(target).toBeEnabled()
     // Removing a preference must not remove the actual saved group.
     await expect(savedGroup).toHaveValue('Fixture_Set')
+    const removeService = favorites.getByRole('button', { name: ja ? 'お気に入りから削除: サービス · fixture-alpha' : 'Remove favorite: Service · fixture-alpha', exact: true })
     for (const viewport of [{ width: 1440, height: 960 }, { width: 375, height: 844 }, { width: 844, height: 390 }]) {
-      await page.setViewportSize(viewport); await target.focus()
+      await page.setViewportSize(viewport)
+      // Refocusing an already-active select does not scroll after a resize.
+      // Enter it again by keyboard so the actual tab order and scroll behavior run.
+      await removeService.focus()
+      await expect(removeService).toBeFocused()
+      await page.keyboard.press('Tab')
       await expect(target).toBeFocused()
-      await expect.poll(() => favorites.evaluate(element => {
+      const layout = () => favorites.evaluate(element => {
         const controls = [...element.querySelectorAll('button, select')]
-        const bounds = document.activeElement.getBoundingClientRect()
-        return element.scrollWidth <= element.clientWidth + 1 && controls.every(control => control.scrollWidth <= control.clientWidth + 1 && (innerWidth > 600 || control.getBoundingClientRect().height >= 44)) &&
-          bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight
-      }), { message: 'Favorites keep wrapped controls and keyboard focus inside desktop and narrow viewports' }).toBe(true)
+        const focused = document.activeElement
+        const bounds = focused.getBoundingClientRect()
+        const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+        return {
+          contained: element.scrollWidth <= element.clientWidth + 1,
+          controlsUnclipped: controls.every(control => control.scrollWidth <= control.clientWidth + 1),
+          touchTargets: controls.every(control => innerWidth > 600 || control.getBoundingClientRect().height >= 44),
+          focusInViewport: bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight,
+          focusUncovered: Boolean(hit && (focused === hit || focused.contains(hit))),
+        }
+      })
+      // Separate assertions keep sanitized failure locations diagnostic.
+      await expect.poll(async () => (await layout()).contained, { message: 'Favorites remain within their container' }).toBe(true)
+      await expect.poll(async () => (await layout()).controlsUnclipped, { message: 'Favorite controls do not clip their labels' }).toBe(true)
+      await expect.poll(async () => (await layout()).touchTargets, { message: 'Narrow favorite controls retain 44px touch targets' }).toBe(true)
+      await expect.poll(async () => (await layout()).focusInViewport, { message: 'Keyboard focus remains inside the viewport' }).toBe(true)
+      await expect.poll(async () => (await layout()).focusUncovered, { message: 'Keyboard focus is not hidden behind the modal heading or footer' }).toBe(true)
       await app.capture(`saved-favorites-${locale}-${viewport.width}x${viewport.height}`)
     }
     await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0)

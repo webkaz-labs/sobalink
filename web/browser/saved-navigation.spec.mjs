@@ -47,9 +47,14 @@ for (const locale of ['en', 'ja']) {
     await page.keyboard.press('Space')
     await expect(selected).toHaveAttribute('aria-pressed', 'false')
     await expect(group).toHaveValue('Fixture_Set')
+    const saveShare = dialog.getByRole('button', { name: ja ? '共有定義を保存' : 'Save a share', exact: true })
+    const footer = dialog.locator(':scope > .modal-body > .modal-actions:last-child')
     for (const viewport of [{ width: 1440, height: 960 }, { width: 375, height: 844 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
       await page.setViewportSize(viewport)
-      await search.focus()
+      // Re-enter the search by keyboard after each resize or action capture.
+      await saveShare.focus()
+      await expect(saveShare).toBeFocused()
+      await page.keyboard.press('Tab')
       await expect(search).toBeFocused()
       await expect.poll(() => dialog.evaluate(element => {
         const body = element.querySelector('.modal-body')
@@ -62,7 +67,9 @@ for (const locale of ['en', 'ja']) {
           buttons.every(button => button.scrollWidth <= button.clientWidth + 1 && (innerWidth > 600 || button.getBoundingClientRect().height >= 44)) &&
           bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight
       }), { message: 'Saved navigation keeps inputs, wrapped labels and keyboard focus inside desktop and narrow viewports' }).toBe(true)
-      await app.captureForm(`saved-navigation-${locale}-${viewport.width}x${viewport.height}`)
+      await app.capture(`saved-navigation-${locale}-${viewport.width}x${viewport.height}`)
+      await footer.scrollIntoViewIfNeeded()
+      await app.capture(`saved-navigation-${locale}-${viewport.width}x${viewport.height}-actions`)
     }
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)

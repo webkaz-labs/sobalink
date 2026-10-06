@@ -200,6 +200,7 @@ var logicalDefinitions = map[string]Definition{
 	"stagingSeconds": {600, "seconds"},
 }
 var resourceDefinitions = map[string]Definition{
+	"portProposalAttempts": {32, "windows"}, "portProposalResults": {3, "proposals"}, "portProposalBinds": {4096, "bind checks"}, "portProposalSeconds": {5, "seconds"},
 	"relayPresenceConnections": {4, "connections"}, "relayCandidateAttempts": {4, "attempts"},
 	"relayTLSConnections": {64, "connections"}, "relayAdmissionConnections": {16, "connections"},
 	"workerFrameBytes": {1 << 20, "bytes"}, "workerRequests": {128, "requests"}, "workerHandles": {1024, "handles"},

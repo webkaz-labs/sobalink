@@ -1,8 +1,10 @@
-# Next convenience patch: scope and acceptance
+# alpha.6 convenience patch: scope and acceptance
 
 [日本語](CONVENIENCE_PLAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [Roadmap](ROADMAP.en.md)
 
-**This is an implementation plan after alpha.5, not a claim that these improvements are shipped.** Keep the ten areas below together as the target, while delivering and reviewing small independent changes. Reuse working service, group, permission and recovery contracts rather than replacing them.
+**The planned alpha.6 targets all ten areas below plus the confirmed alpha.5 saved-screen correction; these improvements are not yet a released version.** Deliver and review small independent changes while keeping the complete target. Reuse working service, group, permission and recovery contracts rather than replacing them.
+
+The partial source checkpoint in [draft PR #13](https://github.com/webkaz-labs/sobalink/pull/13) includes the saved-screen correction, inert favorites and group navigation, passive diagnosis, and read-only device-card API/CLI/Web controls. Read-only cards are only one part of pairing convenience. Endpoint continuity, relay convenience and the remaining combined acceptance are still open; the PR's current checks track automated verification, separately from release and physical-device acceptance.
 
 Normal operation remains a user process without administrator privileges, TUN, OS route/firewall changes or router configuration. Outside-LAN use normally uses Tailscale. Existing explicitly opted-in WAN functionality remains available on its existing terms; new public-relay deployment and a standalone relay daemon are outside this patch. Byte-level transfer resume, durable message outboxes, a TUI and native UI are also outside scope.
 
@@ -23,7 +25,7 @@ Normal operation remains a user process without administrator privileges, TUN, O
 
 ### Confirmed alpha.5 gap to fix first
 
-The Saved Services Web reader accepts only `tailnet` and `lan` (plus a legacy empty backend), while Core and the saved editor also support `direct-lan` and `mixed`. A profile containing either new mode prevents the saved list and group-review controls from loading; the same reader also rejects those imported definitions. Extend only the supported-mode validation and add parser, rendered-group and import-review regression tests. This correction must not change backend selection or permissions.
+The alpha.5 Saved Services Web reader accepts only `tailnet` and `lan` (plus a legacy empty backend), while Core and the saved editor also support `direct-lan` and `mixed`. A profile containing either new mode prevents the saved list and group-review controls from loading; the same reader also rejects those imported definitions. The draft correction aligns supported-mode validation and adds parser, rendered-group and import-review regression tests without changing backend selection or permissions. It does not change the published alpha.5 tag.
 
 ## Dependency and implementation order
 

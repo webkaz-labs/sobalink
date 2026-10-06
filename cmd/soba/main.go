@@ -85,7 +85,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		} else if err != nil && jsonErrors {
 			err = &jsonCommandError{err}
 		} else if err != nil {
-			err = localizeFavoritesError(japanese(locale), err)
+			err = localizeListenerError(japanese(locale), localizeFavoritesError(japanese(locale), err))
 			err = localizeLANSetupError(japanese(locale), localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err)))
 		}
 	}()
@@ -187,6 +187,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		var formatted json.RawMessage
 		e := client(ctx, dir, raw, &formatted)
 		if e != nil {
+			if jsonErrors {
+				return e
+			}
 			return fmt.Errorf("%s: %w", text(ja, "Command failed. Check that soba is running and review the error", "操作に失敗しました。soba の起動状態とエラーを確認してください"), e)
 		}
 		encoder := json.NewEncoder(out)
@@ -253,6 +256,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	case "receive-dir", "autosave", "pause", "resume", "reconnect":
 		return preferenceCommand(command, args, ja, out, query, request)
 	case "service":
+		if len(args) > 0 && args[0] == "ports" {
+			return servicePortsCommand(args[1:], dir, ja, *dryRun, out, queryAction, request)
+		}
 		return serviceCommand(args, ja, out, query, queryAction, request)
 	case "setup":
 		payload, e := setupPayload(args, ja, out)

@@ -37,10 +37,15 @@ test.describe('saved definitions across supported backends', () => {
         const review = page.getByRole('region', { name: ja ? '選択したサービスを確認' : 'Review selected services', exact: true })
         await expect(review).toContainText(`${backend} · TCP`)
         await expect(review).toContainText('fixture-absent')
-        await app.captureForm(`saved-${backend}-${locale}-desktop`)
-        await page.setViewportSize({ width: 390, height: 844 })
-        await review.scrollIntoViewIfNeeded()
-        await app.captureForm(`saved-${backend}-${locale}-390`)
+        for (const viewport of [{ width: 1440, height: 960, label: 'desktop' }, { width: 390, height: 844, label: '390' }]) {
+          await page.setViewportSize({ width: viewport.width, height: viewport.height })
+          await review.getByRole('heading', { name: ja ? '選択したサービスを確認' : 'Review selected services', exact: true }).scrollIntoViewIfNeeded()
+          await app.capture(`saved-${backend}-${locale}-${viewport.label}`)
+          // This dialog also has selection and footer actions. Capture the
+          // reviewed start/cancel controls, not an arbitrary modal action row.
+          await review.locator(':scope > .modal-actions').scrollIntoViewIfNeeded()
+          await app.capture(`saved-${backend}-${locale}-${viewport.label}-actions`)
+        }
         await review.getByRole('button', { name: ja ? 'キャンセル' : 'Cancel', exact: true }).click()
         await expect(review).toHaveCount(0)
         await page.keyboard.press('Escape')

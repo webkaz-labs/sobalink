@@ -1,8 +1,10 @@
-# 次の利便性パッチ：範囲と受入条件
+# alpha.6の利便性パッチ：範囲と受入条件
 
 [English](CONVENIENCE_PLAN.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [ロードマップ](ROADMAP.ja.md)
 
-**alpha.5の次に進める実装計画です。以下が公開済みという意味ではありません。** 10領域を目標として維持し、小さく独立した変更ごとに実装・レビューします。サービス・group・許可・復旧の既存契約を再利用します。
+**予定するalpha.6は、以下の10領域すべてとalpha.5で確認した保存画面の修正を対象とします。これらを含む版はまだ配布していません。** 全体の目標を維持し、小さく独立した変更ごとに実装・レビューします。サービス・group・許可・復旧の既存契約を再利用します。
+
+[draft PR #13](https://github.com/webkaz-labs/sobalink/pull/13)の部分的なソースには、保存画面修正、未起動のお気に入りとgroup操作、受動的な診断、読取り専用端末カードのAPI／CLI／Web操作を含みます。端末カードはペアリング簡略化の一部です。端点追跡、中継の利便性、残る組合せ受入は未完了で、自動検証はPRの最新checksで確認します。配布・実機受入とは分けます。
 
 通常利用はユーザー権限のプロセスで動かし、管理者権限、TUN、OSの経路／FW変更、ルーター設定を前提にしません。LAN外は通常Tailscaleを使います。既存の明示opt-in WAN機能は従来の条件で保持し、公開relayの新規配置と単独daemonは今回の対象外です。転送の途中byteからの再開、永続outbox、TUI、ネイティブUIも含めません。
 
@@ -23,7 +25,7 @@
 
 ### 最初に直すalpha.5の確認済み不足
 
-Saved ServicesのWeb側readerは `tailnet` と `lan`（および旧形式の空欄）だけを受理しますが、Coreと保存editorは `direct-lan` と `mixed` も対応しています。どちらかの新方式を含む保存profileでは一覧とgroup確認が読み込めず、同じreaderを使うimportも拒否されます。対応方式の検証だけを揃え、parser・実際に描画するgroup画面・import確認の回帰テストを加えます。方式の選択や許可は変更しません。
+alpha.5のSaved ServicesのWeb側readerは `tailnet` と `lan`（および旧形式の空欄）だけを受理しますが、Coreと保存editorは `direct-lan` と `mixed` も対応しています。どちらかの新方式を含む保存profileでは一覧とgroup確認が読み込めず、同じreaderを使うimportも拒否されます。ドラフトの修正は対応方式の検証だけを揃え、parser・実際に描画するgroup画面・import確認の回帰テストを追加しています。方式の選択や許可、公開済みalpha.5のタグは変更しません。
 
 ## 依存関係と実装順
 
