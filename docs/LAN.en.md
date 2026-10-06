@@ -2,7 +2,7 @@
 
 [日本語](LAN.ja.md) · [Main guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#tailcat-gate)
 
-Published `0.3.0-alpha.2` provides explicit single-relay pairing. This checkout adds prepared-route recovery for the same pair; the new sections are **unreleased and under verification**. The published baseline, native prototype results and remaining two-process/native gates are separate in [verification](VERIFICATION.en.md#route-recovery-gate). Actual devices, direct LAN/WAN/NAT, sleep/wake and native IME remain unverified.
+Published `0.3.0-alpha.4` includes explicit pinned-relay pairing and prepared-route recovery. The new [LAN destination policy](LAN_DESTINATIONS.en.md) and [relay certificate controls](RELAY_OPERATIONS.en.md) in this checkout are **unreleased and under verification**. Physical devices, LAN/WAN/NAT topology, sleep/wake and native IME remain separate acceptance work.
 
 ## Use the local UI
 
@@ -108,7 +108,7 @@ flowchart LR
     A --> R[Reconnect using eligible routes]
 ```
 
-1. Stop the running agent and start `soba start --offline`. Keep it running; in another terminal use `soba lan routes list`, then add the exact endpoint/pin and `local` or `external` scope. The original relay plus at most three extra candidates are supported
+1. Stop the running agent and start `soba start --offline`. Keep it running; in another terminal use `soba lan routes list`, then add the exact endpoint/pin and `local` or `external` scope. The original relay remains required; additional exact candidates are limited by saved-state and exchange-format capacity, with separate adjustable runtime budgets. See [relay resources](RELAY_OPERATIONS.en.md)
 2. Stop and restart normally on both devices so their saved relay sets take effect. This preserves the paired identity and keys. Ordinary saved services still require their existing explicit start/startup approval
 3. Create an offer for the exact paired peer and exchange the result privately. On the receiving device, inspect it and compare the issuer, recipient, endpoint, certificate pin and expiry
 4. Approve only candidate IDs from that inspection, with an explicitly chosen finite or until-revoked local lifetime. Do the same in the other direction. Authentication alone is not approval; an unapproved offer causes no route probe
@@ -139,7 +139,7 @@ soba lan routes revoke PEER_ID
 
 In the local UI, open LAN setup → “Advanced: prepared relay candidates” to review additions/removals. A paired device's details → “Route recovery” provides private offer creation, inspect/approve, expiry and revoke controls. New offers and eligible approval reviews start with Until revoked selected; finite/v1 offers allow only finite approval. The chosen lifetime and its impact still require confirmation. Select exact candidates explicitly; none is checked automatically. Saving reports configuration, not proven reachability.
 
-`local` is a relay address classification. Direct peer traffic can leave the LAN; there is no strict LAN/no-external-egress mode in this scope. Saved-state cold start with external services unavailable, stable service entrances and route transitions require the [native integration gate](VERIFICATION.en.md#route-recovery-gate), not just configuration success. Existing TCP preservation, automatic application replay and byte-offset/restart file resume are not provided.
+`local` is a relay address classification. Direct peer traffic can leave the LAN; use the separate [explicit destination policy](LAN_DESTINATIONS.en.md) to restrict permitted destinations. It still does not prove NIC/VPN isolation or whole-process zero egress. Saved-state cold start with external services unavailable, stable service entrances and route transitions require the [native integration gate](VERIFICATION.en.md#route-recovery-gate), not just configuration success. Existing TCP preservation, automatic application replay and byte-offset/restart file resume are not provided.
 
 ### Withdraw an advertised offer
 
@@ -202,7 +202,7 @@ Peer Pause blocks messages/files and cancels active sends. After unpausing, sele
 
 ## Traffic and remaining limits
 
-The mode permits direct peer traffic, encrypted payload through the selected relay and HTTPS/ICMP diagnostics to that relay endpoint. It is not strict LAN isolation or zero external traffic. Required build tags omit port mapping, captive-portal probes and system-proxy support; unsupported proxy/backend override environments are rejected.
+The default trusted-relay mode permits direct peer traffic, encrypted payload through the selected relay and HTTPS/ICMP diagnostics to that relay endpoint. It is not strict LAN isolation or zero external traffic. Required build tags omit port mapping, captive-portal probes and system-proxy support; unsupported proxy/backend override environments are rejected.
 
 The embedded relay authenticates a sealed HTTPS bootstrap before admitting the invited transport role. Unknown keys have no blanket exception. Its two-minute relay connection lease rechecks admission; a previously admitted relay session can persist for up to two minutes after removal, or about four minutes from initial bootstrap when temporary admission overlaps a lease. Application authorization and tracked application flows are revoked immediately.
 

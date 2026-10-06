@@ -96,6 +96,14 @@ type LocalRelay struct {
 }
 
 func StartLocalRelay(ctx context.Context, address netip.AddrPort, identity RelayIdentity, allow func(string) bool, bootstrap ...func([]byte) error) (*LocalRelay, error) {
+	return StartLocalRelayWithResources(ctx, address, identity, allow, RelayResources{}, bootstrap...)
+}
+
+func StartLocalRelayWithResources(ctx context.Context, address netip.AddrPort, identity RelayIdentity, allow func(string) bool, resources RelayResources, bootstrap ...func([]byte) error) (*LocalRelay, error) {
+	resources, err := resources.WithDefaults()
+	if err != nil {
+		return nil, err
+	}
 	// Fail closed unless the authenticated bootstrap handler is explicitly wired.
 	if !embeddedBootstrapEnabled || len(bootstrap) != 1 || bootstrap[0] == nil {
 		return nil, ErrEmbeddedBootstrap
@@ -138,7 +146,7 @@ func StartLocalRelay(ctx context.Context, address netip.AddrPort, identity Relay
 	mux.Handle("/derp", derpserver.Handler(d))
 	mux.Handle("/sobalink/pair/bootstrap", relayBootstrapHandler(bootstrap[0]))
 	srv := &http.Server{Handler: mux, ErrorLog: logger.StdLogger(logger.Discard), ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 8192}
-	tlsListener := tls.NewListener(&limitedRelayListener{Listener: ln, slots: make(chan struct{}, 64), lease: 2 * time.Minute}, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}})
+	tlsListener := tls.NewListener(&limitedRelayListener{Listener: ln, slots: make(chan struct{}, resources.TLSConnections), lease: 2 * time.Minute}, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}})
 	relay := &LocalRelay{derp: d, server: srv, admission: ctl, listener: tlsListener, admissionListener: admission, done: make(chan struct{})}
 	relay.wg.Add(2)
 	relay.mu.Lock()
@@ -146,7 +154,7 @@ func StartLocalRelay(ctx context.Context, address netip.AddrPort, identity Relay
 	relay.mu.Unlock()
 	go func() {
 		defer relay.wg.Done()
-		ctl.Serve(&limitedRelayListener{Listener: admission, slots: make(chan struct{}, 16)})
+		ctl.Serve(&limitedRelayListener{Listener: admission, slots: make(chan struct{}, resources.AdmissionConnections)})
 		relay.shutdown()
 	}()
 	go func() { defer relay.wg.Done(); srv.Serve(tlsListener); relay.shutdown() }()

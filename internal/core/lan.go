@@ -24,6 +24,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
+	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 	"github.com/webkaz-labs/sobalink/internal/policy"
 )
 
@@ -66,13 +67,15 @@ type LANSelection struct {
 // All private transport material belongs to this one protected atomic file.
 // Application trust is a separate explicit approval in the ordinary profile.
 type lanState struct {
-	Version         int                      `json:"version"`
-	Identity        lanlink.Identity         `json:"identity"`
-	Selection       *LANSelection            `json:"selection,omitempty"`
-	RelayIdentity   *lanlink.RelayIdentity   `json:"relayIdentity,omitempty"`
-	Trust           lanlink.Snapshot         `json:"trust"`
-	Remotes         []lanlink.RemotePeer     `json:"remotes"`
-	RouteCandidates []lanlink.RouteCandidate `json:"route_candidates,omitempty"`
+	WANCandidates     *WANCandidateConfig      `json:"wan_candidates,omitempty"`
+	Version           int                      `json:"version"`
+	DestinationPolicy lanpolicy.Config         `json:"destination_policy,omitzero"`
+	Identity          lanlink.Identity         `json:"identity"`
+	Selection         *LANSelection            `json:"selection,omitempty"`
+	RelayIdentity     *lanlink.RelayIdentity   `json:"relayIdentity,omitempty"`
+	Trust             lanlink.Snapshot         `json:"trust"`
+	Remotes           []lanlink.RemotePeer     `json:"remotes"`
+	RouteCandidates   []lanlink.RouteCandidate `json:"route_candidates,omitempty"`
 }
 
 type lanStore struct {
@@ -141,8 +144,14 @@ func strictLANJSON(raw []byte, value any) error {
 }
 
 func validateLANState(s lanState) error {
-	if (s.Version != 1 && s.Version != 2 && s.Version != 3) || s.Identity.Validate() != nil {
+	if (s.Version < 1 || s.Version > 5) || s.Identity.Validate() != nil {
 		return errors.New("invalid private LAN state")
+	}
+	if err := validateWANCandidateState(s); err != nil {
+		return err
+	}
+	if err := validateLANDestinationPolicy(s); err != nil {
+		return err
 	}
 	if err := validateLANRoutes(s); err != nil {
 		return err
@@ -228,6 +237,8 @@ func (s *lanStore) copy() lanState {
 }
 
 func cloneLANState(s lanState) lanState {
+	s.WANCandidates = cloneWANCandidates(s.WANCandidates)
+	s.DestinationPolicy.Prefixes = append([]string(nil), s.DestinationPolicy.Prefixes...)
 	if s.Selection != nil {
 		selection := *s.Selection
 		s.Selection = &selection
@@ -299,7 +310,7 @@ func (s *lanStore) persist(trust lanlink.Snapshot, remotes []lanlink.RemotePeer)
 			if next.Version < 2 {
 				next.Version = 2
 			}
-			if remote.Routes.Version >= 2 {
+			if remote.Routes.Version >= 2 && next.Version < 3 {
 				next.Version = 3
 			}
 		}
@@ -331,31 +342,58 @@ func (c *Core) ensureLANIdentity() (*lanStore, error) {
 }
 
 func (c *Core) configureLAN(selection *LANSelection) error {
+	return c.configureLANWithOptions(selection, false)
+}
+
+func (c *Core) configureLANWithOptions(selection *LANSelection, rotateCertificate bool) error {
+	return c.configureLANWithPolicy(selection, rotateCertificate, nil)
+}
+
+func (c *Core) configureLANWithPolicy(selection *LANSelection, rotateCertificate bool, requestedPolicy *lanpolicy.Config) error {
+	canonicalPolicy, err := canonicalLANSetupPolicy(requestedPolicy)
+	if err != nil {
+		return err
+	}
+	if rotateCertificate && (selection == nil || selection.Kind != "host" || selection.CertificateSHA256 != "") {
+		return &lanCommandError{"lan_certificate_rotation_invalid", "certificate rotation requires an explicitly selected existing local relay"}
+	}
 	saved := c.lanStoreCopy()
+	existingStore := saved != nil
+	if saved != nil && saved.routesNeedRecovery() {
+		return config.ErrAtomicRecovery
+	}
+	var existingRelay *lanlink.RelayIdentity
 	if selection == nil {
 		if saved == nil || saved.copy().Selection == nil {
 			return errors.New("select an exact relay or a private local relay address")
 		}
-		return nil
+		if canonicalPolicy == nil {
+			return nil
+		}
+		chosen := *saved.copy().Selection
+		selection = &chosen
+	}
+	if rotateCertificate && (saved == nil || saved.copy().RelayIdentity == nil) {
+		return &lanCommandError{"lan_certificate_rotation_invalid", "certificate rotation requires an explicitly selected existing local relay"}
 	}
 	if saved != nil {
 		state := saved.copy()
-		if state.Selection != nil && (*state.Selection == *selection || (selection.Kind == "host" && state.Selection.Kind == "host" && selection.Address == state.Selection.Address && selection.CertificateSHA256 == "")) {
+		existingRelay = state.RelayIdentity
+		if !rotateCertificate && state.Selection != nil && (*state.Selection == *selection || (selection.Kind == "host" && state.Selection.Kind == "host" && selection.Address == state.Selection.Address && selection.CertificateSHA256 == "")) {
 			_, err := savedLANRelay(state)
 			if err == nil {
-				return nil
+				return c.configureExistingLANPolicy(saved, state, canonicalPolicy)
 			}
-			// An explicit repeat setup may rotate an unusable local certificate
-			// once every old pair has been removed and no engine is active.
-			if selection.Kind != "host" || selection.CertificateSHA256 != "" {
-				return err
+			if selection.Kind == "host" {
+				return relayRotationRequired()
 			}
+			return err
 		}
 		if c.nodeCopy() != nil {
 			return &lanCommandError{"network_restart_required", "stop soba, then start with --offline before changing the selected relay"}
 		}
 		if len(state.Remotes) != 0 {
-			return errors.New("revoke current LAN pairs before changing the selected relay")
+			return &lanCommandError{"lan_relay_pairs_present", "revoke current LAN pairs before changing the selected relay or rotating its certificate; pair again and approve application trust separately afterward"}
 		}
 	}
 	ap, err := netip.ParseAddrPort(selection.Address)
@@ -379,9 +417,17 @@ func (c *Core) configureLAN(selection *LANSelection) error {
 		if conflict {
 			return errors.New("relay port conflicts with the local management port")
 		}
-		id, err := lanlink.GenerateRelayIdentity(ap.Addr())
-		if err != nil {
-			return err
+		var id lanlink.RelayIdentity
+		if existingRelay != nil && !rotateCertificate {
+			id = *existingRelay
+			if _, err := id.Endpoint(ap); err != nil {
+				return relayRotationRequired()
+			}
+		} else {
+			id, err = lanlink.GenerateRelayIdentity(ap.Addr())
+			if err != nil {
+				return err
+			}
 		}
 		relay, err := id.Endpoint(ap)
 		if err != nil {
@@ -397,7 +443,14 @@ func (c *Core) configureLAN(selection *LANSelection) error {
 	}
 	next := saved.copy()
 	next.Selection, next.RelayIdentity = &choice, relayIdentity
+	if err := applyLANSetupPolicy(&next, canonicalPolicy); err != nil {
+		return err
+	}
 	saveErr := saved.save(next)
+	if saveErr != nil && canonicalPolicy != nil && existingStore {
+		saved.requireRouteRecovery()
+		saveErr = errors.Join(saveErr, config.ErrAtomicRecovery)
+	}
 	if !atomicPublished(saveErr) {
 		return saveErr
 	}
@@ -459,7 +512,15 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
+	wan, err := wanTransportConfig(state.WANCandidates)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := selectedRelayResources(c.capacityPolicy())
+	if err != nil {
+		return nil, err
+	}
+	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, RelayResources: resources, WANCandidates: wan, DestinationPolicy: state.DestinationPolicy, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +531,7 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	b.start = func() (io.Closer, error) {
 		var local *lanlink.LocalRelay
 		if state.Selection.Kind == "host" {
-			local, err = lanlink.StartLocalRelay(c.ctx, relay.Address, *state.RelayIdentity, node.AllowRelayKey, node.AuthorizeRelayBootstrap)
+			local, err = lanlink.StartLocalRelayWithResources(c.ctx, relay.Address, *state.RelayIdentity, node.AllowRelayKey, resources, node.AuthorizeRelayBootstrap)
 			if err != nil {
 				return nil, err
 			}
@@ -555,7 +616,19 @@ func (b *lanBackend) DialIP(ctx context.Context, network string, ap netip.AddrPo
 	}
 	for _, peer := range b.PublicPeers() {
 		if ap.Addr() == peer.Endpoint {
-			return b.DialPeer(ctx, peer.Key, network, ap.Port())
+			conn, err := b.DialPeer(ctx, peer.Key, network, ap.Port())
+			if err != nil {
+				return nil, err
+			}
+			id := peer.Key
+			return &exactPeerConn{Conn: conn, id: id, valid: func() bool {
+				for _, current := range b.PublicPeers() {
+					if current.Key == id {
+						return true
+					}
+				}
+				return false
+			}}, nil
 		}
 	}
 	return nil, errors.New("destination is not a current paired LAN server endpoint")
@@ -618,17 +691,21 @@ func (b *lanBackend) Close() error {
 }
 
 func (c *Core) lanStatus() map[string]any {
-	status := map[string]any{"configured": false, "pairingReady": false, "listenerReady": false, "relayReady": false, "path": "unknown"}
+	status := map[string]any{"resources": c.relayResourcesView(), "configured": false, "pairingReady": false, "listenerReady": false, "relayReady": false, "path": "unknown"}
 	host := false
 	if saved := c.lanStoreCopy(); saved != nil {
 		state := saved.copy()
 		status["publicKey"] = state.Identity.PublicKey()
+		status["policy"] = c.lanPolicyView(state.DestinationPolicy)
 		status["routeRecoveryRequired"] = saved.routesNeedRecovery()
 		status["configured"] = state.Selection != nil
 		if state.Selection != nil {
 			status["relay"] = *state.Selection
 			status["routeCandidates"] = state.RouteCandidates
 			host = state.Selection.Kind == "host"
+			if host {
+				status["certificate"] = localRelayCertificateStatus(state.RelayIdentity, time.Now())
+			}
 		}
 	}
 	if _, ok := c.nodeCopy().(lanNetworkBackend); ok {
@@ -836,10 +913,8 @@ func (r offlineLANRevoker) Revoke(id string) error {
 }
 
 func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
-	revocationErr := c.revokeStartupPeer(id)
-	if revocationErr != nil && !errors.Is(revocationErr, config.ErrAtomicCommitted) {
-		return revocationErr
-	}
+	revocationErr := errors.Join(c.retireMixedTransport("lan", id), c.revokeStartupPeer(id))
+	// Even a pre-publication journal failure must not retain inbound authority.
 	p := c.profileCopy()
 	peers := p.Peers[:0]
 	removedAppTrust := false

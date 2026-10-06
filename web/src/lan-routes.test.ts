@@ -77,3 +77,9 @@ describe('paired route contracts', () => {
     expect(Date.parse(expiry) - converted).toBe(30000)
   })
 })
+
+it('keeps five-plus authenticated metadata and explicit approval identities', () => {
+  const candidates = Array.from({ length: 7 }, (_, i) => ({ ...candidate, candidateId: String(i + 1).repeat(64), address: `192.0.2.${20 + i}:443` }))
+  const expanded = { ...offer, candidates }
+  expect(readRouteReview(expanded, offer.issuer, offer.recipient).candidates).toHaveLength(7)
+})

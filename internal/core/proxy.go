@@ -107,7 +107,7 @@ func (c *Core) reviewProxyScope(ctx context.Context, scope ProxyScope, retainedA
 	if scope.Backend == "" {
 		scope.Backend = mode
 	}
-	if (scope.Backend != "tailnet" && scope.Backend != "lan") || scope.Backend != mode {
+	if (scope.Backend != "tailnet" && scope.Backend != "lan" && scope.Backend != "direct-lan" && scope.Backend != "mixed") || scope.Backend != mode {
 		return bad("review proxy targets in the selected active network")
 	}
 	st, err := c.current(ctx)

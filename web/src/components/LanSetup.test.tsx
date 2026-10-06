@@ -382,7 +382,7 @@ describe('Embedded relay review and lifecycle', () => {
     await view.user.click(screen.getByRole('button', { name: lt('refreshAddresses') }))
     expect(screen.getByRole('status')).toHaveTextContent(lt('noAddresses'))
     expect(screen.getByRole('button', { name: lt('reviewHost') })).toBeDisabled()
-    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('combobox', { name: lt('addressChoice') }).querySelectorAll('option')).toHaveLength(1)
   })
 
   it.each(['1023', '65536', '54544', '49000'])('rejects low, invalid or reserved port %s even on direct submit', async port => {
@@ -597,5 +597,114 @@ describe('LAN setup failure and interruption boundaries', () => {
     expect(screen.queryByText(lt('stopping'))).not.toBeInTheDocument()
     expect(screen.getByText(lt('savedRelay'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: lt('confirmStop') })).toBeEnabled()
+  })
+})
+
+describe('Explicit local relay certificate replacement', () => {
+  function savedHostState(certificateState: 'valid' | 'expired' | 'expiring' = 'valid'): State {
+    return { ...unconfiguredState(), lan: { configured: true, publicKey, pairingReady: false, listenerReady: false, relayReady: false, path: 'unknown', relay: { kind: 'host', address: '192.168.20.5:48443', certificateSHA256 }, certificate: { state: certificateState, notBefore: '2025-01-01T00:00:00Z', notAfter: '2026-01-01T00:00:00Z' } } }
+  }
+  it.each(['en', 'ja'] as const)('requires an unchecked explicit replacement choice for expired certificates in %s', async locale => {
+    const view = setup({ state: savedHostState('expired'), locale, addressOptions: hostAddresses })
+    const localized = lanTranslator(locale)
+    expect(screen.getByText(localized('certificateExpired'))).toBeInTheDocument()
+    await screen.findByRole('option', { name: /192.168.20.5/ })
+    await view.user.selectOptions(screen.getByRole('combobox', { name: localized('addressChoice') }), 'ethernet-fixture\n192.168.20.5')
+    await view.user.click(screen.getByRole('button', { name: localized('reviewHost') }))
+    expect(screen.getByRole('button', { name: localized('startHost') })).toBeDisabled()
+    const consent = screen.getByRole('checkbox', { name: localized('rotateCertificate') })
+    expect(consent).not.toBeChecked()
+    await view.user.click(consent)
+    expect(screen.getByText(localized('certificateRotationImpact'))).toBeInTheDocument()
+    await view.user.click(screen.getByRole('button', { name: localized('startHost') }))
+    expect(view.run.mock.calls).toEqual([['network.configure', { mode: 'lan', hostname: 'test-device', lan: { kind: 'host', address: '192.168.20.5:48443' }, rotateCertificate: true }]])
+  })
+  it('preserves a valid certificate by default, including a port-only change', async () => {
+    const view = setup({ state: savedHostState(), addressOptions: hostAddresses })
+    await screen.findByRole('option', { name: /192.168.20.5/ })
+    await view.user.selectOptions(screen.getByRole('combobox', { name: lt('addressChoice') }), 'ethernet-fixture\n192.168.20.5')
+    fireEvent.change(screen.getByRole('spinbutton', { name: new RegExp(lt('hostPort')) }), { target: { value: '48444' } })
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    await view.user.click(screen.getByRole('button', { name: lt('startHost') }))
+    expect(view.run.mock.calls).toEqual([['network.configure', { mode: 'lan', hostname: 'test-device', lan: { kind: 'host', address: '192.168.20.5:48444' } }]])
+  })
+  it('requires replacement for an address change and clears its acknowledgement on cancel', async () => {
+    const view = setup({ state: savedHostState(), addressOptions: hostAddresses })
+    await screen.findByRole('option', { name: /fd00::5/ })
+    await view.user.selectOptions(screen.getByRole('combobox', { name: lt('addressChoice') }), 'wifi-fixture\nfd00::5')
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    expect(screen.getByRole('button', { name: lt('startHost') })).toBeDisabled()
+    await view.user.click(screen.getByRole('checkbox', { name: lt('rotateCertificate') }))
+    await view.user.click(screen.getByRole('button', { name: t('cancel') }))
+    expect(view.run).not.toHaveBeenCalled()
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    expect(screen.getByRole('checkbox', { name: lt('rotateCertificate') })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: lt('startHost') })).toBeDisabled()
+  })
+  it('never clears pairs implicitly when replacing a certificate', async () => {
+    const state = { ...savedHostState('expired'), peers: [pairedPeer()] }
+    const view = setup({ state, addressOptions: hostAddresses })
+    await screen.findByRole('option', { name: /192.168.20.5/ })
+    await view.user.selectOptions(screen.getByRole('combobox', { name: lt('addressChoice') }), 'ethernet-fixture\n192.168.20.5')
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    await view.user.click(screen.getByRole('checkbox', { name: lt('rotateCertificate') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(lt('certificatePairsPresent'))
+    expect(screen.getByRole('button', { name: lt('startHost') })).toBeDisabled()
+    expect(view.run).not.toHaveBeenCalled()
+  })
+  it('warns about an expiring certificate without changing configuration', () => {
+    const view = setup({ state: savedHostState('expiring') })
+    expect(screen.getByText(lt('certificateExpiring'))).toBeInTheDocument()
+    expect(view.run).not.toHaveBeenCalled()
+  })
+})
+
+describe('Initial destination policy is atomic with relay setup', () => {
+  it('shows unselected suggestions and starts the reviewed host with exact allowed prefixes', async () => {
+    const { policyTranslator } = await import('../lan-policy-i18n'); const p = policyTranslator('en')
+    const view = setup({ state: unconfiguredState(), addressOptions: hostAddresses })
+    const details = screen.getByText(p('title')).closest('details')!
+    expect(details).not.toHaveAttribute('open')
+    await view.user.click(screen.getByText(p('title')))
+    await view.user.selectOptions(screen.getByRole('combobox', { name: p('mode') }), 'allowed-lan-destinations')
+    expect(screen.getByRole('textbox', { name: p('prefixes') })).toHaveValue('')
+    fireEvent.change(screen.getByRole('textbox', { name: p('prefixes') }), { target: { value: '192.168.20.0/24' } })
+    await screen.findByRole('option', { name: /192.168.20.5/ })
+    await view.user.selectOptions(screen.getByRole('combobox', { name: lt('addressChoice') }), 'ethernet-fixture\n192.168.20.5')
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    expect(screen.getByRole('region', { name: lt('hostReview') })).toHaveTextContent('192.168.20.0/24')
+    await view.user.click(screen.getByRole('button', { name: lt('startHost') }))
+    expect(view.run.mock.calls).toEqual([['network.configure', { mode: 'lan', hostname: 'test-device', lan: { kind: 'host', address: '192.168.20.5:48443' }, lanPolicy: { mode: 'allowed-lan-destinations', prefixes: ['192.168.20.0/24'] } }]])
+  })
+  it('rejects an empty selected scope before host review or invitation inspection', async () => {
+    const { policyTranslator } = await import('../lan-policy-i18n'); const p = policyTranslator('en')
+    const view = setup({ state: unconfiguredState(), addressOptions: hostAddresses, draft: { ...emptyLanDraft(), policyMode: 'allowed-lan-destinations' } })
+    await screen.findByRole('option', { name: /192.168.20.5/ })
+    await view.user.selectOptions(screen.getByRole('combobox', { name: lt('addressChoice') }), 'ethernet-fixture\n192.168.20.5')
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(p('required'))
+    expect(view.run).not.toHaveBeenCalled()
+  })
+  it('saves the selected policy with the inspected relay before joining', async () => {
+    const view = setup({ state: unconfiguredState(), draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation, policyMode: 'allowed-lan-destinations', policyPrefixes: '192.168.50.0/24' } })
+    const preview = previewInvitation(); preview.relay.address = '192.168.50.10:48443'
+    const ready: State = { ...readyState(), lan: { ...readyState().lan!, relay: preview.relay, policy: { mode: 'allowed-lan-destinations', prefixes: ['192.168.50.0/24'], editable: false, restartRequired: false } } }
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...preview } }).mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } })
+    view.refresh.mockResolvedValueOnce(ready)
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
+    expect(screen.getByRole('region', { name: lt('joinReview') })).toHaveTextContent('192.168.50.0/24')
+    await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
+    expect(view.run.mock.calls).toEqual([['lan.inspect', { invitation: opaqueInvitation }], ['network.configure', { mode: 'lan', hostname: 'test-device', lan: preview.relay, lanPolicy: { mode: 'allowed-lan-destinations', prefixes: ['192.168.50.0/24'] } }], ['lan.join', { invitation: opaqueInvitation }]])
+  })
+  it('invalidates a host review when the selected prefix scope changes', async () => {
+    const { policyTranslator } = await import('../lan-policy-i18n'); const p = policyTranslator('en')
+    const view = setup({ state: unconfiguredState(), addressOptions: hostAddresses, draft: { ...emptyLanDraft(), policyMode: 'allowed-lan-destinations', policyPrefixes: '192.168.20.0/24' } })
+    await view.user.click(screen.getByText(p('title')))
+    await screen.findByRole('option', { name: /192.168.20.5/ })
+    await view.user.selectOptions(screen.getByRole('combobox', { name: lt('addressChoice') }), 'ethernet-fixture\n192.168.20.5')
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    fireEvent.change(screen.getByRole('textbox', { name: p('prefixes') }), { target: { value: '192.168.20.0/25' } })
+    expect(screen.queryByRole('region', { name: lt('hostReview') })).not.toBeInTheDocument()
+    expect(view.run).not.toHaveBeenCalled()
   })
 })

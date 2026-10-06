@@ -64,8 +64,8 @@ func TestLANRouteConfigurationDoesNotActivateAndIsBounded(t *testing.T) {
 	}
 	v := extraRouteFixture()
 	v.Relay.Address = netip.MustParseAddrPort("192.0.2.21:443")
-	if err := c.editLANRoute(v, ""); err == nil {
-		t.Fatal("candidate budget bypass")
+	if err := c.editLANRoute(v, ""); err != nil {
+		t.Fatal("fifth candidate should fit stored metadata without starting the engine", err)
 	}
 	if c.nodeCopy() != nil || c.profileCopy().Settings.Network != "none" {
 		t.Fatal("route setup activated network")

@@ -19,12 +19,15 @@ import (
 // SourceProvenance records the original, unmodified upstream inputs. Its hashes
 // must never be interpreted as the hashes of our adapted runtime sources.
 type SourceProvenance struct {
-	Module    string            `json:"module"`
-	Version   string            `json:"version"`
-	Commit    string            `json:"commit"`
-	SourceURL string            `json:"source_url"`
-	License   string            `json:"license"`
-	Files     map[string]string `json:"files"`
+	Module     string            `json:"module"`
+	Version    string            `json:"version"`
+	Commit     string            `json:"commit"`
+	SourceURL  string            `json:"source_url"`
+	License    string            `json:"license"`
+	Files      map[string]string `json:"files"`
+	ModuleSum  string            `json:"module_sum,omitempty"`
+	GoModSum   string            `json:"go_mod_sum,omitempty"`
+	TreeSHA256 string            `json:"tree_sha256,omitempty"`
 }
 
 type SourceComponent struct {
@@ -35,6 +38,8 @@ type SourceComponent struct {
 	Notices           []Notice         `json:"notices"`
 	BuildInputs       []Notice         `json:"build_inputs"`
 	BuildInputsSHA256 string           `json:"build_inputs_sha256"`
+	AdaptedTreeSHA256 string           `json:"adapted_tree_sha256,omitempty"`
+	ManifestSHA256    string           `json:"manifest_sha256,omitempty"`
 }
 
 const routecatPath = "internal/routecat"
@@ -132,9 +137,9 @@ func uniqueSourceObject(raw []byte) (map[string]json.RawMessage, error) {
 	return fields, nil
 }
 
-// sourceInventory augments the Go module inventory only when the adapted
+// routecatInventory augments the Go module inventory only when the adapted
 // main-module package is actually in the target's non-test dependency closure.
-func sourceInventory(root string, packages []goPackage, share string) ([]SourceComponent, error) {
+func routecatInventory(root string, packages []goPackage, share string) ([]SourceComponent, error) {
 	var linked *goPackage
 	for i := range packages {
 		if packages[i].ImportPath == routecatPackage {
@@ -277,10 +282,15 @@ func sourceSBOMComponent(component SourceComponent, version string) map[string]a
 			"externalReferences": []any{map[string]string{"type": "vcs", "url": upstream.SourceURL}},
 			"properties":         []any{map[string]string{"name": "source:commit", "value": upstream.Commit}, map[string]string{"name": "source:original-files:sha256", "value": string(originalHashes)}},
 		}}},
-		"licenses": []any{map[string]any{"license": map[string]string{"name": "See retained source licenses and per-file notices; adapted main-module inputs have separate provenance"}}},
+		"licenses": []any{map[string]any{"license": map[string]string{"name": "See retained source licenses and per-file notices; adapted source inputs have separate provenance"}}},
 		"properties": []any{
 			map[string]string{"name": "source:path", "value": component.Path},
 			map[string]string{"name": "source:modified", "value": "true"},
+			map[string]string{"name": "source:adapted-tree:sha256", "value": component.AdaptedTreeSHA256},
+			map[string]string{"name": "source:manifest:sha256", "value": component.ManifestSHA256},
+			map[string]string{"name": "source:upstream-module:sum", "value": upstream.ModuleSum},
+			map[string]string{"name": "source:upstream-go-mod:sum", "value": upstream.GoModSum},
+			map[string]string{"name": "source:upstream-tree:sha256", "value": upstream.TreeSHA256},
 			map[string]string{"name": "source:build-inputs:sha256", "value": component.BuildInputsSHA256},
 			map[string]string{"name": "source:build-inputs", "value": string(inputs)},
 			map[string]string{"name": "source:notices", "value": "See third-party-notices.json and licenses/source/" + component.Path + "/"},

@@ -19,10 +19,12 @@ import (
 	"tailscale.com/types/key"
 )
 
-// MaxRegions bounds background presence connections and candidate metadata.
-const MaxRegions = 4
+// RelayRegionNamespace is the nonzero 16-bit DERP region identifier space.
+// It is a protocol representation bound, not a policy limit or NAT constraint.
+const RelayRegionNamespace = 1<<16 - 1
+const DefaultRelayPresenceConnections = 4
 
-var ErrExplicitRegions = errors.New("one to four explicit numeric certificate-pinned relay candidates required")
+var ErrExplicitRegions = errors.New("explicit numeric certificate-pinned relay candidates within the DERP identifier space required")
 var ErrPrivateOnlyBuild = errors.New("private-only transport requires a build without UDP underlay transport")
 
 // validateRegions creates an immutable canonical map. IDs are local transport
@@ -30,7 +32,7 @@ var ErrPrivateOnlyBuild = errors.New("private-only transport requires a build wi
 // An empty map, DNS, optional address-family fallback and TLS weakening are
 // rejected before the first socket is created.
 func validateRegions(regions []*tailcfg.DERPRegion, privateOnly bool) ([]*tailcfg.DERPRegion, error) {
-	if len(regions) == 0 || len(regions) > MaxRegions {
+	if len(regions) == 0 || len(regions) > RelayRegionNamespace {
 		return nil, ErrExplicitRegions
 	}
 	type candidate struct {

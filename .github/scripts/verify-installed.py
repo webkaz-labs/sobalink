@@ -6,6 +6,7 @@ import pathlib
 import platform
 import subprocess
 import sys
+from source_provenance import verify_sources
 
 root = pathlib.Path(sys.argv[1])
 version, commit, target = sys.argv[2:]
@@ -37,6 +38,7 @@ for module in notices["modules"] + notices["frontend_modules"] + [notices["go_st
         notice = share.joinpath(*relative.parts)
         assert notice.is_file() and not notice.is_symlink()
         assert hashlib.sha256(notice.read_bytes()).hexdigest() == entry["sha256"]
+verify_sources(share, meta, notices, bom)
 result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
 assert result.stdout.strip() == "sobalink " + version + " (soba)"
 subprocess.run([str(binary), "--help"], check=True)

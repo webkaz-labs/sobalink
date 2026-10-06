@@ -78,7 +78,7 @@ func TestRegionsRejectUnsafeAndOversizedInputs(t *testing.T) {
 			}
 		})
 	}
-	for _, regs := range [][]*tailcfg.DERPRegion{nil, {nil}, {testRegion("127.0.0.1", 54446), testRegion("127.0.0.1", 54446)}, make([]*tailcfg.DERPRegion, MaxRegions+1)} {
+	for _, regs := range [][]*tailcfg.DERPRegion{nil, {nil}, {testRegion("127.0.0.1", 54446), testRegion("127.0.0.1", 54446)}, make([]*tailcfg.DERPRegion, RelayRegionNamespace+1)} {
 		if _, err := validateRegions(regs, false); err == nil {
 			t.Fatal("invalid set accepted")
 		}

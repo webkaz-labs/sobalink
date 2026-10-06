@@ -26,6 +26,7 @@ import (
 )
 
 const maxPairMessage = 64 << 10
+const maxPairPlaintext = 24 << 10
 const pairingVersion = 1
 const requestDomain = "sobalink pairing v1 request"
 const replyDomain = "sobalink pairing v1 reply"
@@ -161,7 +162,7 @@ func sealMessage(identity Identity, recipient string, value any) ([]byte, []byte
 		return nil, nil, e
 	}
 	plain, e := json.Marshal(value)
-	if e != nil || len(plain) > 24<<10 {
+	if e != nil || len(plain) > maxPairPlaintext {
 		return nil, nil, ErrInvite
 	}
 	envelope, e := json.Marshal(pairEnvelope{identity.PublicKey(), identity.Key.SealTo(pub, plain)})
@@ -183,7 +184,7 @@ func openMessage(identity Identity, data []byte, expectedSender string, out any)
 		return nil, e
 	}
 	plain, ok := identity.Key.OpenFrom(pub, envelope.Box)
-	if !ok || len(plain) > 24<<10 || strictJSON(plain, out) != nil {
+	if !ok || len(plain) > maxPairPlaintext || strictJSON(plain, out) != nil {
 		return nil, ErrInvite
 	}
 	return plain, nil
@@ -341,7 +342,7 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 		}
 	}
 	delete(n.admissions, remote.IncomingClientKey)
-	entry := &remoteClient{remote: remote, address: ap}
+	entry := &remoteClient{remote: remote, address: ap, destinationPolicy: n.cfg.DestinationPolicy, wanCandidates: n.cfg.WANCandidates, candidateAttempts: n.cfg.RelayResources.CandidateAttempts}
 	if len(liveClient) == 1 && liveClient[0] != nil {
 		entry.client = liveClient[0]
 		entry.started = true
@@ -605,7 +606,7 @@ func (n *Node) pair(ctx context.Context, remote PeerOffer, token string, embedde
 			return e
 		}
 	}
-	c := &tailcat.Client{Server: remote.Address, Key: role, PrivateOnly: n.cfg.PrivateOnly, Logf: logger.Discard}
+	c := &tailcat.Client{Server: remote.Address, Key: role, PrivateOnly: n.cfg.PrivateOnly, DestinationPrefixes: destinationPrefixes(n.cfg.DestinationPolicy), WANCandidates: n.cfg.WANCandidates, Logf: logger.Discard}
 	retained := false
 	defer func() {
 		if !retained {

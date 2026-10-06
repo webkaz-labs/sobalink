@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -112,7 +113,7 @@ func routeRuntimeFixture(t *testing.T, expiry time.Time) (*remoteClient, Trusted
 
 func TestTransportFailoverKeepsKeysAndDoesNotReplayPayload(t *testing.T) {
 	r, anchor, candidates := routeRuntimeFixture(t, time.Time{})
-	first := &fakePeerTransport{probeErr: errors.New("unavailable")}
+	first := &fakePeerTransport{probeErr: syscall.ECONNREFUSED}
 	second := &fakePeerTransport{}
 	var selected []RouteCandidate
 	r.makeClient = func(addr tailcat.Addr) peerTransport {
@@ -328,7 +329,7 @@ func TestTransportGateRejectsCancelledCallerWithoutConsumingAdmission(t *testing
 
 func TestTransportLocalRetryOnlyWithoutActiveFlows(t *testing.T) {
 	r, anchor, candidates := routeRuntimeFixture(t, time.Time{})
-	first := &fakePeerTransport{probeErr: errors.New("offline")}
+	first := &fakePeerTransport{probeErr: syscall.ECONNREFUSED}
 	external := &fakePeerTransport{}
 	local := &fakePeerTransport{}
 	calls := 0
@@ -403,7 +404,7 @@ func TestTransportDeadRouteRecoversUDPWithHungOldFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.probeErr = errors.New("route no longer reachable")
+	first.probeErr = syscall.ECONNREFUSED
 	current, err := r.dial(context.Background(), "udp", 8080)
 	if err != nil {
 		t.Fatal(err)
@@ -424,7 +425,7 @@ func TestTransportDeadRouteRecoversUDPWithHungOldFlow(t *testing.T) {
 
 func TestTransportServiceFailureKeepsHealthyRelay(t *testing.T) {
 	r, anchor, candidates := routeRuntimeFixture(t, time.Time{})
-	serviceErr := errors.New("application port unavailable")
+	serviceErr := syscall.ECONNREFUSED
 	fake := &fakePeerTransport{dialErr: serviceErr}
 	calls := 0
 	r.makeClient = func(tailcat.Addr) peerTransport { calls++; return fake }
@@ -510,7 +511,7 @@ func TestTransportRepeatedRecoveryRetiresExactlyOldGenerations(t *testing.T) {
 	var flows []net.Conn
 	for turn := range 4 {
 		if turn > 0 {
-			transports[turn-1].probeErr = errors.New("fixture route failure")
+			transports[turn-1].probeErr = syscall.ECONNREFUSED
 			for _, candidate := range candidates {
 				r.failures[candidate.ID()] = time.Time{}
 			}

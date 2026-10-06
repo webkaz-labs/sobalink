@@ -76,6 +76,7 @@ import (
 	"tailscale.com/net/netns"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/net/tsdial"
+	"tailscale.com/net/underlayguard"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsd"
 	"tailscale.com/types/ipproto"
@@ -88,6 +89,7 @@ import (
 	"tailscale.com/util/mak"
 	"tailscale.com/wgengine"
 	"tailscale.com/wgengine/filter"
+	"tailscale.com/wgengine/magicsock"
 	"tailscale.com/wgengine/netstack"
 	"tailscale.com/wgengine/router"
 	"tailscale.com/wgengine/wgcfg"
@@ -121,7 +123,7 @@ type ConnInfo struct {
 	// Region, if non-empty, lists the regions of a DERPMap.
 	// Region must be populated. Network map lookups are disabled.
 	//
-	// Servers accept up to MaxRegions candidates. Each Client must use one
+	// Servers validate a finite presence budget separately. Each Client must use one
 	// authorized candidate at a time; the outer coordinator owns retries.
 	Region []*tailcfg.DERPRegion `json:",omitempty"`
 
@@ -300,24 +302,32 @@ type locoBackend struct {
 	// to allow all clients. Set before Start.
 	allowClient func(key.NodePublic) bool
 
-	mu             sync.Mutex
-	clients        map[key.NodePublic]*tailcfg.Node // for the server
-	nextClientID   tailcfg.NodeID                   // for the server; never reused after a removal
-	pendingAllow   map[key.NodePublic]bool          // client keys with an allowClient call in flight
-	nm             *netmap.NetworkMap
-	eps            []netip.AddrPort // our current local UDP endpoints, sorted
-	closeOnce      sync.Once
-	homeRegion     tailcfg.DERPRegionID
-	privateOnly    bool
-	presenceCancel context.CancelFunc
-	presenceDone   chan struct{}
-	closed         bool // guarded by mu
+	mu                  sync.Mutex
+	clients             map[key.NodePublic]*tailcfg.Node // for the server
+	nextClientID        tailcfg.NodeID                   // for the server; never reused after a removal
+	pendingAllow        map[key.NodePublic]bool          // client keys with an allowClient call in flight
+	nm                  *netmap.NetworkMap
+	eps                 []netip.AddrPort // our current local UDP endpoints, sorted
+	closeOnce           sync.Once
+	homeRegion          tailcfg.DERPRegionID
+	privateOnly         bool
+	underlayPolicy      *underlayguard.Policy
+	destinationPrefixes []netip.Prefix
+	wanCandidates       *WANConfig
+	presenceCancel      context.CancelFunc
+	presenceDone        chan struct{}
+	relayFailures       *relayFailureState // client-only; one state per engine
+	closed              bool               // guarded by mu
 }
 
 func (b *locoBackend) derpRegionID() tailcfg.DERPRegionID { return b.homeRegion }
 
 func (b *locoBackend) Close() error {
 	b.closeOnce.Do(func() {
+		b.relayFailures.close()
+		if b.underlayPolicy != nil {
+			b.underlayPolicy.Revoke()
+		}
 		b.mu.Lock()
 		b.closed = true
 		b.mu.Unlock()
@@ -387,9 +397,18 @@ type Server struct {
 
 	// Regions is an explicit bounded candidate set. Use either Region or Regions.
 	Regions []*tailcfg.DERPRegion
+	// RelayPresenceConnections is the finite active relay-map/presence budget.
+	// Zero keeps the existing four-connection default; metadata is not truncated.
+	RelayPresenceConnections int
 	// PrivateOnly confines relay endpoints to private/loopback addresses and
 	// requires a build without UDP transport. Direct-enabled builds fail closed.
 	PrivateOnly bool
+	// DestinationPrefixes opts into immutable per-engine LAN destination admission.
+	// Nil retains trusted-relay behavior; an empty non-nil slice fails closed.
+	DestinationPrefixes []netip.Prefix
+	// WANCandidates explicitly enables bounded WAN discovery in trusted-relay mode.
+	// Nil preserves existing behavior; selected LAN destinations reject it.
+	WANCandidates *WANConfig
 
 	// AllowClient, if non-nil, reports whether the client with node
 	// key k may connect. It is consulted when a client that is not
@@ -568,10 +587,17 @@ func (s *Server) startLocked(ctx context.Context) error {
 	if s.RegionID != 0 {
 		return ErrExplicitRegions
 	}
+	wan, err := ValidateWANConfig(s.WANCandidates, s.PrivateOnly, s.DestinationPrefixes)
+	if err != nil {
+		return err
+	}
 	if err := validateRuntime(s.PrivateOnly); err != nil {
 		return err
 	}
-	regions, err := validateRegions(regions, s.PrivateOnly)
+	if err := ValidateRelayPresenceBudget(len(regions), s.RelayPresenceConnections); err != nil {
+		return err
+	}
+	regions, err = validateRegions(regions, s.PrivateOnly)
 	if err != nil {
 		return err
 	}
@@ -583,6 +609,12 @@ func (s *Server) startLocked(ctx context.Context) error {
 	lb.dm = regionMap(regions)
 	lb.homeRegion = regions[0].RegionID
 	lb.privateOnly = s.PrivateOnly
+	lb.wanCandidates = wan
+	lb.underlayPolicy, err = newUnderlayPolicy(s.DestinationPrefixes, regions)
+	if err != nil {
+		return err
+	}
+	lb.destinationPrefixes = slices.Clone(s.DestinationPrefixes)
 	lb.allowClient = s.AllowClient
 
 	sys := &lb.sys
@@ -1299,7 +1331,7 @@ func (b *locoBackend) advertiseEndpoints() {
 		b.mu.Unlock()
 		return
 	}
-	eps := slices.Clone(b.eps)
+	eps := selectedEndpoints(b.eps, b.destinationPrefixes)
 	var peers []tailcfg.NodeView
 	if b.nm != nil {
 		peers = b.nm.Peers
@@ -1620,15 +1652,22 @@ func newNetstack(logf logger.Logf, sys *tsd.System) (*netstack.Impl, error) {
 func createEngine(logf logger.Logf, lb *locoBackend) (err error) {
 	sys := &lb.sys
 	conf := wgengine.Config{
-		ListenPort:    0,
-		NetMon:        sys.NetMon.Get(),
-		Dialer:        sys.Dialer.Get(),
-		SetSubsystem:  sys.Set,
-		Metrics:       sys.UserMetricsRegistry(),
-		HealthTracker: sys.HealthTracker.Get(),
-		EventBus:      sys.Bus.Get(),
-		OnDERPRecv:    lb.onDERPRecv,
-		DERPAppName:   "tailcat-client",
+		ListenPort:     0,
+		UnderlayPolicy: lb.underlayPolicy,
+		NetMon:         sys.NetMon.Get(),
+		Dialer:         sys.Dialer.Get(),
+		SetSubsystem:   sys.Set,
+		Metrics:        sys.UserMetricsRegistry(),
+		HealthTracker:  sys.HealthTracker.Get(),
+		EventBus:       sys.Bus.Get(),
+		OnDERPRecv:     lb.onDERPRecv,
+		DERPAppName:    "tailcat-client",
+	}
+	if lb.relayFailures != nil {
+		conf.OnDERPConnectionEvent = lb.relayFailures.update
+	}
+	if lb.wanCandidates != nil {
+		conf.WANCandidates = &magicsock.WANConfig{STUNEndpoints: slices.Clone(lb.wanCandidates.STUNEndpoints), AdvertiseIPv6: lb.wanCandidates.AdvertiseIPv6, ProbeBudget: lb.wanCandidates.ProbeBudget}
 	}
 	if lb.isServer {
 		conf.DERPAppName = "tailcat-server"
@@ -1674,6 +1713,12 @@ type Client struct {
 
 	// PrivateOnly has the same fail-closed build requirement as Server.PrivateOnly.
 	PrivateOnly bool
+	// DestinationPrefixes opts into immutable per-engine LAN destination admission.
+	// Nil retains trusted-relay behavior; an empty non-nil slice fails closed.
+	DestinationPrefixes []netip.Prefix
+	// WANCandidates explicitly enables bounded WAN discovery in trusted-relay mode.
+	// Nil preserves existing behavior; selected LAN destinations reject it.
+	WANCandidates *WANConfig
 
 	lb       *locoBackend
 	ci       ConnInfo      // of server
@@ -1726,6 +1771,10 @@ func (c *Client) initLocked() error {
 	if err != nil {
 		return err
 	}
+	wan, err := ValidateWANConfig(c.WANCandidates, c.PrivateOnly, c.DestinationPrefixes)
+	if err != nil {
+		return err
+	}
 	if err := validateRuntime(c.PrivateOnly); err != nil {
 		return err
 	}
@@ -1743,7 +1792,14 @@ func (c *Client) initLocked() error {
 	lb.logf = logf
 	lb.dm = &tailcfg.DERPMap{}
 	lb.privateOnly = c.PrivateOnly
+	lb.wanCandidates = wan
+	lb.underlayPolicy, err = newUnderlayPolicy(c.DestinationPrefixes, ci.Region)
+	if err != nil {
+		return err
+	}
+	lb.destinationPrefixes = slices.Clone(c.DestinationPrefixes)
 	lb.homeRegion = ci.Region[0].RegionID
+	lb.relayFailures = &relayFailureState{region: lb.homeRegion}
 	lb.serverPub = ci.ServerPublic.NodePublic
 	lb.serverDiscoPub = ci.ServerDiscoPublic.DiscoPublic
 
@@ -1972,14 +2028,31 @@ func (c *Client) ping(ctx context.Context) (PingResult, error) {
 	resend := time.NewTicker(time.Second)
 	defer resend.Stop()
 	for {
+		// A completed handshake wins a simultaneous background relay error.
 		select {
 		case <-c.meowWait:
 			return PingResult{time.Since(t0)}, nil
-		case <-ctx.Done():
-			if lastSendErr != nil {
-				return zero, fmt.Errorf("%w (last send error: %v)", ctx.Err(), lastSendErr)
+		default:
+		}
+		failure, changed := c.lb.relayFailures.snapshot()
+		if failure != nil {
+			if ctx.Err() != nil {
+				return zero, errors.Join(ctx.Err(), failure)
 			}
-			return zero, ctx.Err()
+			return zero, failure
+		}
+		select {
+		case <-changed:
+			continue
+		case <-c.meowWait:
+			return PingResult{time.Since(t0)}, nil
+		case <-ctx.Done():
+			select {
+			case <-c.meowWait:
+				return PingResult{time.Since(t0)}, nil
+			default:
+			}
+			return zero, relayWaitFailure(ctx.Err(), lastSendErr, c.lb.relayFailures)
 		case <-resend.C:
 			lastSendErr = send()
 		}
@@ -2022,17 +2095,7 @@ func (c *Client) DiscoPing(ctx context.Context) (*ipnstate.PingResult, error) {
 		default:
 		}
 	})
-	select {
-	case r := <-ch:
-		if r.Err != "" {
-			return nil, errors.New(r.Err)
-		}
-		return r, nil
-	case <-ctx.Done():
-		// Magicsock never calls the callback if all its pings time
-		// out, so the context is the only bound on waiting here.
-		return nil, ctx.Err()
-	}
+	return waitDiscoPing(ctx, ch, c.lb.relayFailures)
 }
 
 // Dial opens a connection to the given network/address through the server's

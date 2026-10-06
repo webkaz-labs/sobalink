@@ -1,6 +1,7 @@
 import type { Locale } from './api'
 
 export const routeEnglish = {
+ lan_relay_presence_capacity: 'Configured relays exceed the active presence budget. Stop networking, raise relayPresenceConnections in Capacity and history, then start again. Saved candidates and permissions are kept.', lan_route_envelope_capacity: 'The route offer exceeds the existing 24 KiB plaintext exchange envelope. Review the amount of candidate metadata in the offer.',
   approvalLifetime: 'Local approval lifetime', untilRevoked: 'Until revoked', finite: 'Choose an expiry',
   permanentHint: 'No automatic expiry. These routes remain allowed until you revoke them or apply a replacement or withdrawal.',
   permanentExportHint: 'This update has no automatic expiry. The recipient must still approve routes locally and can revoke them at any time.',
@@ -27,7 +28,7 @@ export const routeEnglish = {
   externalWarning: 'This allows connections to this exact external relay.',
   candidateReview: 'Review relay candidate', addImpact: 'Save this exact address, certificate pin and scope as an approved candidate for this device. A peer still needs its own review.',
   removeImpact: 'Remove this additional candidate from future offers. Existing pairs are kept; previously exchanged offers keep their own expiry.',
-  save: 'Save candidate', confirmRemove: 'Remove this candidate', maximum: 'Up to four candidates, including the original relay.',
+  save: 'Save candidate', confirmRemove: 'Remove this candidate', maximum: 'Candidate metadata is bounded by saved-state and exchange sizes. Active relay presence and each recovery attempt use adjustable resource budgets.',
   saved: 'Saved. Restart sobalink to use the changed relay set.', empty: 'Configure the original relay first.',
   refresh: 'Refresh routes', retry: 'Retry', back: 'Back', cancel: 'Cancel',
   legacy: 'Original paired relay', approved: 'Locally approved routes', none: 'No current approved routes',
@@ -54,6 +55,7 @@ export const routeEnglish = {
 } as const
 export type RouteTextKey = keyof typeof routeEnglish
 export const routeJapanese: Record<RouteTextKey, string> = {
+ lan_relay_presence_capacity: '設定したリレー数が同時接続予算を超えています。ネットワークを停止し「容量と履歴」の relayPresenceConnections を増やしてから再起動してください。保存済み候補と許可は維持します。', lan_route_envelope_capacity: '経路提供情報が既存の交換プロトコルの24 KiB本文枠を超えています。提供する候補情報の量を見直してください。',
   approvalLifetime: '手元での承認の有効期間', untilRevoked: '取り消すまで', finite: '期限を指定',
   permanentHint: '自動では期限切れになりません。承認を取り消すか、新しい更新情報や撤回を適用するまで、この経路を許可します。',
   permanentExportHint: 'この更新情報は自動では期限切れになりません。相手側でも経路の承認が必要です。相手はいつでも承認を取り消せます。',
@@ -79,7 +81,7 @@ export const routeJapanese: Record<RouteTextKey, string> = {
   externalWarning: 'この外部リレーへの接続を、表示されたアドレスに限って許可します。',
   candidateReview: 'リレー候補の確認', addImpact: 'このアドレス、証明書の指紋、範囲を、このデバイスで承認した候補として保存します。相手側でも別途確認が必要です。',
   removeImpact: 'この追加候補を今後の更新情報から削除します。ペアは保持され、交換済みの更新情報には元の期限が適用されます。',
-  save: '候補を保存', confirmRemove: 'この候補を削除', maximum: '元のリレーを含め、候補は4つまでです。',
+  save: '候補を保存', confirmRemove: 'この候補を削除', maximum: '候補の情報は保存容量・交換データ容量に制約されます。同時に接続するリレーと復旧時の試行数には、変更可能なリソース予算を適用します。',
   saved: '保存しました。変更したリレーの組み合わせを使うには、sobalink を再起動してください。', empty: '先に元のリレーを設定してください。',
   refresh: '経路を更新', retry: '再試行', back: '戻る', cancel: 'キャンセル',
   legacy: 'ペアリング時のリレー', approved: '手元で承認済みの経路', none: '有効な承認済み経路なし',

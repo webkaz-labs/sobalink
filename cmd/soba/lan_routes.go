@@ -81,9 +81,6 @@ func routeIDs(value string) ([]string, error) {
 		return nil, nil
 	}
 	ids := strings.Split(value, ",")
-	if len(ids) > 4 {
-		return nil, errors.New("at most four exact candidate IDs")
-	}
 	seen := map[string]bool{}
 	for _, id := range ids {
 		b, err := hex.DecodeString(id)

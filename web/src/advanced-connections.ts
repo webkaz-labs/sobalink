@@ -15,7 +15,7 @@ export function singleServicePort(service: Service) {
   return /^\d+$/.test(text) && validPort(port) ? String(port) : ''
 }
 export function validProxyScope(scope: ProxyScope, peerIDs: string[], reserved: number[] = []) {
-  return validServiceName(scope.name) && ['tailnet', 'lan'].includes(scope.backend) && ['127.0.0.1', '::1'].includes(scope.loopbackHost) && validPort(scope.localPort) && scope.localPort >= 1024 && !reservedPort(scope.localPort, reserved) && validLifetime(scope.lifetime, scope.ttlSeconds, 'connect') && scope.targets.length > 0 && scope.targets.every(target => peerIDs.includes(target.peerId) && validPort(target.port) && !reservedPort(target.port)) && new Set(scope.targets.map(target => `${target.peerId}:${target.port}`)).size === scope.targets.length
+  return validServiceName(scope.name) && ['tailnet', 'lan', 'direct-lan', 'mixed'].includes(scope.backend) && ['127.0.0.1', '::1'].includes(scope.loopbackHost) && validPort(scope.localPort) && scope.localPort >= 1024 && !reservedPort(scope.localPort, reserved) && validLifetime(scope.lifetime, scope.ttlSeconds, 'connect') && scope.targets.length > 0 && scope.targets.every(target => peerIDs.includes(target.peerId) && validPort(target.port) && !reservedPort(target.port)) && new Set(scope.targets.map(target => `${target.peerId}:${target.port}`)).size === scope.targets.length
 }
 export const proxyScopeKey = (scope: ProxyScope) => JSON.stringify([scope.name, scope.backend, scope.loopbackHost, scope.localPort, scope.lifetime, scope.ttlSeconds, [...scope.targets].sort((a, b) => a.peerId.localeCompare(b.peerId) || a.port - b.port).map(target => [target.peerId, target.port])])
 export function readProxyReview(value: unknown, requested: ProxyScope): ProxyReview {

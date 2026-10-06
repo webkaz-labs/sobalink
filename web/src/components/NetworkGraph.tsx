@@ -21,7 +21,7 @@ const en = {
   onlineCompact: 'Online', offlineCompact: 'Offline', self: 'This device', known: 'Known device', online: 'Network online', offline: 'Network offline', ready: 'Allowed here',
   appUnknown: 'sobalink service not confirmed', identityNeeded: 'Identity unverified', permissionNeeded: 'Permission needed', paused: 'App paused', localPermission: 'Files & messages',
   bridgeConfirmed: 'sobalink confirmed', presenceUnknown: 'Response not confirmed', presenceUnknownCompact: 'Response not confirmed',
-  network: 'Selected network', tailnet: 'Tailscale · Tailnet', lan: 'Tailcat', configuredRelay: 'Configured relay', configuredHost: 'Configured host', configurationOnly: 'Configuration only; the route is not reported.',
+  network: 'Selected network', tailnet: 'Tailscale · Tailnet', lan: 'Tailcat', directLan: 'Direct LAN', mixed: 'Mixed', configuredRelay: 'Configured relay', configuredHost: 'Configured host', configurationOnly: 'Configuration only; the route is not reported.',
   selected: 'Selected device', selectHint: 'Select a device for service and transfer details.', knownCount: 'Known devices', confirmedCount: 'sobalink confirmed',
   filteredEmpty: 'No matching devices', filteredEmptyHint: 'Try a different search or network filter.', clearFilters: 'Clear filters',
   transferring: 'Transferring', direct: 'Direct path', relay: 'Relay path', unknown: 'Path unknown',
@@ -42,7 +42,7 @@ const ja: Labels = {
   onlineCompact: 'オンライン', offlineCompact: 'オフライン', self: 'この端末', known: '検出・登録済み', online: 'ネットワーク上でオンライン', offline: 'ネットワーク上でオフライン', ready: 'この端末で許可',
   appUnknown: 'sobalink サービス未確認', identityNeeded: '識別情報が未確認', permissionNeeded: '通信の許可が必要', paused: 'アプリ通信を一時停止中', localPermission: 'ファイルとメッセージ',
   bridgeConfirmed: 'sobalink 確認済み', presenceUnknown: '応答未確認', presenceUnknownCompact: '応答未確認',
-  network: '選択中のネットワーク', tailnet: 'Tailscale · Tailnet', lan: 'Tailcat', configuredRelay: '設定済みの中継先', configuredHost: '設定済みのホスト', configurationOnly: '設定情報です。実際の経路は報告されていません。',
+  network: '選択中のネットワーク', tailnet: 'Tailscale · Tailnet', lan: 'Tailcat', directLan: '直接LAN', mixed: '複合接続', configuredRelay: '設定済みの中継先', configuredHost: '設定済みのホスト', configurationOnly: '設定情報です。実際の経路は報告されていません。',
   selected: '選択中のデバイス', selectHint: 'デバイスを選ぶとサービスや転送の詳細を確認できます。', knownCount: '登録・検出済み', confirmedCount: 'sobalink 確認済み',
   filteredEmpty: '一致するデバイスがありません', filteredEmptyHint: '検索語やネットワークの絞り込みを変更してください。', clearFilters: '絞り込みを解除',
   transferring: 'ファイル転送中', direct: '直接接続', relay: '中継接続', unknown: '経路不明',
@@ -109,7 +109,7 @@ function peerFacts(peer: Peer, state: State, locale: Locale, labels: Labels) {
   const listeners = [connections ? `${labels.connections}: ${connections}` : '', shares ? `${labels.shares}: ${shares}` : ''].filter(Boolean)
   const path = labels[peer.path === 'direct' ? 'direct' : peer.path === 'relay' ? 'relay' : 'unknown']
   const app = appLabel(peer, labels)
-  const networks = peer.networks.map(network => network === 'lan' ? labels.lan : 'Tailnet').join(' · ') || labels.networkUnknown
+  const networks = peer.networks.map(network => network === 'mixed' ? labels.mixed : network === 'direct-lan' ? labels.directLan : network === 'lan' ? labels.lan : 'Tailnet').join(' · ') || labels.networkUnknown
   return { incoming: incoming.length > 0, outgoing: outgoing.length > 0, active: active.length > 0, hasTransferWork: active.length > 0 || pending > 0 || saving > 0, transferLabel, listeners, path, app,
     networks, serviceSummary: `${labels.listenersCompact} ${connections} · ${labels.sharesCompact} ${shares}`,
     serviceNames: [...activeConnections, ...activeShares].map(item => `${item.name} (${item.network.toUpperCase()})`), description: `${labels.known}; ${presenceLabel(peer, labels)}; ${app}; ${networks}; ${path}; ${listeners.join('; ') || labels.noListeners}; ${transferLabel}; ${peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}${peer.verified ? '' : `; ${labels.identityNeeded}`}` }
@@ -219,7 +219,7 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
   const selfName = state.self.name || labels.self
   const localStatus = selfStatus(state.self.status, labels)
   const selectedNetwork = state.settings?.network ?? (state.self.networks?.length === 1 ? state.self.networks[0] : undefined)
-  const selfNetworks = selectedNetwork === 'lan' ? labels.lan : selectedNetwork === 'tailnet' ? labels.tailnet : labels.networkUnknown
+  const selfNetworks = selectedNetwork === 'mixed' ? labels.mixed : selectedNetwork === 'direct-lan' ? labels.directLan : selectedNetwork === 'lan' ? labels.lan : selectedNetwork === 'tailnet' ? labels.tailnet : labels.networkUnknown
   const relayConfiguration = selectedNetwork === 'lan' && state.lan?.configured ? state.lan.relay : undefined
   const selected = facts.find(item => item.peer.id === selectedPeerId)
   const selfButton = <button ref={geometry.self} type="button" className="network-graph-node network-graph-self" onClick={onSelectSelf} aria-label={`${labels.open}: ${selfName}; ${labels.self}; ${localStatus}`}>

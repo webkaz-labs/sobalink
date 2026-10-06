@@ -12,6 +12,9 @@ import { serviceText } from '../service-i18n'
 import type { Server } from '../useServer'
 import { Badge, Button, ErrorBanner, Icon, Modal, useAlive } from './ui'
 import { LanSetup, StopApplication, type LanDraft } from './LanSetup'
+import { MixedSetup } from './MixedSetup'
+import { WanCandidates } from './WanCandidates'
+import { DirectLanSetup, type DirectLanDraft } from './DirectLanSetup'
 import { TailnetLogin } from './TailnetLogin'
 import { lanTranslator } from '../lan-i18n'
 
@@ -30,27 +33,30 @@ export function Preferences({ t, onClose, locale, theme, setLocale, setTheme, se
     {server.auth === 'ready' && <fieldset className="form-section settings-section settings-links"><legend>{t('managementPreferences')}</legend><Button className="full-width" onClick={onPolicy}>{policyLabel}<Icon name="chevron" /></Button><Button className="full-width" onClick={onAdvancedConnections}>{advancedConnectionsLabel}<Icon name="chevron" /></Button><Button className="full-width" onClick={onStartup}>{startupLabel}<Icon name="chevron" /></Button>{server.state?.shares.some(service => ['active', 'reconnecting'].includes(service.status)) && <Button className="full-width" variant="danger" onClick={onStopSharing}>{stopSharingLabel}</Button>}</fieldset>}
   </Modal>
 }
-export function NetworkDialog({ t, onClose, server, locale, lanDraft, setLanDraft, onViewPeer }: Base & { locale: Locale; lanDraft: LanDraft; setLanDraft: Dispatch<SetStateAction<LanDraft>>; onViewPeer: (id: string) => void }) {
+export function NetworkDialog({ t, onClose, server, locale, lanDraft, setLanDraft, directLanDraft, setDirectLanDraft, onViewPeer }: Base & { locale: Locale; directLanDraft: DirectLanDraft; setDirectLanDraft: Dispatch<SetStateAction<DirectLanDraft>>; lanDraft: LanDraft; setLanDraft: Dispatch<SetStateAction<LanDraft>>; onViewPeer: (id: string) => void }) {
   const lt = lanTranslator(locale)
   const [hostname, updateHostname] = useState(lanDraft.hostname ?? server.state?.self.name ?? 'sobalink')
   const setHostname = (value: string) => { updateHostname(value); setLanDraft(current => ({ ...current, hostname: value })) }
   const [networkStopping, setNetworkStopping] = useState(false)
   const blocked = networkStopping || server.auth !== 'ready' || server.stale || server.busy.has('application.stop')
-  const [mode, setMode] = useState<'tailnet' | 'lan'>(server.state?.settings?.network === 'lan' ? 'lan' : 'tailnet')
+  const [mode, setMode] = useState<'tailnet' | 'lan' | 'direct-lan' | 'mixed'>(server.state?.settings?.network === 'mixed' ? 'mixed' : server.state?.settings?.network === 'direct-lan' ? 'direct-lan' : server.state?.settings?.network === 'lan' ? 'lan' : 'tailnet')
   const activeMode = server.state?.settings?.network
   const engineActive = !['idle', 'offline', 'none', 'stopped', ''].includes((server.state?.self.status || '').toLowerCase())
   const switchingActive = Boolean(engineActive && activeMode && activeMode !== 'none' && activeMode !== mode)
   const configure = async (event: FormEvent) => { event.preventDefault(); if (blocked) return; await server.run('network.configure', { mode, hostname: hostname.trim() }) }
   return <Modal title={t('chooseNetwork')} t={t} onClose={onClose}><p className="muted">{t('networkHint')}</p>
-    {server.state && <div className="network-current"><span>{t(server.state.settings?.network === 'lan' ? 'lan' : server.state.settings?.network === 'tailnet' ? 'tailnet' : 'disabledNetwork')}</span><Badge>{networkLabel(server.state.self.status, t)}</Badge>{server.state.self.error && <div className="error-copy field-error"><p>{server.state.self.errorCode ? errorText({ code: server.state.self.errorCode }, t) : t('networkProblem')}</p><details><summary>{t('technicalDetails')}</summary><p>{server.state.self.error}</p></details></div>}</div>}
+    {server.state && <div className="network-current"><span>{t(server.state.settings?.network === 'mixed' ? 'mixed' : server.state.settings?.network === 'direct-lan' ? 'direct-lan' : server.state.settings?.network === 'lan' ? 'lan' : server.state.settings?.network === 'tailnet' ? 'tailnet' : 'disabledNetwork')}</span><Badge>{networkLabel(server.state.self.status, t)}</Badge>{server.state.self.error && <div className="error-copy field-error"><p>{server.state.self.errorCode ? errorText({ code: server.state.self.errorCode }, t) : t('networkProblem')}</p><details><summary>{t('technicalDetails')}</summary><p>{server.state.self.error}</p></details></div>}</div>}
     {server.error != null && <ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}
-      <div className="network-options">{(['tailnet', 'lan'] as const).map(value => <label key={value} className={`network-option ${mode === value ? 'selected' : ''}`}><input type="radio" name="network" disabled={blocked} value={value} checked={mode === value} onChange={() => setMode(value)} /><Icon name={value === 'tailnet' ? 'globe' : 'wifi'} size={23} /><span><strong>{t(value)}</strong><small>{t(value === 'tailnet' ? 'tailnetHint' : 'lanHint')}</small></span></label>)}</div>
+      <div className="network-options">{(['direct-lan', 'tailnet', 'lan', 'mixed'] as const).map(value => <label key={value} className={`network-option ${mode === value ? 'selected' : ''}`}><input type="radio" name="network" disabled={blocked} value={value} checked={mode === value} onChange={() => setMode(value)} /><Icon name={value === 'tailnet' ? 'globe' : 'wifi'} size={23} /><span><strong>{t(value)}</strong><small>{t(value === 'mixed' ? 'mixedHint' : value === 'direct-lan' ? 'directLANHint' : value === 'tailnet' ? 'tailnetHint' : 'lanHint')}</small></span></label>)}</div>
     {switchingActive && <p className="scope-note network-restart">{t('networkSwitchRestart')}</p>}
     {mode === 'tailnet' && !switchingActive && <form onSubmit={configure} className="form-stack subsection">
       <label className="field">{t('deviceName')}<input value={hostname} onChange={event => setHostname(event.target.value)} maxLength={63} pattern="[\p{L}\p{N}](?:[\p{L}\p{N}]|-){0,62}" title={t('hostnameHint')} autoComplete="off" required /><small className="muted">{t('hostnameHint')}</small></label>
       <div className="modal-actions"><Button onClick={onClose} type="button">{t('close')}</Button><Button type="submit" variant="primary" disabled={blocked} busy={server.busy.has('network.configure')}>{t('activate')}<Icon name="arrow" /></Button></div>
     </form>}
+    {mode === 'mixed' && !switchingActive && server.state && <MixedSetup server={server} state={server.state} locale={locale} t={t} blocked={blocked} />}
+    {mode === 'direct-lan' && !switchingActive && server.state && <DirectLanSetup server={server} state={server.state} locale={locale} t={t} hostname={hostname} setHostname={setHostname} draft={directLanDraft} setDraft={setDirectLanDraft} onViewPeer={onViewPeer} blocked={blocked} />}
     {mode === 'lan' && !switchingActive && server.state && <LanSetup server={server} state={server.state} t={t} locale={locale} hostname={hostname} setHostname={setHostname} draft={lanDraft} setDraft={setLanDraft} onViewPeer={onViewPeer} showStopControl={false} applicationStopping={networkStopping} />}
+    {mode === 'lan' && !switchingActive && <WanCandidates server={server} locale={locale} t={t} blocked={blocked} />}
     {mode === 'tailnet' && !switchingActive && <TailnetLogin server={server} locale={locale} t={t} disabled={blocked || activeMode !== 'tailnet' || !engineActive} />}
     {server.state && <div className="network-restart"><LogoutControl server={server} locale={locale} t={t} blocked={blocked} onStopping={setNetworkStopping} />{activeMode && activeMode !== 'none' && <p className="small muted">{t('networkRestart')}</p>}<StopApplication server={server} state={server.state} t={t} locale={locale} blocked={blocked} onStopping={() => setNetworkStopping(true)} />{networkStopping && <p className="scope-note" role="status">{lt('stopping')}</p>}</div>}
   </Modal>
@@ -82,10 +88,10 @@ export function PausePeerDialog({ t, onClose, server, peer }: Base & { peer: Pee
 export function RevokePairingDialog({ t, onClose, server, peer }: Base & { peer: Peer }) {
   const alive = useAlive()
   const revoke = async () => {
-    const result = await server.run('lan.revoke', { peerId: peer.id }, `lan-revoke:${peer.id}`)
+    const result = await server.run(peer.networks.includes('direct-lan') ? 'direct-lan.revoke' : 'lan.revoke', { peerId: peer.id }, `lan-revoke:${peer.id}`)
     if (result && alive.current) onClose()
   }
-  return <Modal title={t('revokePairing')} t={t} onClose={onClose}><div className="target-pill"><Icon name="monitor" /><strong>{peer.name}</strong></div><p className="code-value">{peer.id}</p><p className="muted">{t('revokePairingHint')}</p>{server.error != null && <ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}<div className="modal-actions"><Button onClick={onClose}>{t('cancel')}</Button><Button variant="danger" onClick={revoke} busy={server.busy.has(`lan-revoke:${peer.id}`)}>{t('revokePairing')}</Button></div></Modal>
+  return <Modal title={t('revokePairing')} t={t} onClose={onClose}><div className="target-pill"><Icon name="monitor" /><strong>{peer.name}</strong></div><p className="code-value">{peer.id}</p><p className="muted">{t(peer.networks.includes('direct-lan') ? 'directRevokePairingHint' : 'revokePairingHint')}</p>{server.error != null && <ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}<div className="modal-actions"><Button onClick={onClose}>{t('cancel')}</Button><Button variant="danger" onClick={revoke} busy={server.busy.has(`lan-revoke:${peer.id}`)}>{t('revokePairing')}</Button></div></Modal>
 }
 export function ServiceDialog({ t, locale, onClose, onStarted, server, peer, mode, state, draft: storedDraft, onDraft, source }: Base & { peer: Peer; mode: 'connect' | 'share'; state: State; locale: Locale; draft?: ServiceDraft; onDraft: (draft: ServiceDraft | undefined) => void; source?: SavedServiceAction; onStarted?: () => void }) {
   const alive = useAlive()

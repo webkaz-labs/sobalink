@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 )
 
 // Route updates describe reachability, never application or relay-use permission.
@@ -16,7 +18,6 @@ import (
 // activation. This contract performs no network I/O or persistence.
 const (
 	RouteUpdateVersion = 2
-	MaxRouteCandidates = 4
 	// MaxRouteUpdateLifetime applies only to the original finite v1 protocol.
 	MaxRouteUpdateLifetime    = 30 * 24 * time.Hour
 	RouteLifetimeFinite       = "finite"
@@ -154,7 +155,7 @@ func validateRouteUpdate(update RouteUpdate, issuer, recipient, binding string, 
 	if !update.active(now) {
 		return ErrRouteUpdate
 	}
-	if len(update.Candidates) > MaxRouteCandidates {
+	if len(update.Candidates) > tailcat.RelayRegionNamespace {
 		return ErrRouteUpdate
 	}
 	seen := map[string]bool{}
@@ -194,6 +195,13 @@ func sealRouteUpdate(identity Identity, remote RemotePeer, sequence uint64, cand
 	if err := validateRouteUpdate(update, identity.PublicKey(), remote.Peer.Key, binding, issued); err != nil {
 		return nil, err
 	}
+	encoded, err := json.Marshal(update)
+	if err != nil {
+		return nil, err
+	}
+	if len(encoded) > maxPairPlaintext {
+		return nil, &RouteEnvelopeCapacityError{Bytes: len(encoded), Limit: maxPairPlaintext}
+	}
 	sealed, _, err := sealMessage(identity, remote.Peer.Key, update)
 	return sealed, err
 }
@@ -227,7 +235,7 @@ func OpenRouteUpdate(identity Identity, remote RemotePeer, raw []byte, highestSe
 // exact candidate identities. Authentication alone never adds permission. The
 // local list must be stored separately from remotely controlled update content.
 func PermittedRoutes(update RouteUpdate, approvedIDs []string, now time.Time) ([]RouteCandidate, error) {
-	if len(approvedIDs) > MaxRouteCandidates || len(update.Candidates) > MaxRouteCandidates {
+	if len(approvedIDs) > tailcat.RelayRegionNamespace || len(update.Candidates) > tailcat.RelayRegionNamespace {
 		return nil, ErrRouteUpdate
 	}
 	if !update.active(now) {

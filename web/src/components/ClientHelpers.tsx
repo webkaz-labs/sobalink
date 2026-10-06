@@ -4,7 +4,7 @@ import { clientText } from '../client-i18n'
 import { readClientSettings, readRustDeskReview, validRustDeskSetup } from '../client-helpers'
 import { errorText, type Translate } from '../i18n'
 import { serviceText } from '../service-i18n'
-import { MAX_SERVICE_TTL_SECONDS } from '../service-form'
+import { currentBackend, MAX_SERVICE_TTL_SECONDS } from '../service-form'
 import type { Server } from '../useServer'
 import { Badge, Button, ErrorBanner, Icon, Modal, useAlive } from './ui'
 function lifetimeText(locale: Locale, lifetime: ServiceLifetime, seconds: number) { return lifetime === 'finite' ? `${seconds.toLocaleString(locale)} ${serviceText(locale, 'customLifetime')}` : serviceText(locale, lifetime === 'until-revoked' ? 'untilRevoked' : 'untilStopped') }
@@ -50,7 +50,7 @@ export function RustDeskSetupDialog({ server, locale, t, onClose, onSaved }: { s
   const c = (key: string) => clientText(locale, key)
   const keyHelpId = useId()
   const s = (key: string) => serviceText(locale, key)
-  const [draft, setDraft] = useState<RustDeskSetup>({ name: 'rustdesk', backend: server.state?.settings?.network === 'lan' ? 'lan' : 'tailnet', idPeerId: '', relayPeerId: '', publicKey: '', idPort: 21116, relayPort: 21117, localIdPort: 32116, localRelayPort: 32117, loopbackHost: '127.0.0.1', lifetime: 'until-stopped', ttlSeconds: 0 })
+  const [draft, setDraft] = useState<RustDeskSetup>({ name: 'rustdesk', backend: server.state ? currentBackend(server.state) : 'tailnet', idPeerId: '', relayPeerId: '', publicKey: '', idPort: 21116, relayPort: 21117, localIdPort: 32116, localRelayPort: 32117, loopbackHost: '127.0.0.1', lifetime: 'until-stopped', ttlSeconds: 0 })
   const [review, setReview] = useState<RustDeskSetupReview>()
   const [saved, setSaved] = useState<RustDeskSetupReview>()
   const [working, setWorking] = useState(false)

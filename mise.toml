@@ -5,15 +5,18 @@ GOFLAGS = "-mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_
 go = "1.27.1"
 node = "24.19.0"
 
+[tasks.prepare-engine]
+run = "go run ./cmd/prepare-engine"
+
 [tasks.frontend]
 run = "npm --prefix web ci --no-audit --no-fund && npm --prefix web run build"
 
 [tasks.test]
-depends = ["frontend"]
+depends = ["frontend", "prepare-engine"]
 run = "npm --prefix web test && go test -race ./..."
 [tasks.check]
-depends = ["frontend"]
+depends = ["frontend", "prepare-engine"]
 run = "go vet ./..."
 [tasks.build]
-depends = ["frontend"]
+depends = ["frontend", "prepare-engine"]
 run = "go build -trimpath -o bin/soba ./cmd/soba"

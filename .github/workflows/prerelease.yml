@@ -58,6 +58,7 @@ jobs:
             .github/scripts/release-validation.py
             .github/scripts/verify-installed.py
             .github/scripts/offline-smoke.py
+            .github/scripts/source_provenance.py
           if-no-files-found: error
           retention-days: 14
 
@@ -122,7 +123,7 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.gate.outputs.commit }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ needs.gate.outputs.commit }}
       - name: Report Go cache result and require an exact release key
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
@@ -141,6 +142,8 @@ jobs:
           test "$(go env GOVERSION)" = go1.27.1
           test "$(go env GOOS)" = "$TARGET_OS"
           test "$(go env GOARCH)" = "$TARGET_ARCH"
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
           go mod verify 2>&1 | tee logs/dependencies.txt
       - name: Native race tests (local and mocked services only)
         run: |
@@ -148,8 +151,86 @@ jobs:
           go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
           # Enforce offline route-revocation recovery using the real protected fixture.
           go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core 2>&1 | tee -a logs/race-tests.txt
+          go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
+          go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
           # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
           go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
+      - name: Verify adapted engine admission and native underlay denial
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+
+          # Upstream test-only dependencies stay in the original immutable
+          # upstream module graph; product tests use the product graph above.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_UNDERLAY_NATIVE"] = "1"
+          base = ["go", "test", "-mod=readonly", "-race", "-count=1", "-v", "-timeout=5m",
+                  "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"]
+          subprocess.run(base + ["./net/underlayguard"],
+                         cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
+          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate|Sobalink|GuardedLocalSocketEndpointUsesActualFamilyPort)", "./wgengine", "./wgengine/magicsock", "./derp", "./derp/derphttp", "./net/netcheck"],
+                         cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
+          PYTHON
+          python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
+          go run ./cmd/prepare-engine --verify
+      - name: Verify direct LAN WireGuard and Core native applications
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          go test -race -count=2 -timeout=120s -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
+          go vet -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
+          go test -race -count=5 -timeout=5m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestDirectLAN' ./internal/core
+      - name: Verify direct LAN session rekey and idle lifecycle
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
+      - name: Verify explicit WAN discovery with isolated native STUN
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+
+          # Synthetic native loopback fixture only; this does not establish
+          # real NAT traversal, physical IPv6 routes, or device acceptance.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-race", "-count=1", "-v", "-timeout=120s",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^TestWANCandidateNativeLoopbackSTUN$", "./internal/routecat",
+          ], env=env, check=True, timeout=4 * 60)
+          PYTHON
+      - name: Verify guarded production direct and relay underlays
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+
+          # Normal production build with explicit synthetic loopback grants.
+          # Clear overrides only for the child test process, never the runner.
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
+          subprocess.run([
+              "go", "test", "-race", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^(TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
+          ], env=env, check=True, timeout=8 * 60)
+          PYTHON
       - name: Verify paired transport and Core applications over an isolated relay
         timeout-minutes: 10
         run: |
@@ -265,7 +346,7 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.gate.outputs.commit }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ needs.gate.outputs.commit }}
       - name: Report Go cache result and require an exact release key
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
@@ -284,6 +365,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
           go mod verify
           go run ./cmd/package-tool manifest "$RELEASE_VERSION"
           go run ./cmd/package-tool checksums
@@ -438,20 +521,38 @@ jobs:
                   "sobalink（コマンド soba）は端末間でサービス・ファイル・メッセージを扱うツールです。ローカルのWeb画面とCLIを備え、既存Tailnetと明示指定した信頼できる中継先を利用するペア接続に対応します。",
                   "認証済みの同じペアで、個別に許可したLAN内・外部リレー候補の間を復旧します。経路の許可は任意の期限または取消までを明示して選び、既存の有限許可は自動延長しません。",
                   "既存TCP接続の無停止や途中バイトからの再送は保証しません。アプリケーションによる再接続が必要です。LAN内の候補を使っていても外部送信ゼロを保証するモードではありません。",
+                  "必要な場合だけLANの送信先を明示的に制限できます。UDPは選択したCIDR、TCPは証明書を固定した中継のIPとポートだけを許可し、そのエンジンの補助的なネットワーク診断を停止します。",
+                  "この制限は宛先の許可であり、NICやVPNの固定、プロセス全体の通信隔離ではありません。管理者権限、追加ドライバー、OSの経路やLANルーターの設定変更を前提にしません。",
+                  "最初の中継設定は一度に検証・保存し、証明書の変更は明示的なローテーション操作で扱います。同じIPの別ポートは別の中継先として保持します。",
+                  "明示的に選ぶ中継なしLAN接続は、指定した数値アドレスの相手とWireGuardおよびユーザー空間TCP/UDPで通信します。一度限りのペア設定で相手の識別鍵とトンネル鍵を結び付けます。",
+                  "通常のLAN外接続にはTailscaleを推奨します。任意のWAN設定は、到達可能な互換中継を既に用意している場合の高度な機能として残します。外部中継の構築・配置は当面の対象外です。",
+                  "WAN候補の探索は別の明示設定です。選択した数値STUN宛先への探索は調整可能な有限の処理予算で行い、任意のIPv6候補と許可済み中継へのフォールバックを利用できます。LAN宛先制限との同時利用はできません。",
+                  "中継候補に4件の固定許可上限は設けず、保存形式の容量と調整可能な有限の接続・探索予算で資源を制限します。予算を増やしても相手や宛先への許可は広がりません。",
+                  "複数バックエンドの切替には明示的な認証済みの相手の対応付けが必要です。同じ名前やIPだけでは同じ相手と判断せず、許可の拒否を別経路への切替理由にしません。",
+                  "エンジン変更は元と変更後のハッシュを検証する小さなソース差分として管理します。配布物は従来どおり単一実行ファイルで、利用者の追加インストール手順はありません。",
                   "サービスの公開先・ポート・期限、ファイルの受信先と自動保存は明示的に選びます。保存済みサービスを起動時に自動公開しません。",
                   "3種類のOS、4対象環境でネイティブのrace test・vet・同一入力2回ビルド・日英の配布物smoke testを実行しました。正確なソースに対するPlaywrightの実ブラウザー試験はリンク先のCIで確認できます。",
                   "実機間のTailnet・ACL・アプリ互換性、スマートフォンQR、実際のIME・フォント、Windows Console／ConPTY、OSログイン・スリープは別途確認が必要です。模擬ピアと隔離されたループバック中継の試験は、実利用環境全体の保証ではありません。",
-                  "公開後に4対象環境で実際のmiseインストールと署名・来歴を検証します。結果はこのリリースのActions実行で確認してください。",
+                  "公開後に4対象環境で実際のmiseインストールと署名・来歴を検証します。実機ネットワークでの確認は公開後も未検証として残ります。結果はこのリリースのActions実行で確認してください。",
                   "",
                   "Experimental prerelease; this is not a stable release.",
                   "Route permission reductions stop old connections before saving. After a save failure, stop soba: old permissions may remain on disk. Inspect and reconcile saved state before restarting; failed revocation is not guaranteed durable.",
                   "sobalink, with the soba command, connects devices for services, files and messages through a local Web UI and CLI. It supports an existing Tailnet and explicit peer pairing through a selected trusted relay.",
                   "The same authenticated pair can recover across individually approved LAN-local and external relay candidates. Route authorization has an explicitly chosen expiry or lasts until revoked; existing finite permissions are never automatically extended.",
                   "Established TCP connections may fail and applications must reconnect; partial-byte resumption is not provided. A LAN-local relay candidate is not a strict no-external-egress mode.",
+                  "An optional LAN destination allowlist admits UDP only to selected CIDRs and TCP only to exact certificate-pinned relay IP:port destinations, while disabling auxiliary network diagnostics for that engine.",
+                  "This is destination admission, not NIC/VPN binding or whole-process isolation. The product does not require administrator privileges, additional drivers, OS route changes or LAN-router configuration changes.",
+                  "First relay setup is validated and saved atomically. Certificate changes use an explicit rotation operation, and different relay ports on the same IP keep their separate identities.",
+                  "Explicit relayless LAN mode uses selected numeric peer endpoints with WireGuard and userspace TCP/UDP. One-use pairing binds each peer's identity key to its separate tunnel key.",
+                  "Use Tailscale for ordinary outside-LAN connections. Optional WAN controls remain an advanced capability for an already reachable compatible relay; external relay construction and deployment are out of scope for now.",
+                  "WAN discovery is a separate opt-in for selected numeric STUN destinations and/or native IPv6 candidates. STUN probes use an adjustable finite batch budget, with approved relay fallback retained. WAN discovery cannot be combined with a LAN destination policy.",
+                  "Relay candidates have no fixed four-item permission ceiling. Storage-format capacity and adjustable finite connection/probe budgets bound resources; increasing a budget does not authorize additional peers or destinations.",
+                  "Mixed-backend routing requires an explicit authenticated peer binding. Matching names or IPs never establish identity, and a denied route never triggers fallback to another backend.",
+                  "The engine adaptation is retained as a small source patch with verified original and adapted hashes. Distribution remains a single executable with no additional end-user installation steps.",
                   "Service recipients, ports and lifetimes, receiving destinations and automatic saving are explicit choices. Saved services are not automatically exposed on startup.",
                   "Native race tests, vet, matching repeated builds and bilingual archive smoke tests ran on four targets across three operating systems. See the linked exact-source CI for Playwright browser acceptance.",
                   "Real-device Tailnet/ACL/application compatibility, phone QR, actual IME/font combinations, Windows Console/ConPTY, OS login and suspend remain separate acceptance checks. Synthetic peers and an isolated loopback relay do not establish compatibility with every real environment.",
-                  "Actual mise installation and public signatures/provenance are checked on all four targets after publication; inspect this release's Actions run for the results.",
+                  "Actual mise installation and public signatures/provenance are checked on all four targets after publication. Physical-device network acceptance remains unverified after release; inspect this release's Actions run for the results.",
                   "",
                   "Verification: https://github.com/" + checks.REPOSITORY + "/actions/runs/" + os.environ["GITHUB_RUN_ID"],
                   "Source commit: " + commit,

@@ -45,7 +45,7 @@ describe('locale coverage', () => {
 
 
 describe('localized recovery', () => {
-  it.each(['lan_environment_proxy', 'lan_environment_override', 'lan_relay_mismatch', 'lan_certificate_expired', 'network_restart_required', 'lan_cancel_invite_first', 'lan_pair_reply_uncertain', 'lan_remote_paired_local_save', 'lan_revoke_not_persisted'])('gives a Japanese next step for %s while retaining technical details separately', code => {
+  it.each(['lan_policy_invalid', 'lan_policy_setup_required', 'lan_policy_relay_outside', 'lan_certificate_rotation_required', 'lan_certificate_rotation_invalid', 'lan_relay_pairs_present', 'lan_environment_proxy', 'lan_environment_override', 'lan_relay_mismatch', 'lan_certificate_expired', 'network_restart_required', 'lan_cancel_invite_first', 'lan_pair_reply_uncertain', 'lan_remote_paired_local_save', 'lan_revoke_not_persisted'])('gives a Japanese next step for %s while retaining technical details separately', code => {
     const error = new ApiError(code, 'Synthetic backend diagnostic')
     expect(errorText(error, translator('ja'))).toMatch(/[ぁ-んァ-ヶ一-龠]/)
     expect(errorText(error, translator('ja'))).not.toContain(error.message)

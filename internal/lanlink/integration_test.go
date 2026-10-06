@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 	"tailscale.com/derp/derphttp"
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/net/netmon"
@@ -24,7 +25,7 @@ import (
 	"tailscale.com/types/logger"
 )
 
-// This opt-in CI test uses real stock Tailcat/WireGuard over a TLS-pinned local
+// This opt-in CI test uses real pinned Tailcat/WireGuard over a TLS-pinned local
 // DERP. Direct underlay UDP must be compiled out so every OS listener remains
 // loopback-only. It tests existing TCP across one real two-minute relay lease;
 // it does not prove direct UDP, real LAN/WAN/NAT migration or cross-relay migration.
@@ -38,6 +39,27 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 	if e := ValidateBuild(); e != nil {
 		t.Fatal("integration setup or pairing failed")
 	}
+	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{})
+}
+
+// This is the ordinary UDP-enabled product build with constructor-wired policy,
+// pinned TLS bootstrap and a real DERP lease. It permits loopback destinations
+// only. It is separate evidence from physical-LAN/NIC/VPN acceptance.
+func TestGuardedRelayTwoPeerIntegration(t *testing.T) {
+	if os.Getenv("SOBALINK_RUN_GUARDED_INTEGRATION") != "1" {
+		t.Skip("requires explicit native guarded integration")
+	}
+	if !buildfeatures.HasUDPTransport {
+		t.Fatal("guarded integration requires the normal UDP-enabled build")
+	}
+	if e := ValidateBuild(); e != nil {
+		t.Fatal("guarded integration build validation failed")
+	}
+	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{Mode: lanpolicy.AllowedLANDestinations, Prefixes: []string{"127.0.0.1/32", "::1/128"}})
+}
+
+func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	var closers []io.Closer
@@ -75,7 +97,7 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 	}
 	var hostSaves, clientSaves atomic.Int64
 	hostIdentity, clientIdentity := GenerateIdentity(), GenerateIdentity()
-	host, e := NewNode(NodeConfig{Identity: hostIdentity, Relay: relayConfig, Trust: NewBook(), EmbeddedRelay: true, Persist: func(Snapshot, []RemotePeer) error { hostSaves.Add(1); return nil }})
+	host, e := NewNode(NodeConfig{DestinationPolicy: policy, Identity: hostIdentity, Relay: relayConfig, Trust: NewBook(), EmbeddedRelay: true, Persist: func(Snapshot, []RemotePeer) error { hostSaves.Add(1); return nil }})
 	if e != nil {
 		t.Fatal("integration setup or pairing failed")
 	}
@@ -112,7 +134,7 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 	if _, e = host.ServePairing(ctx); e != nil {
 		t.Fatal("integration setup or pairing failed")
 	}
-	client, e := NewNode(NodeConfig{Identity: clientIdentity, Relay: relayConfig, Trust: NewBook(), Persist: func(Snapshot, []RemotePeer) error { clientSaves.Add(1); return nil }})
+	client, e := NewNode(NodeConfig{DestinationPolicy: policy, Identity: clientIdentity, Relay: relayConfig, Trust: NewBook(), Persist: func(Snapshot, []RemotePeer) error { clientSaves.Add(1); return nil }})
 	if e != nil {
 		t.Fatal("integration setup or pairing failed")
 	}
@@ -257,7 +279,7 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 	if approvals.Load() <= baseline {
 		t.Fatal("no real DERP re-admission observed across lease")
 	}
-	// Application UDP uses the overlay; OS underlay UDP remains compiled out.
+	// Application UDP uses the encrypted overlay; underlay policy is fixed by the caller.
 	var hostPackets net.PacketConn
 	var clientSource net.Addr
 	for _, pair := range [][2]*Node{{host, client}, {client, host}} {
@@ -332,7 +354,7 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 		return
 	}
 	// Only generic evidence is logged: never print errors that may contain peer capabilities.
-	t.Logf("stock loopback DERP: bidirectional TCP/UDP, denied-key admission, active revocation, clean stop; %d ordered rounds across a real two-minute lease", frames)
+	t.Logf("loopback pinned DERP: bidirectional TCP/UDP, denied-key admission, active revocation, clean stop; %d ordered rounds across a real two-minute lease", frames)
 }
 
 func newPinnedDERPTestClient(private key.NodePrivate, relay TrustedRelay, mon *netmon.Monitor) *derphttp.Client {

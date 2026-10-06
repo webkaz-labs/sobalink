@@ -802,3 +802,8 @@ textarea.code-value, .client-copy textarea.code-value, .composer textarea { font
 
 .button:disabled { border-color: transparent; font-weight: 500; }
 .settings-links > .button:last-child { border-bottom: 0; }
+
+/* Extra explicit connection modes remain readable on narrow sidebars. */
+.network-filter { flex-wrap: wrap; }
+.network-filter button { flex: 1 1 40%; }
+.direct-lan-setup .code-value { overflow-wrap: anywhere; }

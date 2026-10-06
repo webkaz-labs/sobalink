@@ -10,13 +10,15 @@
 
 ### 署名付き公開版を使う
 
-最新の公開済みプレリリースは [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2)、ソースは `00cc6a99809df77bf1754936ea7bf5ca4c5d0741` です。[公開 workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格し、署名・公開取得・4ネイティブ対象の実導入を確認しました。下記の複数中継を準備する経路復旧は、検証中の未公開ソースであり alpha.2 には含まれません。[資材と対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+最新の公開済みプレリリースは [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4)、ソースは `ded32f73c0d198294548120a38bcaf03e088bd6a` です。[公開 workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) の全15ジョブが合格し、署名・公開取得・4ネイティブ対象の実導入を確認しました。複数中継を準備する経路復旧は alpha.4 に含まれます。このチェックアウトの明示的な LAN 送信先制限・中継運用・中継なしLAN接続・任意のWAN探索・方式の併用は未公開・検証中です。中継なしLANの初回接続の不具合は修正し、localhostのTCP／UDP継続試験で確認しました。最終4対象native・ブラウザー・配布受入は未完了です。[資材と対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+
+LAN外の接続にはTailscaleを使います。中継の起動と今後の配置改善はLAN内を対象にし、外部中継の配備は当面対象外です。任意の高度なWAN候補設定には、到達可能な互換中継と固定pinを既に用意している必要があります。
 
 mise **2026.9.18** を用意した環境で実行します。`mise use -g` は通常使う版を設定します。
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.4"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -28,6 +30,7 @@ mise exec -- soba
 ```sh
 npm --prefix web ci --no-audit --no-fund
 npm --prefix web run build
+go run ./cmd/prepare-engine
 go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba ./cmd/soba
 ./bin/soba
 ```
@@ -37,7 +40,7 @@ Windows のビルドは `go build -tags ts_omit_portmapper,ts_omit_captiveportal
 ### 起動後の操作
 
 1. 表示された `http://127.0.0.1:ポート` を同じ端末のブラウザーで開き、端末に表示された一回用コードを入力します。コードは URL に含みません。再発行は別の端末ウィンドウで `soba ui`
-2. ネットワークを選びます。既存の Tailnet を利用する場合は、sobalink の独立ノードを公式の Tailscale 認証ページで参加させます。Tailcat LAN は明示した信頼できる中継先とペアリングを使います。ローカル画面と CLI から設定できます。[LAN 手順](docs/LAN.ja.md)
+2. ネットワークを選びます。既存の Tailnet を利用する場合は、sobalink の独立ノードを公式の Tailscale 認証ページで参加させます。Tailcat LAN は明示した信頼できる中継先とペアリングを使います。ローカル画面と CLI から設定できます。[LAN 手順](docs/LAN.ja.md)。開発版には明示して選ぶ[中継なしLAN](docs/DIRECT_LAN.ja.md)と[接続方式の併用](docs/MIXED_CONNECTIONS.ja.md)もあり、利用前に現在の検証範囲を確認してください
 3. 相手・ポート・有効期間を確認してサービスを共有または接続します。表示された実際の接続先をアプリで使い、認証と動作を確認します
 4. 文字やファイルを送る場合は、現在の識別情報を確認して意図した送信者を信頼します。文字は明示して送り、画像・複数ファイル・フォルダーは一括内容を確認します
 5. 受信側は原則として一括ごとに保存先を決めて承認します。自動保存は、特定のバックエンド・信頼済み相手・信頼の世代・保存先を指定した場合だけ有効です
@@ -62,11 +65,11 @@ Windows のビルドは `go build -tags ts_omit_portmapper,ts_omit_captiveportal
 
 TCP の広い共有範囲は、許可期間中にその範囲で新しく起動したアプリにも適用されます。必要な範囲まで狭め、除外を設定してください。探索 `54543`、ピア API `54544`、ペアリング `54545` とバックエンド内部の入口はサービス共有から除外します。UDP とローカル接続の実待受には、既定64件の調整可能な有限予算があります。共有相手32件や一括256項目・1 GiBは論理制限の初期値で、固定の製品上限ではありません。論理制限を外しても、本人確認・パス安全性・通信形式・資源の検査は残ります。[容量の選択](docs/CAPACITY.ja.md) · [安全性](docs/SECURITY.ja.md)
 
-Direct・Relay は暗号化された通信の経路、再接続は通信を作り直す状態です。経路が不明なら不明と表示し、遅延から推測しません。ネットワーク方式を自動交換せず、既存 TCP 接続の維持も保証しません。Tailcat に任意の公開中継先への自動フォールバックはありません。[ネットワークと設計](docs/ARCHITECTURE.md)
+Direct・Relay は暗号化された通信の経路、再接続は通信を作り直す状態です。経路が不明なら不明と表示し、遅延から推測しません。単一方式の設定では選択したネットワークを変更しません。未公開の併用モードでは、認証済みの同じ相手に明示許可した経路について、利用不能が確認できた場合に限り新しい接続で別経路を選べます。許可拒否や状態不明では切り替えず、既存 TCP の移行・再送は行いません。Tailcat に任意の公開中継先への自動フォールバックはありません。[ネットワークと設計](docs/ARCHITECTURE.md)
 
-## 準備した経路で復旧する（未公開）
+## 準備した経路で復旧する
 
-同じ Tailcat のペアを保ったまま、LAN 内と外部の正確な中継候補を準備します。ネットワークを移る前に両端で候補を設定し、認証された経路情報を非公開で交換して、それぞれの端末で使う候補を許可します。新しい CLI とローカル画面は実装・検証中です。[短い設定手順](docs/LAN.ja.md#別の経路を準備する未公開)
+同じ Tailcat のペアを保ったまま、LAN 内と外部の正確な中継候補を準備します。ネットワークを移る前に両端で候補を設定し、認証された経路情報を非公開で交換して、それぞれの端末で使う候補を許可します。複数中継の経路復旧を扱う CLI とローカル画面は alpha.4 に含まれます。[短い設定手順](docs/LAN.ja.md#別の経路を準備する未公開)
 
 ```mermaid
 flowchart LR
@@ -76,7 +79,7 @@ flowchart LR
     P --> E[許可済みの外部中継]
 ```
 
-図は復旧の目標であり、到達性を確認済みという意味ではありません。外部サービスが不通の状態から、保存済み LAN 設定だけで起動するネイティブ検証は残っています。local は中継アドレスの区分で、通常ビルドは公開経路を使う可能性のある相手への直接通信を維持します。厳密な LAN 限定・外部通信ゼロのモードは未実装です。既存 TCP は切れる場合があり、アプリで再接続します。ファイル再試行は同じ起動中の未完了項目全体だけです。[証拠と限界](docs/VERIFICATION.md#経路復旧の条件)
+図は許可済みの復旧関係を表し、あらゆるネットワークでの到達性を保証しません。native試験の証拠と残る実機確認はソースごとの記録を参照してください。local は中継アドレスの区分で、通常の中継方式は公開経路を使う可能性のある相手への直接通信を維持します。開発版の[LAN送信先制限](docs/LAN_DESTINATIONS.ja.md)は明示的に宛先を許可する機能で、プロセス全体の外部通信ゼロや物理NIC・VPNの隔離を保証しません。既存 TCP は切れる場合があり、アプリで再接続します。ファイル再試行は同じ起動中の未完了項目全体だけです。[証拠と限界](docs/VERIFICATION.md#経路復旧の条件)
 
 ## CLI の短い例
 

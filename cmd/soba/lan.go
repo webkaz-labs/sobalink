@@ -9,22 +9,62 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/core"
+	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 )
 
 func setupPayload(args []string, ja bool, out io.Writer) (map[string]any, error) {
 	f := commandFlags("setup", ja, out)
-	network := f.String("network", "tailnet", text(ja, "tailnet, lan or none", "tailnet、lan、none"))
+	network := f.String("network", "tailnet", text(ja, "tailnet, lan, direct-lan or none", "tailnet、lan、direct-lan、none"))
+	listen := f.String("listen", "", text(ja, "exact private direct LAN tunnel IP:port", "direct LANトンネルの正確なプライベートIP:ポート"))
 	hostname := f.String("name", "", text(ja, "node name; omit to keep the current name", "端末名（省略時は現在の名前を維持）"))
 	host := f.String("host", "", text(ja, "explicit private local relay IP:port (LAN mode)", "明示するプライベートIP:ポートのローカル中継（LAN用）"))
 	relay := f.String("relay", "", text(ja, "explicit trusted relay IP:port (LAN mode)", "明示する信頼済み中継のIP:ポート（LAN用）"))
 	certificate := f.String("certificate", "", text(ja, "relay SHA-256 certificate fingerprint, 64 hexadecimal characters", "中継証明書のSHA-256指紋（16進64文字）"))
+	rotateCertificate := f.Bool("rotate-certificate", false, text(ja, "replace an existing host certificate and pin; revoke old pairs first and pair again", "既存ホストの証明書・指紋を更新（先に旧ペアを解除し、更新後に再ペアリング）"))
+	policyMode := f.String("policy-mode", "", text(ja, "explicit trusted-relay or allowed-lan-destinations policy, saved before connecting", "接続前に保存する trusted-relay または allowed-lan-destinations を明示"))
+	var prefixes policyPrefixes
+	f.Var(&prefixes, "prefix", text(ja, "explicit private/ULA or loopback CIDR for --policy-mode; repeatable", "--policy-mode 用のプライベート・ULA・ループバックCIDR（複数可）"))
 	if err := parseFlags(f, args, ja); err != nil {
 		return nil, err
 	}
-	if *network != "tailnet" && *network != "lan" && *network != "none" {
-		return nil, errors.New(text(ja, "--network must be tailnet, lan or none", "--network は tailnet、lan、none から選んでください"))
+	if *network != "tailnet" && *network != "lan" && *network != "direct-lan" && *network != "none" {
+		return nil, errors.New(text(ja, "--network must be tailnet, lan, direct-lan or none", "--network は tailnet、lan、direct-lan、none から選んでください"))
+	}
+	if *network == "direct-lan" {
+		if *host != "" || *relay != "" || *certificate != "" || *rotateCertificate || *policyMode != "" {
+			return nil, errors.New(text(ja, "Direct LAN requires --listen and --prefix without relay settings", "direct LANはリレー設定を指定せず --listen と --prefix を使ってください"))
+		}
+		if *listen == "" && len(prefixes) == 0 {
+			return map[string]any{"mode": "direct-lan", "hostname": *hostname}, nil
+		}
+		selection := core.DirectLANSelection{Listen: *listen, Prefixes: prefixes}
+		if err := core.ValidateDirectLANSelection(selection); err != nil {
+			return nil, errors.New(text(ja, "Choose an exact private listen endpoint and canonical allowed prefixes", "正確なプライベート待受アドレスと正規表記の許可範囲を指定してください"))
+		}
+		return map[string]any{"mode": "direct-lan", "hostname": *hostname, "directLAN": selection}, nil
+	}
+	if *listen != "" {
+		return nil, errors.New(text(ja, "--listen requires --network direct-lan", "--listen は --network direct-lan で指定してください"))
+	}
+	if *rotateCertificate && (*network != "lan" || *host == "" || *relay != "" || *certificate != "") {
+		return nil, errors.New(text(ja, "--rotate-certificate requires --network lan --host IP:PORT", "--rotate-certificate には --network lan --host IP:PORT が必要です"))
 	}
 	payload := map[string]any{"mode": *network, "hostname": *hostname}
+	if *rotateCertificate {
+		payload["rotateCertificate"] = true
+	}
+	if *policyMode != "" || len(prefixes) != 0 {
+		if *network != "lan" || *policyMode == "" {
+			return nil, errors.New(text(ja, "--policy-mode and --prefix require LAN mode and an explicit policy mode", "--policy-mode と --prefix には LAN モードと明示的なポリシーモードが必要です"))
+		}
+		chosen, err := (lanpolicy.Config{Mode: *policyMode, Prefixes: prefixes}).Canonical()
+		if err != nil {
+			return nil, errors.New(text(ja, "Use a valid policy mode and canonical private/ULA or loopback prefixes", "有効なポリシーモードと正規表記のプライベート・ULA・ループバック範囲を使ってください"))
+		}
+		payload["lanPolicy"] = map[string]any{"mode": chosen.Mode, "prefixes": append([]string{}, chosen.Prefixes...)}
+	}
 	if *host == "" && *relay == "" && *certificate == "" {
 		return payload, nil
 	}

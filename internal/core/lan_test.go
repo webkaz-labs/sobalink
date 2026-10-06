@@ -624,7 +624,15 @@ func TestExpiredHostCertificateCanLoadForExplicitRecovery(t *testing.T) {
 	if _, err := readLANStore(store.path); err != nil {
 		t.Fatalf("expired state blocked recovery loading: %v", err)
 	}
-	if err := c.configureLAN(host); err != nil {
+	before, _ := os.ReadFile(store.path)
+	if err := c.configureLAN(host); networkErrorCode(err) != "lan_certificate_rotation_required" {
+		t.Fatal("expired repeat setup must require explicit replacement", err)
+	}
+	after, _ := os.ReadFile(store.path)
+	if string(before) != string(after) {
+		t.Fatal("refused replacement changed saved state")
+	}
+	if err := c.configureLANWithOptions(host, true); err != nil {
 		t.Fatal(err)
 	}
 	repaired := store.copy()
