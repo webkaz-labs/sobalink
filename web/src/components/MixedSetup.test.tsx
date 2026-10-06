@@ -48,3 +48,29 @@ it.each(['en', 'ja'] as const)('shows unavailable saved state and blocks changes
   expect(run).toHaveBeenCalledWith('mixed.status', {})
   expect(run.mock.calls.some(c => c[0] === 'network.configure')).toBe(false)
 })
+
+it.each(['en', 'ja'] as const)('distinguishes absence, unconfirmed readiness and restart in %s', locale => {
+ const value = state(); value.mixed!.backendStates = [{ backend: 'direct-lan', running: false, state: 'unavailable', availability: 'confirmed-unavailable', restartRequired: true }, { backend: 'tailnet', running: false, state: 'Starting', availability: 'readiness-unconfirmed' }]
+ const server = { run: vi.fn(), busy: new Set(), state: value, auth: 'ready', stale: false, setError: vi.fn() } as unknown as Server
+ render(<MixedSetup server={server} state={value} locale={locale} t={translator(locale)} blocked={false} />)
+ expect(screen.getByText(locale === 'ja' ? /利用不可を確認済み/ : /Confirmed unavailable/)).toBeInTheDocument()
+ expect(screen.getByText(locale === 'ja' ? /準備状態を未確認/ : /Readiness unconfirmed/)).toBeInTheDocument()
+ expect(screen.getByText(locale === 'ja' ? /sobaを再起動して/ : /restart soba to activate/)).toBeInTheDocument()
+})
+
+it.each(['en', 'ja'] as const)('shows unconfirmed runtime status while retaining refresh and explicit removal in %s', async locale => {
+ const value = state(); value.mixed!.backendStatusAvailable = false; delete value.mixed!.backendStates
+ value.mixed!.bindings = [{ peerId: 'synthetic-logical-peer', publicKey: 'a1'.repeat(32), identities: [{ backend: 'tailnet', id: 'synthetic-tailnet-id' }, { backend: 'direct-lan', id: 'b2'.repeat(32) }] }]
+ const run = vi.fn<Server['run']>().mockResolvedValue({ ok: true, result: { ...value.mixed } }), server = { run, busy: new Set(), state: value, auth: 'ready', stale: false, setError: vi.fn() } as unknown as Server
+ render(<MixedSetup server={server} state={value} locale={locale} t={translator(locale)} blocked={false} />)
+ expect(screen.getByText(locale === 'ja' ? /接続方式の状態を確認できません/ : /Backend status could not be confirmed/)).toBeInTheDocument()
+ expect(screen.queryByText(locale === 'ja' ? /関連付け可能な経路は報告されていません/ : /No eligible unbound routes/)).not.toBeInTheDocument()
+ expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+ const refresh = screen.getByRole('button', { name: locale === 'ja' ? '接続方式の識別情報を更新' : 'Refresh backend identities' })
+ expect(refresh).not.toBeDisabled(); await userEvent.click(refresh); expect(run).toHaveBeenCalledWith('mixed.status', {})
+ await userEvent.click(screen.getByRole('button', { name: locale === 'ja' ? '解除内容を確認' : 'Review removal' }))
+ expect(run.mock.calls.some(c => c[0] === 'mixed.unbind')).toBe(false)
+ await userEvent.click(screen.getByRole('button', { name: locale === 'ja' ? 'この関連付けを解除' : 'Remove this binding' }))
+ expect(run).toHaveBeenCalledWith('mixed.unbind', { peerId: 'synthetic-logical-peer' })
+ expect(run.mock.calls.some(c => c[0] === 'mixed.bind' || c[0] === 'network.configure')).toBe(false)
+})

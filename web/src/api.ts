@@ -52,12 +52,14 @@ export interface ServicePreset { id: string; purpose: string; network: 'tcp' | '
 export interface CapacityChoice { mode: 'default' | 'limited' | 'unlimited'; value?: number }
 export interface CapacityPolicy { version: 1; logical: Record<string, CapacityChoice>; resources: Record<string, CapacityChoice> }
 export interface PolicyConfig {
+ restartRequiredResources?: string[]
+ relayResourceEditable?: boolean
   version: 1; requested: CapacityPolicy; effective: CapacityPolicy; revision: string
   catalog: Record<'logical' | 'resources', Record<string, { default: number; unit: string }>>
   adjustable: Record<'logical' | 'resources', Record<string, boolean>>
   usage: Record<string, number>
 }
-export interface PolicyPreview { version: 1; requested: CapacityPolicy; effective: CapacityPolicy; revision: string; destructive: false; usage: Record<string, number> }
+export interface PolicyPreview { restartRequired?: boolean; version: 1; requested: CapacityPolicy; effective: CapacityPolicy; revision: string; destructive: false; usage: Record<string, number> }
 export interface HistoryPreview { version: 1; revision: string; messageIds: string[]; retained: number; remove: number; destructive: true }
 export interface ServiceLimits { effective: { logical?: Record<string, CapacityChoice>; resources: Record<string, CapacityChoice> }; usage: { materializedListeners: number; [key: string]: number } }
 export interface ServiceDiagnostic {
@@ -137,7 +139,7 @@ export function receivingBlocked(state: Pick<State, 'receiveRecovery'>) {
 }
 export interface DirectLanStatus { configured: boolean; listenerReady: boolean; publicKey?: string; endpoint?: string; prefixes?: string[]; recoveryRequired?: boolean; resourceRestartRequired?: boolean }
 export interface DirectLanInvitationPreview { hostPublicKey: string; hostName: string; endpoint: string; recipientPublicKey: string; recipientMatches: true; expires: string }
-export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string }[] }
+export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string; availability?: "ready" | "confirmed-unavailable" | "authorization-required" | "readiness-unconfirmed"; restartRequired?: boolean }[] }
 export interface State {
   csrfToken: string
   self: { name: string; status: string; error?: string; errorCode?: string; receiveDirectory?: string; networks?: Network[] }

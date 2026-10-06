@@ -17,8 +17,9 @@ unmodified upstream module.
 The executable dependency is the repository's pinned `tailscale.com v1.104.0` with a separately inventoried, hash-verified generated-source adaptation. See `internal/engineadaptation/UPSTREAM.md`. No downloaded module-cache source is changed.
 
 Changes: remove network map fetching and implicit region defaults; validate and
-canonicalize up to four numeric certificate-pinned one-node regions; keep all
-server regions present in one engine; update each peer's relay from the DERP
+canonicalize numeric certificate-pinned one-node regions within the nonzero
+16-bit region-ID namespace and an explicit adjustable presence budget; keep all
+configured server regions present in one engine; update each peer's relay from the DERP
 connection carrying its key-checked meow; keep clients single-candidate; bound
 presence work by server lifetime; normalize failed concrete TCP dial results
 before converting them to connection interfaces so cleanup cannot dereference

@@ -16,6 +16,8 @@ import (
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/views"
+	"tailscale.com/util/eventbus"
+	"tailscale.com/wgengine/router"
 )
 
 // Explicit synthetic static loopback endpoints make direct-path evidence
@@ -57,10 +59,28 @@ func TestGuardedDirectEncryptedTCPUDPIntegration(t *testing.T) {
 			loopback := netip.MustParseAddr(family)
 			for _, backend := range []*locoBackend{server.lb, client.lb} {
 				sock := backend.sys.MagicSock.Get()
-				if sock.LocalPort() == 0 {
-					t.Fatal("guarded UDP socket absent")
+				// PortUpdate is production socket state, including separately bound IPv6.
+				observer := backend.sys.Bus.Get().Client("guarded-family-port")
+				ports := eventbus.Subscribe[router.PortUpdate](observer)
+				sock.Rebind()
+				network := "udp4"
+				if loopback.Is6() {
+					network = "udp6"
 				}
-				sock.SetStaticEndpoints(views.SliceOf([]netip.AddrPort{netip.AddrPortFrom(loopback, sock.LocalPort())}))
+				var port uint16
+				for port == 0 {
+					select {
+					case update := <-ports.Events():
+						if update.EndpointNetwork == network {
+							port = update.UDPPort
+						}
+					case <-ctx.Done():
+						observer.Close()
+						t.Fatal("guarded socket family port not reported")
+					}
+				}
+				observer.Close()
+				sock.SetStaticEndpoints(views.SliceOf([]netip.AddrPort{netip.AddrPortFrom(loopback, port)}))
 			}
 			deadline := time.Now().Add(20 * time.Second)
 			direct := false

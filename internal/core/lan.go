@@ -516,7 +516,11 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, WANCandidates: wan, DestinationPolicy: state.DestinationPolicy, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
+	resources, err := selectedRelayResources(c.capacityPolicy())
+	if err != nil {
+		return nil, err
+	}
+	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, RelayResources: resources, WANCandidates: wan, DestinationPolicy: state.DestinationPolicy, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
 	if err != nil {
 		return nil, err
 	}
@@ -527,7 +531,7 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	b.start = func() (io.Closer, error) {
 		var local *lanlink.LocalRelay
 		if state.Selection.Kind == "host" {
-			local, err = lanlink.StartLocalRelay(c.ctx, relay.Address, *state.RelayIdentity, node.AllowRelayKey, node.AuthorizeRelayBootstrap)
+			local, err = lanlink.StartLocalRelayWithResources(c.ctx, relay.Address, *state.RelayIdentity, node.AllowRelayKey, resources, node.AuthorizeRelayBootstrap)
 			if err != nil {
 				return nil, err
 			}
@@ -687,7 +691,7 @@ func (b *lanBackend) Close() error {
 }
 
 func (c *Core) lanStatus() map[string]any {
-	status := map[string]any{"configured": false, "pairingReady": false, "listenerReady": false, "relayReady": false, "path": "unknown"}
+	status := map[string]any{"resources": c.relayResourcesView(), "configured": false, "pairingReady": false, "listenerReady": false, "relayReady": false, "path": "unknown"}
 	host := false
 	if saved := c.lanStoreCopy(); saved != nil {
 		state := saved.copy()

@@ -7,7 +7,7 @@ import { isRelayAddress } from './LanSetup'
 const en = {
   budget: 'Maximum probes per discovery pass',
   title: 'Advanced: WAN direct candidates', read: 'Review WAN settings', enabled: 'Explicit discovery enabled', disabled: 'Discovery disabled',
-  intro: 'Optionally probe only the numeric STUN endpoints you choose and advertise eligible global IPv6 addresses. This may send UDP outside the LAN. It does not guarantee direct connectivity.',
+  intro: 'For ordinary outside-LAN connections, use Tailscale. This advanced option requires an already reachable compatible pinned relay; public relay deployment is not provided. Optionally probe only the numeric STUN endpoints you choose and advertise eligible global IPv6 addresses. This may send UDP outside the LAN. It does not guarantee direct connectivity.',
   addresses: 'Exact STUN IP:port endpoints', ipv6: 'Advertise eligible global IPv6 addresses',
   hint: 'Numeric endpoints, separated by commas. The probe budget bounds each discovery pass. Leave endpoints empty for IPv6-only candidates. No server is selected automatically. The existing approved encrypted relay remains the fallback.',
   review: 'Review candidate changes', save: 'Save explicit WAN discovery', disable: 'Disable WAN discovery', cancel: 'Cancel',
@@ -17,7 +17,7 @@ const en = {
 const ja: Record<keyof typeof en, string> = {
   budget: '1回の探索の最大送信先数',
   title: '詳細設定：WAN直接経路候補', read: 'WAN設定を確認', enabled: '明示した探索が有効', disabled: '探索は無効',
-  intro: '指定した数値STUN接続先への探索と、利用可能なグローバルIPv6アドレスの通知を任意で有効にします。LAN外へUDPを送信する場合があります。直接接続を保証するものではありません。',
+  intro: '通常のLAN外接続にはTailscaleを使います。この詳細設定には到達可能な互換中継と固定pinが必要で、公開中継の配備機能はありません。指定した数値STUN接続先への探索と、利用可能なグローバルIPv6アドレスの通知を任意で有効にします。LAN外へUDPを送信する場合があります。直接接続を保証するものではありません。',
   addresses: '正確なSTUN IP:port接続先', ipv6: '利用可能なグローバルIPv6アドレスを通知する',
   hint: '数値接続先をカンマ区切りで指定します。1回の探索数は探索予算で制限します。IPv6候補だけを使う場合、接続先は空欄にできます。サーバーは自動選択しません。既存の許可済み暗号化リレーは代替経路として残ります。',
   review: '経路候補の変更を確認', save: '明示したWAN探索を保存', disable: 'WAN探索を無効化', cancel: 'キャンセル',

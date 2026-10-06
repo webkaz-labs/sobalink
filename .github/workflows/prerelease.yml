@@ -173,7 +173,7 @@ jobs:
                   "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"]
           subprocess.run(base + ["./net/underlayguard"],
                          cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
-          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate)", "./wgengine", "./wgengine/magicsock", "./derp/derphttp", "./net/netcheck"],
+          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate|SobalinkDERP|GuardedLocalSocketEndpointUsesActualFamilyPort)", "./wgengine", "./wgengine/magicsock", "./derp/derphttp", "./net/netcheck"],
                          cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
           PYTHON
           python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
@@ -227,7 +227,7 @@ jobs:
           subprocess.run([
               "go", "test", "-race", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^(TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration)$",
+              "-run=^(TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration)$",
               "-timeout=5m", "./internal/lanlink", "./internal/routecat",
           ], env=env, check=True, timeout=8 * 60)
           PYTHON

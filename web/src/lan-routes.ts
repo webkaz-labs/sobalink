@@ -9,7 +9,7 @@ export function routeAddress(value: string) {
   try { return new URL(`https://${value}`).hostname.startsWith('[') } catch { return false }
 }
 function candidates(value: unknown): value is LanRouteCandidate[] {
-  return Array.isArray(value) && value.length <= 4 && value.every(item => item && routeKey(item.candidateId) && typeof item.address === 'string' && routeAddress(item.address) && routeKey(item.certificateSHA256) && ['local', 'external'].includes(item.scope)) && new Set(value.map(item => item.candidateId)).size === value.length
+  return Array.isArray(value) && value.every(item => item && routeKey(item.candidateId) && typeof item.address === 'string' && routeAddress(item.address) && routeKey(item.certificateSHA256) && ['local', 'external'].includes(item.scope)) && new Set(value.map(item => item.candidateId)).size === value.length
 }
 export function readOwnRoutes(value: unknown): LanOwnRoutes {
   const view = value as LanOwnRoutes
@@ -34,7 +34,7 @@ export function readRouteReview(value: unknown, peerId: string, selfId?: string)
 }
 export function readPeerRoutes(value: unknown): LanPeerRoutes {
   const view = value as LanPeerRoutes
-  if (!view || typeof view.legacy !== 'boolean' || typeof view.recoveryRequired !== 'boolean' || !Number.isSafeInteger(view.issuedSequence) || view.issuedSequence < 0 || !Number.isSafeInteger(view.receivedSequence) || view.receivedSequence < 0 || !candidates(view.candidates) || view.expires !== null && !date(view.expires) || view.nextExpiry !== null && !date(view.nextExpiry) || !Array.isArray(view.approvals) || view.approvals.length > 4 || !view.approvals.every(item => item && view.candidates.some(candidate => candidate.candidateId === item.candidateId)) || !Array.isArray(view.permittedIds) || !view.permittedIds.every(id => view.candidates.some(item => item.candidateId === id))) throw new Error('invalid_response')
+  if (!view || typeof view.legacy !== 'boolean' || typeof view.recoveryRequired !== 'boolean' || !Number.isSafeInteger(view.issuedSequence) || view.issuedSequence < 0 || !Number.isSafeInteger(view.receivedSequence) || view.receivedSequence < 0 || !candidates(view.candidates) || view.expires !== null && !date(view.expires) || view.nextExpiry !== null && !date(view.nextExpiry) || !Array.isArray(view.approvals) || !view.approvals.every(item => item && view.candidates.some(candidate => candidate.candidateId === item.candidateId)) || !Array.isArray(view.permittedIds) || !view.permittedIds.every(id => view.candidates.some(item => item.candidateId === id))) throw new Error('invalid_response')
   if (view.observation !== undefined) readRouteObservation(view.observation)
   if (view.legacy) {
     if (view.approvals.length || view.permittedIds.length) throw new Error('invalid_response')

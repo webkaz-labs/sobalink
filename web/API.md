@@ -214,3 +214,9 @@ transport confirmation. No application bytes use the control connection.
 Cancellation, revocation and current-generation checks remain authoritative.
 Independent WireGuard timers still govern existing flows and do not guarantee
 TCP continuity across suspend, network loss or long idle.
+
+### Relay resource settings
+
+`policy.config` additionally lists `restartRequiredResources` and `relayResourceEditable`. The four relay budgets are `resources.relayPresenceConnections` (default 4), `relayCandidateAttempts` (4), `relayTLSConnections` (64), and `relayAdmissionConnections` (16), each using the existing `default` / positive `limited` capacity choice. `unlimited` is invalid for finite resource budgets. `policy.preview.restartRequired` reports an effective relay-budget change. Such edits are rejected while a network backend exists and take effect at the next start. The same effective values and edit/start boundary appear under `lan.resources` in status.
+
+Candidate views and route approvals no longer reject a fifth item. Their metadata remains bounded by private-state and signed-exchange sizes, and relay-map IDs use the nonzero 16-bit DERP namespace. An insufficient `relayPresenceConnections` budget raises `lan_relay_presence_capacity` before startup without truncating saved candidates or grants. `lan_route_envelope_capacity` reports an offer exceeding the existing 24 KiB plaintext exchange envelope. See [relay operations](../docs/RELAY_OPERATIONS.en.md) ([日本語](../docs/RELAY_OPERATIONS.ja.md)) for defaults, restart and old-version compatibility.

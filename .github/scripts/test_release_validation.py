@@ -115,12 +115,12 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertNotIn("        if:", engine_step)
             self.assertIn('env["SOBALINK_RUN_UNDERLAY_NATIVE"] = "1"', engine_step)
             self.assertIn('cwd=".sobalink-deps/tailscale"', engine_step)
-            self.assertIn('"-run=^Test(UnderlayGuard|WANCandidate)"', engine_step)
+            self.assertIn('"-run=^Test(UnderlayGuard|WANCandidate|SobalinkDERP|GuardedLocalSocketEndpointUsesActualFamilyPort)"', engine_step)
             self.assertIn('"./net/underlayguard"', engine_step)
             self.assertIn("python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale", engine_step)
             self.assertIn("go run ./cmd/prepare-engine --verify", engine_step)
             self.assertIn('env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"', step)
-            self.assertIn("TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration", step)
+            self.assertIn("TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration", step)
             self.assertIn('"go", "test", "-race", "-count=1"', step)
         scripts = pathlib.Path(__file__).parent
         for name in ("smoke-package.py", "verify-installed.py"):

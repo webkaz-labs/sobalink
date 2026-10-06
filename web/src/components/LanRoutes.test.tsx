@@ -398,11 +398,11 @@ describe('prepared candidates', () => {
     expect(screen.getByText(r('offline'))).toBeVisible()
     expect(calls(view, 'lan.routes.add')).toHaveLength(0)
   })
-  it('enforces the four-candidate limit and reviews removal of the exact additional candidate', async () => {
+  it('keeps Add available beyond four candidates and reviews removal of the exact additional candidate', async () => {
     const view = setup(true)
     view.command.mockResolvedValueOnce(result({ candidates: [local, candidate, { ...candidate, candidateId: '8'.repeat(64), address: '192.0.2.21:443' }, { ...candidate, candidateId: '9'.repeat(64), address: '192.0.2.22:443' }], primaryCandidateId: local.candidateId, editable: true }))
     await open(view, true)
-    expect(screen.getByRole('button', { name: r('add') })).toBeDisabled()
+    expect(screen.getByRole('button', { name: r('add') })).toBeEnabled()
     await view.user.click(screen.getAllByRole('button', { name: r('remove') })[0])
     await view.user.click(screen.getByRole('button', { name: r('cancel') }))
     expect(calls(view, 'lan.routes.remove')).toHaveLength(0)

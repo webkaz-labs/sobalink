@@ -6,12 +6,12 @@
   "go_mod_sum": "h1:Cb1XjScRgSOeRD7NW6uCEznme782WiOU9IxqyTWoRf0=",
   "source_url": "https://github.com/tailscale/tailscale/tree/v1.104.0",
   "upstream_tree_sha256": "1b42321127234cae8cdaf79365ac831e0e9259f9c7918b399972ec9cfc50e2d5",
-  "adapted_tree_sha256": "1cfd99cf4f3d4c99d687358d9e5a9853d922e903a13e06f25ab7321fe8cd9098",
+  "adapted_tree_sha256": "0451d1f29b04e4b464d6d42c0bda28560e5f5ff79e6d689b2505c47a9767c0a5",
   "changes": [
     {
       "path": "derp/derphttp/derphttp_client.go",
       "original_sha256": "a6711c986564297a85621586ef7eb0acacd9a645989ffa4fbdd5ad29d420a531",
-      "adapted_sha256": "34ad9982e8022778231153ba6aa2e0aa8e348dc9d1bb3b861777cd1e7ac7a495",
+      "adapted_sha256": "f795f36937c57bc9d51ac84259107be0f98932152b4f4115cd2c9fd1ad629875",
       "edits": [
         {
           "offset": 583,
@@ -21,7 +21,47 @@
         {
           "offset": 1407,
           "old": "",
-          "new": "\t// UnderlayPolicy is set before the first operation and never changed.\n\t// Nil retains the upstream URL, DNS, proxy and dialing behavior.\n\tUnderlayPolicy *underlayguard.Policy\n\n"
+          "new": "\t// UnderlayPolicy is set before the first operation and never changed.\n\t// Nil retains the upstream URL, DNS, proxy and dialing behavior.\n\tUnderlayPolicy *underlayguard.Policy\n\n\t// OnConnectionState is optional, set before first use, and called under mu.\n\t// It must not block or call the client or magicsock. Nil retains upstream\n\t// error behavior. Observers receive ordered connection outcomes, not probes.\n\tOnConnectionState       func(ConnectionStateEvent)\n\tconnectionStateSequence uint64\n\n"
+        },
+        {
+          "offset": 10640,
+          "old": "",
+          "new": "\tphase := \"protocol\"\n"
+        },
+        {
+          "offset": 10766,
+          "old": "\t\t\treturn nil, 0, errors.New(\"DERP region not available\")\n",
+          "new": "\t\t\terr := errors.New(\"DERP region not available\")\n\t\t\tif c.OnConnectionState != nil {\n\t\t\t\terr = &ConnectionError{Phase: \"protocol\", Err: err}\n\t\t\t\tc.reportConnectionStateLocked(err)\n\t\t\t}\n\t\t\treturn nil, 0, err\n"
+        },
+        {
+          "offset": 10889,
+          "old": "\t\t\tif ctx.Err() != nil {\n\t\t\t\terr = fmt.Errorf(\"%v: %v\", ctx.Err(), err)\n",
+          "new": "\t\t\tif c.OnConnectionState != nil {\n\t\t\t\tif ctx.Err() != nil {\n\t\t\t\t\terr = errors.Join(ctx.Err(), err)\n\t\t\t\t}\n\t\t\t\terr = fmt.Errorf(\"%s connect to %v: %w\", caller, c.targetString(reg), &ConnectionError{Phase: phase, Err: err})\n\t\t\t\tc.reportConnectionStateLocked(err)\n\t\t\t} else {\n\t\t\t\tif ctx.Err() != nil {\n\t\t\t\t\terr = fmt.Errorf(\"%v: %v\", ctx.Err(), err)\n\t\t\t\t}\n\t\t\t\terr = fmt.Errorf(\"%s connect to %v: %v\", caller, c.targetString(reg), err)\n"
+        },
+        {
+          "offset": 10966,
+          "old": "\t\t\terr = fmt.Errorf(\"%s connect to %v: %v\", caller, c.targetString(reg), err)\n",
+          "new": ""
+        },
+        {
+          "offset": 12226,
+          "old": "",
+          "new": "\t\tphase = \"dial\"\n"
+        },
+        {
+          "offset": 12349,
+          "old": "",
+          "new": "\t\tphase = \"dial\"\n"
+        },
+        {
+          "offset": 13401,
+          "old": "",
+          "new": "\t\tphase = \"tls\"\n"
+        },
+        {
+          "offset": 14600,
+          "old": "",
+          "new": "\tphase = \"protocol\"\n"
         },
         {
           "offset": 18012,
@@ -29,9 +69,39 @@
           "new": "\tif c.UnderlayPolicy != nil {\n\t\treturn c.guardedDial(ctx, \"tcp\", net.JoinHostPort(c.url.Hostname(), urlPort(c.url)))\n\t}\n\n"
         },
         {
+          "offset": 18596,
+          "old": "",
+          "new": "\t\tif c.OnConnectionState != nil {\n\t\t\treturn nil, fmt.Errorf(\"dial of %v: %w\", host, err)\n\t\t}\n"
+        },
+        {
+          "offset": 19228,
+          "old": "\t\tc, err := c.dialNode(ctx, n)\n",
+          "new": "\t\tconn, err := c.dialNode(ctx, n)\n"
+        },
+        {
+          "offset": 19277,
+          "old": "\t\t\treturn c, n, nil\n",
+          "new": "\t\t\treturn conn, n, nil\n"
+        },
+        {
+          "offset": 19301,
+          "old": "\t\tif firstErr == nil {\n",
+          "new": "\t\tif c.OnConnectionState != nil {\n\t\t\tfirstErr = errors.Join(firstErr, err)\n\t\t} else if firstErr == nil {\n"
+        },
+        {
           "offset": 21061,
           "old": "",
           "new": "\tif c.UnderlayPolicy != nil {\n\t\treturn c.guardedDial(ctx, proto, addr)\n\t}\n\n"
+        },
+        {
+          "offset": 24069,
+          "old": "\t\t\tif firstErr == nil {\n",
+          "new": "\t\t\tif c.OnConnectionState != nil {\n\t\t\t\tfirstErr = errors.Join(firstErr, res.err)\n\t\t\t} else if firstErr == nil {\n"
+        },
+        {
+          "offset": 24191,
+          "old": "",
+          "new": "\t\t\tif c.OnConnectionState != nil {\n\t\t\t\treturn nil, errors.Join(firstErr, ctx.Err())\n\t\t\t}\n"
         },
         {
           "offset": 24512,
@@ -39,9 +109,73 @@
           "new": "\tif c.UnderlayPolicy != nil {\n\t\treturn nil, underlayguard.ErrDenied\n\t}\n\n"
         },
         {
+          "offset": 27248,
+          "old": "\t\tc.closeForReconnect(client)\n",
+          "new": "\t\tc.closeForReconnect(client, err)\n"
+        },
+        {
+          "offset": 29946,
+          "old": "\t\tc.closeForReconnect(client)\n",
+          "new": "\t\tc.closeForReconnect(client, err)\n"
+        },
+        {
+          "offset": 31138,
+          "old": "\t\t\tc.closeForReconnect(client)\n",
+          "new": "\t\t\tc.closeForReconnect(client, err)\n"
+        },
+        {
+          "offset": 31528,
+          "old": "\t\tc.closeForReconnect(client)\n",
+          "new": "\t\tc.closeForReconnect(client, err)\n"
+        },
+        {
+          "offset": 32266,
+          "old": "",
+          "new": "\t\tcase derp.ServerInfoMessage:\n\t\t\tc.connectionReady(client)\n"
+        },
+        {
+          "offset": 32356,
+          "old": "\t\t\tc.closeForReconnect(client)\n",
+          "new": "\t\t\tc.closeForReconnect(client, err)\n"
+        },
+        {
+          "offset": 33518,
+          "old": "func (c *Client) closeForReconnect(brokenClient *derp.Client) {\n",
+          "new": "func (c *Client) closeForReconnect(brokenClient *derp.Client, cause error) {\n"
+        },
+        {
+          "offset": 33656,
+          "old": "",
+          "new": "\t}\n\tif !c.closed && c.OnConnectionState != nil {\n\t\tc.reportConnectionStateLocked(&ConnectionError{Phase: \"protocol\", Err: cause})\n"
+        },
+        {
           "offset": 34366,
           "old": "",
           "new": "\n// guardedDial preserves the platform socket-control behavior while deliberately\n// avoiding netns.NewDialer's environment SOCKS wrapper, DNS caches, URL dialer\n// overrides and HTTP proxy setup. Policy parses and checks the numeric endpoint.\nfunc (c *Client) guardedDial(ctx context.Context, network, address string) (net.Conn, error) {\n\treturn c.UnderlayPolicy.DialContext(ctx, network, address, func(ctx context.Context, network, address string) (net.Conn, error) {\n\t\td := &net.Dialer{Control: netns.Listener(c.logf, c.netMon).Control}\n\t\treturn d.DialContext(ctx, network, address)\n\t})\n}\n"
+        }
+      ]
+    },
+    {
+      "path": "derp/derphttp/sobalink_connection_state.go",
+      "original_sha256": "",
+      "adapted_sha256": "990ba7d549b736b79f24ea205d33c9fdfc791071ca7365ed554c4625e5aac207",
+      "edits": [
+        {
+          "offset": 0,
+          "old": "",
+          "new": "// Copyright (c) 2026 sobalink contributors\n// SPDX-License-Identifier: MIT\n\npackage derphttp\n\nimport (\n\t\"fmt\"\n\t\"tailscale.com/derp\"\n)\n\n// ConnectionError retains a real DERP connection failure and its phase. Only\n// dial failures can represent positive endpoint unavailability; TLS and protocol\n// failures remain terminal even when their cause resembles a network error.\ntype ConnectionError struct {\n\tPhase string\n\tErr   error\n}\n\nfunc (e *ConnectionError) Error() string            { return fmt.Sprintf(\"DERP %s: %v\", e.Phase, e.Err) }\nfunc (e *ConnectionError) Unwrap() error            { return e.Err }\nfunc (e *ConnectionError) DERPFailurePhase() string { return e.Phase }\n\n// ConnectionStateEvent is serialized under the client mutex. A nil Err means\n// the server sent DERP ServerInfo, not merely that TCP or TLS connected.\ntype ConnectionStateEvent struct {\n\tSequence uint64\n\tErr      error\n}\n\nfunc (c *Client) reportConnectionStateLocked(err error) {\n\tif c.OnConnectionState == nil {\n\t\treturn\n\t}\n\tc.connectionStateSequence++\n\tc.OnConnectionState(ConnectionStateEvent{Sequence: c.connectionStateSequence, Err: err})\n}\n\nfunc (c *Client) connectionReady(client *derp.Client) {\n\tif c.OnConnectionState == nil {\n\t\treturn\n\t}\n\tc.mu.Lock()\n\tdefer c.mu.Unlock()\n\tif c.client == client && !c.closed {\n\t\tc.reportConnectionStateLocked(nil)\n\t}\n}\n"
+        }
+      ]
+    },
+    {
+      "path": "derp/derphttp/sobalink_connection_state_test.go",
+      "original_sha256": "",
+      "adapted_sha256": "de1ca2dfd0f432daf8c5ef9158c26aa0737bf94ec5bac16f2773320a5e681f9e",
+      "edits": [
+        {
+          "offset": 0,
+          "old": "",
+          "new": "// Copyright (c) 2026 sobalink contributors\n// SPDX-License-Identifier: MIT\n\npackage derphttp\n\nimport (\n\t\"bufio\"\n\t\"context\"\n\t\"crypto/ecdsa\"\n\t\"crypto/elliptic\"\n\t\"crypto/rand\"\n\t\"crypto/tls\"\n\t\"crypto/x509\"\n\t\"errors\"\n\t\"math/big\"\n\t\"net\"\n\t\"net/http\"\n\t\"sync\"\n\t\"syscall\"\n\t\"testing\"\n\t\"time\"\n\n\t\"tailscale.com/derp\"\n\t\"tailscale.com/net/netmon\"\n\t\"tailscale.com/tailcfg\"\n\t\"tailscale.com/types/key\"\n\t\"tailscale.com/types/logger\"\n)\n\nfunc stateClient(t *testing.T, scheme string) (*Client, *[]ConnectionStateEvent) {\n\tt.Helper()\n\tc, err := NewClient(key.NewNode(), scheme+\"://synthetic.invalid/derp\", logger.Discard, netmon.NewStatic())\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tevents := new([]ConnectionStateEvent)\n\tc.OnConnectionState = func(e ConnectionStateEvent) { *events = append(*events, e) }\n\tt.Cleanup(func() { c.Close() })\n\treturn c, events\n}\nfunc TestSobalinkDERPDialPreservesTypedJoinedErrors(t *testing.T) {\n\tunknown := errors.New(\"synthetic dial failure\")\n\tfor _, cause := range []error{syscall.ECONNREFUSED, syscall.EACCES, context.Canceled, context.DeadlineExceeded, unknown, errors.Join(syscall.ECONNREFUSED, unknown)} {\n\t\tc, events := stateClient(t, \"https\")\n\t\tc.SetURLDialer(func(context.Context, string, string) (net.Conn, error) { return nil, cause })\n\t\terr := c.Connect(context.Background())\n\t\tvar staged *ConnectionError\n\t\tif !errors.As(err, &staged) || staged.DERPFailurePhase() != \"dial\" || !errors.Is(err, cause) {\n\t\t\tt.Fatalf(\"lost dial cause: %v\", err)\n\t\t}\n\t\tif len(*events) != 1 || (*events)[0].Err != err || (*events)[0].Sequence != 1 {\n\t\t\tt.Fatal(\"missing ordered actual dial result\")\n\t\t}\n\t}\n}\nfunc TestSobalinkDERPNilObserverRetainsUpstreamErrors(t *testing.T) {\n\tc, _ := stateClient(t, \"https\")\n\tc.OnConnectionState = nil\n\tc.SetURLDialer(func(context.Context, string, string) (net.Conn, error) { return nil, syscall.ECONNREFUSED })\n\terr := c.Connect(context.Background())\n\tvar staged *ConnectionError\n\tif errors.As(err, &staged) || errors.Is(err, syscall.ECONNREFUSED) {\n\t\tt.Fatal(\"nil observer changed upstream behavior\")\n\t}\n}\nfunc TestSobalinkDERPTLSAndAdmissionFailures(t *testing.T) {\n\tpriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\ttemplate := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), DNSNames: []string{\"synthetic.invalid\"}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}\n\traw, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tcert := tls.Certificate{Certificate: [][]byte{raw}, PrivateKey: priv}\n\tpin := errors.New(\"synthetic pin mismatch\")\n\tfor _, phase := range []string{\"tls\", \"protocol\"} {\n\t\tt.Run(phase, func(t *testing.T) {\n\t\t\tscheme := \"https\"\n\t\t\tif phase == \"protocol\" {\n\t\t\t\tscheme = \"http\"\n\t\t\t}\n\t\t\tc, events := stateClient(t, scheme)\n\t\t\tclient, server := net.Pipe()\n\t\t\tt.Cleanup(func() { client.Close(); server.Close() })\n\t\t\tc.SetURLDialer(func(context.Context, string, string) (net.Conn, error) { return client, nil })\n\t\t\tdone := make(chan struct{})\n\t\t\tgo func() {\n\t\t\t\tdefer close(done)\n\t\t\t\tdefer server.Close()\n\t\t\t\tif phase == \"tls\" {\n\t\t\t\t\ttls.Server(server, &tls.Config{Certificates: []tls.Certificate{cert}}).Handshake()\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t\treq, e := http.ReadRequest(bufio.NewReader(server))\n\t\t\t\tif e == nil {\n\t\t\t\t\treq.Body.Close()\n\t\t\t\t\tserver.Write([]byte(\"HTTP/1.1 403 Forbidden\\r\\nContent-Length: 0\\r\\n\\r\\n\"))\n\t\t\t\t}\n\t\t\t}()\n\t\t\tif phase == \"tls\" {\n\t\t\t\tc.TLSConfig = &tls.Config{VerifyPeerCertificate: func([][]byte, [][]*x509.Certificate) error { return pin }}\n\t\t\t}\n\t\t\tctx, cancel := context.WithTimeout(context.Background(), time.Second)\n\t\t\tdefer cancel()\n\t\t\terr := c.Connect(ctx)\n\t\t\tvar staged *ConnectionError\n\t\t\tif !errors.As(err, &staged) || staged.Phase != phase {\n\t\t\t\tt.Fatalf(\"wrong stage %v\", err)\n\t\t\t}\n\t\t\tif phase == \"tls\" && !errors.Is(err, pin) {\n\t\t\t\tt.Fatal(\"pin rejection cause lost\")\n\t\t\t}\n\t\t\tif len(*events) != 1 || (*events)[0].Err != err {\n\t\t\t\tt.Fatal(\"actual handshake failure not reported\")\n\t\t\t}\n\t\t\t<-done\n\t\t})\n\t}\n}\nfunc TestSobalinkDERPJoinsAllNodeAndFamilyCauses(t *testing.T) {\n\tc, _ := stateClient(t, \"https\")\n\tc.UnderlayPolicy = derpGuardPolicy(t, \"10.25.0.0/24\", \"10.25.0.2:443\")\n\tboth := &tailcfg.DERPNode{HostName: \"synthetic.invalid\", IPv4: \"192.0.2.1\", IPv6: \"2001:db8::1\"}\n\t_, err := c.dialNode(context.Background(), both)\n\tjoined, ok := err.(interface{ Unwrap() []error })\n\tif !ok || len(joined.Unwrap()) != 2 {\n\t\tt.Fatal(\"family failures not retained\", err)\n\t}\n\tdisabled := &tailcfg.DERPNode{HostName: \"synthetic.invalid\", IPv4: \"none\", IPv6: \"none\"}\n\t_, _, err = c.dialRegion(context.Background(), &tailcfg.DERPRegion{Nodes: []*tailcfg.DERPNode{both, disabled}})\n\tjoined, ok = err.(interface{ Unwrap() []error })\n\tif !ok || len(joined.Unwrap()) != 2 {\n\t\tt.Fatal(\"node failures not retained\", err)\n\t}\n}\nfunc TestSobalinkDERPStaleClientCannotPublishSuccessOrFailure(t *testing.T) {\n\tc, events := stateClient(t, \"https\")\n\told, current := new(derp.Client), new(derp.Client)\n\tc.client = current\n\tvar wg sync.WaitGroup\n\tfor range 8 {\n\t\twg.Go(func() {\n\t\t\tfor range 100 {\n\t\t\t\tc.connectionReady(old)\n\t\t\t\tc.closeForReconnect(old, syscall.ECONNRESET)\n\t\t\t}\n\t\t})\n\t}\n\twg.Wait()\n\tif len(*events) != 0 {\n\t\tt.Fatal(\"retired client emitted state\")\n\t}\n\tc.connectionReady(current)\n\tif len(*events) != 1 || (*events)[0].Err != nil {\n\t\tt.Fatal(\"current admission not reported\")\n\t}\n\tc.closeForReconnect(current, syscall.ECONNRESET)\n\tif len(*events) != 2 {\n\t\tt.Fatal(\"current protocol failure missing\")\n\t}\n\tvar staged *ConnectionError\n\tif !errors.As((*events)[1].Err, &staged) || staged.Phase != \"protocol\" || !errors.Is(staged, syscall.ECONNRESET) {\n\t\tt.Fatal(\"protocol reset misclassified\")\n\t}\n}\n"
         }
       ]
     },
@@ -177,12 +311,22 @@
     {
       "path": "wgengine/magicsock/derp.go",
       "original_sha256": "8201e9dbe43dfe437db630a326f72df7b85f8b6046fe57ce1ee57968686cd53a",
-      "adapted_sha256": "81d515f04c3eac6dfb5a619d2dd3ccdb8d251bf0a92a1f2af46dd6ff52e4b78f",
+      "adapted_sha256": "3378235a79c15cda5501696247ae47c858187aaeab0450bc9e26363b1b2059be",
       "edits": [
+        {
+          "offset": 2971,
+          "old": "",
+          "new": "\tepoch   uint64\n"
+        },
         {
           "offset": 13753,
           "old": "",
-          "new": "\tdc.UnderlayPolicy = c.underlayPolicy\n"
+          "new": "\tif c.onDERPConnectionEvent != nil {\n\t\tc.derpConnectionEpoch++\n\t\tad.epoch = c.derpConnectionEpoch\n\t\tepoch := ad.epoch\n\t\tc.onDERPConnectionEvent(DERPConnectionEvent{RegionID: regionID, Epoch: epoch})\n\t\tdc.OnConnectionState = func(state derphttp.ConnectionStateEvent) {\n\t\t\t// This callback runs under dc.mu, so it must never acquire c.mu.\n\t\t\t// Retire/new-epoch events let the observer discard late old results.\n\t\t\tc.onDERPConnectionEvent(DERPConnectionEvent{RegionID: regionID, Epoch: epoch, Sequence: state.Sequence, Err: state.Err})\n\t\t}\n\t}\n\tdc.UnderlayPolicy = c.underlayPolicy\n"
+        },
+        {
+          "offset": 28802,
+          "old": "",
+          "new": "\t\tif c.onDERPConnectionEvent != nil {\n\t\t\tc.onDERPConnectionEvent(DERPConnectionEvent{RegionID: regionID, Epoch: ad.epoch, Retired: true})\n\t\t}\n"
         }
       ]
     },
@@ -206,7 +350,7 @@
     {
       "path": "wgengine/magicsock/magicsock.go",
       "original_sha256": "90255e7498bbba2d0e9220a2d939af1863babbd0eb6703a11ee631e21d31671e",
-      "adapted_sha256": "776e9d633bea928ca2259826616ae11f9f1ae7509e0bd87580ac3252bb88a3ff",
+      "adapted_sha256": "6642000993cc7a8423ac8fafa07642207bcc031c8033304a8860eeeeb1f6280c",
       "edits": [
         {
           "offset": 448,
@@ -219,9 +363,19 @@
           "new": "\twanCandidates    *WANConfig\n\twanSTUNCursor    int // guarded by mu\n\twanSTUNSelection atomic.Pointer[wanSTUNBatch]\n\n\tunderlayPolicy *underlayguard.Policy\n\n"
         },
         {
+          "offset": 5349,
+          "old": "",
+          "new": "\tonDERPConnectionEvent  func(DERPConnectionEvent)\n\tderpConnectionEpoch    uint64                                                  // guarded by mu\n"
+        },
+        {
           "offset": 17762,
           "old": "",
           "new": "\t// WANCandidates is explicit opt-in and incompatible with UnderlayPolicy.\n\tWANCandidates *WANConfig\n\n\t// UnderlayPolicy must be immutable and installed before construction.\n\t// A non-nil invalid or revoked policy causes construction to fail.\n\tUnderlayPolicy *underlayguard.Policy\n\n"
+        },
+        {
+          "offset": 20581,
+          "old": "",
+          "new": "\n\t// OnDERPConnectionEvent is optional and must not block or call the engine.\n\t// It reports ordered, epoch-scoped outcomes without creating connections.\n\tOnDERPConnectionEvent func(DERPConnectionEvent)\n"
         },
         {
           "offset": 24436,
@@ -232,6 +386,11 @@
           "offset": 24671,
           "old": "",
           "new": "\tc.wanCandidates = wan\n\tc.underlayPolicy = opts.UnderlayPolicy\n\tc.pconn4.underlayPolicy = opts.UnderlayPolicy\n\tc.pconn6.underlayPolicy = opts.UnderlayPolicy\n"
+        },
+        {
+          "offset": 25581,
+          "old": "",
+          "new": "\tc.onDERPConnectionEvent = opts.OnDERPConnectionEvent\n"
         },
         {
           "offset": 26324,
@@ -281,7 +440,7 @@
         {
           "offset": 51348,
           "old": "",
-          "new": "\t\t\tif c.wanCandidates != nil && c.wanCandidates.AdvertiseIPv6 {\n\t\t\t\tif ep, ok := wanLocalEndpoint(ip, uint16(localAddr.Port), c.pconn6.LocalAddr()); ok {\n\t\t\t\t\taddAddr(ep, tailcfg.EndpointLocal)\n\t\t\t\t}\n\t\t\t\tcontinue\n\t\t\t}\n"
+          "new": "\t\t\tif c.underlayPolicy != nil || c.wanCandidates != nil {\n\t\t\t\tep, ok := localSocketEndpoint(ip, uint16(localAddr.Port), c.pconn6.LocalAddr())\n\t\t\t\tif c.wanCandidates != nil && c.wanCandidates.AdvertiseIPv6 {\n\t\t\t\t\tep, ok = wanLocalEndpoint(ip, uint16(localAddr.Port), c.pconn6.LocalAddr())\n\t\t\t\t}\n\t\t\t\tif ok {\n\t\t\t\t\taddAddr(ep, tailcfg.EndpointLocal)\n\t\t\t\t}\n\t\t\t\tcontinue\n\t\t\t}\n"
         },
         {
           "offset": 57614,
@@ -355,26 +514,38 @@
       ]
     },
     {
-      "path": "wgengine/magicsock/sobalink_wan.go",
+      "path": "wgengine/magicsock/sobalink_derp_state.go",
       "original_sha256": "",
-      "adapted_sha256": "72950916506c83cfc64e7b2908a1e14272281344e1e585fee9bad61d88979053",
+      "adapted_sha256": "88c2cf7e726183a3dc4811833b5b84b207d2d268ce7877b818de5e690bf3bd6a",
       "edits": [
         {
           "offset": 0,
           "old": "",
-          "new": "// Copyright (c) 2026 sobalink contributors\n// SPDX-License-Identifier: MIT\n\npackage magicsock\n\nimport (\n\t\"context\"\n\t\"errors\"\n\t\"fmt\"\n\t\"net\"\n\t\"net/netip\"\n\t\"slices\"\n\n\t\"tailscale.com/feature/buildfeatures\"\n\t\"tailscale.com/net/netcheck\"\n\t\"tailscale.com/tailcfg\"\n)\n\n// WANConfig is immutable, explicit opt-in address discovery. It never replaces\n// the separately configured DERP map or supplies relay certificates.\nconst wanSTUNRegionNamespaceSize = 1<<16 - 1\nconst defaultWANProbeBudget = 4\n\n// ProbeBudget is a finite, adjustable resource budget: destinations per report.\n// Zero selects the default; it never limits the configured metadata to four.\ntype WANConfig struct {\n\tProbeBudget   int\n\tSTUNEndpoints []netip.AddrPort\n\tAdvertiseIPv6 bool\n}\n\n// ValidateWANConfig validates before any subsystem or socket is created. Nil\n// retains the original engine behavior. Restricted engines reject this feature.\nfunc ValidateWANConfig(config *WANConfig, restricted bool) (*WANConfig, error) {\n\tif config == nil {\n\t\treturn nil, nil\n\t}\n\tif restricted || !buildfeatures.HasUDPTransport || !buildfeatures.HasNATTraversal || buildfeatures.HasPortMapper || buildfeatures.HasCaptivePortal || buildfeatures.HasUseProxy {\n\t\treturn nil, errors.New(\"WAN candidates require unrestricted UDP transport without port mapping, captive portal or proxy features\")\n\t}\n\tif len(config.STUNEndpoints) > wanSTUNRegionNamespaceSize || config.ProbeBudget < 0 || config.ProbeBudget > wanSTUNRegionNamespaceSize || len(config.STUNEndpoints) == 0 && !config.AdvertiseIPv6 {\n\t\treturn nil, errors.New(\"explicit bounded WAN candidates required\")\n\t}\n\tout := &WANConfig{STUNEndpoints: slices.Clone(config.STUNEndpoints), AdvertiseIPv6: config.AdvertiseIPv6, ProbeBudget: config.ProbeBudget}\n\tif out.ProbeBudget == 0 {\n\t\tout.ProbeBudget = defaultWANProbeBudget\n\t}\n\tfor _, ep := range out.STUNEndpoints {\n\t\tip := ep.Addr()\n\t\tif !ep.IsValid() || ep.Port() == 0 || ip.Is4In6() || ip.Zone() != \"\" || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) {\n\t\t\treturn nil, errors.New(\"WAN STUN destinations must be numeric unicast endpoints\")\n\t\t}\n\t}\n\tslices.SortFunc(out.STUNEndpoints, func(a, b netip.AddrPort) int { return a.Compare(b) })\n\tfor i := 1; i < len(out.STUNEndpoints); i++ {\n\t\tif out.STUNEndpoints[i] == out.STUNEndpoints[i-1] {\n\t\t\treturn nil, errors.New(\"duplicate WAN STUN destination\")\n\t\t}\n\t}\n\treturn out, nil\n}\n\n// wanSTUNBatch is an immutable bounded selection, private to netcheck. Stable\n// IDs are drawn from the nonzero 16-bit namespace, never from the relay map.\n// The exact writer gate admits only this batch, not all stored metadata.\ntype wanSTUNBatch struct {\n\tdm           *tailcfg.DERPMap\n\tdestinations map[netip.AddrPort]struct{}\n\thasIPv4      bool\n}\n\nfunc wanSTUNMap(config *WANConfig, start int) (*wanSTUNBatch, int) {\n\tif config == nil {\n\t\treturn nil, 0\n\t}\n\tdm := &tailcfg.DERPMap{OmitDefaultRegions: true, Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{}}\n\tbatch := &wanSTUNBatch{dm: dm, destinations: map[netip.AddrPort]struct{}{}}\n\tn := len(config.STUNEndpoints)\n\tif n == 0 {\n\t\treturn batch, 0\n\t}\n\tbudget := config.ProbeBudget\n\tif budget == 0 {\n\t\tbudget = defaultWANProbeBudget\n\t}\n\t// Configurations are validated before construction. Fail closed defensively\n\t// if this pure selector is ever called directly with an invalid budget.\n\tif budget < 1 || budget > wanSTUNRegionNamespaceSize || n > wanSTUNRegionNamespaceSize {\n\t\treturn batch, 0\n\t}\n\tstart = ((start % n) + n) % n\n\tcount := min(n, budget)\n\tfor offset := 0; offset < count; offset++ {\n\t\ti := (start + offset) % n\n\t\tep := config.STUNEndpoints[i]\n\t\tid := tailcfg.DERPRegionID(i + 1)\n\t\tnode := &tailcfg.DERPNode{Name: fmt.Sprintf(\"wan-stun-%d\", i), RegionID: id, HostName: ep.Addr().String(), IPv4: \"none\", IPv6: \"none\", STUNPort: int(ep.Port()), STUNOnly: true, DERPPort: -1}\n\t\tif ep.Addr().Is4() {\n\t\t\tnode.IPv4 = ep.Addr().String()\n\t\t\tbatch.hasIPv4 = true\n\t\t} else {\n\t\t\tnode.IPv6 = ep.Addr().String()\n\t\t}\n\t\tdm.Regions[id] = &tailcfg.DERPRegion{RegionID: id, Nodes: []*tailcfg.DERPNode{node}}\n\t\tbatch.destinations[ep] = struct{}{}\n\t}\n\treturn batch, (start + count) % n\n}\n\nfunc (c *Conn) nextWANSTUNBatch() *wanSTUNBatch {\n\tc.mu.Lock()\n\tdefer c.mu.Unlock()\n\tbatch, next := wanSTUNMap(c.wanCandidates, c.wanSTUNCursor)\n\tc.wanSTUNCursor = next\n\tc.wanSTUNSelection.Store(batch)\n\treturn batch\n}\n\nfunc (c *Conn) wanAllowsSTUN(destination netip.AddrPort) bool {\n\tif c.wanCandidates == nil {\n\t\treturn true\n\t}\n\tbatch := c.wanSTUNSelection.Load()\n\tif batch == nil {\n\t\treturn false\n\t}\n\t_, allowed := batch.destinations[destination]\n\treturn allowed\n}\n\n// A discovery service has no authority to select a relay. Clone because netcheck\n// retains the original report for scheduling its own bounded next probe plan.\nfunc wanCandidateReport(report *netcheck.Report) *netcheck.Report {\n\treport = report.Clone()\n\treport.PreferredDERP = 0\n\treport.RegionLatency = nil\n\treport.RegionV4Latency = nil\n\treport.RegionV6Latency = nil\n\treturn report\n}\n\n// wanLocalEndpoint uses the actual v6 socket rather than assuming that v4 and\n// v6 bound the same port. A missing/disabled v6 socket advertises no v6 endpoint.\n// netmon already excludes down and problematic interfaces and limits addresses.\nfunc wanLocalEndpoint(ip netip.Addr, port4 uint16, local6 *net.UDPAddr) (netip.AddrPort, bool) {\n\tif ip.Is4() {\n\t\treturn netip.AddrPortFrom(ip, port4), port4 != 0\n\t}\n\tif !ip.Is6() || ip.Is4In6() || ip.Zone() != \"\" || !ip.IsGlobalUnicast() || local6 == nil || local6.Port < 1 || local6.Port > 65535 {\n\t\treturn netip.AddrPort{}, false\n\t}\n\tbound := local6.AddrPort().Addr()\n\tif !bound.Is6() || !bound.IsUnspecified() && bound != ip {\n\t\treturn netip.AddrPort{}, false\n\t}\n\treturn netip.AddrPortFrom(ip, uint16(local6.Port)), true\n}\n\n// Opt-in WAN discovery contacts only the configured STUN destinations. Cloud\n// metadata is not a selected discovery service. Nil retains upstream behavior.\nfunc (c *Conn) candidateCloudIPs(ctx context.Context) ([]netip.Addr, error) {\n\tif c.wanCandidates != nil {\n\t\treturn nil, nil\n\t}\n\treturn c.cloudInfo.GetPublicIPs(ctx)\n}\n"
+          "new": "// Copyright (c) 2026 sobalink contributors\n// SPDX-License-Identifier: MIT\n\npackage magicsock\n\nimport \"tailscale.com/tailcfg\"\n\n// DERPConnectionEvent reports the outcome of an existing DERP connection.\n// Epoch increases when a region's client is replaced; Sequence orders outcomes\n// within that client. The observer must discard retired/older epochs and stale\n// sequences. Callbacks must not block or call into magicsock or derphttp.\n// Sequence zero starts a new epoch. Nil Err at a positive Sequence confirms\n// DERP ServerInfo. Retired ends the epoch, including any late in-flight callback.\ntype DERPConnectionEvent struct {\n\tRegionID tailcfg.DERPRegionID\n\tEpoch    uint64\n\tSequence uint64\n\tRetired  bool\n\tErr      error\n}\n"
+        }
+      ]
+    },
+    {
+      "path": "wgengine/magicsock/sobalink_wan.go",
+      "original_sha256": "",
+      "adapted_sha256": "9bf4373f6644c65c1aa8ed81d3d268c6f0a043bae2ce9b47068f33a598262541",
+      "edits": [
+        {
+          "offset": 0,
+          "old": "",
+          "new": "// Copyright (c) 2026 sobalink contributors\n// SPDX-License-Identifier: MIT\n\npackage magicsock\n\nimport (\n\t\"context\"\n\t\"errors\"\n\t\"fmt\"\n\t\"net\"\n\t\"net/netip\"\n\t\"slices\"\n\n\t\"tailscale.com/feature/buildfeatures\"\n\t\"tailscale.com/net/netcheck\"\n\t\"tailscale.com/tailcfg\"\n)\n\n// WANConfig is immutable, explicit opt-in address discovery. It never replaces\n// the separately configured DERP map or supplies relay certificates.\nconst wanSTUNRegionNamespaceSize = 1<<16 - 1\nconst defaultWANProbeBudget = 4\n\n// ProbeBudget is a finite, adjustable resource budget: destinations per report.\n// Zero selects the default; it never limits the configured metadata to four.\ntype WANConfig struct {\n\tProbeBudget   int\n\tSTUNEndpoints []netip.AddrPort\n\tAdvertiseIPv6 bool\n}\n\n// ValidateWANConfig validates before any subsystem or socket is created. Nil\n// retains the original engine behavior. Restricted engines reject this feature.\nfunc ValidateWANConfig(config *WANConfig, restricted bool) (*WANConfig, error) {\n\tif config == nil {\n\t\treturn nil, nil\n\t}\n\tif restricted || !buildfeatures.HasUDPTransport || !buildfeatures.HasNATTraversal || buildfeatures.HasPortMapper || buildfeatures.HasCaptivePortal || buildfeatures.HasUseProxy {\n\t\treturn nil, errors.New(\"WAN candidates require unrestricted UDP transport without port mapping, captive portal or proxy features\")\n\t}\n\tif len(config.STUNEndpoints) > wanSTUNRegionNamespaceSize || config.ProbeBudget < 0 || config.ProbeBudget > wanSTUNRegionNamespaceSize || len(config.STUNEndpoints) == 0 && !config.AdvertiseIPv6 {\n\t\treturn nil, errors.New(\"explicit bounded WAN candidates required\")\n\t}\n\tout := &WANConfig{STUNEndpoints: slices.Clone(config.STUNEndpoints), AdvertiseIPv6: config.AdvertiseIPv6, ProbeBudget: config.ProbeBudget}\n\tif out.ProbeBudget == 0 {\n\t\tout.ProbeBudget = defaultWANProbeBudget\n\t}\n\tfor _, ep := range out.STUNEndpoints {\n\t\tip := ep.Addr()\n\t\tif !ep.IsValid() || ep.Port() == 0 || ip.Is4In6() || ip.Zone() != \"\" || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) {\n\t\t\treturn nil, errors.New(\"WAN STUN destinations must be numeric unicast endpoints\")\n\t\t}\n\t}\n\tslices.SortFunc(out.STUNEndpoints, func(a, b netip.AddrPort) int { return a.Compare(b) })\n\tfor i := 1; i < len(out.STUNEndpoints); i++ {\n\t\tif out.STUNEndpoints[i] == out.STUNEndpoints[i-1] {\n\t\t\treturn nil, errors.New(\"duplicate WAN STUN destination\")\n\t\t}\n\t}\n\treturn out, nil\n}\n\n// wanSTUNBatch is an immutable bounded selection, private to netcheck. Stable\n// IDs are drawn from the nonzero 16-bit namespace, never from the relay map.\n// The exact writer gate admits only this batch, not all stored metadata.\ntype wanSTUNBatch struct {\n\tdm           *tailcfg.DERPMap\n\tdestinations map[netip.AddrPort]struct{}\n\thasIPv4      bool\n}\n\nfunc wanSTUNMap(config *WANConfig, start int) (*wanSTUNBatch, int) {\n\tif config == nil {\n\t\treturn nil, 0\n\t}\n\tdm := &tailcfg.DERPMap{OmitDefaultRegions: true, Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{}}\n\tbatch := &wanSTUNBatch{dm: dm, destinations: map[netip.AddrPort]struct{}{}}\n\tn := len(config.STUNEndpoints)\n\tif n == 0 {\n\t\treturn batch, 0\n\t}\n\tbudget := config.ProbeBudget\n\tif budget == 0 {\n\t\tbudget = defaultWANProbeBudget\n\t}\n\t// Configurations are validated before construction. Fail closed defensively\n\t// if this pure selector is ever called directly with an invalid budget.\n\tif budget < 1 || budget > wanSTUNRegionNamespaceSize || n > wanSTUNRegionNamespaceSize {\n\t\treturn batch, 0\n\t}\n\tstart = ((start % n) + n) % n\n\tcount := min(n, budget)\n\tfor offset := 0; offset < count; offset++ {\n\t\ti := (start + offset) % n\n\t\tep := config.STUNEndpoints[i]\n\t\tid := tailcfg.DERPRegionID(i + 1)\n\t\tnode := &tailcfg.DERPNode{Name: fmt.Sprintf(\"wan-stun-%d\", i), RegionID: id, HostName: ep.Addr().String(), IPv4: \"none\", IPv6: \"none\", STUNPort: int(ep.Port()), STUNOnly: true, DERPPort: -1}\n\t\tif ep.Addr().Is4() {\n\t\t\tnode.IPv4 = ep.Addr().String()\n\t\t\tbatch.hasIPv4 = true\n\t\t} else {\n\t\t\tnode.IPv6 = ep.Addr().String()\n\t\t}\n\t\tdm.Regions[id] = &tailcfg.DERPRegion{RegionID: id, Nodes: []*tailcfg.DERPNode{node}}\n\t\tbatch.destinations[ep] = struct{}{}\n\t}\n\treturn batch, (start + count) % n\n}\n\nfunc (c *Conn) nextWANSTUNBatch() *wanSTUNBatch {\n\tc.mu.Lock()\n\tdefer c.mu.Unlock()\n\tbatch, next := wanSTUNMap(c.wanCandidates, c.wanSTUNCursor)\n\tc.wanSTUNCursor = next\n\tc.wanSTUNSelection.Store(batch)\n\treturn batch\n}\n\nfunc (c *Conn) wanAllowsSTUN(destination netip.AddrPort) bool {\n\tif c.wanCandidates == nil {\n\t\treturn true\n\t}\n\tbatch := c.wanSTUNSelection.Load()\n\tif batch == nil {\n\t\treturn false\n\t}\n\t_, allowed := batch.destinations[destination]\n\treturn allowed\n}\n\n// A discovery service has no authority to select a relay. Clone because netcheck\n// retains the original report for scheduling its own bounded next probe plan.\nfunc wanCandidateReport(report *netcheck.Report) *netcheck.Report {\n\treport = report.Clone()\n\treport.PreferredDERP = 0\n\treport.RegionLatency = nil\n\treport.RegionV4Latency = nil\n\treport.RegionV6Latency = nil\n\treturn report\n}\n\n// wanLocalEndpoint uses the actual v6 socket rather than assuming that v4 and\n// v6 bound the same port. A missing/disabled v6 socket advertises no v6 endpoint.\n// netmon already excludes down and problematic interfaces and limits addresses.\nfunc wanLocalEndpoint(ip netip.Addr, port4 uint16, local6 *net.UDPAddr) (netip.AddrPort, bool) {\n\tif ip.Is6() && !ip.IsGlobalUnicast() {\n\t\treturn netip.AddrPort{}, false\n\t}\n\treturn localSocketEndpoint(ip, port4, local6)\n}\n\n// localSocketEndpoint also permits loopback for strict LAN and native fixtures.\n// It never substitutes the IPv4 port for an absent or independently bound IPv6 socket.\nfunc localSocketEndpoint(ip netip.Addr, port4 uint16, local6 *net.UDPAddr) (netip.AddrPort, bool) {\n\tif ip.Is4() {\n\t\treturn netip.AddrPortFrom(ip, port4), port4 != 0\n\t}\n\tif !ip.Is6() || ip.Is4In6() || ip.Zone() != \"\" || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) || local6 == nil || local6.Port < 1 || local6.Port > 65535 {\n\t\treturn netip.AddrPort{}, false\n\t}\n\tbound := local6.AddrPort().Addr()\n\tif !bound.Is6() || !bound.IsUnspecified() && bound != ip {\n\t\treturn netip.AddrPort{}, false\n\t}\n\treturn netip.AddrPortFrom(ip, uint16(local6.Port)), true\n}\n\n// Opt-in WAN discovery contacts only the configured STUN destinations. Cloud\n// metadata is not a selected discovery service. Nil retains upstream behavior.\nfunc (c *Conn) candidateCloudIPs(ctx context.Context) ([]netip.Addr, error) {\n\tif c.wanCandidates != nil {\n\t\treturn nil, nil\n\t}\n\treturn c.cloudInfo.GetPublicIPs(ctx)\n}\n"
         }
       ]
     },
     {
       "path": "wgengine/magicsock/sobalink_wan_test.go",
       "original_sha256": "",
-      "adapted_sha256": "0919819760717e36179190f1076231bd0d729a8057de616c3c17316d675294e2",
+      "adapted_sha256": "d15be013522693aaa91b90717dd90051d562101ccbe0074a66c7475183157b58",
       "edits": [
         {
           "offset": 0,
           "old": "",
-          "new": "// Copyright (c) 2026 sobalink contributors\n// SPDX-License-Identifier: MIT\n\npackage magicsock\n\nimport (\n\t\"context\"\n\t\"net\"\n\t\"net/netip\"\n\t\"reflect\"\n\t\"testing\"\n\t\"time\"\n\n\t\"tailscale.com/feature/buildfeatures\"\n\t\"tailscale.com/health\"\n\t\"tailscale.com/net/netcheck\"\n\t\"tailscale.com/net/netmon\"\n\t\"tailscale.com/net/underlayguard\"\n\t\"tailscale.com/tailcfg\"\n\t\"tailscale.com/types/logger\"\n\t\"tailscale.com/util/eventbus\"\n\t\"tailscale.com/util/usermetric\"\n)\n\nfunc requireWANBuild(t *testing.T) {\n\tt.Helper()\n\tif !buildfeatures.HasUDPTransport || !buildfeatures.HasNATTraversal || buildfeatures.HasPortMapper || buildfeatures.HasCaptivePortal || buildfeatures.HasUseProxy {\n\t\tt.Skip(\"WAN candidate fixtures require bounded direct-enabled product build\")\n\t}\n}\n\nfunc TestWANCandidateValidationBeforeSetup(t *testing.T) {\n\tif v, err := ValidateWANConfig(nil, true); err != nil || v != nil {\n\t\tt.Fatal(\"default behavior changed\")\n\t}\n\tconfig := &WANConfig{STUNEndpoints: []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3478\")}}\n\tif _, err := NewConn(Options{WANCandidates: config, UnderlayPolicy: new(underlayguard.Policy)}); err == nil {\n\t\tt.Fatal(\"restricted configuration did not fail before setup\")\n\t}\n\trequireWANBuild(t)\n\tgot, err := ValidateWANConfig(config, false)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tconfig.STUNEndpoints[0] = netip.AddrPort{}\n\tif !got.STUNEndpoints[0].IsValid() {\n\t\tt.Fatal(\"caller owns engine configuration\")\n\t}\n\tfor _, eps := range [][]netip.AddrPort{nil, {{}}, {netip.MustParseAddrPort(\"192.0.2.1:0\")}, {netip.MustParseAddrPort(\"[::ffff:192.0.2.1]:3478\")}, {netip.MustParseAddrPort(\"[fe80::1%fixture]:3478\")}, {got.STUNEndpoints[0], got.STUNEndpoints[0]}, make([]netip.AddrPort, wanSTUNRegionNamespaceSize+1)} {\n\t\tif _, err := ValidateWANConfig(&WANConfig{STUNEndpoints: eps}, false); err == nil {\n\t\t\tt.Fatal(\"invalid configuration admitted\")\n\t\t}\n\t}\n}\n\nfunc TestWANCandidateMapHasOnlyExactSTUNAuthority(t *testing.T) {\n\tif batch, _ := wanSTUNMap(nil, 0); batch != nil {\n\t\tt.Fatal(\"implicit discovery map created\")\n\t}\n\teps := []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3478\"), netip.MustParseAddrPort(\"[2001:db8::1]:3479\")}\n\tbatch, _ := wanSTUNMap(&WANConfig{STUNEndpoints: eps}, 0)\n\tdm := batch.dm\n\tif !dm.OmitDefaultRegions || len(dm.Regions) != 2 {\n\t\tt.Fatal(\"implicit discovery regions\")\n\t}\n\tfor i, ep := range eps {\n\t\tr := dm.Regions[tailcfg.DERPRegionID(1+i)]\n\t\tif r == nil || len(r.Nodes) != 1 || r.NoMeasureNoHome {\n\t\t\tt.Fatal(\"invalid discovery-only region\")\n\t\t}\n\t\tn := r.Nodes[0]\n\t\tif !n.STUNOnly || n.STUNPort != int(ep.Port()) || n.HostName != ep.Addr().String() || n.DERPPort != -1 || n.InsecureForTests || n.STUNTestIP != \"\" || n.CanPort80 {\n\t\t\tt.Fatal(\"discovery authority widened\")\n\t\t}\n\t\tif ep.Addr().Is4() && (n.IPv4 != ep.Addr().String() || n.IPv6 != \"none\") || ep.Addr().Is6() && (n.IPv6 != ep.Addr().String() || n.IPv4 != \"none\") {\n\t\t\tt.Fatal(\"DNS/address-family fallback enabled\")\n\t\t}\n\t}\n\tif batch, _ := wanSTUNMap(&WANConfig{AdvertiseIPv6: true}, 0); len(batch.dm.Regions) != 0 {\n\t\tt.Fatal(\"IPv6-only config enabled STUN\")\n\t}\n}\n\nfunc TestWANCandidateReportCannotChooseRelay(t *testing.T) {\n\toriginal := &netcheck.Report{PreferredDERP: 50000, RegionLatency: netcheck.RegionLatency{50000: time.Millisecond}, RegionV4Latency: netcheck.RegionLatency{50000: time.Millisecond}, RegionV6Latency: netcheck.RegionLatency{50001: time.Millisecond}, GlobalV4: netip.MustParseAddrPort(\"192.0.2.20:48000\"), GlobalV6: netip.MustParseAddrPort(\"[2001:db8::20]:48001\"), UDP: true, IPv4: true, IPv6: true}\n\tgot := wanCandidateReport(original)\n\tif got.PreferredDERP != 0 || len(got.RegionLatency)+len(got.RegionV4Latency)+len(got.RegionV6Latency) != 0 {\n\t\tt.Fatal(\"STUN service can select a relay\")\n\t}\n\tif got.GlobalV4 != original.GlobalV4 || got.GlobalV6 != original.GlobalV6 || !got.UDP || !got.IPv4 || !got.IPv6 {\n\t\tt.Fatal(\"address discovery lost\")\n\t}\n\tif original.PreferredDERP != 50000 || len(original.RegionLatency) != 1 {\n\t\tt.Fatal(\"netcheck cache report mutated\")\n\t}\n}\n\nfunc TestWANCandidateWriterRejectsUnselectedBeforeSocket(t *testing.T) {\n\trequireWANBuild(t)\n\tallowed := netip.MustParseAddrPort(\"192.0.2.1:3478\")\n\tc := &Conn{wanCandidates: &WANConfig{STUNEndpoints: []netip.AddrPort{allowed}}}\n\tc.nextWANSTUNBatch()\n\tfor _, ep := range []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3479\"), netip.MustParseAddrPort(\"192.0.2.2:3478\"), netip.MustParseAddrPort(\"[2001:db8::1]:3478\"), netip.MustParseAddrPort(\"[::ffff:192.0.2.1]:3478\")} {\n\t\tif n, err := c.sendUDPNetcheck([]byte(\"synthetic\"), ep); err == nil || n != 0 {\n\t\t\tt.Fatal(\"unselected probe reached writer\")\n\t\t}\n\t}\n\tfake := &guardedFakeUDP{blockForeverConn: newBlockForeverConn()}\n\tguardedSet(&c.pconn4, fake)\n\tif n, err := c.sendUDPNetcheck([]byte(\"synthetic\"), allowed); err != nil || n != 9 || fake.writes != 1 {\n\t\tt.Fatal(\"selected endpoint not sent\", n, err)\n\t}\n\tif !(new(Conn)).wanAllowsSTUN(allowed) {\n\t\tt.Fatal(\"legacy netcheck behavior changed\")\n\t}\n}\n\nfunc TestWANCandidateIPv6UsesNativeSocketPort(t *testing.T) {\n\tlocal6 := &net.UDPAddr{IP: net.ParseIP(\"::\"), Port: 42006}\n\tip := netip.MustParseAddr(\"2001:db8::2\")\n\tif ep, ok := wanLocalEndpoint(ip, 42004, local6); !ok || ep != netip.MustParseAddrPort(\"[2001:db8::2]:42006\") {\n\t\tt.Fatal(\"IPv6 advertised IPv4 socket port\")\n\t}\n\tfor _, bound := range []*net.UDPAddr{nil, {IP: net.ParseIP(\"::\"), Port: 0}, {IP: net.ParseIP(\"2001:db8::3\"), Port: 42006}, {IP: net.ParseIP(\"0.0.0.0\"), Port: 42006}} {\n\t\tif _, ok := wanLocalEndpoint(ip, 42004, bound); ok {\n\t\t\tt.Fatal(\"unusable IPv6 socket advertised\")\n\t\t}\n\t}\n\tfor _, raw := range []string{\"::\", \"::1\", \"fe80::1\", \"2001:db8::1%fixture\", \"::ffff:192.0.2.1\", \"ff02::1\"} {\n\t\tif _, ok := wanLocalEndpoint(netip.MustParseAddr(raw), 42004, local6); ok {\n\t\t\tt.Fatal(\"invalid IPv6 candidate advertised\")\n\t\t}\n\t}\n\tif ep, ok := wanLocalEndpoint(netip.MustParseAddr(\"192.0.2.2\"), 42004, nil); !ok || ep.Port() != 42004 {\n\t\tt.Fatal(\"IPv4 candidate lost\")\n\t}\n}\n\nfunc TestWANCandidateConstructorCopiesAndSeparatesMaps(t *testing.T) {\n\trequireWANBuild(t)\n\tconfig := &WANConfig{STUNEndpoints: []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3478\")}, AdvertiseIPv6: true}\n\tbus := eventbus.New()\n\tdefer bus.Close()\n\tc, err := NewConn(Options{WANCandidates: config, EventBus: bus, NetMon: netmon.NewStatic(), Logf: logger.Discard, HealthTracker: health.NewTracker(bus), Metrics: new(usermetric.Registry), TestOnlyPacketListener: guardedListener{}})\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tdefer c.Close()\n\tif c.derpMap != nil || c.wanSTUNSelection.Load() != nil || c.portMapper != nil {\n\t\tt.Fatal(\"STUN map leaked into relay/portmap configuration\")\n\t}\n\tif batch := c.nextWANSTUNBatch(); len(batch.dm.Regions) != 1 {\n\t\tt.Fatal(\"probe selection missing\")\n\t}\n\tconfig.STUNEndpoints[0] = netip.AddrPort{}\n\tif !c.wanCandidates.STUNEndpoints[0].IsValid() {\n\t\tt.Fatal(\"engine config aliases caller\")\n\t}\n\tif got, err := c.candidateCloudIPs(context.Background()); err != nil || !reflect.DeepEqual(got, []netip.Addr(nil)) {\n\t\tt.Fatal(\"WAN config contacted unselected cloud metadata\")\n\t}\n}\n\nfunc TestWANCandidateProbeBudgetRotatesWithoutMetadataCap(t *testing.T) {\n\trequireWANBuild(t)\n\tvar endpoints []netip.AddrPort\n\tfor port := uint16(30000); port < 30011; port++ {\n\t\tendpoints = append(endpoints, netip.AddrPortFrom(netip.MustParseAddr(\"192.0.2.1\"), port))\n\t}\n\tfor _, budget := range []int{0, 1, 3, 7, 20} {\n\t\tconfig, err := ValidateWANConfig(&WANConfig{STUNEndpoints: endpoints, ProbeBudget: budget}, false)\n\t\tif err != nil {\n\t\t\tt.Fatal(\"configurable metadata was capped\", err)\n\t\t}\n\t\tif budget == 0 {\n\t\t\tbudget = defaultWANProbeBudget\n\t\t}\n\t\tif config.ProbeBudget != budget || len(config.STUNEndpoints) != len(endpoints) {\n\t\t\tt.Fatal(\"configuration lost metadata or budget\")\n\t\t}\n\t\tc := &Conn{wanCandidates: config}\n\t\tseen := map[netip.AddrPort]bool{}\n\t\tfor range len(endpoints) {\n\t\t\tbatch := c.nextWANSTUNBatch()\n\t\t\tif len(batch.dm.Regions) != min(budget, len(endpoints)) || len(batch.destinations) != len(batch.dm.Regions) {\n\t\t\t\tt.Fatal(\"probe fanout exceeded selected resource budget\")\n\t\t\t}\n\t\t\tfor i, ep := range endpoints {\n\t\t\t\t_, selected := batch.destinations[ep]\n\t\t\t\tif c.wanAllowsSTUN(ep) != selected {\n\t\t\t\t\tt.Fatal(\"writer authority exceeded current batch\")\n\t\t\t\t}\n\t\t\t\tif selected {\n\t\t\t\t\tseen[ep] = true\n\t\t\t\t\tregion := batch.dm.Regions[tailcfg.DERPRegionID(i+1)]\n\t\t\t\t\tif region == nil || region.Nodes[0].STUNPort != int(ep.Port()) {\n\t\t\t\t\t\tt.Fatal(\"rotation changed stable discovery identity\")\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t\tif len(seen) != len(endpoints) {\n\t\t\tt.Fatal(\"rotating selection starved configured metadata\")\n\t\t}\n\t\tif !reflect.DeepEqual(config.STUNEndpoints, endpoints) {\n\t\t\tt.Fatal(\"rotation mutated metadata\")\n\t\t}\n\t}\n}\n\nfunc TestWANCandidateNamespaceBoundaryAndFiniteBudget(t *testing.T) {\n\trequireWANBuild(t)\n\tendpoints := make([]netip.AddrPort, wanSTUNRegionNamespaceSize)\n\tfor i := range endpoints {\n\t\tendpoints[i] = netip.AddrPortFrom(netip.MustParseAddr(\"192.0.2.1\"), uint16(i+1))\n\t}\n\tconfig, err := ValidateWANConfig(&WANConfig{STUNEndpoints: endpoints, ProbeBudget: 1}, false)\n\tif err != nil {\n\t\tt.Fatal(\"inherent namespace boundary was capped\", err)\n\t}\n\tbatch, next := wanSTUNMap(config, wanSTUNRegionNamespaceSize-1)\n\tif next != 0 || len(batch.dm.Regions) != 1 || batch.dm.Regions[65535] == nil || batch.dm.Regions[0] != nil {\n\t\tt.Fatal(\"discovery IDs wrapped or escaped their inherent namespace\")\n\t}\n\tfor _, budget := range []int{-1, wanSTUNRegionNamespaceSize + 1} {\n\t\tif _, err := ValidateWANConfig(&WANConfig{AdvertiseIPv6: true, ProbeBudget: budget}, false); err == nil {\n\t\t\tt.Fatal(\"invalid resource budget admitted\")\n\t\t}\n\t}\n}\n"
+          "new": "// Copyright (c) 2026 sobalink contributors\n// SPDX-License-Identifier: MIT\n\npackage magicsock\n\nimport (\n\t\"context\"\n\t\"net\"\n\t\"net/netip\"\n\t\"reflect\"\n\t\"testing\"\n\t\"time\"\n\n\t\"tailscale.com/feature/buildfeatures\"\n\t\"tailscale.com/health\"\n\t\"tailscale.com/net/netcheck\"\n\t\"tailscale.com/net/netmon\"\n\t\"tailscale.com/net/underlayguard\"\n\t\"tailscale.com/tailcfg\"\n\t\"tailscale.com/types/logger\"\n\t\"tailscale.com/util/eventbus\"\n\t\"tailscale.com/util/usermetric\"\n)\n\nfunc requireWANBuild(t *testing.T) {\n\tt.Helper()\n\tif !buildfeatures.HasUDPTransport || !buildfeatures.HasNATTraversal || buildfeatures.HasPortMapper || buildfeatures.HasCaptivePortal || buildfeatures.HasUseProxy {\n\t\tt.Skip(\"WAN candidate fixtures require bounded direct-enabled product build\")\n\t}\n}\n\nfunc TestWANCandidateValidationBeforeSetup(t *testing.T) {\n\tif v, err := ValidateWANConfig(nil, true); err != nil || v != nil {\n\t\tt.Fatal(\"default behavior changed\")\n\t}\n\tconfig := &WANConfig{STUNEndpoints: []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3478\")}}\n\tif _, err := NewConn(Options{WANCandidates: config, UnderlayPolicy: new(underlayguard.Policy)}); err == nil {\n\t\tt.Fatal(\"restricted configuration did not fail before setup\")\n\t}\n\trequireWANBuild(t)\n\tgot, err := ValidateWANConfig(config, false)\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tconfig.STUNEndpoints[0] = netip.AddrPort{}\n\tif !got.STUNEndpoints[0].IsValid() {\n\t\tt.Fatal(\"caller owns engine configuration\")\n\t}\n\tfor _, eps := range [][]netip.AddrPort{nil, {{}}, {netip.MustParseAddrPort(\"192.0.2.1:0\")}, {netip.MustParseAddrPort(\"[::ffff:192.0.2.1]:3478\")}, {netip.MustParseAddrPort(\"[fe80::1%fixture]:3478\")}, {got.STUNEndpoints[0], got.STUNEndpoints[0]}, make([]netip.AddrPort, wanSTUNRegionNamespaceSize+1)} {\n\t\tif _, err := ValidateWANConfig(&WANConfig{STUNEndpoints: eps}, false); err == nil {\n\t\t\tt.Fatal(\"invalid configuration admitted\")\n\t\t}\n\t}\n}\n\nfunc TestWANCandidateMapHasOnlyExactSTUNAuthority(t *testing.T) {\n\tif batch, _ := wanSTUNMap(nil, 0); batch != nil {\n\t\tt.Fatal(\"implicit discovery map created\")\n\t}\n\teps := []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3478\"), netip.MustParseAddrPort(\"[2001:db8::1]:3479\")}\n\tbatch, _ := wanSTUNMap(&WANConfig{STUNEndpoints: eps}, 0)\n\tdm := batch.dm\n\tif !dm.OmitDefaultRegions || len(dm.Regions) != 2 {\n\t\tt.Fatal(\"implicit discovery regions\")\n\t}\n\tfor i, ep := range eps {\n\t\tr := dm.Regions[tailcfg.DERPRegionID(1+i)]\n\t\tif r == nil || len(r.Nodes) != 1 || r.NoMeasureNoHome {\n\t\t\tt.Fatal(\"invalid discovery-only region\")\n\t\t}\n\t\tn := r.Nodes[0]\n\t\tif !n.STUNOnly || n.STUNPort != int(ep.Port()) || n.HostName != ep.Addr().String() || n.DERPPort != -1 || n.InsecureForTests || n.STUNTestIP != \"\" || n.CanPort80 {\n\t\t\tt.Fatal(\"discovery authority widened\")\n\t\t}\n\t\tif ep.Addr().Is4() && (n.IPv4 != ep.Addr().String() || n.IPv6 != \"none\") || ep.Addr().Is6() && (n.IPv6 != ep.Addr().String() || n.IPv4 != \"none\") {\n\t\t\tt.Fatal(\"DNS/address-family fallback enabled\")\n\t\t}\n\t}\n\tif batch, _ := wanSTUNMap(&WANConfig{AdvertiseIPv6: true}, 0); len(batch.dm.Regions) != 0 {\n\t\tt.Fatal(\"IPv6-only config enabled STUN\")\n\t}\n}\n\nfunc TestWANCandidateReportCannotChooseRelay(t *testing.T) {\n\toriginal := &netcheck.Report{PreferredDERP: 50000, RegionLatency: netcheck.RegionLatency{50000: time.Millisecond}, RegionV4Latency: netcheck.RegionLatency{50000: time.Millisecond}, RegionV6Latency: netcheck.RegionLatency{50001: time.Millisecond}, GlobalV4: netip.MustParseAddrPort(\"192.0.2.20:48000\"), GlobalV6: netip.MustParseAddrPort(\"[2001:db8::20]:48001\"), UDP: true, IPv4: true, IPv6: true}\n\tgot := wanCandidateReport(original)\n\tif got.PreferredDERP != 0 || len(got.RegionLatency)+len(got.RegionV4Latency)+len(got.RegionV6Latency) != 0 {\n\t\tt.Fatal(\"STUN service can select a relay\")\n\t}\n\tif got.GlobalV4 != original.GlobalV4 || got.GlobalV6 != original.GlobalV6 || !got.UDP || !got.IPv4 || !got.IPv6 {\n\t\tt.Fatal(\"address discovery lost\")\n\t}\n\tif original.PreferredDERP != 50000 || len(original.RegionLatency) != 1 {\n\t\tt.Fatal(\"netcheck cache report mutated\")\n\t}\n}\n\nfunc TestWANCandidateWriterRejectsUnselectedBeforeSocket(t *testing.T) {\n\trequireWANBuild(t)\n\tallowed := netip.MustParseAddrPort(\"192.0.2.1:3478\")\n\tc := &Conn{wanCandidates: &WANConfig{STUNEndpoints: []netip.AddrPort{allowed}}}\n\tc.nextWANSTUNBatch()\n\tfor _, ep := range []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3479\"), netip.MustParseAddrPort(\"192.0.2.2:3478\"), netip.MustParseAddrPort(\"[2001:db8::1]:3478\"), netip.MustParseAddrPort(\"[::ffff:192.0.2.1]:3478\")} {\n\t\tif n, err := c.sendUDPNetcheck([]byte(\"synthetic\"), ep); err == nil || n != 0 {\n\t\t\tt.Fatal(\"unselected probe reached writer\")\n\t\t}\n\t}\n\tfake := &guardedFakeUDP{blockForeverConn: newBlockForeverConn()}\n\tguardedSet(&c.pconn4, fake)\n\tif n, err := c.sendUDPNetcheck([]byte(\"synthetic\"), allowed); err != nil || n != 9 || fake.writes != 1 {\n\t\tt.Fatal(\"selected endpoint not sent\", n, err)\n\t}\n\tif !(new(Conn)).wanAllowsSTUN(allowed) {\n\t\tt.Fatal(\"legacy netcheck behavior changed\")\n\t}\n}\n\nfunc TestWANCandidateIPv6UsesNativeSocketPort(t *testing.T) {\n\tlocal6 := &net.UDPAddr{IP: net.ParseIP(\"::\"), Port: 42006}\n\tip := netip.MustParseAddr(\"2001:db8::2\")\n\tif ep, ok := wanLocalEndpoint(ip, 42004, local6); !ok || ep != netip.MustParseAddrPort(\"[2001:db8::2]:42006\") {\n\t\tt.Fatal(\"IPv6 advertised IPv4 socket port\")\n\t}\n\tfor _, bound := range []*net.UDPAddr{nil, {IP: net.ParseIP(\"::\"), Port: 0}, {IP: net.ParseIP(\"2001:db8::3\"), Port: 42006}, {IP: net.ParseIP(\"0.0.0.0\"), Port: 42006}} {\n\t\tif _, ok := wanLocalEndpoint(ip, 42004, bound); ok {\n\t\t\tt.Fatal(\"unusable IPv6 socket advertised\")\n\t\t}\n\t}\n\tfor _, raw := range []string{\"::\", \"::1\", \"fe80::1\", \"2001:db8::1%fixture\", \"::ffff:192.0.2.1\", \"ff02::1\"} {\n\t\tif _, ok := wanLocalEndpoint(netip.MustParseAddr(raw), 42004, local6); ok {\n\t\t\tt.Fatal(\"invalid IPv6 candidate advertised\")\n\t\t}\n\t}\n\tif ep, ok := wanLocalEndpoint(netip.MustParseAddr(\"192.0.2.2\"), 42004, nil); !ok || ep.Port() != 42004 {\n\t\tt.Fatal(\"IPv4 candidate lost\")\n\t}\n}\n\nfunc TestWANCandidateConstructorCopiesAndSeparatesMaps(t *testing.T) {\n\trequireWANBuild(t)\n\tconfig := &WANConfig{STUNEndpoints: []netip.AddrPort{netip.MustParseAddrPort(\"192.0.2.1:3478\")}, AdvertiseIPv6: true}\n\tbus := eventbus.New()\n\tdefer bus.Close()\n\tc, err := NewConn(Options{WANCandidates: config, EventBus: bus, NetMon: netmon.NewStatic(), Logf: logger.Discard, HealthTracker: health.NewTracker(bus), Metrics: new(usermetric.Registry), TestOnlyPacketListener: guardedListener{}})\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\tdefer c.Close()\n\tif c.derpMap != nil || c.wanSTUNSelection.Load() != nil || c.portMapper != nil {\n\t\tt.Fatal(\"STUN map leaked into relay/portmap configuration\")\n\t}\n\tif batch := c.nextWANSTUNBatch(); len(batch.dm.Regions) != 1 {\n\t\tt.Fatal(\"probe selection missing\")\n\t}\n\tconfig.STUNEndpoints[0] = netip.AddrPort{}\n\tif !c.wanCandidates.STUNEndpoints[0].IsValid() {\n\t\tt.Fatal(\"engine config aliases caller\")\n\t}\n\tif got, err := c.candidateCloudIPs(context.Background()); err != nil || !reflect.DeepEqual(got, []netip.Addr(nil)) {\n\t\tt.Fatal(\"WAN config contacted unselected cloud metadata\")\n\t}\n}\n\nfunc TestWANCandidateProbeBudgetRotatesWithoutMetadataCap(t *testing.T) {\n\trequireWANBuild(t)\n\tvar endpoints []netip.AddrPort\n\tfor port := uint16(30000); port < 30011; port++ {\n\t\tendpoints = append(endpoints, netip.AddrPortFrom(netip.MustParseAddr(\"192.0.2.1\"), port))\n\t}\n\tfor _, budget := range []int{0, 1, 3, 7, 20} {\n\t\tconfig, err := ValidateWANConfig(&WANConfig{STUNEndpoints: endpoints, ProbeBudget: budget}, false)\n\t\tif err != nil {\n\t\t\tt.Fatal(\"configurable metadata was capped\", err)\n\t\t}\n\t\tif budget == 0 {\n\t\t\tbudget = defaultWANProbeBudget\n\t\t}\n\t\tif config.ProbeBudget != budget || len(config.STUNEndpoints) != len(endpoints) {\n\t\t\tt.Fatal(\"configuration lost metadata or budget\")\n\t\t}\n\t\tc := &Conn{wanCandidates: config}\n\t\tseen := map[netip.AddrPort]bool{}\n\t\tfor range len(endpoints) {\n\t\t\tbatch := c.nextWANSTUNBatch()\n\t\t\tif len(batch.dm.Regions) != min(budget, len(endpoints)) || len(batch.destinations) != len(batch.dm.Regions) {\n\t\t\t\tt.Fatal(\"probe fanout exceeded selected resource budget\")\n\t\t\t}\n\t\t\tfor i, ep := range endpoints {\n\t\t\t\t_, selected := batch.destinations[ep]\n\t\t\t\tif c.wanAllowsSTUN(ep) != selected {\n\t\t\t\t\tt.Fatal(\"writer authority exceeded current batch\")\n\t\t\t\t}\n\t\t\t\tif selected {\n\t\t\t\t\tseen[ep] = true\n\t\t\t\t\tregion := batch.dm.Regions[tailcfg.DERPRegionID(i+1)]\n\t\t\t\t\tif region == nil || region.Nodes[0].STUNPort != int(ep.Port()) {\n\t\t\t\t\t\tt.Fatal(\"rotation changed stable discovery identity\")\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t\tif len(seen) != len(endpoints) {\n\t\t\tt.Fatal(\"rotating selection starved configured metadata\")\n\t\t}\n\t\tif !reflect.DeepEqual(config.STUNEndpoints, endpoints) {\n\t\t\tt.Fatal(\"rotation mutated metadata\")\n\t\t}\n\t}\n}\n\nfunc TestWANCandidateNamespaceBoundaryAndFiniteBudget(t *testing.T) {\n\trequireWANBuild(t)\n\tendpoints := make([]netip.AddrPort, wanSTUNRegionNamespaceSize)\n\tfor i := range endpoints {\n\t\tendpoints[i] = netip.AddrPortFrom(netip.MustParseAddr(\"192.0.2.1\"), uint16(i+1))\n\t}\n\tconfig, err := ValidateWANConfig(&WANConfig{STUNEndpoints: endpoints, ProbeBudget: 1}, false)\n\tif err != nil {\n\t\tt.Fatal(\"inherent namespace boundary was capped\", err)\n\t}\n\tbatch, next := wanSTUNMap(config, wanSTUNRegionNamespaceSize-1)\n\tif next != 0 || len(batch.dm.Regions) != 1 || batch.dm.Regions[65535] == nil || batch.dm.Regions[0] != nil {\n\t\tt.Fatal(\"discovery IDs wrapped or escaped their inherent namespace\")\n\t}\n\tfor _, budget := range []int{-1, wanSTUNRegionNamespaceSize + 1} {\n\t\tif _, err := ValidateWANConfig(&WANConfig{AdvertiseIPv6: true, ProbeBudget: budget}, false); err == nil {\n\t\t\tt.Fatal(\"invalid resource budget admitted\")\n\t\t}\n\t}\n}\n\nfunc TestGuardedLocalSocketEndpointUsesActualFamilyPort(t *testing.T) {\n\tlocal6 := &net.UDPAddr{IP: net.ParseIP(\"::\"), Port: 42006}\n\tfor _, raw := range []string{\"::1\", \"fd25::2\", \"2001:db8::2\"} {\n\t\tip := netip.MustParseAddr(raw)\n\t\tif ep, ok := localSocketEndpoint(ip, 42004, local6); !ok || ep.Port() != 42006 || ep.Addr() != ip {\n\t\t\tt.Fatal(\"IPv6 did not use actual socket\", raw, ep)\n\t\t}\n\t\tif _, ok := localSocketEndpoint(ip, 42004, nil); ok {\n\t\t\tt.Fatal(\"absent IPv6 socket inherited IPv4 port\")\n\t\t}\n\t}\n\tip4 := netip.MustParseAddr(\"127.0.0.1\")\n\tif ep, ok := localSocketEndpoint(ip4, 42004, local6); !ok || ep.Port() != 42004 {\n\t\tt.Fatal(\"IPv4 socket changed\")\n\t}\n\tfor _, local := range []*net.UDPAddr{nil, {IP: net.ParseIP(\"::\"), Port: 0}, {IP: net.ParseIP(\"::\"), Port: 65536}, {IP: net.ParseIP(\"::2\"), Port: 42006}, {IP: net.ParseIP(\"0.0.0.0\"), Port: 42006}} {\n\t\tif _, ok := localSocketEndpoint(netip.MustParseAddr(\"::1\"), 42004, local); ok {\n\t\t\tt.Fatal(\"unusable family socket advertised\")\n\t\t}\n\t}\n}\n"
         }
       ]
     },
@@ -417,7 +588,7 @@
     {
       "path": "wgengine/userspace.go",
       "original_sha256": "35bbebe1073f12f11e9a0d9245c579424b244908a8efa8fe552e8902785d7375",
-      "adapted_sha256": "3aac202f7a124469588566b774aa96a640564fcae96909a437de6db9bb69a163",
+      "adapted_sha256": "a9403908fab26a2ce242dc58865446e026dbfbf4a95e34c55c4f27aa248b508b",
       "edits": [
         {
           "offset": 250,
@@ -430,14 +601,19 @@
           "new": "\t// WANCandidates opts into bounded address discovery, never relay discovery.\n\tWANCandidates *magicsock.WANConfig\n\n\t// UnderlayPolicy is immutable and installed before any network setup.\n\t// Nil preserves ordinary Tailnet behavior; non-nil enforces numeric destinations.\n\tUnderlayPolicy *underlayguard.Policy\n\n"
         },
         {
+          "offset": 10033,
+          "old": "",
+          "new": "\n\t// OnDERPConnectionEvent observes actual relay outcomes; nil retains upstream behavior.\n\tOnDERPConnectionEvent func(magicsock.DERPConnectionEvent)\n"
+        },
+        {
           "offset": 11154,
           "old": "",
           "new": "\tif _, err := magicsock.ValidateWANConfig(conf.WANCandidates, conf.UnderlayPolicy != nil); err != nil {\n\t\treturn nil, err\n\t}\n\tif err := conf.UnderlayPolicy.Validate(); err != nil {\n\t\treturn nil, err\n\t}\n"
         },
         {
           "offset": 14691,
-          "old": "",
-          "new": "\t\tWANCandidates:  conf.WANCandidates,\n\t\tUnderlayPolicy: conf.UnderlayPolicy,\n"
+          "old": "\t\tEventBus:       e.eventBus,\n\t\tLogf:           logf,\n\t\tPort:           conf.ListenPort,\n\t\tEndpointsFunc:  endpointsFn,\n\t\tDERPActiveFunc: e.RequestStatus,\n\t\tIdleFunc:       e.tundev.IdleDuration,\n\t\tNetMon:         e.netMon,\n\t\tHealthTracker:  e.health,\n\t\tExtraRootCAs:   conf.ExtraRootCAs,\n\t\tDERPAppName:    conf.DERPAppName,\n\t\tMetrics:        conf.Metrics,\n\t\tControlKnobs:   conf.ControlKnobs,\n\t\tPeerByKeyFunc:  e.PeerByKey,\n\t\tForceDiscoKey:  conf.ForceDiscoKey,\n\t\tOnDERPRecv:     conf.OnDERPRecv,\n",
+          "new": "\t\tWANCandidates:         conf.WANCandidates,\n\t\tUnderlayPolicy:        conf.UnderlayPolicy,\n\t\tEventBus:              e.eventBus,\n\t\tLogf:                  logf,\n\t\tPort:                  conf.ListenPort,\n\t\tEndpointsFunc:         endpointsFn,\n\t\tDERPActiveFunc:        e.RequestStatus,\n\t\tIdleFunc:              e.tundev.IdleDuration,\n\t\tNetMon:                e.netMon,\n\t\tHealthTracker:         e.health,\n\t\tExtraRootCAs:          conf.ExtraRootCAs,\n\t\tDERPAppName:           conf.DERPAppName,\n\t\tMetrics:               conf.Metrics,\n\t\tControlKnobs:          conf.ControlKnobs,\n\t\tPeerByKeyFunc:         e.PeerByKey,\n\t\tForceDiscoKey:         conf.ForceDiscoKey,\n\t\tOnDERPRecv:            conf.OnDERPRecv,\n\t\tOnDERPConnectionEvent: conf.OnDERPConnectionEvent,\n"
         }
       ]
     }
