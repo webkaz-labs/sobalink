@@ -2,7 +2,7 @@
 
 [日本語](LAN.ja.md) · [Main guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#tailcat-gate)
 
-Published `0.3.0-alpha.4` includes explicit pinned-relay pairing and prepared-route recovery. The new [LAN destination policy](LAN_DESTINATIONS.en.md) and [relay certificate controls](RELAY_OPERATIONS.en.md) in this checkout are **unreleased and under verification**. Physical devices, LAN/WAN/NAT topology, sleep/wake and native IME remain separate acceptance work.
+Published `0.3.0-alpha.5` includes explicit pinned-relay pairing, prepared-route recovery, the [LAN destination policy](LAN_DESTINATIONS.en.md), and [relay certificate/resource controls](RELAY_OPERATIONS.en.md). Exact-source automated and distribution results are recorded in [verification](VERIFICATION.en.md). Physical devices, LAN/WAN/NAT topology, sleep/wake and native IME remain separate, unperformed acceptance checks.
 
 ## Use the local UI
 
@@ -97,7 +97,7 @@ soba trust PEER_ID
 
 Then use explicit messages, batch transfers and scoped services from the [main guide](GENERIC.en.md). Autosave remains a separate opt-in bound to backend, exact peer, trust generation and destination.
 
-## Prepare another route (unreleased)
+## Prepare another route
 
 Prepare **both devices before moving networks**. Keep the original pairing; add only relay endpoints whose operator and certificate pin you have verified. An additional relay must already exist and admit the paired roles. `routes add` neither starts a relay nor changes its admission policy.
 

@@ -2,7 +2,7 @@
 
 [日本語](DIRECT_LAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-The development build implements `direct-lan`: recipient-authenticated pairing
+Published alpha.5 implements `direct-lan`: recipient-authenticated pairing
 at an exact numeric private-network address, followed by WireGuard-encrypted TCP
 and native UDP through an embedded gVisor userspace stack. No relay, DNS lookup,
 STUN, public discovery, kernel TUN, administrator permission, router change or
@@ -13,10 +13,10 @@ Native automated loopback tests cover cold-start pairing, both directions of
 identity proof, TCP streaming/half-close, native UDP, restart, message delivery,
 scoped application forwarding and revocation. These do **not** establish
 real-device LAN reachability, application compatibility, suspend/resume,
-installation, or publication of this development source. The additional browser
-review tests are authored; their current local run is blocked before page load
-by Chromium's process-singleton socket permission, so visual acceptance remains
-open. An earlier concurrent race run exposed simultaneous initial WireGuard
+installation or publication by themselves. Alpha.5 separately completed its
+exact-source native/browser and signed-release gates; see [verification](VERIFICATION.en.md).
+An earlier local browser attempt was blocked before page load by Chromium's
+process-singleton socket permission; that attempt established no visual acceptance. An earlier concurrent race run exposed simultaneous initial WireGuard
 handshakes: only 9/10 first messages and 7/10 first HTTP probes connected before
 the unchanged eight-second application deadline. A deterministic session gate
 now serializes initial activation, and the broader Core order subsequently

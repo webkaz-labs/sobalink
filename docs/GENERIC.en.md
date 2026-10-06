@@ -2,7 +2,7 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-This guide covers `soba`. The published baseline is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2); [all 15 release jobs](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713), including signed public retrieval and four-target mise installation, passed for its exact source. Sections marked unreleased describe newer source under verification. Real-device enrollment, application compatibility, native IME, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery remain separate checks. [Source-specific evidence](VERIFICATION.en.md#current-integration-and-published-baseline)
+This guide covers `soba` in published [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5). Its [15 release gates](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236), including signed public retrieval and four-target mise installation, passed for the exact source recorded in [verification](VERIFICATION.en.md#current-integration-and-published-baseline). Real-device enrollment, application compatibility, native IME, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery remain separate checks.
 
 The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
@@ -10,10 +10,10 @@ The local Web UI and guided CLI support normal service workflows; explicit CLI c
 
 ## Start and open the local UI
 
-Use mise **2026.9.18** to select the published alpha.2 prerelease, verify the version, then start it. Keep signature verification enabled. To try the unreleased route changes, use a reviewed [source build](DISTRIBUTION.md#build-this-checkout):
+Use mise **2026.9.18** to select the published alpha.5 prerelease, verify the version, then start it. Keep signature verification enabled:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -45,7 +45,7 @@ A fresh profile starts with no network selected. UI preferences, trust and servi
 | Choice | Setup | Important boundary |
 | --- | --- | --- |
 | Existing Tailnet | Activate the embedded node, then use the official interactive Tailscale sign-in flow | It is a separate node in the chosen Tailnet; the OS Tailscale app's session is not imported |
-| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI implemented; stock loopback-relay acceptance passed at the recorded commit. Later source needs separate verification. No arbitrary public fallback or zero-external-traffic claim |
+| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI and exact-source loopback gates are recorded for alpha.5. Physical topology remains unverified. No arbitrary public fallback or zero-external-traffic claim |
 | No network | Leave the agent local | No peer transfer or service connection |
 
 For the Tailnet path:
@@ -62,7 +62,7 @@ Selecting a mode is explicit. Stop the agent and use `soba start --offline` to o
 
 For foreground/background startup, optional reviewed startup at user sign-in, saved autosave behavior and Tailnet logout, see [startup and logout](LIFECYCLE.en.md).
 
-Tailcat permits direct peer traffic, encrypted payload and HTTPS/ICMP diagnostics to explicitly configured/approved relay endpoints. The normal direct-enabled binary can use public peer paths; `local` is a relay classification, not a LAN egress sandbox. The unreleased [prepared-route workflow](LAN.en.md#prepare-another-route-unreleased) keeps the same pair across reviewed candidates, with an explicitly reviewed finite or until-revoked local approval on both devices. It requires new source and does not appear in alpha.2. [Transport detail](ARCHITECTURE.md#network-boundaries)
+Tailcat permits direct peer traffic, encrypted payload and HTTPS/ICMP diagnostics to explicitly configured/approved relay endpoints. The normal direct-enabled binary can use public peer paths; `local` is a relay classification, not a LAN egress sandbox. The [prepared-route workflow](LAN.en.md#prepare-another-route) keeps the same pair across reviewed candidates, with an explicitly reviewed finite or until-revoked local approval on both devices. It was already included in alpha.4 and remains included in alpha.5. [Transport detail](ARCHITECTURE.md#network-boundaries)
 
 ## Trust the peer you mean
 
@@ -275,10 +275,10 @@ soba stop
 
 Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
-Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the alpha.2 release's signed assets and successful verification before using this pin; do not assume prerelease state is compatible with every upgrade or downgrade:
+Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the alpha.5 release's signed assets and successful verification before using this pin; do not assume prerelease state is compatible with every upgrade or downgrade:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
 mise exec -- soba version
 mise exec -- soba start --offline
 ```

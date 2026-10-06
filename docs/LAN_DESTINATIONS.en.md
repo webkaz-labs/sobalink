@@ -2,7 +2,7 @@
 
 [日本語](LAN_DESTINATIONS.ja.md) · [LAN setup](LAN.en.md) · [Relay operations](RELAY_OPERATIONS.en.md)
 
-**This is new source under verification, not part of alpha.4.** The optional `allowed-lan-destinations` policy restricts this LAN transport's UDP writes to explicitly selected private/ULA/loopback CIDRs and its DERP TCP connections to exact configured numeric relay endpoints within those CIDRs. It does not bind a physical interface or prove same-link, VPN isolation, or whole-host/process zero egress. A matching destination can still be routed through another interface or VPN.
+**Published in alpha.5, with exact-source automated and distribution evidence in [verification](VERIFICATION.en.md). Physical-device network acceptance remains pending.** The optional `allowed-lan-destinations` policy restricts this LAN transport's UDP writes to explicitly selected private/ULA/loopback CIDRs and its DERP TCP connections to exact configured numeric relay endpoints within those CIDRs. It does not bind a physical interface or prove same-link, VPN isolation, or whole-host/process zero egress. A matching destination can still be routed through another interface or VPN.
 
 Administrator rights and LAN-router changes are not required or performed. The feature uses ordinary userspace sockets; it does not install a TUN driver, modify routes/firewalls, enable UPnP/NAT mappings or bypass a network policy. If the selected network blocks the needed traffic, report the failure and choose another explicitly allowed configuration.
 
