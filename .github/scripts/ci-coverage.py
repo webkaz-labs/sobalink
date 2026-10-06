@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""Read-only CI selection/provenance and the non-skippable coverage aggregate.
+"""Choose the minimum applicable checks and validate their actual completion.
 
-An optimization failure selects all tests. A validation failure never creates a
-successful full-coverage receipt. No prior test executable or result is executed.
+Scope is proved from this event's complete Git delta, never from a previous
+success or a cached test result. Release validation is independent of this file.
 """
 import argparse
 import datetime
 import hashlib
-import io
 import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
-import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 REPOSITORY = "webkaz-labs/sobalink"
@@ -46,6 +44,13 @@ FAST_STEPS = (
 )
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
+SCOPES = {"docs", "frontend", "go", "full"}
+BROWSER_STEPS = ("Test and reproduce locked frontend assets",
+                 "Verify actual UI workflows with isolated Playwright fixtures")
+GO_STEPS = ("Validate scoped Go selection", "Check exact toolchain and module graph",
+            "Test affected Go packages and reverse dependencies")
+SCOPE_STEP = "Select minimum CI scope"
+
 
 def require(condition, message):
     if not condition:
@@ -68,112 +73,43 @@ def digest(path):
     return hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
 
 
-def api(path, binary=False):
-    # gh owns authenticated redirects; credentials never enter arguments or logs.
-    result = subprocess.run(["gh", "api", "--method", "GET", "repos/" + REPOSITORY + "/" + path],
-                            check=True, capture_output=True, timeout=15)
-    return result.stdout if binary else json.loads(result.stdout)
-
-
-def classify(sha, baseline=None, force=False):
+def classify(sha, force=False):
     args = [sys.executable, str(ROOT / POLICY), "--head", sha]
-    if baseline:
-        args += ["--verified-baseline-commit", baseline["head_sha"],
-                 "--verified-baseline-run-id", str(baseline["id"])]
     if force:
         args.append("--force-full")
     result = subprocess.run(args, cwd=ROOT, check=True, capture_output=True, timeout=90)
     plan = json.loads(result.stdout)
-    require(type(plan.get("long_required")) is bool, "invalid classifier decision")
+    require(plan.get("version") == 2 and plan.get("policy_id") == "minimum-ci-v2",
+            "unknown classifier policy")
+    require(plan.get("scope") in SCOPES, "invalid classifier decision")
     return plan
-
-
-def trusted_run(run):
-    require(type(run.get("id")) is int and run["id"] > 0, "invalid baseline run ID")
-    require(type(run.get("run_attempt")) is int and run["run_attempt"] > 0, "invalid baseline attempt")
-    require(run.get("status") == "completed" and run.get("conclusion") == "success", "baseline CI failed")
-    require(run.get("event") in ("push", "workflow_dispatch") and run.get("head_branch") == "main",
-            "baseline must be canonical main CI")
-    require(run.get("name") == "Cross-platform CI" and run.get("path") == WORKFLOW, "wrong baseline workflow")
-    require(run.get("repository", {}).get("full_name") == REPOSITORY
-            and run.get("head_repository", {}).get("full_name") == REPOSITORY, "wrong baseline repository")
-    require(bool(SHA.fullmatch(run.get("head_sha", ""))), "invalid baseline SHA")
-
-
-def read_receipt(run):
-    listing = api(f"actions/runs/{run['id']}/artifacts?per_page=100")
-    require(type(listing.get("total_count")) is int and isinstance(listing.get("artifacts"), list)
-            and 0 <= listing["total_count"] <= 100
-            and listing["total_count"] == len(listing["artifacts"]), "incomplete baseline artifact inventory")
-    matches = [a for a in listing["artifacts"] if a.get("name") == "ci-coverage"]
-    require(len(matches) == 1, "missing or duplicate baseline receipt")
-    artifact = matches[0]
-    require(artifact.get("expired") is False and 0 < artifact.get("size_in_bytes", 0) < 524288,
-            "unavailable baseline receipt")
-    require(type(artifact.get("id")) is int and artifact["id"] > 0, "invalid artifact ID")
-    archive = api(f"actions/artifacts/{artifact['id']}/zip", binary=True)
-    require(len(archive) < 524288, "oversized baseline receipt")
-    with zipfile.ZipFile(io.BytesIO(archive)) as z:
-        require(z.namelist() == ["ci-coverage.json"], "unexpected receipt archive entries")
-        info = z.getinfo("ci-coverage.json")
-        require(info.file_size < 524288, "oversized receipt content")
-        return json.loads(z.read(info))
-
-
-def validate_receipt(receipt, run):
-    trusted_run(run)
-    sha = run["head_sha"]
-    require(type(receipt.get("schema_version")) is int and receipt["schema_version"] == 1 and receipt.get("repository") == REPOSITORY,
-            "invalid receipt identity")
-    require(type(receipt.get("run_id")) is int and type(receipt.get("run_attempt")) is int
-            and receipt["run_id"] == run["id"] and receipt["run_attempt"] == run["run_attempt"],
-            "receipt attempt differs from successful attempt")
-    require(receipt.get("head_sha") == sha and receipt.get("full_native") is True,
-            "baseline did not execute full native coverage")
-    require(receipt.get("browser") == "success" and receipt.get("manifest") == "success"
-            and receipt.get("targets") == {t: "success" for t in TARGETS}, "incomplete baseline coverage")
-    require(receipt.get("policy_sha256") == digest(POLICY), "baseline uses a different selection policy")
-    require(receipt.get("head_tree") == git("rev-parse", sha + "^{tree}").decode().strip(), "wrong baseline tree")
-    for field, path in (("policy_sha256", POLICY), ("workflow_sha256", WORKFLOW)):
-        require(receipt.get(field) == hashlib.sha256(git("show", sha + ":" + path)).hexdigest(),
-                "receipt source fingerprint differs")
-    return run
-
-
-def baseline_by_id(run_id, sha):
-    require(type(run_id) is int and run_id > 0 and bool(SHA.fullmatch(sha)), "invalid nominated baseline")
-    run = api(f"actions/runs/{run_id}")
-    trusted_run(run)
-    require(run["head_sha"] == sha, "nominated baseline SHA differs")
-    return validate_receipt(read_receipt(run), run)
-
-
-def find_baseline():
-    # Bounded optimization: an older/expired/incomplete history just runs full.
-    listing = api("actions/workflows/ci.yml/runs?branch=main&status=success&per_page=10")
-    for run in listing.get("workflow_runs", []):
-        try:
-            trusted_run(run)
-            # Do not download receipts for commits outside this checkout history.
-            git("merge-base", "--is-ancestor", run["head_sha"], "HEAD")
-            return validate_receipt(read_receipt(run), run)
-        except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-            continue
-    return None
 
 
 def read_plan(path):
     plan = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-    require(plan.get("version") == 1 and plan.get("policy_id") == "native-long-impact-v1", "unknown plan schema")
-    require(type(plan.get("long_required")) is bool, "plan lacks explicit decision")
+    require(plan.get("version") == 2 and plan.get("policy_id") == "minimum-ci-v2",
+            "unknown plan schema")
+    require(plan.get("scope") in SCOPES, "plan lacks explicit scope")
     require(plan.get("head_sha") == head(), "plan belongs to another checkout")
-    require(plan.get("head_tree") == git("rev-parse", "HEAD^{tree}").decode().strip(), "plan tree differs")
+    require(plan.get("head_tree") == git("rev-parse", "HEAD^{tree}").decode().strip(),
+            "plan tree differs")
     require(plan.get("policy_sha256") == digest(POLICY), "plan policy differs")
-    if not plan["long_required"]:
-        require(bool(SHA.fullmatch(plan.get("baseline_sha", "")))
-                and type(plan.get("baseline_run_id")) is int and plan["baseline_run_id"] > 0,
-                "skip lacks baseline provenance")
     return plan
+
+
+def force_full():
+    return os.environ.get("FORCE_FULL", "false") != "false"
+
+
+def verified_plan(path):
+    """An artifact is only a hint: repeat the Git proof in each consuming job."""
+    try:
+        plan = read_plan(path)
+        require(plan == classify(head(), force_full()), "scope decision did not reproduce")
+        return plan
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+        print("::warning::Invalid scope evidence; full coverage is required")
+        return classify(head(), force=True)
 
 
 def write_plan(plan, path):
@@ -181,9 +117,10 @@ def write_plan(plan, path):
     pathlib.Path(path).write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
-            print("long_required=" + str(plan["long_required"]).lower(), file=stream)
-    mode = "FULL: all real-time native tests required" if plan["long_required"] else "SELECTED: real-time tests not required by the verified change scope"
-    print(mode + " (" + plan["reason"] + ")")
+            print("scope=" + plan["scope"], file=stream)
+            # Full native jobs keep the established step names and cache policy.
+            print("long_required=" + str(plan["scope"] == "full").lower(), file=stream)
+    print("CI scope: " + plan["scope"] + " (" + plan["reason"] + ")")
 
 
 def successful_step(job, name):
@@ -191,36 +128,56 @@ def successful_step(job, name):
     return len(steps) == 1 and steps[0].get("status") == "completed" and steps[0].get("conclusion") == "success"
 
 
-def evaluate_jobs(jobs, long_required):
+def evaluate_jobs(jobs, scope):
+    require(scope in SCOPES, "unknown required scope")
     index = {}
     for job in jobs:
         name = job.get("name")
         require(name not in index, "duplicate job name")
         index[name] = job
-    names = [*TARGETS.values(), "browser", "manifest-smoke"]
-    for name in names:
+
+    def passed(name, steps):
         job = index.get(name, {})
         require(job.get("status") == "completed" and job.get("conclusion") == "success",
                 "required job did not pass: " + name)
-    full = True
-    for target, name in TARGETS.items():
-        job = index[name]
-        for step in FAST_STEPS:
-            require(successful_step(job, step), "required fast step did not run: " + target + ": " + step)
-        if target == "windows-amd64":
-            require(successful_step(job, "Verify Windows receive-retirement directory barriers"), "Windows native barrier probe missing")
-        for step in LONG_STEPS:
-            passed = successful_step(job, step)
-            if long_required:
-                require(passed, "required real-time step did not run: " + target + ": " + step)
-            else:
-                matches = [s for s in job.get("steps", []) if s.get("name") == step]
-                require(len(matches) == 1 and matches[0].get("conclusion") in ("success", "skipped"),
-                        "unexpected real-time step state: " + target)
-            full = full and passed
-    require(successful_step(index["browser"], "Verify actual UI workflows with isolated Playwright fixtures"), "browser tests missing")
-    require(successful_step(index["manifest-smoke"], "Exercise signing and verification offline with a disposable test key"), "manifest verification missing")
-    return full
+        for step in steps:
+            require(successful_step(job, step), "required step did not run: " + name + ": " + step)
+
+    passed("impact", (SCOPE_STEP,))
+    required = {"impact"}
+    if scope in ("frontend", "full"):
+        passed("browser", BROWSER_STEPS)
+        required.add("browser")
+    if scope == "go":
+        passed("go-unit", GO_STEPS)
+        required.add("go-unit")
+    if scope == "full":
+        for target, name in TARGETS.items():
+            steps = FAST_STEPS + LONG_STEPS
+            if target == "windows-amd64":
+                steps += ("Verify Windows receive-retirement directory barriers",)
+            passed(name, steps)
+            required.add(name)
+        passed("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",))
+        required.add("manifest-smoke")
+
+    # Job-level skips can appear as one unexpanded matrix job or several jobs.
+    # Only explicitly out-of-scope jobs may be skipped; their presence is not
+    # required and is never represented as a test pass in the receipt.
+    application = {*TARGETS.values(), "native", "browser", "go-unit", "manifest-smoke"}
+    for name in application - required:
+        if name in index:
+            require(index[name].get("status") == "completed"
+                    and index[name].get("conclusion") == "skipped",
+                    "unexpected out-of-scope job result: " + name)
+    return scope == "full"
+
+
+def api(path):
+    # gh owns authentication; no credentials enter arguments or saved reports.
+    result = subprocess.run(["gh", "api", "--method", "GET", "repos/" + REPOSITORY + "/" + path],
+                            check=True, capture_output=True, timeout=15)
+    return json.loads(result.stdout)
 
 
 def current_jobs():
@@ -238,7 +195,7 @@ def current_jobs():
 
 
 def job_timings(jobs):
-    """Only fixed CI names and elapsed seconds; no runner/account metadata."""
+    """Fixed CI names and elapsed seconds only; no runner/account metadata."""
     def elapsed(item):
         try:
             start = datetime.datetime.fromisoformat(item["started_at"].replace("Z", "+00:00"))
@@ -247,9 +204,10 @@ def job_timings(jobs):
             return value if value >= 0 else None
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
-    names = {*TARGETS.values(), "browser", "manifest-smoke"}
-    steps = {*FAST_STEPS, *LONG_STEPS, "Restore trusted main Go caches",
-             "Restore isolated development Go caches", "Save Go caches after all native checks pass on main",
+    names = {*TARGETS.values(), "impact", "browser", "go-unit", "manifest-smoke"}
+    steps = {*FAST_STEPS, *LONG_STEPS, *BROWSER_STEPS, *GO_STEPS,
+             "Restore trusted main Go caches", "Restore isolated development Go caches",
+             "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}
     return [{"job": j["name"], "elapsed_seconds": elapsed(j),
              "steps": [{"step": s["name"], "elapsed_seconds": elapsed(s), "result": s.get("conclusion")}
@@ -258,37 +216,37 @@ def job_timings(jobs):
 
 
 def finalize(input_path, output):
-    try:
-        plan = read_plan(input_path)
-        if not plan["long_required"]:
-            baseline = baseline_by_id(plan["baseline_run_id"], plan["baseline_sha"])
-            rechecked = classify(head(), baseline)
-            require(rechecked == plan, "change decision did not reproduce")
-    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-        plan = classify(head(), force=True)
-        print("::warning::Selection evidence unavailable; aggregate requires every real-time test")
+    plan = verified_plan(input_path)
+    scope = plan["scope"]
     jobs = current_jobs()
-    full = evaluate_jobs(jobs, plan["long_required"])
-    receipt = {"schema_version": 1, "repository": REPOSITORY,
+    full = evaluate_jobs(jobs, scope)
+    receipt = {"schema_version": 2, "repository": REPOSITORY,
                "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
                "head_sha": head(), "head_tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
                "policy_sha256": digest(POLICY), "workflow_sha256": digest(WORKFLOW),
-               "full_native": full, "targets": {t: "success" for t in TARGETS},
-               "browser": "success", "manifest": "success", "selection": plan,
-               "timings": job_timings(jobs)}
+               "scope": scope, "full_native": full,
+               "targets": {t: "success" if full else "not_run" for t in TARGETS},
+               "browser": "success" if scope in ("frontend", "full") else "not_run",
+               "manifest": "success" if full else "not_run",
+               "go_unit": "success" if scope == "go" else "not_run",
+               "selection": plan, "timings": job_timings(jobs)}
     pathlib.Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-    summary = "Full native coverage passed" if full else "Selected coverage passed; real-time tests NOT RUN for this change scope"
+    descriptions = {
+        "docs": "Documentation only; application tests, builds and packages NOT RUN",
+        "frontend": "Frontend checks passed; four-target native and package checks NOT RUN",
+        "go": "Affected Go packages and reverse dependencies passed on Linux; full native, browser and package checks NOT RUN",
+        "full": "Full native, browser and package coverage passed",
+    }
+    summary = descriptions[scope]
     print(summary)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
             print("## " + summary + "\n\nDecision: " + plan["reason"] + "\n", file=stream)
-            print("All four native targets, fast security/logic checks, browser acceptance and package/manifest checks passed.\n", file=stream)
+            print("This result describes this attempt only. No previous test result is reused.\n", file=stream)
             print("| Job | Elapsed seconds |\n| --- | ---: |", file=stream)
             for row in receipt["timings"]:
                 print(f"| {row['job']} | {row['elapsed_seconds'] if row['elapsed_seconds'] is not None else 'unavailable'} |", file=stream)
-            print("\nThese are per-job elapsed times, not summed critical-path time. Cache restore/save step timings are included in the receipt.\n", file=stream)
-            if not full:
-                print(f"Last full baseline: {plan['baseline_sha']} ([run {plan['baseline_run_id']}](https://github.com/{REPOSITORY}/actions/runs/{plan['baseline_run_id']})). This run does not advance that baseline.\n", file=stream)
+            print("\nPer-job elapsed times are not summed critical-path time. Releases run their independent full validation.\n", file=stream)
 
 
 def main():
@@ -300,28 +258,14 @@ def main():
     require(os.environ.get("GITHUB_REPOSITORY", REPOSITORY) == REPOSITORY, "unexpected repository")
     if args.command == "finalize":
         finalize(args.input, args.output)
-        return
-    if args.command == "resolve":
-        try:
-            plan = read_plan(args.input)
-        except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
-            plan = classify(head(), force=True)
-            print("::warning::Missing/invalid impact plan; running full real-time coverage")
     else:
-        force = os.environ.get("FORCE_FULL", "false") != "false"
-        baseline = None
-        if not force:
-            try:
-                baseline = find_baseline()
-            except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-                print("::warning::Baseline lookup unavailable; running full real-time coverage")
-        plan = classify(head(), baseline, force)
-    write_plan(plan, args.output)
+        plan = verified_plan(args.input) if args.command == "resolve" else classify(head(), force_full())
+        write_plan(plan, args.output)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         print("CI coverage validation failed; no success receipt was issued", file=sys.stderr)
         sys.exit(1)

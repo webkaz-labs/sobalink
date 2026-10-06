@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       force_full:
-        description: Run all real-time native lifecycle and relay lease tests
+        description: Run every native, browser and package check
         type: boolean
         default: true
 
@@ -15,8 +15,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A documentation push must not cancel application validation on main.
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GOTOOLCHAIN: local
@@ -25,7 +26,9 @@ env:
 
 jobs:
   impact:
-    # Only read canonical main receipts. No release write/OIDC permissions.
+    outputs:
+      scope: ${{ steps.selection.outputs.scope }}
+    # Prove the complete event delta. No prior test receipts are reused.
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -37,7 +40,8 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Select full or change-scoped real-time coverage
+      - name: Select minimum CI scope
+        id: selection
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.force_full || false }}
@@ -50,9 +54,9 @@ jobs:
           retention-days: 14
 
   native:
-    # A failed classifier defaults to full coverage, never a skipped matrix.
+    # Unknown or failed selection defaults to the full native matrix.
     needs: impact
-    if: always() && !cancelled() && github.event.repository.private == false
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'
     strategy:
       fail-fast: false
       matrix:
@@ -78,6 +82,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Download this run's impact plan
         if: needs.impact.result == 'success'
         continue-on-error: true
@@ -572,7 +577,8 @@ jobs:
 
   browser:
     # Real Go management HTTP and embedded assets; networking peers are fixtures.
-    if: github.event.repository.private == false
+    needs: impact
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'go'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -587,13 +593,15 @@ jobs:
         with:
           node-version: '24.19.0'
           check-latest: false
-      - name: Install exact frontend dependencies and official Chromium
+      - name: Test and reproduce locked frontend assets
         run: |
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
-          npm --prefix web ci --no-audit --no-fund
-          npm --prefix web run build
+          python .github/scripts/check-frontend.py
           git diff --exit-code -- web/dist
+      - name: Install official Chromium and fonts
+        run: |
+          set -euo pipefail
           node web/node_modules/@playwright/test/cli.js install --with-deps chromium
           sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
       - name: Verify actual UI workflows with isolated Playwright fixtures
@@ -620,9 +628,72 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  go-unit:
+    needs: impact
+    if: needs.impact.outputs.scope == 'go'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-impact-plan
+          path: ${{ runner.temp }}/ci-plan
+      - name: Validate scoped Go selection
+        run: |
+          python .github/scripts/ci-coverage.py resolve --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output "$RUNNER_TEMP/ci-go-plan.json"
+          python -c 'import json,os; assert json.load(open(os.environ["RUNNER_TEMP"]+"/ci-go-plan.json"))["scope"] == "go"'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Locate scoped Go caches
+        id: scoped-cache-info
+        run: |
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      # Scoped checks never populate trusted-main or release cache namespaces.
+      - name: Restore scoped Go caches
+        id: scoped-go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.scoped-cache-info.outputs.gomodcache }}
+            ${{ steps.scoped-cache-info.outputs.gocache }}
+          key: scoped-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: scoped-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.ref }}-
+      - name: Check exact toolchain and module graph
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+      - name: Test affected Go packages and reverse dependencies
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-go-scope.py --plan "$RUNNER_TEMP/ci-go-plan.json"
+          unformatted="$(gofmt -l cmd internal web)"
+          test -z "$unformatted" || { printf 'Go files need gofmt:\n%s\n' "$unformatted" >&2; exit 1; }
+      - name: Save scoped Go caches after checks pass
+        if: success() && steps.scoped-go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.scoped-cache-info.outputs.gomodcache }}
+            ${{ steps.scoped-cache-info.outputs.gocache }}
+          key: ${{ steps.scoped-go-cache.outputs.cache-primary-key }}
+
   ci-required:
     # Require this aggregate in branch protection; a skipped job alone is green.
-    needs: [impact, native, browser, manifest-smoke]
+    needs: [impact, native, browser, go-unit, manifest-smoke]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -640,7 +711,7 @@ jobs:
         with:
           name: ci-impact-plan
           path: ${{ runner.temp }}/ci-plan
-      - name: Require actual selected coverage across all four native targets
+      - name: Require every check selected for this change
         env:
           GH_TOKEN: ${{ github.token }}
         run: python .github/scripts/ci-coverage.py finalize --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output ci-coverage.json

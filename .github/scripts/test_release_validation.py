@@ -227,7 +227,7 @@ class WorkflowCachePolicy(unittest.TestCase):
 
     def test_only_successful_canonical_main_native_ci_can_save(self):
         ci = self.workflow("ci")
-        self.assertEqual(ci.count("uses: actions/cache/save@"), 2)
+        self.assertEqual(ci.count("uses: actions/cache/save@"), 3)
         save = self.step("ci", "native", "name: Save Go caches after all native checks pass on main")
         self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
         self.assertIn("        if: success() && steps.ci-plan.outputs.long_required != 'false' && " + self.MAIN_GUARD + " && steps.go-cache.outputs.cache-hit != 'true'\n", save)
@@ -433,7 +433,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn('"-timeout=5m"', relay)
         self.assertIn("timeout=9 * 60", relay)
 
-    def test_only_real_time_ci_steps_are_change_scoped(self):
+    def test_full_native_real_time_steps_and_release_are_preserved(self):
         names = ("Verify direct LAN session natural rekey and idle lifecycle",
                  "Verify guarded relay real-time lease continuity",
                  "Verify relay-only real-time lease and idle continuity")
@@ -494,11 +494,35 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("      force_full:\n", workflow)
         self.assertIn("        type: boolean\n        default: true", workflow)
         aggregate = self.job("ci", "ci-required")
-        self.assertIn("    needs: [impact, native, browser, manifest-smoke]\n", aggregate)
+        self.assertIn("    needs: [impact, native, browser, go-unit, manifest-smoke]\n", aggregate)
         self.assertIn("    if: always()\n", aggregate)
         self.assertIn("ci-coverage.py finalize", aggregate)
         self.assertNotIn("contents: write", aggregate)
         self.assertNotIn("id-token: write", aggregate)
+
+    def test_minimum_scope_jobs_and_main_concurrency_remain_explicit(self):
+        workflow = self.workflow("ci")
+        native = self.job("ci", "native")
+        for excluded in ("docs", "frontend", "go"):
+            self.assertIn("needs.impact.outputs.scope != '" + excluded + "'", native)
+        browser = self.job("ci", "browser")
+        self.assertIn("needs: impact", browser)
+        self.assertIn("needs.impact.outputs.scope != 'docs'", browser)
+        self.assertIn("needs.impact.outputs.scope != 'go'", browser)
+        self.assertIn("python .github/scripts/check-frontend.py", browser)
+        scoped = self.job("ci", "go-unit")
+        self.assertIn("if: needs.impact.outputs.scope == 'go'", scoped)
+        self.assertIn("runs-on: ubuntu-24.04", scoped)
+        self.assertIn("ci-go-scope.py --plan", scoped)
+        self.assertIn("ci-coverage.py resolve", scoped)
+        self.assertNotIn("trusted-main-go", scoped)
+        self.assertIn("format('ci-run-{0}', github.run_id)", workflow)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
+        for name in ("relay-traffic", "release-resources"):
+            self.assertNotRegex(self.workflow(name), r"(?m)^      - docs/")
+        release = self.workflow("prerelease")
+        self.assertNotIn("ci-go-scope", release)
+        self.assertNotIn("needs.impact", release)
 
     def test_native_ipc_regression_is_repeated_without_cache_skips(self):
         for workflow, command in (("ci", "go test -race -count=5 -timeout=2m ./internal/control"), ("prerelease", "go test -race -count=25 -timeout=3m ./internal/control")):
