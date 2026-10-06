@@ -20,12 +20,33 @@ export function parsePorts(value: string): PortRange[] {
   return merged
 }
 export function subtractPorts(ranges: PortRange[], excluded: PortRange[]): PortRange[] {
-  let result = ranges
-  for (const exclude of excluded) {
-    result = result.flatMap(range => {
-      if (exclude.end < range.start || exclude.start > range.end) return [range]
-      return [...(exclude.start > range.start ? [{ start: range.start, end: exclude.start - 1 }] : []), ...(exclude.end < range.end ? [{ start: exclude.end + 1, end: range.end }] : [])]
-    })
+  if (!excluded.length) return ranges
+  // Merge once instead of rescanning every surviving interval per exclusion:
+  // O((E + R) log(E + 1) + K) time and O(E + K) space for K result intervals.
+  // In a parsed 1..65535 scope, at most 32768 disjoint intervals can survive.
+  const merged: PortRange[] = []
+  for (const range of [...excluded].sort((a, b) => a.start - b.start)) {
+    const previous = merged.at(-1)
+    if (previous && range.start <= previous.end + 1) previous.end = Math.max(previous.end, range.end)
+    else merged.push({ ...range })
+  }
+  const result: PortRange[] = []
+  for (const range of ranges) {
+    // A binary search also preserves the order of unsorted/overlapping inputs.
+    let low = 0, high = merged.length
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2)
+      if (merged[middle].end < range.start) low = middle + 1
+      else high = middle
+    }
+    let start = range.start
+    for (let index = low; index < merged.length && merged[index].start <= range.end; index++) {
+      const exclude = merged[index]
+      if (exclude.start > start) result.push({ start, end: exclude.start - 1 })
+      start = Math.max(start, exclude.end + 1)
+      if (start > range.end) break
+    }
+    if (start <= range.end) result.push(start === range.start ? range : { start, end: range.end })
   }
   return result
 }
@@ -34,11 +55,12 @@ export function previewPorts(value: string, exclusions: string, local: string, m
   const excluded = exclusions.trim() ? parsePorts(exclusions) : []
   const selected = subtractPorts(parsePorts(value), excluded)
   if (mode === 'share' && local.trim() && selected.reduce((sum, range) => sum + range.end - range.start + 1, 0) !== 1) throw new PortError('invalid_share_mapping')
+  let ranges = selected
   if (mode === 'share') {
-    excluded.push({ start: 54543, end: 54545 })
-    for (const port of reservedPorts) if (Number.isInteger(port) && port > 0 && port <= 65535) excluded.push({ start: port, end: port })
+    const reserved = [{ start: 54543, end: 54545 }]
+    for (const port of reservedPorts) if (Number.isInteger(port) && port > 0 && port <= 65535) reserved.push({ start: port, end: port })
+    ranges = subtractPorts(selected, reserved)
   }
-  const ranges = subtractPorts(parsePorts(value), excluded)
   const count = ranges.reduce((sum, range) => sum + range.end - range.start + 1, 0)
   if (!count) throw new PortError('empty_ports')
   // Preserve the legacy bound only for snapshots without an effective budget.

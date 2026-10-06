@@ -1,3 +1,5 @@
+import { portProposalText } from '../port-proposals-i18n'
+import { samePortProposalSource, type PortProposalChoice } from '../port-proposals'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { CommandPayloads, Locale, ServiceConfigResult, ServiceConfiguration } from '../api'
 import { savedEditorText } from '../saved-editor-i18n'
@@ -9,9 +11,11 @@ import type { Server } from '../useServer'
 import { Button, ErrorBanner, Modal, useAlive } from './ui'
 type DefinitionDraft = Omit<ServiceConfiguration, 'id'> & { id?: string }
 const peerID = /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,127}$/
-export function SavedDefinitionEditor({ server, locale, t, onClose, onSaved, mode, source: initialSource, services }: { server: Server; locale: Locale; t: Translate; onClose: () => void; onSaved: () => void; mode: ServiceMode; source?: SavedServiceAction; services: ServiceConfiguration[] }) {
+export function SavedDefinitionEditor({ server, locale, t, onClose, onSaved, mode, source: initialSource, services, portChoice }: { server: Server; locale: Locale; t: Translate; onClose: () => void; onSaved: () => void; mode: ServiceMode; source?: SavedServiceAction; services: ServiceConfiguration[]; portChoice?: PortProposalChoice }) {
   const e = (key: string) => savedEditorText(locale, key)
   const s = (key: string) => serviceText(locale, key)
+  const p = (key: string) => portProposalText(locale, key)
+  const [checkedPort, setCheckedPort] = useState(portChoice)
   const alive = useAlive()
   const [templateID, setTemplateID] = useState('')
   const source: SavedServiceAction | undefined = initialSource || (templateID ? { id: templateID, intent: 'copy' } : undefined)
@@ -30,13 +34,13 @@ export function SavedDefinitionEditor({ server, locale, t, onClose, onSaved, mod
   const stale = useRef(server.stale)
   stale.current = server.stale
   const close = () => { ++generation.current; setReview(undefined); onClose() }
-  const reloadSource = () => { ++generation.current; setRecord(undefined); setReview(undefined); server.setError(null); setReload(value => value + 1) }
+  const reloadSource = () => { setCheckedPort(undefined); ++generation.current; setRecord(undefined); setReview(undefined); server.setError(null); setReload(value => value + 1) }
   const chooseTemplate = (id: string) => {
     if (id === templateID) return
     ++generation.current; setReview(undefined); setRecord(undefined); server.setError(null)
     setTemplateID(id); setDraft(blankDraft()); setIDs(''); setLoading(Boolean(id))
   }
-  useEffect(() => { if (server.stale) { ++generation.current; setReview(undefined); setLoading(false) } }, [server.stale])
+  useEffect(() => { if (server.stale) { ++generation.current; setReview(undefined); setLoading(false); if (checkedPort) { setCheckedPort(undefined); setRecord(undefined); setDraft(blankDraft()) } } }, [server.stale])
   useEffect(() => {
     if (!source) return
     if (stale.current) { setLoading(false); return }
@@ -47,12 +51,13 @@ export function SavedDefinitionEditor({ server, locale, t, onClose, onSaved, mod
       if (result) {
         try {
           const saved = readServiceConfig(result.result, source.id, mode)
+          if (checkedPort && (source.intent !== 'edit' || saved.active || !samePortProposalSource(saved, checkedPort.source))) { server.setError({ code: saved.active ? 'service_active' : 'service_revision_conflict' }); setLoading(false); return }
           const c = saved.configuration
           // Copy definition data only, never runtime state or replacement authority.
           const configuration: DefinitionDraft = {
             id: source.intent === 'edit' ? c.id : undefined,
             name: c.name, direction: c.direction, backend: c.backend, network: c.network,
-            ports: c.ports, excludePorts: c.excludePorts, localPort: c.localPort, loopbackHost: c.loopbackHost,
+            ports: c.ports, excludePorts: c.excludePorts, localPort: checkedPort?.localPort ?? c.localPort, loopbackHost: c.loopbackHost,
             lifetime: c.lifetime || 'finite', ttlSeconds: c.ttlSeconds, purpose: c.purpose, discoverable: c.discoverable,
             ...(mode === 'share' ? { peerIds: [...c.peerIds!] } : { peerId: c.peerId, serviceId: c.serviceId, serviceRevision: c.serviceRevision }),
           }
@@ -71,6 +76,7 @@ export function SavedDefinitionEditor({ server, locale, t, onClose, onSaved, mod
   const selectedIDs = ids.split(',').map(id => id.trim()).filter(Boolean)
   const configuration: DefinitionDraft = { ...draft, peerId: mode === 'connect' ? selectedIDs[0] : undefined, peerIds: mode === 'share' ? selectedIDs : undefined }
   const preview = useMemo(() => { try { return previewPorts(draft.ports, draft.excludePorts || '', draft.localPort ? String(draft.localPort) : '', mode, [], { protocol: draft.network, maxListeners: 65535 }) } catch { return null } }, [draft.ports, draft.excludePorts, draft.localPort, draft.network, mode])
+  const originalPortMapping = checkedPort ? previewPorts(checkedPort.source.configuration.ports, checkedPort.source.configuration.excludePorts || '', checkedPort.source.configuration.localPort ? String(checkedPort.source.configuration.localPort) : '', 'connect', [], { maxListeners: 65535 }).mappings.map(item => `${loopbackEndpoint(checkedPort.source.configuration.loopbackHost || '127.0.0.1', item.local)} → ${item.remote}`).join('; ') : ''
   const duplicateName = services.some(service => service.name === draft.name && service.id !== draft.id)
   const valid = validServiceName(draft.name) && !duplicateName && ['tailnet', 'lan', 'direct-lan', 'mixed'].includes(draft.backend || '') && selectedIDs.length > 0 && (mode !== 'connect' || selectedIDs.length === 1) && selectedIDs.every(id => peerID.test(id)) && new Set(selectedIDs).size === selectedIDs.length && validLifetime(draft.lifetime || 'finite', draft.ttlSeconds, mode) && Boolean(preview)
   const active = source?.intent === 'edit' && (record?.active || [...(server.state?.services || []), ...(server.state?.shares || [])].some(service => service.id === source.id && ['active', 'reconnecting'].includes(service.status)))
@@ -92,7 +98,7 @@ export function SavedDefinitionEditor({ server, locale, t, onClose, onSaved, mod
       onSaved()
     } finally { saving.current = false; if (alive.current) setSubmitting(false) }
   }
-  return <Modal title={e(initialSource?.intent === 'edit' ? 'edit' : initialSource?.intent === 'copy' ? 'copy' : mode === 'connect' ? 'createForward' : 'createShare')} t={t} onClose={close} wide><p>{e('intro')}</p>{submitting && <p role="status" className="scope-note">{e('saving')}</p>}{!initialSource && mode === 'share' && templates.length > 0 && <label className="field">{e('template')}<select value={templateID} disabled={submitting || server.busy.has('service.save') || server.stale} onChange={event => chooseTemplate(event.target.value)}><option value="">{e('blankTemplate')}</option>{templates.map(service => <option key={service.id} value={service.id}>{service.name} · {service.network.toUpperCase()} · {service.ports}</option>)}</select><small>{e('templateHint')}</small></label>}{server.error != null && <ErrorBanner message={s(code) || errorText(server.error, t)} t={t} />}{source && !record ? <><p role="status">{t(loading ? 'loading' : 'unavailable')}</p>{!loading && <Button disabled={server.stale || submitting} onClick={reloadSource}>{e('reload')}</Button>}</> : <form className="form-stack" onSubmit={prepare}>
+  return <Modal title={e(initialSource?.intent === 'edit' ? 'edit' : initialSource?.intent === 'copy' ? 'copy' : mode === 'connect' ? 'createForward' : 'createShare')} t={t} onClose={close} wide><p>{e('intro')}</p>{checkedPort && <section className="scope-note" aria-label={p('chosen')}><p>{p('draft')}</p><p className="code-value">{p('source')}: {checkedPort.source.configuration.name} · {checkedPort.source.configuration.id}</p><p className="code-value">{p('revision')}: {checkedPort.source.revision}</p><p>{p('original')}: {originalPortMapping} · {p('chosen')}: {checkedPort.localPort}</p><p>{p('checkedAt')}: {checkedPort.checkedAt}</p><p>{p('warning')}</p><p>{p('reloadHint')}</p></section>}{submitting && <p role="status" className="scope-note">{e('saving')}</p>}{!initialSource && mode === 'share' && templates.length > 0 && <label className="field">{e('template')}<select value={templateID} disabled={submitting || server.busy.has('service.save') || server.stale} onChange={event => chooseTemplate(event.target.value)}><option value="">{e('blankTemplate')}</option>{templates.map(service => <option key={service.id} value={service.id}>{service.name} · {service.network.toUpperCase()} · {service.ports}</option>)}</select><small>{e('templateHint')}</small></label>}{server.error != null && <ErrorBanner message={s(code) || errorText(server.error, t)} t={t} />}{source && !record ? <><p role="status">{t(loading ? 'loading' : 'unavailable')}</p>{!loading && <Button disabled={server.stale || submitting} onClick={reloadSource}>{e('reload')}</Button>}</> : <form className="form-stack" onSubmit={prepare}>
     {active && <p className="scope-note">{e('active')}</p>}<label className="field">{t('ruleName')}<input value={draft.name} maxLength={64} required disabled={busy} onChange={event => change({ name: event.target.value })} /></label><label className="field">{e('backend')}<select value={draft.backend || ''} disabled={busy || source?.intent === 'edit' && Boolean(record?.configuration.backend)} onChange={event => change({ backend: event.target.value as 'tailnet' | 'lan' | 'direct-lan' | 'mixed' | '' })}><option value="">{e('chooseBackend')}</option><option value="tailnet">Tailnet</option><option value="lan">LAN</option><option value="direct-lan">{t('direct-lan')}</option><option value="mixed">{t('mixed')}</option></select><small>{e('backendHint')}</small></label>
     <label className="field">{e('peers')}<input value={ids} required disabled={busy || Boolean(draft.serviceId)} onChange={event => { setIDs(event.target.value); setReview(undefined) }} autoComplete="off" spellCheck={false} /><small>{e('peerHint')}</small></label>{!draft.serviceId && <select aria-label={e('addPeer')} value="" disabled={busy} onChange={event => { setIDs(mode === 'connect' ? event.target.value : [...new Set([...selectedIDs, event.target.value])].join(', ')); setReview(undefined) }}><option value="">{e('addPeer')}</option>{server.state?.peers.filter(peer => peer.networks.includes(draft.backend as 'lan' | 'tailnet' | 'direct-lan' | 'mixed')).map(peer => <option key={peer.id} value={peer.id}>{peer.name} · {peer.id}</option>)}</select>}{selectedIDs.some(id => !server.state?.peers.some(peer => peer.id === id && peer.networks.includes(draft.backend as 'lan' | 'tailnet' | 'direct-lan' | 'mixed'))) && <p className="scope-note">{e('unavailable')}</p>}
     <div className="form-row"><label className="field grow">{t('ports')}<input value={draft.ports} required disabled={busy || Boolean(draft.serviceId)} onChange={event => change({ ports: event.target.value })} spellCheck={false} /></label><label className="field">{t('protocol')}<select value={draft.network} disabled={busy || Boolean(draft.serviceId)} onChange={event => change({ network: event.target.value as 'tcp' | 'udp' })}><option value="tcp">TCP</option><option value="udp">UDP</option></select></label></div><label className="field">{t('excludePorts')}<input value={draft.excludePorts || ''} disabled={busy || Boolean(draft.serviceId)} onChange={event => change({ excludePorts: event.target.value })} /></label><div className="form-row"><label className="field grow">{s('loopbackHost')}<select value={draft.loopbackHost || '127.0.0.1'} disabled={busy} onChange={event => change({ loopbackHost: event.target.value as '127.0.0.1' | '::1' })}><option>127.0.0.1</option><option>::1</option></select></label><label className="field grow">{mode === 'connect' ? t('localStart') : s('shareLocalPort')}<input type="number" min={mode === 'connect' ? 1024 : 1} max="65535" value={draft.localPort || ''} disabled={busy} onChange={event => change({ localPort: event.target.value ? Number(event.target.value) : undefined })} /></label></div>

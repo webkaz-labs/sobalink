@@ -2,7 +2,7 @@
 
 [日本語](PORT_PROPOSALS.ja.md) · [CLI guide](CLI_GUIDE.en.md) · [Capacity](CAPACITY.en.md) · [API](../web/API.md)
 
-A stopped saved outbound TCP/UDP connection can explicitly check alternate local entry ports. The existing fixed port stays unchanged until a separate reviewed restart. The local Web UI does not yet offer this action.
+A stopped saved outbound TCP/UDP connection can explicitly check alternate local entry ports. The existing fixed port stays unchanged until a separate reviewed save or restart. In the local Web UI, open **Saved services → Manage service → Check alternate ports** for a stopped connection. Opening the view reads its source only; **Check loopback ports now** explicitly performs the transient checks.
 
 ```sh
 soba service show NAME_OR_ID
@@ -10,6 +10,8 @@ soba service ports NAME_OR_ID
 soba --dry-run service restart NAME_OR_ID --local-port PORT --expected-revision REVISION
 soba service restart NAME_OR_ID --local-port PORT --expected-revision REVISION
 ```
+
+The Web view shows the exact source ID/revision, protocol, loopback family, original mapping, effective remote ports, exclusions and checking time. Count and attempt inputs use the current finite capacity settings when zero; bind and time budgets remain configurable through **Preferences → Capacity and history**. Candidate lists are paged without additional checks. Select a candidate explicitly, then choose **Edit draft with selected port**. The saved-definition editor rereads the source and rejects a changed revision before seeding the candidate. Review the complete stopped definition and save it separately; starting remains another reviewed action. Reloading the source discards the candidate instead of applying it to a newer revision. Closing, changing source or losing contact discards pending results. These observations use fresh request identities outside mutating retry guards.
 
 Use the revision and chosen port returned by `service ports`, and retain the same `--state-dir` throughout. Review the entire saved scope and lifetime before restarting: normal explicit restart begins the reviewed permission lifetime. An active service must first be stopped explicitly. Shares and application-side target ports are outside this proposal command.
 
@@ -33,7 +35,7 @@ A proposal is not a reservation or a promise of later availability. Another proc
 
 These defaults can be raised or lowered through the normal capacity preview/apply flow. Explicit positive requests must fit the chosen budgets. The port domain itself bounds the search to 64512 high starting positions. Total work and result count are finite, independent of service permission lifetime. Larger mapped ranges need enough simultaneous-listener and total-bind budget to check a complete window. The deadline begins before configuration preflight and includes the backend-state read. Normalized exclusion scanning is linear; parsing and normalization are bounded by the physical port domain. The Core command lock stays held for one consistent review. Cancellation or timeout closes partial windows and returns a stable error without a proposal result.
 
-`stopReason` reports `requested_count`, `attempt_budget`, `bind_budget` or `port_range`; fewer results do not prove that all other ports are occupied. Use another high starting point or review the finite budgets. `--dry-run service ports ...` prints the planned command without binding. `--json` retains the same schema and values in Japanese and English. These observations are not retained in the request deduplication cache: even a repeated request ID performs a fresh explicit check. The selected finite result count and physical port domain bound a single result; the usual local response-size envelope still applies. A response or decoding failure returns an error, not usable partial proposals.
+`stopReason` reports `requested_count`, `attempt_budget`, `bind_budget` or `port_range`; fewer results do not prove that all other ports are occupied. Use another high starting point or review the finite budgets. `--dry-run service ports ...` prints the planned command without binding. `--json` retains the same schema and values in Japanese and English. These observations are not retained in the request deduplication cache: even a repeated request ID performs a fresh explicit check. The selected finite result count and physical port domain bound a single result; the local IPC response-size envelope also applies to CLI responses. The Web path parses the complete bounded result rather than imposing a separate raw-response byte limit. A response or decoding failure returns an error, not usable partial proposals.
 
 ## Known failures
 

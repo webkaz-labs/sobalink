@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
+import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
 import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
 
 export { expect }
@@ -248,15 +249,17 @@ export const test = base.extend({
         try { await app.capture(name) } catch { /* Never relax privacy checks for failure evidence. */ }
       }
     } finally {
-      // Fallback cleanup never counts as the shutdown assertion above.
-      if (!exited) child.kill('SIGTERM')
-      let cleanupResult
-      try { cleanupResult = await waitForExit(exit, 5_000) } catch { child.kill('SIGKILL'); cleanupResult = await waitForExit(exit, 5_000) }
-      await rm(privateRoot, { recursive: true, force: true })
-      if (usedFixture && testInfo.status === testInfo.expectedStatus) {
-        assert.equal(cleanupResult.code, 0, 'The isolated Go fixture must close without an error')
-        assert.equal(cleanupResult.signal, null, 'Fixture cleanup must finish without forced termination')
-      }
+      await drainRoutesBeforeCleanup(page, async () => {
+        // Fallback cleanup never counts as the shutdown assertion above.
+        if (!exited) child.kill('SIGTERM')
+        let cleanupResult
+        try { cleanupResult = await waitForExit(exit, 5_000) } catch { child.kill('SIGKILL'); cleanupResult = await waitForExit(exit, 5_000) }
+        await rm(privateRoot, { recursive: true, force: true })
+        if (usedFixture && testInfo.status === testInfo.expectedStatus) {
+          assert.equal(cleanupResult.code, 0, 'The isolated Go fixture must close without an error')
+          assert.equal(cleanupResult.signal, null, 'Fixture cleanup must finish without forced termination')
+        }
+      })
     }
   },
 })

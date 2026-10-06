@@ -169,6 +169,12 @@ export interface ServiceConfiguration extends ServicePayload {
   id: string
   direction: 'forward' | 'share'
 }
+export interface ServicePortProposals {
+  configuration: ServiceConfiguration; revision: string; code: 'listener_conflict' | 'listener_proposals_exhausted'; conflictPort: number
+  effectivePorts: string; checkedAt: string; fromPort: number; attempts: number; requestedCount: number
+  attemptBudget: number; bindChecks: number; stopReason: 'requested_count' | 'attempt_budget' | 'bind_budget' | 'port_range'
+  proposals: { localPort: number; localEnd: number }[]; reservation: false; nextSteps: Record<Locale, string>
+}
 export interface ServiceConfigResult { configuration: ServiceConfiguration; revision: string; active: boolean }
 export interface ServicePayload {
   backend?: Network | ''
@@ -267,6 +273,7 @@ export interface CommandPayloads {
   'service.share': ServicePayload
   'service.stop': { id: string }
   'service.config': { id: string }
+  'service.ports': { id: string; expectedRevision: string; fromPort?: number; count?: number; attempts?: number }
   'network.configure': { mode: 'none' | Network; mixed?: { backends: TransportBackend[] }; directLAN?: { listen: string; prefixes: string[] }; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
   'network.logout': Record<string, never>
   'network.login': { refresh?: boolean; qr?: boolean }

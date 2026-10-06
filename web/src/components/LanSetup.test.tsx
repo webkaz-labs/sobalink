@@ -20,7 +20,7 @@ function readyState(): State {
     csrfToken: 'fixture-csrf', self: { name: 'test-device', status: 'online' },
     peers: [], messages: [], transfers: [], services: [], shares: [],
     settings: { network: 'lan' },
-    lan: { configured: true, pairingReady: true, publicKey, path: 'relay', relay: { kind: 'relay', address: '192.0.2.10:443', certificateSHA256 } },
+    lan: { configured: true, pairingReady: true, publicKey, path: 'relay', policy: { mode: 'trusted-relay', prefixes: [], editable: false, restartRequired: false }, relay: { kind: 'relay', address: '192.0.2.10:443', certificateSHA256 } },
   }
 }
 function invitation(): ActiveInvitation {
@@ -43,18 +43,19 @@ function setup({ state = readyState(), draft = emptyLanDraft(), stale = false, l
   const setError = vi.fn()
   const onViewPeer = vi.fn()
   let currentDraft = draft
+  let replaceDraft = (_value: LanDraft) => {}
   const server: Server = {
     state, auth: 'ready', stale, error: null, setError, busy: new Set(),
     refresh: vi.fn().mockResolvedValue(state), run: execute, updatedAt: null, messageBlock: vi.fn().mockResolvedValue(null), messageGuardRevision: 0, handleError: vi.fn(),
   }
-  function Harness({ nextState, visible = true }: { nextState: State; visible?: boolean }) {
+  function Harness({ nextState, visible = true, serverPatch = {} }: { nextState: State; visible?: boolean; serverPatch?: Partial<Server> }) {
     const [value, setDraft] = useState(draft)
     const [hostname, setHostname] = useState('test-device')
-    currentDraft = value
-    return visible ? <LanSetup server={{ ...server, state: nextState }} state={nextState} t={translator(locale)} locale={locale} hostname={hostname} setHostname={setHostname} draft={value} setDraft={setDraft} onViewPeer={onViewPeer} /> : null
+    currentDraft = value; replaceDraft = setDraft
+    return visible ? <LanSetup server={{ ...server, ...serverPatch, state: nextState }} state={nextState} t={translator(locale)} locale={locale} hostname={hostname} setHostname={setHostname} draft={value} setDraft={setDraft} onViewPeer={onViewPeer} /> : null
   }
   const view = render(<Harness nextState={state} />)
-  return { ...view, user, run, readAddresses, refresh: server.refresh as ReturnType<typeof vi.fn<Server['refresh']>>, setError, onViewPeer, draft: () => currentDraft, update: (nextState = state, visible = true) => view.rerender(<Harness nextState={nextState} visible={visible} />) }
+  return { ...view, user, run, readAddresses, refresh: server.refresh as ReturnType<typeof vi.fn<Server['refresh']>>, setError, onViewPeer, draft: () => currentDraft, setDraft: (value: LanDraft) => act(() => replaceDraft(value)), update: (nextState = state, visible = true, serverPatch: Partial<Server> = {}) => view.rerender(<Harness nextState={nextState} visible={visible} serverPatch={serverPatch} />) }
 }
 function unconfiguredState(): State {
   return { ...readyState(), settings: { network: 'none' }, lan: { configured: false, pairingReady: false, publicKey, path: 'unknown' } }
@@ -123,14 +124,15 @@ describe('LAN setup commands and relay scope', () => {
     else expect(view.run).toHaveBeenCalledWith('lan.inspect', { invitation: opaqueInvitation })
   })
 
-  it('joins only after submission and leaves communication trust and automatic receiving untouched', async () => {
+  it('inspects and joins only after explicit review, leaving communication trust and automatic receiving untouched', async () => {
     const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: ` ${opaqueInvitation} ` } })
-    view.run.mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: pairedPeer().id } })
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } }).mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: pairedPeer().id } })
     expect(view.run).not.toHaveBeenCalled()
     expect(screen.getByLabelText(t('invitation'), { exact: false })).toHaveAttribute('type', 'password')
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
     await view.user.click(screen.getByRole('button', { name: t('join') }))
     await waitFor(() => expect(view.draft().joinedPeerId).toBe(pairedPeer().id))
-    expect(view.run.mock.calls).toEqual([['lan.join', { invitation: opaqueInvitation }]])
+    expect(view.run.mock.calls).toEqual([['lan.inspect', { invitation: opaqueInvitation }], ['lan.join', { invitation: opaqueInvitation }]])
     expect(view.draft().joinInvitation).toBe('')
     expect(screen.getByText(t('paired'))).toBeInTheDocument()
     expect(view.onViewPeer).not.toHaveBeenCalled()
@@ -138,7 +140,8 @@ describe('LAN setup commands and relay scope', () => {
 
   it('rejects an unexpected join acknowledgement that claims communication was automatically trusted', async () => {
     const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
-    view.run.mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: true, peerId: pairedPeer().id } })
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } }).mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: true, peerId: pairedPeer().id } })
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
     await view.user.click(screen.getByRole('button', { name: t('join') }))
     expect(view.setError).toHaveBeenCalledWith({ code: 'invalid_response' })
     expect(view.draft().joinedPeerId).toBeUndefined()
@@ -232,7 +235,8 @@ describe('LAN invitation secrets and interrupted responses', () => {
     const state = { ...readyState(), peers: [pairedPeer()] }
     const pending = deferred<CommandResult>()
     const view = setup({ state, draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
-    view.run.mockReturnValueOnce(pending.promise)
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } }).mockReturnValueOnce(pending.promise)
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
     await view.user.click(screen.getByRole('button', { name: t('join') }))
     view.update(state, false)
     await act(async () => { pending.resolve({ ok: true, result: { paired: true, trusted: false, peerId: pairedPeer().id } }); await pending.promise })
@@ -242,7 +246,7 @@ describe('LAN invitation secrets and interrupted responses', () => {
     view.update(state)
     await view.user.click(screen.getByRole('button', { name: t('viewDevice') }))
     expect(view.onViewPeer).toHaveBeenCalledExactlyOnceWith(pairedPeer().id)
-    expect(view.run.mock.calls).toEqual([['lan.join', { invitation: opaqueInvitation }]])
+    expect(view.run.mock.calls).toEqual([['lan.inspect', { invitation: opaqueInvitation }], ['lan.join', { invitation: opaqueInvitation }]])
   })
 
   it('shows an issued invitation as paired after the exact recipient appears and stops offering copy or cancellation', async () => {
@@ -570,12 +574,12 @@ describe('LAN setup failure and interruption boundaries', () => {
     const view = setup({ state, draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
     view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } })
     await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
-    await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
+    await view.user.click(screen.getByRole('button', { name: t('join') }))
     expect(screen.getByRole('alert')).toHaveTextContent(lt('joinDifferentRelay'))
     expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
   })
 
-  it('retries only pairing after configured readiness appears and an earlier join was unacknowledged', async () => {
+  it('requires a fresh review after configured state changes, then retries only pairing', async () => {
     const view = setup({ state: unconfiguredState(), draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
     view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } }).mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce(undefined)
     view.refresh.mockResolvedValueOnce(readyState())
@@ -583,9 +587,10 @@ describe('LAN setup failure and interruption boundaries', () => {
     await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
     expect(view.draft().joinInvitation).toBe(opaqueInvitation)
     view.update(readyState())
-    view.run.mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } })
-    await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
-    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect', 'network.configure', 'lan.join', 'lan.join'])
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } }).mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } })
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
+    await view.user.click(screen.getByRole('button', { name: t('join') }))
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect', 'network.configure', 'lan.join', 'lan.inspect', 'lan.join'])
     expect(view.draft().joinInvitation).toBe('')
   })
 
@@ -706,5 +711,258 @@ describe('Initial destination policy is atomic with relay setup', () => {
     fireEvent.change(screen.getByRole('textbox', { name: p('prefixes') }), { target: { value: '192.168.20.0/25' } })
     expect(screen.queryByRole('region', { name: lt('hostReview') })).not.toBeInTheDocument()
     expect(view.run).not.toHaveBeenCalled()
+  })
+})
+
+describe('Reviewed pairing on an already configured LAN', () => {
+  async function inspect(view: ReturnType<typeof setup>, locale: Locale = 'en') {
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } })
+    await view.user.click(screen.getByRole('button', { name: lanTranslator(locale)('reviewInvitation') }))
+    return screen.getByRole('region', { name: lanTranslator(locale)('joinReview') })
+  }
+
+  it.each(['en', 'ja'] as const)('%s: shows the exact public target and scope before any join', async locale => {
+    const view = setup({ locale, draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    const review = await inspect(view, locale)
+    expect(review).toHaveFocus()
+    for (const text of ['Host device', recipientPublicKey, '192.0.2.10:443', certificateSHA256, lanTranslator(locale)('joinExistingImpact'), lanTranslator(locale)('previewLimit')]) expect(review).toHaveTextContent(text)
+    expect(review.querySelector('time')).toHaveAttribute('dateTime', expect.any(String))
+    expect(review).not.toHaveTextContent(lanTranslator(locale)('joinRelayImpact'))
+    expectSecretAbsent(view.container, opaqueInvitation)
+    expect(localStorage.length).toBe(0)
+    expect(sessionStorage.length).toBe(0)
+    await view.user.click(screen.getByRole('button', { name: translator(locale)('cancel') }))
+    expect(screen.queryByRole('region', { name: lanTranslator(locale)('joinReview') })).not.toBeInTheDocument()
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
+    expect(view.draft().joinInvitation).toBe(opaqueInvitation)
+  })
+
+  it('requires an existing identity even when the relay reports ready', () => {
+    const state = readyState(); delete state.lan!.publicKey
+    const view = setup({ state, draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    const button = screen.getByRole('button', { name: lt('reviewInvitation') })
+    expect(button).toBeDisabled()
+    fireEvent.submit(button.closest('form')!)
+    expect(screen.getByRole('alert')).toHaveTextContent(lt('joinNeedsIdentity'))
+    expect(view.run).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates repeated inspect and join clicks and explains a pending mutation', async () => {
+    const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    const inspection = deferred<CommandResult>(), pairing = deferred<CommandResult>()
+    view.run.mockReturnValueOnce(inspection.promise).mockReturnValueOnce(pairing.promise)
+    const form = screen.getByRole('button', { name: lt('reviewInvitation') }).closest('form')!
+    act(() => { fireEvent.submit(form); fireEvent.submit(form) })
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
+    await act(async () => { inspection.resolve({ ok: true, result: { ...previewInvitation() } }); await inspection.promise })
+    const confirm = screen.getByRole('button', { name: t('join') })
+    act(() => { fireEvent.click(confirm); fireEvent.click(confirm) })
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect', 'lan.join'])
+    expect(screen.getByText(lt('joinPending'))).toHaveAttribute('role', 'status')
+    expect(screen.getByRole('button', { name: t('cancel') })).toBeDisabled()
+    await act(async () => { pairing.resolve({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } }); await pairing.promise })
+    expect(view.draft().joinedPeerId).toBe(recipientPublicKey)
+    expect(screen.queryByText(lt('joinPending'))).not.toBeInTheDocument()
+  })
+
+  const changes: [string, (view: ReturnType<typeof setup>) => void][] = [
+    ['exact input bytes', view => view.setDraft({ ...view.draft(), joinInvitation: ` ${opaqueInvitation}` })],
+    ['local identity', view => view.update({ ...readyState(), lan: { ...readyState().lan!, publicKey: 'd4'.repeat(32) } })],
+    ['relay address', view => view.update({ ...readyState(), lan: { ...readyState().lan!, relay: { ...readyState().lan!.relay!, address: '192.0.2.11:443' } } })],
+    ['relay pin', view => view.update({ ...readyState(), lan: { ...readyState().lan!, relay: { ...readyState().lan!.relay!, certificateSHA256: 'd4'.repeat(32) } } })],
+    ['relay kind', view => view.update({ ...readyState(), lan: { ...readyState().lan!, relay: { ...readyState().lan!.relay!, kind: 'host' }, relayReady: true } })],
+    ['relay readiness', view => view.update({ ...readyState(), lan: { ...readyState().lan!, pairingReady: false } })],
+    ['saved configuration', view => view.update({ ...readyState(), lan: { ...readyState().lan!, configured: false } })],
+    ['network mode', view => view.update({ ...readyState(), settings: { network: 'tailnet' } })],
+    ['destination scope', view => view.update({ ...readyState(), lan: { ...readyState().lan!, policy: { mode: 'allowed-lan-destinations', prefixes: ['192.168.50.0/24'], editable: false, restartRequired: false } } })],
+    ['manual relay draft', view => view.setDraft({ ...view.draft(), relayAddress: '192.0.2.12:443' })],
+    ['device name', () => fireEvent.change(screen.getByLabelText(t('deviceName')), { target: { value: 'changed-device' } })],
+    ['stale state', view => view.update(readyState(), true, { stale: true })],
+    ['authentication', view => view.update(readyState(), true, { auth: 'locked' })],
+    ['local session', view => view.update({ ...readyState(), csrfToken: 'changed-fixture-session' })],
+  ]
+  for (const phase of ['inspection', 'review'] as const) {
+    it.each(changes)(`invalidates ${phase} when %s changes`, async (_reason, change) => {
+      const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+      const pending = deferred<CommandResult>()
+      if (phase === 'inspection') {
+        view.run.mockReturnValueOnce(pending.promise)
+        await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
+      } else await inspect(view)
+      change(view)
+      if (phase === 'inspection') await act(async () => { pending.resolve({ ok: true, result: { ...previewInvitation() } }); await pending.promise })
+      expect(screen.queryByRole('region', { name: lt('joinReview') })).not.toBeInTheDocument()
+      expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
+      expect(view.draft().joinedPeerId).toBeUndefined()
+    })
+  }
+
+  it.each(['close', 'section'] as const)('discards late inspection after %s and reopening', async action => {
+    const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    const pending = deferred<CommandResult>()
+    view.run.mockReturnValueOnce(pending.promise)
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
+    if (action === 'close') { view.update(readyState(), false); view.update() }
+    else { await view.user.click(screen.getByRole('button', { name: t('inviteDevice') })); await view.user.click(screen.getByRole('button', { name: t('joinDevice') })) }
+    await act(async () => { pending.resolve({ ok: true, result: { ...previewInvitation() } }); await pending.promise })
+    expect(screen.queryByRole('region', { name: lt('joinReview') })).not.toBeInTheDocument()
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
+  })
+
+  it('does not restore a review after a stale state recovers or an input edit is reverted', async () => {
+    const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    view.update(readyState(), true, { stale: true }); view.update()
+    expect(screen.queryByRole('region', { name: lt('joinReview') })).not.toBeInTheDocument()
+    const pending = deferred<CommandResult>(); view.run.mockReturnValueOnce(pending.promise)
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
+    view.setDraft({ ...view.draft(), joinInvitation: ` ${opaqueInvitation}` }); view.setDraft({ ...view.draft(), joinInvitation: opaqueInvitation })
+    await act(async () => { pending.resolve({ ok: true, result: { ...previewInvitation() } }); await pending.promise })
+    expect(screen.queryByRole('region', { name: lt('joinReview') })).not.toBeInTheDocument()
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect', 'lan.inspect'])
+  })
+
+  it('invalidates an expired review even if the local clock later moves back', async () => {
+    const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    const start = Date.now()
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    try {
+      vi.setSystemTime(start + 360_000)
+      fireEvent.click(screen.getByRole('button', { name: t('join') }))
+      expect(screen.queryByRole('region', { name: lt('joinReview') })).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent(lt('invitationExpired'))
+      vi.setSystemTime(start)
+      view.update()
+      expect(screen.queryByRole('region', { name: lt('joinReview') })).not.toBeInTheDocument()
+      expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
+    } finally { vi.useRealTimers() }
+  })
+
+  it('rechecks the reviewed relay without replacing an already configured relay', async () => {
+    const state = readyState(); state.lan!.relay!.address = '192.0.2.11:443'
+    const view = setup({ state, draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    await view.user.click(screen.getByRole('button', { name: t('join') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(lt('joinDifferentRelay'))
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
+  })
+
+  it('preserves the exact mutation payload on an unacknowledged retry in unchanged context', async () => {
+    const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    view.run.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } })
+    await view.user.click(screen.getByRole('button', { name: t('join') }))
+    expect(view.draft().joinedPeerId).toBeUndefined()
+    await view.user.click(screen.getByRole('button', { name: t('join') }))
+    expect(view.run.mock.calls).toEqual([['lan.inspect', { invitation: opaqueInvitation }], ['lan.join', { invitation: opaqueInvitation }], ['lan.join', { invitation: opaqueInvitation }]])
+  })
+
+  it('retains a late acknowledged pair without clearing a changed input or navigating', async () => {
+    const state = { ...readyState(), peers: [pairedPeer()] }
+    const view = setup({ state, draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    const pending = deferred<CommandResult>(); view.run.mockReturnValueOnce(pending.promise)
+    await view.user.click(screen.getByRole('button', { name: t('join') }))
+    view.setDraft({ ...view.draft(), joinInvitation: ` ${opaqueInvitation}` })
+    expect(screen.getByText(lt('joinPending'))).toBeInTheDocument()
+    await act(async () => { pending.resolve({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } }); await pending.promise })
+    expect(view.draft().joinedPeerId).toBe(recipientPublicKey)
+    expect(view.draft().joinInvitation).toBe(` ${opaqueInvitation}`)
+    expect(view.onViewPeer).not.toHaveBeenCalled()
+  })
+
+  it('does not claim pairing with an unexpected peer from the acknowledgement', async () => {
+    const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    view.run.mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: 'd4'.repeat(32) } })
+    await view.user.click(screen.getByRole('button', { name: t('join') }))
+    expect(view.setError).toHaveBeenCalledWith({ code: 'invalid_response' })
+    expect(view.draft().joinedPeerId).toBeUndefined()
+  })
+
+  it('keeps a pending mutation noticeable after closing and reopening setup', async () => {
+    const view = setup({ draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    view.update(readyState(), false)
+    view.update(readyState(), true, { busy: new Set(['lan.join']) })
+    expect(screen.getByText(lt('joinPending'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: lt('reviewInvitation') })).toBeDisabled()
+    fireEvent.submit(screen.getByRole('button', { name: lt('reviewInvitation') }).closest('form')!)
+    expect(view.run).not.toHaveBeenCalled()
+  })
+
+  it('allows only the reviewed initial configuration transition before pairing', async () => {
+    const view = setup({ state: unconfiguredState(), draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    const pending = deferred<CommandResult>()
+    view.run.mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } })
+    view.refresh.mockResolvedValueOnce(readyState())
+    await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
+    view.update(readyState())
+    expect(screen.queryByRole('region', { name: lt('joinReview') })).not.toBeInTheDocument()
+    await act(async () => { pending.resolve({ ok: true }); await pending.promise })
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect', 'network.configure', 'lan.join'])
+  })
+
+  it.each(['identity', 'relay', 'relay kind', 'scope', 'stale', 'input'] as const)('stops initial configuration continuation when %s changes', async change => {
+    const view = setup({ state: unconfiguredState(), draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    await inspect(view)
+    const pending = deferred<CommandResult>(); view.run.mockReturnValueOnce(pending.promise)
+    view.refresh.mockResolvedValueOnce(readyState())
+    await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
+    if (change === 'identity') view.update({ ...readyState(), lan: { ...readyState().lan!, publicKey: 'd4'.repeat(32) } })
+    if (change === 'relay') view.update({ ...readyState(), lan: { ...readyState().lan!, relay: { ...readyState().lan!.relay!, address: '192.0.2.99:443' } } })
+    if (change === 'relay kind') view.update({ ...readyState(), lan: { ...readyState().lan!, relay: { ...readyState().lan!.relay!, kind: 'host' }, relayReady: true } })
+    if (change === 'scope') view.update({ ...readyState(), lan: { ...readyState().lan!, policy: { mode: 'allowed-lan-destinations', prefixes: ['192.168.50.0/24'], editable: false, restartRequired: false } } })
+    if (change === 'stale') view.update(readyState(), true, { stale: true })
+    if (change === 'input') view.setDraft({ ...view.draft(), joinInvitation: 'different-synthetic-invitation' })
+    await act(async () => { pending.resolve({ ok: true }); await pending.promise })
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect', 'network.configure'])
+    expect(view.draft().joinedPeerId).toBeUndefined()
+  })
+})
+
+describe('Initial reviewed configuration readback', () => {
+  it.each(['relay kind', 'scope', 'identity'] as const)('does not join when fresh readback changed %s without a component update', async changed => {
+    const view = setup({ state: unconfiguredState(), draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation } })
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...previewInvitation() } }).mockResolvedValueOnce({ ok: true })
+    const fresh = readyState()
+    if (changed === 'relay kind') fresh.lan!.relay!.kind = 'host'
+    if (changed === 'scope') fresh.lan!.policy = { mode: 'allowed-lan-destinations', prefixes: ['192.168.50.0/24'], editable: false, restartRequired: false }
+    if (changed === 'identity') fresh.lan!.publicKey = 'd4'.repeat(32)
+    view.refresh.mockResolvedValueOnce(fresh)
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
+    await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect', 'network.configure'])
+    expect(view.draft().joinedPeerId).toBeUndefined()
+  })
+})
+
+describe('Saved LAN configuration with networking disabled', () => {
+  it.each(['same relay', 'different relay', 'absent network'] as const)('explicitly reviews configuration for %s and preserves the saved policy', async situation => {
+    const saved = readyState()
+    saved.settings = situation === 'absent network' ? {} : { network: 'none' }
+    saved.lan!.pairingReady = false
+    saved.lan!.relay!.address = '192.168.50.5:48443'
+    saved.lan!.policy = { mode: 'allowed-lan-destinations', prefixes: ['192.168.50.0/24'], editable: true, restartRequired: false }
+    const preview = previewInvitation(); preview.relay.address = saved.lan!.relay!.address
+    if (situation === 'different relay') preview.relay.address = '192.168.50.10:48443'
+    const view = setup({ state: saved, draft: { ...emptyLanDraft(), joinInvitation: opaqueInvitation, policyMode: 'trusted-relay', policyPrefixes: '' } })
+    view.run.mockResolvedValueOnce({ ok: true, result: { ...preview } }).mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: true, result: { paired: true, trusted: false, peerId: recipientPublicKey } })
+    view.refresh.mockResolvedValueOnce({ ...readyState(), lan: { ...readyState().lan!, relay: preview.relay, policy: { ...saved.lan!.policy!, editable: false } } })
+    await view.user.click(screen.getByRole('button', { name: lt('reviewInvitation') }))
+    const review = screen.getByRole('region', { name: lt('joinReview') })
+    expect(review).toHaveTextContent(lt('joinRelayImpact'))
+    expect(review).not.toHaveTextContent(lt('joinExistingImpact'))
+    expect(review).toHaveTextContent(preview.relay.address)
+    expect(screen.queryByRole('button', { name: t('join') })).not.toBeInTheDocument()
+    expect(view.run.mock.calls.map(call => call[0])).toEqual(['lan.inspect'])
+    await view.user.click(screen.getByRole('button', { name: lt('activateAndJoin') }))
+    expect(view.run.mock.calls).toEqual([
+      ['lan.inspect', { invitation: opaqueInvitation }],
+      ['network.configure', { mode: 'lan', hostname: 'test-device', lan: preview.relay }],
+      ['lan.join', { invitation: opaqueInvitation }],
+    ])
+    expect(view.draft().joinedPeerId).toBe(recipientPublicKey)
   })
 })

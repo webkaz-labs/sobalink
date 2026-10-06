@@ -6,6 +6,8 @@ Published `0.3.0-alpha.5` includes explicit pinned-relay pairing, prepared-route
 
 ## Use the local UI
 
+The draft alpha.6 UI always inspects an incoming invitation before the separate pairing action, including when LAN is already configured. Review the intended identity, exact relay/pin and expiry. A change of invitation, identity, network or destination policy invalidates that review. For initial configuration, pairing continues only if the acknowledged configuration still matches the reviewed scope; closing the view does not cancel an already-submitted command. The published alpha.5 UI does not include this complete review flow.
+
 Open Network setup, choose LAN and create or display this device's public identity. Then choose the appropriate path:
 
 1. To host, choose “Host a relay on this device”, select a private address/interface from the current list and an unused TCP port, review the listener, then start it. The default port is 48443 and can be changed. An empty list needs a private-network connection and refresh. Firewall settings are unchanged; a running listener does not prove another device can reach it
