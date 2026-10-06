@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"syscall"
@@ -207,6 +208,56 @@ func TestRelayFailureLatePublicationRetainsTimeoutDiagnostics(t *testing.T) {
 		}
 		if relayDialAvailability(err, 0) {
 			t.Fatal("deadline/cancel became availability")
+		}
+	}
+}
+
+func TestRelayFailureAdmittedClosureWaitsForActualDialOutcome(t *testing.T) {
+	observation := &derphttp.ConnectionError{Phase: "transport", Err: io.EOF}
+	refused := &derphttp.ConnectionError{Phase: "dial", Err: syscall.ECONNREFUSED}
+	for _, next := range []error{refused, &derphttp.ConnectionError{Phase: "tls", Err: syscall.ECONNRESET}, &derphttp.ConnectionError{Phase: "protocol", Err: io.EOF}, context.Canceled, errors.New("synthetic unknown")} {
+		s := &relayFailureState{region: 1}
+		s.update(relayEvent(1, 1, nil))
+		s.update(relayEvent(1, 2, observation))
+		if got, _ := s.snapshot(); got != nil {
+			t.Fatal("provisional closure interrupted pending registration")
+		}
+		expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		_, err := waitDiscoPing(expired, make(chan *ipnstate.PingResult), s)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, io.EOF) || relayDialAvailability(err, 0) {
+			t.Fatal("closure alone authorized fallback or lost terminal timeout")
+		}
+		s.update(relayEvent(1, 3, next))
+		if got, _ := s.snapshot(); !errors.Is(got, next) {
+			t.Fatal("actual follow-up outcome missing")
+		}
+		s.update(relayEvent(1, 4, refused))
+		got, _ := s.snapshot()
+		if next == refused {
+			if !relayDialAvailability(got, 0) {
+				t.Fatal("actual dial refusal was hidden by old transport observation")
+			}
+		} else if !errors.Is(got, next) || relayDialAvailability(got, 0) {
+			t.Fatal("terminal follow-up cause did not latch")
+		}
+	}
+}
+
+func TestRelayFailureUnknownOrPreAdmissionErrorCannotBeSuperseded(t *testing.T) {
+	refused := &derphttp.ConnectionError{Phase: "dial", Err: syscall.ECONNREFUSED}
+	for _, terminal := range []error{
+		&derphttp.ConnectionError{Phase: "protocol", Err: io.EOF},
+		&derphttp.ConnectionError{Phase: "transport", Err: io.ErrUnexpectedEOF},
+		&derphttp.ConnectionError{Phase: "transport", Err: errors.New("synthetic malformed frame")},
+		&derphttp.ConnectionError{Phase: "transport", Err: errors.Join(io.EOF, context.Canceled)},
+		errors.Join(&derphttp.ConnectionError{Phase: "transport", Err: io.EOF}, &derphttp.ConnectionError{Phase: "tls", Err: syscall.ECONNRESET}),
+	} {
+		s := &relayFailureState{region: 1}
+		s.update(relayEvent(1, 1, terminal))
+		s.update(relayEvent(1, 2, refused))
+		if got, _ := s.snapshot(); !errors.Is(got, terminal) || relayDialAvailability(got, 0) {
+			t.Fatal("unknown or pre-admission failure hidden by later refusal")
 		}
 	}
 }

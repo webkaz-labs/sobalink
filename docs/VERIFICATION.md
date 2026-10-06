@@ -15,6 +15,7 @@
 | 公開済み alpha.2 の資源観測。統合済み [PR #7](https://github.com/webkaz-labs/sobalink/pull/7)、merge `11cd8285607c220962c97db725f36fdd00d653d7` | [確認報告](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [観測 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) で正確な公開 Linux amd64 バイナリを15分オフライン待機、10回正常再起動、待機中の強制終了・復旧で検査。[CI 37183542586 attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) は Windows frontend の非決定的な1アサーションをコード変更なしで再実行し、4対象・ブラウザー・manifest が合格。受信中の異常終了、packet capture、電源断、後続経路の受入ではない |
 | 新しい接続方式の統合 | alpha.4を基準とする[draft PR #11](https://github.com/webkaz-labs/sobalink/pull/11)。変更後の正確なソースに対する4対象native／browserと署名付き配布は未完了。ローカルのcross-build・race・制御されたTCP／UDP試験と、hosted native CI・実機受入を区別する。PR #8の経路復旧はalpha.4へ統合済み |
 | 統合CI `1da932ca` | [run 37396023044](https://github.com/webkaz-labs/sobalink/actions/runs/37396023044) の4 nativeジョブが失敗。Windowsは時刻由来のrequest ID重複、Linux／macOSはdirect fixture／通知のIPv6ソケットポート選択を検出。browser73件は合格し、選択した32画像と日本語フォント証拠を確認。修正したID・family別ポート・型付きDERP失敗通知・mixed利用不能判定・中継資源・追加WAN設定ケースには、新しい正確なソースのrunが必要 |
+| 修正CI `ab095063` | [run 37403561750](https://github.com/webkaz-labs/sobalink/actions/runs/37403561750) は修正したguarded直接IPv4／IPv6 TCP／UDPと型付きDERP失敗通知の段階が成功しましたが、後段の入場済み中継停止後のmanaged経路復旧が4 native対象すべてで失敗。実DERPの再現で、入場後EOFが後続の接続拒否を隠す原因を確認。browserは73/77成功で、追加WAN4件は非同期readbackとstatus locatorの競合。限定した修正の独立レビューと新しい最終ソースの全試験が必要で、配布受入の成功とは扱わない |
 
 ## ソースごとの記録
 

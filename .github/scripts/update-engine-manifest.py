@@ -31,6 +31,8 @@ ALLOWED_PATHS = {
     "wgengine/magicsock/sobalink_wan.go", "wgengine/magicsock/sobalink_wan_test.go",
     "derp/derphttp/sobalink_connection_state.go", "derp/derphttp/sobalink_connection_state_test.go",
     "wgengine/magicsock/sobalink_derp_state.go",
+    "derp/derp_client.go", "derp/sobalink_eof_test.go",
+    "derp/derphttp/sobalink_socket_closure_other.go", "derp/derphttp/sobalink_socket_closure_windows.go",
 }
 
 

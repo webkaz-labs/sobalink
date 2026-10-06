@@ -64,3 +64,20 @@ NIC/VPN isolation, bypass destination admission, or add privileged configuration
 The three added observer/type/test files retain explicit project MIT headers;
 modified upstream files retain their original notices. Their complete bytes and
 original/final hashes are included in the same reviewed adaptation manifest.
+
+
+Admitted-connection recovery distinguishes a verified current DERP session's
+known clean socket closure from terminal TLS, admission, malformed/truncated
+protocol, cancellation and unknown failures. The transport observation is
+non-authorizing: only a subsequent actual dial outcome may support the caller's
+existing endpoint-failover policy. Client admission cannot transfer to a stale
+or replacement session.
+
+Optional frame-truncation diagnostics retain the original read cause together
+with UnexpectedEOF. Writer-close handling waits for the current parser result,
+so partial frames and real parser failures cannot be hidden by a concurrent
+socket close. Default parser behavior remains unchanged without this opt-in.
+Small platform-specific helpers classify only reviewed socket-closure errno
+values; they do not add probes, permissions, network settings or dependencies.
+The additional local helpers and parser tests carry project MIT notices, while
+upstream DERP source retains its original BSD-3-Clause notice.

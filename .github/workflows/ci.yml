@@ -207,7 +207,7 @@ jobs:
                   "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"]
           subprocess.run(base + ["./net/underlayguard"],
                          cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
-          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate|SobalinkDERP|GuardedLocalSocketEndpointUsesActualFamilyPort)", "./wgengine", "./wgengine/magicsock", "./derp/derphttp", "./net/netcheck"],
+          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate|Sobalink|GuardedLocalSocketEndpointUsesActualFamilyPort)", "./wgengine", "./wgengine/magicsock", "./derp", "./derp/derphttp", "./net/netcheck"],
                          cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
           PYTHON
           python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale

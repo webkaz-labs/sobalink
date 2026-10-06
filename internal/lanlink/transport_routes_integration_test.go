@@ -235,7 +235,12 @@ func TestManagedRelayCandidateFailoverIntegration(t *testing.T) {
 		defer finish()
 		c, err := client.DialPeer(bounded, host.PublicKey(), "tcp", 54546)
 		if err != nil {
-			t.Fatal(stage, "managed application dial failed")
+			var phase interface{ DERPFailurePhase() string }
+			phaseName := "none"
+			if errors.As(err, &phase) {
+				phaseName = phase.DERPFailurePhase()
+			}
+			t.Fatalf("%s managed application dial failed (type=%T phase=%q eof=%t canceled=%t deadline=%t availability=%t)", stage, err, phaseName, errors.Is(err, io.EOF), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), relayAvailabilityError(err))
 		}
 		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
 		payload := []byte("managed synthetic application roundtrip")

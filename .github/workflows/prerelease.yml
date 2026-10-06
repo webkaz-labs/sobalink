@@ -173,7 +173,7 @@ jobs:
                   "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"]
           subprocess.run(base + ["./net/underlayguard"],
                          cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
-          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate|SobalinkDERP|GuardedLocalSocketEndpointUsesActualFamilyPort)", "./wgengine", "./wgengine/magicsock", "./derp/derphttp", "./net/netcheck"],
+          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate|Sobalink|GuardedLocalSocketEndpointUsesActualFamilyPort)", "./wgengine", "./wgengine/magicsock", "./derp", "./derp/derphttp", "./net/netcheck"],
                          cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
           PYTHON
           python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
@@ -525,7 +525,9 @@ jobs:
                   "この制限は宛先の許可であり、NICやVPNの固定、プロセス全体の通信隔離ではありません。管理者権限、追加ドライバー、OSの経路やLANルーターの設定変更を前提にしません。",
                   "最初の中継設定は一度に検証・保存し、証明書の変更は明示的なローテーション操作で扱います。同じIPの別ポートは別の中継先として保持します。",
                   "明示的に選ぶ中継なしLAN接続は、指定した数値アドレスの相手とWireGuardおよびユーザー空間TCP/UDPで通信します。一度限りのペア設定で相手の識別鍵とトンネル鍵を結び付けます。",
+                  "通常のLAN外接続にはTailscaleを推奨します。任意のWAN設定は、到達可能な互換中継を既に用意している場合の高度な機能として残します。外部中継の構築・配置は当面の対象外です。",
                   "WAN候補の探索は別の明示設定です。選択した数値STUN宛先への探索は調整可能な有限の処理予算で行い、任意のIPv6候補と許可済み中継へのフォールバックを利用できます。LAN宛先制限との同時利用はできません。",
+                  "中継候補に4件の固定許可上限は設けず、保存形式の容量と調整可能な有限の接続・探索予算で資源を制限します。予算を増やしても相手や宛先への許可は広がりません。",
                   "複数バックエンドの切替には明示的な認証済みの相手の対応付けが必要です。同じ名前やIPだけでは同じ相手と判断せず、許可の拒否を別経路への切替理由にしません。",
                   "エンジン変更は元と変更後のハッシュを検証する小さなソース差分として管理します。配布物は従来どおり単一実行ファイルで、利用者の追加インストール手順はありません。",
                   "サービスの公開先・ポート・期限、ファイルの受信先と自動保存は明示的に選びます。保存済みサービスを起動時に自動公開しません。",
@@ -542,7 +544,9 @@ jobs:
                   "This is destination admission, not NIC/VPN binding or whole-process isolation. The product does not require administrator privileges, additional drivers, OS route changes or LAN-router configuration changes.",
                   "First relay setup is validated and saved atomically. Certificate changes use an explicit rotation operation, and different relay ports on the same IP keep their separate identities.",
                   "Explicit relayless LAN mode uses selected numeric peer endpoints with WireGuard and userspace TCP/UDP. One-use pairing binds each peer's identity key to its separate tunnel key.",
+                  "Use Tailscale for ordinary outside-LAN connections. Optional WAN controls remain an advanced capability for an already reachable compatible relay; external relay construction and deployment are out of scope for now.",
                   "WAN discovery is a separate opt-in for selected numeric STUN destinations and/or native IPv6 candidates. STUN probes use an adjustable finite batch budget, with approved relay fallback retained. WAN discovery cannot be combined with a LAN destination policy.",
+                  "Relay candidates have no fixed four-item permission ceiling. Storage-format capacity and adjustable finite connection/probe budgets bound resources; increasing a budget does not authorize additional peers or destinations.",
                   "Mixed-backend routing requires an explicit authenticated peer binding. Matching names or IPs never establish identity, and a denied route never triggers fallback to another backend.",
                   "The engine adaptation is retained as a small source patch with verified original and adapted hashes. Distribution remains a single executable with no additional end-user installation steps.",
                   "Service recipients, ports and lifetimes, receiving destinations and automatic saving are explicit choices. Saved services are not automatically exposed on startup.",

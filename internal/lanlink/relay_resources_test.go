@@ -253,7 +253,7 @@ func (e testDERPPhaseError) Error() string            { return "synthetic typed 
 func (e testDERPPhaseError) Unwrap() error            { return e.cause }
 func (e testDERPPhaseError) DERPFailurePhase() string { return e.phase }
 func TestRelayDERPPhasePrecedesNestedSocketCause(t *testing.T) {
-	for _, phase := range []string{"tls", "protocol", "unknown", ""} {
+	for _, phase := range []string{"tls", "protocol", "transport", "unknown", ""} {
 		if relayAvailabilityError(testDERPPhaseError{phase, syscall.ECONNRESET}) {
 			t.Fatal("non-dial DERP phase permitted another candidate", phase)
 		}

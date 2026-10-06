@@ -21,6 +21,7 @@ type relayFailureState struct {
 	epoch, sequence uint64
 	retired, closed bool
 	err             error
+	observation     error // provisional socket closure; never authorizes failover
 	terminal        bool
 	changed         chan struct{}
 }
@@ -41,7 +42,7 @@ func (s *relayFailureState) update(e magicsock.DERPConnectionEvent) {
 	if e.Epoch > s.epoch {
 		s.epoch, s.sequence, s.retired = e.Epoch, 0, false
 		if !s.terminal {
-			s.err = nil
+			s.err, s.observation = nil, nil
 		}
 	} else if s.retired || !e.Retired && e.Sequence <= s.sequence {
 		return
@@ -49,14 +50,17 @@ func (s *relayFailureState) update(e magicsock.DERPConnectionEvent) {
 	if e.Retired {
 		s.retired = true
 		if !s.terminal {
-			s.err = nil
+			s.err, s.observation = nil, nil
 		}
 	} else {
 		s.sequence = e.Sequence
 		if e.Err == nil && e.Sequence > 0 {
 			// Only ServerInfo proves admission; a replacement epoch does not.
-			s.err, s.terminal = nil, false
+			s.err, s.observation, s.terminal = nil, nil, false
+		} else if e.Err != nil && !s.terminal && relayTransportObservation(e.Err, 0) {
+			s.err, s.observation = nil, e.Err
 		} else if e.Err != nil && !s.terminal {
+			s.observation = nil
 			terminal := !relayDialAvailability(e.Err, 0)
 			if terminal {
 				s.err = errors.Join(s.err, e.Err)
@@ -87,7 +91,7 @@ func (s *relayFailureState) close() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.closed, s.err, s.terminal = true, net.ErrClosed, true
+	s.closed, s.err, s.observation, s.terminal = true, net.ErrClosed, nil, true
 	s.notifyLocked()
 }
 
@@ -157,13 +161,51 @@ func waitDiscoPing(ctx context.Context, ch <-chan *ipnstate.PingResult, failures
 			return nil, failure
 		}
 		// An unexplained timeout remains terminal; it is not availability evidence.
-		return nil, ctx.Err()
+		return nil, relayWaitFailure(ctx.Err(), nil, failures)
 	}
 }
 
 // Re-snapshot after the wait ends: a real failure and context completion may
 // both become ready after the caller's initial state read. Keep all causes.
 func relayWaitFailure(contextErr, sendErr error, failures *relayFailureState) error {
-	failure, _ := failures.snapshot()
+	failure := failures.diagnostic()
 	return errors.Join(contextErr, sendErr, failure)
+}
+
+// diagnostic includes provisional evidence only at the end of a bounded wait.
+func (s *relayFailureState) diagnostic() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return errors.Join(s.err, s.observation)
+}
+
+func relayTransportObservation(err error, depth int) bool {
+	if err == nil || depth > 32 {
+		return false
+	}
+	if _, coded := err.(interface{ ErrorCode() string }); coded {
+		return false
+	}
+	if observed, ok := err.(interface{ DERPTransportObservation() bool }); ok {
+		return observed.DERPTransportObservation()
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !relayTransportObservation(cause, depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return relayTransportObservation(wrapped.Unwrap(), depth+1)
+	}
+	return false
 }
