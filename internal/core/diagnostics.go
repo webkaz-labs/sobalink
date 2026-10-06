@@ -78,7 +78,7 @@ func (c *Core) diagnoseCommand(ctx context.Context, raw json.RawMessage) (any, e
 		if in.ServiceID != "" || in.Port != 0 {
 			return nil, &localCommandError{"diagnostic_probe_required", "select an explicit TCP check when choosing a service or port"}
 		}
-		return map[string]any{"services": c.serviceViews(), "proxies": c.proxyViews(), "application": "unverified", "tcpProbePerformed": false, "nextSteps": map[string]string{"en": "Use doctor --service ID --tcp [--port PORT] for one explicit TCP connection check.", "ja": "doctor --service ID --tcp [--port PORT] で、TCP 接続を 1 回明示的に確認できます。"}}, nil
+		return map[string]any{"services": c.serviceViews(), "proxies": c.proxyViews(), "networkGuidance": c.networkGuidance(), "application": "unverified", "tcpProbePerformed": false, "nextSteps": map[string]string{"en": "Use doctor --service ID --tcp [--port PORT] for one explicit TCP connection check.", "ja": "doctor --service ID --tcp [--port PORT] で、TCP 接続を 1 回明示的に確認できます。"}}, nil
 	}
 	c.mu.RLock()
 	active := c.active[in.ServiceID]

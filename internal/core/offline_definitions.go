@@ -17,7 +17,10 @@ func OfflineDefinitionCommand(ctx context.Context, opts Options, command webui.C
 	if !opts.SkipNetworkStart {
 		return nil, errors.New("offline definition commands require SkipNetworkStart")
 	}
+	favorites := false
 	switch command.Name {
+	case "favorites.list", "favorites.add", "favorites.remove":
+		favorites = true
 	case "rustdesk.preview", "rustdesk.save", "rustdesk.settings", "client.settings", "service.save", "service.config", "service.delete", "service.selection", "group.list", "group.save", "profile.export", "profile.import.preview", "profile.import":
 	default:
 		return nil, &localCommandError{"offline_command_unsupported", "offline mode supports saved service, group and profile definitions only"}
@@ -48,7 +51,8 @@ func OfflineDefinitionCommand(ctx context.Context, opts Options, command webui.C
 	lifetime, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c := &Core{dir: opts.Directory, version: opts.Version, profile: p, capacity: limits, ctx: lifetime, cancel: cancel, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
-	if errors.Is(loadErr, os.ErrNotExist) {
+	if !favorites && errors.Is(loadErr, os.ErrNotExist) {
+		// Favorites never materialize or rewrite the profile.
 		// First-use public profile metadata is durable so a separate preview and
 		// apply see the same revision. No transport identity is materialized.
 		if err := c.writeProfile(p); err != nil {

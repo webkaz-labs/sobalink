@@ -143,8 +143,10 @@ func strictLANJSON(raw []byte, value any) error {
 	return nil
 }
 
+func supportedLANStateVersion(version int) bool { return version >= 1 && version <= 5 }
+
 func validateLANState(s lanState) error {
-	if (s.Version < 1 || s.Version > 5) || s.Identity.Validate() != nil {
+	if !supportedLANStateVersion(s.Version) || s.Identity.Validate() != nil {
 		return errors.New("invalid private LAN state")
 	}
 	if err := validateWANCandidateState(s); err != nil {

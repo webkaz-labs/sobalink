@@ -220,3 +220,58 @@ TCP continuity across suspend, network loss or long idle.
 `policy.config` additionally lists `restartRequiredResources` and `relayResourceEditable`. The four relay budgets are `resources.relayPresenceConnections` (default 4), `relayCandidateAttempts` (4), `relayTLSConnections` (64), and `relayAdmissionConnections` (16), each using the existing `default` / positive `limited` capacity choice. `unlimited` is invalid for finite resource budgets. `policy.preview.restartRequired` reports an effective relay-budget change. Such edits are rejected while a network backend exists and take effect at the next start. The same effective values and edit/start boundary appear under `lan.resources` in status.
 
 Candidate views and route approvals no longer reject a fifth item. Their metadata remains bounded by private-state and signed-exchange sizes, and relay-map IDs use the nonzero 16-bit DERP namespace. An insufficient `relayPresenceConnections` budget raises `lan_relay_presence_capacity` before startup without truncating saved candidates or grants. `lan_route_envelope_capacity` reports an offer exceeding the existing 24 KiB plaintext exchange envelope. See [relay operations](../docs/RELAY_OPERATIONS.en.md) ([日本語](../docs/RELAY_OPERATIONS.ja.md)) for defaults, restart and old-version compatibility.
+
+## Passive network guidance
+
+Optional `self.guidance` and passive `diagnostics.run {}` response
+`networkGuidance` contain the same local-state interpretation:
+`{code,category,action,summary:{en,ja},nextSteps:{en,ja}}`. They use only the
+reported state/error code and do not probe, change settings, generate identity or
+establish route/application success. Unknown errors retain their code and use an
+unknown-cause explanation. A normal ready state does not create a route result.
+
+`action` is one of `review_network`, `review_capacity`, `refresh_state`, or `wait`.
+The Web opens a review surface or refreshes local status only after a click;
+`wait` has no retry action. Stale notices are suppressed. Human `soba status`
+uses the same localized next step, while its JSON preserves the original fields.
+Technical codes/details remain expandable. Offline saved direct-LAN peers expose
+`path:"unknown"`; their saved endpoint is configuration, not a path observation.
+
+## Read-only public device cards
+
+`device-card.export {mode,name,includeEndpointHint?,qr?}` reads an existing
+`lan` or `direct-lan` component identity using an explicit public-field
+allowlist. `device-card.inspect {card,expectedMode}` parses the bounded canonical
+card without local setup or any network operation. Neither changes pairing,
+trust, endpoints or settings. Both bypass command-result retention to read current
+state on deliberate retries. Optional export QR is a local bitmap only; no image
+reader or new dependency is included.
+
+Both return `verification:"unverified"` and `freshness:"unknown"`. An inspection
+content digest is not identity proof. Address/pin hints are opt-in on export,
+shape-validated only on inspection, and never applied. See [device cards](../docs/DEVICE_CARDS.en.md)
+([日本語](../docs/DEVICE_CARDS.ja.md)) for exact fields, bounds and remaining UI acceptance.
+
+## Inert favorites
+
+`favorites.list {}` returns
+`{version:1,revision,entries,durabilityUncertain}`. Each entry is exactly
+`{kind:"service",serviceId,available}` or `{kind:"group",groupName,available}`.
+Availability describes a current saved reference, not an online peer or service.
+`favorites.add` and `favorites.remove` accept
+`{reference:{kind,serviceId|groupName},expectedRevision}` and return the same view.
+Adding requires a current target; removing may clear a missing reference.
+
+Preferences are separately stored, byte-bounded and lazily read; they do not
+change the strict profile format, group membership, service revisions, startup
+approvals or active deadlines. Missing references are not automatically pruned.
+Every edit checks the current preference revision. Uncertain published writes
+reconcile the actual file and return an error; `durabilityUncertain` is retained
+in the current Core instance until a confirmed write, not across restart.
+
+The lazy Web panel uses fresh request identities and leaves ordinary saved
+navigation available after preference failure. Favorite operations never retain
+or replay `useServer` uncertain-request entries. After an ambiguous response the
+user must reload and review current marks before a new explicit mutation; other
+commands retain their existing uncertainty/deduplication behavior. Favorite
+selection still uses the existing full service-scope review before starting.

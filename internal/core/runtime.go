@@ -286,7 +286,7 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 		if saved := c.directLANStoreCopy(); saved != nil {
 			for _, peer := range saved.copy().Peers {
 				trusted, ok := c.trust(peer.Key)
-				peers = append(peers, map[string]any{"id": peer.Key, "name": peer.Name, "networks": []string{"direct-lan"}, "online": false, "verified": false, "trusted": ok, "path": "direct-lan", "bridge": false, "address": "", "endpoint": peer.Endpoint.String(), "fingerprint": peer.Key, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
+				peers = append(peers, map[string]any{"id": peer.Key, "name": peer.Name, "networks": []string{"direct-lan"}, "online": false, "verified": false, "trusted": ok, "path": "unknown", "bridge": false, "address": "", "endpoint": peer.Endpoint.String(), "fingerprint": peer.Key, "autosave": map[string]any{"enabled": trusted.Autosave, "paused": trusted.Paused, "directory": trusted.Directory}})
 			}
 		}
 	}
@@ -302,7 +302,7 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			services = append(services, v)
 		}
 	}
-	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus(), "directLAN": c.directLANStatus(), "mixed": c.mixedStatus()}, nil
+	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "guidance": networkDiagnosticGuidance(state, reasonCode, reason != "", p.Settings.Network), "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus(), "directLAN": c.directLANStatus(), "mixed": c.mixedStatus()}, nil
 }
 
 // Command deduplicates requests independently of the mutation lock. Slow file
@@ -314,8 +314,9 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Credential reveal is an explicit read, never retained in request history.
-	if cmd.Name == "proxy.reveal" {
+	// These explicit reads are never retained in request history. A device
+	// card must reflect the current component identity/configuration on retry.
+	if cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" {
 		return c.executeCommand(ctx, cmd)
 	}
 	digest := sha256.Sum256(append([]byte(cmd.Name+"\x00"), cmd.Payload...))
@@ -412,6 +413,8 @@ func (c *Core) executeCommand(ctx context.Context, cmd webui.Command) (any, erro
 
 func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 	switch cmd.Name {
+	case "device-card.export", "device-card.inspect":
+		return c.deviceCardCommand(cmd.Name, cmd.Payload)
 	case "receive.recovery.confirm":
 		var input struct {
 			Reviewed bool `json:"reviewed"`
@@ -444,6 +447,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.deleteDefinition(cmd.Payload)
 	case "profile.export", "profile.import.preview", "profile.import":
 		return c.profileDefinitionsCommand(cmd.Name, cmd.Payload)
+	case "favorites.list", "favorites.add", "favorites.remove":
+		return c.favoritesCommand(cmd.Name, cmd.Payload)
 	case "group.list", "group.save":
 		return c.groupCommand(cmd.Name, cmd.Payload)
 	case "service.selection", "services.start", "services.stop", "services.renew", "services.ready":

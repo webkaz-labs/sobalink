@@ -15,6 +15,37 @@ soba --offline service show SERVICE_ID
 
 本体停止中の一覧は `soba --offline rules` を使います。[画面の保存一覧](WEB_CONTROLS.ja.md)では、保存した相手が不在でも保存のみの作成・編集・コピー・確認付き削除ができます。共通の接続先ヘルパーは[アプリ設定・RustDesk](CLIENT_HELPERS.ja.md)を参照してください。
 
+## 保存済み設定を探してお気に入りにする
+
+**保存済みサービス**で、サービス・端末・正確なgroup名・portから検索できます。
+**選択済みだけ**は表示を切り替え、表示中のサービスを加える操作は現在の選択へ
+追加します。検索で隠れた選択も件数と開始／停止前の全体確認に残ります。
+groupは現在の正確な構成を選び、再読込みでは変更や削除を反映します。
+
+**お気に入り**を開くと、保存済みサービス／groupの登録・選択・サービスの絞込みが
+できます。登録はCLIと共通の非公開設定です。groupの構成を複製せず、自動開始の
+承認、待受開始、サービス許可の変更、稼働中の期限延長を行いません。
+
+```sh
+soba favorites list --json
+soba favorites add service SERVICE_ID --review FAVORITES_REVISION --json
+soba favorites add group GROUP_NAME --review FAVORITES_REVISION --json
+soba favorites remove group GROUP_NAME --review FAVORITES_REVISION --json
+```
+
+変更ごとに`favorites list`が返す現在のrevisionを指定してください。サービスIDと
+group名は完全一致です。本体の停止中は`favorites`の前にglobal `--offline`を付け、
+通常のprofile lockを使います。初回のお気に入り読取りだけでprofileや接続IDを
+作成しません。
+
+参照先がなくなっても、明示削除まで表示を残します。importやgroup名の再利用でも、
+開始前の現在の範囲全体の確認を省略しません。お気に入りは持ち運び用の定義exportへ
+含めません。保護された保存には既存の有限`resources.profileBytes`予算を使います。
+破損・利用不能はお気に入りだけを停止します。保存失敗や永続化が不確かな場合は
+再読込みして実際の登録を確認してください。応答の失敗は巻戻しの証明ではありません。
+不確かさのflagは現在のprocessで観測した保存エラーを記録するもので、永続の復旧台帳
+ではありません。再起動は実際に反映された設定を読み、許可を復活させません。
+
 ## グループと準備完了
 
 ```sh

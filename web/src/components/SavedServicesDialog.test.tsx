@@ -48,6 +48,35 @@ function definitionFile(profile: unknown) {
   return file
 }
 describe('saved service and group management', () => {
+  it.each(['tailnet', 'lan', 'direct-lan', 'mixed'] as const)('accepts saved %s definitions without changing the backend', backend => {
+    const source: DefinitionBundle = { ...profile, services: profile.services.map(service => ({ ...service, backend })) }
+    expect(readDefinitionBundle(source)).toEqual(source)
+  })
+  it.each(['direct-lan', 'mixed'] as const)('lists and reviews saved %s groups without starting them', async backend => {
+    const source: DefinitionBundle = { ...profile, services: profile.services.map(service => ({ ...service, backend })) }
+    const requests = setup(source); await open()
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Saved group' }), 'daily-tools')
+    await userEvent.click(screen.getByRole('button', { name: 'Review start' }))
+    const review = await screen.findByRole('region', { name: 'Review selected services' })
+    expect(review).toHaveTextContent(`${backend} · TCP`)
+    expect(review).toHaveTextContent('web-share')
+    expect(review).toHaveTextContent('web-connection')
+    expect(requests.some(item => ['services.start', 'network.configure'].includes(item.name))).toBe(false)
+  })
+  it.each(['direct-lan', 'mixed'] as const)('reviews a %s definitions import without changing permissions', async backend => {
+    const requests = setup(); await open()
+    fireEvent.click(screen.getByText('Import and export'))
+    const incoming: DefinitionBundle = { version: 1, services: [{ ...forward, backend }], groups: [] }
+    await userEvent.upload(screen.getByLabelText('Choose a definitions file'), definitionFile(incoming))
+    await userEvent.click(await screen.findByRole('button', { name: 'Review import' }))
+    const review = await screen.findByRole('region', { name: 'Review replacement' })
+    expect(review).toHaveTextContent(`${backend} · TCP`)
+    expect(requests.find(item => item.name === 'profile.import.preview')?.payload).toEqual({ profile: incoming })
+    expect(requests.some(item => ['profile.import', 'services.start', 'network.configure'].includes(item.name))).toBe(false)
+  })
+  it('still rejects an unsupported saved backend', () => {
+    expect(() => readDefinitionBundle({ ...profile, services: [{ ...forward, backend: 'unrecognized' }] })).toThrow('invalidBundle')
+  })
   it('handles an empty null-valued Core profile and aligns localization', async () => {
     expect(Object.keys(definitionsJapanese)).toEqual(Object.keys(definitionsEnglish))
     expect(readDefinitionBundle({ version: 1, services: null, groups: null })).toEqual({ version: 1, services: [], groups: [] })

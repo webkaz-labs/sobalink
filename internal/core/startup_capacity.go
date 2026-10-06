@@ -10,7 +10,7 @@ import (
 // plus individual byte counts, without serializing credential-bearing records.
 func (c *Core) privateSettingsUsage() (map[string]int64, error) {
 	usage := map[string]int64{}
-	for name, key := range map[string]string{"startup.json": "startupBytes", "saved-proxies.json": "savedProxyBytes", "startup-revocations.json": "startupRevocationBytes"} {
+	for name, key := range map[string]string{"favorites.json": "favoritesBytes", "startup.json": "startupBytes", "saved-proxies.json": "savedProxyBytes", "startup-revocations.json": "startupRevocationBytes"} {
 		info, err := os.Lstat(filepath.Join(c.dir, name))
 		if errors.Is(err, os.ErrNotExist) {
 			usage[key] = 0
@@ -30,7 +30,7 @@ func (c *Core) validatePrivateSettingsCapacity(limit int64) error {
 	}
 	for _, size := range usage {
 		if size > limit {
-			return &localCommandError{"policy_in_use", "profileBytes cannot be below retained private startup, proxy or revocation storage; review and remove saved settings first"}
+			return &localCommandError{"policy_in_use", "profileBytes cannot be below retained private startup, proxy, revocation or favorites storage; review and remove saved settings first"}
 		}
 	}
 	return nil

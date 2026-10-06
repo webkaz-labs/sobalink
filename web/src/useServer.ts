@@ -85,6 +85,10 @@ export function useServer() {
     let fingerprint: string | undefined
     let messageClaimed = false
     let requested = false
+    // Favorites use fresh reads/review after any uncertain write. Keeping their
+    // one-shot UI keys here would retain unreachable entries on repeated errors
+    // and could replay an obsolete preference view. Other retry guards stay put.
+    const retainUncertain = !name.startsWith('favorites.')
     try {
       if (name === 'message.send') {
         const message = payload as api.CommandPayloads['message.send']
@@ -99,13 +103,13 @@ export function useServer() {
         messageClaimed = true
       }
       const signature = JSON.stringify({ name, payload })
-      const previous = uncertain.current.get(key)
+      const previous = retainUncertain ? uncertain.current.get(key) : undefined
       const requestId = previous?.signature === signature ? previous.requestId : api.requestID()
-      uncertain.current.set(key, { signature, requestId })
+      if (retainUncertain) uncertain.current.set(key, { signature, requestId })
       requested = true
       const result = await api.command(name, payload, requestId)
       if (!live.current || epoch !== authEpoch.current) return undefined
-      uncertain.current.delete(key)
+      if (retainUncertain) uncertain.current.delete(key)
       await refresh(true)
       if (!live.current || epoch !== authEpoch.current) return undefined
       return result
@@ -114,7 +118,7 @@ export function useServer() {
         uncertainMessages.current.add(fingerprint)
         if (live.current) setMessageGuardRevision(current => current + 1)
       }
-      if (requested && (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code))) uncertain.current.delete(key)
+      if (retainUncertain && requested && (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code))) uncertain.current.delete(key)
       if (live.current && epoch === authEpoch.current) handleError(value)
       return undefined
     }

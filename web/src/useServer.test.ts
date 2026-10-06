@@ -112,6 +112,58 @@ it.each(['network_error', 'invalid_response'])('preserves %s retry identity for 
   expect(requests[2].requestId).toBe(requests[3].requestId)
 })
 
+it.each(['network_error', 'invalid_response'])('never retains or replays failed favorites on %s, while preserving other retry identities', async code => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    requests.push(JSON.parse(init!.body as string))
+    if (code === 'network_error') throw new TypeError('Synthetic interruption')
+    return new Response('invalid synthetic JSON')
+  }))
+  const { result, unmount } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    // A preference request using the same UI key must neither overwrite nor
+    // delete an existing non-favorite uncertainty guard.
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+    for (let i = 0; i < 40; i++) {
+      const key = i < 20 ? 'shared-key' : `favorites:one-shot-${i}`
+      await result.current.run('favorites.list', {}, key)
+      await result.current.run('favorites.add', { reference: { kind: 'service', serviceId: 'sample-service' }, expectedRevision: 'a'.repeat(64) }, key)
+      await result.current.run('favorites.remove', { reference: { kind: 'group', groupName: 'Sample_Set' }, expectedRevision: 'b'.repeat(64) }, key)
+    }
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+  })
+  const favorites = requests.filter(request => request.name.startsWith('favorites.'))
+  expect(favorites).toHaveLength(120)
+  expect(new Set(favorites.map(request => request.requestId)).size).toBe(120)
+  expect(requests[0].requestId).toBe(requests.at(-1)!.requestId)
+  expect(result.current.busy.size).toBe(0)
+  expect(result.current.error).toMatchObject({ code })
+  unmount()
+})
+
+it.each([true, false])('keeps another command guard when a favorite succeeds or fails definitively (success: %s)', async success => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    const request = JSON.parse(init!.body as string)
+    requests.push(request)
+    if (request.name === 'peer.reconnect') throw new TypeError('Synthetic interruption')
+    return success ? new Response('{"ok":true}') : new Response('{"code":"favorites_revision_conflict"}', { status: 409 })
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+    await result.current.run('favorites.list', {}, 'shared-key')
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+  })
+  expect(requests).toHaveLength(3)
+  expect(requests[0].requestId).toBe(requests[2].requestId)
+  expect(requests[1].requestId).not.toBe(requests[0].requestId)
+})
+
 it('never reapplies an authenticated snapshot or CSRF after a newer 401', async () => {
   const state: State = { csrfToken: 'old-token', self: { name: 'Test', status: 'online' }, peers: [], messages: [], transfers: [], services: [], shares: [] }
   let resolveLate!: (value: Response) => void

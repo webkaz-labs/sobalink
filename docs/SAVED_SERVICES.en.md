@@ -15,6 +15,41 @@ The returned ID identifies the saved definition. `service save ... --replace SER
 
 Use `soba --offline rules` to list saved definitions with the agent stopped. The [global Web catalog](WEB_CONTROLS.en.md) also supports save-only creation, editing, copying and reviewed removal when a saved peer is unavailable. [Application settings and RustDesk](CLIENT_HELPERS.en.md) explain the shared endpoint helpers.
 
+## Find and favorite saved settings
+
+Open **Saved services** to search by service, device, exact group name or port.
+**Selected only** changes the view, and **Add visible services** adds the visible
+matches to the current selection. Hidden selections remain counted and are
+included in the complete start/stop review. Selecting a group uses its current
+exact membership; reloading reconciles changed or removed groups.
+
+Open **Favorites** to mark a saved service or group, select it, or show only
+favorite services. Marks are private preferences shared with the CLI. They do
+not duplicate group membership, create startup approval, start a listener,
+change service permission or extend an active deadline.
+
+```sh
+soba favorites list --json
+soba favorites add service SERVICE_ID --review FAVORITES_REVISION --json
+soba favorites add group GROUP_NAME --review FAVORITES_REVISION --json
+soba favorites remove group GROUP_NAME --review FAVORITES_REVISION --json
+```
+
+Use the current preference revision returned by `favorites list` for each edit.
+Service IDs and group names match exactly. Add global `--offline` before
+`favorites` when the agent is stopped; the normal profile lock still applies.
+A first-use favorites read does not create a profile or network identity.
+
+Missing references stay visible until explicitly removed. Importing a different
+service or reusing a group name never bypasses the ordinary full-scope review.
+Favorites are not included in portable definition exports. Their protected
+storage uses the existing finite `resources.profileBytes` budget. A corrupt or
+unavailable favorites file affects favorites only. After a failed or uncertain
+write, reload and review the actual marks; a failed response is not proof of
+rollback. The uncertainty flag records an observed durability error in the
+current process, not a persistent recovery journal. Restart reads the actual
+published preference file without reviving any permission.
+
 ## Groups and readiness
 
 ```sh

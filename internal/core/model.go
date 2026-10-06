@@ -93,6 +93,7 @@ type Options struct {
 }
 
 type Core struct {
+	favoritesUncertain         bool // protected by op; cleared only by a confirmed whole-store write
 	startup                    startupStore
 	startupPending             map[string]string
 	startupStates              map[string]string

@@ -1,0 +1,12 @@
+.definition-navigation { margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); }
+.definition-navigation-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; }
+.definition-navigation-fields .field { min-width: 0; margin: 0; }
+.definition-navigation-fields input, .definition-navigation-fields select { min-width: 0; max-width: 100%; }
+.definition-navigation-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.definition-navigation .button { white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.definition-navigation-actions [aria-pressed="true"] { background: var(--primary-soft); color: var(--primary-text); border-color: var(--primary); }
+.definition-selection-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; }
+.definition-selection-notice p { flex: 1 1 220px; overflow-wrap: anywhere; }
+@media (max-width: 600px), (pointer: coarse) {
+  .definition-navigation input, .definition-navigation select, .definition-navigation .button { min-height: 44px; }
+}

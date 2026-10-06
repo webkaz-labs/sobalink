@@ -62,6 +62,9 @@ export interface PolicyConfig {
 export interface PolicyPreview { restartRequired?: boolean; version: 1; requested: CapacityPolicy; effective: CapacityPolicy; revision: string; destructive: false; usage: Record<string, number> }
 export interface HistoryPreview { version: 1; revision: string; messageIds: string[]; retained: number; remove: number; destructive: true }
 export interface ServiceLimits { effective: { logical?: Record<string, CapacityChoice>; resources: Record<string, CapacityChoice> }; usage: { materializedListeners: number; [key: string]: number } }
+export interface DiagnosticGuidance {
+  code: string; category: string; action: 'review_network' | 'review_capacity' | 'refresh_state' | 'wait'; summary: Record<Locale, string>; nextSteps: Record<Locale, string>
+}
 export interface ServiceDiagnostic {
   serviceId: string; port: number; checkedAt: string; code: string
   transport: 'reachable' | 'unreachable'; application: 'unverified'; nextSteps: Record<Locale, string>
@@ -142,7 +145,7 @@ export interface DirectLanInvitationPreview { hostPublicKey: string; hostName: s
 export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string; availability?: "ready" | "confirmed-unavailable" | "authorization-required" | "readiness-unconfirmed"; restartRequired?: boolean }[] }
 export interface State {
   csrfToken: string
-  self: { name: string; status: string; error?: string; errorCode?: string; receiveDirectory?: string; networks?: Network[] }
+  self: { name: string; status: string; error?: string; errorCode?: string; guidance?: DiagnosticGuidance | null; receiveDirectory?: string; networks?: Network[] }
   peers: Peer[]
   messages: Message[]
   transfers: Transfer[]
@@ -201,7 +204,13 @@ export interface DefinitionExport { profile: DefinitionBundle; revision: string;
 export interface DefinitionImport extends DefinitionExport { replacesServices: number; preservesIdentity: true; removesRustDeskMetadata?: string[]; applied?: boolean }
 export interface ServiceSelection { services: ServiceConfiguration[]; revision: string; group: string; ready: boolean; states: { id: string; status: Service['status']; lifetime?: ServiceLifetime; ttlSeconds?: number; expiresAt?: string | null; owner?: string; leaseSeconds?: number; leaseExpiresAt?: string | null }[]; application: 'unverified' }
 export interface GroupList { groups: ServiceGroup[] | null; revision: string }
+export type FavoriteReference = { kind: 'service'; serviceId: string } | { kind: 'group'; groupName: string }
+export type FavoriteEntry = FavoriteReference & { available: boolean }
+export interface FavoritesView { version: 1; revision: string; entries: FavoriteEntry[]; durabilityUncertain: boolean }
 export interface CommandPayloads {
+  'favorites.list': Record<string, never>
+  'favorites.add': { reference: FavoriteReference; expectedRevision: string }
+  'favorites.remove': { reference: FavoriteReference; expectedRevision: string }
   'rustdesk.preview': { configuration: RustDeskSetup }
   'rustdesk.save': { configuration: RustDeskSetup; expectedRevision: string }
   'rustdesk.settings': { group: string }
