@@ -121,7 +121,8 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn("python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale", engine_step)
             self.assertIn("go run ./cmd/prepare-engine --verify", engine_step)
             self.assertIn('env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"', step)
-            self.assertIn("TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration", step)
+            relay_test = "TestGuardedRelayTwoPeerFunctionalIntegration" if workflow == "ci" else "TestGuardedRelayTwoPeerIntegration"
+            self.assertIn(relay_test + "|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration", step)
             self.assertIn('"go", "test", "-race", "-count=1"', step)
         scripts = pathlib.Path(__file__).parent
         for name in ("smoke-package.py", "verify-installed.py"):
@@ -134,11 +135,20 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn("go test -race -count=2 -timeout=120s", direct)
             self.assertIn("-run='^TestDirectLAN' ./internal/core", direct)
             self.assertIn("-count=5 -timeout=5m", direct)
-            lifecycle = self.step(workflow, "native", "name: Verify direct LAN session rekey and idle lifecycle")
-            self.assertNotIn("        if:", lifecycle)
+            title = "name: Verify direct LAN session natural rekey and idle lifecycle" if workflow == "ci" else "name: Verify direct LAN session rekey and idle lifecycle"
+            lifecycle = self.step(workflow, "native", title)
+            if workflow == "ci":
+                self.assertIn("if: steps.ci-plan.outputs.long_required != 'false'", lifecycle)
+                synthetic = self.step("ci", "native", "name: Verify direct LAN synthetic expiry and rekey")
+                self.assertNotIn("        if:", synthetic)
+                self.assertIn("-run='^TestNativeSessionSyntheticExpiryRekey$'", synthetic)
+                self.assertIn("go test -race -count=1", synthetic)
+            else:
+                self.assertNotIn("        if:", lifecycle)
             self.assertIn("-count=1 -timeout=8m", lifecycle)
             self.assertIn("directlan_integration,directlan_lifecycle", lifecycle)
-            self.assertIn("-run='^TestNativeSessionLifecycle$'", lifecycle)
+            pattern = "-run='^TestNativeSessionLifecycle$'" if workflow == "ci" else "-run='^TestNativeSession(SyntheticExpiryRekey|Lifecycle)$'"
+            self.assertIn(pattern, lifecycle)
             self.assertNotIn("directlan_lifecycle", direct)
             self.assertNotIn("sudo", lifecycle)
             self.assertIn("go test -race -count=5", direct)
@@ -164,7 +174,8 @@ class WorkflowCachePolicy(unittest.TestCase):
         for workflow in ("ci", "prerelease"):
             step = self.step(workflow, "native", "name: Verify paired transport")
             self.assertNotIn("        if:", step)
-            self.assertIn("TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration", step)
+            relay_test = "TestTrustedRelayTwoPeerFunctionalIntegration" if workflow == "ci" else "TestTrustedRelayTwoPeerIntegration"
+            self.assertIn(relay_test + "|TestLANCorePeerApplicationsIntegration", step)
             self.assertIn('env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"', step)
             self.assertIn("ts_omit_udptransport", step)
 
@@ -219,7 +230,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertEqual(ci.count("uses: actions/cache/save@"), 2)
         save = self.step("ci", "native", "name: Save Go caches after all native checks pass on main")
         self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
-        self.assertIn("        if: success() && " + self.MAIN_GUARD + " && steps.go-cache.outputs.cache-hit != 'true'\n", save)
+        self.assertIn("        if: success() && steps.ci-plan.outputs.long_required != 'false' && " + self.MAIN_GUARD + " && steps.go-cache.outputs.cache-hit != 'true'\n", save)
         self.assertIn(self.CACHE_PATHS, save)
         self.assertIn("key: ${{ steps.go-cache.outputs.cache-primary-key }}", save)
         native = self.job("ci", "native")
@@ -421,6 +432,73 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn('"go", "test", "-count=1", "-v"', relay)
         self.assertIn('"-timeout=5m"', relay)
         self.assertIn("timeout=9 * 60", relay)
+
+    def test_only_real_time_ci_steps_are_change_scoped(self):
+        names = ("Verify direct LAN session natural rekey and idle lifecycle",
+                 "Verify guarded relay real-time lease continuity",
+                 "Verify relay-only real-time lease and idle continuity")
+        for name in names:
+            step = self.step("ci", "native", "name: " + name)
+            self.assertIn("        if: steps.ci-plan.outputs.long_required != 'false'\n", step)
+            self.assertNotIn("cache-hit", step)
+            self.assertIn("-count=1", step)
+        guarded = self.step("ci", "native", "name: Verify guarded relay real-time lease continuity")
+        self.assertIn('"go", "test", "-race", "-count=1"', guarded)
+        self.assertIn('env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"', guarded)
+        self.assertIn('"-run=^TestGuardedRelayTwoPeerIntegration$"', guarded)
+        self.assertNotIn("ts_omit_udptransport", guarded)
+        trusted = self.step("ci", "native", "name: Verify relay-only real-time lease and idle continuity")
+        self.assertIn('env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"', trusted)
+        self.assertIn('"-run=^(TestTrustedRelayTwoPeerIntegration|TestMultipleRelayPresenceAndFreshClientRecovery)$"', trusted)
+        self.assertIn('"./internal/lanlink", "./internal/routecat"', trusted)
+        self.assertIn('"--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery"', trusted)
+        self.assertIn("ts_omit_udptransport", trusted)
+        # Prerelease does not consume the impact plan, even for prose-only changes.
+        release = self.workflow("prerelease")
+        self.assertNotIn("long_required", release)
+        self.assertNotIn("ci-impact", release)
+
+    def test_explicit_native_probes_require_actual_go_test_pass_events(self):
+        for workflow in ("ci", "prerelease"):
+            for title in ("Verify explicit WAN discovery with isolated native STUN",
+                          "Verify guarded production direct and relay underlays",
+                          "Verify paired transport and Core applications over an isolated relay",
+                          "Verify recovery with the ordinary direct-enabled transport"):
+                step = self.step(workflow, "native", "name: " + title)
+                self.assertIn('sys.executable, ".github/scripts/ci-go-test.py"', step)
+                self.assertIn('"--expect", "github.com/webkaz-labs/sobalink/internal/', step)
+        for title in ("Verify direct LAN synthetic expiry and rekey",
+                      "Verify direct LAN session natural rekey and idle lifecycle",
+                      "Verify guarded relay real-time lease continuity",
+                      "Verify relay-only real-time lease and idle continuity"):
+            step = self.step("ci", "native", "name: " + title)
+            self.assertIn("ci-go-test.py", step)
+            self.assertIn("--expect", step)
+        for workflow, title in (("ci", "Verify direct LAN session natural rekey and idle lifecycle"),
+                                ("prerelease", "Verify direct LAN session rekey and idle lifecycle")):
+            step = self.step(workflow, "native", "name: " + title)
+            for test in ("TestNativeSessionLifecycle/active-through-natural-rekey",
+                         "TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial"):
+                self.assertIn("--expect github.com/webkaz-labs/sobalink/internal/directlan:" + test, step)
+
+    def test_impact_failure_and_missing_outputs_cannot_skip_native_coverage(self):
+        native = self.job("ci", "native")
+        self.assertIn("    needs: impact\n", native)
+        self.assertIn("if: always() && !cancelled()", native)
+        resolve = self.step("ci", "native", "id: ci-plan\n")
+        self.assertNotIn("        if:", resolve)
+        self.assertIn("ci-coverage.py resolve", resolve)
+        workflow = self.workflow("ci")
+        self.assertNotIn("paths-ignore:", workflow)
+        self.assertNotIn("paths:", workflow)
+        self.assertIn("      force_full:\n", workflow)
+        self.assertIn("        type: boolean\n        default: true", workflow)
+        aggregate = self.job("ci", "ci-required")
+        self.assertIn("    needs: [impact, native, browser, manifest-smoke]\n", aggregate)
+        self.assertIn("    if: always()\n", aggregate)
+        self.assertIn("ci-coverage.py finalize", aggregate)
+        self.assertNotIn("contents: write", aggregate)
+        self.assertNotIn("id-token: write", aggregate)
 
     def test_native_ipc_regression_is_repeated_without_cache_skips(self):
         for workflow, command in (("ci", "go test -race -count=5 -timeout=2m ./internal/control"), ("prerelease", "go test -race -count=25 -timeout=3m ./internal/control")):

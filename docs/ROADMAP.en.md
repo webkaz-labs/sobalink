@@ -59,3 +59,7 @@ The following ten areas are adopted for the patch after the current integration 
 Automatic LAN relay-host selection remains an unresolved desired capability. No remote deployment, new host authority or permission expansion is implied by these usability goals.
 
 Keep all examples and published evidence generic. See [capacity](CAPACITY.en.md), [security](../SECURITY.md) and the [route contract](ROUTE_RECOVERY_DESIGN.en.md) for the authoritative boundaries rather than duplicating detailed checklists here.
+
+## CI latency and conditional real-time tests
+
+Keep short safety/logic checks, four native targets and browser acceptance on every change; select only natural key/lease timing checks by change impact. Transport/auth/timer/Core/config/dependency/helper/workflow or unknown changes require full coverage. Only cumulative docs/CSS changes from an exact verified full baseline are eligible to omit those waits. Release retains every test. See the [selection, provenance, required-check and measurement contract](CI_EFFICIENCY.en.md). Acceptance requires native CI for both selected and full paths and protection requiring the coverage aggregate.

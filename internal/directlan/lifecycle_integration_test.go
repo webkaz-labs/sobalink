@@ -15,8 +15,7 @@ import (
 	"github.com/tailscale/wireguard-go/device"
 )
 
-// These minute-scale tests are a separate explicit native gate. Do not include
-// them in the short adapter repeat-count gate or shorten protocol timers.
+// These fixtures serve both synthetic and real-timer native lifecycle checks.
 func lifecyclePair(t *testing.T, seed byte) (*Node, *Node) {
 	t.Helper()
 	a, _ := nativeNode(t, seed)
@@ -164,53 +163,59 @@ func lastHandshake(t *testing.T, n *Node) time.Time {
 	}
 	return time.Unix(w.sec, w.nsec)
 }
-func TestNativeSessionLifecycle(t *testing.T) {
-	t.Run("synthetic-expiry-rekey", func(t *testing.T) {
-		t.Parallel()
-		a, b := lifecyclePair(t, 72)
-		cs := lifecycleDials(t, a, b)
-		lifecycleExchange(t, cs)
-		for i, n := range []*Node{a, b} {
-			target := []*Node{b, a}[i]
-			n.mu.Lock()
-			p := n.peers[target.PublicKey()]
-			p.enginePeer.ExpireCurrentKeypairs()
-			n.mu.Unlock()
-			if p.session.ready() {
-				t.Fatal("expired key remained ready")
-			}
+
+// This fast native check always runs independently of the minute-scale gate.
+// It expires fixture keypairs explicitly; it does not replace real timer coverage.
+func TestNativeSessionSyntheticExpiryRekey(t *testing.T) {
+	t.Parallel()
+	a, b := lifecyclePair(t, 72)
+	cs := lifecycleDials(t, a, b)
+	lifecycleExchange(t, cs)
+	for i, n := range []*Node{a, b} {
+		target := []*Node{b, a}[i]
+		n.mu.Lock()
+		p := n.peers[target.PublicKey()]
+		p.enginePeer.ExpireCurrentKeypairs()
+		n.mu.Unlock()
+		if p.session.ready() {
+			t.Fatal("expired key remained ready")
 		}
-		fresh := lifecycleDials(t, a, b)
-		lifecycleExchange(t, fresh)
-		for i, n := range []*Node{a, b} {
-			target := []*Node{b, a}[i]
-			n.mu.Lock()
-			p := n.peers[target.PublicKey()]
-			p.enginePeer.ZeroAndFlushAll()
-			n.mu.Unlock()
-			if p.session.ready() {
-				t.Fatal("flushed key remained ready")
-			}
+	}
+	fresh := lifecycleDials(t, a, b)
+	lifecycleExchange(t, fresh)
+	for i, n := range []*Node{a, b} {
+		target := []*Node{b, a}[i]
+		n.mu.Lock()
+		p := n.peers[target.PublicKey()]
+		p.enginePeer.ZeroAndFlushAll()
+		n.mu.Unlock()
+		if p.session.ready() {
+			t.Fatal("flushed key remained ready")
 		}
-		renewed := lifecycleDials(t, a, b)
+	}
+	renewed := lifecycleDials(t, a, b)
+	lifecycleExchange(t, renewed)
+	if a.PublicKey() > b.PublicKey() {
+		a, b = b, a
+	}
+	raw, _ := hex.DecodeString(b.cfg.Identity.TunnelKey())
+	var key device.NoisePublicKey
+	copy(key[:], raw)
+	before := lastHandshake(t, a)
+	a.engine.ScheduleHandshakeOnUserSend(key)
+	until := time.Now().Add(device.RekeyTimeout + time.Second)
+	for time.Now().Before(until) {
 		lifecycleExchange(t, renewed)
-		if a.PublicKey() > b.PublicKey() {
-			a, b = b, a
-		}
-		raw, _ := hex.DecodeString(b.cfg.Identity.TunnelKey())
-		var key device.NoisePublicKey
-		copy(key[:], raw)
-		before := lastHandshake(t, a)
-		a.engine.ScheduleHandshakeOnUserSend(key)
-		until := time.Now().Add(device.RekeyTimeout + time.Second)
-		for time.Now().Before(until) {
-			lifecycleExchange(t, renewed)
-			time.Sleep(250 * time.Millisecond)
-		}
-		if !lastHandshake(t, a).After(before) {
-			t.Fatal("scheduled rekey did not complete")
-		}
-	})
+		time.Sleep(250 * time.Millisecond)
+	}
+	if !lastHandshake(t, a).After(before) {
+		t.Fatal("scheduled rekey did not complete")
+	}
+}
+
+// These minute-scale tests are a separate explicit native gate. Do not include
+// them in the short adapter repeat-count gate or shorten protocol timers.
+func TestNativeSessionLifecycle(t *testing.T) {
 	t.Run("active-through-natural-rekey", func(t *testing.T) {
 		t.Parallel()
 		a, b := lifecyclePair(t, 74)

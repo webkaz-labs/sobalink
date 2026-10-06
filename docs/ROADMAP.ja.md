@@ -59,3 +59,7 @@ LAN外の推奨方式はTailscaleです。外部中継の構築・配置と専�
 LAN中継ホストの自動選出は未解決の要望として残します。操作改善によって遠隔配置・新しいホスト権限・許可範囲の拡大を暗黙に追加しません。
 
 例と公開証拠は汎用的な内容にします。詳細な確認表はここに重複させず、正式な境界は[容量](CAPACITY.ja.md)・[安全性](SECURITY.ja.md)・[経路の契約](ROUTE_RECOVERY_DESIGN.ja.md)を参照してください。
+
+## CIの待ち時間と条件付き実時間試験
+
+短い安全性・ロジック・4対象・browser確認を毎回維持し、自然な鍵更新とleaseの実時間試験だけを変更範囲に応じて選択します。通信・認証・timer・Core・設定・依存・helper・workflowや不明な変更はfull、正確なfull基準からのdocs／CSSだけの累積変更は省略対象です。releaseは全試験を維持します。[判定・来歴・required check・計測の契約](CI_EFFICIENCY.ja.md)を参照してください。条件付き経路とfull経路のnative CI受入、必須集約checkの保護設定を完了条件にします。

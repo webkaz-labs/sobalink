@@ -28,6 +28,17 @@ import (
 // application success and stable identity across fresh clients, not existing
 // TCP continuity, direct path migration, or packet-capture egress acceptance.
 func TestMultipleRelayPresenceAndFreshClientRecovery(t *testing.T) {
+	runMultipleRelayPresenceAndFreshClientRecovery(t, true)
+}
+
+// Keep authenticated application traffic and fresh-client relay failover in the
+// fast gate. This does not prove presence across the real non-home idle boundary.
+func TestMultipleRelayPresenceAndFreshClientFunctionalRecovery(t *testing.T) {
+	runMultipleRelayPresenceAndFreshClientRecovery(t, false)
+}
+
+func runMultipleRelayPresenceAndFreshClientRecovery(t *testing.T, realTime bool) {
+	t.Helper()
 	if os.Getenv("SOBALINK_RUN_LAN_INTEGRATION") != "1" {
 		t.Skip("requires explicitly enabled isolated native CI")
 	}
@@ -76,12 +87,14 @@ func TestMultipleRelayPresenceAndFreshClientRecovery(t *testing.T) {
 		}
 	}()
 	defer func() { ln.Close(); <-acceptDone; handlers.Wait() }()
-	// A non-home connection becomes stale after 60s and cleanup can take 15s.
-	// Leave both regions idle beyond that bound before attempting any clients.
-	select {
-	case <-time.After(80 * time.Second):
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
+	if realTime {
+		// A non-home connection becomes stale after 60s and cleanup can take 15s.
+		// Leave both regions idle beyond that bound before attempting any clients.
+		select {
+		case <-time.After(80 * time.Second):
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	}
 	connect := func(stage string, r *tailcfg.DERPRegion) *Client {
 		t.Helper()
