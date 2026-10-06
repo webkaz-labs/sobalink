@@ -52,6 +52,16 @@ The earlier full CI at source `308d252` took 27m10s, with a 26m26s Windows job o
 
 Before acceptance, verify both a full run and a presentation-only selected run, manual force-full, unknown/helper/dependency/rename inputs, and injected missing/failed/skipped target evidence. Physical-device network acceptance remains separate.
 
+## Rollout verification
+
+The [first verified full canonical main run](https://github.com/webkaz-labs/sobalink/actions/runs/37456053817) passed all eight jobs in 29m11s at source `e93995c` (attempt 1). Its receipt records `full_native=true` with all four native targets, browser and manifest successful. This establishes a full baseline; it does not measure selected-path performance.
+
+1. After merging the workflow, verify a successful canonical `main` run and its full `ci-coverage` receipt. The successful PR run alone is not an eligible baseline.
+2. Start an ordinary docs-only PR from that validated main. Confirm the complete cumulative diff is `documentation_only`, and record the tested SHA/tree, run attempt and linked full baseline.
+3. Verify `ci-required`, the current-attempt receipt and actual steps: all four native targets, fast checks, browser and manifest must pass; only the named real-time steps may be omitted. Record selected coverage explicitly as **“real-time tests NOT RUN for this change scope”**.
+
+Development caches are isolated per PR, so the first docs-only PR may be cold. Judge selection correctness from the receipt and actual steps; report cache state with timings rather than assuming warm-cache performance.
+
 ## Native port fixture portability
 
 Fixtures that need TCP and UDP on one endpoint reserve both protocols on the exact IPv4/IPv6 loopback address. The shared test helper checks at most 100 spread candidates with real binds, retains both sockets until immediately before the real start, preserves explicit application-reserved ports and reports exhaustion or cleanup errors. Deterministic tests cover different TCP/UDP excluded ranges and bounded cleanup. The raw WireGuard fixture holds its two UDP reservations concurrently to keep the peer endpoints distinct.

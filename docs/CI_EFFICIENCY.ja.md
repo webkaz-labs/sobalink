@@ -52,6 +52,16 @@ developmentとtrusted-mainのcacheは分離したままです。実時間試験�
 
 受入ではfullと見た目だけの選択実行の両方、手動force-full、不明・helper・依存・renameの変更、target証跡の欠落・失敗・skip注入を確認します。実端末のネットワーク受入は別に残ります。
 
+## 導入後の確認手順
+
+[初めて検証済みとなった正規mainのfull run](https://github.com/webkaz-labs/sobalink/actions/runs/37456053817)は、ソース `e93995c`（attempt 1）で全8jobに成功し、29分11秒でした。証跡は `full_native=true` で、4対象・browser・manifestの成功を記録しています。これが全件検証の基準となり、選択実行の所要時間は別に測定します。
+
+1. workflowのmerge後、正規の `main` runの成功とfullの `ci-coverage` 証跡を確認します。PRの成功だけでは、省略の基準にできません。
+2. 検証済みmainから通常の文書だけを変更するPRを作ります。累積差分全体が `documentation_only` であることを確認し、試験したSHA／tree、run attempt、link先のfull基準を記録します。
+3. `ci-required`、現在のattemptの証跡、実際のstepを照合します。4対象・短い確認・browser・manifestの成功を必須とし、省略できるのは指定された実時間stepだけです。選択実行は **「この変更範囲では実時間試験を未実行」** と明記します。
+
+development cacheはPRごとに分離されるため、最初のdocs-only PRはcoldになる場合があります。判定の正しさは証跡と実際のstepで確認し、warm cacheの性能を前提にせず、所要時間とcache状態を併記します。
+
 ## ネイティブport fixtureの移植性
 
 同じ端点にTCPとUDPが必要なfixtureは、正確なIPv4／IPv6のloopbackアドレスで両方を予約します。共通のテストhelperは最大100個の分散した候補を実bindで確認し、実際の起動直前まで両socketを保持します。アプリケーションが予約したportの除外を維持し、候補不足やcleanupの失敗を返します。TCPとUDPで異なる除外範囲と、有限のcleanupを決定的なテストで確認します。WireGuard単体のfixtureでは、2つのUDP予約を同時に保持して相手ごとの端点を区別します。
