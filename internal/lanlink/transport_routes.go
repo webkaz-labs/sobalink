@@ -71,8 +71,12 @@ func configuredRegions(cfg NodeConfig) ([]*tailcfg.DERPRegion, error) {
 	if len(candidates) == 0 {
 		candidates = []RouteCandidate{legacyCandidate(cfg.Relay)}
 	}
-	if len(candidates) > MaxRouteCandidates {
-		return nil, ErrRouteUpdate
+	resources, err := cfg.RelayResources.WithDefaults()
+	if err != nil {
+		return nil, err
+	}
+	if err := tailcat.ValidateRelayPresenceBudget(len(candidates), resources.PresenceConnections); err != nil {
+		return nil, err
 	}
 	if cfg.PrivateOnly && buildfeatures.HasUDPTransport {
 		return nil, tailcat.ErrPrivateOnlyBuild
@@ -220,7 +224,15 @@ func (r *remoteClient) dial(ctx context.Context, network string, port uint16) (n
 	if !r.managed {
 		return r.dialLegacyLocked(ctx, network, port)
 	}
-	bounded, cancel := context.WithTimeout(ctx, time.Duration(len(r.candidates))*routeAttemptTimeout)
+	attempts := r.candidateAttempts
+	if attempts == 0 {
+		attempts = DefaultRelayCandidateAttempts
+	}
+	if attempts < 1 {
+		return nil, ErrRoutePermission
+	}
+	attempts = min(attempts, len(r.candidates))
+	bounded, cancel := context.WithTimeout(ctx, time.Duration(attempts)*routeAttemptTimeout)
 	stop := context.AfterFunc(r.runCtx, cancel)
 	defer stop()
 	defer cancel()
@@ -231,10 +243,11 @@ func (r *remoteClient) dial(ctx context.Context, network string, port uint16) (n
 	}
 	if r.client != nil && r.activeFlows() == 0 && r.selected > 0 && time.Since(r.selectedAt) >= routeRetryHoldDown {
 		r.closeClientLocked()
+		r.nextCandidate = 0
 	}
 	attempted := make(map[int]bool)
 	var lastErr error
-	for {
+	for len(attempted) < attempts {
 		if !r.validRoute() {
 			return nil, ErrRoutePermission
 		}
@@ -244,7 +257,9 @@ func (r *remoteClient) dial(ctx context.Context, network string, port uint16) (n
 		index := r.selected
 		if r.client == nil {
 			index = -1
-			for i, candidate := range r.candidates {
+			for offset := range r.candidates {
+				i := (r.nextCandidate + offset) % len(r.candidates)
+				candidate := r.candidates[i]
 				if !attempted[i] && !time.Now().Before(r.failures[candidate.ID()]) {
 					index = i
 					break
@@ -284,6 +299,11 @@ func (r *remoteClient) dial(ctx context.Context, network string, port uint16) (n
 				lastErr = errors.New("application connection unavailable")
 			}
 			applicationErr := lastErr
+			// A target service denial or unknown application error must never
+			// be reinterpreted as permission to select another relay.
+			if !relayAvailabilityError(applicationErr) {
+				return nil, applicationErr
+			}
 			if err := bounded.Err(); err != nil {
 				return nil, applicationErr
 			}
@@ -302,7 +322,13 @@ func (r *remoteClient) dial(ctx context.Context, network string, port uint16) (n
 		if !r.validRoute() {
 			return nil, ErrRoutePermission
 		}
+		if !relayAvailabilityError(lastErr) {
+			r.closeClientLocked()
+			r.publishObservation("unavailable", "unknown", time.Time{})
+			return nil, lastErr
+		}
 		r.failures[r.candidates[index].ID()] = time.Now().Add(routeRetryHoldDown)
+		r.nextCandidate = (index + 1) % len(r.candidates)
 		r.closeClientLocked()
 	}
 	r.publishObservation("unavailable", "unknown", time.Time{})
@@ -387,7 +413,7 @@ func (r *remoteClient) retirementState() *transportRetirement {
 // start old's retirement after releasing it; no engine teardown runs under n.mu.
 func (n *Node) replaceRemoteLocked(peer string, old *remoteClient, remote RemotePeer) *remoteClient {
 	old.retired.Store(true)
-	next := &remoteClient{remote: remote, address: old.address, destinationPolicy: n.cfg.DestinationPolicy, wanCandidates: n.cfg.WANCandidates, predecessor: old.retirementState()}
+	next := &remoteClient{remote: remote, address: old.address, destinationPolicy: n.cfg.DestinationPolicy, wanCandidates: n.cfg.WANCandidates, candidateAttempts: n.cfg.RelayResources.CandidateAttempts, predecessor: old.retirementState()}
 	n.clients[peer] = next
 	return next
 }

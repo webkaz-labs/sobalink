@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"math"
 	"net"
 	"slices"
@@ -141,7 +142,7 @@ func ValidateRouteState(identity Identity, remote RemotePeer) error {
 		return nil
 	}
 	binding, err := PairRouteBinding(identity, remote)
-	if err != nil || (s.Version != 1 && s.Version != RouteStateVersion) || s.PairBinding != binding || len(s.Approvals) > MaxRouteCandidates {
+	if err != nil || (s.Version != 1 && s.Version != RouteStateVersion) || s.PairBinding != binding || len(s.Approvals) > tailcat.RelayRegionNamespace {
 		return ErrRouteUpdate
 	}
 	if s.Version == 1 {
@@ -331,7 +332,7 @@ func (n *Node) ApplyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDig
 }
 
 func (n *Node) applyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDigest string, selectedIDs []string, lifetime string, approvalExpiry, now time.Time) error {
-	if len(raw) == 0 || len(raw) > maxPairMessage || !validKey(reviewedDigest) || reviewedDigest != routeReviewDigest(raw) || len(selectedIDs) > MaxRouteCandidates {
+	if len(raw) == 0 || len(raw) > maxPairMessage || !validKey(reviewedDigest) || reviewedDigest != routeReviewDigest(raw) || len(selectedIDs) > tailcat.RelayRegionNamespace {
 		return ErrRouteUpdate
 	}
 	n.pairMu.Lock()
@@ -387,7 +388,7 @@ func validateRouteApproval(u RouteUpdate, lifetime string, granted, expiry time.
 }
 
 func selectedApprovalsWithLifetime(u RouteUpdate, ids []string, lifetime string, expiry, now time.Time) ([]RouteApproval, error) {
-	if (lifetime != RouteLifetimeFinite && lifetime != RouteLifetimeUntilRevoked) || lifetime == RouteLifetimeUntilRevoked && !expiry.IsZero() || len(ids) > MaxRouteCandidates || len(ids) > 0 && validateRouteApproval(u, lifetime, now, expiry) != nil {
+	if (lifetime != RouteLifetimeFinite && lifetime != RouteLifetimeUntilRevoked) || lifetime == RouteLifetimeUntilRevoked && !expiry.IsZero() || len(ids) > tailcat.RelayRegionNamespace || len(ids) > 0 && validateRouteApproval(u, lifetime, now, expiry) != nil {
 		return nil, ErrRouteUpdate
 	}
 	available := make(map[string]bool, len(u.Candidates))
@@ -554,7 +555,7 @@ func (n *Node) commitRouteChangeLocked(peer string, old *remoteClient, next Remo
 // is stopped before persistence, even when the save fails. A failed save is
 // surfaced and the reduced in-memory authority stays in force for a retry.
 func (n *Node) RevokeRoutes(peer string, ids []string) error {
-	if len(ids) > MaxRouteCandidates {
+	if len(ids) > tailcat.RelayRegionNamespace {
 		return ErrRouteUpdate
 	}
 	remove := make(map[string]bool, len(ids))
