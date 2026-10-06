@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"github.com/webkaz-labs/sobalink/internal/testfixture"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 	"io"
 	"net"
@@ -43,32 +44,31 @@ func runDirectLANCoreNative(t *testing.T, diagnoseFirstHTTP bool) {
 		}
 		return value
 	}
-	choose := func() string {
+	choose := func() *testfixture.PortReservation {
 		t.Helper()
-		for range 16 {
-			l, err := net.Listen("tcp4", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			ap := l.Addr().(*net.TCPAddr).AddrPort()
-			u, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(ap))
-			_ = l.Close()
-			if err != nil {
-				continue
-			}
-			_ = u.Close()
-			if ap.Port() >= 1024 && (ap.Port() < 54543 || ap.Port() > 54545) {
-				return ap.String()
-			}
+		reserve, err := testfixture.ReserveLoopbackTCPUDP(netip.MustParseAddr("127.0.0.1"), 54543, 54544, 54545)
+		if err != nil {
+			t.Fatalf("could not allocate a paired loopback TCP/UDP endpoint: %v", err)
 		}
-		t.Fatal("could not allocate a paired loopback TCP/UDP endpoint")
-		return ""
+		t.Cleanup(func() {
+			if err := reserve.Close(); err != nil {
+				t.Errorf("release direct LAN fixture reservation: %v", err)
+			}
+		})
+		return reserve
 	}
 	for _, item := range []struct {
 		c    *Core
 		name string
 	}{{host, "native-host"}, {guest, "native-guest"}} {
-		must(t, item.c, "network.configure", map[string]any{"mode": "direct-lan", "hostname": item.name, "directLAN": DirectLANSelection{Listen: choose(), Prefixes: []string{"127.0.0.0/8"}}})
+		reserve := choose()
+		listen := reserve.Endpoint().String()
+		// Hold both protocols until immediately before the real configuration
+		// starts the node. Product startup errors still fail this test.
+		if err := reserve.Close(); err != nil {
+			t.Fatal(err)
+		}
+		must(t, item.c, "network.configure", map[string]any{"mode": "direct-lan", "hostname": item.name, "directLAN": DirectLANSelection{Listen: listen, Prefixes: []string{"127.0.0.0/8"}}})
 	}
 	hostKey := host.directLANStoreCopy().copy().Identity.PublicKey()
 	guestKey := guest.directLANStoreCopy().copy().Identity.PublicKey()
