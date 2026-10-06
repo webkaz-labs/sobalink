@@ -16,7 +16,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/policy"
 )
 
-func mixedCorePair(t *testing.T) (*Core, *Core, *mixedBackend, *mixedBackend) {
+func mixedCorePair(t *testing.T, decorate ...func(string, *pipeNode) NetworkBackend) (*Core, *Core, *mixedBackend, *mixedBackend) {
 	t.Helper()
 	open := func() (*Core, *mixedBackend) {
 		c, e := Open(context.Background(), Options{Directory: t.TempDir(), Version: "test", SkipNetworkStart: true})
@@ -31,10 +31,6 @@ func mixedCorePair(t *testing.T) (*Core, *Core, *mixedBackend, *mixedBackend) {
 			t.Fatal(e)
 		}
 		n := &mixedBackend{ctx: c.ctx, self: mixedIP(id), order: s.Selection.Backends, nodes: map[string]NetworkBackend{}, sources: map[netip.AddrPort]mixedSource{}}
-		c.mu.Lock()
-		c.profile.Settings.Network = "mixed"
-		c.node = n
-		c.mu.Unlock()
 		t.Cleanup(func() { _ = c.Close() })
 		return c, n
 	}
@@ -46,11 +42,25 @@ func mixedCorePair(t *testing.T) (*Core, *Core, *mixedBackend, *mixedBackend) {
 		node := func(ip, other netip.Addr, own, peer string) *pipeNode {
 			return &pipeNode{hub: hub, ip: ip, who: map[netip.Addr]string{other: peer}, state: identity.State{SelfID: own, IPs: []netip.Addr{ip}, Backend: "Running", Snapshot: policy.Snapshot{Running: true, Peers: []policy.Peer{{ID: peer, IPs: []netip.Addr{other}}}}}}
 		}
-		na.nodes[name] = node(aIP, bIP, "peer-a-"+name, "peer-b-"+name)
+		first := node(aIP, bIP, "peer-a-"+name, "peer-b-"+name)
+		na.nodes[name] = first
+		if len(decorate) != 0 {
+			na.nodes[name] = decorate[0](name, first)
+		}
 		nb.nodes[name] = node(bIP, aIP, "peer-b-"+name, "peer-a-"+name)
 	}
-	for _, c := range []*Core{a, b} {
+	// Match production: finish every backend and wrapper before publishing the
+	// immutable map to Core.maintenance and peer-listener goroutines.
+	for _, pair := range []struct {
+		c *Core
+		n *mixedBackend
+	}{{a, na}, {b, nb}} {
+		c := pair.c
 		c.op.Lock()
+		c.mu.Lock()
+		c.profile.Settings.Network = "mixed"
+		c.node = pair.n
+		c.mu.Unlock()
 		if e := c.startPeerServer([]netip.Addr{c.nodeCopy().(*mixedBackend).self}); e != nil {
 			t.Fatal(e)
 		}

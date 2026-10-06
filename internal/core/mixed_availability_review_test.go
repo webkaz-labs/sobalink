@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-func reviewBoundCore(t *testing.T) (*Core, *mixedBackend, string) {
+func reviewBoundCore(t *testing.T, decorate ...func(string, *pipeNode) NetworkBackend) (*Core, *mixedBackend, string) {
 	t.Helper()
-	c, _, n, _ := mixedCorePair(t)
+	c, _, n, _ := mixedCorePair(t, decorate...)
 	raw, _ := json.Marshal(map[string]any{"peers": []string{mixedID("lan", "peer-b-lan"), mixedID("tailnet", "peer-b-tailnet")}})
 	result, e := c.bindMixedPeers(context.Background(), raw)
 	if e != nil {
@@ -62,13 +62,12 @@ func TestMixedReviewAvailabilityAdmissionUnknownBlocksNewTCPPreservesAdmittedIde
 	}
 }
 func TestMixedReviewAvailabilityAdmissionUnknownBlocksNewUDPAlias(t *testing.T) {
-	_, n, id := reviewBoundCore(t)
 	nodes := map[string]*mixedTestPacketNode{}
-	for name, node := range n.nodes {
-		wrapped := &mixedTestPacketNode{pipeNode: node.(*pipeNode)}
+	_, n, id := reviewBoundCore(t, func(name string, node *pipeNode) NetworkBackend {
+		wrapped := &mixedTestPacketNode{pipeNode: node}
 		nodes[name] = wrapped
-		n.nodes[name] = wrapped
-	}
+		return wrapped
+	})
 	conn, e := n.ListenPacket("udp", netip.AddrPortFrom(n.self, 7000).String())
 	if e != nil {
 		t.Fatal(e)
@@ -90,7 +89,7 @@ func TestMixedReviewAvailabilityAdmissionRetryStopsAfterBindingRemoved(t *testin
 	n, id, first, second := boundAvailabilityPair(t)
 	first.dialErr = net.ErrClosed
 	first.beforeDial = func() { n.mu.Lock(); n.bindings = nil; n.mu.Unlock() }
-	conn, e := n.DialIP(context.Background(), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
+	conn, e := n.DialIP(availabilityDialContext(context.Background()), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
 	if conn != nil {
 		conn.Close()
 	}

@@ -9,13 +9,12 @@ import (
 )
 
 func TestReviewOpaqueUDPCoreAdmissionLifecycle(t *testing.T) {
-	c, _, owner, _ := mixedCorePair(t)
 	nodes := map[string]*mixedTestPacketNode{}
-	for name, node := range owner.nodes {
-		p := &mixedTestPacketNode{pipeNode: node.(*pipeNode)}
-		owner.nodes[name] = p
+	c, _, owner, _ := mixedCorePair(t, func(name string, node *pipeNode) NetworkBackend {
+		p := &mixedTestPacketNode{pipeNode: node}
 		nodes[name] = p
-	}
+		return p
+	})
 	conn, err := owner.ListenPacket("udp", netip.AddrPortFrom(owner.self, 7000).String())
 	if err != nil {
 		t.Fatal(err)

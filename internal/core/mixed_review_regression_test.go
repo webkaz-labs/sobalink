@@ -34,10 +34,7 @@ func (n *reviewScopedNode) SetTCPScopes(context.Context, []backendworker.TCPPoli
 	return nil
 }
 func TestMixedReviewUnavailableWorkerMustNotCloseHealthyWorker(t *testing.T) {
-	a, _, na, _ := mixedCorePair(t)
-	for name, node := range na.nodes {
-		na.nodes[name] = &reviewScopedNode{node.(*pipeNode)}
-	}
+	a, _, na, _ := mixedCorePair(t, func(_ string, node *pipeNode) NetworkBackend { return &reviewScopedNode{node} })
 	raw, _ := json.Marshal(map[string]any{"peers": []string{mixedID("lan", "peer-b-lan"), mixedID("tailnet", "peer-b-tailnet")}})
 	result, err := a.bindMixedPeers(context.Background(), raw)
 	if err != nil {

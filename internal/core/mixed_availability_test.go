@@ -15,6 +15,14 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/identity"
 )
 
+// Fault injection belongs only to the explicitly exercised dial, not ordinary
+// Core maintenance probes that continue concurrently throughout these tests.
+type availabilityDialKey struct{}
+
+func availabilityDialContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, availabilityDialKey{}, true)
+}
+
 type availabilityBackend struct {
 	NetworkBackend
 	startErr, dialErr     error
@@ -31,6 +39,9 @@ func (b *availabilityBackend) Close() error {
 	return nil
 }
 func (b *availabilityBackend) DialIP(ctx context.Context, network string, ap netip.AddrPort) (net.Conn, error) {
+	if ctx.Value(availabilityDialKey{}) != true {
+		return b.NetworkBackend.DialIP(ctx, network, ap)
+	}
 	b.dials++
 	if b.beforeDial != nil {
 		b.beforeDial()
@@ -42,17 +53,19 @@ func (b *availabilityBackend) DialIP(ctx context.Context, network string, ap net
 }
 func boundAvailabilityPair(t *testing.T) (*mixedBackend, string, *availabilityBackend, *availabilityBackend) {
 	t.Helper()
-	a, _, n, _ := mixedCorePair(t)
+	wrappers := map[string]*availabilityBackend{}
+	a, _, n, _ := mixedCorePair(t, func(name string, node *pipeNode) NetworkBackend {
+		wrapped := &availabilityBackend{NetworkBackend: node}
+		wrappers[name] = wrapped
+		return wrapped
+	})
 	raw, _ := json.Marshal(map[string]any{"peers": []string{mixedID("lan", "peer-b-lan"), mixedID("tailnet", "peer-b-tailnet")}})
 	result, e := a.bindMixedPeers(context.Background(), raw)
 	if e != nil {
 		t.Fatal(e)
 	}
 	id := result.(map[string]any)["binding"].(connectionroute.Binding).PeerID
-	first := &availabilityBackend{NetworkBackend: n.nodes["lan"]}
-	second := &availabilityBackend{NetworkBackend: n.nodes["tailnet"]}
-	n.nodes["lan"], n.nodes["tailnet"] = first, second
-	return n, id, first, second
+	return n, id, wrappers["lan"], wrappers["tailnet"]
 }
 func TestMixedAvailabilityClassifierRejectsAmbiguousErrors(t *testing.T) {
 	for _, e := range []error{net.ErrClosed, backendworker.ErrClosed, connectionroute.ErrUnavailable, directlan.ErrLocalAddressUnavailable, fmt.Errorf("wrapped: %w", net.ErrClosed)} {
@@ -91,7 +104,7 @@ func TestMixedUnknownReadinessNeverSelectsAnotherRoute(t *testing.T) {
 			node.state.Backend = state
 			node.state.Snapshot.Running = false
 			node.mu.Unlock()
-			conn, e := n.DialIP(context.Background(), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
+			conn, e := n.DialIP(availabilityDialContext(context.Background()), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
 			if conn != nil {
 				conn.Close()
 			}
@@ -113,7 +126,7 @@ func TestMixedDialAvailabilityRaceRechecksBeforeFallback(t *testing.T) {
 		t.Run(failure.Error(), func(t *testing.T) {
 			n, id, first, second := boundAvailabilityPair(t)
 			first.dialErr = failure
-			conn, e := n.DialIP(context.Background(), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
+			conn, e := n.DialIP(availabilityDialContext(context.Background()), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
 			if mixedUnavailable(failure) {
 				if e != nil || conn == nil || second.dials != 1 {
 					t.Fatalf("positive absence did not fall back: %v", e)
@@ -144,7 +157,7 @@ func TestMixedDialRaceCannotBypassNewRevocationOrCancellation(t *testing.T) {
 			node.state.Snapshot.Peers[0].Expired = true
 			node.mu.Unlock()
 		}
-		conn, e := n.DialIP(ctx, "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
+		conn, e := n.DialIP(availabilityDialContext(ctx), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
 		if conn != nil {
 			conn.Close()
 		}
@@ -180,7 +193,7 @@ func TestMixedDeadWorkerDoesNotEraseKnownAuthorizationFailure(t *testing.T) {
 		t.Fatal(e)
 	}
 	node.Close()
-	conn, e := n.DialIP(context.Background(), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
+	conn, e := n.DialIP(availabilityDialContext(context.Background()), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
 	if conn != nil {
 		conn.Close()
 	}
@@ -259,7 +272,7 @@ func TestMixedRetryStopsAfterBindingRemoved(t *testing.T) {
 	n, id, first, second := boundAvailabilityPair(t)
 	first.dialErr = net.ErrClosed
 	first.beforeDial = func() { n.mu.Lock(); n.bindings = nil; n.mu.Unlock() }
-	conn, e := n.DialIP(context.Background(), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
+	conn, e := n.DialIP(availabilityDialContext(context.Background()), "tcp", netip.AddrPortFrom(mixedIP(id), PeerPort))
 	if conn != nil {
 		conn.Close()
 	}
