@@ -23,47 +23,56 @@ import (
 // The parent owns private state locking and must never run a second worker for
 // the same backend state. No credentials are supplied through command arguments.
 func RunNetworkWorker(ctx context.Context, dir, mode, hostname string, in io.ReadCloser, out io.WriteCloser, selected ...backendworker.Limits) error {
-	if !filepath.IsAbs(dir) || !config.ValidName(hostname) {
-		return errors.New("invalid private worker configuration")
+	node, limits, err := prepareNetworkWorker(ctx, dir, mode, hostname, selected...)
+	if err != nil {
+		return err
 	}
+	return backendworker.ServeEngine(ctx, in, out, workerEngine{node}, limits)
+}
+
+// Prepare from one validated saved policy before starting any engine or owner RPC.
+// Explicit IPC limits override only IPC budgets, never the LAN runtime or store.
+func prepareNetworkWorker(ctx context.Context, dir, mode, hostname string, selected ...backendworker.Limits) (NetworkBackend, backendworker.Limits, error) {
 	limits := backendworker.DefaultLimits()
+	if !filepath.IsAbs(dir) || !config.ValidName(hostname) {
+		return nil, limits, errors.New("invalid private worker configuration")
+	}
+	policy, err := readCapacityPolicy(dir)
+	if err != nil {
+		return nil, limits, err
+	}
 	if len(selected) > 0 {
 		limits = selected[0]
 	} else {
-		policy, e := readCapacityPolicy(dir)
-		if e != nil {
-			return e
-		}
-		limits, e = selectedWorkerLimits(policy)
-		if e != nil {
-			return e
+		limits, err = selectedWorkerLimits(policy)
+		if err != nil {
+			return nil, limits, err
 		}
 	}
 	if e := limits.Validate(); e != nil {
-		return e
+		return nil, limits, e
 	}
 	var node NetworkBackend
-	var err error
 	switch mode {
 	case "tailnet":
 		node, err = identity.New(dir, hostname)
 	case "lan":
 		var store *lanStore
-		store, err = readLANStore(filepath.Join(dir, "lan.json"))
+		store, err = readLANStoreWithPolicy(filepath.Join(dir, "lan.json"), policy)
 		if err == nil {
 			if store == nil {
-				return errors.New("LAN worker requires existing reviewed configuration")
+				return nil, limits, errors.New("LAN worker requires existing reviewed configuration")
 			}
-			owner := &Core{ctx: ctx, dir: dir}
+			owner := &Core{ctx: ctx, dir: dir, capacity: policy}
 			node, err = owner.newLANBackend(store)
 		}
 	default:
-		return errors.New("unsupported isolated network engine")
+		return nil, limits, errors.New("unsupported isolated network engine")
 	}
 	if err != nil {
-		return err
+		return nil, limits, err
 	}
-	return backendworker.ServeEngine(ctx, in, out, workerEngine{node}, limits)
+	return node, limits, nil
 }
 
 type workerEngine struct{ NetworkBackend }
