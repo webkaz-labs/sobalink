@@ -48,3 +48,19 @@ relayless WAN guarantee. A configured LAN destination policy rejects WAN
 candidates before engine setup. Nil policy and nil WAN configuration retain
 ordinary upstream behavior. Original and adapted hashes include the separately
 reviewed WAN source and tests; the upstream module graph remains unchanged.
+
+
+The endpoint-state correction adds an optional observer of existing DERP
+connection outcomes. It retains typed dial, TLS and protocol failures with
+per-client sequence, per-region epoch and retirement markers so observers can
+reject stale updates. Positive readiness follows DERP ServerInfo, rather than
+TCP or TLS completion alone. Nil observers retain the upstream error behavior;
+this is not a separate reachability probe or permission to fall back after an
+admission failure.
+
+Local UDP candidates now use the actual socket port for their address family
+and reject missing or unusable family sockets. This does not establish physical
+NIC/VPN isolation, bypass destination admission, or add privileged configuration.
+The three added observer/type/test files retain explicit project MIT headers;
+modified upstream files retain their original notices. Their complete bytes and
+original/final hashes are included in the same reviewed adaptation manifest.

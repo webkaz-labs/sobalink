@@ -14,6 +14,7 @@
 | 過去の公開済み alpha.2 | [公開 run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格。4対象の native race/vet/package、署名・provenance、認証なしの公開取得、Linux x64/ARM64・macOS ARM64・Windows x64 の実 mise 導入を確認。正確な main の CI 成功ゲートも合格。実端末・実アプリ受入は別 |
 | 公開済み alpha.2 の資源観測。統合済み [PR #7](https://github.com/webkaz-labs/sobalink/pull/7)、merge `11cd8285607c220962c97db725f36fdd00d653d7` | [確認報告](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [観測 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) で正確な公開 Linux amd64 バイナリを15分オフライン待機、10回正常再起動、待機中の強制終了・復旧で検査。[CI 37183542586 attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) は Windows frontend の非決定的な1アサーションをコード変更なしで再実行し、4対象・ブラウザー・manifest が合格。受信中の異常終了、packet capture、電源断、後続経路の受入ではない |
 | 新しい接続方式の統合 | alpha.4を基準とする[draft PR #11](https://github.com/webkaz-labs/sobalink/pull/11)。変更後の正確なソースに対する4対象native／browserと署名付き配布は未完了。ローカルのcross-build・race・制御されたTCP／UDP試験と、hosted native CI・実機受入を区別する。PR #8の経路復旧はalpha.4へ統合済み |
+| 統合CI `1da932ca` | [run 37396023044](https://github.com/webkaz-labs/sobalink/actions/runs/37396023044) の4 nativeジョブが失敗。Windowsは時刻由来のrequest ID重複、Linux／macOSはdirect fixture／通知のIPv6ソケットポート選択を検出。browser73件は合格し、選択した32画像と日本語フォント証拠を確認。修正したID・family別ポート・型付きDERP失敗通知・mixed利用不能判定・中継資源・追加WAN設定ケースには、新しい正確なソースのrunが必要 |
 
 ## ソースごとの記録
 
@@ -103,7 +104,7 @@
 | 最終アプリ統合 | 正確なソースの2プロセス・実ソケットで、外部不通時の準備済み LAN 起動、同じペアの経路断・復旧、ローカルアプリ入口、取消・期限、移行、後片付けが必要。その後に4対象と実 Go 本体の経路ブラウザー操作を確認 |
 | 実端末 | LAN/WAN/NAT の変化、実端末のオフライン LAN 起動、実アプリ認証・再接続、OS スリープ復帰は未実施 |
 
-製品は direct を有効にした通常の単一バイナリです。UDP を除いた隔離 fixture は狭い証拠であり、通常の直接通信や外向き通信を厳密に限定する製品を検証しません。ネイティブ受入は制御した中継 fixture と実際の製品構成の両方を必要とします。厳密な LAN 限定・外部通信ゼロのモードは含めません。local 中継の区分は相手への公開された直接経路を止めません。
+製品は direct を有効にした通常の単一バイナリです。UDP を除いた隔離 fixture は狭い証拠であり、通常の直接通信や外向き通信を厳密に限定する製品を検証しません。ネイティブ受入は制御した中継 fixture と実際の製品構成の両方を必要とします。過去の経路復旧だけのソースには厳密な送信先制限はありませんでした。現在の統合では明示した送信先の許可を追加しますが、物理NICの隔離や端末全体の外部通信ゼロではありません。local中継の区分だけでは相手への公開された直接経路を止めません。
 
 明示したプレリリースの前に、統合自動試験、認証・許可・非公開情報のレビュー、最終ソースの native/browser、署名付き実導入を通します。実端末受入は未実施と明示して残し、その試験のために mise 導入を提供できます。既存 TCP の維持、任意要求の再実行、ファイルの途中バイト・再起動後の再開を宣伝しません。待受準備、認証済み経路の証拠、アプリ成功、遠隔ジョブ完了を区別します。
 

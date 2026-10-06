@@ -113,6 +113,10 @@ func (n *Node) readyLocked() error {
 // Start opens exactly the selected numeric TCP tunnel endpoint. Failure is
 // returned without changing its address, touching firewall policy or fallback.
 func (n *Node) Start(ctx context.Context) error {
+	return n.start(ctx, localAddressReady)
+}
+
+func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.closed {
@@ -125,6 +129,9 @@ func (n *Node) Start(ctx context.Context) error {
 		return nil
 	}
 	if e := ctx.Err(); e != nil {
+		return e
+	}
+	if e := checkAddress(n.cfg.Listen.Addr()); e != nil {
 		return e
 	}
 	network := "tcp6"

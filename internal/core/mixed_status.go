@@ -40,7 +40,7 @@ func (c *Core) addMixedRuntimeStatus(out map[string]any) {
 	var backends []map[string]any
 	for _, name := range n.order {
 		s := states[name]
-		backends = append(backends, map[string]any{"backend": name, "state": s.Backend, "running": s.Snapshot.Running, "selfId": s.SelfID})
+		backends = append(backends, map[string]any{"backend": name, "state": s.Backend, "running": s.Snapshot.Running, "selfId": s.SelfID, "availability": mixedReadiness(s), "restartRequired": mixedBackendRestartRequired(n.nodes[name])})
 	}
 	out["backendStates"] = backends
 	var peers []map[string]any
@@ -61,4 +61,11 @@ func (c *Core) addMixedRuntimeStatus(out map[string]any) {
 	out["workerResources"] = n.workerLimits
 	out["resourceRestartRequired"] = e != nil || current != n.workerLimits
 	out["automaticSwitchTrigger"] = "backend-unavailable"
+}
+
+func mixedBackendRestartRequired(node NetworkBackend) bool {
+	if restart, ok := node.(interface{ restartRequired() bool }); ok {
+		return restart.restartRequired()
+	}
+	return false
 }

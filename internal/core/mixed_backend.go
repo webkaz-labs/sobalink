@@ -71,11 +71,24 @@ func (n *mixedBackend) logical(backend, id string) string {
 	return mixedID(backend, id)
 }
 func (n *mixedBackend) Start() error {
+	started := 0
 	for _, name := range n.order {
-		if e := n.nodes[name].Start(); e != nil {
+		if e := n.ctx.Err(); e != nil {
 			_ = n.Close()
 			return e
 		}
+		if e := n.nodes[name].Start(); e != nil {
+			if mixedStartupUnavailable(e) && n.ctx.Err() == nil {
+				continue
+			}
+			_ = n.Close()
+			return e
+		}
+		started++
+	}
+	if started == 0 {
+		_ = n.Close()
+		return connectionroute.ErrUnavailable
 	}
 	return nil
 }
@@ -88,14 +101,16 @@ func (n *mixedBackend) routeSnapshot(ctx context.Context) (map[string][]mixedPee
 			if ctx.Err() != nil {
 				return nil, nil, ctx.Err()
 			}
-			if !errors.Is(e, net.ErrClosed) && !errors.Is(e, backendworker.ErrClosed) && !errors.Is(e, connectionroute.ErrUnavailable) {
+			if !mixedUnavailable(e) {
 				return nil, nil, e
 			}
 			n.mu.Lock()
 			state = n.cached[name]
 			n.mu.Unlock()
 			state.Snapshot.Running = false
-			state.Backend = "unavailable"
+			if mixedReadiness(state) != mixedAuthRequired {
+				state.Backend = "unavailable"
+			}
 		} else {
 			n.mu.Lock()
 			if n.cached == nil {
@@ -159,40 +174,71 @@ func (n *mixedBackend) Logout(context.Context) error {
 	return errors.New("stop mixed mode and explicitly review Tailnet logout")
 }
 func (n *mixedBackend) DialIP(ctx context.Context, network string, ap netip.AddrPort) (net.Conn, error) {
-	routes, states, e := n.routeSnapshot(ctx)
-	if e != nil {
-		return nil, e
-	}
-	for id, rs := range routes {
-		if mixedIP(id) != ap.Addr() {
-			continue
+	attempted := map[string]bool{}
+	// Each retry is a fresh unopened connection. Re-read identity/revocation state
+	// after a positive availability race; never reuse a returned connection.
+	for {
+		if e := ctx.Err(); e != nil {
+			return nil, e
 		}
-		if n.bindingDenied(id, routes, states) {
+		routes, states, e := n.routeSnapshot(ctx)
+		if e != nil {
+			return nil, e
+		}
+		var id string
+		for candidate := range routes {
+			if mixedIP(candidate) == ap.Addr() {
+				id = candidate
+				break
+			}
+		}
+		if id == "" {
 			return nil, connectionroute.ErrDenied
 		}
-		for _, r := range rs {
-			if r.peer.Expired {
-				return nil, connectionroute.ErrDenied
-			}
+		if e := n.routeReadiness(id, routes, states); e != nil {
+			return nil, e
 		}
-		for _, r := range rs {
-			if !states[r.backend].Snapshot.Running {
+		var selected *mixedPeerRoute
+		for _, r := range routes[id] {
+			if attempted[r.backend] || mixedReadiness(states[r.backend]) == mixedAbsent {
 				continue
 			}
-			conn, e := n.nodes[r.backend].DialIP(ctx, network, netip.AddrPortFrom(r.address, ap.Port()))
-			if e != nil {
+			candidate := r
+			selected = &candidate
+			break
+		}
+		if selected == nil {
+			return nil, connectionroute.ErrUnavailable
+		}
+		r := *selected
+		attempted[r.backend] = true
+		conn, e := n.nodes[r.backend].DialIP(ctx, network, netip.AddrPortFrom(r.address, ap.Port()))
+		if ctx.Err() != nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return nil, ctx.Err()
+		}
+		if e != nil {
+			if conn != nil {
+				_ = conn.Close()
 				return nil, e
 			}
-			observed, e := observedBackendPeer(ctx, n.nodes[r.backend], conn)
-			if e != nil || observed != r.id {
-				_ = conn.Close()
-				return nil, connectionroute.ErrDenied
+			if mixedUnavailable(e) {
+				continue
 			}
-			return conn, nil
+			return nil, e
 		}
-		return nil, connectionroute.ErrUnavailable
+		if conn == nil {
+			return nil, errMixedReadinessUnknown
+		}
+		observed, e := observedBackendPeer(ctx, n.nodes[r.backend], conn)
+		if e != nil || observed != r.id {
+			_ = conn.Close()
+			return nil, connectionroute.ErrDenied
+		}
+		return conn, nil
 	}
-	return nil, connectionroute.ErrDenied
 }
 func (n *mixedBackend) Listen(network, address string) (net.Listener, error) {
 	ap, e := netip.ParseAddrPort(address)
@@ -248,6 +294,9 @@ func (n *mixedBackend) wrap(name string, c net.Conn) (net.Conn, error) {
 		return nil, e
 	}
 	logical := n.logical(name, actual)
+	if e := n.admitMixedRoute(identityCtx, logical); e != nil {
+		return nil, e
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.closed || len(n.sources) >= n.sourceBudget() {

@@ -20,6 +20,7 @@ type directLANBackend struct {
 	ctx           context.Context
 	store         *directLANStore
 	ready, closed bool
+	startAbsent   bool
 	resources     directLANRuntimeResources
 }
 
@@ -61,8 +62,16 @@ func (b *directLANBackend) Start() error {
 		return nil
 	}
 	if err := b.Node.Start(b.ctx); err != nil {
+		if err == directlan.ErrLocalAddressUnavailable {
+			b.startAbsent = true
+			return &mixedError{"direct_lan_address_unavailable", "The selected direct LAN address is absent; reconnect or reconfigure while stopped, then restart", err}
+		}
+		if b.ctx.Err() != nil {
+			return b.ctx.Err()
+		}
 		return &lanCommandError{"direct_lan_start_failed", "direct LAN could not bind the selected endpoint; check that the local address is assigned and its port is free"}
 	}
+	b.startAbsent = false
 	b.ready = true
 	return nil
 }
@@ -71,7 +80,7 @@ func (b *directLANBackend) State(ctx context.Context) (identity.State, error) {
 		return identity.State{}, err
 	}
 	b.mu.Lock()
-	ready, closed := b.ready, b.closed
+	ready, closed, absent := b.ready, b.closed, b.startAbsent
 	b.mu.Unlock()
 	if closed || b.ctx.Err() != nil {
 		return identity.State{}, net.ErrClosed
@@ -82,6 +91,7 @@ func (b *directLANBackend) State(ctx context.Context) (identity.State, error) {
 	if ready {
 		if err := b.Node.Ready(); errors.Is(err, directlan.ErrLocalAddressUnavailable) {
 			ready = false
+			absent = true
 		} else if err != nil {
 			return identity.State{}, codedDirectLANError(err)
 		}
@@ -89,7 +99,7 @@ func (b *directLANBackend) State(ctx context.Context) (identity.State, error) {
 	st := identity.State{SelfID: b.PublicKey(), Backend: "starting", IPs: []netip.Addr{b.OverlayAddr()}, ReservedPorts: []uint16{b.Endpoint().Port()}, Snapshot: policy.Snapshot{Running: ready}}
 	if ready {
 		st.Backend = "ready"
-	} else {
+	} else if absent {
 		st.Backend = "unavailable"
 	}
 	for _, peer := range b.Peers() {
@@ -113,6 +123,9 @@ func (b *directLANBackend) DialIP(ctx context.Context, network string, ap netip.
 		return nil, err
 	}
 	if !st.Snapshot.Running {
+		if st.Backend == "unavailable" {
+			return nil, directlan.ErrLocalAddressUnavailable
+		}
 		return nil, directlan.ErrUnavailable
 	}
 	for _, peer := range st.Snapshot.Peers {
@@ -176,3 +189,9 @@ func (b *directLANBackend) Close() error {
 }
 
 var _ NetworkBackend = (*directLANBackend)(nil)
+
+func (b *directLANBackend) restartRequired() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startAbsent
+}

@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"net"
 	"net/netip"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/webkaz-labs/sobalink/internal/backendworker"
 	"github.com/webkaz-labs/sobalink/internal/connectionroute"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/transport"
@@ -75,7 +73,7 @@ type mixedPacket struct {
 }
 
 func mixedPacketUnavailable(err error) bool {
-	return errors.Is(err, net.ErrClosed) || errors.Is(err, backendworker.ErrClosed) || errors.Is(err, connectionroute.ErrUnavailable)
+	return mixedUnavailable(err)
 }
 
 func (n *mixedBackend) ListenPacket(network, address string) (net.PacketConn, error) {
@@ -134,10 +132,13 @@ func (p *mixedPacket) refresh(network string, port uint16) error {
 	}
 	for _, name := range p.owner.order {
 		state := states[name]
-		if state.Backend == "NeedsLogin" || state.Backend == "NeedsMachineAuth" {
+		if mixedReadiness(state) == mixedAuthRequired {
 			return connectionroute.ErrDenied
 		}
-		if !state.Snapshot.Running || len(state.IPs) == 0 {
+		if mixedReadiness(state) == mixedUnknown || (mixedReadiness(state) == mixedReady && len(state.IPs) == 0) {
+			return errMixedReadinessUnknown
+		}
+		if mixedReadiness(state) == mixedAbsent {
 			p.mu.Lock()
 			packet := p.packets[name]
 			p.mu.Unlock()
@@ -249,8 +250,11 @@ func (p *mixedPacket) enqueue(name string, packet net.PacketConn, remote netip.A
 	}
 	identityCtx, cancel := context.WithTimeout(p.ctx, 3*time.Second)
 	id, err := p.owner.nodes[name].WhoIs(identityCtx, remote)
-	cancel()
 	logical := p.owner.logical(name, id)
+	if err == nil {
+		err = p.owner.admitMixedRoute(identityCtx, logical)
+	}
+	cancel()
 	p.mu.Lock()
 	filter, version := p.peerFilter, p.filterVersion
 	p.mu.Unlock()

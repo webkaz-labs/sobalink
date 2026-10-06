@@ -425,6 +425,7 @@ func TestMixedPacketLateBackendInheritsWriteDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		n, nodes := newMixedPacketFixture(t)
 		nodes["lan"].state.Snapshot.Running = false
+		nodes["lan"].state.Backend = "unavailable"
 		p := openMixedPacketFixture(t, n)
 		deadline := time.Now().Add(time.Minute)
 		if err := p.SetWriteDeadline(deadline); err != nil {
@@ -432,6 +433,7 @@ func TestMixedPacketLateBackendInheritsWriteDeadline(t *testing.T) {
 		}
 		nodes["lan"].mu.Lock()
 		nodes["lan"].state.Snapshot.Running = true
+		nodes["lan"].state.Backend = "Running"
 		nodes["lan"].mu.Unlock()
 		time.Sleep(mixedPacketWatchInterval)
 		synctest.Wait()

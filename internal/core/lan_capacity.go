@@ -16,6 +16,9 @@ func (c *Core) applyLANCapacityLocked(policy capacity.Policy, publish func() err
 	return c.applyDirectLANCapacityLocked(policy, func() error { return c.applyRelayLANCapacityLocked(policy, publish) })
 }
 func (c *Core) applyRelayLANCapacityLocked(policy capacity.Policy, publish func() error) error {
+	if c.node != nil && relayResourcesChanged(c.capacity, policy) {
+		return relayResourceRestartError()
+	}
 	store := c.lan
 	if store == nil {
 		return publish()

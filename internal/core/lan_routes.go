@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	tailcat "github.com/webkaz-labs/sobalink/internal/routecat"
 	"net/netip"
 	"slices"
 	"time"
@@ -32,7 +33,7 @@ func validateLANRoutes(state lanState) error {
 			}
 		}
 	}
-	if len(state.RouteCandidates) >= lanlink.MaxRouteCandidates {
+	if len(state.RouteCandidates) >= tailcat.RelayRegionNamespace {
 		return lanlink.ErrRouteUpdate
 	}
 	seen := map[string]bool{}

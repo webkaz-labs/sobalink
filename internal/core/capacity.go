@@ -137,6 +137,9 @@ func validateSupportedCapacity(p capacity.Policy) error {
 	if _, err := selectedWorkerLimits(p); err != nil {
 		return err
 	}
+	if _, err := selectedRelayResources(p); err != nil {
+		return err
+	}
 	for _, g := range []struct {
 		values    map[string]capacity.Choice
 		supported map[string]bool
@@ -227,7 +230,7 @@ func (c *Core) capacityView() map[string]any {
 	for key, value := range supportedCapacityResources {
 		resources[key] = value
 	}
-	return map[string]any{"version": capacity.Version, "requested": p, "effective": resolved, "catalog": capacity.Catalog(), "adjustable": map[string]any{"logical": logical, "resources": resources}, "usage": c.capacityUsage(), "revision": capacityRevision(p, c.profileCopy())}
+	return map[string]any{"version": capacity.Version, "requested": p, "effective": resolved, "catalog": capacity.Catalog(), "restartRequiredResources": append([]string(nil), relayResourceKeys...), "relayResourceEditable": c.nodeCopy() == nil, "adjustable": map[string]any{"logical": logical, "resources": resources}, "usage": c.capacityUsage(), "revision": capacityRevision(p, c.profileCopy())}
 }
 
 func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
@@ -249,6 +252,9 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	current := c.capacityPolicy()
+	if c.nodeCopy() != nil && relayResourcesChanged(current, in.Policy) {
+		return nil, relayResourceRestartError()
+	}
 	profile := c.profileCopy()
 	if err := validateCapacityBackend(profile.Settings.Network, in.Policy); err != nil {
 		return nil, err
@@ -262,7 +268,7 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 	if err := transfer.ValidateLimits(nextTransferLimits); err != nil {
 		return nil, err
 	}
-	view := map[string]any{"version": capacity.Version, "requested": in.Policy, "effective": resolved, "usage": c.capacityUsage(), "revision": revision, "destructive": false}
+	view := map[string]any{"version": capacity.Version, "requested": in.Policy, "effective": resolved, "usage": c.capacityUsage(), "revision": revision, "destructive": false, "restartRequired": relayResourcesChanged(current, in.Policy)}
 	if name == "policy.preview" {
 		return view, nil
 	}
