@@ -10,8 +10,6 @@ on:
       - .github/scripts/test_resource_observer.py
       - .github/scripts/measure-release-resources.py
       - .github/scripts/test_measure_release_resources.py
-      - docs/RESOURCE_MEASUREMENT.en.md
-      - docs/RESOURCE_MEASUREMENT.ja.md
 
 permissions:
   contents: read

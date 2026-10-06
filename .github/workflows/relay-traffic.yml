@@ -9,8 +9,6 @@ on:
       - .github/fixtures/relay-traffic/**
       - .github/scripts/measure-relay-traffic.py
       - .github/scripts/test_measure_relay_traffic.py
-      - docs/RELAY_TRAFFIC_MEASUREMENT.en.md
-      - docs/RELAY_TRAFFIC_MEASUREMENT.ja.md
 
 permissions:
   contents: read

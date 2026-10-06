@@ -1,71 +1,59 @@
-# Change-aware native CI
+# CI matched to the change
 
 [日本語](CI_EFFICIENCY.ja.md) · [Verification](VERIFICATION.en.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-Every change keeps the fast safety/logic checks, all four native targets, browser acceptance, reproducible frontend checks and package/manifest smoke checks. Only the real-time natural-key, relay-lease and relay-presence idle waits can be omitted, after a conservative change-impact decision. Prerelease always runs the complete real-time coverage and existing distribution/signature/install gates.
+Run the checks affected by the complete change. Ordinary documentation does not need an application build or four operating systems. Frontend changes need frontend and browser checks. Sensitive, shared or uncertain changes keep the complete native matrix. Every prerelease still runs the independent full validation and distribution/signature/install gates.
 
-## What always runs
+## Scope
 
-- Native race tests, vet, formatting, Windows retirement barriers and repeated IPC cleanup
-- Synthetic key expiry, flush and explicit rekey checks, plus direct-LAN/Core integration
-- Guarded and relay-only functional pairing, identity, TLS/pin, TCP/UDP, revocation and teardown checks
-- Engine admission/negative controls, native STUN and existing route recovery tests
-- Frontend tests and two matching exact-lock builds, real browser acceptance, archive and manifest verification
-
-The new functional relay tests use the same fixture and security assertions as their long counterparts. They do not claim that a natural lease boundary was crossed. The long counterparts still retain the original 130-second continuity check, the same TCP connections, the final post-boundary frame and re-admission assertions. The existing multi-relay presence test retains its 80-second stale-idle boundary; a separate fast counterpart checks the same functional recovery without claiming that boundary. Natural direct-LAN rekey and expiry retain the upstream timers; production timers are not shortened.
-
-## When real-time checks run
-
-The initial policy permits only a narrow positive allowlist:
-
-| Complete cumulative change | Real-time checks |
+| Complete change | Checks |
 | --- | --- |
-| Root README/SECURITY prose or ordinary `docs/**/*.md` only | May be omitted with a verified full baseline |
-| `web/src/**/*.css`, optionally with generated `web/dist` changes | May be omitted with a verified full baseline; frontend regeneration must still match |
-| Identical tree to a verified full baseline | May be omitted |
-| Go, `internal/**`, `cmd/**`, Core/config/auth/policy/timers, helpers, fixtures, workflows, toolchains, dependencies, lock files or unknown paths | Full |
-| UI TS/TSX, API clients, event handlers, route/setup/login controls | Full; these are not classified as presentation-only |
-| Generated assets without an accompanying safe CSS change | Full |
-| Development/agent policy documents, file-mode/type changes or unsafe rename endpoints | Full |
-| Missing, malformed, incomplete, dirty, shallow or unverifiable inputs | Full |
-| Manual `force_full=true` or any prerelease | Full |
+| Ordinary root README/SECURITY or top-level `docs/*.md` prose | Lightweight Git scope proof and required-document presence; application tests, builds and packages are not run |
+| `web/src` TypeScript/TSX/CSS or existing `web/browser/*.mjs` acceptance code, optionally with ordinary prose | Linux frontend unit tests, two matching exact-lock builds, fixture safety tests and real browser acceptance |
+| Accompanying generated `web/dist` changes | Included in frontend scope only with a frontend source change; regeneration must match |
+| Reviewed Go-only changes in `internal/servicepresets` or `internal/boundedlog`, optionally with ordinary prose | Changed packages and transitive reverse dependencies, including test imports, tested with race detection and vet on Linux |
+| Transport, authentication, Core, configuration, timers, shared helpers, dependencies, lockfiles, build configuration, CI policy/workflows, or any unknown path | Full native Linux amd64/arm64, macOS arm64, Windows amd64, browser and package/manifest validation |
+| Mixed frontend and Go changes, platform-specific Go, cgo, unreviewed imports, policy/provenance Markdown, unsafe modes/types or unverifiable input | Full |
+| Manual full validation or any prerelease | Full |
 
-The classification includes both rename endpoints and compares the parsed change list against complete Git tree inventories. It does not rely on GitHub workflow-level path filters, the last pushed commit alone, a cache hit, or an AI interpretation of the diff. Additions to the safe allowlist require a reviewed policy change, which itself forces full coverage.
+The Go allowlist is deliberately small. It is not permission to run any Go change on one operating system. OS-specific files, build constraints and dependencies outside the reviewed package boundary require the full matrix. The scoped runner uses current Go import graphs, including integration-tag variants for reverse-dependency selection, but executes ordinary Linux tests rather than the long native integration suites. If graph discovery is uncertain, it runs all ordinary Go packages. Failed commands and missing actual test passes remain failures.
 
-## Baseline and required result
+Markdown used as development policy or upstream source provenance is not ordinary prose. The required root documents must remain present. Guides are included in release archives, but that alone does not require rebuilding the application for every prose edit. Code and release validations continue checking the package contents. The separate resource and relay measurement workflows are triggered by their implementation inputs, not wording changes in their reports.
 
-The baseline must be an ancestor with a successful canonical `main` Cross-platform CI run, matching source/tree/policy fingerprints and the exact successful run attempt. Its `ci-coverage` receipt must prove all four targets, browser, manifest and full real-time coverage. PR receipts and selected-only runs cannot advance this baseline. Missing or expired evidence causes full execution; an initial rollout therefore runs full before any optimization is available.
+## Complete diffs and an honest required check
 
-The diff is from this full baseline to the tested checkout, including the PR merge tree where applicable. A failed transport change followed by a CSS change cannot hide the transport change. Baseline lookup reads a bounded recent history; inability to find usable evidence is an optimization miss, not permission to skip.
+The workflow runs on every supported PR/main push. It does not use a whole-workflow `paths-ignore` filter, which could leave the required check pending.
 
-`ci-required` always evaluates the actual jobs and named steps for the current attempt. It rejects failed, canceled, missing or unexpectedly skipped required coverage. A valid selected run is labeled **“real-time tests NOT RUN for this change scope”**, with its full-baseline link; it is not labeled full validation. Configure branch protection/rulesets to require **`ci-required`** before relying on conditional CI for merge eligibility. This workflow does not change repository protection settings.
+For a PR, the classifier checks the complete effective change between the verified base parent and the tested merge commit. For a main push it checks event `before` through `after`, including all pushed commits. It never judges only the latest commit. A PR that contains a Core change therefore remains full even if its latest commit fixes a browser test. Previous successful jobs are not reused.
 
-To request all checks, use **Actions → Cross-platform CI → Run workflow**, select the intended ref and leave **force_full** checked (the default). There is no force-skip override. Release workflows do not consume the change-impact plan. If an attempt only reruns failed jobs and therefore lacks a complete current-attempt inventory, rerun all jobs; incomplete attempt evidence cannot issue a full receipt.
+The classifier checks full Git tree inventories, both rename endpoints, file modes and repository/event identity. Missing history, incomplete or malformed diffs and unknown changes choose full validation. The aggregate repeats the scope proof; an artifact cannot grant itself a smaller scope. A classifier failure does not silently skip application validation.
 
-## Caches and measurement
+`ci-required` remains the required status. It runs even when application jobs are skipped and verifies the actual required jobs and named steps for the current attempt. Documentation results say **“Documentation only; application tests, builds and packages NOT RUN”**. Frontend and Go results identify their limited coverage. Only complete native, browser and package execution can produce `full_native=true`; all other domains are recorded as `not_run`, never as successful tests or a reusable full baseline.
 
-Development and trusted-main caches remain separate. Only a main native job that actually selects and completes all real-time gates can write the trusted-main namespace. Release retains its exact-source cache restoration and re-executes its native gates, including the extracted synthetic-key test.
+Repository protection settings need no change when this workflow is adopted: keep requiring `ci-required`. Main runs have separate concurrency identities, so a later documentation push cannot cancel an earlier code-validation run. Updated commits to the same PR may still cancel superseded PR runs.
 
-The aggregate also records fixed-name job and cache-step durations. Each native job publishes content-free suite timings: fixed suite identifier, elapsed seconds, result and return code. Arguments, environment, file contents and raw logs are not placed in timing records. A command failure remains a failure even if recording fails. Compare cold and warm runs separately and keep total runner time distinct from elapsed critical-path time.
+To request every check, use **Actions → Cross-platform CI → Run workflow** and leave **force_full** checked. There is no force-skip override. Release workflows do not consume the change-impact plan. A partial job rerun without complete current-attempt evidence cannot issue a full receipt.
 
-The earlier full CI at source `308d252` took 27m10s, with a 26m26s Windows job on a cache miss. Linux amd64/arm64 and macOS had cache hits and took 14m08s/13m31s/16m16s. These are observed baselines, not a promised duration for a changed test set. A reduction from omitted real-time waits must be reported as selected coverage, not as identical full-coverage performance. [Baseline run](https://github.com/webkaz-labs/sobalink/actions/runs/37412218933)
+## Reading a documentation-only result
 
-Before acceptance, verify both a full run and a presentation-only selected run, manual force-full, unknown/helper/dependency/rename inputs, and injected missing/failed/skipped target evidence. Physical-device network acceptance remains separate.
+Open the latest **Cross-platform CI** run for the exact PR head, then read the **ci-required** job summary on the workflow run’s **Summary** page. The impact decision and `ci-coverage` receipt must identify scope `docs`, the required check must succeed, and the result must explicitly say that application tests, builds and packages were **NOT RUN**. A green skipped native job on its own is not the required result. The receipt records `full_native=false` and the application domains as `not_run`.
 
-## Rollout verification
+This path proves that the complete change is ordinary prose; it does not borrow an earlier application-test pass. The full validation of the workflow change is a separate rollout check. If a PR also contains source/configuration changes, use its complete diff and the scope table above rather than judging its last commit.
 
-The [first verified full canonical main run](https://github.com/webkaz-labs/sobalink/actions/runs/37456053817) passed all eight jobs in 29m11s at source `e93995c` (attempt 1). Its receipt records `full_native=true` with all four native targets, browser and manifest successful. This establishes a full baseline; it does not measure selected-path performance.
+## Caches and measurements
 
-The [first ordinary docs-only selected run](https://github.com/webkaz-labs/sobalink/actions/runs/37460427507) passed all eight jobs in 24m57s. All four development caches missed; fast native checks, browser and manifest still passed while the three named real-time steps per target (12 total) were omitted. Its receipt records `full_native=false` and links the full baseline above without advancing it. This is one cold selected-coverage observation, not a duration guarantee or a like-for-like full-coverage speedup.
+Compilation caches accelerate builds; they do not turn a previous test result into a new pass. Native development caches, scoped-Go caches and trusted-main caches use separate namespaces. Only complete main native validation writes trusted-main cache entries. Release retains exact-source restoration and reruns its full gates. Scoped Go tests use `-count=1` to execute their tests.
 
-1. After merging the workflow, verify a successful canonical `main` run and its full `ci-coverage` receipt. The successful PR run alone is not an eligible baseline.
-2. Start an ordinary docs-only PR from that validated main. Confirm the complete cumulative diff is `documentation_only`, and record the tested SHA/tree, run attempt and linked full baseline.
-3. Verify `ci-required`, the current-attempt receipt and actual steps: all four native targets, fast checks, browser and manifest must pass; only the named real-time steps may be omitted. Record selected coverage explicitly as **“real-time tests NOT RUN for this change scope”**.
+Content-free timings record fixed suite/job names, elapsed time, result and return code. They do not contain command arguments, environment values, file contents or raw logs. A command failure remains a failure if timing recording fails. Compare cold and warm runs separately; parallel job durations must not be added to describe elapsed waiting time.
 
-Development caches are isolated per PR, so the first docs-only PR may be cold. Judge selection correctness from the receipt and actual steps; report cache state with timings rather than assuming warm-cache performance.
+The earlier real-time-only optimization was measured before this scope policy: full canonical main took 29m11s; a documentation PR still running ordinary native/browser/package checks took 24m57s with four development-cache misses, then 12m57s with four fallback cache hits. Both selected runs omitted 12 real-time steps and explicitly recorded `full_native=false`. Those are historical observations of a different coverage policy, not timing promises for this workflow. [Full run](https://github.com/webkaz-labs/sobalink/actions/runs/37456053817) · [Cold selected run](https://github.com/webkaz-labs/sobalink/actions/runs/37460427507) · [Warm selected run](https://github.com/webkaz-labs/sobalink/actions/runs/37464624901)
 
-## Native port fixture portability
+The warm run's longest job was Windows at 11m46s: ordinary/native test stages took 7m31s, frontend checks 1m41s, and cache restoration/saving 1m09s. This is why prose changes now avoid those application jobs instead of relying on more caching.
 
-Fixtures that need TCP and UDP on one endpoint reserve both protocols on the exact IPv4/IPv6 loopback address. The shared test helper checks at most 100 spread candidates with real binds, retains both sockets until immediately before the real start, preserves explicit application-reserved ports and reports exhaustion or cleanup errors. Deterministic tests cover different TCP/UDP excluded ranges and bounded cleanup. The raw WireGuard fixture holds its two UDP reservations concurrently to keep the peer endpoints distinct.
+## Native fixture and release coverage
 
-These helpers are imported only by test files. Production listener policy, selected endpoints, timing limits and assertion failures remain unchanged. A native target failure still makes `ci-required` fail and prevents issuing a full-coverage receipt.
+Full native validation retains race detection, vet, Windows retirement barriers, repeated IPC cleanup, synthetic key checks, engine negative controls, native discovery, direct/relay recovery and the original natural lifecycle/lease waits. Production timers, payloads, assertions and test timeouts are not shortened by scope selection.
+
+Fixtures requiring TCP and UDP on one endpoint reserve both protocols on the exact loopback address, with bounded real-bind attempts and cleanup. The helper is imported only by tests. Browser teardown drains pending intercepted requests before stopping the fixture and still propagates failures. A failed required target or step fails `ci-required`.
+
+Automated CI evidence remains separate from physical-device enrollment, network, OS-login and suspend acceptance.
