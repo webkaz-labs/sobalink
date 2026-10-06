@@ -162,6 +162,9 @@ test.describe('explicit WAN candidate settings', () => {
         await expect(wan.getByText(text.disabled, { exact: true })).toBeVisible()
         expect(await app.count('wan.candidates.set')).toBe(1)
         await button(text.read).click()
+        // The save notice remains a second status until this explicit read
+        // settles. Wait for that transition before using a strict locator.
+        await expect(wan.getByRole('status')).toHaveCount(1)
         await expect(wan.getByRole('status')).toHaveText(text.disabled)
         await expect(endpoints).toHaveValue('')
         await expect(ipv6).not.toBeChecked()
