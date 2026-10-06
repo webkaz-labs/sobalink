@@ -34,6 +34,12 @@ Repository protection settings need no change when this workflow is adopted: kee
 
 To request every check, use **Actions → Cross-platform CI → Run workflow** and leave **force_full** checked. There is no force-skip override. Release workflows do not consume the change-impact plan. A partial job rerun without complete current-attempt evidence cannot issue a full receipt.
 
+## Reading a documentation-only result
+
+Open the latest **Cross-platform CI** run for the exact PR head, then read the **ci-required** job summary on the workflow run’s **Summary** page. The impact decision and `ci-coverage` receipt must identify scope `docs`, the required check must succeed, and the result must explicitly say that application tests, builds and packages were **NOT RUN**. A green skipped native job on its own is not the required result. The receipt records `full_native=false` and the application domains as `not_run`.
+
+This path proves that the complete change is ordinary prose; it does not borrow an earlier application-test pass. The full validation of the workflow change is a separate rollout check. If a PR also contains source/configuration changes, use its complete diff and the scope table above rather than judging its last commit.
+
 ## Caches and measurements
 
 Compilation caches accelerate builds; they do not turn a previous test result into a new pass. Native development caches, scoped-Go caches and trusted-main caches use separate namespaces. Only complete main native validation writes trusted-main cache entries. Release retains exact-source restoration and reruns its full gates. Scoped Go tests use `-count=1` to execute their tests.
