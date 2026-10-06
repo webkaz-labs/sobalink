@@ -67,14 +67,16 @@ func localizeLANSetupError(ja bool, err error) error {
 		return err
 	}
 	messages := map[string]string{
-		"mixed_selection_invalid":  "異なる接続方式を2つまたは3つ、優先順に明示してください",
-		"mixed_setup_required":     "mixedを開始する前に、各方式を個別に設定し、必要なペアリング・サインインを完了してください",
-		"mixed_strict_boundary":    "LAN限定の範囲から外部通信を自動追加しません。停止して各方式の通信範囲を明示的に確認してください",
-		"mixed_network_required":   "確認済みのmixedネットワークを開始してから相手を関連付けてください",
-		"mixed_binding_selection":  "異なる接続方式の認証済み経路を2つまたは3つ選んでください",
-		"mixed_binding_unverified": "同一の相手であることを確認できませんでした。両端末の正確な経路・識別子・許可を確認してください",
-		"mixed_recovery_required":  "許可の保存状態を確認できないためmixedを停止しました。保存済みの許可を確認してから再起動してください",
-		"mixed_operation_failed":   "mixedの操作が完了しませんでした。各方式の準備状況と保存済み設定を確認してから再試行してください",
+		"lan_relay_presence_capacity": "設定したリレー数に対して relayPresenceConnections 予算が不足しています。保存済み候補・許可を維持したまま、停止・オフライン起動して soba lan resources set --presence-connections で予算を増やしてください",
+		"lan_route_envelope_capacity": "経路更新が既存の交換プロトコルの24 KiB本文枠を超えています。保存容量とは別の制約です。提供する候補情報の量を見直してください",
+		"mixed_selection_invalid":     "異なる接続方式を2つまたは3つ、優先順に明示してください",
+		"mixed_setup_required":        "mixedを開始する前に、各方式を個別に設定し、必要なペアリング・サインインを完了してください",
+		"mixed_strict_boundary":       "LAN限定の範囲から外部通信を自動追加しません。停止して各方式の通信範囲を明示的に確認してください",
+		"mixed_network_required":      "確認済みのmixedネットワークを開始してから相手を関連付けてください",
+		"mixed_binding_selection":     "異なる接続方式の認証済み経路を2つまたは3つ選んでください",
+		"mixed_binding_unverified":    "同一の相手であることを確認できませんでした。両端末の正確な経路・識別子・許可を確認してください",
+		"mixed_recovery_required":     "許可の保存状態を確認できないためmixedを停止しました。保存済みの許可を確認してから再起動してください",
+		"mixed_operation_failed":      "mixedの操作が完了しませんでした。各方式の準備状況と保存済み設定を確認してから再試行してください",
 
 		"direct_lan_unavailable": "direct LANの待受が未準備です。選択した接続先を確認し、設定済みネットワークを開始してください",
 		"direct_lan_pair_state":  "保存済みのdirect LANペアを確認してください。招待を置き換える前に既存のペアを解除してください",

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/core"
 	"github.com/webkaz-labs/sobalink/internal/messageframe"
@@ -213,7 +212,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(map[string]any{"applied": false, "command": name, "payload": previewPayload(name, raw), "validation": "local-input-only"})
 		}
-		id := fmt.Sprintf("cli-%d", time.Now().UnixNano())
+		id := newCLIRequestID("cli")
 		request, e := json.Marshal(webui.Command{RequestID: id, Name: name, Payload: raw})
 		if e != nil {
 			return e
@@ -226,7 +225,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		if e != nil {
 			return e
 		}
-		command, e := json.Marshal(webui.Command{RequestID: fmt.Sprintf("cli-read-%d", time.Now().UnixNano()), Name: name, Payload: raw})
+		command, e := json.Marshal(webui.Command{RequestID: newCLIRequestID("cli-read"), Name: name, Payload: raw})
 		if e != nil {
 			return e
 		}
@@ -259,6 +258,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	case "direct-lan":
 		return directLANCLI(ctx, args, ja, out, stdin, *dryRun, queryAction, request)
 	case "lan":
+		if len(args) > 0 && args[0] == "resources" {
+			return lanResourcesCommand(args[1:], ja, *dryRun, out, queryAction, request)
+		}
 		if len(args) > 0 && args[0] == "wan" {
 			return wanCandidatesCommand(args[1:], ja, *dryRun, out, queryAction, request)
 		}

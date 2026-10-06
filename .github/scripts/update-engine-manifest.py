@@ -29,6 +29,8 @@ ALLOWED_PATHS = {
     "net/netcheck/underlay_guard_test.go", "net/underlayguard/LICENSE",
     "wgengine/magicsock/endpoint_test.go",
     "wgengine/magicsock/sobalink_wan.go", "wgengine/magicsock/sobalink_wan_test.go",
+    "derp/derphttp/sobalink_connection_state.go", "derp/derphttp/sobalink_connection_state_test.go",
+    "wgengine/magicsock/sobalink_derp_state.go",
 }
 
 

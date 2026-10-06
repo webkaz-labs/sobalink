@@ -67,6 +67,7 @@ const lanHelpEN = `LAN identity and pairing
   soba lan cancel --json-file INVITATION_FILE
   soba lan revoke PEER_ID
   soba lan routes --help
+  soba lan resources --help
   soba lan policy --help
 
 The IP above is fictional: choose an address returned by lan addresses.
@@ -97,6 +98,7 @@ const lanHelpJA = `LANの公開ID・ペアリング
   soba lan cancel --json-file INVITATION_FILE
   soba lan revoke PEER_ID
   soba lan routes --help
+  soba lan resources --help
   soba lan policy --help
 
 上のIPは架空の例です。lan addresses が表示したアドレスから選んでください。
