@@ -12,6 +12,8 @@
 
 最新の公開済みプレリリースは [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4)、ソースは `ded32f73c0d198294548120a38bcaf03e088bd6a` です。[公開 workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) の全15ジョブが合格し、署名・公開取得・4ネイティブ対象の実導入を確認しました。複数中継を準備する経路復旧は alpha.4 に含まれます。このチェックアウトの明示的な LAN 送信先制限・中継運用・中継なしLAN接続・任意のWAN探索・方式の併用は未公開・検証中です。中継なしLANの初回接続の不具合は修正し、localhostのTCP／UDP継続試験で確認しました。最終4対象native・ブラウザー・配布受入は未完了です。[資材と対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
+LAN外の接続にはTailscaleを使います。中継の起動と今後の配置改善はLAN内を対象にし、外部中継の配備は当面対象外です。任意の高度なWAN候補設定には、到達可能な互換中継と固定pinを既に用意している必要があります。
+
 mise **2026.9.18** を用意した環境で実行します。`mise use -g` は通常使う版を設定します。
 
 ```sh

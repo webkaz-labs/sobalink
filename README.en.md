@@ -12,6 +12,8 @@
 
 The latest published prerelease is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), source `ded32f73c0d198294548120a38bcaf03e088bd6a`. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102) passed all 15 jobs, including signatures, public download and installation on all four native targets. Prepared multi-relay recovery is included in alpha.4. The explicit LAN destination policy, relay operations, relayless LAN, opt-in WAN discovery and mixed-backend routing in this checkout are unreleased and under verification. The direct-LAN cold-start regression is fixed and covered by localhost TCP/UDP lifecycle tests; final four-target native/browser and release acceptance remain open. [Assets and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
 
+For outside-LAN connections, use Tailscale. Relay hosting and upcoming placement improvements focus on LAN hosts; external relay deployment is out of scope for now. Advanced opt-in WAN candidates require an already reachable compatible pinned relay.
+
 Run with mise **2026.9.18** available. `mise use -g` selects the version for normal use.
 
 ```sh
