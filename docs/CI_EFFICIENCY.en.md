@@ -56,6 +56,8 @@ Before acceptance, verify both a full run and a presentation-only selected run, 
 
 The [first verified full canonical main run](https://github.com/webkaz-labs/sobalink/actions/runs/37456053817) passed all eight jobs in 29m11s at source `e93995c` (attempt 1). Its receipt records `full_native=true` with all four native targets, browser and manifest successful. This establishes a full baseline; it does not measure selected-path performance.
 
+The [first ordinary docs-only selected run](https://github.com/webkaz-labs/sobalink/actions/runs/37460427507) passed all eight jobs in 24m57s. All four development caches missed; fast native checks, browser and manifest still passed while the three named real-time steps per target (12 total) were omitted. Its receipt records `full_native=false` and links the full baseline above without advancing it. This is one cold selected-coverage observation, not a duration guarantee or a like-for-like full-coverage speedup.
+
 1. After merging the workflow, verify a successful canonical `main` run and its full `ci-coverage` receipt. The successful PR run alone is not an eligible baseline.
 2. Start an ordinary docs-only PR from that validated main. Confirm the complete cumulative diff is `documentation_only`, and record the tested SHA/tree, run attempt and linked full baseline.
 3. Verify `ci-required`, the current-attempt receipt and actual steps: all four native targets, fast checks, browser and manifest must pass; only the named real-time steps may be omitted. Record selected coverage explicitly as **“real-time tests NOT RUN for this change scope”**.

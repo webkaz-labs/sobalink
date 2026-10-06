@@ -56,6 +56,8 @@ developmentとtrusted-mainのcacheは分離したままです。実時間試験�
 
 [初めて検証済みとなった正規mainのfull run](https://github.com/webkaz-labs/sobalink/actions/runs/37456053817)は、ソース `e93995c`（attempt 1）で全8jobに成功し、29分11秒でした。証跡は `full_native=true` で、4対象・browser・manifestの成功を記録しています。これが全件検証の基準となり、選択実行の所要時間は別に測定します。
 
+[最初の通常の文書のみの選択run](https://github.com/webkaz-labs/sobalink/actions/runs/37460427507)は全8jobに成功し、24分57秒でした。4対象すべてでdevelopment cacheがmissし、対象ごとの実時間3step（合計12step）を省略しながら、短いnative確認・browser・manifestは成功しました。証跡は `full_native=false` で、上記full基準を更新せずに参照しています。この値はcoldな選択実行1回の観測で、所要時間の保証や同じ全件検証範囲での高速化測定ではありません。
+
 1. workflowのmerge後、正規の `main` runの成功とfullの `ci-coverage` 証跡を確認します。PRの成功だけでは、省略の基準にできません。
 2. 検証済みmainから通常の文書だけを変更するPRを作ります。累積差分全体が `documentation_only` であることを確認し、試験したSHA／tree、run attempt、link先のfull基準を記録します。
 3. `ci-required`、現在のattemptの証跡、実際のstepを照合します。4対象・短い確認・browser・manifestの成功を必須とし、省略できるのは指定された実時間stepだけです。選択実行は **「この変更範囲では実時間試験を未実行」** と明記します。
