@@ -21,17 +21,25 @@ for (const locale of ['en', 'ja']) {
     await openDetailsSection(dialog.locator('details').filter({ has: page.getByText(ja ? 'この選択をグループとして保存' : 'Save this selection as a group', { exact: true }) }))
     await dialog.getByLabel(ja ? 'グループ名' : 'Group name', { exact: true }).fill('Fixture_Set')
     await dialog.getByRole('button', { name: ja ? 'グループを保存' : 'Save group', exact: true }).click()
+    await expect(dialog.getByText(ja ? 'サービスを開始せずにグループを保存しました' : 'Group saved without starting services', { exact: true })).toBeVisible()
+    // The new group option confirms the post-save profile reload has finished.
+    const savedGroup = dialog.getByRole('combobox', { name: ja ? '保存済みグループ' : 'Saved group', exact: true })
+    await expect(savedGroup.locator('option[value="Fixture_Set"]')).toHaveText('Fixture_Set')
     const toggle = dialog.getByRole('button', { name: ja ? 'お気に入り' : 'Favorites', exact: true })
-    await toggle.focus(); await page.keyboard.press('Space')
+    await expect(toggle).toBeEnabled()
+    await toggle.focus(); await expect(toggle).toBeFocused()
+    await page.keyboard.press('Space')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     const favorites = dialog.getByRole('region', { name: ja ? 'お気に入り' : 'Favorites', exact: true })
-    const target = favorites.getByLabel(ja ? 'お気に入りにするサービス・グループ' : 'Service or group to favorite', { exact: true })
+    // Role names exclude nested option text; exact label-text matching does not.
+    const target = favorites.getByRole('combobox', { name: ja ? 'お気に入りにするサービス・グループ' : 'Service or group to favorite', exact: true })
     const add = favorites.getByRole('button', { name: ja ? 'お気に入りに追加' : 'Add favorite', exact: true })
     for (const name of ['fixture-alpha', 'Fixture_Set']) {
       await target.selectOption({ label: name }); await add.click(); await expect(target).toBeEnabled()
     }
     const group = favorites.getByRole('button', { name: ja ? 'お気に入りを選択: グループ · Fixture_Set' : 'Select favorite: Group · Fixture_Set', exact: true })
     await group.click()
-    await expect(dialog.getByLabel(ja ? '保存済みグループ' : 'Saved group', { exact: true })).toHaveValue('Fixture_Set')
+    await expect(savedGroup).toHaveValue('Fixture_Set')
     const filter = favorites.getByRole('button', { name: ja ? 'お気に入りのサービスだけ表示' : 'Favorite services only', exact: true })
     await filter.click()
     await expect(dialog.locator('.definition-entry')).toHaveCount(1)
@@ -46,7 +54,7 @@ for (const locale of ['en', 'ja']) {
     await favorites.getByRole('button', { name: ja ? 'お気に入りから削除: グループ · Fixture_Set' : 'Remove favorite: Group · Fixture_Set', exact: true }).click()
     await expect(group).toHaveCount(0); await expect(target).toBeEnabled()
     // Removing a preference must not remove the actual saved group.
-    await expect(dialog.getByLabel(ja ? '保存済みグループ' : 'Saved group', { exact: true })).toHaveValue('Fixture_Set')
+    await expect(savedGroup).toHaveValue('Fixture_Set')
     for (const viewport of [{ width: 1440, height: 960 }, { width: 375, height: 844 }, { width: 844, height: 390 }]) {
       await page.setViewportSize(viewport); await target.focus()
       await expect(target).toBeFocused()

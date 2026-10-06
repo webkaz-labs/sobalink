@@ -202,3 +202,48 @@ it('does not return an invitation after its follow-up state refresh invalidates 
   expect(result.current.auth).toBe('locked')
   expect(response).toBeUndefined()
 })
+
+it.each(['network_error', 'invalid_response'])('never retains card reads on %s or disturbs another command using the same key', async code => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    requests.push(JSON.parse(init!.body as string))
+    if (code === 'network_error') throw new TypeError('Synthetic interruption')
+    return new Response('invalid synthetic JSON')
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key')
+    for (let i = 0; i < 40; i++) {
+      // Exact card-read allowlist: no unreachable read signatures or request IDs
+      // remain, even when a caller reuses an unrelated mutating action key.
+      const key = i < 20 ? 'shared-card-key' : `synthetic-card-read-${i}`
+      await result.current.run('device-card.export', { mode: 'lan', name: 'Synthetic alias' }, key)
+      await result.current.run('device-card.inspect', { card: 'soba-card1.synthetic', expectedMode: 'lan' }, key)
+    }
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key')
+  })
+  const reads = requests.filter(request => request.name.startsWith('device-card.'))
+  expect(reads).toHaveLength(80); expect(new Set(reads.map(request => request.requestId)).size).toBe(80)
+  expect(requests[0].requestId).toBe(requests.at(-1)!.requestId); expect(result.current.busy.size).toBe(0); expect(result.current.error).toMatchObject({ code, message: '' })
+})
+it.each([true, false])('keeps other uncertainty guards when a device-card read succeeds or fails definitively (%s)', async success => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    const request = JSON.parse(init!.body as string); requests.push(request)
+    if (request.name === 'peer.reconnect') throw new TypeError('Synthetic interruption')
+    return success ? new Response('{"ok":true}') : new Response('{"code":"device_card_invalid","message":"synthetic-private-payload"}', { status: 400 })
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key')
+    await result.current.run('device-card.export', { mode: 'lan', name: 'Synthetic alias' }, 'shared-card-key')
+    await result.current.run('device-card.inspect', { card: 'soba-card1.synthetic', expectedMode: 'lan' }, 'shared-card-key')
+  })
+  if (!success) expect(result.current.error).toMatchObject({ code: 'device_card_invalid', message: '' })
+  await act(async () => { await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key') })
+  expect(requests).toHaveLength(4); expect(requests[0].requestId).toBe(requests[3].requestId); expect(new Set(requests.slice(0, 3).map(request => request.requestId)).size).toBe(3)
+})

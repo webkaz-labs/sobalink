@@ -16,13 +16,22 @@ test.describe('saved definitions across supported backends', () => {
         await dialog.getByRole('textbox', { name: new RegExp(ja ? '正確な端末 ID' : 'Exact device IDs') }).fill('fixture-absent')
         await dialog.getByLabel(ja ? 'ポート' : 'Ports', { exact: true }).fill('8080')
         await dialog.getByRole('button', { name: ja ? '停止状態の定義を確認' : 'Review stopped definition', exact: true }).click()
+        // The reload reads persisted definitions. Runtime /api/state services
+        // deliberately omit backend, so verify that field in profile.export.
+        const savedProfile = page.waitForResponse(response => new URL(response.url()).pathname === '/api/command' && response.request().postDataJSON()?.name === 'profile.export')
         await dialog.getByRole('button', { name: ja ? '確認した定義を保存' : 'Save reviewed definition', exact: true }).click()
-        await app.expectState(state => state.services.some(service => service.name === name && service.backend === backend && service.status === 'saved'))
+        const exported = await (await savedProfile).json()
+        expect(exported.ok).toBe(true)
+        expect(exported.result.disabled).toBe(true)
+        expect(exported.result.profile.services).toEqual([expect.objectContaining({ name, backend, direction: 'forward', network: 'tcp', peerId: 'fixture-absent', ports: '8080' })])
+        const savedID = exported.result.profile.services[0].id
+        await app.expectState(state => state.services.some(service => service.id === savedID && service.name === name && service.status === 'saved'))
         await page.getByRole('button', { name: ja ? 'すべて選択' : 'Select all', exact: true }).click()
         const groupEditor = page.locator('dialog details').filter({ has: page.locator('summary', { hasText: ja ? '選択をグループとして保存' : 'Save this selection as a group' }) })
         await openDetailsSection(groupEditor)
         await groupEditor.getByRole('textbox', { name: ja ? 'グループ名' : 'Group name', exact: true }).fill('saved-fixture')
         await groupEditor.getByRole('button', { name: ja ? 'グループを保存' : 'Save group', exact: true }).click()
+        await expect(dialog.getByText(ja ? 'サービスを開始せずにグループを保存しました' : 'Group saved without starting services', { exact: true })).toBeVisible()
         await page.getByRole('combobox', { name: ja ? '保存済みグループ' : 'Saved group', exact: true }).selectOption('saved-fixture')
         await page.getByRole('button', { name: ja ? '開始内容を確認' : 'Review start', exact: true }).click()
         const review = page.getByRole('region', { name: ja ? '選択したサービスを確認' : 'Review selected services', exact: true })

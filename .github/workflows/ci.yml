@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      force_full:
+        description: Run all real-time native lifecycle and relay lease tests
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -19,9 +24,35 @@ env:
   GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
 
 jobs:
-  native:
-    # Standard public runners only. No login, tailnet, OIDC signing or release.
+  impact:
+    # Only read canonical main receipts. No release write/OIDC permissions.
     if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select full or change-scoped real-time coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.force_full || false }}
+        run: python .github/scripts/ci-coverage.py plan --output "$RUNNER_TEMP/ci-impact-plan.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-impact-plan
+          path: ${{ runner.temp }}/ci-impact-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+  native:
+    # A failed classifier defaults to full coverage, never a skipped matrix.
+    needs: impact
+    if: always() && !cancelled() && github.event.repository.private == false
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +78,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Download this run's impact plan
+        if: needs.impact.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-impact-plan
+          path: ${{ runner.temp }}/ci-plan
+      - name: Validate impact plan or require full coverage
+        id: ci-plan
+        run: python .github/scripts/ci-coverage.py resolve --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output "$RUNNER_TEMP/ci-impact-plan.json"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27.1'
@@ -176,14 +217,14 @@ jobs:
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail
-          go test -race -count=1 -timeout=10m ./...
+          python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
           # Enforce offline route-revocation recovery using the real protected fixture.
-          go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
-          go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
-          go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
+          python .github/scripts/ci-metrics.py run --suite offline-route-race -- go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
+          python .github/scripts/ci-metrics.py run --suite backend-route-race -- go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
+          python .github/scripts/ci-metrics.py run --suite mixed-core-race -- go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
           # Repeat real native IPC cleanup; exact timer policy is tested virtually.
-          go test -race -count=5 -timeout=2m ./internal/control
-          go vet ./...
+          python .github/scripts/ci-metrics.py run --suite ipc-repeat-race -- go test -race -count=5 -timeout=2m ./internal/control
+          python .github/scripts/ci-metrics.py run --suite native-vet -- go vet ./...
           unformatted="$(gofmt -l cmd internal web)"
           if [[ -n "$unformatted" ]]; then
             printf 'Go files need gofmt (check checkout line endings):\n%s\n' "$unformatted" >&2
@@ -216,14 +257,20 @@ jobs:
         timeout-minutes: 8
         run: |
           set -euo pipefail
-          go test -race -count=2 -timeout=120s -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
-          go vet -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
-          go test -race -count=5 -timeout=5m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestDirectLAN' ./internal/core
-      - name: Verify direct LAN session rekey and idle lifecycle
+          python .github/scripts/ci-metrics.py run --suite directlan-repeat-race -- go test -race -count=2 -timeout=120s -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
+          python .github/scripts/ci-metrics.py run --suite directlan-vet -- go vet -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
+          python .github/scripts/ci-metrics.py run --suite directlan-core-repeat-race -- go test -race -count=5 -timeout=5m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestDirectLAN' ./internal/core
+      - name: Verify direct LAN synthetic expiry and rekey
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite synthetic-expiry-rekey -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionSyntheticExpiryRekey -- go test -race -count=1 -timeout=2m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionSyntheticExpiryRekey$' ./internal/directlan
+      - name: Verify direct LAN session natural rekey and idle lifecycle
+        if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 9
         run: |
           set -euo pipefail
-          go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
+          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
       - name: Verify explicit WAN discovery with isolated native STUN
         timeout-minutes: 5
         run: |
@@ -231,6 +278,7 @@ jobs:
           python - <<'PYTHON'
           import os
           import subprocess
+          import sys
 
           # Synthetic native loopback fixture only; this does not establish
           # real NAT traversal, physical IPv6 routes, or device acceptance.
@@ -239,6 +287,9 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestWANCandidateNativeLoopbackSTUN",
+              "--",
               "go", "test", "-race", "-count=1", "-v", "-timeout=120s",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
               "-run=^TestWANCandidateNativeLoopbackSTUN$", "./internal/routecat",
@@ -251,6 +302,7 @@ jobs:
           python - <<'PYTHON'
           import os
           import subprocess
+          import sys
 
           # Normal production build with explicit synthetic loopback grants.
           # Clear overrides only for the child test process, never the runner.
@@ -259,9 +311,14 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerFunctionalIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDirectEncryptedTCPUDPIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDERPFailurePropagationIntegration",
+              "--",
               "go", "test", "-race", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^(TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration)$",
+              "-run=^(TestGuardedRelayTwoPeerFunctionalIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration)$",
               "-timeout=5m", "./internal/lanlink", "./internal/routecat",
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
@@ -272,6 +329,7 @@ jobs:
           python - <<'PY'
           import os
           import subprocess
+          import sys
 
           # Only this child test process receives a clean backend environment.
           # The test compiles out OS UDP and refuses non-loopback listeners.
@@ -280,9 +338,16 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerFunctionalIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCorePeerApplicationsIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientFunctionalRecovery",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestManagedRelayCandidateFailoverIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
+              "--",
               "go", "test", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
+              "-run=^(TestTrustedRelayTwoPeerFunctionalIntegration|TestLANCorePeerApplicationsIntegration|TestMultipleRelayPresenceAndFreshClientFunctionalRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
               "-timeout=5m", "./internal/lanlink", "./internal/core", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PY
@@ -293,6 +358,7 @@ jobs:
           python - <<'PYTHON'
           import os
           import subprocess
+          import sys
 
           # Real production UDP behavior with synthetic peers and exactly two
           # pinned loopback TLS relays. No account or public bootstrap map.
@@ -302,11 +368,64 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_DIRECT_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
+              "--",
               "go", "test", "-race", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
               "-run=^(TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
               "-timeout=5m", "./internal/routecat", "./internal/core",
           ], env=env, check=True, timeout=8 * 60)
+          PYTHON
+      - name: Verify guarded relay real-time lease continuity
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerIntegration",
+              "--",
+              "go", "test", "-race", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^TestGuardedRelayTwoPeerIntegration$", "-timeout=5m", "./internal/lanlink",
+          ], env=env, check=True, timeout=8 * 60)
+          PYTHON
+      - name: Verify relay-only real-time lease and idle continuity
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+          # Preserve Go package-level concurrency for the 130s lease and 80s idle gates.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
+              "--",
+              "go", "test", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestMultipleRelayPresenceAndFreshClientRecovery)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
+          ], env=env, check=True, timeout=9 * 60)
           PYTHON
       - name: Build native package and smoke archive contents
         run: |
@@ -331,7 +450,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Save Go caches after all native checks pass on main
-        if: success() && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit != 'true'
+        if: success() && steps.ci-plan.outputs.long_required != 'false' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -346,6 +465,18 @@ jobs:
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
           key: ${{ steps.development-go-cache.outputs.cache-primary-key }}
+
+      - name: Summarize measured native suites
+        if: always()
+        run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/ci-suite-metrics.json"
+      - name: Preserve native suite timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-timings-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ runner.temp }}/ci-suite-metrics.json
+          if-no-files-found: error
+          retention-days: 14
 
   manifest-smoke:
     needs: native
@@ -488,3 +619,34 @@ jobs:
             ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
           if-no-files-found: warn
           retention-days: 14
+
+  ci-required:
+    # Require this aggregate in branch protection; a skipped job alone is green.
+    needs: [impact, native, browser, manifest-smoke]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Download selection evidence
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-impact-plan
+          path: ${{ runner.temp }}/ci-plan
+      - name: Require actual selected coverage across all four native targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/scripts/ci-coverage.py finalize --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output ci-coverage.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-coverage
+          path: ci-coverage.json
+          if-no-files-found: error
+          retention-days: 90

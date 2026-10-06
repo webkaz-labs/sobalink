@@ -19,13 +19,30 @@ import (
 
 func TestNativeWireGuardNetstackProof(t *testing.T) {
 	cfgA, cfgB := testConfig(91), testConfig(92)
-	for _, cfg := range []*Config{&cfgA, &cfgB} {
+	var reservations [2]*net.UDPConn
+	releaseReservation := func(index int) error {
+		u := reservations[index]
+		if u == nil {
+			return nil
+		}
+		reservations[index] = nil
+		return u.Close()
+	}
+	for index, cfg := range []*Config{&cfgA, &cfgB} {
 		u, e := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:0")))
 		if e != nil {
 			t.Fatal(e)
 		}
+		reservations[index] = u
+		t.Cleanup(func() {
+			if err := releaseReservation(index); err != nil {
+				t.Errorf("release WireGuard loopback reservation: %v", err)
+			}
+		})
 		cfg.Listen = u.LocalAddr().(*net.UDPAddr).AddrPort()
-		u.Close()
+	}
+	if cfgA.Listen == cfgB.Listen {
+		t.Fatal("simultaneously reserved UDP endpoints must be distinct")
 	}
 	addrA, _ := OverlayAddress(cfgA.Identity.PublicKey())
 	addrB, _ := OverlayAddress(cfgB.Identity.PublicKey())
@@ -33,10 +50,12 @@ func TestNativeWireGuardNetstackProof(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(func() { ta.Close() })
 	tb, e := newUserspaceTunnel(addrB, func(src, dst netip.Addr) bool { return src == addrA && dst == addrB })
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(func() { tb.Close() })
 	ba, bb := &lanBind{cfg: cfgA}, &lanBind{cfg: cfgB}
 	ba.policy.Store(&bindPolicy{endpoints: map[netip.AddrPort]bool{cfgB.Listen: true}})
 	bb.policy.Store(&bindPolicy{endpoints: map[netip.AddrPort]bool{cfgA.Listen: true}})
@@ -53,7 +72,15 @@ func TestNativeWireGuardNetstackProof(t *testing.T) {
 	if e = db.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\npublic_key=%s\nendpoint=%s\nallowed_ip=%s/128\n", hexKey(kb.Bytes()), cfgB.Listen.Port(), hexKey(ka.PublicKey().Bytes()), cfgA.Listen, addrA)); e != nil {
 		t.Fatal(e)
 	}
+	// IpcSet's BindUpdate does not open sockets while the device is down.
+	// Keep both reservations until each corresponding Up call binds UDP.
+	if e = releaseReservation(0); e != nil {
+		t.Fatal(e)
+	}
 	if e = da.Up(); e != nil {
+		t.Fatal(e)
+	}
+	if e = releaseReservation(1); e != nil {
 		t.Fatal(e)
 	}
 	if e = db.Up(); e != nil {

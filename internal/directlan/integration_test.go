@@ -7,12 +7,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/testfixture"
 )
 
 func nativeNode(t *testing.T, id byte) (*Node, *[]Peer) { return nativeNodeOnIP(t, id, "127.0.0.1") }
@@ -22,18 +27,17 @@ func nativeNodeOnIP(t *testing.T, id byte, ip string) (*Node, *[]Peer) {
 func nativeConfiguredNode(t *testing.T, id byte, ip string, configure func(*Config)) (*Node, *[]Peer) {
 	t.Helper()
 	address := netip.MustParseAddr(ip)
-	network := "tcp6"
-	if address.Is4() {
-		network = "tcp4"
-	}
-	reserve, e := net.Listen(network, netip.AddrPortFrom(address, 0).String())
+	reserve, e := testfixture.ReserveLoopbackTCPUDP(address)
 	if e != nil {
 		t.Fatalf("native loopback sockets unavailable; this integration gate is NOT passed: %v", e)
 	}
-	ap := reserve.Addr().(*net.TCPAddr).AddrPort()
-	reserve.Close()
+	t.Cleanup(func() {
+		if err := reserve.Close(); err != nil {
+			t.Errorf("release native loopback reservation: %v", err)
+		}
+	})
 	c := testConfig(id)
-	c.Listen = ap
+	c.Listen = reserve.Endpoint()
 	c.AllowedPrefixes = []netip.Prefix{netip.PrefixFrom(address, address.BitLen())}
 	var saved []Peer
 	c.Persist = func(p []Peer) error { saved = append([]Peer(nil), p...); return nil }
@@ -44,10 +48,13 @@ func nativeConfiguredNode(t *testing.T, id byte, ip string, configure func(*Conf
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(func() { n.Close() })
+	if e = reserve.Close(); e != nil {
+		t.Fatal(e)
+	}
 	if e = n.Start(context.Background()); e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { n.Close() })
 	return n, &saved
 }
 func pairNative(t *testing.T, a, b *Node) {
@@ -70,6 +77,36 @@ func pairNative(t *testing.T, a, b *Node) {
 		t.Fatal(e)
 	}
 }
+
+// nativeCountedReader records progress without changing reads or their errors.
+// This is test-only evidence for distinguishing a stalled payload from a missing
+// half-close or response; it never extends a deadline or retries an operation.
+type nativeCountedReader struct {
+	reader io.Reader
+	bytes  *atomic.Int64
+}
+
+func (r nativeCountedReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytes.Add(int64(n))
+	return n, err
+}
+
+func TestNativeCountedReaderPreservesReadResult(t *testing.T) {
+	payload := []byte("synthetic partial-read evidence")
+	var count atomic.Int64
+	reader := nativeCountedReader{reader: iotest.DataErrReader(bytes.NewReader(payload)), bytes: &count}
+	got, err := io.ReadAll(reader)
+	if err != nil || !bytes.Equal(got, payload) || count.Load() != int64(len(payload)) {
+		t.Fatalf("counted read changed bytes or EOF: got=%q bytes=%d err=%v", got, count.Load(), err)
+	}
+	wantErr := errors.New("synthetic read failure")
+	reader.reader = iotest.ErrReader(wantErr)
+	if n, err := reader.Read(make([]byte, 8)); n != 0 || !errors.Is(err, wantErr) || count.Load() != int64(len(payload)) {
+		t.Fatalf("counted read changed failure: n=%d bytes=%d err=%v", n, count.Load(), err)
+	}
+}
+
 func TestNativeColdStartTCPUDPRevoke(t *testing.T) {
 	for _, ip := range []string{"127.0.0.1", "::1"} {
 		t.Run(ip, func(t *testing.T) {
@@ -87,44 +124,85 @@ func TestNativeColdStartTCPUDPRevoke(t *testing.T) {
 			defer ln.Close()
 			tcpDone := make(chan error, 1)
 			var caller net.Addr
+			var client net.Conn
+			defer func() {
+				if client != nil {
+					client.Close()
+				}
+			}()
 			payload := bytes.Repeat([]byte("synthetic stream bytes"), 100000)
+			var serverReceived atomic.Int64
+			var serverStage atomic.Value
+			serverStage.Store("awaiting accept")
+			streamStarted := time.Now()
+			var writeElapsed, responseElapsed time.Duration
+			defer func() {
+				if !t.Failed() {
+					return
+				}
+				t.Logf("native stream progress after %s: server=%s received=%d expected=%d write_elapsed=%s response_elapsed=%s", time.Since(streamStarted), serverStage.Load(), serverReceived.Load(), len(payload), writeElapsed, responseElapsed)
+				for index, node := range []*Node{a, b} {
+					stackStats := node.tunnel.stack.Stats()
+					stats := stackStats.TCP
+					t.Logf("native stream side %d: sent=%d received=%d retransmits=%d timeouts=%d send_errors=%d resets_sent=%d resets_received=%d ip_send_errors=%d queued=%d", index, stats.SegmentsSent.Value(), stats.ValidSegmentsReceived.Value(), stats.Retransmits.Value(), stats.Timeouts.Value(), stats.SegmentSendErrors.Value(), stats.ResetsSent.Value(), stats.ResetsReceived.Value(), stackStats.IP.OutgoingPacketErrors.Value(), node.tunnel.ep.NumQueued())
+				}
+			}()
 			go func() {
 				c, e := ln.Accept()
 				if e != nil {
+					serverStage.Store(fmt.Sprintf("accept: %v", e))
 					tcpDone <- e
 					return
 				}
 				defer c.Close()
 				caller = c.RemoteAddr()
-				c.SetDeadline(time.Now().Add(20 * time.Second))
-				if key, ok := a.PeerKey(c.RemoteAddr()); !ok || key != b.PublicKey() {
-					tcpDone <- ErrIdentity
-					return
-				}
-				got, e := io.ReadAll(c)
-				if e != nil {
+				if e = c.SetDeadline(time.Now().Add(20 * time.Second)); e != nil {
+					serverStage.Store(fmt.Sprintf("deadline: %v", e))
 					tcpDone <- e
 					return
 				}
+				if key, ok := a.PeerKey(c.RemoteAddr()); !ok || key != b.PublicKey() {
+					serverStage.Store("identity rejected")
+					tcpDone <- ErrIdentity
+					return
+				}
+				serverStage.Store("reading payload and half-close")
+				got, e := io.ReadAll(nativeCountedReader{reader: c, bytes: &serverReceived})
+				if e != nil {
+					serverStage.Store(fmt.Sprintf("read: %v", e))
+					tcpDone <- e
+					return
+				}
+				serverStage.Store("writing hash response")
 				sum := sha256.Sum256(got)
 				_, e = c.Write(sum[:])
-				c.Close()
+				closeErr := c.Close()
+				e = errors.Join(e, closeErr)
+				serverStage.Store(fmt.Sprintf("completed: %v", e))
 				tcpDone <- e
 			}()
 			c, e := b.DialPeer(ctx, a.PublicKey(), "tcp", 42001)
 			if e != nil {
 				t.Fatal(e)
 			}
-			c.SetDeadline(time.Now().Add(20 * time.Second))
-			if _, e = c.Write(payload); e != nil {
+			client = c
+			if e = c.SetDeadline(time.Now().Add(20 * time.Second)); e != nil {
 				t.Fatal(e)
+			}
+			writeStarted := time.Now()
+			written, err := c.Write(payload)
+			writeElapsed = time.Since(writeStarted)
+			if err != nil || written != len(payload) {
+				t.Fatalf("write stream payload: bytes=%d/%d: %v", written, len(payload), err)
 			}
 			if e = c.(interface{ CloseWrite() error }).CloseWrite(); e != nil {
 				t.Fatal(e)
 			}
+			responseStarted := time.Now()
 			got, e := io.ReadAll(c)
+			responseElapsed = time.Since(responseStarted)
 			if e != nil {
-				t.Fatal(e)
+				t.Fatalf("read stream hash response: bytes=%d/%d: %v", len(got), sha256.Size, e)
 			}
 			sum := sha256.Sum256(payload)
 			if !bytes.Equal(got, sum[:]) {

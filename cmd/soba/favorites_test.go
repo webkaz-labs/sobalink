@@ -206,9 +206,14 @@ func TestFavoritesCLIOfflineMetadataOnlyLockAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
-	if err := checkProxyPrivateFile(file); err != nil {
-		t.Fatal("favorites file not private", err)
+	privateErr := checkProxyPrivateFile(file)
+	// A standard Windows read handle does not share DELETE access. Release
+	// this inspection handle before testing the later atomic replacement.
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if privateErr != nil {
+		t.Fatal("favorites file not private", privateErr)
 	}
 	lock, err := config.AcquireLock(dir)
 	if err != nil {
@@ -220,8 +225,13 @@ func TestFavoritesCLIOfflineMetadataOnlyLockAndRestart(t *testing.T) {
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run("favorites", "remove", "service", saved.Configuration.ID, "--review", updated.Revision, "--json"); err != nil {
+	data, err = run("favorites", "remove", "service", saved.Configuration.ID, "--review", updated.Revision, "--json")
+	if err != nil {
 		t.Fatal(err)
+	}
+	var removed core.FavoritesView
+	if json.Unmarshal([]byte(data), &removed) != nil || len(removed.Entries) != 0 || removed.Revision == updated.Revision {
+		t.Fatal("offline removal did not replace preferences after releasing handles")
 	}
 }
 

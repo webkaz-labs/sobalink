@@ -138,13 +138,16 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
 		}
 		fmt.Fprintln(out, text(ja, "Usage: soba ", "使い方: soba ")+usage)
 		return nil
+	}
+	if command == "card" {
+		return deviceCardCLI(ctx, args, dir, ja, jsonErrors, *dryRun, *offlineDefinitions, out, stdin, client)
 	}
 	if dir == "" {
 		var e error
@@ -529,6 +532,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba pause|resume PEER_ID     Pause/resume messages and file transfers
   soba reconnect PEER_ID        Refresh this peer's reachability and services
   soba lan --help               Public identity and private pairing invitations
+  soba card --help              Export or inspect public device cards
   soba service --help           Save, inspect, delete and restart service settings
   soba profile --help           Export/import stopped service definitions
   soba rustdesk --help          Review and save RustDesk client settings
@@ -548,6 +552,7 @@ soba settings [SERVICE_ID] shows saved endpoints and application hints.
 Use soba help examples for short workflows; soba help upgrade for safe updates.
 Global options: --state-dir DIR --locale auto|ja|en --dry-run --json-errors (before command)
 --offline edits saved service/group/profile definitions and favorites with the agent stopped.
+It also supports card inspection without reading a profile or contacting Core.
 --json-errors writes {code,error} to stderr on failure; success JSON is unchanged.
 --dry-run previews action JSON and validates local inputs without applying it.
 status, peers and service/group workflows default to human output; --json stays stable.
@@ -583,6 +588,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba pause|resume PEER_ID     メッセージ・ファイル転送を一時停止／再開
   soba reconnect PEER_ID        相手の到達状態と共有一覧を再確認
   soba lan --help               公開IDと機密のペアリング招待
+  soba card --help              公開端末カードの書出し・内容確認
   soba service --help           設定の保存・確認・削除・再開始
   soba profile --help           停止状態のサービス設定を書き出し・読込み
   soba rustdesk --help          RustDeskの接続設定を確認・保存
@@ -602,6 +608,7 @@ soba settings [SERVICE_ID] は保存済み接続先とアプリの設定例を�
 短い操作例は soba help examples、更新手順は soba help upgrade で表示します。
 共通指定: --state-dir DIR --locale auto|ja|en --dry-run --json-errors（コマンドより前）
 --offline は本体を起動せず保存済みサービス・グループ・プロファイルとお気に入りを編集します。
+カードの内容確認ではプロファイルを読まず、本体へ接続しません。
 --json-errors は失敗時に {code,error} のJSONを標準エラーへ出します。成功時のJSONは同じです。
 --dry-run はローカル入力を検証し、変更を適用せず操作JSONを表示します。
 status・peers・サービス/グループの操作は人向け表示が基本です。--json は全言語で同じです。

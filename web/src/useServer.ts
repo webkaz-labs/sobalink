@@ -88,7 +88,10 @@ export function useServer() {
     // Favorites use fresh reads/review after any uncertain write. Keeping their
     // one-shot UI keys here would retain unreachable entries on repeated errors
     // and could replay an obsolete preference view. Other retry guards stay put.
-    const retainUncertain = !name.startsWith('favorites.')
+    // Public-card reads have no effect to retry or retain. Keep this exact
+    // allowlist separate from mutating commands and their uncertainty guards.
+    const cardRead = name === 'device-card.export' || name === 'device-card.inspect'
+    const retainUncertain = !name.startsWith('favorites.') && !cardRead
     try {
       if (name === 'message.send') {
         const message = payload as api.CommandPayloads['message.send']
@@ -119,7 +122,7 @@ export function useServer() {
         if (live.current) setMessageGuardRevision(current => current + 1)
       }
       if (retainUncertain && requested && (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code))) uncertain.current.delete(key)
-      if (live.current && epoch === authEpoch.current) handleError(value)
+      if (live.current && epoch === authEpoch.current) handleError(cardRead ? new api.ApiError(value instanceof api.ApiError ? value.code : 'request_failed', '') : value)
       return undefined
     }
     finally {

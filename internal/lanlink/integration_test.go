@@ -30,6 +30,19 @@ import (
 // loopback-only. It tests existing TCP across one real two-minute relay lease;
 // it does not prove direct UDP, real LAN/WAN/NAT migration or cross-relay migration.
 func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
+	requireTrustedRelayIntegration(t)
+	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{}, true)
+}
+
+// Keep real bootstrap, admission, TCP/UDP and revocation checks in the fast gate.
+// Real lease continuity remains in TestTrustedRelayTwoPeerIntegration.
+func TestTrustedRelayTwoPeerFunctionalIntegration(t *testing.T) {
+	requireTrustedRelayIntegration(t)
+	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{}, false)
+}
+
+func requireTrustedRelayIntegration(t *testing.T) {
+	t.Helper()
 	if os.Getenv("SOBALINK_RUN_LAN_INTEGRATION") != "1" {
 		t.Skip("requires an explicitly enabled isolated native CI environment")
 	}
@@ -39,13 +52,25 @@ func TestTrustedRelayTwoPeerIntegration(t *testing.T) {
 	if e := ValidateBuild(); e != nil {
 		t.Fatal("integration setup or pairing failed")
 	}
-	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{})
 }
 
 // This is the ordinary UDP-enabled product build with constructor-wired policy,
 // pinned TLS bootstrap and a real DERP lease. It permits loopback destinations
 // only. It is separate evidence from physical-LAN/NIC/VPN acceptance.
 func TestGuardedRelayTwoPeerIntegration(t *testing.T) {
+	requireGuardedRelayIntegration(t)
+	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{Mode: lanpolicy.AllowedLANDestinations, Prefixes: []string{"127.0.0.1/32", "::1/128"}}, true)
+}
+
+// Exercise the same production-build loopback policy without waiting for a lease.
+// Real lease continuity remains in TestGuardedRelayTwoPeerIntegration.
+func TestGuardedRelayTwoPeerFunctionalIntegration(t *testing.T) {
+	requireGuardedRelayIntegration(t)
+	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{Mode: lanpolicy.AllowedLANDestinations, Prefixes: []string{"127.0.0.1/32", "::1/128"}}, false)
+}
+
+func requireGuardedRelayIntegration(t *testing.T) {
+	t.Helper()
 	if os.Getenv("SOBALINK_RUN_GUARDED_INTEGRATION") != "1" {
 		t.Skip("requires explicit native guarded integration")
 	}
@@ -55,10 +80,9 @@ func TestGuardedRelayTwoPeerIntegration(t *testing.T) {
 	if e := ValidateBuild(); e != nil {
 		t.Fatal("guarded integration build validation failed")
 	}
-	runTrustedRelayTwoPeerIntegration(t, lanpolicy.Config{Mode: lanpolicy.AllowedLANDestinations, Prefixes: []string{"127.0.0.1/32", "::1/128"}})
 }
 
-func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config) {
+func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config, verifyLeaseContinuity bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -241,44 +265,60 @@ func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config) {
 		}
 		streams = append(streams, stream{conn, incoming, ln, done})
 	}
-	// Keep these exact connections: no redial/retry can hide loss of TCP state.
-	baseline := approvals.Load()
-	started := time.Now()
 	frames := 0
-	for time.Since(started) < 130*time.Second {
+	if verifyLeaseContinuity {
+		// Keep these exact connections: no redial/retry can hide loss of TCP state.
+		baseline := approvals.Load()
+		started := time.Now()
+		for time.Since(started) < 130*time.Second {
+			for _, s := range streams {
+				s.conn.SetDeadline(time.Now().Add(20 * time.Second))
+				payload := fmt.Sprintf("ordered-frame-%06d\n", frames)
+				if _, err := io.WriteString(s.conn, payload); err != nil {
+					t.Fatal("existing TCP write failed during lease rollover")
+				}
+				got := make([]byte, len(payload))
+				if _, err := io.ReadFull(s.conn, got); err != nil || string(got) != payload {
+					t.Fatal("existing TCP ordered echo failed during lease rollover")
+				}
+			}
+			frames++
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				t.Fatal("lease continuity timeout")
+			}
+		}
+		// A final successful frame must occur after the elapsed lease boundary,
+		// even if a CI runner was paused while the periodic loop was sleeping.
 		for _, s := range streams {
 			s.conn.SetDeadline(time.Now().Add(20 * time.Second))
-			payload := fmt.Sprintf("ordered-frame-%06d\n", frames)
-			if _, err := io.WriteString(s.conn, payload); err != nil {
-				t.Fatal("existing TCP write failed during lease rollover")
+			if _, err := io.WriteString(s.conn, "after-lease"); err != nil {
+				t.Fatal("post-lease TCP write failed")
 			}
-			got := make([]byte, len(payload))
-			if _, err := io.ReadFull(s.conn, got); err != nil || string(got) != payload {
-				t.Fatal("existing TCP ordered echo failed during lease rollover")
+			got := make([]byte, len("after-lease"))
+			if _, err := io.ReadFull(s.conn, got); err != nil || string(got) != "after-lease" {
+				t.Fatal("post-lease TCP echo failed")
 			}
 		}
-		frames++
-		select {
-		case <-time.After(time.Second):
-		case <-ctx.Done():
-			t.Fatal("lease continuity timeout")
+		if approvals.Load() <= baseline {
+			t.Fatal("no real DERP re-admission observed across lease")
+		}
+	} else {
+		// A functional round uses the same connected streams and echo servers.
+		// It makes no claim about crossing the real two-minute lease boundary.
+		for _, s := range streams {
+			s.conn.SetDeadline(time.Now().Add(20 * time.Second))
+			if _, err := io.WriteString(s.conn, "functional-frame"); err != nil {
+				t.Fatal("TCP write failed")
+			}
+			got := make([]byte, len("functional-frame"))
+			if _, err := io.ReadFull(s.conn, got); err != nil || string(got) != "functional-frame" {
+				t.Fatal("TCP echo failed")
+			}
 		}
 	}
-	// A final successful frame must occur after the elapsed lease boundary,
-	// even if a CI runner was paused while the periodic loop was sleeping.
-	for _, s := range streams {
-		s.conn.SetDeadline(time.Now().Add(20 * time.Second))
-		if _, err := io.WriteString(s.conn, "after-lease"); err != nil {
-			t.Fatal("post-lease TCP write failed")
-		}
-		got := make([]byte, len("after-lease"))
-		if _, err := io.ReadFull(s.conn, got); err != nil || string(got) != "after-lease" {
-			t.Fatal("post-lease TCP echo failed")
-		}
-	}
-	if approvals.Load() <= baseline {
-		t.Fatal("no real DERP re-admission observed across lease")
-	}
+
 	// Application UDP uses the encrypted overlay; underlay policy is fixed by the caller.
 	var hostPackets net.PacketConn
 	var clientSource net.Addr
@@ -354,7 +394,11 @@ func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config) {
 		return
 	}
 	// Only generic evidence is logged: never print errors that may contain peer capabilities.
-	t.Logf("loopback pinned DERP: bidirectional TCP/UDP, denied-key admission, active revocation, clean stop; %d ordered rounds across a real two-minute lease", frames)
+	if verifyLeaseContinuity {
+		t.Logf("loopback pinned DERP: bidirectional TCP/UDP, denied-key admission, active revocation, clean stop; %d ordered rounds across a real two-minute lease", frames)
+	} else {
+		t.Log("loopback pinned DERP: bidirectional TCP/UDP, denied-key admission, active revocation, clean stop")
+	}
 }
 
 func newPinnedDERPTestClient(private key.NodePrivate, relay TrustedRelay, mon *netmon.Monitor) *derphttp.Client {

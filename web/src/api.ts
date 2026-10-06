@@ -208,6 +208,8 @@ export type FavoriteReference = { kind: 'service'; serviceId: string } | { kind:
 export type FavoriteEntry = FavoriteReference & { available: boolean }
 export interface FavoritesView { version: 1; revision: string; entries: FavoriteEntry[]; durabilityUncertain: boolean }
 export interface CommandPayloads {
+  'device-card.export': { mode: 'lan' | 'direct-lan'; name: string; includeEndpointHint?: boolean; qr?: boolean }
+  'device-card.inspect': { card: string; expectedMode: 'lan' | 'direct-lan' }
   'favorites.list': Record<string, never>
   'favorites.add': { reference: FavoriteReference; expectedRevision: string }
   'favorites.remove': { reference: FavoriteReference; expectedRevision: string }

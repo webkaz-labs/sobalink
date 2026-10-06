@@ -21,7 +21,9 @@ for (const locale of ['en', 'ja']) {
     await openDetailsSection(groupEditor)
     await dialog.getByLabel(ja ? 'グループ名' : 'Group name', { exact: true }).fill('Fixture_Set')
     await dialog.getByRole('button', { name: ja ? 'グループを保存' : 'Save group', exact: true }).click()
-    const group = dialog.getByLabel(ja ? '保存済みグループ' : 'Saved group', { exact: true })
+    await expect(dialog.getByText(ja ? 'サービスを開始せずにグループを保存しました' : 'Group saved without starting services', { exact: true })).toBeVisible()
+    // Role names exclude nested option text; exact label-text matching does not.
+    const group = dialog.getByRole('combobox', { name: ja ? '保存済みグループ' : 'Saved group', exact: true })
     await group.selectOption('Fixture_Set')
     const selected = dialog.getByRole('button', { name: ja ? '選択したものだけ表示' : 'Selected only', exact: true })
     await expect(selected).toHaveAttribute('aria-pressed', 'true')

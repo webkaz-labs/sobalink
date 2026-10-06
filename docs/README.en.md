@@ -30,3 +30,4 @@ For outside-LAN connections, use Tailscale. Relay hosting and upcoming placement
 | Security boundaries | [Security](../SECURITY.md) |
 | Architecture and distribution | [Architecture](ARCHITECTURE.md) · [Distribution](DISTRIBUTION.md) |
 | Remaining acceptance work | [Roadmap](ROADMAP.en.md) |
+| CI real-time test selection and timing | [Change-aware CI](CI_EFFICIENCY.en.md) |

@@ -3,6 +3,7 @@ import { messageByteLength, type LanAddress, type LanInvitationPreview, type Loc
 import { timestamp, type Translate } from '../i18n'
 import { lanTranslator } from '../lan-i18n'
 import './LanSetup.css'
+import { DeviceCards } from './DeviceCards'
 import { PreparedLanRoutes } from './LanRoutes'
 import { InitialLanPolicy, SavedLanPolicy, selectedLANPolicy, PolicySummary, type LanPolicyDraft, type LanPolicySelection } from './LanPolicy'
 import { policyTranslator } from '../lan-policy-i18n'
@@ -284,6 +285,7 @@ export function LanSetup({ server, state, t, locale, hostname, setHostname, draf
   const changeSection = (value: 'invite' | 'join') => { ++joinSequence.current; setSection(value); setPreview(undefined); setJoinProgress(false); setValidation('') }
   return <div className="lan-setup">
     <section className="lan-step"><h3><span>1</span>{t('deviceIdentity')}</h3><p className="small muted">{t('publicIdHint')}</p>{publicKey ? <><p className="public-id code-value" aria-label={t('publicId')}>{publicKey}</p><CopyValue value={publicKey} label={t('copyPublicId')} t={t} /></> : <Button onClick={createIdentity} disabled={blocked} busy={server.busy.has('lan.identity')}><Icon name="shield" size={15} />{t('createIdentity')}</Button>}</section>
+    <DeviceCards server={server} locale={locale} mode="lan" publicKey={publicKey} disabled={blocked || joinProgress} canUseRecipient={!hasActiveInvite && !consumed} binding={JSON.stringify([state.settings?.network, state.lan?.relay, state.lan?.policy, state.lan?.configured, hostname, address, pin, draft.hostAddress, draft.hostPort, draft.policyMode, draft.policyPrefixes, section, draft.recipientPublicKey, draft.recipientName])} onUseRecipient={({ publicKey, name }) => setDraft(current => ({ ...current, recipientPublicKey: publicKey, recipientName: name }))} />
     <section className="lan-step"><h3><span>2</span>{lt('connectLan')}</h3><div className="segmented pairing-tabs" role="group" aria-label={lt('connectLan')}><button type="button" disabled={joinProgress} aria-pressed={section === 'invite'} onClick={() => changeSection('invite')}>{state.lan?.configured ? t('inviteDevice') : lt('hostRelay')}</button><button type="button" disabled={joinProgress} aria-pressed={section === 'join'} onClick={() => changeSection('join')}>{t('joinDevice')}</button></div><RelaySummary state={state} t={t} locale={locale} />
       {!state.lan?.configured ? <InitialLanPolicy server={server} locale={locale} draft={draft} disabled={blocked || joinProgress} onChange={value => { ++joinSequence.current; setPreview(undefined); setValidation(''); setDraft(current => ({ ...current, ...value })) }} /> : <SavedLanPolicy server={server} state={state} locale={locale} t={t} disabled={blocked || joinProgress} />}
       {section === 'invite' && (!state.lan?.configured || state.lan.relay?.kind === 'host' && !state.lan.relayReady) && <HostRelay server={server} state={state} t={t} locale={locale} hostname={hostname} setHostname={setHostname} blocked={blocked || joinProgress} draft={draft} setDraft={setDraft} />}

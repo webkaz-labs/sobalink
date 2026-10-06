@@ -45,6 +45,8 @@ func helpTopic(topic string, ja bool) (string, bool) {
 		return text(ja, examplesEN, examplesJA), true
 	case "upgrade":
 		return text(ja, upgradeEN, upgradeJA), true
+	case "card":
+		return text(ja, deviceCardHelpEN, deviceCardHelpJA), true
 	case "lan":
 		return text(ja, lanHelpEN, lanHelpJA), true
 	case "mixed":

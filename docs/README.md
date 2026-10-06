@@ -30,3 +30,4 @@ LAN外の接続にはTailscaleを使います。中継の起動と今後の配�
 | 安全性の境界 | [安全性](SECURITY.ja.md) |
 | 設計と配布 | [設計](ARCHITECTURE.md) · [配布](DISTRIBUTION.md) |
 | 残る受入 | [ロードマップ](ROADMAP.ja.md) |
+| CIの実時間試験の条件・計測 | [変更内容に応じたCI](CI_EFFICIENCY.ja.md) |

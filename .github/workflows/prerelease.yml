@@ -189,7 +189,7 @@ jobs:
         timeout-minutes: 9
         run: |
           set -euo pipefail
-          go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
+          python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionSyntheticExpiryRekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSession(SyntheticExpiryRekey|Lifecycle)$' ./internal/directlan
       - name: Verify explicit WAN discovery with isolated native STUN
         timeout-minutes: 5
         run: |
@@ -197,6 +197,7 @@ jobs:
           python - <<'PYTHON'
           import os
           import subprocess
+          import sys
 
           # Synthetic native loopback fixture only; this does not establish
           # real NAT traversal, physical IPv6 routes, or device acceptance.
@@ -205,6 +206,9 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestWANCandidateNativeLoopbackSTUN",
+              "--",
               "go", "test", "-race", "-count=1", "-v", "-timeout=120s",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
               "-run=^TestWANCandidateNativeLoopbackSTUN$", "./internal/routecat",
@@ -217,6 +221,7 @@ jobs:
           python - <<'PYTHON'
           import os
           import subprocess
+          import sys
 
           # Normal production build with explicit synthetic loopback grants.
           # Clear overrides only for the child test process, never the runner.
@@ -225,6 +230,11 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDirectEncryptedTCPUDPIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDERPFailurePropagationIntegration",
+              "--",
               "go", "test", "-race", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
               "-run=^(TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration)$",
@@ -238,6 +248,7 @@ jobs:
           python - <<'PY'
           import os
           import subprocess
+          import sys
 
           # Only this child test process receives a clean backend environment.
           # The test compiles out OS UDP and refuses non-loopback listeners.
@@ -246,6 +257,13 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCorePeerApplicationsIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestManagedRelayCandidateFailoverIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
+              "--",
               "go", "test", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
               "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
@@ -259,6 +277,7 @@ jobs:
           python - <<'PYTHON'
           import os
           import subprocess
+          import sys
 
           # Real production UDP behavior with synthetic peers and exactly two
           # pinned loopback TLS relays. No account or public bootstrap map.
@@ -268,6 +287,10 @@ jobs:
                  and not k.upper().startswith("TS_")}
           env["SOBALINK_RUN_DIRECT_INTEGRATION"] = "1"
           subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
+              "--",
               "go", "test", "-race", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
               "-run=^(TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
