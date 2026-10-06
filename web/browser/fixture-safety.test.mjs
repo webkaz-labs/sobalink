@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
 import SafeReporter from './reporter.mjs'
+import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
 
 const sentinel = 'PRIVATE_FIXTURE_SENTINEL_MUST_NOT_APPEAR'
 const valid = { url: 'http://127.0.0.1:43210/', code: sentinel, scenario: 'studio', receiveDirectory: '/tmp/fixture/received', capabilities: ['service-lifecycle', 'failed-upload-retry', 'application-stop'], localServicePort: 43919 }
@@ -89,4 +90,82 @@ test('paired routes require their own offline capabilities and private input loc
   for (const missing of routes.capabilities) rejected({ ...routes, capabilities: routes.capabilities.filter(value => value !== missing) }, 'routes')
   for (const routePeerId of ['', 'A'.repeat(64), sentinel]) rejected({ ...routes, routePeerId }, 'routes')
   for (const routeUpdateFile of ['', `relative/${sentinel}`]) rejected({ ...routes, routeUpdateFile }, 'routes')
+})
+
+test('fixture teardown waits for in-flight routes before stopping the backend', async () => {
+  const route = Promise.withResolvers()
+  const events = []
+  let settled = false
+  const teardown = drainRoutesBeforeCleanup({
+    async unrouteAll(options) {
+      assert.deepEqual(options, { behavior: 'wait' })
+      events.push('drain-started')
+      await route.promise
+      events.push('route-settled')
+    },
+  }, async () => { events.push('backend-stopped') }).then(() => { settled = true })
+  await Promise.resolve()
+  assert.deepEqual(events, ['drain-started'])
+  assert.equal(settled, false)
+  route.resolve()
+  await teardown
+  assert.deepEqual(events, ['drain-started', 'route-settled', 'backend-stopped'])
+  assert.equal(settled, true)
+})
+
+test('fixture teardown still cleans up and exposes route-drain rejection', async () => {
+  const route = Promise.withResolvers()
+  const failure = new Error('synthetic route failure')
+  const events = []
+  const teardown = drainRoutesBeforeCleanup({
+    async unrouteAll(options) {
+      assert.deepEqual(options, { behavior: 'wait' })
+      events.push('drain-started')
+      await route.promise
+    },
+  }, async () => { events.push('backend-stopped'); events.push('private-root-removed') })
+  const rejection = assert.rejects(teardown, error => error === failure)
+  await Promise.resolve()
+  assert.deepEqual(events, ['drain-started'])
+  route.reject(failure)
+  await rejection
+  assert.deepEqual(events, ['drain-started', 'backend-stopped', 'private-root-removed'])
+})
+
+test('fixture teardown exposes cleanup failures after routes drain', async () => {
+  const failure = new Error('synthetic cleanup failure')
+  const events = []
+  await assert.rejects(drainRoutesBeforeCleanup({
+    async unrouteAll(options) {
+      assert.deepEqual(options, { behavior: 'wait' })
+      events.push('routes-drained')
+    },
+  }, async () => { events.push('cleanup-started'); throw failure }), error => error === failure)
+  assert.deepEqual(events, ['routes-drained', 'cleanup-started'])
+})
+
+test('fixture teardown preserves both route and cleanup failures', async () => {
+  const route = Promise.withResolvers()
+  const routeFailure = new Error('synthetic route failure')
+  const cleanupFailure = new Error('synthetic cleanup failure')
+  const events = []
+  const teardown = drainRoutesBeforeCleanup({
+    async unrouteAll(options) {
+      assert.deepEqual(options, { behavior: 'wait' })
+      events.push('drain-started')
+      await route.promise
+    },
+  }, async () => { events.push('cleanup-started'); throw cleanupFailure })
+  const rejection = assert.rejects(teardown, error => {
+    assert.ok(error instanceof AggregateError)
+    assert.equal(error.errors.length, 2)
+    assert.equal(error.errors[0], routeFailure)
+    assert.equal(error.errors[1], cleanupFailure)
+    return true
+  })
+  await Promise.resolve()
+  assert.deepEqual(events, ['drain-started'])
+  route.reject(routeFailure)
+  await rejection
+  assert.deepEqual(events, ['drain-started', 'cleanup-started'])
 })
