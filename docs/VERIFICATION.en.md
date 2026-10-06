@@ -6,13 +6,14 @@
 
 ## Current integration and published baseline
 
-The latest published release is [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2), exact source `00cc6a99809df77bf1754936ea7bf5ca4c5d0741`. Prepared multi-route recovery is newer unreleased source; it is not covered by that release's results. No next version is assigned here.
+The latest published release is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), exact source `ded32f73c0d198294548120a38bcaf03e088bd6a`. Prepared multi-route recovery and failed-reduction safeguards are included. The new [LAN destination admission](LAN_DESTINATIONS.en.md), relay certificate controls, [relayless LAN](DIRECT_LAN.en.md), explicit WAN discovery and [mixed connections](MIXED_CONNECTIONS.en.md) in [draft PR #11](https://github.com/webkaz-labs/sobalink/pull/11) are unreleased; their final integrated-source/native/browser/release gates remain pending. Research [PR #9](https://github.com/webkaz-labs/sobalink/pull/9) is not product proof. Physical-device acceptance is scheduled after release and is not silently marked passed.
 
 | Source/category | Result and boundary |
 | --- | --- |
-| Published alpha.2 | [Release run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed all 15 jobs: four native race/vet/package jobs, signing/provenance, unauthenticated public retrieval and actual mise-installed binaries on Linux x64/ARM64, macOS ARM64 and Windows x64. Its exact-main successful CI gate passed. Physical-device/application acceptance is separate |
+| Published alpha.4 | [Release run 37269441102, attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102/attempts/2) passed all 15 gates and published 19 assets. Four native packages, signatures/provenance, unauthenticated public retrieval and actual mise installation passed. [Exact main CI 37268364810](https://github.com/webkaz-labs/sobalink/actions/runs/37268364810) passed all six jobs. The initial release attempt hit a draft-lookup race; its failed stage was retried without moving the source tag. Physical devices remain separate |
+| Historical published alpha.2 | [Release run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed all 15 jobs: four native race/vet/package jobs, signing/provenance, unauthenticated public retrieval and actual mise-installed binaries on Linux x64/ARM64, macOS ARM64 and Windows x64. Its exact-main successful CI gate passed. Physical-device/application acceptance is separate |
 | Published alpha.2 resource observation; merged [PR #7](https://github.com/webkaz-labs/sobalink/pull/7), merge `11cd8285607c220962c97db725f36fdd00d653d7` | [Recorded report](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [observation 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) tested the exact released Linux amd64 binary through 15-minute offline idle, ten normal restarts and forced idle termination/recovery. [CI 37183542586 attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) passed four native targets, browser and manifest after an unchanged-code retry of one intermittent Windows frontend assertion. No active-transfer crash, packet capture, power-loss or later route acceptance |
-| New route implementation | [Draft PR #8](https://github.com/webkaz-labs/sobalink/pull/8). Helper, native prototype and final integration evidence are separated [below](#route-recovery-gate). Later working-tree changes are not the tested prototype SHA |
+| New connection-mode integration | [Draft PR #11](https://github.com/webkaz-labs/sobalink/pull/11), built on alpha.4. The changed-source four-native/browser gates and signed release are pending. Local crossbuilds, race checks and controlled TCP/UDP tests are separate from hosted native CI and physical-device acceptance. PR #8 route recovery is already included in alpha.4 |
 
 ## Recorded source evidence
 
@@ -87,6 +88,8 @@ Application revoke closes its authorization and tracked flows immediately. The e
 Actual devices still need explicit setup/identity verification, consented service/file operations, canceled-send reselection after pause, offline repair, certificate expiry, interrupted/uncertain pairing, durable revocation and network recovery. No arbitrary public fallback or automatic backend exchange is allowed.
 
 ## Route recovery gate
+
+The prototype history below predates published alpha.4; current release evidence is the exact-source table above. It does not establish the newer destination-policy integration.
 
 The new source includes the adapted transport, authenticated offers, durable per-pair route state, independent explicit-lifetime approvals, Core/CLI and local UI. Implementation is not integrated acceptance. [Contract](ROUTE_RECOVERY_DESIGN.en.md) · [Commands](LAN.en.md#prepare-another-route-unreleased)
 

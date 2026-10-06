@@ -6,13 +6,14 @@
 
 ## 現在の統合と公開済みの基準
 
-最新の公開版は [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2)、正確なソースは `00cc6a99809df77bf1754936ea7bf5ca4c5d0741` です。複数の準備済み経路による復旧は後続の未公開ソースで、この公開版の結果には含めません。ここでは次の版番号を割り当てません。
+最新の公開版は [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4)、正確なソースは `ded32f73c0d198294548120a38bcaf03e088bd6a` です。準備済み複数経路の復旧と許可縮小時の保護を含みます。[draft PR #11](https://github.com/webkaz-labs/sobalink/pull/11) の新しい [LAN 送信先制限](LAN_DESTINATIONS.ja.md)、中継証明書の操作、[中継なしLAN](DIRECT_LAN.ja.md)、明示的なWAN候補探索、[接続方式の併用](MIXED_CONNECTIONS.ja.md)は未公開で、最終統合ソースの native／browser／配布ゲートはこれから確認します。独立実験 [PR #9](https://github.com/webkaz-labs/sobalink/pull/9) の結果を製品の証明にはしません。実端末の受入はリリース後に実施し、未確認のまま合格扱いにしません。
 
 | ソース・区分 | 結果と限界 |
 | --- | --- |
-| 公開済み alpha.2 | [公開 run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格。4対象の native race/vet/package、署名・provenance、認証なしの公開取得、Linux x64/ARM64・macOS ARM64・Windows x64 の実 mise 導入を確認。正確な main の CI 成功ゲートも合格。実端末・実アプリ受入は別 |
+| 公開済み alpha.4 | [公開 run 37269441102、attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102/attempts/2) の全15ゲートが成功し19資材を公開。4対象の native package、署名・provenance、認証なし取得、実 mise 導入を確認。[同一 main CI 37268364810](https://github.com/webkaz-labs/sobalink/actions/runs/37268364810) も全6ジョブ成功。初回は draft 取得の競合で失敗し、ソース tag を動かさず失敗段階だけ再試行。実端末は別の受入 |
+| 過去の公開済み alpha.2 | [公開 run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格。4対象の native race/vet/package、署名・provenance、認証なしの公開取得、Linux x64/ARM64・macOS ARM64・Windows x64 の実 mise 導入を確認。正確な main の CI 成功ゲートも合格。実端末・実アプリ受入は別 |
 | 公開済み alpha.2 の資源観測。統合済み [PR #7](https://github.com/webkaz-labs/sobalink/pull/7)、merge `11cd8285607c220962c97db725f36fdd00d653d7` | [確認報告](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [観測 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) で正確な公開 Linux amd64 バイナリを15分オフライン待機、10回正常再起動、待機中の強制終了・復旧で検査。[CI 37183542586 attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) は Windows frontend の非決定的な1アサーションをコード変更なしで再実行し、4対象・ブラウザー・manifest が合格。受信中の異常終了、packet capture、電源断、後続経路の受入ではない |
-| 新しい経路実装 | [draft PR #8](https://github.com/webkaz-labs/sobalink/pull/8)。helper、ネイティブ試作、最終統合の結果は[下記](#経路復旧の条件)で区別。後続の作業中変更は、試験済み試作と同じ SHA ではない |
+| 新しい接続方式の統合 | alpha.4を基準とする[draft PR #11](https://github.com/webkaz-labs/sobalink/pull/11)。変更後の正確なソースに対する4対象native／browserと署名付き配布は未完了。ローカルのcross-build・race・制御されたTCP／UDP試験と、hosted native CI・実機受入を区別する。PR #8の経路復旧はalpha.4へ統合済み |
 
 ## ソースごとの記録
 
@@ -87,6 +88,8 @@
 実機では明示設定と識別、承認済みのサービス・ファイル操作、一時停止後の取消済みファイルの選び直し、オフライン修復、証明書期限、不確かなペアリング、永続解除、ネットワーク復旧を確認します。任意の公開中継や方式の自動交換はしません。
 
 ## 経路復旧の条件
+
+以下の試作履歴は alpha.4 公開前のものです。現在の公開版は上の正確なソース表を参照し、新しい送信先制限の受入とは区別してください。
 
 新ソースは改変した transport、認証済み情報、永続的なペアごとの経路状態、独立した明示期間の許可、Core/CLI、ローカル画面を含みます。実装と統合受入は別です。[契約](ROUTE_RECOVERY_DESIGN.ja.md) · [操作](LAN.ja.md#別の経路を準備する未公開)
 
