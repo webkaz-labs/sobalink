@@ -6,7 +6,7 @@ The local Web UI supports service connections, reviewed sharing, files and messa
 
 ## Use the device list and network graph
 
-The published baseline is `0.3.0-alpha.4`, including prepared multi-relay recovery. Development-only controls below are not yet released. The [exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline) distinguishes published acceptance from current integration work.
+The published baseline is `0.3.0-alpha.5`, including the connection controls below. The [exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline) identifies its completed automated and distribution gates; physical-device and OS-lifecycle acceptance remain pending.
 
 **Device list** and **Network graph** use the same search and filter. Counts refer to remote devices and exclude this device. Use **Clear filters** when filtering hides the desired device. Select a node or line to open that peer's details; Close or Escape returns to the previous control. On narrow screens, details replace the graph.
 
@@ -16,11 +16,11 @@ Lines represent relationships with this device. A backend that does not report i
 
 Service rows keep the endpoint, state and lifetime visible. Open **Manage service** for copy, edit, remove and diagnostic actions; active **Stop** remains directly available. Settings open by topic. Long forms scroll their contents while retaining the heading and close control. Closing an unapplied form does not change runtime or saved configuration. Language and theme take effect immediately and are stored in this browser.
 
-## Choose a development connection mode
+## Choose a connection mode
 
 Start offline and open **Set up network**. [Direct LAN](DIRECT_LAN.en.md) pairs exact numeric private-network endpoints without a relay. [Mixed connections](MIXED_CONNECTIONS.en.md) explicitly selects backends and requires fresh authenticated binding before treating multiple routes as the same peer; unbound routes remain individually usable. [LAN destination restrictions](LAN_DESTINATIONS.en.md) constrain admitted destinations; they do not bind physical interfaces or override VPN routing. WAN discovery is a separate opt-in to selected numeric STUN destinations and/or IPv6 candidates, incompatible with strict LAN destination restrictions. None requires administrator privileges or LAN-router changes.
 
-Review configuration and network effects before applying. Local readiness is not confirmed peer response. The direct-LAN cold-start regression is fixed with localhost TCP/UDP lifecycle evidence. Final-source browser checks and four-target native release acceptance remain open; these controls do not establish release readiness.
+Review configuration and network effects before applying. Local readiness is not confirmed peer response. The direct-LAN cold-start regression is fixed with localhost TCP/UDP lifecycle evidence. The alpha.5 exact-source browser and four-target release gates passed as recorded in [verification](VERIFICATION.en.md); actual-device reachability and application success remain separate checks.
 
 ## Prepare route recovery
 
@@ -28,7 +28,7 @@ In LAN setup, expand “Advanced: prepared relay candidates”. Add/remove exact
 
 In a paired device's details, expand “Route recovery”. Create a private update for that peer, or inspect one received from it. Check the peer/recipient, exact endpoints, pins and expiry, then review the lifetime and explicitly select candidates. New offers and eligible approvals initially show Until revoked; finite/v1 offers allow only a finite deadline, no later than their expiry. The lifetime has a clearly labeled confirmation, and no exact candidate is checked automatically. Optional finite dates have no arbitrary 30-day ceiling. Certificate validity/pin changes are a separate availability boundary. Review a saved update to change approval, or revoke all local route approvals; refresh state after an uncertain response before retrying. The local UI applies the same Core checks as the CLI. Offer creation also has an optional, initially unchecked withdrawal choice. A received empty offer gets a distinct withdrawal review: applying it records the sequence and removes local route approvals. Merely exporting a withdrawal changes no local approval.
 
-Cancel/back clears private update text; copying is explicit. Creating, importing or saving an update does not prove reachability or grant message/file/service access. `local` is a relay address class, not a strict LAN traffic restriction. Existing TCP may need application reconnect; file retry does not resume from its last byte. [Step-by-step preparation and limits](LAN.en.md#prepare-another-route-unreleased)
+Cancel/back clears private update text; copying is explicit. Creating, importing or saving an update does not prove reachability or grant message/file/service access. `local` is a relay address class, not a strict LAN traffic restriction. Existing TCP may need application reconnect; file retry does not resume from its last byte. [Step-by-step preparation and limits](LAN.en.md#prepare-another-route)
 
 ## Review blocked file receiving
 
@@ -104,4 +104,4 @@ The device list keeps a visible search label and a persistent selected row. In t
 
 Service forms group destination/access separately from service settings, followed by the exact review. Preferences groups display, receiving and management. Advanced options still open on request. Closing a form preserves the existing draft behavior; changing its grouping does not apply settings.
 
-Inputs and copyable values use a readable 16px scale. Secondary text and compact metadata retain separate sizes. Buttons and utilities use readable text/icons and restrained tonal fills before hover in both themes. Input boundaries remain distinct. Focus follows the field’s existing contour for both pointer and keyboard editing, without a detached second frame. The message editor highlights its outer container; its toolbar buttons retain their own keyboard indicator. Unavailable actions use neutral styling while retaining readable captions, and read-only values stay selectable. Selected tabs use a fill and type weight. Sparse dividers and aligned rows establish structure without framing every control or underlining every action. Touch layouts retain at least 44px principal controls while avoiding oversized cards. These presentation changes shipped in alpha.2; the new route controls need their own final-source browser acceptance.
+Inputs and copyable values use a readable 16px scale. Secondary text and compact metadata retain separate sizes. Buttons and utilities use readable text/icons and restrained tonal fills before hover in both themes. Input boundaries remain distinct. Focus follows the field’s existing contour for both pointer and keyboard editing, without a detached second frame. The message editor highlights its outer container; its toolbar buttons retain their own keyboard indicator. Unavailable actions use neutral styling while retaining readable captions, and read-only values stay selectable. Selected tabs use a fill and type weight. Sparse dividers and aligned rows establish structure without framing every control or underlining every action. Touch layouts retain at least 44px principal controls while avoiding oversized cards. These presentation changes shipped in alpha.2. The alpha.5 connection controls have their own exact-source browser evidence in [verification](VERIFICATION.en.md); any later UI changes need separate acceptance.

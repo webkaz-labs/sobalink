@@ -2,7 +2,7 @@
 
 [English](LAN_DESTINATIONS.en.md) · [LAN 設定](LAN.ja.md) · [中継の運用](RELAY_OPERATIONS.ja.md)
 
-**検証中の新しいソースです。alpha.4 には含まれません。** 任意の `allowed-lan-destinations` は、LAN transport の UDP 送信を明示した private／ULA／loopback の CIDR 内へ、DERP の TCP 接続をその範囲内の正確な設定済み数値中継先へ制限します。物理 NIC への固定、同一リンク、VPN 隔離、ホスト／プロセス全体の外部送信ゼロを保証しません。許可した宛先でも別の NIC や VPN へルーティングされる場合があります。
+**alpha.5で公開済みです。同一ソースの自動試験・配布結果は[検証記録](VERIFICATION.md)を参照してください。実端末ネットワークでの受入は未完了です。** 任意の `allowed-lan-destinations` は、LAN transport の UDP 送信を明示した private／ULA／loopback の CIDR 内へ、DERP の TCP 接続をその範囲内の正確な設定済み数値中継先へ制限します。物理 NIC への固定、同一リンク、VPN 隔離、ホスト／プロセス全体の外部送信ゼロを保証しません。許可した宛先でも別の NIC や VPN へルーティングされる場合があります。
 
 管理者権限と LAN ルーターの変更は不要で、実施しません。通常の userspace socket を使い、TUN driver、経路／ファイアウォール変更、UPnP／NAT mapping、ネットワーク方針の迂回は行いません。選択したネットワークで必要な通信が禁止されている場合は失敗を示し、別の明示的に許可された設定を選びます。
 

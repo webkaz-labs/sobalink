@@ -2,22 +2,22 @@
 
 [日本語](ROADMAP.ja.md) · [Overview](../README.en.md) · [Verification](VERIFICATION.en.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-The published baseline is [0.3.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.4), including prepared-route recovery and failed-reduction safeguards, with signed public retrieval and installation verified on four targets. [PR #11](https://github.com/webkaz-labs/sobalink/pull/11) adds LAN destination admission, easier chosen-host relay operation, relayless LAN, explicit WAN discovery and mixed connections. It is unreleased; implementation, exact-source automated acceptance and physical-device acceptance remain distinct. Mixed availability handling and configurable relay resource budgets are integrated locally; the corrected final source still needs full release acceptance.
+The published baseline is [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5), source `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6`. LAN destination admission, chosen-host relay operations, relayless LAN, advanced opt-in WAN discovery, mixed connections and adjustable relay resources are included. Its exact-source native/browser CI and all 15 signed-release gates passed; see [verification](VERIFICATION.en.md). Implementation, automated/distribution acceptance and physical-device acceptance remain distinct. Physical-device acceptance is still pending.
 
 ## Current work
 
 | Area | Implemented scope | Remaining evidence |
 | --- | --- | --- |
 | Devices and services | Tailnet, explicitly paired Tailcat, scoped TCP/UDP, stable local service listeners, presets | Physical enrollment, app authentication/TLS/host keys and actual LAN/WAN/NAT behavior |
-| Prepared routes and relay operations | Alpha.4 recovery, encrypted pair-bound offers, explicit lifetimes, chosen-host setup and certificate operations | Recheck exact-source recovery and adjustable relay budgets; candidate metadata has no fixed four-item permission ceiling |
-| LAN destination admission | Explicit private prefixes, exact pinned relay TCP, UDP guard and auxiliary-diagnostic restrictions | Exact-source native denial/revocation checks; never label this physical NIC/VPN or host-wide isolation |
+| Prepared routes and relay operations | Alpha.4 recovery, encrypted pair-bound offers, explicit lifetimes, chosen-host setup and certificate operations | Physical network movement, sleep/wake and operator recovery remain unverified; candidate metadata has no fixed four-item permission ceiling |
+| LAN destination admission | Explicit private prefixes, exact pinned relay TCP, UDP guard and auxiliary-diagnostic restrictions | Physical multi-NIC/VPN behavior remains unverified; destination admission is not physical-interface or host-wide isolation |
 | Relayless LAN | Mutually authenticated pairing/control plus userspace WireGuard TCP/UDP | Fixed same-family numeric endpoints must be reachable over TCP and UDP; no discovery or automatic endpoint rebinding; physical networks remain unverified |
-| WAN candidates | Explicit numeric STUN and/or IPv6 discovery through the trusted-relay backend | Pinned relay still required for bootstrap; no universal NAT or relayless WAN promise; final native and expanded-form browser coverage |
-| Mixed connections | Separate selected engines, signed same-peer binding and separately approved application access | Verify integrated positively-unavailable startup/dial fallback, unknown-state refusal and lifecycle races on the final source; no byte replay or existing-stream migration |
+| WAN candidates | Explicit numeric STUN and/or IPv6 discovery through the trusted-relay backend | Pinned relay still required for bootstrap; physical NAT/IPv6 reachability remains unverified; no universal NAT or relayless WAN promise |
+| Mixed connections | Separate selected engines, signed same-peer binding and separately approved application access | Physical network transitions and application reconnect remain unverified; no byte replay or existing-stream migration |
 | Files and stored state | Explicit send, batch consent, optional exact-peer autosave, no overwrite, bounded staging/accounting, uncertain-save recovery | Active-transfer interruption, real filesystems, ordinary-user Windows process behavior and physical power-loss durability |
-| Human interfaces | Japanese/English guided CLI, local UI, services, graph, route review, private sign-in | Final Go-backed route browser flows and screenshots; physical phone QR, actual native IME/fonts and terminal input |
+| Human interfaces | Japanese/English guided CLI, local UI, services, graph, route review, private sign-in | Physical phone QR, actual native IME/fonts and terminal input remain unverified |
 | Lifecycle | Explicit startup approvals, offline suppression, saved settings and per-user OS startup | Actual OS sign-in and suspend/wake, real proxy/application reconnect |
-| Distribution | Existing reproducible packages, signing/provenance, public retrieval and four-target mise checks | Repeat all exact-source gates for a separately selected next release |
+| Distribution | Existing reproducible packages, signing/provenance, public retrieval and four-target mise checks | Alpha.5 gates passed; any later release still needs its own exact-source gates |
 
 [PR #8](https://github.com/webkaz-labs/sobalink/pull/8) was integrated before alpha.4, including independent Core-process restart/recovery evidence. That evidence does not automatically cover new connection modes. The [verification record](VERIFICATION.en.md#route-recovery-gate) preserves historical failures and exact-source outcomes.
 
@@ -38,6 +38,8 @@ A clearly labeled prerelease can be published for physical-device testing after 
 Initial backend selection and cross-transport peer binding stay explicit. Automatic choice is limited to already configured, authenticated and approved routes for new flows, with positively classified unavailability; authorization, pin, unknown-state and unclassified failures stay terminal. Outward application traffic remains in the selected userspace stack. Route recovery cannot renew service lifetimes, widen peers/ports, restore revoked trust or restart canceled files. Files retain in-process whole-item retry only; no byte-offset or restart resume is added. Existing TCP preservation, arbitrary transaction replay and remote-job completion are not promised.
 
 The normal direct-enabled single executable remains. `local` classifies a relay, and direct peer paths may be public. The implemented optional LAN policy admits specified destinations; it does not promise physical-NIC/VPN binding or whole-process/host zero egress. Administrator privileges, OS route/firewall or LAN-router changes are not prerequisites. Additional resource administration, remote management APIs, remote filesystem browsing, broadcast, synchronization and a durable offline outbox remain separate work.
+
+CI optimization is separate post-release work and is not included in alpha.5. Any unmerged optimization changes need their own review and CI before publication.
 
 ### Agreed convenience work after this release
 

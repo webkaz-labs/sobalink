@@ -2,7 +2,7 @@
 
 [English](FEATURE_PARITY.en.md) · [文書一覧](README.md) · [検証記録](VERIFICATION.md)
 
-**alpha.2 の自動公開条件は完了しています。機能ごとの実機受入は別に残っています。** 公開済みの基準は [sobalink `0.3.0-alpha.2`](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2)、ソースは `00cc6a99809df77bf1754936ea7bf5ca4c5d0741` です。この表は以前の[旧 `v0.2.0-alpha.2`](https://github.com/webkaz-labs/sobalink/releases/tag/v0.2.0-alpha.2)、ソース `0b0a13c4edd2924de149650152445507cc709da7` の機能を追跡します。固定のF01〜F56で機能と旧コマンド・設定表記を区別します。人向けCLI、確認付き探索、アプリ設定支援、任意の起動時接続・非公開プロキシ設定は、公開済み sobalink の基準に含まれます。PR #8 の新しい経路作業は未公開で、正確なソースの検証が別に必要です。
+**alpha.2 の自動公開条件は完了しています。機能ごとの実機受入は別に残っています。** この履歴表の基準は [sobalink `0.3.0-alpha.2`](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2)、ソースは `00cc6a99809df77bf1754936ea7bf5ca4c5d0741` です。この表は以前の[旧 `v0.2.0-alpha.2`](https://github.com/webkaz-labs/sobalink/releases/tag/v0.2.0-alpha.2)、ソース `0b0a13c4edd2924de149650152445507cc709da7` の機能を追跡します。固定のF01〜F56で機能と旧コマンド・設定表記を区別します。人向けCLI、確認付き探索、アプリ設定支援、任意の起動時接続・非公開プロキシ設定は、公開済み sobalink の基準に含まれます。PR #8の準備済み経路復旧は、alpha.4にも含まれます。現在の公開版はalpha.5で、[現在の正確なソースの証拠](VERIFICATION.md)に記録しています。以下のF01〜F56は、その時点で残っていた確認事項を含むalpha.2の履歴です。現在の公開状態を示す表とは区別してください。
 
 「実装済み」はソース上の操作経路です。alpha.2 の[正確なソースのCI](https://github.com/webkaz-labs/sobalink/actions/runs/37177788934)は4対象のネイティブジョブ・実Go本体ブラウザー試験・manifest検査に合格し、[公開 run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713)は署名・provenance・公開取得・4対象 mise 実導入を含む全15ジョブに合格しました。集約結果だけでF01〜F56の全状況を証明するものではありません。実認証・スマートフォンQR・ネイティブIMEや端末動作・Windows一般ユーザープロセス・物理端末のアプリ・OSサインインやスリープは別の条件です。下表の「alpha.2 CI・ブラウザー合格」はそのソースと試験群の結果で、現在のPRや実機全体の受入ではありません。
 

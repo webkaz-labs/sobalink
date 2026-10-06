@@ -2,7 +2,7 @@
 
 [English](GENERIC.en.md) · [概要](../README.md) · [安全性](SECURITY.ja.md) · [確認範囲](VERIFICATION.md)
 
-実行コマンド `soba` の手順です。公開済みの基準は [0.3.0-alpha.2](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.2) で、その正確なソースの[公開全15ジョブ](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713)が合格し、署名付き公開取得と4対象の mise 実導入を確認しています。「未公開」の節は後続の検証中ソースの説明です。実端末の認証・アプリ互換性・ネイティブ IME・Windows の一般ユーザープロセス・OS サインインやスリープ・実際の電源断からの復旧は別の確認が必要です。[ソースごとの証拠](VERIFICATION.md#現在の統合と公開済みの基準)
+公開済み [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5) の実行コマンド `soba` の手順です。署名付き公開取得と4対象のmise実導入を含む[公開全15ゲート](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236)が合格しています。正確なソースは[検証記録](VERIFICATION.md#現在の統合と公開済みの基準)に示します。実端末の認証・アプリ互換性・ネイティブIME・Windows一般ユーザープロセス・OSサインインや休止・実際の電源断復旧は別に確認します。
 
 普段のサービス操作はローカル画面や案内付き CLI で行い、繰り返す操作や自動処理には明示した CLI コマンドを使えます。どちらも Go の共通処理で許可と保存先を検査します。中心となる操作は端末同士の接続とアプリのサービス利用です。[共有](#この端末のサービスを共有する)・[接続](#相手のサービスを使う)から始め、必要に応じて文字・ファイルを送れます。旧 `tsnet-bridge` 公開版とはコマンドと設定形式が異なります。
 
@@ -10,10 +10,10 @@
 
 ## 起動して画面を開く
 
-mise **2026.9.18** で公開済み alpha.2 を選び、版を確認して起動します。署名の検査を有効のまま使います。未公開の経路変更を試すには、確認した[ソースからビルド](DISTRIBUTION.md#build-this-checkout)してください:
+mise **2026.9.18** で公開済みalpha.5を選び、版を確認して起動します。署名の検査を有効のまま使います:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -45,7 +45,7 @@ soba --state-dir ./sample-state status
 | 選択 | 設定 | 境界 |
 | --- | --- | --- |
 | 既存 Tailnet | 組込みノードを有効化し、公式の Tailscale 認証へ進む | 選択した Tailnet 内の独立ノード。OS の Tailscale アプリの認証状態を取り込まない |
-| Tailcat／明示した信頼できる中継先 | 数値アドレス・ポートと証明書ピンを指定し、特定の相手とペアリング | 画面・CLI は実装済み。記録したコミットの stock loopback 中継は合格。後続のソースは別途検証。任意の公開中継や外部通信ゼロの保証はない |
+| Tailcat／明示した信頼できる中継先 | 数値アドレス・ポートと証明書ピンを指定し、特定の相手とペアリング | 画面・CLIと同一ソースのloopbackゲートをalpha.5で確認。実構成は未確認。任意の公開中継や外部通信ゼロの保証はない |
 | ネットワークなし | ローカルのまま使う | 相手への転送・サービス接続は行わない |
 
 Tailnet では次の順に進みます。
@@ -62,7 +62,7 @@ soba peers
 
 フォアグラウンド・バックグラウンド起動、確認付きの任意のサインイン時起動、保存済み自動受信、Tailnet ログアウトは[起動とログアウト](LIFECYCLE.ja.md)を参照してください。
 
-Tailcat は相手への直接通信と、明示して設定・許可した中継先への暗号化ペイロード・HTTPS/ICMP 診断を許します。通常の direct 有効バイナリは相手への公開経路を使う場合もあり、`local` は中継の区分で通信隔離ではありません。未公開の[経路準備](LAN.ja.md#別の経路を準備する未公開)は、両側で有限期間または取り消すまでを明示して確認したローカル許可で、確認済み候補を同じペアのまま使います。新しいソースが必要で、alpha.2 には含みません。[通信の境界](ARCHITECTURE.md#network-boundaries)
+Tailcat は相手への直接通信と、明示して設定・許可した中継先への暗号化ペイロード・HTTPS/ICMP 診断を許します。通常の direct 有効バイナリは相手への公開経路を使う場合もあり、`local` は中継の区分で通信隔離ではありません。[経路準備](LAN.ja.md#別の経路を準備する)は、両側で有限期間または取り消すまでを明示して確認したローカル許可で、確認済み候補を同じペアのまま使います。alpha.4に含まれ、alpha.5でも利用できます。[通信の境界](ARCHITECTURE.md#network-boundaries)
 
 ## 意図した相手を信頼する
 
@@ -275,10 +275,10 @@ soba stop
 
 状態にある現在の ID を使います。`soba stop-shares` はタスク所有分を含め受信共有を一括停止し、ネットワークのノードと外向き接続は残します。`soba revoke PEER_ID` はアプリの信頼を解除し、[LAN ペア解除](LAN.ja.md#解除復旧停止)では通信上のペアリングも解除します。個別停止はそのサービスの接続を閉じます。Stop または Ctrl+C は本体・ネットワーク・稼働中の処理を終了し、非公開の設定と識別情報を残します。期限で許可と追跡中の通信は終了しますが、渡したデータを回収したり遠隔アプリのジョブを取り消したりしません。
 
-更新は明示して行います。まず対象の本体を停止し、必要なら状態を非公開の場所にバックアップします。バックアップには識別情報と相手の情報が含まれます。次の指定を使う前に、alpha.2 公開版の署名付き資材と検証成功を確認してください。プレリリース間の更新・ダウングレードで、設定形式が常に互換とは限りません。
+更新は明示して行います。まず対象の本体を停止し、必要なら状態を非公開の場所にバックアップします。バックアップには識別情報と相手の情報が含まれます。次の指定を使う前に、alpha.5公開版の署名付き資材と検証成功を確認してください。プレリリース間の更新・ダウングレードで、設定形式が常に互換とは限りません。
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.2"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
 mise exec -- soba version
 mise exec -- soba start --offline
 ```
