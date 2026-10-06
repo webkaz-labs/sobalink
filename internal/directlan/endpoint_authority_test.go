@@ -92,28 +92,8 @@ func TestNativeApprovedSourceCannotChangePeerIdentity(t *testing.T) {
 }
 
 func TestNativeIPv6DatagramSizes(t *testing.T) {
-	create := func(id byte) *Node {
-		t.Helper()
-		reserve, e := net.Listen("tcp6", "[::1]:0")
-		if e != nil {
-			t.Fatal(e)
-		}
-		ap := reserve.Addr().(*net.TCPAddr).AddrPort()
-		reserve.Close()
-		cfg := testConfig(id)
-		cfg.Listen = ap
-		cfg.AllowedPrefixes = []netip.Prefix{netip.MustParsePrefix("::1/128")}
-		node, e := NewNode(cfg)
-		if e != nil {
-			t.Fatal(e)
-		}
-		if e = node.Start(context.Background()); e != nil {
-			t.Fatal(e)
-		}
-		t.Cleanup(func() { node.Close() })
-		return node
-	}
-	a, b := create(120), create(121)
+	a, _ := nativeNodeOnIP(t, 120, "::1")
+	b, _ := nativeNodeOnIP(t, 121, "::1")
 	pairNative(t, a, b)
 	pc, e := a.ListenPacket(context.Background(), 45222)
 	if e != nil {

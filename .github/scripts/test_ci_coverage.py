@@ -38,6 +38,16 @@ def jobs(full=True):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_native_port_helper_is_only_imported_by_tests(self):
+        root = pathlib.Path(__file__).parents[2]
+        imports = []
+        for directory in ("cmd", "internal", "web"):
+            for path in (root / directory).rglob("*.go"):
+                if '"github.com/webkaz-labs/sobalink/internal/testfixture"' in path.read_text(encoding="utf-8"):
+                    imports.append(path.relative_to(root).as_posix())
+                    self.assertTrue(path.name.endswith("_test.go"), "test fixture leaked into product source: " + str(path.relative_to(root)))
+        self.assertTrue(imports, "shared port fixture must have checked test-only consumers")
+
     def test_timings_only_record_fixed_names_and_elapsed_seconds(self):
         data = jobs()
         data[0].update({"started_at": "2026-01-01T00:00:00Z", "completed_at": "2026-01-01T00:00:10Z", "runner_name": "private-runner"})

@@ -51,3 +51,9 @@ developmentとtrusted-mainのcacheは分離したままです。実時間試験�
 従来のfull CIはソース `308d252` で27分10秒、cache missのWindowsが26分26秒でした。cache hitのLinux amd64／arm64／macOSは14分08秒／13分31秒／16分16秒です。これは観測基準であり、試験構成変更後の所要時間を保証する値ではありません。実時間待機を省略した短縮は選択実行として記録し、同じfull coverageでの性能改善とは区別します。[基準run](https://github.com/webkaz-labs/sobalink/actions/runs/37412218933)
 
 受入ではfullと見た目だけの選択実行の両方、手動force-full、不明・helper・依存・renameの変更、target証跡の欠落・失敗・skip注入を確認します。実端末のネットワーク受入は別に残ります。
+
+## ネイティブport fixtureの移植性
+
+同じ端点にTCPとUDPが必要なfixtureは、正確なIPv4／IPv6のloopbackアドレスで両方を予約します。共通のテストhelperは最大100個の分散した候補を実bindで確認し、実際の起動直前まで両socketを保持します。アプリケーションが予約したportの除外を維持し、候補不足やcleanupの失敗を返します。TCPとUDPで異なる除外範囲と、有限のcleanupを決定的なテストで確認します。WireGuard単体のfixtureでは、2つのUDP予約を同時に保持して相手ごとの端点を区別します。
+
+helperはテストfileだけがimportします。製品のlistener方針・選択した端点・時間制限・assertion失敗の扱いは変更しません。ネイティブ対象が失敗した場合は引き続き `ci-required` が失敗し、full成功証跡は発行しません。

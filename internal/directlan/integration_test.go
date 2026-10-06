@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/testfixture"
 )
 
 func nativeNode(t *testing.T, id byte) (*Node, *[]Peer) { return nativeNodeOnIP(t, id, "127.0.0.1") }
@@ -22,18 +24,17 @@ func nativeNodeOnIP(t *testing.T, id byte, ip string) (*Node, *[]Peer) {
 func nativeConfiguredNode(t *testing.T, id byte, ip string, configure func(*Config)) (*Node, *[]Peer) {
 	t.Helper()
 	address := netip.MustParseAddr(ip)
-	network := "tcp6"
-	if address.Is4() {
-		network = "tcp4"
-	}
-	reserve, e := net.Listen(network, netip.AddrPortFrom(address, 0).String())
+	reserve, e := testfixture.ReserveLoopbackTCPUDP(address)
 	if e != nil {
 		t.Fatalf("native loopback sockets unavailable; this integration gate is NOT passed: %v", e)
 	}
-	ap := reserve.Addr().(*net.TCPAddr).AddrPort()
-	reserve.Close()
+	t.Cleanup(func() {
+		if err := reserve.Close(); err != nil {
+			t.Errorf("release native loopback reservation: %v", err)
+		}
+	})
 	c := testConfig(id)
-	c.Listen = ap
+	c.Listen = reserve.Endpoint()
 	c.AllowedPrefixes = []netip.Prefix{netip.PrefixFrom(address, address.BitLen())}
 	var saved []Peer
 	c.Persist = func(p []Peer) error { saved = append([]Peer(nil), p...); return nil }
@@ -44,10 +45,13 @@ func nativeConfiguredNode(t *testing.T, id byte, ip string, configure func(*Conf
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(func() { n.Close() })
+	if e = reserve.Close(); e != nil {
+		t.Fatal(e)
+	}
 	if e = n.Start(context.Background()); e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { n.Close() })
 	return n, &saved
 }
 func pairNative(t *testing.T, a, b *Node) {

@@ -51,3 +51,9 @@ The aggregate also records fixed-name job and cache-step durations. Each native 
 The earlier full CI at source `308d252` took 27m10s, with a 26m26s Windows job on a cache miss. Linux amd64/arm64 and macOS had cache hits and took 14m08s/13m31s/16m16s. These are observed baselines, not a promised duration for a changed test set. A reduction from omitted real-time waits must be reported as selected coverage, not as identical full-coverage performance. [Baseline run](https://github.com/webkaz-labs/sobalink/actions/runs/37412218933)
 
 Before acceptance, verify both a full run and a presentation-only selected run, manual force-full, unknown/helper/dependency/rename inputs, and injected missing/failed/skipped target evidence. Physical-device network acceptance remains separate.
+
+## Native port fixture portability
+
+Fixtures that need TCP and UDP on one endpoint reserve both protocols on the exact IPv4/IPv6 loopback address. The shared test helper checks at most 100 spread candidates with real binds, retains both sockets until immediately before the real start, preserves explicit application-reserved ports and reports exhaustion or cleanup errors. Deterministic tests cover different TCP/UDP excluded ranges and bounded cleanup. The raw WireGuard fixture holds its two UDP reservations concurrently to keep the peer endpoints distinct.
+
+These helpers are imported only by test files. Production listener policy, selected endpoints, timing limits and assertion failures remain unchanged. A native target failure still makes `ci-required` fail and prevents issuing a full-coverage receipt.
