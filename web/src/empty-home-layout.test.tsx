@@ -31,7 +31,7 @@ describe('empty-home scroll ownership', () => {
   it('gives the short empty-home sidebar one complete scroll area', () => {
     const short = styles.match(/@media \(max-height: 500px\) \{([\s\S]*?)\n\}/)?.[1]
     expect(short).toContain('.workspace:not(.device-selected) .device-sidebar')
-    expect(rule('.workspace:not(.device-selected) .device-sidebar')).toMatchObject({ 'overflow-y': 'auto' })
+    expect(rule('.workspace:not(.device-selected) .device-sidebar')).toMatchObject({ 'overflow-y': 'auto', 'scroll-padding-block': '8px' })
     expect(rule('.workspace:not(.device-selected) .device-sidebar > *')).toMatchObject({ flex: '0 0 auto' })
     expect(rule('.workspace:not(.device-selected) .device-list')).toMatchObject({ 'overflow-y': 'visible' })
   })

@@ -306,6 +306,9 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .target-pill { display: flex; align-items: center; gap: 9px; padding: 13px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .target-pill .badge { margin-left: auto; }
 .scope-note, .inline-note { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 1.8; color: var(--muted); }
+/* The selected-port handoff is a multi-paragraph review, not an icon/text row. */
+.port-choice-note { display: block; min-width: 0; overflow-wrap: anywhere; }
+.port-choice-note > p + p { margin-top: 8px; }
 .scope-note svg, .inline-note svg { margin-top: 2px; color: var(--primary-text); }
 .advertised-review { display: grid; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
 .advertised-review > .button { justify-self: start; max-width: 100%; white-space: normal; }
@@ -681,9 +684,10 @@ html:has(dialog[open]) { overflow: hidden; }
 @media (max-width: 800px) { .clear-filters { min-height: 44px; } }
 
 /* When the empty-home sidebar is taller than the available frame, keep its
-   search, device list and footer in one reachable scroll area. */
+   search, device list and footer in one reachable scroll area. The scroll inset
+   leaves room for the 3px keyboard outline and its 3px offset at either edge. */
 @media (max-height: 500px) {
-  .workspace:not(.device-selected) .device-sidebar { overflow-y: auto; overscroll-behavior: contain; }
+  .workspace:not(.device-selected) .device-sidebar { overflow-y: auto; overscroll-behavior: contain; scroll-padding-block: 8px; }
   .workspace:not(.device-selected) .device-sidebar > * { flex: 0 0 auto; }
   .workspace:not(.device-selected) .device-list { overflow-y: visible; }
 }

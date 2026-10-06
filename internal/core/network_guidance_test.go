@@ -12,6 +12,11 @@ import (
 
 func TestNetworkGuidanceClassifiesOnlyReportedEvidence(t *testing.T) {
 	tests := []struct{ code, category, action string }{
+		{"lan_listener_conflict", "listener", "review_network"},
+		{"lan_listener_address_unavailable", "address", "review_network"},
+		{"lan_listener_permission_denied", "permission", "review_network"},
+		{"lan_listener_capacity", "capacity", "review_capacity"},
+		{"lan_start_failed", "unknown", "review_network"},
 		{"direct_lan_recovery_required", "recovery", "review_network"},
 		{"mixed_recovery_required", "recovery", "review_network"},
 		{"direct_lan_address_unavailable", "address", "review_network"},

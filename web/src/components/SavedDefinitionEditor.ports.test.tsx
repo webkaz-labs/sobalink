@@ -14,12 +14,25 @@ function setup(locale: Locale = 'en') {
   const server = { state, stale: false, busy: new Set(), error: null, setError: vi.fn(), run } as unknown as Server
   return { run, e: (key: string) => savedEditorText(locale, key), props: { server, locale, t: translator(locale), mode: 'connect' as const, services: [source.configuration], source: { id: source.configuration.id, intent: 'edit' as const }, portChoice: { source, localPort: 49152, checkedAt: proposal.checkedAt }, onClose: vi.fn(), onSaved: vi.fn() } }
 }
+// Source guard only; hosted browser assertions measure the complete modal body.
+const fileSystemModule = 'node:fs'
+const { readFileSync } = await import(fileSystemModule) as { readFileSync(path: string, encoding: 'utf8'): string }
+it('lays out the multi-paragraph port choice vertically with breakable values', () => {
+  const styles = readFileSync('src/styles.css', 'utf8')
+  const rule = styles.match(/\.port-choice-note \{([^}]+)\}/)?.[1]
+  expect(rule).toMatch(/display:\s*block;/)
+  expect(rule).toMatch(/min-width:\s*0;/)
+  expect(rule).toMatch(/overflow-wrap:\s*anywhere;/)
+})
 describe('candidate handoff to reviewed stopped definition', () => {
   for (const locale of ['en', 'ja'] as const) {
     it(`${locale}: rereads exact revision, changes only draft local port and saves only after full review`, async () => {
       const { props, e, run } = setup(locale); const t = translator(locale); render(<SavedDefinitionEditor {...props} />)
       const local = await screen.findByLabelText(t('localStart')); expect(local).toHaveValue(49152)
-      expect(screen.getByRole('region', { name: portProposalText(locale, 'chosen') })).toHaveTextContent('127.0.0.1:18080 → 8000; 127.0.0.1:18081 → 8002')
+      const chosen = screen.getByRole('region', { name: portProposalText(locale, 'chosen') })
+      expect(chosen).toHaveClass('port-choice-note')
+      expect(chosen.querySelectorAll(':scope > p')).toHaveLength(7)
+      expect(chosen).toHaveTextContent('127.0.0.1:18080 → 8000; 127.0.0.1:18081 → 8002')
       expect(run.mock.calls.map(([name]) => name)).toEqual(['service.config'])
       expect(source.configuration.localPort).toBe(18080)
       await userEvent.click(screen.getByRole('button', { name: e('review') }))

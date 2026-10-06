@@ -159,7 +159,7 @@ export interface State {
   reservedPorts?: number[]
   servicePresets?: ServicePreset[]
   limits?: ServiceLimits
-  lan?: { configured: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
+  lan?: { configured: boolean; readinessKnown?: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
   mixed?: MixedStatus
   directLAN?: DirectLanStatus
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }

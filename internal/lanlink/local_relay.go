@@ -147,18 +147,26 @@ func StartLocalRelayWithResources(ctx context.Context, address netip.AddrPort, i
 	mux.Handle("/sobalink/pair/bootstrap", relayBootstrapHandler(bootstrap[0]))
 	srv := &http.Server{Handler: mux, ErrorLog: logger.StdLogger(logger.Discard), ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 8192}
 	tlsListener := tls.NewListener(&limitedRelayListener{Listener: ln, slots: make(chan struct{}, resources.TLSConnections), lease: 2 * time.Minute}, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}})
-	relay := &LocalRelay{derp: d, server: srv, admission: ctl, listener: tlsListener, admissionListener: admission, done: make(chan struct{})}
+	relay := &LocalRelay{derp: d, server: srv, admission: ctl, listener: tlsListener, admissionListener: &limitedRelayListener{Listener: admission, slots: make(chan struct{}, resources.AdmissionConnections)}, done: make(chan struct{})}
+	relay.serve(ctx)
+	return relay, nil
+}
+
+// Done closes after either serving loop ends and the owned listeners and relay
+// have shut down. It reports local lifecycle only, never remote reachability.
+func (r *LocalRelay) Done() <-chan struct{} { return r.done }
+
+func (relay *LocalRelay) serve(ctx context.Context) {
 	relay.wg.Add(2)
 	relay.mu.Lock()
 	relay.stop = context.AfterFunc(ctx, func() { relay.Close() })
 	relay.mu.Unlock()
 	go func() {
 		defer relay.wg.Done()
-		ctl.Serve(&limitedRelayListener{Listener: admission, slots: make(chan struct{}, resources.AdmissionConnections)})
+		relay.admission.Serve(relay.admissionListener)
 		relay.shutdown()
 	}()
-	go func() { defer relay.wg.Done(); srv.Serve(tlsListener); relay.shutdown() }()
-	return relay, nil
+	go func() { defer relay.wg.Done(); relay.server.Serve(relay.listener); relay.shutdown() }()
 }
 func admissionHandler(path string, allow func(string) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -130,6 +130,12 @@ func (c *Core) startNetwork(ctx context.Context) error {
 		if p.Settings.Network == "direct-lan" {
 			return e
 		}
+		if p.Settings.Network == "lan" {
+			var safe *lanCommandError
+			if errors.As(codedLANError(e), &safe) {
+				return safe
+			}
+		}
 		if p.Settings.Network == "mixed" {
 			return c.codedMixedError(e)
 		}

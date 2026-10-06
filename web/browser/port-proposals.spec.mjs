@@ -123,14 +123,32 @@ async function keyboardActionAtEverySize(page, app, dialog, previous, target, ar
     await expect(previous).toBeFocused()
     await page.keyboard.press('Tab')
     await expect(target).toBeFocused()
-    await expect.poll(() => target.evaluate(element => {
-      const bounds = element.getBoundingClientRect()
-      const top = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
-      const body = element.closest('dialog').querySelector('.modal-body')
-      return bounds.width > 0 && bounds.height > 0 && bounds.left >= 0 && bounds.right <= innerWidth &&
-        bounds.top >= 0 && bounds.bottom <= innerHeight && Boolean(top && element.contains(top)) &&
-        body.scrollWidth <= body.clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth + 1
-    }), { message: 'Keyboard-entered port action stays inside the viewport and is not covered by another element' }).toBe(true)
+    let geometry
+    try {
+      await expect.poll(async () => {
+        geometry = await target.evaluate(element => {
+          const bounds = element.getBoundingClientRect()
+          const top = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+          const body = element.closest('dialog').querySelector('.modal-body')
+          const note = body.querySelector('.port-choice-note')
+          // Never serialize labels, values, DOM snapshots or request data.
+          return {
+            width: bounds.width, height: bounds.height, left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom,
+            viewportWidth: innerWidth, viewportHeight: innerHeight, centerUncovered: Boolean(top && element.contains(top)),
+            bodyScrollWidth: body.scrollWidth, bodyClientWidth: body.clientWidth,
+            pageScrollWidth: document.documentElement.scrollWidth,
+            noteScrollWidth: note?.scrollWidth ?? 0, noteClientWidth: note?.clientWidth ?? 0,
+          }
+        })
+        return geometry.width > 0 && geometry.height > 0 && geometry.left >= 0 && geometry.right <= geometry.viewportWidth &&
+          geometry.top >= 0 && geometry.bottom <= geometry.viewportHeight && geometry.centerUncovered &&
+          geometry.bodyScrollWidth <= geometry.bodyClientWidth + 1 && geometry.pageScrollWidth <= geometry.viewportWidth + 1
+      }, { message: 'Keyboard-entered port action stays inside the viewport and is not covered by another element' }).toBe(true)
+    } catch (error) {
+      // The existing fixture privacy guard still controls diagnostic capture.
+      if (geometry) await app.writeMetrics(`${artifact}-${viewport.width}x${viewport.height}-geometry`, geometry).catch(() => {})
+      throw error
+    }
     await expect(dialog).toBeVisible()
     await app.capture(`${artifact}-${viewport.width}x${viewport.height}`)
   }

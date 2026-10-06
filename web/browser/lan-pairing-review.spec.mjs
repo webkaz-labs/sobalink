@@ -1,10 +1,11 @@
 import { test, expect } from './fixtures.mjs'
+import { SYNTHETIC_PAIRING_INVITATION } from './synthetic-pairing.mjs'
 
 // Browser UI regression only: authenticated Go serves the production page, but
 // LAN state and inspection/join responses are synthetic. This does not establish
 // enrollment, remote availability, or real-device pairing acceptance. No usable
 // private invitation is created, read, logged, or captured by these cases.
-const input = 'synthetic-ui-review-only-not-a-private-invitation'
+const input = SYNTHETIC_PAIRING_INVITATION
 const publicKey = 'a1'.repeat(32), hostKey = 'b2'.repeat(32), pin = 'c3'.repeat(32)
 const relay = { kind: 'relay', address: '192.0.2.10:443', certificateSHA256: pin }
 const labels = locale => locale === 'ja' ? {
@@ -16,7 +17,7 @@ const labels = locale => locale === 'ja' ? {
   confirm: 'Pair with this device', cancel: 'Cancel', paired: 'Device paired',
   scope: 'Communication trust, automatic receiving, services and startup permissions need separate approval.',
 }
-async function installReadyFixture(page, { failFirstJoin = false } = {}) {
+async function installReadyFixture(page, app, { failFirstJoin = false } = {}) {
   const commands = []
   let firstJoinID, exactPayloads = true, stableRetryID = true
   await page.route('**/api/state', async route => {
@@ -26,25 +27,17 @@ async function installReadyFixture(page, { failFirstJoin = false } = {}) {
       policy: { mode: 'trusted-relay', prefixes: [], editable: false, restartRequired: false },
     } } })
   })
-  await page.route('**/api/command', async route => {
-    const request = route.request().postDataJSON()
-    if (!['lan.inspect', 'lan.join'].includes(request.name)) {
-      // The pairing UI must never make any additional mutating command here.
-      commands.push(request.name)
-      await route.fulfill({ status: 400, json: { ok: false, error: { code: 'invalid_request', message: 'Synthetic UI fixture rejects additional commands' } } })
-      return
-    }
+  await app.interceptSyntheticPairingCommands(async request => {
     commands.push(request.name)
     exactPayloads &&= Object.keys(request.payload).length === 1 && request.payload.invitation === input
     if (request.name === 'lan.inspect') {
-      await route.fulfill({ json: { ok: true, result: { recipientPublicKey: publicKey, recipientMatches: true, hostPublicKey: hostKey, hostName: 'Synthetic inviting device', expires: new Date(Date.now() + 300_000).toISOString(), relay } } })
-      return
+      return { json: { ok: true, result: { recipientPublicKey: publicKey, recipientMatches: true, hostPublicKey: hostKey, hostName: 'Synthetic inviting device', expires: new Date(Date.now() + 300_000).toISOString(), relay } } }
     }
     if (firstJoinID === undefined) {
       firstJoinID = request.requestId
-      if (failFirstJoin) { await route.abort('failed'); return }
+      if (failFirstJoin) return { abort: 'failed' }
     } else stableRetryID &&= firstJoinID === request.requestId
-    await route.fulfill({ json: { ok: true, result: { paired: true, trusted: false, peerId: hostKey } } })
+    return { json: { ok: true, result: { paired: true, trusted: false, peerId: hostKey } } }
   })
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   return { commands, exactPayloads: () => exactPayloads, stableRetryID: () => stableRetryID }
@@ -76,7 +69,7 @@ test.describe('configured LAN pairing review with synthetic responses', () => {
   for (const locale of ['en', 'ja']) {
     test(`${locale}: review is required, fits narrow layout and is destroyed by cancel, close and Back`, async ({ page, app }) => {
       await app.appearance(locale, locale === 'ja' ? 'dark' : 'light')
-      const fixture = await installReadyFixture(page), text = labels(locale)
+      const fixture = await installReadyFixture(page, app), text = labels(locale)
       await openJoin(page, text)
       let review = await inspect(page, text)
       expect(fixture.commands).toEqual(['lan.inspect'])
@@ -106,7 +99,7 @@ test.describe('configured LAN pairing review with synthetic responses', () => {
 
     test(`${locale}: explicit pairing preserves the existing retry request identity`, async ({ page, app }) => {
       await app.appearance(locale, 'light')
-      const fixture = await installReadyFixture(page, { failFirstJoin: true }), text = labels(locale)
+      const fixture = await installReadyFixture(page, app, { failFirstJoin: true }), text = labels(locale)
       await openJoin(page, text)
       const review = await inspect(page, text)
       expect(fixture.commands).toEqual(['lan.inspect'])

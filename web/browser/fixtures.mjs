@@ -7,6 +7,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
+import { createSyntheticPairingInterception, verifyCommandsBeforeCleanup } from './synthetic-pairing.mjs'
 import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
 
 export { expect }
@@ -76,6 +77,8 @@ export const test = base.extend({
     let usedFixture = false
     let runtimeErrors = 0
     let cspErrors = 0
+    const syntheticPairing = createSyntheticPairingInterception(scenario)
+    const count = name => page.evaluate(name => (window.__sobaQA?.commands || []).filter(command => command === name).length, name)
     page.on('pageerror', () => runtimeErrors++)
     page.on('console', entry => { if (entry.type() === 'error' && /content security policy|refused to/i.test(entry.text())) cspErrors++ })
     try {
@@ -150,7 +153,8 @@ export const test = base.extend({
             return state !== null && Boolean(predicate(state))
           }, { message: description }).toBe(true)
         },
-        count(name) { return page.evaluate(name => (window.__sobaQA?.commands || []).filter(command => command === name).length, name) },
+        count,
+        interceptSyntheticPairingCommands(respond) { return syntheticPairing.install(page, respond) },
         async capture(name) {
           await assertCaptureAllowed()
           const filename = `${safeArtifactName(name)}.png`
@@ -241,7 +245,6 @@ export const test = base.extend({
         assert.equal(runtimeErrors, 0, 'Browser acceptance must not introduce uncaught exceptions')
         assert.equal(cspErrors, 0, 'Browser acceptance must not violate production CSP')
         await expect.poll(() => page.evaluate(() => window.__sobaQA?.errors === 0 && window.__sobaQA?.cspViolations === 0), { message: 'Production UI must retain runtime and CSP health' }).toBe(true)
-        for (const name of ['network.login', 'lan.invite', 'lan.join']) assert.equal(await app.count(name), 0, 'Browser acceptance must not enroll or pair a real device')
         if (expectShutdown && !cleanShutdownVerified) await app.expectStopped()
       } else if (authenticated) {
         const identity = createHash('sha256').update(testInfo.testId).digest('hex').slice(0, 12)
@@ -250,15 +253,19 @@ export const test = base.extend({
       }
     } finally {
       await drainRoutesBeforeCleanup(page, async () => {
-        // Fallback cleanup never counts as the shutdown assertion above.
-        if (!exited) child.kill('SIGTERM')
-        let cleanupResult
-        try { cleanupResult = await waitForExit(exit, 5_000) } catch { child.kill('SIGKILL'); cleanupResult = await waitForExit(exit, 5_000) }
-        await rm(privateRoot, { recursive: true, force: true })
-        if (usedFixture && testInfo.status === testInfo.expectedStatus) {
-          assert.equal(cleanupResult.code, 0, 'The isolated Go fixture must close without an error')
-          assert.equal(cleanupResult.signal, null, 'Fixture cleanup must finish without forced termination')
-        }
+        // Audit after all intercepted routes settle, including failed tests.
+        // An audit failure must never prevent process/private-root cleanup.
+        await verifyCommandsBeforeCleanup(syntheticPairing, authenticated ? count : null, async () => {
+          // Fallback cleanup never counts as the shutdown assertion above.
+          if (!exited) child.kill('SIGTERM')
+          let cleanupResult
+          try { cleanupResult = await waitForExit(exit, 5_000) } catch { child.kill('SIGKILL'); cleanupResult = await waitForExit(exit, 5_000) }
+          await rm(privateRoot, { recursive: true, force: true })
+          if (usedFixture && testInfo.status === testInfo.expectedStatus) {
+            assert.equal(cleanupResult.code, 0, 'The isolated Go fixture must close without an error')
+            assert.equal(cleanupResult.signal, null, 'Fixture cleanup must finish without forced termination')
+          }
+        })
       })
     }
   },

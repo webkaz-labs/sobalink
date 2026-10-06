@@ -415,6 +415,20 @@ describe('Embedded relay review and lifecycle', () => {
     expect(screen.getByText(t('unknown'))).toBeInTheDocument()
   })
 
+  it.each(['en', 'ja'] as const)('keeps unknown LAN worker status separate from mixed readiness in %s', locale => {
+    const lt = lanTranslator(locale)
+    const state: State = { ...readyState(), settings: { network: 'mixed' }, lan: { ...readyState().lan!, readinessKnown: false, listenerReady: false, pairingReady: false, relayReady: false, relay: { kind: 'host', address: '127.0.0.1:48443', certificateSHA256 } } }
+    const view = setup({ state, locale })
+    expect(screen.getByText(lt('relayUnknown'))).toBeInTheDocument()
+    expect(screen.getByText(lt('pairingListenerUnknown'))).toBeInTheDocument()
+    expect(screen.queryByText(lt('relayStopped'))).not.toBeInTheDocument()
+    expect(screen.queryByText(lt('relayRunning'))).not.toBeInTheDocument()
+    view.update({ ...state, lan: { ...state.lan!, readinessKnown: true, relayReady: true, pairingReady: true, listenerReady: true } })
+    expect(screen.getByText(lt('relayRunning'))).toBeInTheDocument()
+    expect(screen.getByText(lt('reachabilityUnknown'))).toBeInTheDocument()
+    expect(view.run).not.toHaveBeenCalled()
+  })
+
   it('warns that Stop ends the whole app and active connections, and Cancel does not stop it', async () => {
     const state = readyState()
     state.services = [{ id: 'active-service', name: 'Fixture service', peerId: recipientPublicKey, network: 'tcp', status: 'active' }]

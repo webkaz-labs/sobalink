@@ -485,12 +485,17 @@ type lanEngine interface {
 	Revoke(string) error
 }
 
+type hostedLANRelay interface {
+	io.Closer
+	Done() <-chan struct{}
+}
+
 type lanBackend struct {
 	lanEngine
 	mu        sync.Mutex
 	ctx       context.Context
-	start     func() (io.Closer, error)
-	relay     io.Closer
+	start     func() (hostedLANRelay, error)
+	relay     hostedLANRelay
 	ready     bool
 	closed    bool
 	reserved  []uint16
@@ -530,12 +535,12 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	if state.Selection.Kind == "host" {
 		b.reserved = append(b.reserved, relay.Address.Port())
 	}
-	b.start = func() (io.Closer, error) {
+	b.start = func() (hostedLANRelay, error) {
 		var local *lanlink.LocalRelay
 		if state.Selection.Kind == "host" {
 			local, err = lanlink.StartLocalRelayWithResources(c.ctx, relay.Address, *state.RelayIdentity, node.AllowRelayKey, resources, node.AuthorizeRelayBootstrap)
 			if err != nil {
-				return nil, err
+				return nil, classifyLANRelayStartError(err)
 			}
 			b.reserved = append(b.reserved, local.ReservedPorts()...)
 		}
@@ -578,7 +583,7 @@ func (b *lanBackend) State(ctx context.Context) (identity.State, error) {
 		return identity.State{}, err
 	}
 	b.mu.Lock()
-	ready, closed := b.ready, b.closed
+	ready, closed, relay := b.ready, b.closed, b.relay
 	reserved := append([]uint16(nil), b.reserved...)
 	b.mu.Unlock()
 	if closed || b.ctx.Err() != nil {
@@ -587,6 +592,13 @@ func (b *lanBackend) State(ctx context.Context) (identity.State, error) {
 	state := identity.State{Backend: "starting", IPs: []netip.Addr{b.OverlayAddr()}, ReservedPorts: reserved, Snapshot: policy.Snapshot{Running: ready}}
 	if ready {
 		state.Backend = "ready"
+	}
+	if relay != nil {
+		select {
+		case <-relay.Done():
+			state.Backend, state.Snapshot.Running = "unavailable", false
+		default:
+		}
 	}
 	for _, peer := range b.PublicPeers() {
 		// Endpoint is first for outgoing resolution. The remaining source role
@@ -693,7 +705,7 @@ func (b *lanBackend) Close() error {
 }
 
 func (c *Core) lanStatus() map[string]any {
-	status := map[string]any{"resources": c.relayResourcesView(), "configured": false, "pairingReady": false, "listenerReady": false, "relayReady": false, "path": "unknown"}
+	status := map[string]any{"resources": c.relayResourcesView(), "configured": false, "readinessKnown": true, "pairingReady": false, "listenerReady": false, "relayReady": false, "path": "unknown"}
 	host := false
 	if saved := c.lanStoreCopy(); saved != nil {
 		state := saved.copy()
@@ -710,9 +722,28 @@ func (c *Core) lanStatus() map[string]any {
 			}
 		}
 	}
-	if _, ok := c.nodeCopy().(lanNetworkBackend); ok {
-		state, err := c.current(c.ctx)
-		ready := err == nil && state.Snapshot.Running
+	// Query the exact LAN worker, never mixed aggregate readiness. A failed
+	// observation is unknown rather than evidence that the listener stopped.
+	c.mu.RLock()
+	closing := c.closing
+	c.mu.RUnlock()
+	if closing || c.ctx.Err() != nil {
+		return status
+	}
+	var node NetworkBackend
+	switch active := c.nodeCopy().(type) {
+	case lanNetworkBackend:
+		node = active
+	case *mixedBackend:
+		node = active.nodes["lan"]
+	}
+	if node != nil {
+		ctx, cancel := context.WithTimeout(c.ctx, 3*time.Second)
+		defer cancel()
+		state, err := node.State(ctx)
+		known := err == nil && ctx.Err() == nil
+		ready := known && state.Snapshot.Running
+		status["readinessKnown"] = known
 		status["pairingReady"], status["listenerReady"] = ready, ready
 		status["relayReady"] = host && ready
 	}

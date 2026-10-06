@@ -16,9 +16,62 @@ import (
 	"testing"
 	"time"
 
+	"tailscale.com/derp/derpserver"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+	"tailscale.com/types/logger"
 )
+
+func TestLocalRelayDoneTracksEitherServingLoop(t *testing.T) {
+	for _, ending := range []string{"relay", "admission", "context", "already-canceled"} {
+		t.Run(ending, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			listener, admission := newFakeListener(), newFakeListener()
+			relay := &LocalRelay{derp: derpserver.New(key.NewNode(), logger.Discard), server: &http.Server{}, admission: &http.Server{}, listener: listener, admissionListener: admission, done: make(chan struct{})}
+			t.Cleanup(func() { relay.Close() })
+			select {
+			case <-relay.Done():
+				t.Fatal("unstarted relay already terminated")
+			default:
+			}
+			if ending == "already-canceled" {
+				cancel()
+			}
+			relay.serve(ctx)
+			switch ending {
+			case "relay":
+				listener.Close()
+			case "admission":
+				admission.Close()
+			case "context":
+				cancel()
+			}
+			select {
+			case <-relay.Done():
+			case <-time.After(time.Second):
+				t.Fatal("serving termination was not observable")
+			}
+			if (ending == "relay" || ending == "admission") && ctx.Err() != nil {
+				t.Fatal("relay termination canceled its owner")
+			}
+			for _, closed := range []<-chan struct{}{listener.closed, admission.closed} {
+				select {
+				case <-closed:
+				default:
+					t.Fatal("owned listener survived termination")
+				}
+			}
+			joined := make(chan struct{})
+			go func() { relay.Close(); relay.Close(); close(joined) }()
+			select {
+			case <-joined:
+			case <-time.After(time.Second):
+				t.Fatal("serving loops did not join on repeated Close")
+			}
+		})
+	}
+}
 
 func TestRelayCertificatePinnedToSelectedIP(t *testing.T) {
 	ip := netip.MustParseAddr("127.0.0.1")

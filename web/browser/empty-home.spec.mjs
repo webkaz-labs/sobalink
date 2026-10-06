@@ -8,16 +8,34 @@ const viewports = [
   { width: 375, height: 844 },
 ]
 
-async function expectUncovered(control) {
-  await expect.poll(() => control.evaluate(element => {
-    const bounds = element.getBoundingClientRect()
-    if (bounds.width <= 0 || bounds.height <= 0 || bounds.left < 0 || bounds.right > innerWidth || bounds.top < 0 || bounds.bottom > innerHeight) return false
-    const points = [[.5, .5], [.1, .1], [.9, .1], [.1, .9], [.9, .9]]
-    return points.every(([x, y]) => {
-      const hit = document.elementFromPoint(bounds.left + bounds.width * x, bounds.top + bounds.height * y)
-      return Boolean(hit && (hit === element || element.contains(hit)))
-    })
-  }), { message: 'The entire control remains reachable without decoration or clipped content intercepting it' }).toBe(true)
+async function expectUncovered(control, app, artifact) {
+  let geometry
+  try {
+    await expect.poll(async () => {
+      geometry = await control.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        const frame = element.closest('.device-sidebar')
+        const points = [[.5, .5], [.1, .1], [.9, .1], [.1, .9], [.9, .9]]
+        // Only numeric geometry and hit counts may enter a diagnostic artifact.
+        return {
+          width: bounds.width, height: bounds.height, left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom,
+          viewportWidth: innerWidth, viewportHeight: innerHeight,
+          frameTop: frame?.getBoundingClientRect().top ?? 0, frameBottom: frame?.getBoundingClientRect().bottom ?? 0,
+          frameScrollTop: frame?.scrollTop ?? 0, frameScrollHeight: frame?.scrollHeight ?? 0, frameClientHeight: frame?.clientHeight ?? 0,
+          uncoveredPoints: points.filter(([x, y]) => {
+            const hit = document.elementFromPoint(bounds.left + bounds.width * x, bounds.top + bounds.height * y)
+            return Boolean(hit && (hit === element || element.contains(hit)))
+          }).length,
+        }
+      })
+      return geometry.width > 0 && geometry.height > 0 && geometry.left >= 0 && geometry.right <= geometry.viewportWidth &&
+        geometry.top >= 0 && geometry.bottom <= geometry.viewportHeight && geometry.uncoveredPoints === 5
+    }, { message: 'The entire control remains reachable without decoration or clipped content intercepting it' }).toBe(true)
+  } catch (error) {
+    // Retain the original assertion if the existing privacy guard blocks capture.
+    if (app && artifact && geometry) await app.writeMetrics(artifact, geometry).catch(() => {})
+    throw error
+  }
 }
 
 async function expectFrame(page) {
@@ -63,7 +81,7 @@ for (const locale of ['en', 'ja']) {
       await sidebarControls.first().focus()
       for (let index = 0; index < count; index++) {
         await expect(sidebarControls.nth(index)).toBeFocused()
-        await expectUncovered(sidebarControls.nth(index))
+        await expectUncovered(sidebarControls.nth(index), app, `empty-home-geometry-${locale}-${viewport.width}x${viewport.height}-${index}`)
         if (index < count - 1) await page.keyboard.press('Tab')
       }
       await expect(sidebar.locator('.sidebar-footer button')).toBeFocused()

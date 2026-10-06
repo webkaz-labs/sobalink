@@ -20,6 +20,14 @@ func guidance(code, category, action, en, ja, nextEN, nextJA string) *Diagnostic
 
 func networkDiagnosticGuidance(state, code string, hasError bool, mode string) *DiagnosticGuidance {
 	switch code {
+	case "lan_listener_conflict":
+		return guidance(code, "listener", "review_network", "A local relay port is already in use.", "ローカルリレーのポートが使用中です。", "Stop the conflicting listener separately, then retry the saved endpoint. Review any endpoint change explicitly; no port was changed automatically.", "競合する待受を別途停止し、保存済みの端点で再試行してください。端点の変更は明示的に確認してください。ポートは自動変更していません。")
+	case "lan_listener_address_unavailable":
+		return guidance(code, "address", "review_network", "A local relay address or address family is unavailable.", "ローカルリレーのアドレスまたはアドレス系統を利用できません。", "Reconnect the selected network or review the exact saved endpoint before retrying. Address and certificate changes still require explicit review.", "選択したネットワークへ戻すか、保存済みの正確な端点を確認してから再試行してください。アドレスや証明書の変更には明示的な確認が必要です。")
+	case "lan_listener_permission_denied":
+		return guidance(code, "permission", "review_network", "The operating system denied a local relay listener.", "OSがローカルリレーの待受を拒否しました。", "Review local listener permissions before retrying. This diagnosis does not authorize changes to security settings.", "再試行前にローカル待受のアクセス権を確認してください。この診断はセキュリティ設定の変更を許可するものではありません。")
+	case "lan_listener_capacity":
+		return guidance(code, "capacity", "review_capacity", "Local relay listener resources are exhausted.", "ローカルリレーの待受資源が不足しています。", "Stop unused work or review available resources before retrying. Saved identity and endpoint settings remain unchanged.", "不要な処理を停止するか、使用可能な資源を確認してから再試行してください。保存済みのIDと端点設定は変更していません。")
 	case "direct_lan_recovery_required", "mixed_recovery_required", "direct_lan_state_invalid":
 		return guidance(code, "recovery", "review_network", "Saved network state needs review.", "保存済みの接続状態の確認が必要です。", "Stop sobalink and inspect the saved approvals before restarting. Retrying must not reactivate uncertain permissions.", "sobalinkを停止し、保存済みの許可を確認・修正してから再起動してください。保存が不確かな許可を再試行で復活させないでください。")
 	case "direct_lan_address_unavailable":
