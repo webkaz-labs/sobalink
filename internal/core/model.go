@@ -160,6 +160,7 @@ type Core struct {
 	closeOnce                  sync.Once
 	closeErr                   error
 	directLAN                  *directLANStore
+	contextControl             *contextControlOwner
 	lan                        *lanStore
 	lanFactory                 func(*lanStore) (lanNetworkBackend, error)
 	lanAddresses               func() ([]LANLocalAddress, error)
@@ -404,7 +405,11 @@ func (c *Core) close() error {
 	c.mu.Lock()
 	c.closing = true
 	peerHTTP := c.peerHTTPTransport
+	control := c.contextControl
 	c.mu.Unlock()
+	if control != nil {
+		control.requestClose()
+	}
 	if peerHTTP != nil {
 		peerHTTP.close()
 	}
@@ -422,6 +427,7 @@ func (c *Core) close() error {
 	c.web = nil
 	c.mu.Unlock()
 	var errs []error
+	errs = append(errs, c.stopContextControlLocked())
 	if ps != nil {
 		errs = append(errs, ps.Close())
 	}

@@ -81,6 +81,14 @@ func (c *Core) stopApplication() map[string]string {
 }
 
 func (c *Core) startNetwork(ctx context.Context) error {
+	c.mu.RLock()
+	control := c.contextControl
+	c.mu.RUnlock()
+	// A waiting owner, unfinished construction, or retained failed cleanup
+	// excludes ordinary application activation until a complete successful join.
+	if control != nil {
+		return directLANMetadataUnavailable()
+	}
 	if c.nodeCopy() != nil {
 		return nil
 	}

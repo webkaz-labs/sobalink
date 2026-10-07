@@ -27,14 +27,16 @@ type service struct {
 	port    uint16
 }
 type wire struct {
-	flow    *flow
-	g       *runtimeGeneration
-	work    *generationWork
-	control bool
-	raw     net.Conn
-	key     string
-	peer    *peerState
-	cancel  context.CancelFunc
+	flow             *flow
+	g                *runtimeGeneration
+	work             *generationWork
+	control          bool
+	contextDeadline  time.Time
+	contextArmCutoff uint64
+	raw              net.Conn
+	key              string
+	peer             *peerState
+	cancel           context.CancelFunc
 }
 
 type pendingDial struct {
@@ -46,6 +48,10 @@ type pendingDial struct {
 
 type Node struct {
 	mu                        sync.Mutex
+	contextControl            bool // immutable; never grants application admission
+	contextCompletion         ContextCompletion
+	contextAttempts           map[contextAttemptKey]*ContextAttempt
+	contextArmRevision        uint64
 	cfg                       Config
 	cert                      tls.Certificate
 	peers                     map[string]*peerState
@@ -111,6 +117,9 @@ func (n *Node) snapshotLocked() []Peer {
 	return out
 }
 func (n *Node) readyLocked() error {
+	if n.contextControl {
+		return ErrUnavailable
+	}
 	if n.closed || n.closing.Load() {
 		return net.ErrClosed
 	}
@@ -143,7 +152,7 @@ func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) e
 		return ErrRecovery
 	}
 	if n.started {
-		err := n.readyLocked()
+		err := n.startReadyLocked()
 		n.mu.Unlock()
 		return err
 	}
@@ -157,7 +166,7 @@ func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) e
 				return previous.err
 			}
 			n.mu.Lock()
-			err := n.readyLocked()
+			err := n.startReadyLocked()
 			n.mu.Unlock()
 			return err
 		}
@@ -175,7 +184,9 @@ func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) e
 		return err
 	}
 	cfg := cloneGenerationConfig(n.cfg)
-	cfg.Peers = n.snapshotLocked()
+	if !n.contextControl {
+		cfg.Peers = n.snapshotLocked()
+	}
 	build := newGenerationBuild(ctx)
 	n.building.Store(build)
 	if n.closing.Load() {
@@ -189,7 +200,13 @@ func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) e
 		build.signalResources()
 		close(callbackDone)
 	})
-	g, err := n.buildTransportGeneration(build, cfg)
+	var g *runtimeGeneration
+	var err error
+	if n.contextControl {
+		g, err = n.buildContextGeneration(build, cfg)
+	} else {
+		g, err = n.buildTransportGeneration(build, cfg)
+	}
 	n.mu.Lock()
 	if err == nil && (n.closed || n.closing.Load()) {
 		err = net.ErrClosed
@@ -214,7 +231,11 @@ func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) e
 			n.underlay = g.underlay.listener
 			n.generation.Store(g)
 			n.started = true
-			g.traffic.Store(true)
+			if n.contextControl {
+				g.controlOpen.Store(true)
+			} else {
+				g.traffic.Store(true)
+			}
 			close(g.published)
 			return true
 		}) {
@@ -452,7 +473,10 @@ func (n *Node) RegisterTCPFallback(f func(netip.AddrPort, netip.AddrPort) (func(
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.closed {
+	if n.contextControl {
+		return nil, ErrUnavailable
+	}
+	if n.closed || n.closing.Load() {
 		return nil, net.ErrClosed
 	}
 	if n.fallback != nil {
@@ -515,6 +539,11 @@ func (n *Node) Close() error {
 	}
 	for _, cancel := range n.attempts {
 		cancel()
+	}
+	for key, attempt := range n.contextAttempts {
+		attempt.Cancel()
+		attempt.cell.data.Store(nil)
+		delete(n.contextAttempts, key)
 	}
 	n.invites = map[string]pendingInvitation{}
 	n.mu.Unlock()

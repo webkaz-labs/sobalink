@@ -15,6 +15,7 @@ type controlStream struct {
 	raw           net.Conn
 	local, remote net.Addr
 	once          sync.Once
+	closeErr      error
 }
 
 func newControlStream(g *runtimeGeneration, raw net.Conn) *controlStream {
@@ -41,7 +42,18 @@ func (c *controlStream) Write(b []byte) (int, error) {
 	defer w.finish()
 	return c.raw.Write(b)
 }
-func (c *controlStream) Close() error         { var e error; c.once.Do(func() { e = c.raw.Close() }); return e }
+func (c *controlStream) Close() error {
+	c.once.Do(func() {
+		c.closeErr = c.raw.Close()
+		if c.closeErr != nil && c.g.n.contextControl {
+			c.g.mu.Lock()
+			c.g.failedControl[c] = c.closeErr
+			c.g.controlCount++ // retained failure remains charged after work returns
+			c.g.mu.Unlock()
+		}
+	})
+	return c.closeErr
+}
 func (c *controlStream) LocalAddr() net.Addr  { return c.local }
 func (c *controlStream) RemoteAddr() net.Addr { return c.remote }
 func (c *controlStream) SetDeadline(t time.Time) error {

@@ -178,6 +178,16 @@ jobs:
           PYTHON
           python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
           go run ./cmd/prepare-engine --verify
+      - name: Verify Core context control over pinned TLS
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-context-control.py core-tls 2>&1 | tee logs/context-core-tls.txt
+      - name: Verify context control over fixed loopback TCP
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-context-control.py fixed-tcp 2>&1 | tee logs/context-fixed-tcp.txt
       - name: Verify direct LAN WireGuard and Core native applications
         timeout-minutes: 8
         run: |

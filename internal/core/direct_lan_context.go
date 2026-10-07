@@ -12,10 +12,10 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
 )
 
-// This closed, private metadata boundary has no command, authentication,
-// network, or startup caller. Transcript values are data, not verified evidence.
-// Any later adapter must add its independently reviewed claim/response owner;
-// neither an admission nor a local durable result permits a wire success.
+// This closed, private metadata boundary has no command or startup caller.
+// Transcript values are data, not verified evidence. The separate scoped owner
+// authenticates and claims them; neither admission nor durable save alone is a
+// wire-success permit.
 type contextOperation uint8
 
 const (
@@ -28,6 +28,8 @@ const (
 	contextConfirmStatus
 	contextConfirmUpdate
 	contextRepublish
+	contextRepublishPrepared
+	contextStatusInbound
 )
 
 // Exported field names support a canonical private digest only. The type is
@@ -45,9 +47,9 @@ type contextInputs struct {
 }
 
 // Completion data is deliberately separate from the earlier local admission.
-// A future owner can arm inbound work before reading a request, or capture the
-// exact original outbound request before waiting for its reply. These values
-// alone authenticate nothing and are accepted by no production caller.
+// The scoped owner arms inbound work before reading a request and captures the
+// exact outbound request before waiting for its reply. These values alone
+// authenticate nothing and are never management-request capabilities.
 type contextTranscript struct {
 	Prepare   endpointmeta.PrepareRequest
 	Prepared  endpointmeta.PrepareReply
@@ -65,7 +67,7 @@ func (t contextTranscript) frozen(in contextInputs) (contextTranscript, error) {
 	case contextRecordOutbound:
 		allowed.Prepared = t.Prepared
 		_, err = endpointmeta.Encode(t.Prepared)
-	case contextCommit:
+	case contextCommit, contextStatusInbound:
 		allowed.Bound = t.Bound
 		_, err = endpointmeta.Encode(t.Bound)
 		if t.Bound != in.Bound {
@@ -116,9 +118,13 @@ func (in contextInputs) frozen() (contextInputs, error) {
 		if _, err := endpointmeta.Encode(in.Prepare); err != nil {
 			return contextInputs{}, err
 		}
-	case contextCommit:
+	case contextCommit, contextStatusInbound:
 		allowed.Bound = in.Bound
-		if in.Bound.Operation != "pair-context-commit" {
+		operation := "pair-context-commit"
+		if in.Operation == contextStatusInbound {
+			operation = "pair-context-status"
+		}
+		if in.Bound.Operation != operation {
 			return contextInputs{}, endpointmeta.ErrInvalid
 		}
 	case contextConfirmCommit, contextConfirmStatus:
@@ -135,14 +141,14 @@ func (in contextInputs) frozen() (contextInputs, error) {
 		if _, err := endpointmeta.Encode(in.Update); err != nil {
 			return contextInputs{}, err
 		}
-	case contextRepublish:
+	case contextRepublish, contextRepublishPrepared:
 	default:
 		return contextInputs{}, endpointmeta.ErrInvalid
 	}
 	if in.PeerKey == "" || !reflect.DeepEqual(in, allowed) {
 		return contextInputs{}, endpointmeta.ErrInvalid
 	}
-	if in.Operation == contextCommit || in.Operation == contextConfirmCommit || in.Operation == contextConfirmStatus {
+	if in.Operation == contextCommit || in.Operation == contextStatusInbound || in.Operation == contextConfirmCommit || in.Operation == contextConfirmStatus {
 		if _, err := endpointmeta.Encode(in.Bound); err != nil {
 			return contextInputs{}, err
 		}
@@ -254,7 +260,54 @@ func (s *directLANStore) reduceContextLocked(in contextInputs, transcript contex
 		if err != nil || m.Peers[i].PairContext == nil {
 			return endpointmeta.ContextTransition{}, endpointmeta.ErrReview
 		}
-		return endpointmeta.ContextTransition{Snapshot: *cloneDirectLANMetadata(&m)}, nil
+		return contextObservation(m, m.Peers[i], budget)
+	case contextRepublishPrepared:
+		i, err := contextPeer(m, in.PeerKey)
+		if err != nil || m.Peers[i].PairContext != nil || m.Peers[i].UpgradePending == nil || m.Peers[i].UpgradePending.Context == nil {
+			return endpointmeta.ContextTransition{}, endpointmeta.ErrReview
+		}
+		return contextObservation(m, m.Peers[i], budget)
+	case contextStatusInbound:
+		i, err := contextPeer(m, in.PeerKey)
+		if err != nil {
+			return endpointmeta.ContextTransition{}, err
+		}
+		p := contextSavedPair(m.Peers[i])
+		if p == nil {
+			return endpointmeta.ContextTransition{}, endpointmeta.ErrReview
+		}
+		binding, err := p.Binding()
+		if err != nil || binding != in.Bound.PairBinding || transcript.Bound != in.Bound {
+			return endpointmeta.ContextTransition{}, endpointmeta.ErrIdentity
+		}
+		return contextObservation(m, m.Peers[i], budget)
 	}
 	return endpointmeta.ContextTransition{}, directlan.ErrRecovery
+}
+
+func contextSavedPair(r endpointmeta.PeerRecord) *endpointmeta.PairContext {
+	if r.PairContext != nil {
+		return r.PairContext
+	}
+	if r.UpgradePending != nil {
+		return r.UpgradePending.Context
+	}
+	return nil
+}
+
+// Status and republication preserve the complete snapshot, including an expired
+// preparation. Neither operation creates or renews a preparation window.
+func contextObservation(m endpointmeta.Snapshot, r endpointmeta.PeerRecord, budget int) (endpointmeta.ContextTransition, error) {
+	if _, err := endpointmeta.EncodeSnapshot(m, budget); err != nil {
+		return endpointmeta.ContextTransition{}, err
+	}
+	phase := "reviewed"
+	if r.ContextConfirmed {
+		phase = "confirmed"
+	} else if r.PairContext != nil {
+		phase = "committed"
+	} else if contextSavedPair(r) != nil {
+		phase = "prepared"
+	}
+	return endpointmeta.ContextTransition{Snapshot: *cloneDirectLANMetadata(&m), Phase: phase}, nil
 }

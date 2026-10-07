@@ -12,6 +12,7 @@ import (
 )
 
 const protocolName = "sobalink-directlan/1"
+const contextProtocolName = "sobalink-directlan/2"
 
 func certificate(id Identity, now time.Time) (tls.Certificate, error) {
 	priv, err := id.private()
@@ -45,7 +46,11 @@ func certificateKey(raw [][]byte, now time.Time) (string, error) {
 	return hex.EncodeToString(pub), nil
 }
 func tlsConfig(cert tls.Certificate, pin string, server bool) *tls.Config {
-	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{protocolName}, SessionTicketsDisabled: true}
+	return tlsConfigProtocol(cert, pin, server, protocolName)
+}
+
+func tlsConfigProtocol(cert tls.Certificate, pin string, server bool, protocol string) *tls.Config {
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, NextProtos: []string{protocol}, SessionTicketsDisabled: true}
 	// Standard Web PKI/DNS names are deliberately inapplicable: the exchanged
 	// exact Ed25519 key is the trust anchor. TLS CertificateVerify proves key
 	// possession; VerifyConnection enforces that pin on every connection.
@@ -55,7 +60,7 @@ func tlsConfig(cert tls.Certificate, pin string, server bool) *tls.Config {
 		cfg.InsecureSkipVerify = true
 	}
 	cfg.VerifyConnection = func(s tls.ConnectionState) error {
-		if s.NegotiatedProtocol != protocolName {
+		if s.NegotiatedProtocol != protocol {
 			return ErrIdentity
 		}
 		raw := make([][]byte, len(s.PeerCertificates))
