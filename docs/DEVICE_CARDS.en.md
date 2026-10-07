@@ -93,7 +93,11 @@ physical QR scanning or real-device pairing. A listed browser test is not a
 passing browser run; check the acceptance report for execution results.
 The PNG browser spec uses twelve digest-pinned synthetic images plus a saved
 screenshot, malformed/oversized/animated/metadata/duplicate-symbol inputs,
-asset-delay cancellation, and document/worker CSP probes. The larger independent
+asset-delay cancellation, and the shipped reader's response hash and CSP.
+Separate ordinary synthetic scripts check enforcement of the exact document and
+reader CSP values fetched from the server; they do not replace the shipped reader
+or establish its decoding behavior. Each denied operation must both fail and
+produce a matching enforced-CSP event. The larger independent
 227-case Node comparison is not a browser result. No supported-browser native
 raster or installed-release pass is claimed merely from these specifications.
 

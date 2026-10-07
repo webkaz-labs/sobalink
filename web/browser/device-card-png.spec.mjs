@@ -3,6 +3,7 @@ import { crc32 } from 'node:zlib'
 import { readFile } from 'node:fs/promises'
 import { test, expect } from './fixtures.mjs'
 import { CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
+import { CSP_PROBE_ROOT, createCspPolicyFixture } from './csp-policy-fixture.mjs'
 const fixtureRoot = new URL('./png-fixtures/', import.meta.url)
 const fixtures = JSON.parse(await readFile(new URL('manifest.json', fixtureRoot), 'utf8'))
 const manifest = JSON.parse(await readFile(new URL('../dist/png-worker-manifest.json', import.meta.url), 'utf8'))
@@ -38,7 +39,7 @@ test.describe('bounded local device-card PNG import', () => {
       const baseline = await commands(page)
       for (const fixture of fixtures.filter(value => value.mode === mode)) {
         await select(cards, labels, await bytes(fixture))
-        await expect(cards.getByLabel(labels.input, { exact: true })).toHaveValue(fixture.expected)
+        await expect(cards.getByRole('textbox', { name: labels.input, exact: true })).toHaveValue(fixture.expected)
         await expect(cards.getByRole('region', { name: labels.review, exact: true })).toHaveCount(0)
         expect(await commands(page)).toEqual(baseline)
       }
@@ -62,7 +63,7 @@ test.describe('bounded local device-card PNG import', () => {
     await select(cards, labels, withChunk(await bytes(fixture), 'acTL', Buffer.alloc(8)))
     await expect(cards.getByRole('alert')).toContainText('Animated PNG')
     await select(cards, labels, withChunk(await bytes(fixture), 'iCCP', Buffer.from([255])))
-    await expect(cards.getByLabel(labels.input, { exact: true })).toHaveValue(fixture.expected)
+    await expect(cards.getByRole('textbox', { name: labels.input, exact: true })).toHaveValue(fixture.expected)
     const pair = await page.evaluate(async encoded => {
       const image = new Image(); image.src = `data:image/png;base64,${encoded}`; await image.decode()
       const canvas = document.createElement('canvas'); canvas.width = 576; canvas.height = 288
@@ -72,7 +73,7 @@ test.describe('bounded local device-card PNG import', () => {
     }, (await bytes(fixture)).toString('base64'))
     await select(cards, labels, Buffer.from(pair, 'base64'))
     await expect(cards.getByRole('alert')).toContainText('More than one QR code')
-    await expect(cards.getByLabel(labels.input, { exact: true })).toHaveValue('')
+    await expect(cards.getByRole('textbox', { name: labels.input, exact: true })).toHaveValue('')
     expect(await commands(page)).toEqual(baseline)
   })
   test('a saved screenshot of the generated public QR reads exactly and needs a separate Review', async ({ page, app }) => {
@@ -81,7 +82,7 @@ test.describe('bounded local device-card PNG import', () => {
     await cards.getByRole('textbox', { name: /^Alias to share/ }).fill('Synthetic screenshot card')
     await cards.getByRole('checkbox', { name: 'Include a local QR code', exact: true }).check()
     await cards.getByRole('button', { name: 'Export public card', exact: true }).click()
-    const output = cards.getByLabel('Public card text', { exact: true })
+    const output = cards.getByRole('textbox', { name: 'Public card text', exact: true })
     await expect(output).not.toHaveValue('')
     const expected = await output.inputValue()
     await expect(page.locator('.workspace')).toBeVisible()
@@ -90,7 +91,7 @@ test.describe('bounded local device-card PNG import', () => {
     const screenshot = await cards.locator('.device-card-qr').screenshot()
     const baseline = await commands(page)
     await select(cards, labels, screenshot)
-    await expect(cards.getByLabel(labels.input, { exact: true })).toHaveValue(expected)
+    await expect(cards.getByRole('textbox', { name: labels.input, exact: true })).toHaveValue(expected)
     expect(await commands(page)).toEqual(baseline)
   })
   test('cancel, edit, close and reselection discard delayed asset completion', async ({ page, app }) => {
@@ -104,50 +105,48 @@ test.describe('bounded local device-card PNG import', () => {
       await page.route('**/*.wasm', routeHandler)
       await select(cards, labels, buffer); await seen
       if (boundary === 'cancel') await cards.getByRole('button', { name: labels.cancel, exact: true }).click()
-      if (boundary === 'edit') await cards.getByLabel(labels.input, { exact: true }).fill('new draft')
+      if (boundary === 'edit') await cards.getByRole('textbox', { name: labels.input, exact: true }).fill('new draft')
       if (boundary === 'close') { await cards.getByRole('button', { name: labels.close, exact: true }).click(); await cards.getByRole('button', { name: labels.open, exact: true }).click() }
       if (boundary === 'reselect') await select(cards, labels, Buffer.from('replacement invalid PNG'))
       release(); await page.unroute('**/*.wasm', routeHandler)
       if (boundary === 'reselect') await expect(cards.getByRole('alert')).toBeVisible()
-      await expect(cards.getByLabel(labels.input, { exact: true })).toHaveValue(boundary === 'edit' ? 'new draft' : '')
+      await expect(cards.getByRole('textbox', { name: labels.input, exact: true })).toHaveValue(boundary === 'edit' ? 'new draft' : '')
     }
   })
-  test('shipped worker alone permits WASM while document eval, worker network and subworkers are blocked', async ({ page, app, context }) => {
+  test('shipped reader bytes are pinned and its fetched CSP enforces isolated synthetic policy probes', async ({ page, app, context }) => {
     await app.appearance('en', 'light')
     const documentResponse = await context.request.get(page.url())
-    expect(documentResponse.headers()['content-security-policy']).not.toContain('wasm-unsafe-eval')
+    const documentCSP = documentResponse.headers()['content-security-policy']
+    expect(documentCSP).not.toContain('wasm-unsafe-eval')
     const workerURL = new URL(`/${manifest.path}`, page.url()).href
     const workerResponse = await context.request.get(workerURL)
-    expect(workerResponse.headers()['content-security-policy']).toContain("script-src 'self' 'wasm-unsafe-eval'")
+    const workerCSP = workerResponse.headers()['content-security-policy']
+    expect(workerCSP).toContain("script-src 'self' 'wasm-unsafe-eval'")
     expect(createHash('sha256').update(await workerResponse.body()).digest('hex')).toBe(manifest.sha256)
     const unknown = await context.request.get(new URL('/assets/device-card-worker-unknown.js', page.url()).href)
     expect(unknown.headers()['content-security-policy']).not.toContain('wasm-unsafe-eval')
-    // A separate same-origin test page keeps intentional denied probes separate
-    // from the normal UI health fixture. No product script is replaced.
+    // Ordinary external scripts avoid DevTools evaluation privileges. This is
+    // policy-enforcement coverage using the actual fetched CSP values; the real
+    // reader's hash above and PNG decoding in the other tests are separate proof.
+    // No product script or response policy is replaced.
     const probe = await context.newPage()
+    const responses = createCspPolicyFixture({ documentCSP, workerCSP })
+    const origin = new URL(page.url()).origin
+    const probePattern = `${origin}${CSP_PROBE_ROOT}**`
+    const probeRoute = async route => {
+      const response = responses.get(new URL(route.request().url()).pathname)
+      if (response) await route.fulfill(response)
+      else await route.abort()
+    }
     try {
-      await probe.goto(page.url())
-      const documentChecks = await probe.evaluate(async () => {
-        let jsBlocked = false, wasmBlocked = false
-        try { eval('1') } catch { jsBlocked = true }
-        try { await WebAssembly.compile(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0)) } catch { wasmBlocked = true }
-        return { jsBlocked, wasmBlocked }
+      await context.route(probePattern, probeRoute)
+      await probe.goto(`${origin}${CSP_PROBE_ROOT}index.html`)
+      // Evaluation only reads the completed result; all tested operations run
+      // in ordinary document load / worker message event tasks.
+      await expect.poll(() => probe.evaluate(() => window.__sobaCspPolicyResult), { timeout: 15_000 }).toEqual({
+        documentChecks: { jsBlocked: true, wasmBlocked: true },
+        workerChecks: { wasmAllowed: true, jsBlocked: true, fetchBlocked: true, socketBlocked: true, childBlocked: true },
       })
-      expect(documentChecks).toEqual({ jsBlocked: true, wasmBlocked: true })
-      const appeared = probe.waitForEvent('worker')
-      await probe.evaluate(url => { window.__pngProbe = new Worker(url, { type: 'module' }) }, workerURL)
-      const worker = await appeared
-      const workerChecks = await worker.evaluate(async url => {
-        const result = { wasmAllowed: false, jsBlocked: false, fetchBlocked: false, socketBlocked: false, childBlocked: false }
-        try { await WebAssembly.compile(Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0)); result.wasmAllowed = true } catch {}
-        try { eval('1') } catch { result.jsBlocked = true }
-        try { await fetch(new URL('/api/state', url)) } catch { result.fetchBlocked = true }
-        try { const socket = new WebSocket(url.replace(/^http/, 'ws')); result.socketBlocked = await new Promise(resolve => { const timer = setTimeout(() => { socket.close(); resolve(false) }, 3000); socket.onerror = () => { clearTimeout(timer); resolve(true) }; socket.onopen = () => { socket.close(); resolve(false) } }) } catch { result.socketBlocked = true }
-        try { const child = new Worker(url, { type: 'module' }); result.childBlocked = await new Promise(resolve => { const timer = setTimeout(() => { child.terminate(); resolve(false) }, 3000); child.onerror = event => { clearTimeout(timer); event.preventDefault(); child.terminate(); resolve(true) }; child.onmessage = () => { child.terminate(); resolve(false) } }) } catch { result.childBlocked = true }
-        return result
-      }, workerURL)
-      expect(workerChecks).toEqual({ wasmAllowed: true, jsBlocked: true, fetchBlocked: true, socketBlocked: true, childBlocked: true })
-      await probe.evaluate(() => window.__pngProbe.terminate())
-    } finally { await probe.close() }
+    } finally { await probe.close(); await context.unroute(probePattern, probeRoute) }
   })
 })
