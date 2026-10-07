@@ -67,6 +67,7 @@ type generationWork struct {
 func newRuntimeGeneration(n *Node, b *lanBind, t *userspaceTunnel) *runtimeGeneration {
 	cfg := cloneGenerationConfig(n.cfg)
 	g := &runtimeGeneration{n: n, cfg: cfg, peers: make(map[string]*peerState), published: make(chan struct{}), bind: b, tunnel: t, changed: make(chan struct{}), stop: make(chan struct{}), built: make(chan struct{}), done: make(chan struct{}), work: make(map[*generationWork]struct{}), creators: make(map[*endpointCreator]struct{}), live: make(map[tcpip.Endpoint]*liveEndpoint), endpointLimit: n.cfg.FlowLimit, controlLimit: n.cfg.ControlLimit, incoming: newTCPAdmissions(n.cfg.FlowLimit), peerRegistrations: make(map[device.PeerRegistration]*peerState)}
+	g.failedControl = make(map[*controlStream]error)
 	g.origin = newGenerationOrigin(g)
 	g.retirement = &TransportRetirement{g: g}
 	return g
@@ -241,7 +242,13 @@ func (g *runtimeGeneration) supervise() {
 		engine.RequestStop(g.cause)
 		engineErr = engine.WaitStopped(context.Background())
 	}
-	if bindErr == nil && engineErr == nil && underlayErr == nil {
+	g.mu.Lock()
+	var controlErr error
+	for _, err := range g.failedControl {
+		controlErr = errors.Join(controlErr, err)
+	}
+	g.mu.Unlock()
+	if bindErr == nil && engineErr == nil && underlayErr == nil && controlErr == nil {
 		// Admission is permanently sealed and all creators/ingress have exited.
 		// The adapter remains allocated for late inert references.
 		if g.tunnel != nil {
@@ -249,10 +256,6 @@ func (g *runtimeGeneration) supervise() {
 		}
 	}
 	g.mu.Lock()
-	var controlErr error
-	for _, err := range g.failedControl {
-		controlErr = errors.Join(controlErr, err)
-	}
 	g.result = errors.Join(bindErr, engineErr, underlayErr, controlErr)
 	g.mu.Unlock()
 	if g.result == nil {

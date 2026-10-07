@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	SnapshotVersionV3 = 3
+	SnapshotVersionV4 = 4
+)
+
 // Approval is local metadata. A received wire value cannot create one.
 type Approval struct {
 	Kind           string `json:"kind"`
@@ -54,6 +59,14 @@ type UpgradePending struct {
 	Context         *PairContext `json:"context,omitempty"`
 }
 
+// PairRevocation is terminal evidence for the retained old binding, not an
+// endpoint approval revocation. Future new-context re-pair is not modeled here.
+type PairRevocation struct {
+	PairBinding string `json:"pair_binding"`
+	Revision    string `json:"revision"`
+	RevokedAt   string `json:"revoked_at"`
+}
+
 type PeerRecord struct {
 	Peer             PeerWire        `json:"peer"`
 	Revision         string          `json:"revision"`
@@ -61,6 +74,7 @@ type PeerRecord struct {
 	PairContext      *PairContext    `json:"pair_context,omitempty"`
 	ContextConfirmed bool            `json:"context_confirmed"`
 	EndpointState    *EndpointState  `json:"endpoint_state,omitempty"`
+	PairRevocation   *PairRevocation `json:"pair_revocation,omitempty"`
 }
 
 // Snapshot is a data model, not the production profile/file schema. Core owns
@@ -93,7 +107,7 @@ func MigrateLegacy(old LegacySnapshot, now time.Time) (Snapshot, error) {
 	if old.Version != 2 || now.IsZero() {
 		return Snapshot{}, ErrInvalid
 	}
-	s := Snapshot{Version: 3, Revision: "1", LocalPeer: old.LocalPeer, LocalScope: old.LocalScope, PreviousLocalEndpoint: old.LocalPeer.Endpoint, ObservedAt: now.UTC().Format(time.RFC3339Nano), Peers: make([]PeerRecord, 0, len(old.Peers))}
+	s := Snapshot{Version: SnapshotVersionV3, Revision: "1", LocalPeer: old.LocalPeer, LocalScope: old.LocalScope, PreviousLocalEndpoint: old.LocalPeer.Endpoint, ObservedAt: now.UTC().Format(time.RFC3339Nano), Peers: make([]PeerRecord, 0, len(old.Peers))}
 	for _, p := range old.Peers {
 		s.Peers = append(s.Peers, PeerRecord{Peer: p, Revision: "1"})
 	}
@@ -250,15 +264,20 @@ func approvalWithin(a Approval, u UpdateBody) bool {
 }
 
 func (s Snapshot) Validate() error {
-	if s.Version != 3 || s.LocalPeer.validate() != nil || !s.LocalScope.Contains(s.LocalPeer.Endpoint) || !s.LocalScope.Contains(s.PreviousLocalEndpoint) || s.Peers == nil {
+	if (s.Version != SnapshotVersionV3 && s.Version != SnapshotVersionV4) || s.LocalPeer.validate() != nil || !s.LocalScope.Contains(s.LocalPeer.Endpoint) || !s.LocalScope.Contains(s.PreviousLocalEndpoint) || s.Peers == nil {
 		return ErrInvalid
 	}
 	revision, err := sequence(s.Revision, false)
 	if err != nil {
 		return err
 	}
-	if _, err := instant(s.ObservedAt); err != nil {
+	observed, err := instant(s.ObservedAt)
+	if err != nil {
 		return err
+	}
+	// Active endpoint fences have v3-bound digests and no v4 contract yet.
+	if s.Version == SnapshotVersionV4 && s.PendingChange != nil {
+		return ErrRecovery
 	}
 	keys := map[string]bool{s.LocalPeer.Key: true}
 	tunnels := map[string]bool{s.LocalPeer.TunnelKey: true}
@@ -293,6 +312,23 @@ func (s Snapshot) Validate() error {
 				return err
 			}
 			if r.Peer.Endpoint != r.EndpointState.LastEndpoint {
+				return ErrInvalid
+			}
+		}
+		if terminal := r.PairRevocation; terminal != nil {
+			if s.Version != SnapshotVersionV4 || r.PairContext == nil || r.EndpointState == nil {
+				return ErrInvalid
+			}
+			binding, err := r.PairContext.Binding()
+			if err != nil || terminal.PairBinding != binding {
+				return ErrIdentity
+			}
+			removed, err := sequence(terminal.Revision, false)
+			if err != nil || removed < rv || removed > revision {
+				return ErrInvalid
+			}
+			at, err := instant(terminal.RevokedAt)
+			if err != nil || at.After(observed) {
 				return ErrInvalid
 			}
 		}

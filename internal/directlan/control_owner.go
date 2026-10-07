@@ -2,6 +2,7 @@ package directlan
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -21,6 +22,21 @@ type controlStream struct {
 func newControlStream(g *runtimeGeneration, raw net.Conn) *controlStream {
 	return &controlStream{g: g, raw: raw, local: raw.LocalAddr(), remote: raw.RemoteAddr()}
 }
+
+// closeUnadmittedControl retains cleanup ownership for a raw dial/accept result
+// that never transferred to a wire. The caller retains its work or accept-loop
+// reservation until this close returns, including a nonnil result with an error.
+func closeUnadmittedControl(g *runtimeGeneration, raw net.Conn, cause error) error {
+	if raw == nil {
+		return cause
+	}
+	owned, ok := raw.(*controlStream)
+	if !ok {
+		owned = newControlStream(g, raw)
+	}
+	return errors.Join(cause, owned.Close())
+}
+
 func (c *controlStream) Read(b []byte) (int, error) {
 	w, e := c.g.acquireWork(nil, false)
 	if e != nil {
@@ -45,11 +61,13 @@ func (c *controlStream) Write(b []byte) (int, error) {
 func (c *controlStream) Close() error {
 	c.once.Do(func() {
 		c.closeErr = c.raw.Close()
-		if c.closeErr != nil && c.g.n.contextControl {
+		if c.closeErr != nil && (c.g.n.contextControl || len(c.g.cfg.PairContexts) > 0) {
 			c.g.mu.Lock()
 			c.g.failedControl[c] = c.closeErr
 			c.g.controlCount++ // retained failure remains charged after work returns
 			c.g.mu.Unlock()
+			// Sealing may enter the WG owner; never hold the generation lock.
+			c.g.requestStop(errors.Join(ErrRecovery, c.closeErr))
 		}
 	})
 	return c.closeErr

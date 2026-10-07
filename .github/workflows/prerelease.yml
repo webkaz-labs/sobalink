@@ -188,6 +188,31 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-context-control.py fixed-tcp 2>&1 | tee logs/context-fixed-tcp.txt
+      - name: Verify managed session tls
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-managed-session.py tls 2>&1 | tee logs/managed-session-tls.txt
+      - name: Verify managed session outbound-tcp
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-managed-session.py outbound-tcp 2>&1 | tee logs/managed-session-outbound-tcp.txt
+      - name: Verify managed session native-caller
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-managed-session.py native-caller 2>&1 | tee logs/managed-session-native-caller.txt
+      - name: Verify managed session native-simultaneous
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-managed-session.py native-simultaneous 2>&1 | tee logs/managed-session-native-simultaneous.txt
+      - name: Verify managed session native-udp-capacity
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-managed-session.py native-udp-capacity 2>&1 | tee logs/managed-session-native-udp-capacity.txt
       - name: Verify direct LAN WireGuard and Core native applications
         timeout-minutes: 9
         run: |
@@ -271,13 +296,14 @@ jobs:
               "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
               "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCorePeerApplicationsIntegration",
               "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCoreSavedHostStartIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCoreDeviceCardPairingCompositionIntegration",
               "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
               "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestManagedRelayCandidateFailoverIntegration",
               "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
               "--",
               "go", "test", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestLANCoreSavedHostStartIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestLANCoreSavedHostStartIntegration|TestLANCoreDeviceCardPairingCompositionIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
               "-timeout=5m", "./internal/lanlink", "./internal/core", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PY

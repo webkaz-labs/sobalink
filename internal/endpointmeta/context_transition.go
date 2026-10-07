@@ -34,6 +34,9 @@ type ContextResumeReview struct {
 }
 
 func contextRecord(s Snapshot, peerKey string, now time.Time) (int, error) {
+	if s.Version != SnapshotVersionV3 {
+		return -1, ErrReview
+	}
 	if s.PendingChange != nil {
 		return -1, ErrRecovery
 	}

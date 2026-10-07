@@ -42,6 +42,9 @@ func (s *directLANStore) managedFixedEndpointContextsLocked(now time.Time) (map[
 // is copied data, never evidence of publication, peer authentication or grants.
 // Unsupported managed records reject the entire projection, not just one peer.
 func projectManagedFixedEndpointContexts(state directLANState) (map[string]endpointmeta.PairContext, error) {
+	if state.Version != directLANStateVersion && state.Version != directLANMetadataStateVersion {
+		return nil, directLANMetadataUnavailable()
+	}
 	// This also validates directLANConfig and the exact identity, selected
 	// scope and Peer DTO projection against the single metadata model.
 	if err := validateDirectLANState(state); err != nil {

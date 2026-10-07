@@ -37,7 +37,8 @@ func (r PeerRecord) measure(w *wireSizer) bool {
 	return w.reserve(len(`{"peer":,"revision":,"context_confirmed":}`)) && r.Peer.measure(w) && w.str(r.Revision) && w.boolean(r.ContextConfirmed) &&
 		(r.UpgradePending == nil || w.reserve(len(`,"upgrade_pending":`)) && r.UpgradePending.measure(w)) &&
 		(r.PairContext == nil || w.reserve(len(`,"pair_context":`)) && r.PairContext.measure(w)) &&
-		(r.EndpointState == nil || w.reserve(len(`,"endpoint_state":`)) && r.EndpointState.measure(w))
+		(r.EndpointState == nil || w.reserve(len(`,"endpoint_state":`)) && r.EndpointState.measure(w)) &&
+		(r.PairRevocation == nil || w.reserve(len(`,"pair_revocation":`)) && r.PairRevocation.measure(w))
 }
 
 func (u UpgradePending) measure(w *wireSizer) bool {
@@ -74,4 +75,8 @@ func (p PendingChange) measure(w *wireSizer) bool {
 func (m Mutation) measure(w *wireSizer) bool {
 	return w.reserve(len(`{"kind":,"pair_binding":,"local_endpoint":}`)) && w.strings(m.Kind, m.PairBinding, m.LocalEndpoint) &&
 		(m.State == nil || w.reserve(len(`,"state":`)) && m.State.measure(w))
+}
+
+func (p PairRevocation) measure(w *wireSizer) bool {
+	return w.reserve(len(`{"pair_binding":,"revision":,"revoked_at":}`)) && w.strings(p.PairBinding, p.Revision, p.RevokedAt)
 }

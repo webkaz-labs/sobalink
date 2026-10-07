@@ -68,6 +68,9 @@ func (n *Node) accept(g *runtimeGeneration, u *generationUnderlay) {
 	for {
 		raw, err := u.listener.Accept()
 		if err != nil {
+			if raw != nil {
+				n.rejectAcceptedContext(g, u, raw)
+			}
 			return
 		}
 		ap, err := netip.ParseAddrPort(raw.RemoteAddr().String())
@@ -94,7 +97,7 @@ func (n *Node) accept(g *runtimeGeneration, u *generationUnderlay) {
 			continue
 		}
 		w := &wire{raw: newControlStream(g, raw), control: true, g: g, work: work}
-		if n.contextControl {
+		if n.contextControl || len(g.cfg.PairContexts) > 0 {
 			w.contextDeadline = time.Now().Add(handshakeTimeout)
 			w.contextArmCutoff = n.contextArmRevision
 		}
@@ -116,15 +119,16 @@ func (n *Node) accept(g *runtimeGeneration, u *generationUnderlay) {
 // already exhausted. It never becomes an authenticated work admission. A failed
 // close seals the owner immediately; no further raw socket can accumulate.
 func (n *Node) rejectAcceptedContext(g *runtimeGeneration, u *generationUnderlay, raw net.Conn) bool {
-	if !n.contextControl {
+	if !n.contextControl && len(g.cfg.PairContexts) == 0 {
 		_ = raw.Close()
 		return true
 	}
 	u.rejected = raw
-	if err := raw.Close(); err != nil {
+	// Even an unidentified rejected socket belongs to this managed owner.
+	// Its retained close failure consumes a control slot until owner disposal.
+	if err := closeUnadmittedControl(g, raw, nil); err != nil {
 		u.rejectionErr = err
 		u.RequestClose()
-		g.requestStop(ErrRecovery)
 		return false
 	}
 	u.rejected = nil

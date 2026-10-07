@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
 )
 
 var (
@@ -101,6 +103,9 @@ type Config struct {
 	Listen           netip.AddrPort
 	AllowedPrefixes  []netip.Prefix
 	Peers            []Peer
+	// PairContexts is constructor-only binding input. It conveys no durable
+	// publication authority and is never persisted through the legacy callback.
+	PairContexts map[string]endpointmeta.PairContext
 	// Persist must atomically save the entire peer snapshot and return nil only
 	// after durable success. It must not re-enter Node. Any error fails closed;
 	// reopen from saved state to reconcile a possibly published replacement.
@@ -141,7 +146,7 @@ func (c Config) Validate() error {
 		seen[p.Key] = true
 		tunnels[p.TunnelKey] = true
 	}
-	return nil
+	return c.validatePairContexts()
 }
 func prefixLast(p netip.Prefix) netip.Addr {
 	b := p.Addr().AsSlice()
