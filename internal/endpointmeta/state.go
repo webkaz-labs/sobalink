@@ -64,8 +64,9 @@ type PeerRecord struct {
 }
 
 // Snapshot is an isolated data model, not the production profile/file schema.
-// Identity secrets and application grants remain outside this model. No loader
-// or constructor consumes it. All revision values are canonical decimal strings.
+// Identity secrets and application grants remain outside this model. No
+// application loader or constructor consumes it. Its unused file adapter reads
+// evidence only. All revision values are canonical decimal strings.
 type Snapshot struct {
 	Version               int            `json:"version"`
 	Revision              string         `json:"revision"`
