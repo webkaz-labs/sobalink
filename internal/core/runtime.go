@@ -327,6 +327,13 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	if cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" || cmd.Name == "direct-lan.migration.review" {
 		return c.executeCommand(ctx, cmd)
 	}
+	// Endpoint proof bytes are never request-history results. Every release
+	// requires current offline/file/recovery checks and a confirmed publication.
+	// Retrying an old apply review must not return a cached proof or issue again.
+	switch cmd.Name {
+	case "direct-lan.endpoint.export.preview", "direct-lan.endpoint.export", "direct-lan.endpoint.reexport.preview", "direct-lan.endpoint.reexport":
+		return c.executeCommand(ctx, cmd)
+	}
 	digest := sha256.Sum256(append([]byte(cmd.Name+"\x00"), cmd.Payload...))
 	sig := hex.EncodeToString(digest[:])
 	c.requestMu.Lock()
@@ -477,6 +484,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.mixedCommand(ctx, cmd.Name, cmd.Payload)
 	case "direct-lan.status", "direct-lan.identity", "direct-lan.invite", "direct-lan.inspect", "direct-lan.join", "direct-lan.cancel", "direct-lan.revoke", "direct-lan.migration.review", "direct-lan.migration.apply",
 		"direct-lan.endpoint.status", "direct-lan.endpoint.inspect", "direct-lan.endpoint.accept", "direct-lan.endpoint.reapprove-current", "direct-lan.endpoint.revoke", "direct-lan.endpoint.expire", "direct-lan.endpoint.follow.preview", "direct-lan.endpoint.follow.apply", "direct-lan.endpoint.recovery.inspect", "direct-lan.endpoint.recovery.apply":
+		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
+	case "direct-lan.endpoint.export.preview", "direct-lan.endpoint.export", "direct-lan.endpoint.reexport.preview", "direct-lan.endpoint.reexport":
 		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
 		return c.lanCommand(ctx, cmd.Name, cmd.Payload)
