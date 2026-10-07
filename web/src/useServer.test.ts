@@ -247,3 +247,29 @@ it.each([true, false])('keeps other uncertainty guards when a device-card read s
   await act(async () => { await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key') })
   expect(requests).toHaveLength(4); expect(requests[0].requestId).toBe(requests[3].requestId); expect(new Set(requests.slice(0, 3).map(request => request.requestId)).size).toBe(3)
 })
+
+it('retains saved state after failed refresh without continuing advertised discovery', async () => {
+  const saved: State = { ...messageState, services: [{ id: 'saved-fixture', peerId: 'fixture-peer', name: 'Saved fixture', network: 'tcp', ports: '8080', status: 'saved' }] }
+  let failed = false
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/state') {
+      if (failed) throw new TypeError('Synthetic refresh failure')
+      return new Response(JSON.stringify(saved))
+    }
+    return new Response('{"ok":true,"result":{"services":[],"observations":[]}}')
+  }))
+  const { result } = renderHook(useServer)
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  const updatedAt = result.current.updatedAt
+  failed = true
+  let continuation: unknown
+  await act(async () => { continuation = await result.current.run('discovery.refresh', { peerId: 'fixture-peer' }) })
+  expect(continuation).toBeUndefined()
+  expect(result.current.stale).toBe(true)
+  expect(result.current.state).toEqual(saved)
+  expect(result.current.updatedAt).toBe(updatedAt)
+  failed = false
+  await act(async () => { await result.current.refresh() })
+  expect(result.current.stale).toBe(false)
+  expect(result.current.state).toEqual(saved)
+})

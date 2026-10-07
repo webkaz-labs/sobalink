@@ -14,6 +14,7 @@ import { MAX_SERVICE_TTL_SECONDS } from '../service-form'
 import { SavedDefinitionEditor } from './SavedDefinitionEditor'
 import { RemoveDefinitionDialog } from './DefinitionDialogs'
 import { ServiceOwnership } from './LifecycleControls'
+import { SelectionAttemptStatus, type SelectionAttempt } from './SelectionAttemptStatus'
 import { savedEditorText } from '../saved-editor-i18n'
 import type { SavedServiceAction, ServiceMode } from '../service-form'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
@@ -61,6 +62,8 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
   const [groupName, setGroupName] = useState('')
   const [replaceGroup, setReplaceGroup] = useState(false)
   const [review, setReview] = useState<{ action: 'start' | 'stop'; target: { ids?: string[]; group?: string }; value: ServiceSelection }>()
+  const [attempt, setAttempt] = useState<SelectionAttempt>()
+  const [selectionPending, setSelectionPending] = useState(false)
   const [incoming, setIncoming] = useState<DefinitionBundle>()
   const [imported, setImported] = useState<DefinitionImport>()
   const [status, setStatus] = useState('')
@@ -69,11 +72,15 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
   const reading = useRef(crypto.randomUUID())
   const fileGeneration = useRef(0)
   const reviewGeneration = useRef(0)
+  const attemptGeneration = useRef(0)
+  const applying = useRef(false)
   const stale = useRef(server.stale)
   stale.current = server.stale
-  const invalidateReview = () => { ++reviewGeneration.current; setReview(undefined) }
+  const invalidateReview = () => { ++reviewGeneration.current; ++attemptGeneration.current; applying.current = false; setSelectionPending(false); setReview(undefined); setAttempt(undefined) }
   const close = () => { invalidateReview(); setFavoritesOpen(false); setFavoriteIds(undefined); onClose() }
-  useEffect(() => { if (server.stale) invalidateReview() }, [server.stale])
+  // A failed refresh invalidates authorization to apply a review, but must keep
+  // the reviewed identities and unknown result visible for recovery.
+  useEffect(() => { if (server.stale) { ++reviewGeneration.current; setReview(undefined) } }, [server.stale])
   const importInput = useRef<HTMLInputElement>(null)
   useEffect(() => {
     let cancelled = false
@@ -96,7 +103,7 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
   const services = bundle?.profile.services || []
   const groups = bundle?.profile.groups || []
   const working = [...server.busy].some(key => /^(definitions:|profile\.|group\.|services\.|service\.selection)/.test(key))
-  const blocked = server.stale || working
+  const blocked = server.stale || working || selectionPending
   const active = [...(server.state?.services || []), ...(server.state?.shares || [])].some(service => ['active', 'reconnecting'].includes(service.status))
   const updateSelection = (ids: string[], nextGroup = '') => { setSelected(ids); setGroup(nextGroup); invalidateReview(); setLifetimeChoice('saved'); setStatus(''); setReplaceGroup(false) }
   const peerName = (id: string) => server.state?.peers.find(peer => peer.id === id)?.name || id
@@ -118,6 +125,7 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
   const scope = (service: ServiceConfiguration) => <article className="definition-scope" key={service.id}><div className="flex justify-between gap-2"><strong>{service.name}</strong><Badge>{d(service.direction)}</Badge></div><dl><div><dt>{d('backend')}</dt><dd>{service.backend || t('unknown')} · {service.network.toUpperCase()}</dd></div><div><dt>{d('peers')}</dt><dd>{(service.peerIds || (service.peerId ? [service.peerId] : [])).map(peerName).join(', ')}</dd></div><div><dt>{t('ports')}</dt><dd className="code-value">{service.ports}</dd></div>{service.excludePorts && <div><dt>{t('excludePorts')}</dt><dd className="code-value">{service.excludePorts}</dd></div>}<div><dt>{t('mapping')}</dt><dd className="code-value">{mappings(service)}</dd></div><div><dt>{d('lifetime')}</dt><dd>{service.lifetime === 'until-stopped' ? d('untilStopped') : service.lifetime === 'until-revoked' ? d('untilRevoked') : `${(service.ttlSeconds || 0).toLocaleString(locale)} ${d('seconds')}`}</dd></div>{service.serviceId && <div><dt>{d('remoteReference')}</dt><dd className="code-value">{service.serviceId}</dd></div>}{service.direction === 'share' && <div><dt>{t('discoverable')}</dt><dd>{t(service.discoverable ? 'enabled' : 'off')}</dd></div>}</dl></article>
   const reviewSelection = async (action: 'start' | 'stop') => {
     if (!selected.length || blocked) return
+    invalidateReview()
     const generation = ++reviewGeneration.current
     setReview(undefined); setValidation(''); setStatus('')
     const target = group ? { group } : { ids: [...selected] }
@@ -138,15 +146,39 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
     const runtime = review?.value.states.find(state => state.id === service.id)
     return runtime?.lifetime ? { ...service, lifetime: runtime.lifetime, ttlSeconds: runtime.ttlSeconds ?? service.ttlSeconds } : service
   }
+  const refreshAttempt = async (checked: SelectionAttempt, generation: number) => {
+    setAttempt({ ...checked, snapshot: null, refreshing: true })
+    // This read leaves the aggregate command error intact. Neither a missing
+    // response nor a stopped snapshot authorizes replaying the mutation.
+    const snapshot = await server.refresh()
+    if (alive.current && generation === attemptGeneration.current) setAttempt({ ...checked, snapshot, refreshing: false })
+  }
+  const finishAttempt = (generation: number) => {
+    if (alive.current && generation === attemptGeneration.current) { applying.current = false; setSelectionPending(false) }
+  }
+  const refreshMemberStates = async () => {
+    if (!attempt || applying.current) return
+    const generation = ++attemptGeneration.current
+    applying.current = true; setSelectionPending(true)
+    try { await refreshAttempt(attempt, generation) } finally { finishAttempt(generation) }
+  }
   const applySelection = async () => {
-    if (!review || blocked || !runtimeValid || activeLifetimeConflict) return
+    if (!review || blocked || applying.current || !runtimeValid || activeLifetimeConflict) return
     const checked = review; invalidateReview()
-    const result = await server.run(checked.action === 'start' ? 'services.start' : 'services.stop', { ...checked.target, expectedRevision: checked.value.revision, ...(checked.action === 'start' ? runtimeLifetime : {}) })
-    if (alive.current && result) {
-      const value = result.result as unknown as ServiceSelection
-      if (!Array.isArray(value?.states) || (checked.action === 'start' ? value.ready !== true : value.ready !== false)) { server.setError({ code: 'invalid_response' }); return }
-      setStatus(checked.action === 'start' ? 'started' : 'stopped'); setReload(value => value + 1)
-    }
+    const generation = attemptGeneration.current
+    applying.current = true; setSelectionPending(true)
+    try {
+      const result = await server.run(checked.action === 'start' ? 'services.start' : 'services.stop', { ...checked.target, expectedRevision: checked.value.revision, ...(checked.action === 'start' ? runtimeLifetime : {}) })
+      if (!alive.current || generation !== attemptGeneration.current) return
+      if (result) {
+        const value = result.result as unknown as ServiceSelection
+        if (Array.isArray(value?.states) && (checked.action === 'start' ? value.ready === true : value.ready === false)) {
+          setStatus(checked.action === 'start' ? 'started' : 'stopped'); setReload(value => value + 1); return
+        }
+        server.setError({ code: 'invalid_response' })
+      }
+      await refreshAttempt({ action: checked.action, reviewed: checked.value, snapshot: null, refreshing: true }, generation)
+    } finally { finishAttempt(generation) }
   }
   const saveGroup = async (event: FormEvent) => {
     event.preventDefault()
@@ -202,6 +234,7 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
   if (removing) return <RemoveDefinitionDialog {...removing} server={server} locale={locale} t={t} onClose={() => { setRemoving(undefined); setReload(value => value + 1) }} />
   const code = (server.error as { code?: string })?.code || ''
   return <Modal title={d('title')} onClose={close} t={t} wide><p className="muted">{d('intro')}</p>{server.error != null && <ErrorBanner message={d(code) || serviceText(locale, code) || c(code) || errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}{validation && <ErrorBanner message={d(validation)} t={t} />}{status && <p role="status" className="scope-note">{d(status)}</p>}
+    {attempt && <SelectionAttemptStatus attempt={attempt} locale={locale} t={t} onRefresh={() => void refreshMemberStates()} onDismiss={invalidateReview} />}
     {!bundle ? <p role="status">{working ? t('loading') : t('unavailable')}</p> : <><div className="definition-toolbar"><Button type="button" disabled={blocked} onClick={() => openEditor('connect')}>{e('createForward')}</Button><Button type="button" disabled={blocked} onClick={() => openEditor('share')}>{e('createShare')}</Button></div>
       <section className="definition-navigation" aria-label={d('browseSaved')}>
         <div className="definition-navigation-fields">

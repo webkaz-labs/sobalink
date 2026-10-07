@@ -51,7 +51,8 @@ test('artifacts cannot overlap the private runtime in either direction', () => {
 })
 
 test('result reports omit private error details and never mark discovery-only runs as accepted', async context => {
-  context.mock.method(console, 'log', () => {})
+  const outputLines = []
+  context.mock.method(console, 'log', line => outputLines.push(line))
   const directory = await mkdtemp(join(tmpdir(), 'soba-reporter-safety-'))
   const previous = process.env.SOBA_SCREENSHOT_DIR
   process.env.SOBA_SCREENSHOT_DIR = directory
@@ -68,6 +69,9 @@ test('result reports omit private error details and never mark discovery-only ru
     assert.equal(result.includes('/private/workspace'), false)
     assert.equal(JSON.parse(result).requiredCoverageComplete, false)
     assert.deepEqual(JSON.parse(result).tests[0].failureLocations, [{ file: 'workflows.spec.mjs', line: 123, column: 7 }])
+    assert.ok(outputLines.includes('DIAGNOSTIC fixture-or-test-error workflows.spec.mjs:123:7'))
+    const consoleOutput = outputLines.join('\n')
+    for (const privateText of [sentinel, '/private/workspace', 'privateValue', 'other.spec.mjs', 'another']) assert.equal(consoleOutput.includes(privateText), false)
   } finally {
     if (previous === undefined) delete process.env.SOBA_SCREENSHOT_DIR
     else process.env.SOBA_SCREENSHOT_DIR = previous
@@ -339,4 +343,26 @@ test('route, command audit and cleanup failures are all preserved', async () => 
     return true
   })
   assert.equal(cleaned, true)
+})
+
+
+test('saved-host review uses only its own offline production-state capability and no paired/listener input', () => {
+  const saved = { ...valid, scenario: 'saved-host', localServicePort: undefined, capabilities: ['offline-network', 'saved-host-review', 'production-saved-state'] }
+  assert.equal(validateSession(saved, 'saved-host').scenario, 'saved-host')
+  for (const missing of saved.capabilities) rejected({ ...saved, capabilities: saved.capabilities.filter(value => value !== missing) }, 'saved-host')
+  for (const extra of ['route-authorization', 'service-lifecycle', 'saved-autosave']) rejected({ ...saved, capabilities: [...saved.capabilities, extra] }, 'saved-host')
+  rejected({ ...saved, capabilities: ['offline-network', 'saved-host-review', 'saved-host-review'] }, 'saved-host')
+  rejected({ ...saved, localServicePort: 43919 }, 'saved-host')
+  rejected({ ...saved, routePeerId: '1'.repeat(64) }, 'saved-host')
+  rejected({ ...saved, routeUpdateFile: '/tmp/fixture/route-update.json' }, 'saved-host')
+  rejected(saved, 'offline')
+  rejected({ ...saved, scenario: 'offline' }, 'offline')
+  rejected({ ...valid, capabilities: [...valid.capabilities, 'saved-host-review'] })
+})
+
+test('saved-host review cannot install the offline synthetic pairing interceptor', async () => {
+  const interceptor = createSyntheticPairingInterception('saved-host')
+  let routes = 0
+  await assert.rejects(interceptor.install({ route: async () => { routes++ } }, async () => ({ status: 200, body: '{}' })))
+  assert.equal(routes, 0)
 })

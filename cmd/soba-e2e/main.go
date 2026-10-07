@@ -181,6 +181,22 @@ func (f *fixtureBackend) Snapshot(ctx context.Context) (map[string]any, error) {
 }
 
 func (f *fixtureBackend) Command(ctx context.Context, cmd webui.Command) (any, error) {
+	if f.scenario == "saved-host" {
+		// This scenario exercises only production reads and presentation setup.
+		// No browser command may create identity, pairing, grants or listeners.
+		if cmd.Name != "settings.update" {
+			return nil, errors.New("saved-host fixture permits review only")
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(cmd.Payload, &fields) != nil || len(fields) == 0 {
+			return nil, errors.New("invalid presentation settings")
+		}
+		for name := range fields {
+			if name != "locale" && name != "theme" {
+				return nil, errors.New("saved-host fixture permits presentation settings only")
+			}
+		}
+	}
 	if cmd.Name == "lan.addresses" {
 		// Never enumerate the CI machine's interfaces in browser evidence.
 		return map[string]any{"addresses": []core.LANLocalAddress{{Interface: "fixture0", Address: "192.168.50.10", Prefix: "192.168.50.0/24"}}}, nil
@@ -269,7 +285,7 @@ type privateSession struct {
 }
 
 func receiveRecoveryScenario(s string) bool { return s == "receive-legacy" || s == "receive-damaged" }
-func offlineScenario(s string) bool         { return s == "offline" || s == "routes" }
+func offlineScenario(s string) bool         { return s == "offline" || s == "routes" || s == "saved-host" }
 func validScenario(s string) bool {
 	return s == "studio" || offlineScenario(s) || receiveRecoveryScenario(s)
 }
@@ -300,6 +316,9 @@ func prepareReceiveRecoveryFixture(directory, receiveDirectory, scenario string)
 }
 
 func scenarioCapabilities(scenario string) []string {
+	if scenario == "saved-host" {
+		return []string{"offline-network", "saved-host-review", "production-saved-state"}
+	}
 	if scenario == "routes" {
 		return []string{"offline-network", "route-authorization", "prepared-route-edit"}
 	}
@@ -320,13 +339,13 @@ func main() {
 }
 func run() (runErr error) {
 	file := flag.String("session-file", "", "private output file read by the browser test")
-	scenario := flag.String("scenario", "studio", "browser fixture: studio, offline, routes, receive-legacy or receive-damaged")
+	scenario := flag.String("scenario", "studio", "browser fixture: studio, offline, saved-host, routes, receive-legacy or receive-damaged")
 	flag.Parse()
 	if *file == "" {
 		return errors.New("--session-file is required")
 	}
 	if !validScenario(*scenario) {
-		return errors.New("--scenario must be studio, offline, routes, receive-legacy or receive-damaged")
+		return errors.New("--scenario must be studio, offline, saved-host, routes, receive-legacy or receive-damaged")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -341,6 +360,11 @@ func run() (runErr error) {
 	}
 	if e := prepareReceiveRecoveryFixture(filepath.Join(dir, "notebook"), receiveDir, *scenario); e != nil {
 		return e
+	}
+	if *scenario == "saved-host" {
+		if err := core.PrepareSavedHostBrowserFixture(filepath.Join(dir, "notebook")); err != nil {
+			return err
+		}
 	}
 	routePeerID, routeUpdateFile := "", ""
 	if *scenario == "routes" {
@@ -423,7 +447,7 @@ func run() (runErr error) {
 		if e := command(ctx, a, "discovery.refresh", map[string]string{"peerId": "fixture-studio"}); e != nil {
 			return e
 		}
-	} else if *scenario != "routes" {
+	} else if *scenario != "routes" && *scenario != "saved-host" {
 		if e := command(ctx, a, "network.configure", map[string]string{"mode": "none", "hostname": "Notebook"}); e != nil {
 			return e
 		}

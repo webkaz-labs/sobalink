@@ -124,6 +124,36 @@ describe('network diagram evidence and interaction', () => {
     expect(container.querySelectorAll('.network-graph-line')).toHaveLength(2)
   })
 
+  it.each(['en', 'ja'] as const)('marks stale observations unknown and retains saved permission (%s)', locale => {
+    const snapshot = state({ peers: [peer('Studio', { path: 'direct' })], transfers: [transfer()] })
+    const original = structuredClone(snapshot)
+    const view = props({ locale, state: snapshot, view: 'list' })
+    const { container, rerender } = render(<NetworkGraph {...view} />)
+    const path = locale === 'ja' ? '直接接続' : 'Direct path'
+    const unknown = locale === 'ja' ? '経路不明' : 'Path unknown'
+    const allowed = locale === 'ja' ? 'この端末で許可' : 'Allowed here'
+    expect(container.querySelector('.network-graph-list-state')).toHaveTextContent(path)
+    rerender(<NetworkGraph {...view} stale />)
+    expect(container.querySelector('.network-graph-list-state')).not.toHaveTextContent(path)
+    expect(container.querySelector('.network-graph-list-state')).toHaveTextContent(unknown)
+    expect(screen.getByRole('status')).toHaveTextContent(locale === 'ja' ? '状態が古く' : 'Status is out of date')
+    expect(container.querySelector('.network-graph-list-permission')).toHaveTextContent(allowed)
+    expect(container.querySelectorAll('.has-transfer, .is-ready, .is-confirmed, [data-direction]')).toHaveLength(0)
+    expect(snapshot).toEqual(original)
+    rerender(<NetworkGraph {...view} />)
+    expect(container.querySelector('.network-graph-list-state')).toHaveTextContent(path)
+  })
+
+  it('draws only unknown relationships for expired or contradictory observations', () => {
+    const now = Date.now()
+    const route = { state: 'ready' as const, path: 'direct' as const, observedAt: new Date(now - 30001).toISOString() }
+    const snapshot = state({ peers: [peer('Expired', { networks: ['lan'], path: 'direct', route }), peer('Contradictory', { networks: ['lan'], path: 'relay', route: { ...route, observedAt: new Date(now).toISOString() } })] })
+    const { container } = render(<NetworkGraph {...props({ state: snapshot, now })} />)
+    expect(container.querySelectorAll('.is-reported, .network-graph-route-glyph')).toHaveLength(0)
+    expect(container.querySelectorAll('.network-graph-line.is-unconfirmed')).toHaveLength(2)
+    expect(diagram().getAllByText('Path unknown')).toHaveLength(2)
+  })
+
   it('opens only the requested peer or local details with mouse, Enter, and Space', async () => {
     const handlers = props()
     const fetch = vi.fn()

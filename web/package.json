@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "preview": "vite preview --host 127.0.0.1",
     "test:browser": "playwright test --config=playwright.config.mjs",
-    "test:browser:safety": "node --test browser/fixture-safety.test.mjs"
+    "test:browser:safety": "node --test browser/fixture-safety.test.mjs browser/csp-policy-fixture.test.mjs"
   },
   "dependencies": {
     "react": "19.3.0",

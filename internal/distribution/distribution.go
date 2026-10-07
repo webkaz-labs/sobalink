@@ -246,7 +246,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		return err
 	}
 	licenses.Frontend = frontend
-	licenses.Scope += " Embedded frontend inventory includes all locked npm production packages, including tree-shaken source, plus Vite preload helpers and Tailwind CSS."
+	licenses.Scope += " Embedded frontend inventory includes all locked npm production packages, including tree-shaken source, plus Vite preload helpers, Tailwind CSS, and the digest-pinned official prebuilt PNG reader subset with conservative accompanying notices."
 	frontendLockHash, err := fileHash(filepath.Join(t.Root, "web", "package-lock.json"))
 	if err != nil {
 		return err

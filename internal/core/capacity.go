@@ -120,7 +120,7 @@ var supportedCapacityLogical = map[string]bool{"savedServices": true, "trustedPe
 	"batchEntries": true, "fileBytes": true, "batchBytes": true, "transferHistoryEntries": true, "receiveWaitSeconds": true, "fileTransferSeconds": true,
 	"pathDepth": true, "pathBytes": true,
 	"messageHistoryEntries": true, "messageHistoryBytes": true, "messageHistoryAgeSeconds": true}
-var supportedCapacityResources = map[string]bool{"workerFrameBytes": true, "workerRequests": true, "workerHandles": true, "profileBytes": true, "lanStateBytes": true, "discoveryBytes": true, "materializedListeners": true, "pageBytes": true, "pageEntries": true,
+var supportedCapacityResources = map[string]bool{"pngEncodedBytes": true, "pngPixels": true, "pngWorkingBytes": true, "pngDeadlineMilliseconds": true, "workerFrameBytes": true, "workerRequests": true, "workerHandles": true, "profileBytes": true, "lanStateBytes": true, "discoveryBytes": true, "materializedListeners": true, "pageBytes": true, "pageEntries": true,
 	"messageTextBytes": true,
 	"tcpConnections":   true, "tcpPerPolicy": true, "tcpPerPeer": true, "udpSessions": true, "udpPerPolicy": true, "udpQueuedBytes": true, "udpPolicyQueuedBytes": true, "udpQueuePackets": true}
 

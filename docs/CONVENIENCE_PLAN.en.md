@@ -4,7 +4,7 @@
 
 **The planned alpha.6 targets all ten areas below plus the confirmed alpha.5 saved-screen correction; these improvements are not yet a released version.** Deliver and review small independent changes while keeping the complete target. Reuse working service, group, permission and recovery contracts rather than replacing them.
 
-The partial source checkpoint in [draft PR #13](https://github.com/webkaz-labs/sobalink/pull/13) includes the saved-screen correction, inert favorites and group navigation, passive diagnosis, read-only device-card API/CLI/Web controls, reusable saved-share templates, and explicit alternate-port checks in the Core, CLI and Web UI. LAN invitation review now also precedes pairing on an already-configured relay. Read-only cards and invitation review are only part of pairing convenience. Endpoint continuity, relay convenience and the remaining combined acceptance are still open; the PR's current checks track automated verification, separately from release and physical-device acceptance.
+The reviewed foundation in [merged PR #13](https://github.com/webkaz-labs/sobalink/pull/13) includes the saved-screen correction, inert favorites and group navigation, passive diagnosis, read-only device-card API/CLI/Web controls, reusable saved-share templates, and explicit alternate-port checks in the Core, CLI and Web UI. LAN invitation review also precedes pairing on an already-configured relay. Participant-host setup includes manual private-address fallback and guarded startup of the exact saved host. Main `3fe3c3bf` has the same tree as the PR's successful native/browser checks. Read-only cards and invitation review are only part of pairing convenience. Image import, endpoint continuity and the remaining combined acceptance are still open; merging this foundation is not an alpha.6 release or physical-device acceptance.
 
 Normal operation remains a user process without administrator privileges, TUN, OS route/firewall changes or router configuration. Outside-LAN use normally uses Tailscale. Existing explicitly opted-in WAN functionality remains available on its existing terms; new public-relay deployment and a standalone relay daemon are outside this patch. Byte-level transfer resume, durable message outboxes, a TUI and native UI are also outside scope.
 
@@ -25,7 +25,7 @@ Normal operation remains a user process without administrator privileges, TUN, O
 
 ### Confirmed alpha.5 gap to fix first
 
-The alpha.5 Saved Services Web reader accepts only `tailnet` and `lan` (plus a legacy empty backend), while Core and the saved editor also support `direct-lan` and `mixed`. A profile containing either new mode prevents the saved list and group-review controls from loading; the same reader also rejects those imported definitions. The draft correction aligns supported-mode validation and adds parser, rendered-group and import-review regression tests without changing backend selection or permissions. It does not change the published alpha.5 tag.
+The alpha.5 Saved Services Web reader accepts only `tailnet` and `lan` (plus a legacy empty backend), while Core and the saved editor also support `direct-lan` and `mixed`. A profile containing either new mode prevents the saved list and group-review controls from loading; the same reader also rejects those imported definitions. The merged correction aligns supported-mode validation and adds parser, rendered-group and import-review regression tests without changing backend selection or permissions. It does not change the published alpha.5 tag.
 
 ## Dependency and implementation order
 
@@ -48,6 +48,26 @@ flowchart TD
 ```
 
 ## Risks and boundaries
+
+### Endpoint continuity: remaining product contract
+
+These are required design and acceptance conditions, not implemented mobility claims. Existing prepared-relay recovery does not update exact direct-LAN endpoints.
+
+- Bind each bounded, versioned update to the current pairing instance, issuer, intended recipient, tunnel key, prior and proposed canonical endpoint, monotonic sequence, and explicit validity interval. A device key alone cannot distinguish revocation followed by pairing again. Accept only endpoints inside the already-reviewed destination scope; a new scope still needs review.
+- Save issued sequence before returning an exported update. Save authenticated received proof and its high-water mark before activating a new endpoint. Lost replies require state inspection; they do not establish that no write occurred. Retain replay evidence after expiry and withdrawal, and reject unsupported versions and counter regression.
+- Serialize endpoint changes with revocation and current application authority. Close affected old communication generations and join their workers before advertising the replacement as ready. Existing TCP may disconnect; bytes already handed to the OS cannot be recalled. Do not replay requests or revive stopped, expired or revoked services. Preserve an existing same-process local service entrance where its original permission remains valid.
+- Define migration, restart and uncertain-save recovery before enabling updates. A process-local recovery latch does not prove durable revocation after restart, and a local sequence record does not detect restoration of an entire old profile. Keep these limits explicit and require reconciliation rather than claiming rollback resistance.
+- Cover IPv4/IPv6, multiple interfaces, simultaneous updates, one/both endpoints moving, sleeping/lost hosts and capacity limits. If no old endpoint or approved rendezvous remains reachable, show a reviewed manual exchange path. Neither automatic discovery nor another retry can create a missing network path.
+
+The remaining product evidence includes the final wire format and fixed positive/negative vectors, persistent authority and migration tests, Core/transport integration, interrupted/repeated flows, and same-source native/browser acceptance. A loopback prototype with test-supplied authority or complete engine replacement does not establish those product contracts.
+
+### LAN relay: smallest operational path and feasibility
+
+Prefer an explicitly chosen, reachable participant as the host. Show its exact advertised private address, port, certificate state and current listener health; review before starting. Saved-host startup reuses the saved identity and reviewed settings. A host still needs to remain running and reachable from the other participant.
+
+A separate host can be useful when both participants can reach it but cannot accept each other's inbound connection. If a participant can host and the other can reach it, a third host is unnecessary. If every permitted path is blocked or the only reachable host is asleep, automatic election cannot make a connection possible. Router changes and automatic remote installation are not a fallback.
+
+Optional local discovery is feasible as a bounded hint source, but automatic discovery and host election are not implemented. A future candidate must already be running, explicitly permit hosting, prove its identity/admission role, and fit reviewed destination and resource policy. Candidate ordering may reuse prepared-route recovery only after those conditions hold; discovery itself grants nothing. This feasibility decision does not add a new public relay, separate daemon or unrestricted third-host admission protocol to the patch.
 
 - **Discovery is a hint.** A name, private IP, network prefix or received multicast packet proves neither device identity nor membership in one physical LAN. Do not broaden allowed destinations, select a different NIC or bypass VPN boundaries from a hint.
 - **Mobility needs rendezvous.** Both peers moving, AP isolation, blocked UDP/TCP or a sleeping only relay may leave no reachable exchange channel. Show a specific manual exchange/wake/connect-Tailscale path where appropriate; do not invent connectivity.

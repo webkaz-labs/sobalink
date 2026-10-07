@@ -1,0 +1,19 @@
+{
+  "package": "zxing-wasm",
+  "version": "3.1.5",
+  "registry": "https://registry.npmjs.org/zxing-wasm/3.1.5",
+  "archiveSHA256": "81e1cd4b01c98b35a30a3f1d16ef38bf338d6e3ada2a0591bd69595a94a07443",
+  "archiveSRI": "sha512-jmxXvTCR/qZxMz2XwR6V+nL2BlDTD1aux7ZWSH9BV77TG9u4k0VyHba/NCCHBHJ60Wg6VV0QL/SMlJczKhJI4w==",
+  "wrapperCommit": "b7dcf63aefc7b94fb97ba09e9b1fb213d9399f54",
+  "zxingCPPCommit": "2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4",
+  "assets": {
+    "share.js": { "upstream": "dist/es/share.js", "sha256": "68b09047a19c17ba74c0bf7e0a4341e77d46b36ae1cae4bdcca31d0c6757f3f2" },
+    "reader/index.js": { "upstream": "dist/es/reader/index.js", "sha256": "3c364d8477404a513d7c0629b1cf9e63ae11e01f9746146d3574f8b10a122320" },
+    "reader/zxing_reader.wasm": { "upstream": "dist/reader/zxing_reader.wasm", "bytes": 966895, "sha256": "aecc1876de036c62c8419f67a5e1a16b1698a325bcd190aa84810d516e263931" }
+  },
+  "sourceLimitations": [
+    "The upstream build fetches stb without a pinned revision; the exact linked stb source commit is not established.",
+    "The authenticated official prebuilt WASM has not been independently reproduced byte-for-byte from source.",
+    "The official WASM initial memory is 22282240 bytes and its declared maximum is 2147483648 bytes; admission accounting is not a heap or RSS quota."
+  ]
+}

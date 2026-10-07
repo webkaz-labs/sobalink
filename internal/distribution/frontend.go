@@ -90,6 +90,13 @@ func frontendInventory(root, share string) ([]FrontendModule, []Notice, error) {
 	if len(modules) == 0 {
 		return nil, nil, errors.New("frontend production dependency inventory is empty")
 	}
+	reader, err := pngReaderInventory(root, share)
+	if err != nil {
+		return nil, nil, err
+	}
+	if reader != nil {
+		modules = append(modules, *reader)
+	}
 	var assets []Notice
 	dist := filepath.Join(root, "web", "dist")
 	if info, err := os.Lstat(filepath.Join(dist, "index.html")); err != nil || !info.Mode().IsRegular() {

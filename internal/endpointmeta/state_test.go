@@ -12,38 +12,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
 const modelBudget = 128 << 10
 
 // saveTemporaryModel exercises only a disposable snapshot's save/reopen
 // consistency. It is not a production persistence owner or a crash test.
+// Use the existing platform-specific writer and preserve uncertain publication.
 func saveTemporaryModel(path string, b []byte) (published bool, err error) {
-	f, err := os.CreateTemp(filepath.Dir(path), ".model-*")
-	if err != nil {
-		return false, err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err != nil {
-		f.Close()
-		return false, err
-	}
-	if err = f.Sync(); err != nil {
-		f.Close()
-		return false, err
-	}
-	if err = f.Close(); err != nil {
-		return false, err
-	}
-	if err = os.Rename(f.Name(), path); err != nil {
-		return false, err
-	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return true, err
-	}
-	defer dir.Close()
-	return true, dir.Sync()
+	err = config.AtomicWritePrivate(path, b)
+	return err == nil || errors.Is(err, config.ErrAtomicCommitted), err
 }
 
 func modelFixture(t *testing.T) (Snapshot, Envelope, ed25519.PrivateKey) {
@@ -408,7 +388,7 @@ func TestExportSavesBeforeReturningAndNeverLeaksOnError(t *testing.T) {
 	u.Sequence = "1"
 	for _, published := range []bool{false, true} {
 		out, b, err := ExportModel(SaveResolution{Snapshot: s, Durable: true}, u.Recipient, u, key, testNow(), modelBudget, func([]byte) (bool, error) { return published, errors.New("synthetic failure") })
-		if err != ErrRecovery || len(b) != 0 || !out.Recovery {
+		if err != ErrRecovery || len(b) != 0 || !out.Recovery || out.Durable || out.Published != published {
 			t.Fatal("failed export returned bytes", err)
 		}
 		if _, err := ReexportModel(out, u.Recipient); err != ErrRecovery {
@@ -418,7 +398,7 @@ func TestExportSavesBeforeReturningAndNeverLeaksOnError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "export.json")
 	called := false
 	out, wire, err := ExportModel(SaveResolution{Snapshot: s, Durable: true}, u.Recipient, u, key, testNow(), modelBudget, func(b []byte) (bool, error) { called = true; return saveTemporaryModel(path, b) })
-	if err != nil || !called || len(wire) == 0 || !out.Durable {
+	if err != nil || !called || len(wire) == 0 || !out.Durable || !out.Published || out.Recovery {
 		t.Fatal("export", err)
 	}
 	b, err := os.ReadFile(path)
