@@ -1,0 +1,7 @@
+# Pinned official reader assets
+
+This directory vendors only the unchanged official zxing-wasm 3.1.5 ESM reader, shared JavaScript and reader WASM, plus the upstream wrapper LICENSE. UPSTREAM.json records original paths, artifact digests and pinned source associations. The small index.d.ts is this project's local adapter declaration, not upstream source. No writer, CDN, package installation or downloaded runtime code is used. The product build verifies every runtime digest and emits one worker chunk and the unchanged WASM.
+
+The official archive's npm publish and SLSA attestations were cryptographically verified during adoption review. Artifact authenticity does not prove complete transitive-source identification or a reproducible source rebuild. The upstream stb fetch has no pinned revision, and the exact linked runtime object list is not known. Preserve these limitations when describing the dependency. The accompanying third-party notices must be included in distributions; wrapper MIT alone does not cover all linked reader components.
+
+THIRD_PARTY_NOTICES.txt is the combined accompanying text. NOTICE_INVENTORY.json identifies its component sources and constituent notice sections; its original section paths are labels within that combined bundle, not a promise that each is separately installed. The build embeds the combined file offline, and packaging also retains it with this inventory and UPSTREAM.json.

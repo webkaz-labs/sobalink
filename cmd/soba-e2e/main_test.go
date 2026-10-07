@@ -45,7 +45,7 @@ func (b *recordingBackend) Upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestFixtureScenarioNamesAreBounded(t *testing.T) {
-	for _, name := range []string{"studio", "offline", "receive-legacy", "receive-damaged"} {
+	for _, name := range []string{"studio", "offline", "saved-host", "receive-legacy", "receive-damaged"} {
 		if !validScenario(name) {
 			t.Fatalf("supported scenario rejected: %s", name)
 		}
@@ -58,7 +58,7 @@ func TestFixtureScenarioNamesAreBounded(t *testing.T) {
 }
 
 func TestFixtureBlocksLiveActivationBeforeCore(t *testing.T) {
-	for _, scenario := range []string{"studio", "offline", "receive-legacy", "receive-damaged"} {
+	for _, scenario := range []string{"studio", "offline", "saved-host", "receive-legacy", "receive-damaged"} {
 		backend := &recordingBackend{}
 		fixture := &fixtureBackend{Backend: backend, scenario: scenario}
 		for _, cmd := range []webui.Command{
@@ -70,7 +70,7 @@ func TestFixtureBlocksLiveActivationBeforeCore(t *testing.T) {
 				t.Fatal("live activation or login reached fixture backend")
 			}
 		}
-		if scenario == "offline" {
+		if offlineScenario(scenario) {
 			if _, err := fixture.Command(context.Background(), webui.Command{Name: "network.configure", Payload: json.RawMessage(`{"mode":"tailnet"}`)}); err == nil {
 				t.Fatal("offline scenario activated a peer network")
 			}
@@ -416,5 +416,50 @@ func TestApplicationStopSignalsFixtureOwnerAndPreservesIdleConfiguration(t *test
 	}
 	if err := app.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSavedHostFixtureCannotInheritMutationCapabilities(t *testing.T) {
+	backend := &recordingBackend{state: map[string]any{"lan": map[string]any{"savedStart": "production-value"}}}
+	fixture := &fixtureBackend{Backend: backend, scenario: "saved-host"}
+	if !offlineScenario("saved-host") || !reflect.DeepEqual(scenarioCapabilities("saved-host"), []string{"offline-network", "saved-host-review", "production-saved-state"}) {
+		t.Fatal("saved-host scenario lost its isolated read-only contract")
+	}
+	state, err := fixture.Snapshot(context.Background())
+	if err != nil || !reflect.DeepEqual(state, backend.state) {
+		t.Fatal("fixture replaced production saved review")
+	}
+	for _, name := range []string{"network.configure", "network.login", "lan.identity", "lan.invite", "lan.join", "lan.revoke", "peer.trust", "peer.autosave", "lan.policy.set", "lan.routes.apply", "lan.routes.approve", "lan.addresses", "application.stop"} {
+		if _, err := fixture.Command(context.Background(), webui.Command{Name: name, Payload: json.RawMessage(`{}`)}); err == nil {
+			t.Fatal("saved review permitted a command outside presentation setup")
+		}
+	}
+	for _, raw := range []string{`{}`, `null`, `{"receiveDirectory":"fictional-directory"}`, `{"locale":"en","hostname":"different"}`, `{"network":"lan"}`} {
+		if _, err := fixture.Command(context.Background(), webui.Command{Name: "settings.update", Payload: json.RawMessage(raw)}); err == nil {
+			t.Fatal("saved review permitted non-presentation settings")
+		}
+	}
+	if len(backend.commands) != 0 {
+		t.Fatal("forbidden command reached production state")
+	}
+	for _, raw := range []string{`{"locale":"ja"}`, `{"theme":"dark"}`} {
+		if _, err := fixture.Command(context.Background(), webui.Command{Name: "settings.update", Payload: json.RawMessage(raw)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(backend.commands) != 2 {
+		t.Fatal("presentation setup did not use production validation")
+	}
+	response := httptest.NewRecorder()
+	fixture.Upload(response, httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/upload", strings.NewReader("fictional")))
+	if response.Code != http.StatusServiceUnavailable || backend.uploads != 0 {
+		t.Fatal("saved review staged an upload")
+	}
+	for _, scenario := range []string{"studio", "offline", "routes", "receive-legacy", "receive-damaged"} {
+		for _, capability := range scenarioCapabilities(scenario) {
+			if capability == "saved-host-review" || capability == "production-saved-state" {
+				t.Fatal("saved-host capability escaped its scenario")
+			}
+		}
 	}
 }

@@ -6,8 +6,8 @@
 contains a public key, an explicitly chosen alias and optional address hints.
 It does not pair devices, enable a network, update an endpoint or grant
 application access. The Web UI can copy a reviewed key and alias into an inert
-recipient draft; invitation creation stays separate. QR image reading is not
-included.
+recipient draft; invitation creation stays separate. Static PNG QR reading is
+available locally in browsers with worker-side image decoding.
 
 A public key is not a secret, but it can identify the same device across copies.
 An address hint can reveal network details. Choose an alias deliberately, leave
@@ -55,7 +55,11 @@ Open **Set up network**, select **LAN** or **Direct LAN**, then choose
    Both routes enforce the 1,040-byte input bound. A file selection only fills
    the card field; choose **Review public card** to inspect it through Core.
    Wrong-mode, malformed, oversized and private-invitation input is rejected
-   without repeating it in errors. Use the other mode's setup for its cards
+   without repeating it in errors. Use the other mode's setup for its cards.
+   Alternatively choose **Open a device-card PNG** for a static image containing
+   one QR code. It reads locally and fills the same text field; it does not
+   inspect, pair or use the recipient automatically. Choose **Cancel PNG reading**
+   to stop; selecting another image replaces the current job
 3. Check the explicit **Identity: unverified** and **Address freshness: unknown**
    labels. Confirm the public key and alias through a separate trusted channel.
    Any address or certificate shown is an unverified hint, with no link or
@@ -68,8 +72,16 @@ Open **Set up network**, select **LAN** or **Direct LAN**, then choose
 
 Input edits, closing the card panel or setup, changing mode, identity or network
 scope, and stale/locked state discard the review. Delayed responses cannot
-restore it. Text and file input remain available without a camera or QR image
-decoder. There is no browser storage for card drafts.
+restore it. PNG reading is also cancelled by these boundaries and changes to its
+capacity settings. Text and text-file input remain available when PNG reading
+is unavailable. There is no browser storage for card drafts and no camera API.
+
+PNG input has configurable finite file-byte, pixel, accounted-working-byte and
+time budgets in **Capacity and history**; see [PNG capacity](CAPACITY.en.md#local-png-device-card-reading).
+Animated PNG and multiple returned QR symbols (including duplicates) are refused.
+The importer uses original-resolution pixels over white and ignores EXIF/color/
+text metadata. If reading fails, use a clearer single-card image or card text.
+These admission bounds do not guarantee a fixed browser-memory maximum.
 
 Component tests cover both languages, bounded parsing, strict QR bitmap and
 quiet-zone checks, cancellation, stale responses and key/name-only draft writes.
@@ -79,6 +91,28 @@ direct-LAN review before identity setup. It does not simulate an existing
 direct-LAN identity or establish direct-LAN export, native clipboard behavior,
 physical QR scanning or real-device pairing. A listed browser test is not a
 passing browser run; check the acceptance report for execution results.
+The PNG browser spec uses twelve digest-pinned synthetic images plus a saved
+screenshot, malformed/oversized/animated/metadata/duplicate-symbol inputs,
+asset-delay cancellation, and document/worker CSP probes. The larger independent
+227-case Node comparison is not a browser result. No supported-browser native
+raster or installed-release pass is claimed merely from these specifications.
+
+## Reader assets and notices
+
+The offline application embeds the unchanged official zxing-wasm 3.1.5 reader
+WASM and bundles its pinned ESM JavaScript into one disposable worker. The
+unchanged WASM SHA-256 is
+`aecc1876de036c62c8419f67a5e1a16b1698a325bcd190aa84810d516e263931`.
+Known wrapper, C++, generated/runtime and mapping-table notices accompany it at
+`/assets/png-reader-notices.txt` on the local application, and in installed
+`licenses/npm/zxing-wasm@3.1.5/` under the package's shared files.
+
+The original archive's authenticated publisher/build association is distinct
+from a source rebuild. The exact fetched stb revision, native function link map,
+and complete historical mapping-input provenance are not established; a
+byte-identical source rebuild has not been demonstrated. The retained notice
+inventory explains these limits and includes conservative runtime attributions;
+it is not a claim of an exhaustive function-level SBOM.
 
 ## CLI export and inspection
 

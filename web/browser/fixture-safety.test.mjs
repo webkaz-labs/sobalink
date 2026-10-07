@@ -340,3 +340,25 @@ test('route, command audit and cleanup failures are all preserved', async () => 
   })
   assert.equal(cleaned, true)
 })
+
+
+test('saved-host review uses only its own offline production-state capability and no paired/listener input', () => {
+  const saved = { ...valid, scenario: 'saved-host', localServicePort: undefined, capabilities: ['offline-network', 'saved-host-review', 'production-saved-state'] }
+  assert.equal(validateSession(saved, 'saved-host').scenario, 'saved-host')
+  for (const missing of saved.capabilities) rejected({ ...saved, capabilities: saved.capabilities.filter(value => value !== missing) }, 'saved-host')
+  for (const extra of ['route-authorization', 'service-lifecycle', 'saved-autosave']) rejected({ ...saved, capabilities: [...saved.capabilities, extra] }, 'saved-host')
+  rejected({ ...saved, capabilities: ['offline-network', 'saved-host-review', 'saved-host-review'] }, 'saved-host')
+  rejected({ ...saved, localServicePort: 43919 }, 'saved-host')
+  rejected({ ...saved, routePeerId: '1'.repeat(64) }, 'saved-host')
+  rejected({ ...saved, routeUpdateFile: '/tmp/fixture/route-update.json' }, 'saved-host')
+  rejected(saved, 'offline')
+  rejected({ ...saved, scenario: 'offline' }, 'offline')
+  rejected({ ...valid, capabilities: [...valid.capabilities, 'saved-host-review'] })
+})
+
+test('saved-host review cannot install the offline synthetic pairing interceptor', async () => {
+  const interceptor = createSyntheticPairingInterception('saved-host')
+  let routes = 0
+  await assert.rejects(interceptor.install({ route: async () => { routes++ } }, async () => ({ status: 200, body: '{}' })))
+  assert.equal(routes, 0)
+})

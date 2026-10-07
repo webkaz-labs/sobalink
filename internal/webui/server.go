@@ -314,6 +314,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if s.servePNGWorker(w, r) {
+		return
+	}
 	http.FileServer(http.FS(s.assets)).ServeHTTP(w, r)
 }
 
