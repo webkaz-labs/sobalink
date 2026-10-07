@@ -57,6 +57,10 @@ type directLANStore struct {
 	// expired approval within this owner; explicit recovery never resets it.
 	endpointObservedAt time.Time
 	endpointDeadlines  map[directLANEndpointDeadlineKey]directLANEndpointDeadline
+	// Context metadata has no command or transport caller. These process-only
+	// bounds and publication evidence are never reconstructed from a file read.
+	contextWindows     map[string]contextPreparationWindow
+	contextPublication *contextPublicationReceipt
 }
 
 func cloneDirectLANState(s directLANState) directLANState {
@@ -315,6 +319,10 @@ func (c *Core) directLANStatus() map[string]any {
 	return status
 }
 func (c *Core) directLANCommand(ctx context.Context, name string, raw json.RawMessage) (any, error) {
+	switch name {
+	case "direct-lan.endpoint.export.preview", "direct-lan.endpoint.export", "direct-lan.endpoint.reexport.preview", "direct-lan.endpoint.reexport":
+		return c.directLANEndpointExportCommand(ctx, name, raw)
+	}
 	if strings.HasPrefix(name, "direct-lan.endpoint.") {
 		return c.directLANEndpointCommand(ctx, name, raw)
 	}
