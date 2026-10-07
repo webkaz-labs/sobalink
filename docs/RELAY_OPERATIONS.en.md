@@ -14,11 +14,21 @@ Direct application traffic can bypass the relay after establishment, but Tailcat
 
 1. Start `soba start --offline`, then inspect `soba lan addresses`. In the local Web UI, choose **Host a relay on this device**. An eligible address can belong to a VPN; review its interface rather than assuming it is the intended network.
 2. Select an address and unused high TCP port. Run `soba setup --network lan --host ADDRESS:PORT`, or review and start the selected listener in the Web UI. The UI never automatically selects the first address.
-3. Use `soba status` or the relay summary to distinguish saved configuration from listener readiness. A successful bind is not proof that another device can reach it. If bind fails, the saved identity remains; choose another port explicitly. Do not disable another program or change a firewall silently.
+3. Use `soba status` or the relay summary to distinguish saved configuration from listener readiness. A successful bind is not proof that another device can reach it. If bind fails, the saved identity remains. Follow the reported cause before retrying; any different endpoint needs explicit review. Do not disable another program or change a firewall silently.
 4. Privately inspect and exchange recipient-bound invitations using `soba lan --help`. Pairing and application trust require separate actions.
 5. `soba stop`, or **Stop sobalink** in the UI, stops the whole app, its relay, and current service connections. Restarting with the same configuration preserves the identity; applications may need new connections.
 
 When using a custom profile, pass the same `--state-dir PATH` before each command. These commands operate on that profile only. No remote installation, startup registration, firewall changes, or relay election occurs.
+
+## Listener health and startup diagnosis
+
+The current source observes the owned relay's serving-loop termination. If either its relay listener or private admission listener ends, both are shut down and status stops reporting the host as ready. It does not restart the relay or change the endpoint. Stop and reopen sobalink with the saved configuration to recover; stop still affects the whole app.
+
+In mixed mode, LAN status comes from the exact LAN worker, independently of another backend being ready. `readinessKnown: false` means its current observation failed: CLI and Web show an unconfirmed status rather than claiming that the listener stopped. Existing readiness booleans remain false in that response; consumers should check `readinessKnown` first. The field is additive, and older responses without it retain their previous interpretation. No status read performs a reachability probe.
+
+These typed startup diagnoses currently cover standalone LAN mode; a mixed-mode LAN worker that fails before its control channel starts can still report a generic startup failure.
+
+Startup reports port conflict, unavailable address/address family, denied bind permissions, or exhausted listener resources only when the operating system supplies that typed local-listen failure. Other failures remain unclassified. Raw error details are not exposed. A port conflict does not authorize stopping another program or choosing another port, and an unavailable address does not authorize changing a certificate. Saved keys, pins, pairs and policies remain intact.
 
 ## Certificate and address changes
 

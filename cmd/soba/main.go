@@ -85,6 +85,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		} else if err != nil && jsonErrors {
 			err = &jsonCommandError{err}
 		} else if err != nil {
+			err = localizeListenerError(japanese(locale), localizeFavoritesError(japanese(locale), err))
 			err = localizeLANSetupError(japanese(locale), localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err)))
 		}
 	}()
@@ -137,13 +138,16 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
 		}
 		fmt.Fprintln(out, text(ja, "Usage: soba ", "使い方: soba ")+usage)
 		return nil
+	}
+	if command == "card" {
+		return deviceCardCLI(ctx, args, dir, ja, jsonErrors, *dryRun, *offlineDefinitions, out, stdin, client)
 	}
 	if dir == "" {
 		var e error
@@ -157,12 +161,15 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	}
 	if *offlineDefinitions {
 		if !offlineDefinitionCLIAllowed(command, args) {
-			return errors.New(text(ja, "--offline supports rules/settings, service save/show/delete, group list/save and profile export/import; use the running agent for other actions", "--offline は rules/settings、service save/show/delete、group list/save、profile export/import に対応しています。他の操作は稼働中の本体で実行してください"))
+			return errors.New(text(ja, "--offline supports rules/settings, service save/show/delete, group list/save, favorites and profile export/import; use the running agent for other actions", "--offline は rules/settings、service save/show/delete、group list/save、favorites、profile export/import に対応しています。他の操作は稼働中の本体で実行してください"))
 		}
 		client = offlineDefinitionCall
 	}
 	if handled, err := clientHelperCLI(ctx, command, args, dir, ja, *dryRun, out, client); handled {
 		return err
+	}
+	if command == "favorites" {
+		return favoritesCLI(ctx, args, dir, ja, *dryRun, out, client)
 	}
 	if handled, err := definitionCLI(ctx, command, args, dir, ja, *dryRun, out, client); handled {
 		return err
@@ -180,6 +187,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		var formatted json.RawMessage
 		e := client(ctx, dir, raw, &formatted)
 		if e != nil {
+			if jsonErrors {
+				return e
+			}
 			return fmt.Errorf("%s: %w", text(ja, "Command failed. Check that soba is running and review the error", "操作に失敗しました。soba の起動状態とエラーを確認してください"), e)
 		}
 		encoder := json.NewEncoder(out)
@@ -246,6 +256,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	case "receive-dir", "autosave", "pause", "resume", "reconnect":
 		return preferenceCommand(command, args, ja, out, query, request)
 	case "service":
+		if len(args) > 0 && args[0] == "ports" {
+			return servicePortsCommand(args[1:], dir, ja, *dryRun, out, queryAction, request)
+		}
 		return serviceCommand(args, ja, out, query, queryAction, request)
 	case "setup":
 		payload, e := setupPayload(args, ja, out)
@@ -525,10 +538,12 @@ const helpEN = `sobalink — Close, even from afar.
   soba pause|resume PEER_ID     Pause/resume messages and file transfers
   soba reconnect PEER_ID        Refresh this peer's reachability and services
   soba lan --help               Public identity and private pairing invitations
+  soba card --help              Export or inspect public device cards
   soba service --help           Save, inspect, delete and restart service settings
   soba profile --help           Export/import stopped service definitions
   soba rustdesk --help          Review and save RustDesk client settings
   soba group --help             Save and start service groups
+  soba favorites --help         Mark inert service and group favorites
   soba task --help              Run a command with owned temporary services
   soba stop-shares              Stop every share; keep the node running
   soba share --help             Scoped TCP/UDP service sharing
@@ -542,7 +557,8 @@ soba --offline rules lists saved definitions with the agent stopped.
 soba settings [SERVICE_ID] shows saved endpoints and application hints.
 Use soba help examples for short workflows; soba help upgrade for safe updates.
 Global options: --state-dir DIR --locale auto|ja|en --dry-run --json-errors (before command)
---offline edits saved service/group/profile definitions with the agent stopped.
+--offline edits saved service/group/profile definitions and favorites with the agent stopped.
+It also supports card inspection without reading a profile or contacting Core.
 --json-errors writes {code,error} to stderr on failure; success JSON is unchanged.
 --dry-run previews action JSON and validates local inputs without applying it.
 status, peers and service/group workflows default to human output; --json stays stable.
@@ -578,10 +594,12 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba pause|resume PEER_ID     メッセージ・ファイル転送を一時停止／再開
   soba reconnect PEER_ID        相手の到達状態と共有一覧を再確認
   soba lan --help               公開IDと機密のペアリング招待
+  soba card --help              公開端末カードの書出し・内容確認
   soba service --help           設定の保存・確認・削除・再開始
   soba profile --help           停止状態のサービス設定を書き出し・読込み
   soba rustdesk --help          RustDeskの接続設定を確認・保存
   soba group --help             サービスをまとめて保存・開始
+  soba favorites --help         サービスとグループにお気に入りの目印を付ける
   soba task --help              所有する一時サービスでコマンドを実行
   soba stop-shares              本体を維持してすべての共有を停止
   soba share --help             範囲を指定したTCP/UDP共有
@@ -595,7 +613,8 @@ soba --offline rules は本体を停止したまま保存済み設定を一覧�
 soba settings [SERVICE_ID] は保存済み接続先とアプリの設定例を表示します。
 短い操作例は soba help examples、更新手順は soba help upgrade で表示します。
 共通指定: --state-dir DIR --locale auto|ja|en --dry-run --json-errors（コマンドより前）
---offline は本体を起動せず保存済みサービス・グループ・プロファイルを編集します。
+--offline は本体を起動せず保存済みサービス・グループ・プロファイルとお気に入りを編集します。
+カードの内容確認ではプロファイルを読まず、本体へ接続しません。
 --json-errors は失敗時に {code,error} のJSONを標準エラーへ出します。成功時のJSONは同じです。
 --dry-run はローカル入力を検証し、変更を適用せず操作JSONを表示します。
 status・peers・サービス/グループの操作は人向け表示が基本です。--json は全言語で同じです。

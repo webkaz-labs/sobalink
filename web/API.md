@@ -29,8 +29,10 @@ The React client uses only same-origin `/api` requests. The Go host is responsib
 - `service.connect`: `{name,peerId,serviceId?,serviceRevision?,network,ports,excludePorts?,localPort?,loopbackHost?,lifetime?,ttlSeconds,purpose,discoverable:false,backend?,replaceId?,expectedRevision?}`
 - `service.share`: `{name,peerIds,network,ports,excludePorts?,localPort?,loopbackHost?,lifetime?,ttlSeconds,purpose,discoverable,backend?,replaceId?,expectedRevision?}`; one exposed port may map to a different application port. Shared ranges retain same-port mapping; reserved control ports are excluded
 - `service.config`: `{id}` returns `{configuration,revision,active}` to authenticated local management only. The full saved configuration is not peer discovery metadata. Create rejects existing names; copy starts a new name. Replacement requires a stopped `replaceId`, its complete `expectedRevision` and the reviewed `backend`; stale revisions, another existing name and backend changes are rejected before changing saved settings
+- `service.ports`: `{id,expectedRevision,fromPort?,count?,attempts?}` explicitly checks a stopped saved outbound connection's loopback binds. The saved backend, full revision, protocol, address family, ports and exclusions remain fixed. Only a real OS address-in-use result permits searching alternatives; permission, family, capacity and unknown failures stop separately. `fromPort` defaults to 49152 and accepts 1024–65535. Zero/omitted count and attempts follow finite `portProposalResults`/`portProposalAttempts` budgets; positive requests must fit them. Total bind work uses `portProposalBinds`, the checking deadline uses `portProposalSeconds` (5 seconds by default, independent of service lifetime), and simultaneous sockets fit remaining `materializedListeners`. Candidate windows skip application/backend reserved ports. All transient sockets close before returning; no forwarding, grant or persistence occurs. This observation bypasses request-result caching; even a repeated request ID performs a fresh check, so raised result budgets cannot accumulate in the mutation deduplication cache. Results contain the complete `configuration`, `revision`, `conflictPort`, `effectivePorts`, `checkedAt`, `fromPort`, requested budgets, performed `attempts`/`bindChecks`, `stopReason`, `reservation:false`, bilingual `nextSteps`, and `proposals:[{localPort,localEnd}]`. Consecutive local ports map to ascending effective remote ports after exclusions, matching `service.connect`. An empty successful observation has `code:"listener_proposals_exhausted"` and `proposals:[]`, not a claim that every high port is occupied. The Web action is available for stopped saved forwards: opening reads source data only; an explicit check uses a fresh request ID and an abort signal outside mutation retry guards. It validates complete results, shows bounded exhaustion without usable candidates, and pages large candidate lists locally. A selected port enters the existing stopped-definition editor only after a same-revision reread; full reviewed `service.save` and reviewed start remain separate. Reload discards the selected candidate; late results after close/source change/stale/active state are ignored. Proposals are observations, not reservations. A direct start applies one through a separate explicit `service.connect` replacement using its saved revision; the Web may instead save the stopped definition before its separate reviewed start. Actual binding rechecks every port. CLI: `service ports NAME_OR_ID`, then `service restart NAME_OR_ID --local-port PORT --expected-revision REVISION`. See [English](../docs/PORT_PROPOSALS.en.md) / [日本語](../docs/PORT_PROPOSALS.ja.md) for taxonomy and check budgets.
 - `service.stop`: `{id}`
 - `network.configure`: `{mode:"none"|"tailnet"|"lan",hostname?,lan?,rotateCertificate?,lanPolicy?:{mode,prefixes}}`; LAN is either `{kind:"host",address}` for an exact private local listener or `{kind:"relay",address,certificateSHA256}` for a trusted numeric relay. Changing a running network/hostname requires stopping and restarting the process, which the UI explains
+- Guarded saved-host restart uses `network.configure` with exactly `{mode:"lan",expectedLANStartRevision}` from `lan.savedStart`. That read-only review includes the exact saved listener, pin, policy and existing scope. It is offered only for an eligible offline standalone LAN host. The server binds the revision to this process/profile, complete saved LAN state, resource settings and application/startup authority, and compares it under the mutation lock before any write or start. Relevant writes invalidate old reviews even when settings are reverted. Reads do not invalidate it; there is no separate permission TTL. Missing/changed/uncertain state, active or other-mode engines, malformed revisions and any editing fields are rejected. The response exposes no private keys or nonce. Existing unguarded payloads retain their behavior.
 - Host setup preserves a valid saved certificate for an unchanged IP, including a port-only change. IP change or unusable certificate requires explicit `rotateCertificate:true`; saved pairs and active engines block replacement. Public `lan.certificate` exposes `{state,notBefore,notAfter}` only, with `valid`, `expiring` (within 30 days), `expired`, or `not-yet-valid`. No private certificate material is returned
 - `lan.policy.get`: `{}` returns `{mode,prefixes,editable,restartRequired}`. `lan.policy.set`: `{mode:"trusted-relay"|"allowed-lan-destinations",prefixes:string[]}` requires an offline engine. Allowed mode requires explicit canonical private/ULA/loopback prefixes covering selected and prepared relays; trusted mode requires no prefixes. Initial `network.configure.lanPolicy` saves the same policy atomically with relay setup before starting. Status exposes `lan.policy`. A failed policy save does not establish a durable restriction and latches recovery for an existing store
 - `lan.addresses` includes optional `prefix` on each read-only `{interface,address}` choice. Suggestions never automatically enable a destination range; prefix membership is not physical interface/VPN isolation
@@ -75,6 +77,19 @@ Only numeric loopback listeners and SOCKS5 TCP CONNECT with username/password au
 
 The global saved-service catalog also creates, edits, copies and deletes stopped definitions independently of current peers or an active network. It accepts explicit exact missing-peer IDs as saved references, uses authoritative revisions for edits/removal, and never starts a saved definition automatically. Task owner and supplied lease data are visible in service rows and selection reviews; manual actions cannot claim task ownership.
 
+**Save a share → Start from saved share** is a save-only copy-to-draft shortcut.
+The choices come from the existing catalog, while each selection reads the current
+`service.config {id}`. Only definition fields are copied; IDs, replacement
+revisions, runtime ownership and startup authority are not. The full audience,
+network, target/mapping, protocol, ports/exclusions, discovery and lifetime stay
+editable and require review before `service.save {configuration}`. Missing peer
+references remain visible and inert. Selection changes, lost contact, reload,
+close and editing invalidate the appropriate pending read/review; late reads and
+repeated save clicks cannot apply another selection. A selected template is a
+detached draft, not authority or a live reference to later source changes. Agents
+can express the same path with these existing commands; there is no new template
+store or API. A later start uses the ordinary current selection/permission checks.
+
 The initial device screen emphasizes services and connectivity. Files/messages remain directly reachable, and unsent messages, reviewed file batches and in-progress uploads survive switching views. The separate saved-service manager can manage persisted definitions and groups without treating them as active permissions.
 
 ## LAN identities and pairing
@@ -109,7 +124,7 @@ Run `npm ci`, `npm test`, and `npm run build` from `web/`. The production `dist/
 
 For deterministic browser checks, follow [Browser acceptance](BROWSER_ACCEPTANCE.md). Playwright Test starts a fresh isolated Go fixture for each named test and uses production HTTP/session/CSRF/CSP and rebuilt embedded assets. Set `SOBA_E2E_BINARY` to the compiled fixture and `SOBA_SCREENSHOT_DIR` to a separate sanitized artifact directory. Vite has no proxy that rewrites the management server’s Origin/Host protections. These checks do not establish real LAN/Tailnet enrollment, real-device delivery, external application compatibility, native IME behavior or OS suspend behavior.
 
-The CI browser job starts `cmd/soba-e2e` with its explicit test build tag and uses `SOBA_E2E_SESSION_FILE` (or `--session-file`) to supply a private `{url,code}` file. This mode uses the real Go management server, session cookie, CSRF checks, production CSP, embedded assets and two in-process fictional peers. It performs no browser API route mocking. Install the pinned browser with `node node_modules/playwright-core/cli.js install --with-deps chromium`. Screenshots are captured only after login, in Japanese/English and desktop/mobile layouts; credentials, cookies, traces and the private session file are not published. Capture guards also reject visible private sign-in links and QR containers (`.auth-private`, `.auth-qr`); only synthetic auth data belongs in test assertions. In-process peers are integration evidence, not real-device network acceptance.
+The CI browser job starts `cmd/soba-e2e` with its explicit test build tag and uses `SOBA_E2E_SESSION_FILE` (or `--session-file`) to supply a private `{url,code}` file. Default cases use the real Go management server, session cookie, CSRF checks, production CSP, embedded assets and in-process fictional peers. Selected UI regressions substitute state or error responses. In particular, the explicitly labelled `lan-pairing-review.spec.mjs` cases replace LAN state and intercept inspection/join commands using one fixed, invalid synthetic invitation; those substituted commands do not reach Core. They establish UI review, cancellation and retry behavior, not Core pairing, enrollment or permission acceptance. See [Browser acceptance](BROWSER_ACCEPTANCE.md) for the layout/error exceptions and pairing command-accounting guard. Install the pinned browser with `node node_modules/playwright-core/cli.js install --with-deps chromium`. Screenshots are captured only after login, in Japanese/English and desktop/mobile layouts; credentials, cookies, traces and the private session file are not published. Capture guards also reject visible private sign-in links and QR containers (`.auth-private`, `.auth-qr`); only synthetic auth data belongs in test assertions. In-process peers are integration evidence, not real-device network acceptance.
 
 The browser harness also records actual Chromium glyph font families and computed text metrics for Japanese static controls, verifies readable type sizes, accepts a real incoming batch and waits for its saved state, and captures graph desktop/mobile/detail views. Font reports contain only static selectors and font metadata. They contain no access codes, input values, cookies or invitations.
 
@@ -220,3 +235,58 @@ TCP continuity across suspend, network loss or long idle.
 `policy.config` additionally lists `restartRequiredResources` and `relayResourceEditable`. The four relay budgets are `resources.relayPresenceConnections` (default 4), `relayCandidateAttempts` (4), `relayTLSConnections` (64), and `relayAdmissionConnections` (16), each using the existing `default` / positive `limited` capacity choice. `unlimited` is invalid for finite resource budgets. `policy.preview.restartRequired` reports an effective relay-budget change. Such edits are rejected while a network backend exists and take effect at the next start. The same effective values and edit/start boundary appear under `lan.resources` in status.
 
 Candidate views and route approvals no longer reject a fifth item. Their metadata remains bounded by private-state and signed-exchange sizes, and relay-map IDs use the nonzero 16-bit DERP namespace. An insufficient `relayPresenceConnections` budget raises `lan_relay_presence_capacity` before startup without truncating saved candidates or grants. `lan_route_envelope_capacity` reports an offer exceeding the existing 24 KiB plaintext exchange envelope. See [relay operations](../docs/RELAY_OPERATIONS.en.md) ([日本語](../docs/RELAY_OPERATIONS.ja.md)) for defaults, restart and old-version compatibility.
+
+## Passive network guidance
+
+Optional `self.guidance` and passive `diagnostics.run {}` response
+`networkGuidance` contain the same local-state interpretation:
+`{code,category,action,summary:{en,ja},nextSteps:{en,ja}}`. They use only the
+reported state/error code and do not probe, change settings, generate identity or
+establish route/application success. Unknown errors retain their code and use an
+unknown-cause explanation. A normal ready state does not create a route result.
+
+`action` is one of `review_network`, `review_capacity`, `refresh_state`, or `wait`.
+The Web opens a review surface or refreshes local status only after a click;
+`wait` has no retry action. Stale notices are suppressed. Human `soba status`
+uses the same localized next step, while its JSON preserves the original fields.
+Technical codes/details remain expandable. Offline saved direct-LAN peers expose
+`path:"unknown"`; their saved endpoint is configuration, not a path observation.
+
+## Read-only public device cards
+
+`device-card.export {mode,name,includeEndpointHint?,qr?}` reads an existing
+`lan` or `direct-lan` component identity using an explicit public-field
+allowlist. `device-card.inspect {card,expectedMode}` parses the bounded canonical
+card without local setup or any network operation. Neither changes pairing,
+trust, endpoints or settings. Both bypass command-result retention to read current
+state on deliberate retries. Optional export QR is a local bitmap only; no image
+reader or new dependency is included.
+
+Both return `verification:"unverified"` and `freshness:"unknown"`. An inspection
+content digest is not identity proof. Address/pin hints are opt-in on export,
+shape-validated only on inspection, and never applied. See [device cards](../docs/DEVICE_CARDS.en.md)
+([日本語](../docs/DEVICE_CARDS.ja.md)) for exact fields, bounds and remaining UI acceptance.
+
+## Inert favorites
+
+`favorites.list {}` returns
+`{version:1,revision,entries,durabilityUncertain}`. Each entry is exactly
+`{kind:"service",serviceId,available}` or `{kind:"group",groupName,available}`.
+Availability describes a current saved reference, not an online peer or service.
+`favorites.add` and `favorites.remove` accept
+`{reference:{kind,serviceId|groupName},expectedRevision}` and return the same view.
+Adding requires a current target; removing may clear a missing reference.
+
+Preferences are separately stored, byte-bounded and lazily read; they do not
+change the strict profile format, group membership, service revisions, startup
+approvals or active deadlines. Missing references are not automatically pruned.
+Every edit checks the current preference revision. Uncertain published writes
+reconcile the actual file and return an error; `durabilityUncertain` is retained
+in the current Core instance until a confirmed write, not across restart.
+
+The lazy Web panel uses fresh request identities and leaves ordinary saved
+navigation available after preference failure. Favorite operations never retain
+or replay `useServer` uncertain-request entries. After an ambiguous response the
+user must reload and review current marks before a new explicit mutation; other
+commands retain their existing uncertainty/deduplication behavior. Favorite
+selection still uses the existing full service-scope review before starting.

@@ -60,10 +60,11 @@ type humanSnapshot struct {
 	State     string                `json:"state"`
 	ProcessID int                   `json:"processId"`
 	Self      struct {
-		Name      string `json:"name"`
-		Status    string `json:"status"`
-		Error     string `json:"error"`
-		ErrorCode string `json:"errorCode"`
+		Name      string                   `json:"name"`
+		Status    string                   `json:"status"`
+		Error     string                   `json:"error"`
+		ErrorCode string                   `json:"errorCode"`
+		Guidance  *core.DiagnosticGuidance `json:"guidance"`
 	} `json:"self"`
 	Settings struct {
 		Network string `json:"network"`
@@ -133,6 +134,9 @@ func snapshotCommand(ctx context.Context, command string, args []string, dir str
 	}
 	if snapshot.Self.Error != "" {
 		fmt.Fprintf(out, "%s: %s (%s)\n", text(ja, "Reported reason", "確認できた理由"), displayText(snapshot.Self.Error), snapshot.Self.ErrorCode)
+	}
+	if snapshot.Self.Guidance != nil {
+		writeHumanNextSteps(out, ja, snapshot.Self.Guidance.NextSteps)
 	}
 	fmt.Fprintf(out, "%s: %d; %s: %d; %s: %d\n", text(ja, "Peers", "相手"), len(snapshot.Peers), text(ja, "connections", "接続"), len(snapshot.Services), text(ja, "shares", "共有"), len(snapshot.Shares))
 	writeHumanLANStatus(out, ja, snapshot.LAN)

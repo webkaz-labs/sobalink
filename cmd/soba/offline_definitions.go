@@ -10,6 +10,9 @@ import (
 )
 
 func offlineDefinitionCLIAllowed(command string, args []string) bool {
+	if command == "favorites" {
+		return len(args) == 0 || args[0] == "list" || args[0] == "add" || args[0] == "remove" || args[0] == "help" || args[0] == "--help" || args[0] == "-h"
+	}
 	if command == "profile" || command == "rules" || command == "settings" || command == "rustdesk" {
 		return true
 	}

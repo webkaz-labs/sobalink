@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -142,7 +141,12 @@ func TestLANInspectionIsPublicAndHasNoSetupSideEffects(t *testing.T) {
 	}
 }
 
-type trackedRelayClose struct{ closed bool }
+type trackedRelayClose struct {
+	closed bool
+	done   chan struct{}
+}
+
+func (r *trackedRelayClose) Done() <-chan struct{} { return r.done }
 
 func (r *trackedRelayClose) Close() error { r.closed = true; return nil }
 
@@ -150,7 +154,7 @@ func TestLANHostReadinessAndApplicationStopUseWholeCoreLifecycle(t *testing.T) {
 	c := openLANTestCore(t)
 	b, engine := testLANBackend()
 	relay := &trackedRelayClose{}
-	b.start = func() (io.Closer, error) { return relay, nil }
+	b.start = func() (hostedLANRelay, error) { return relay, nil }
 	c.lanFactory = func(*lanStore) (lanNetworkBackend, error) { return b, nil }
 	selection := &LANSelection{Kind: "host", Address: "192.168.50.10:48443"}
 	if err := c.configureLAN(selection); err != nil {
@@ -202,7 +206,7 @@ func TestLANHostReadinessAndApplicationStopUseWholeCoreLifecycle(t *testing.T) {
 func TestLANFailedHostStartKeepsConfiguredStateWithoutReadiness(t *testing.T) {
 	c := openLANTestCore(t)
 	b, _ := testLANBackend()
-	b.start = func() (io.Closer, error) { return nil, errors.New("synthetic listener failure") }
+	b.start = func() (hostedLANRelay, error) { return nil, errors.New("synthetic listener failure") }
 	c.lanFactory = func(*lanStore) (lanNetworkBackend, error) { return b, nil }
 	_, err := command(c, randomID(), "network.configure", map[string]any{"mode": "lan", "lan": LANSelection{Kind: "host", Address: "192.168.50.10:48443"}})
 	if err == nil {

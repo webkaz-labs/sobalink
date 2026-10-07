@@ -217,3 +217,34 @@ func TestHumanStatusShowsLocalizedFailureHistoryAndNativeNetworkState(t *testing
 		t.Fatal(err, out.String())
 	}
 }
+
+func TestHumanStatusUsesSharedLocalizedNetworkGuidance(t *testing.T) {
+	for _, locale := range []string{"en", "ja"} {
+		value := map[string]any{"self": map[string]any{"name": "example", "status": "error", "errorCode": "direct_lan_address_unknown", "guidance": core.DiagnosticGuidance{Code: "direct_lan_address_unknown", Category: "unknown", Action: "refresh_state", Summary: map[string]string{"en": "Address unconfirmed", "ja": "アドレス未確認"}, NextSteps: map[string]string{"en": "Refresh the selected network state.", "ja": "選択した接続状態を更新してください。"}}}}
+		raw, _ := json.Marshal(value)
+		for _, structured := range []bool{false, true} {
+			args := []string{"--locale", locale, "status"}
+			if structured {
+				args = append(args, "--json")
+			}
+			var out bytes.Buffer
+			err := runWith(context.Background(), args, &out, panicReader{}, func(_ context.Context, _ string, command string, result any) error {
+				if command != "status" {
+					t.Fatal("status performed an extra operation", command)
+				}
+				return json.Unmarshal(raw, result)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if structured {
+				var got any
+				if json.Unmarshal(out.Bytes(), &got) != nil || !strings.Contains(out.String(), `"action": "refresh_state"`) {
+					t.Fatal("JSON guidance contract changed", out.String())
+				}
+			} else if !strings.Contains(out.String(), map[string]string{"en": "Refresh the selected network state.", "ja": "選択した接続状態を更新してください。"}[locale]) {
+				t.Fatal("human output lost shared localized next step", out.String())
+			}
+		}
+	}
+}

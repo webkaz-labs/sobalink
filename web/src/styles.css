@@ -153,7 +153,12 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .empty-illustration { position: relative; }
 .hello-bubble { width: 82px; height: 73px; background: var(--primary-soft); color: var(--primary-text); border-radius: 23px 23px 23px 3px; display: flex; align-items: center; justify-content: center; transform: rotate(-5deg); }
 .tiny-spark { position: absolute; right: -13px; top: -10px; color: var(--primary); font-size: 21px; }
-.main-empty { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px; }
+/* Auto end margins center content only when it fits. In a short workspace,
+   retain its full size and scroll from the top instead of overflowing the header. */
+.main-empty { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; overflow-y: auto; overscroll-behavior: contain; text-align: center; padding: 40px; }
+.main-empty > * { flex-shrink: 0; }
+.main-empty > :first-child { margin-top: auto; }
+.main-empty > :last-child { margin-bottom: auto; }
 .main-empty h2 { font-size: 24px; font-weight: 600; margin: 10px 0 15px; letter-spacing: -.6px; }
 .main-empty p { max-width: 370px; color: var(--muted); line-height: 1.9; font-size: 15px; margin-bottom: 25px; }
 .main-empty .eyebrow { color: var(--primary-text); }
@@ -301,6 +306,9 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .target-pill { display: flex; align-items: center; gap: 9px; padding: 13px; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 8px; font-size: 14px; overflow-wrap: anywhere; }
 .target-pill .badge { margin-left: auto; }
 .scope-note, .inline-note { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 1.8; color: var(--muted); }
+/* The selected-port handoff is a multi-paragraph review, not an icon/text row. */
+.port-choice-note { display: block; min-width: 0; overflow-wrap: anywhere; }
+.port-choice-note > p + p { margin-top: 8px; }
 .scope-note svg, .inline-note svg { margin-top: 2px; color: var(--primary-text); }
 .advertised-review { display: grid; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
 .advertised-review > .button { justify-self: start; max-width: 100%; white-space: normal; }
@@ -674,6 +682,15 @@ html:has(dialog[open]) { overflow: hidden; }
 .device-permission { flex-wrap: wrap; gap: 2px 4px; }
 .map-mobile-nav .clear-filters { margin-left: auto; }
 @media (max-width: 800px) { .clear-filters { min-height: 44px; } }
+
+/* When the empty-home sidebar is taller than the available frame, keep its
+   search, device list and footer in one reachable scroll area. The scroll inset
+   leaves room for the 3px keyboard outline and its 3px offset at either edge. */
+@media (max-height: 500px) {
+  .workspace:not(.device-selected) .device-sidebar { overflow-y: auto; overscroll-behavior: contain; scroll-padding-block: 8px; }
+  .workspace:not(.device-selected) .device-sidebar > * { flex: 0 0 auto; }
+  .workspace:not(.device-selected) .device-list { overflow-y: visible; }
+}
 
 /* Short touch viewports retain input legibility without forcing phone columns. */
 @media (max-width: 960px) and (max-height: 500px) {

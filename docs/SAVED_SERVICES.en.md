@@ -15,6 +15,68 @@ The returned ID identifies the saved definition. `service save ... --replace SER
 
 Use `soba --offline rules` to list saved definitions with the agent stopped. The [global Web catalog](WEB_CONTROLS.en.md) also supports save-only creation, editing, copying and reviewed removal when a saved peer is unavailable. [Application settings and RustDesk](CLIENT_HELPERS.en.md) explain the shared endpoint helpers.
 
+## Reuse a saved share as a template
+
+Open **Saved services → Save a share → Start from saved share**, choose a saved
+share, and edit the copied draft. The selector loads its current definition,
+including exact device IDs, network, protocol, ports/exclusions, loopback target,
+discovery choice and lifetime. It creates no permission or startup approval.
+Missing or unavailable device references remain explicit; they are never silently
+removed or replaced. Saving changes neither the source nor active runtime state;
+the new definition stays stopped.
+
+Choose **Review stopped definition**, check the complete scope, then **Save
+reviewed definition**. Editing, choosing another template, returning to a blank
+share or losing contact discards the review. Back and Cancel before submission do
+not save. After submission, closing the window does not cancel saving; reopen
+Saved services to check an uncertain result. A failed
+or missing template read requires a reload or another choice. This is a detached
+copy of the settings read at selection, not a live link to future source edits.
+
+For CLI use, inspect `soba service show SERVICE_ID`, then use
+`soba service save share` with the chosen explicit options. Agents can read `service.config {id}`,
+copy/edit only the returned configuration fields while omitting `id`, then call
+`service.save {configuration}`. There is no separate template store. Existing
+`service copy` still creates and starts a live service; it is not the save-only
+path. To use the new stopped definition, separately review and start it through
+the normal saved-service controls. Current identity, scope, resources and lifetime
+are checked there; old or revoked authority is never copied.
+
+## Find and favorite saved settings
+
+Open **Saved services** to search by service, device, exact group name or port.
+**Selected only** changes the view, and **Add visible services** adds the visible
+matches to the current selection. Hidden selections remain counted and are
+included in the complete start/stop review. Selecting a group uses its current
+exact membership; reloading reconciles changed or removed groups.
+
+Open **Favorites** to mark a saved service or group, select it, or show only
+favorite services. Marks are private preferences shared with the CLI. They do
+not duplicate group membership, create startup approval, start a listener,
+change service permission or extend an active deadline.
+
+```sh
+soba favorites list --json
+soba favorites add service SERVICE_ID --review FAVORITES_REVISION --json
+soba favorites add group GROUP_NAME --review FAVORITES_REVISION --json
+soba favorites remove group GROUP_NAME --review FAVORITES_REVISION --json
+```
+
+Use the current preference revision returned by `favorites list` for each edit.
+Service IDs and group names match exactly. Add global `--offline` before
+`favorites` when the agent is stopped; the normal profile lock still applies.
+A first-use favorites read does not create a profile or network identity.
+
+Missing references stay visible until explicitly removed. Importing a different
+service or reusing a group name never bypasses the ordinary full-scope review.
+Favorites are not included in portable definition exports. Their protected
+storage uses the existing finite `resources.profileBytes` budget. A corrupt or
+unavailable favorites file affects favorites only. After a failed or uncertain
+write, reload and review the actual marks; a failed response is not proof of
+rollback. The uncertainty flag records an observed durability error in the
+current process, not a persistent recovery journal. Restart reads the actual
+published preference file without reviving any permission.
+
 ## Groups and readiness
 
 ```sh

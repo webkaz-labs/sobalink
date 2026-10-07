@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -233,7 +232,7 @@ func testLANBackend() (*lanBackend, *fakeLANEngine) {
 	endpoint := netip.MustParseAddr("fd7a:115c:a1e0:bb::1")
 	role := netip.MustParseAddr("fd7a:115c:a1e0:cc::1")
 	fake := &fakeLANEngine{key: strings.Repeat("a", 64), self: netip.MustParseAddr("fd7a:115c:a1e0:aa::1"), role: role, peers: []lanlink.PublicPeerSnapshot{{Key: key, Name: "Device B", Endpoint: endpoint, SourceIPs: []netip.Addr{endpoint, role}}}}
-	b := &lanBackend{lanEngine: fake, ctx: context.Background(), start: func() (io.Closer, error) { return nil, nil }}
+	b := &lanBackend{lanEngine: fake, ctx: context.Background(), start: func() (hostedLANRelay, error) { return nil, nil }}
 	return b, fake
 }
 
@@ -377,7 +376,7 @@ func TestLANConfigureCommandsDoNotSwitchActiveEngines(t *testing.T) {
 	c.lanFactory = func(store *lanStore) (lanNetworkBackend, error) {
 		b, fake := testLANBackend()
 		fake.key = store.copy().Identity.PublicKey()
-		b.start = func() (io.Closer, error) { starts++; return nil, nil }
+		b.start = func() (hostedLANRelay, error) { starts++; return nil, nil }
 		return b, nil
 	}
 	payload := map[string]any{"mode": "lan", "lan": testLANSelection()}

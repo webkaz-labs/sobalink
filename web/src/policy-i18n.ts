@@ -10,6 +10,7 @@ export const policyEnglish = {
   preview: 'Review effective settings', previewHint: 'These settings do not delete history. Existing data must still fit the storage budgets.',
   cleanupReview: 'Review history cleanup', cleanupHint: 'This review uses the saved retention settings for all devices.', cleanupTitle: 'Review permanent removal',
   remove: 'Messages to remove', retained: 'Messages to keep', cleanupWarning: 'Removing these messages permanently deletes their local history. This cannot be undone.', cleanupApply: 'Permanently remove reviewed messages', cleanupDone: 'Reviewed message history removed', nothing: 'No messages match the saved cleanup settings.',
+  windows: 'windows', proposals: 'proposals', 'bind checks': 'bind checks',
   invalid: 'Choose a positive whole number within the supported range.', bytes: 'bytes', entries: 'entries', seconds: 'seconds', levels: 'levels', listeners: 'listeners', connections: 'connections', sessions: 'sessions', packets: 'packets', streams: 'streams',
   policy_revision_conflict: 'Settings or saved configuration changed. Review your choices again before applying.',
   history_revision_conflict: 'History or retention settings changed. Review cleanup again before removing messages.',
@@ -27,6 +28,7 @@ export const policyJapanese: Record<keyof typeof policyEnglish, string> = {
   preview: '実効設定を確認', previewHint: 'この設定では履歴を削除しません。保存済みデータを保持できるリソース予算が必要です。',
   cleanupReview: '履歴の整理を確認', cleanupHint: 'すべてのデバイスについて、保存済みの保持設定で候補を確認します。', cleanupTitle: '完全削除する内容を確認',
   remove: '削除するメッセージ', retained: '残すメッセージ', cleanupWarning: 'この端末の履歴から対象メッセージを完全に削除します。元に戻すことはできません。', cleanupApply: '確認したメッセージを完全削除', cleanupDone: '確認したメッセージ履歴を削除しました', nothing: '保存済み設定で削除の対象になるメッセージはありません。',
+  windows: '候補範囲', proposals: '候補', 'bind checks': '待受確認',
   invalid: '対応する範囲内で正の整数を入力してください。', bytes: 'バイト', entries: '件', seconds: '秒', levels: '階層', listeners: '待受', connections: '接続', sessions: 'セッション', packets: 'パケット', streams: 'ストリーム',
   policy_revision_conflict: '設定または保存済みの構成が変わりました。選択内容をもう一度確認してから適用してください。',
   history_revision_conflict: '履歴または保持設定が変わりました。削除前に整理する内容をもう一度確認してください。',
@@ -34,6 +36,7 @@ export const policyJapanese: Record<keyof typeof policyEnglish, string> = {
   policy_unsupported: '現在の接続方式では変更できない設定です。保存済み設定を再読み込みし、詳細を確認してください。',
 }
 const labels: Record<string, [string, string]> = {
+  portProposalResults: ['Alternate port candidates', '代替ポートの候補数'], portProposalAttempts: ['Alternate port window checks', '代替ポートの候補範囲の確認回数'], portProposalBinds: ['Alternate port bind checks', '代替ポートの待受確認合計'], portProposalSeconds: ['Alternate port check deadline', '代替ポート確認の期限'],
  relayPresenceConnections: ['Active relay presence connections', '同時に維持するリレー接続数'], relayCandidateAttempts: ['Sequential relay attempts per connection', '接続1回ごとのリレー候補試行数'], relayTLSConnections: ['Hosted relay TLS connections', 'ホストするリレーのTLS接続数'], relayAdmissionConnections: ['Hosted relay admission connections', 'ホストするリレーの入場確認接続数'],
   savedServices: ['Saved services', '保存するサービス'], trustedPeers: ['Allowed devices', '許可する端末'], sharePeers: ['Devices per share', '共有ごとの端末'], rangePolicies: ['Port range rules', 'ポート範囲ルール'], portIntervals: ['Port intervals', 'ポート区間'], groups: ['Service groups', 'サービスグループ'], groupMembers: ['Services per group', 'グループ内のサービス'],
   pathDepth: ['Path depth', 'パスの階層数'], pathBytes: ['Path length', 'パスのバイト数'], batchEntries: ['Items per batch', 'バッチ内の項目数'], fileBytes: ['File size', 'ファイル単体の容量'], batchBytes: ['Batch size', 'バッチの容量'], messageBytes: ['Message size', 'メッセージの容量'], messageHistoryEntries: ['Messages to retain', '保持するメッセージ数'], messageHistoryBytes: ['History size to retain', '保持する履歴の容量'], messageHistoryAgeSeconds: ['History age to retain', '履歴の保持期間'], transferHistoryEntries: ['Transfer records to retain', '保持する転送記録数'], receiveWaitSeconds: ['Wait for file acceptance', 'ファイル受信許可の待ち時間'], fileTransferSeconds: ['File transfer duration', 'ファイル転送の時間'], stagingSeconds: ['File preparation duration', 'ファイル準備の時間'],

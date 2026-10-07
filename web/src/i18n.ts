@@ -1,5 +1,20 @@
 import type { Locale } from './api'
 export const en = {
+  lan_saved_start_changed: 'Saved host settings or permissions changed. Refresh the status and review the saved host again.',
+  lan_listener_conflict: 'A local relay port is already in use. Stop the conflicting listener separately, then retry the saved endpoint.',
+  lan_listener_permission_denied: 'The operating system denied a local relay listener. Review local permissions before retrying.',
+  lan_listener_capacity: 'Local relay listener resources are exhausted. Stop unused work or review available resources before retrying.',
+  lan_listener_address_unavailable: 'A local relay address or address family is unavailable. Reconnect the selected network or review the saved endpoint before retrying.',
+  lan_start_failed: 'The LAN relay could not start for an unclassified reason. Review the saved configuration before retrying. Private identity state was retained.',
+  device_card_identity_required: 'This mode needs an existing identity before card export. Create or configure it separately in setup.',
+  device_card_recovery_required: 'The saved identity needs recovery. Review protected state before exporting a card.',
+  device_card_hint_unavailable: 'No saved address hint is available. Export without the hint.',
+  device_card_invalid: 'Invalid public device card. Use canonical soba-card1 text and an explicitly chosen alias.',
+  device_card_mode_required: 'Select LAN or direct LAN explicitly for this card.',
+  device_card_mode_mismatch: 'This card is for another network mode. Review it in that mode’s setup.',
+  device_card_too_large: 'The device card exceeds its bounded text format. Use a small plain-text card.',
+  device_card_qr_failed: 'The QR code could not be generated. Export the public card as text instead.',
+
   wan_candidates_invalid: "Choose distinct numeric STUN IP:port endpoints or enable IPv6 candidates, with a probe budget from 1 to 65535.",
   wan_candidates_setup_required: "Select and verify a pinned relay before configuring WAN candidates.",
   wan_candidates_restricted: "WAN discovery requires trusted-relay mode. Disable it before selecting strict LAN destinations.",
@@ -140,6 +155,21 @@ export const en = {
 } as const
 export type TextKey = keyof typeof en
 export const ja: Record<TextKey, string> = {
+  lan_saved_start_changed: '保存済みホストの設定または許可が変更されました。状態を更新し、保存済みホストをもう一度確認してください。',
+  lan_listener_conflict: 'ローカルリレーのポートが使用中です。競合する待受を別途停止し、保存済みの端点で再試行してください。',
+  lan_listener_permission_denied: 'OSがローカルリレーの待受を拒否しました。再試行前にローカルのアクセス権を確認してください。',
+  lan_listener_capacity: 'ローカルリレーの待受資源が不足しています。不要な処理を停止するか、使用可能な資源を確認してから再試行してください。',
+  lan_listener_address_unavailable: 'ローカルリレーのアドレスまたはアドレス系統を利用できません。選択したネットワークへ戻すか、保存済みの端点を確認してから再試行してください。',
+  lan_start_failed: 'LANリレーを開始できませんでした。原因は未分類です。保存済みの設定を確認してから再試行してください。秘密のID情報は保持されています。',
+  device_card_identity_required: 'カードを書き出す前に、この方式の既存IDが必要です。設定画面で別途作成または設定してください。',
+  device_card_recovery_required: '保存されたIDに復旧が必要です。保護された状態を確認してからカードを書き出してください。',
+  device_card_hint_unavailable: '保存されたアドレス情報がありません。アドレス情報を付けずに書き出してください。',
+  device_card_invalid: '公開端末カードが無効です。正規形式のsoba-card1テキストと、明示して選んだ表示名を使ってください。',
+  device_card_mode_required: 'カードに使うLANまたは直接LANを明示して選んでください。',
+  device_card_mode_mismatch: 'カードは別の接続方式用です。該当する方式の設定で確認してください。',
+  device_card_too_large: '端末カードが文字列の上限を超えています。小さなテキストカードを使ってください。',
+  device_card_qr_failed: 'QRコードを生成できませんでした。公開カードを文字列で書き出してください。',
+
   wan_candidates_invalid: "重複しない数値STUN IP:port接続先を指定するかIPv6候補を有効にし、探索予算を1〜65535で指定してください。",
   wan_candidates_setup_required: "WAN候補を設定する前に、固定証明書付きリレーを選択・確認してください。",
   wan_candidates_restricted: "WAN探索にはtrusted-relay方式が必要です。厳格なLAN送信先制限を選ぶ前に無効にしてください。",

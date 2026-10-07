@@ -6,11 +6,15 @@ Published `0.3.0-alpha.5` includes explicit pinned-relay pairing, prepared-route
 
 ## Use the local UI
 
-Open Network setup, choose LAN and create or display this device's public identity. Then choose the appropriate path:
+The draft alpha.6 UI always inspects an incoming invitation before the separate pairing action, including when LAN is already configured. Review the intended identity, exact relay/pin and expiry. A change of invitation, identity, network or destination policy invalidates that review. For initial configuration, pairing continues only if the acknowledged configuration still matches the reviewed scope; closing the view does not cancel an already-submitted command. The published alpha.5 UI does not include this complete review flow.
 
-1. To host, choose “Host a relay on this device”, select a private address/interface from the current list and an unused TCP port, review the listener, then start it. The default port is 48443 and can be changed. An empty list needs a private-network connection and refresh. Firewall settings are unchanged; a running listener does not prove another device can reach it
+For two devices, choose either one as the host before pairing, using an address the other can reach. Keep sobalink running on that host; hosting does not move automatically to the other device. Open “Set up network” → LAN and create or display the public identity needed for the invitation. Then choose the appropriate path:
+
+1. To host, choose “Host a relay on this device” → choose a private address/interface and unused TCP port → “Review relay start” → “Start relay”. The default port is 48443. If the list is unavailable, choose “Enter a LAN address manually” and enter this device’s exact private IPv4 or ULA IPv6 address; equivalent IPv6 spellings are canonicalized in the review. No interface is selected automatically. Firewall settings are unchanged; a running listener does not prove another device can reach it
 2. To join from a fresh profile, send this device's public ID to the inviter and paste its private invitation. Review the host identity, exact relay/pin and expiry, then choose “Connect and pair”. The UI configures that reviewed relay and pairs; an existing different network or relay requires explicit stop/offline recovery first
 3. “Advanced: use an existing relay” remains available for a verified numeric endpoint and certificate pin. Once connected, invite the exact recipient key or join a received invitation. Pairing leaves application trust off until explicitly approved
+
+For an unchanged saved host in an offline process, choose “Review saved host” → check the exact public identity, name, listener, fingerprint, destination policy and existing scope → “Start saved relay”. This needs no address lookup and preserves the saved pair and valid certificate. Changed settings or permissions require a new review. If a running or failed engine still exists, stop the whole app and reopen with `soba start --offline` first. Address/certificate replacement retains its separate explicit recovery requirements. These shortcuts are draft alpha.6 source changes; physical-device hosting and pairing acceptance remain open.
 
 “Stop sobalink” reviews active transfers and services before stopping the app, hosted relay and connections. The local control page disconnects. Reopen the app to continue. Ordinary definitions remain stopped; only separately reviewed [outbound startup approvals](STARTUP.en.md) can start fresh connections. Previous transfer progress never resumes.
 

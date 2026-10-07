@@ -112,6 +112,58 @@ it.each(['network_error', 'invalid_response'])('preserves %s retry identity for 
   expect(requests[2].requestId).toBe(requests[3].requestId)
 })
 
+it.each(['network_error', 'invalid_response'])('never retains or replays failed favorites on %s, while preserving other retry identities', async code => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    requests.push(JSON.parse(init!.body as string))
+    if (code === 'network_error') throw new TypeError('Synthetic interruption')
+    return new Response('invalid synthetic JSON')
+  }))
+  const { result, unmount } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    // A preference request using the same UI key must neither overwrite nor
+    // delete an existing non-favorite uncertainty guard.
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+    for (let i = 0; i < 40; i++) {
+      const key = i < 20 ? 'shared-key' : `favorites:one-shot-${i}`
+      await result.current.run('favorites.list', {}, key)
+      await result.current.run('favorites.add', { reference: { kind: 'service', serviceId: 'sample-service' }, expectedRevision: 'a'.repeat(64) }, key)
+      await result.current.run('favorites.remove', { reference: { kind: 'group', groupName: 'Sample_Set' }, expectedRevision: 'b'.repeat(64) }, key)
+    }
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+  })
+  const favorites = requests.filter(request => request.name.startsWith('favorites.'))
+  expect(favorites).toHaveLength(120)
+  expect(new Set(favorites.map(request => request.requestId)).size).toBe(120)
+  expect(requests[0].requestId).toBe(requests.at(-1)!.requestId)
+  expect(result.current.busy.size).toBe(0)
+  expect(result.current.error).toMatchObject({ code })
+  unmount()
+})
+
+it.each([true, false])('keeps another command guard when a favorite succeeds or fails definitively (success: %s)', async success => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    const request = JSON.parse(init!.body as string)
+    requests.push(request)
+    if (request.name === 'peer.reconnect') throw new TypeError('Synthetic interruption')
+    return success ? new Response('{"ok":true}') : new Response('{"code":"favorites_revision_conflict"}', { status: 409 })
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+    await result.current.run('favorites.list', {}, 'shared-key')
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-key')
+  })
+  expect(requests).toHaveLength(3)
+  expect(requests[0].requestId).toBe(requests[2].requestId)
+  expect(requests[1].requestId).not.toBe(requests[0].requestId)
+})
+
 it('never reapplies an authenticated snapshot or CSRF after a newer 401', async () => {
   const state: State = { csrfToken: 'old-token', self: { name: 'Test', status: 'online' }, peers: [], messages: [], transfers: [], services: [], shares: [] }
   let resolveLate!: (value: Response) => void
@@ -149,4 +201,49 @@ it('does not return an invitation after its follow-up state refresh invalidates 
   await act(async()=>{response=await result.current.run('lan.invite',{recipientPublicKey:'a'.repeat(64),name:'Synthetic peer',ttlSeconds:300})})
   expect(result.current.auth).toBe('locked')
   expect(response).toBeUndefined()
+})
+
+it.each(['network_error', 'invalid_response'])('never retains card reads on %s or disturbs another command using the same key', async code => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    requests.push(JSON.parse(init!.body as string))
+    if (code === 'network_error') throw new TypeError('Synthetic interruption')
+    return new Response('invalid synthetic JSON')
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key')
+    for (let i = 0; i < 40; i++) {
+      // Exact card-read allowlist: no unreachable read signatures or request IDs
+      // remain, even when a caller reuses an unrelated mutating action key.
+      const key = i < 20 ? 'shared-card-key' : `synthetic-card-read-${i}`
+      await result.current.run('device-card.export', { mode: 'lan', name: 'Synthetic alias' }, key)
+      await result.current.run('device-card.inspect', { card: 'soba-card1.synthetic', expectedMode: 'lan' }, key)
+    }
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key')
+  })
+  const reads = requests.filter(request => request.name.startsWith('device-card.'))
+  expect(reads).toHaveLength(80); expect(new Set(reads.map(request => request.requestId)).size).toBe(80)
+  expect(requests[0].requestId).toBe(requests.at(-1)!.requestId); expect(result.current.busy.size).toBe(0); expect(result.current.error).toMatchObject({ code, message: '' })
+})
+it.each([true, false])('keeps other uncertainty guards when a device-card read succeeds or fails definitively (%s)', async success => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    const request = JSON.parse(init!.body as string); requests.push(request)
+    if (request.name === 'peer.reconnect') throw new TypeError('Synthetic interruption')
+    return success ? new Response('{"ok":true}') : new Response('{"code":"device_card_invalid","message":"synthetic-private-payload"}', { status: 400 })
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key')
+    await result.current.run('device-card.export', { mode: 'lan', name: 'Synthetic alias' }, 'shared-card-key')
+    await result.current.run('device-card.inspect', { card: 'soba-card1.synthetic', expectedMode: 'lan' }, 'shared-card-key')
+  })
+  if (!success) expect(result.current.error).toMatchObject({ code: 'device_card_invalid', message: '' })
+  await act(async () => { await result.current.run('peer.reconnect', { peerId: 'a' }, 'shared-card-key') })
+  expect(requests).toHaveLength(4); expect(requests[0].requestId).toBe(requests[3].requestId); expect(new Set(requests.slice(0, 3).map(request => request.requestId)).size).toBe(3)
 })

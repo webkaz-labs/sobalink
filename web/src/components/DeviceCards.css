@@ -1,0 +1,14 @@
+.device-cards { min-width: 0; margin-top: 12px; }
+.device-card-panel { margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
+.device-card-panel input, .device-card-panel textarea { max-width: 100%; min-width: 0; }
+.device-card-panel .code-value, .device-card-review dd { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+.device-card-panel .button { white-space: normal; overflow-wrap: anywhere; }
+.device-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.device-card-qr { margin: 0; padding: 0; background: #fff; width: min(100%, 296px); aspect-ratio: 1; }
+.device-card-qr svg { display: block; width: 100%; height: auto; }
+@media (max-width: 480px) {
+  .device-card-panel { padding: 10px; }
+  .device-card-review dl { grid-template-columns: 1fr; gap: 5px; }
+  .device-card-review dd { margin-bottom: 8px; }
+  .device-card-actions > .button { width: 100%; }
+}

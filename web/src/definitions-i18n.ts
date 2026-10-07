@@ -1,5 +1,6 @@
 import type { Locale } from './api'
 export const definitionsEnglish = {
+  browseSaved: 'Browse saved services', search: 'Find saved services', searchHint: 'Service, device, group or port', selectedOnly: 'Selected only', resetFilters: 'Show all services', selectVisible: 'Add visible services', shown: 'Shown', hiddenSelected: 'Selected outside this view', hiddenHint: 'Services hidden by these filters are still selected and included in the full review.', showSelection: 'Show selection', noMatches: 'No services match these filters. Change the search or show all services.', noSelection: 'No services selected. Show all services or choose a saved group.',
   removesRustDeskMetadata: 'This replacement removes or changes the RustDesk public key and role metadata for these saved helper groups:',
   runtimeLifetime: 'Lifetime for this start', useSavedLifetime: 'Use each saved lifetime', oneHour: 'One hour', customLifetime: 'Custom duration', durationSeconds: 'Duration in seconds', runtimeHint: 'This choice applies only to this start; saved definitions stay unchanged. An active permission is never extended by retrying. Stop it explicitly before selecting a different lifetime.',
   savedDefinition: 'Definition saved and left stopped',
@@ -12,6 +13,7 @@ export const definitionsEnglish = {
   group_revision_conflict: 'The saved profile changed. Reload services and groups before saving this selection.', profile_revision_conflict: 'Saved definitions or the import changed. Reload and review again.', service_revision_conflict: 'Selected definitions changed. Review their current scope again.', service_owner_conflict: 'Another task owns a selected service. It was left unchanged.',
 } as const
 export const definitionsJapanese: Record<keyof typeof definitionsEnglish, string> = {
+  browseSaved: '保存済みサービスを探す', search: '保存済みサービスを検索', searchHint: 'サービス・端末・グループ・ポート', selectedOnly: '選択したものだけ表示', resetFilters: 'すべてのサービスを表示', selectVisible: '表示中のサービスを選択に追加', shown: '表示中', hiddenSelected: '表示外の選択', hiddenHint: '絞り込みで非表示のサービスも選択したままです。確認画面にはすべての対象を表示します。', showSelection: '選択したサービスを表示', noMatches: '条件に合うサービスはありません。検索条件を変えるか、すべてのサービスを表示してください。', noSelection: 'サービスを選択していません。すべてのサービスを表示するか、保存済みグループを選んでください。',
   removesRustDeskMetadata: 'この置き換えにより、次の補助グループの RustDesk 公開鍵と役割情報が削除または変更されます。',
   runtimeLifetime: '今回の開始に使う有効期間', useSavedLifetime: '各サービスの保存済み有効期間', oneHour: '1時間', customLifetime: '任意の期間', durationSeconds: '有効期間（秒）', runtimeHint: 'この選択は今回の開始だけに適用し、保存済み定義は変更しません。再試行で有効な許可を延長しません。異なる有効期間を選ぶ前に明示的に停止してください。',
   savedDefinition: '定義を保存しました。停止状態のままです',

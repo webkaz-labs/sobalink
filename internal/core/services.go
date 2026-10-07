@@ -466,7 +466,7 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		remaining := c.limit("resources", "materializedListeners") - int64(c.materializedCount())
 		expanded, e = effective.ExpandWithLimit(remaining)
 		if e != nil {
-			return nil, errors.New("this plan exceeds the remaining OS/UDP listener capacity; narrow the selection")
+			return nil, listenerError("listener_capacity")
 		}
 		if direction == "forward" {
 			for i, port := range expanded {
@@ -543,7 +543,7 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		c.mu.Lock()
 		delete(c.active, spec.ID)
 		c.serviceStates[spec.ID] = "failed"
-		c.recordServiceFailureLocked(spec.ID, "service_start_failed")
+		c.recordServiceFailureLocked(spec.ID, serviceFailureCode(err))
 		c.mu.Unlock()
 		return nil, fmt.Errorf("saved but not started: %w", err)
 	}
@@ -573,7 +573,7 @@ func (c *Core) startServiceTransport(ctx context.Context, st identity.State, act
 		}
 		c.mu.Lock()
 		active.error = err.Error()
-		c.recordServiceFailureLocked(active.spec.ID, "service_start_failed")
+		c.recordServiceFailureLocked(active.spec.ID, serviceFailureCode(err))
 		c.mu.Unlock()
 		return err
 	}
@@ -618,7 +618,7 @@ func (c *Core) startServiceTransport(ctx context.Context, st identity.State, act
 					server, err = transport.StartUDP(lifetime, transport.UDPConfig{ListenAddress: config.Address(loopback, local), Target: target, Validate: pol.Validate, Budget: udpBudget}, pol.Dial)
 				}
 				if err != nil {
-					return rollback(fmt.Errorf("local port %d is unavailable; select a different starting port or narrower range", local))
+					return rollback(classifyListenerError(err))
 				}
 			} else {
 				packet, err := c.nodeCopy().ListenPacket("udp", config.Address(active.address.String(), int(port)))

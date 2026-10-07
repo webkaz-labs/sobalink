@@ -7,11 +7,12 @@ import (
 )
 
 type humanLANStatus struct {
-	Policy        *humanLANPolicy `json:"policy"`
-	Configured    bool            `json:"configured"`
-	ListenerReady bool            `json:"listenerReady"`
-	RelayReady    bool            `json:"relayReady"`
-	Relay         *struct {
+	Policy         *humanLANPolicy `json:"policy"`
+	ReadinessKnown *bool           `json:"readinessKnown"`
+	Configured     bool            `json:"configured"`
+	ListenerReady  bool            `json:"listenerReady"`
+	RelayReady     bool            `json:"relayReady"`
+	Relay          *struct {
 		Kind    string `json:"kind"`
 		Address string `json:"address"`
 	} `json:"relay"`
@@ -31,7 +32,9 @@ func writeHumanLANStatus(out io.Writer, ja bool, status *humanLANStatus) {
 		saved = text(ja, "configured", "設定済み")
 	}
 	ready := text(ja, "not ready", "未準備")
-	if status.ListenerReady {
+	if status.ReadinessKnown != nil && !*status.ReadinessKnown {
+		ready = text(ja, "status unconfirmed", "状態未確認")
+	} else if status.ListenerReady {
 		ready = text(ja, "ready", "準備完了")
 	}
 	fmt.Fprintf(out, "%s: %s; %s: %s; %s\n", text(ja, "LAN relay", "LANリレー"), displayText(status.Relay.Address), text(ja, "saved", "保存状態"), saved, text(ja, "pairing listener", "ペアリング待受")+": "+ready)
@@ -42,7 +45,9 @@ func writeHumanLANStatus(out io.Writer, ja bool, status *humanLANStatus) {
 		return
 	}
 	hostReady := text(ja, "not running", "停止中")
-	if status.RelayReady {
+	if status.ReadinessKnown != nil && !*status.ReadinessKnown {
+		hostReady = text(ja, "status unconfirmed", "状態未確認")
+	} else if status.RelayReady {
 		hostReady = text(ja, "running", "稼働中")
 	}
 	fmt.Fprintf(out, "%s: %s\n", text(ja, "Hosted relay listener", "この端末のリレー待受"), hostReady)
@@ -67,16 +72,21 @@ func localizeLANSetupError(ja bool, err error) error {
 		return err
 	}
 	messages := map[string]string{
-		"lan_relay_presence_capacity": "設定したリレー数に対して relayPresenceConnections 予算が不足しています。保存済み候補・許可を維持したまま、停止・オフライン起動して soba lan resources set --presence-connections で予算を増やしてください",
-		"lan_route_envelope_capacity": "経路更新が既存の交換プロトコルの24 KiB本文枠を超えています。保存容量とは別の制約です。提供する候補情報の量を見直してください",
-		"mixed_selection_invalid":     "異なる接続方式を2つまたは3つ、優先順に明示してください",
-		"mixed_setup_required":        "mixedを開始する前に、各方式を個別に設定し、必要なペアリング・サインインを完了してください",
-		"mixed_strict_boundary":       "LAN限定の範囲から外部通信を自動追加しません。停止して各方式の通信範囲を明示的に確認してください",
-		"mixed_network_required":      "確認済みのmixedネットワークを開始してから相手を関連付けてください",
-		"mixed_binding_selection":     "異なる接続方式の認証済み経路を2つまたは3つ選んでください",
-		"mixed_binding_unverified":    "同一の相手であることを確認できませんでした。両端末の正確な経路・識別子・許可を確認してください",
-		"mixed_recovery_required":     "許可の保存状態を確認できないためmixedを停止しました。保存済みの許可を確認してから再起動してください",
-		"mixed_operation_failed":      "mixedの操作が完了しませんでした。各方式の準備状況と保存済み設定を確認してから再試行してください",
+		"lan_listener_conflict":            "ローカルリレーのポートが使用中です。競合する待受を別途停止し、保存済みの端点で再試行してください",
+		"lan_listener_permission_denied":   "OSがローカルリレーの待受を拒否しました。再試行前にローカルのアクセス権を確認してください",
+		"lan_listener_capacity":            "ローカルリレーの待受資源が不足しています。不要な処理を停止するか、使用可能な資源を確認してから再試行してください",
+		"lan_listener_address_unavailable": "ローカルリレーのアドレスまたはアドレス系統を利用できません。選択したネットワークへ戻すか、保存済みの端点を確認してから再試行してください",
+		"lan_start_failed":                 "LANリレーを開始できませんでした。原因は未分類です。保存済みの設定を確認してから再試行してください。秘密のID情報は保持されています",
+		"lan_relay_presence_capacity":      "設定したリレー数に対して relayPresenceConnections 予算が不足しています。保存済み候補・許可を維持したまま、停止・オフライン起動して soba lan resources set --presence-connections で予算を増やしてください",
+		"lan_route_envelope_capacity":      "経路更新が既存の交換プロトコルの24 KiB本文枠を超えています。保存容量とは別の制約です。提供する候補情報の量を見直してください",
+		"mixed_selection_invalid":          "異なる接続方式を2つまたは3つ、優先順に明示してください",
+		"mixed_setup_required":             "mixedを開始する前に、各方式を個別に設定し、必要なペアリング・サインインを完了してください",
+		"mixed_strict_boundary":            "LAN限定の範囲から外部通信を自動追加しません。停止して各方式の通信範囲を明示的に確認してください",
+		"mixed_network_required":           "確認済みのmixedネットワークを開始してから相手を関連付けてください",
+		"mixed_binding_selection":          "異なる接続方式の認証済み経路を2つまたは3つ選んでください",
+		"mixed_binding_unverified":         "同一の相手であることを確認できませんでした。両端末の正確な経路・識別子・許可を確認してください",
+		"mixed_recovery_required":          "許可の保存状態を確認できないためmixedを停止しました。保存済みの許可を確認してから再起動してください",
+		"mixed_operation_failed":           "mixedの操作が完了しませんでした。各方式の準備状況と保存済み設定を確認してから再試行してください",
 
 		"direct_lan_unavailable": "direct LANの待受が未準備です。選択した接続先を確認し、設定済みネットワークを開始してください",
 		"direct_lan_pair_state":  "保存済みのdirect LANペアを確認してください。招待を置き換える前に既存のペアを解除してください",
@@ -103,6 +113,7 @@ func localizeLANSetupError(ja bool, err error) error {
 		"direct_lan_invitation_invalid":       "direct LANの招待が無効または期限切れです。この公開ID宛ての新しい招待を依頼してください",
 		"direct_lan_capacity":                 "direct LANの容量上限です。不要なペアを解除するか、実行中の処理が終わってから再試行してください",
 
+		"lan_saved_start_changed":           "保存済みホストの設定または許可が変更されました。状態を更新し、保存済みホストをもう一度確認してください",
 		"lan_policy_invalid":                "trusted-relay は範囲を指定せず、allowed-lan-destinations は正規表記のプライベート・ULA・ループバックCIDRを明示してください",
 		"lan_policy_setup_required":         "先にLANリレーを選択するか、setup でリレーとポリシーを一緒に保存してください",
 		"lan_policy_relay_outside":          "選択済みリレーと追加候補のリレーを許可範囲に含めるか、不要なリレー候補を先に削除してください",

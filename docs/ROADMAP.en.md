@@ -65,3 +65,9 @@ Keep all examples and published evidence generic. See [capacity](CAPACITY.en.md)
 ## CI latency and conditional real-time tests
 
 Keep short safety/logic checks, four native targets and browser acceptance on every change; select only natural key/lease timing checks by change impact. Transport/auth/timer/Core/config/dependency/helper/workflow or unknown changes require full coverage. Only cumulative docs/CSS changes from an exact verified full baseline are eligible to omit those waits. Release retains every test. See the [selection, provenance, required-check and measurement contract](CI_EFFICIENCY.en.md). Acceptance requires native CI for both selected and full paths and protection requiring the coverage aggregate.
+
+## Later direction: selected tools for approved agents
+
+The current product supplies scoped TCP/UDP connections, explicit sharing permissions, and a local CLI/API. It does not yet provide an MCP server or an end-to-end agent-tool execution layer. A later direction is to let an approved peer’s AI use selected remote tools through a simple sharing/review flow, while keeping connection identity, transport permission and application execution authorization distinct.
+
+Tailscale can already provide device connectivity and remains the normal outside-LAN path. If ordinary Tailscale and an existing application already meet the need, using them alone can be simpler; sobalink is optional. The proposed value is the combination of ordinary-user operation without router port-forwarding setup, easy service sharing, and exact peer/scope/lifetime review, rather than connectivity alone. Network reachability and each tool’s own authentication still apply. A small working tool-sharing demonstration and its security review must precede implementation claims; this direction does not add requirements to the ten-area alpha.6 scope.

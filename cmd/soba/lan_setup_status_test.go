@@ -35,7 +35,7 @@ func TestLANSetupRotationIsExplicitAndLocalized(t *testing.T) {
 }
 
 func TestLANSetupRecoveryMessagesKeepMachineContract(t *testing.T) {
-	for _, code := range []string{"lan_policy_invalid", "lan_policy_setup_required", "lan_policy_relay_outside", "lan_certificate_rotation_required", "lan_certificate_rotation_invalid", "lan_relay_pairs_present", "lan_certificate_expired", "network_restart_required"} {
+	for _, code := range []string{"lan_listener_conflict", "lan_listener_permission_denied", "lan_listener_capacity", "lan_listener_address_unavailable", "lan_start_failed", "lan_policy_invalid", "lan_policy_setup_required", "lan_policy_relay_outside", "lan_certificate_rotation_required", "lan_certificate_rotation_invalid", "lan_relay_pairs_present", "lan_certificate_expired", "network_restart_required"} {
 		for _, locale := range []string{"ja", "en"} {
 			for _, structured := range []bool{false, true} {
 				original := &control.RemoteError{Code: code, Message: "Synthetic private-state recovery"}
@@ -76,6 +76,23 @@ func TestLANStatusReportsSavedReadyAndCertificateSeparately(t *testing.T) {
 		}
 		if locale == "ja" && (!strings.Contains(out.String(), "未準備") || !strings.Contains(out.String(), "停止中")) {
 			t.Fatal("Japanese status lost readiness distinction", out.String())
+		}
+	}
+}
+
+func TestLANStatusUnconfirmedDoesNotClaimStopped(t *testing.T) {
+	for _, ja := range []bool{false, true} {
+		for _, reportedReady := range []bool{false, true} {
+			var status humanLANStatus
+			if err := json.Unmarshal([]byte(`{"configured":true,"readinessKnown":false,"relay":{"kind":"host","address":"127.0.0.1:48443"}}`), &status); err != nil {
+				t.Fatal(err)
+			}
+			status.ListenerReady, status.RelayReady = reportedReady, reportedReady
+			var out bytes.Buffer
+			writeHumanLANStatus(&out, ja, &status)
+			if !strings.Contains(out.String(), text(ja, "status unconfirmed", "状態未確認")) || strings.Contains(out.String(), text(ja, "not running", "停止中")) {
+				t.Fatal("unknown observation became stopped", out.String())
+			}
 		}
 	}
 }

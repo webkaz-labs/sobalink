@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -93,6 +94,10 @@ type Options struct {
 }
 
 type Core struct {
+	lanStartNonce              string
+	lanStartWriteRevision      atomic.Uint64
+	lanStartUncertain          atomic.Bool
+	favoritesUncertain         bool // protected by op; cleared only by a confirmed whole-store write
 	startup                    startupStore
 	startupPending             map[string]string
 	startupStates              map[string]string
@@ -142,6 +147,7 @@ type Core struct {
 	proxies                    map[string]*activeProxy
 	proxyStart                 proxyStarter
 	diagnosticsDial            transport.Dialer
+	portProposalListen         func(context.Context, string, string) (io.Closer, error)
 	rangeState                 *rangeState
 	requestMu                  sync.Mutex
 	inflightRequests           map[string]*pendingRequest
@@ -201,7 +207,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	c := &Core{dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
+	c := &Core{lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
 	c.capacity = limits
 	for _, peer := range p.Peers {
 		if peer.Generation > c.trustGeneration {

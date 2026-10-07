@@ -45,3 +45,14 @@ Without `--tcp`, doctor shows current service observations and the last runtime 
 A successful result says `tcp_reachable`, transport `reachable`, and application `unverified`. It proves TCP acceptance only. The probe sends no application data and does not establish application health, compatibility, TLS, host-key verification or successful login. A generic UDP probe cannot establish those facts either and is rejected.
 
 Results include a stable code, UTC check time and Japanese/English next actions. Local service views retain `lastFailure` after a successful check, transport recovery or stop, until the process ends or the definition is deleted. This added failure history is process-local; the earlier implementation exposed only its current diagnostic result. It is not a durable cross-restart diagnostic journal. Raw target errors and local destinations are not included in peer discovery. Diagnostics neither renew a grant nor change its saved definition.
+
+### Passive network guidance
+
+The local Web notice, `soba status` next step, and passive `soba doctor` JSON use
+one interpretation of the reported network state. They distinguish configuration,
+local-address availability, identity/pin review, certificate status, resource
+capacity, saved-state recovery and unknown causes. The Web offers the relevant
+review surface or an explicit status refresh. Waiting does not automatically
+retry an operation. These notices perform no probe or permission change and do
+not establish an actual direct/relay route or application success. Technical
+codes and details remain available when needed.

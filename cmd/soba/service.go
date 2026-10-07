@@ -42,7 +42,7 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 		return usageError(ja, "service "+operation+" SERVICE_ID [OPTIONS]")
 	}
 	if args[1] == "--help" || args[1] == "-h" {
-		return usageHelp(out, ja, "service "+operation+" SERVICE_ID [--name NAME] [--network tcp|udp] [--ports PORTS] [--exclude PORTS] [--peer ID | --peers IDS] [--local-port PORT] [--loopback-host 127.0.0.1|::1] [--lifetime MODE] [--ttl DURATION] [--discoverable=true|false] [--backend tailnet|lan|direct-lan|mixed]")
+		return usageHelp(out, ja, "service "+operation+" SERVICE_ID [--name NAME] [--network tcp|udp] [--ports PORTS] [--exclude PORTS] [--peer ID | --peers IDS] [--local-port PORT] [--loopback-host 127.0.0.1|::1] [--lifetime MODE] [--ttl DURATION] [--discoverable=true|false] [--backend tailnet|lan|direct-lan|mixed] [--expected-revision REVISION]")
 	}
 	if operation == "show" {
 		f := commandFlags("service show NAME_OR_ID", ja, out)
@@ -85,6 +85,7 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	for _, name := range []string{"name", "network", "ports", "exclude", "peer", "peers", "backend", "loopback-host", "lifetime"} {
 		values[name] = f.String(name, "", text(ja, "override the saved "+name, "保存済みの "+name+" を変更"))
 	}
+	expectedRevision := f.String("expected-revision", "", text(ja, "require the saved revision reviewed with service ports/show (restart only)", "service ports/show で確認した保存済みの版を必須にする（restart のみ）"))
 	local := f.Int("local-port", 0, text(ja, "override the saved listener or application port", "保存済みの入口またはアプリ側ポートを変更"))
 	ttl := f.Duration("ttl", 0, text(ja, "override the saved permission lifetime", "保存済みの許可期間を変更"))
 	discover := f.Bool("discoverable", false, text(ja, "override discovery visibility (true or false)", "共有情報の表示を変更（true または false）"))
@@ -93,6 +94,9 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	}
 	changed := map[string]bool{}
 	f.Visit(func(value *flag.Flag) { changed[value.Name] = true })
+	if changed["expected-revision"] && (operation != "restart" || !validServiceRevision(*expectedRevision)) {
+		return &servicePortCLIError{"service_revision_invalid", "--expected-revision requires restart and a complete saved revision"}
+	}
 	resolved, err := resolveServiceReferences([]string{args[1]}, ja, query)
 	if err != nil {
 		return err
@@ -105,6 +109,9 @@ func serviceCommand(args []string, ja bool, out io.Writer, state stateQuery, que
 	}
 	if err := checkResolvedName(resolved, snapshot.Configuration.ID, snapshot.Configuration.Name, ja); err != nil {
 		return err
+	}
+	if changed["expected-revision"] && snapshot.Revision != *expectedRevision {
+		return &servicePortCLIError{"service_revision_conflict", "Saved configuration changed; check service ports/show again before restarting"}
 	}
 	config := snapshot.Configuration
 	if config.ID != args[1] || (config.Direction != "share" && config.Direction != "forward") || len(snapshot.Revision) != 64 {

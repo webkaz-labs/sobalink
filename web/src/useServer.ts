@@ -85,6 +85,13 @@ export function useServer() {
     let fingerprint: string | undefined
     let messageClaimed = false
     let requested = false
+    // Favorites use fresh reads/review after any uncertain write. Keeping their
+    // one-shot UI keys here would retain unreachable entries on repeated errors
+    // and could replay an obsolete preference view. Other retry guards stay put.
+    // Public-card reads have no effect to retry or retain. Keep this exact
+    // allowlist separate from mutating commands and their uncertainty guards.
+    const cardRead = name === 'device-card.export' || name === 'device-card.inspect'
+    const retainUncertain = !name.startsWith('favorites.') && !cardRead
     try {
       if (name === 'message.send') {
         const message = payload as api.CommandPayloads['message.send']
@@ -99,13 +106,13 @@ export function useServer() {
         messageClaimed = true
       }
       const signature = JSON.stringify({ name, payload })
-      const previous = uncertain.current.get(key)
+      const previous = retainUncertain ? uncertain.current.get(key) : undefined
       const requestId = previous?.signature === signature ? previous.requestId : api.requestID()
-      uncertain.current.set(key, { signature, requestId })
+      if (retainUncertain) uncertain.current.set(key, { signature, requestId })
       requested = true
       const result = await api.command(name, payload, requestId)
       if (!live.current || epoch !== authEpoch.current) return undefined
-      uncertain.current.delete(key)
+      if (retainUncertain) uncertain.current.delete(key)
       await refresh(true)
       if (!live.current || epoch !== authEpoch.current) return undefined
       return result
@@ -114,8 +121,8 @@ export function useServer() {
         uncertainMessages.current.add(fingerprint)
         if (live.current) setMessageGuardRevision(current => current + 1)
       }
-      if (requested && (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code))) uncertain.current.delete(key)
-      if (live.current && epoch === authEpoch.current) handleError(value)
+      if (retainUncertain && requested && (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code))) uncertain.current.delete(key)
+      if (live.current && epoch === authEpoch.current) handleError(cardRead ? new api.ApiError(value instanceof api.ApiError ? value.code : 'request_failed', '') : value)
       return undefined
     }
     finally {

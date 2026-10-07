@@ -62,6 +62,9 @@ export interface PolicyConfig {
 export interface PolicyPreview { restartRequired?: boolean; version: 1; requested: CapacityPolicy; effective: CapacityPolicy; revision: string; destructive: false; usage: Record<string, number> }
 export interface HistoryPreview { version: 1; revision: string; messageIds: string[]; retained: number; remove: number; destructive: true }
 export interface ServiceLimits { effective: { logical?: Record<string, CapacityChoice>; resources: Record<string, CapacityChoice> }; usage: { materializedListeners: number; [key: string]: number } }
+export interface DiagnosticGuidance {
+  code: string; category: string; action: 'review_network' | 'review_capacity' | 'refresh_state' | 'wait'; summary: Record<Locale, string>; nextSteps: Record<Locale, string>
+}
 export interface ServiceDiagnostic {
   serviceId: string; port: number; checkedAt: string; code: string
   transport: 'reachable' | 'unreachable'; application: 'unverified'; nextSteps: Record<Locale, string>
@@ -142,7 +145,7 @@ export interface DirectLanInvitationPreview { hostPublicKey: string; hostName: s
 export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string; availability?: "ready" | "confirmed-unavailable" | "authorization-required" | "readiness-unconfirmed"; restartRequired?: boolean }[] }
 export interface State {
   csrfToken: string
-  self: { name: string; status: string; error?: string; errorCode?: string; receiveDirectory?: string; networks?: Network[] }
+  self: { name: string; status: string; error?: string; errorCode?: string; guidance?: DiagnosticGuidance | null; receiveDirectory?: string; networks?: Network[] }
   peers: Peer[]
   messages: Message[]
   transfers: Transfer[]
@@ -156,15 +159,34 @@ export interface State {
   reservedPorts?: number[]
   servicePresets?: ServicePreset[]
   limits?: ServiceLimits
-  lan?: { configured: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
+  lan?: { savedStart?: LANStartReview; configured: boolean; readinessKnown?: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
   mixed?: MixedStatus
   directLAN?: DirectLanStatus
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }
+}
+export interface LANStartReview {
+  publicKey: string
+  revision: string
+  hostname: string
+  relay: LanRelay
+  policy: Pick<LanPolicy, 'mode' | 'prefixes'>
+  pairedDevices: number
+  trustedDevices: number
+  automaticReceivers: number
+  preparedRelays: LanRelay[]
+  wanCandidates?: { stunEndpoints: string[]; advertiseIPv6: boolean; probeBudget: number }
+  pendingStartup: string[]
 }
 export interface CommandResult { ok: boolean; result?: { authUrl?: string; [key: string]: unknown } }
 export interface ServiceConfiguration extends ServicePayload {
   id: string
   direction: 'forward' | 'share'
+}
+export interface ServicePortProposals {
+  configuration: ServiceConfiguration; revision: string; code: 'listener_conflict' | 'listener_proposals_exhausted'; conflictPort: number
+  effectivePorts: string; checkedAt: string; fromPort: number; attempts: number; requestedCount: number
+  attemptBudget: number; bindChecks: number; stopReason: 'requested_count' | 'attempt_budget' | 'bind_budget' | 'port_range'
+  proposals: { localPort: number; localEnd: number }[]; reservation: false; nextSteps: Record<Locale, string>
 }
 export interface ServiceConfigResult { configuration: ServiceConfiguration; revision: string; active: boolean }
 export interface ServicePayload {
@@ -201,7 +223,15 @@ export interface DefinitionExport { profile: DefinitionBundle; revision: string;
 export interface DefinitionImport extends DefinitionExport { replacesServices: number; preservesIdentity: true; removesRustDeskMetadata?: string[]; applied?: boolean }
 export interface ServiceSelection { services: ServiceConfiguration[]; revision: string; group: string; ready: boolean; states: { id: string; status: Service['status']; lifetime?: ServiceLifetime; ttlSeconds?: number; expiresAt?: string | null; owner?: string; leaseSeconds?: number; leaseExpiresAt?: string | null }[]; application: 'unverified' }
 export interface GroupList { groups: ServiceGroup[] | null; revision: string }
+export type FavoriteReference = { kind: 'service'; serviceId: string } | { kind: 'group'; groupName: string }
+export type FavoriteEntry = FavoriteReference & { available: boolean }
+export interface FavoritesView { version: 1; revision: string; entries: FavoriteEntry[]; durabilityUncertain: boolean }
 export interface CommandPayloads {
+  'device-card.export': { mode: 'lan' | 'direct-lan'; name: string; includeEndpointHint?: boolean; qr?: boolean }
+  'device-card.inspect': { card: string; expectedMode: 'lan' | 'direct-lan' }
+  'favorites.list': Record<string, never>
+  'favorites.add': { reference: FavoriteReference; expectedRevision: string }
+  'favorites.remove': { reference: FavoriteReference; expectedRevision: string }
   'rustdesk.preview': { configuration: RustDeskSetup }
   'rustdesk.save': { configuration: RustDeskSetup; expectedRevision: string }
   'rustdesk.settings': { group: string }
@@ -256,7 +286,8 @@ export interface CommandPayloads {
   'service.share': ServicePayload
   'service.stop': { id: string }
   'service.config': { id: string }
-  'network.configure': { mode: 'none' | Network; mixed?: { backends: TransportBackend[] }; directLAN?: { listen: string; prefixes: string[] }; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
+  'service.ports': { id: string; expectedRevision: string; fromPort?: number; count?: number; attempts?: number }
+  'network.configure': { mode: 'none' | Network; expectedLANStartRevision?: string; mixed?: { backends: TransportBackend[] }; directLAN?: { listen: string; prefixes: string[] }; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
   'network.logout': Record<string, never>
   'network.login': { refresh?: boolean; qr?: boolean }
   'network.login.status': { qr?: boolean }

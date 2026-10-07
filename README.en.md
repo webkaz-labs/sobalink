@@ -4,6 +4,8 @@
 
 **Close, even from afar.** Connect devices and use their applications through selected TCP/UDP services. Start `soba`, choose a peer in its local Web UI, then connect to SSH/SFTP, web, database or other application ports. Share a local service with explicit peers and a chosen lifetime. Text, images, files and folders are also available. The embedded React UI and CLI use the same Go authorization checks.
 
+**Share only the services you choose, without requiring administrator privileges or router port forwarding.** sobalink runs as an ordinary user process without requiring TUN, OS route/firewall changes, or router port-forwarding setup. Choose the peers, ports and lifetime of each share. The selected network still needs a reachable path; existing firewalls or client isolation can prevent connections. Application/server installation and authentication have their own requirements.
+
 **Experimental software.** Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a published version's source, signed assets and verification results. Source feature descriptions alone do not establish acceptance for that version. Real-device enrollment, application compatibility, phone QR, native IME, OS sign-in and sleep/wake need separate checks. [Exact-source verification results](docs/VERIFICATION.en.md)
 
 ## Get started

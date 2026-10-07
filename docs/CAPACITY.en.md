@@ -35,6 +35,7 @@ Resource budgets are independently adjustable and always finite. Representative 
 | --- | --- |
 | `profileBytes`, `lanStateBytes`, `messageStorageBytes` | 4 MiB profile, 2 MiB private LAN state, 4 MiB message storage |
 | `messageTextBytes` | 16 KiB decoded message storage/framing budget |
+| `portProposalResults`, `portProposalAttempts`, `portProposalBinds`, `portProposalSeconds` | 3 alternate-port results, 32 candidate windows, 4096 total transient bind checks, 5 seconds per explicit check |
 | `materializedListeners` | 64 shared across UDP service sockets, local forwards and optional proxy listeners |
 | `tcpConnections`, `tcpPerPolicy`, `tcpPerPeer` | 512 total, 128 per policy, 64 per peer |
 | `udpSessions`, `udpPerPolicy` | 512 total, 256 per policy |

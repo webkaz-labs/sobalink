@@ -36,8 +36,16 @@ func diagnosticNextSteps(code string) map[string]string {
 		en, ja = "Check that the application is listening on the approved port, then check peer reachability and network permissions and retry this TCP check.", "許可したポートでアプリが待ち受けているか確認し、相手への到達状態とネットワークの許可を確認して、この TCP 確認を再実行してください。"
 	case "service_start_failed":
 		en, ja = "Check current peer identity, network availability, local port conflicts and capacity, then retry the reviewed service explicitly.", "現在の端末 ID、ネットワークの接続、ローカルポートの競合、容量を確認し、確認したサービスを明示的に再開始してください。"
+	case "listener_conflict":
+		en, ja = "A local bind reported address-in-use. Use service ports NAME_OR_ID to explicitly check alternatives, then review and restart with a chosen port and revision. Proposals are not reservations; actual start rechecks every bind.", "ローカルの待受で使用中のアドレスが確認されました。service ports NAME_OR_ID で候補を明示的に確認し、選んだポートと版を指定して再開始してください。候補は予約ではなく、実際の開始時に再確認します。"
+	case "listener_capacity":
+		en, ja = "Review the finite listener budget, stop unused work or narrow the selection; changing ports cannot resolve exhausted capacity.", "有限の入口数の上限を確認するか、未使用の動作を停止・選択範囲を縮小してください。容量不足はポートの変更では解消しません。"
+	case "listener_permission_denied":
+		en, ja = "The operating system denied the bind. Review local permissions; do not automatically elevate privileges or alter security settings.", "OS が待受を拒否しました。ローカルのアクセス権を確認してください。自動的な権限昇格やセキュリティ設定の変更は行いません。"
+	case "listener_address_unavailable":
+		en, ja = "Review the explicitly selected IPv4 or IPv6 loopback family before retrying.", "明示的に選んだ IPv4 または IPv6 のループバックを確認してから再試行してください。"
 	case "listener_unavailable":
-		en, ja = "Check for a conflicting local listener or exhausted capacity. Choose a different local port or review capacity settings, then restart explicitly.", "ローカルのポート競合や容量不足を確認してください。別のローカルポートを選ぶか容量設定を確認し、明示的に再開始してください。"
+		en, ja = "The loopback bind failed for an unclassified reason. Review the local listener configuration before retrying.", "原因を分類できないローカル待受の失敗です。入口の設定を確認してから明示的に再試行してください。"
 	case "network_unavailable":
 		en, ja = "Reconnect the selected network. Listener readiness does not prove that the application is reachable.", "選択したネットワークを再接続してください。入口の準備完了だけではアプリへの到達を確認できません。"
 	case "peer_identity_changed":
@@ -78,7 +86,7 @@ func (c *Core) diagnoseCommand(ctx context.Context, raw json.RawMessage) (any, e
 		if in.ServiceID != "" || in.Port != 0 {
 			return nil, &localCommandError{"diagnostic_probe_required", "select an explicit TCP check when choosing a service or port"}
 		}
-		return map[string]any{"services": c.serviceViews(), "proxies": c.proxyViews(), "application": "unverified", "tcpProbePerformed": false, "nextSteps": map[string]string{"en": "Use doctor --service ID --tcp [--port PORT] for one explicit TCP connection check.", "ja": "doctor --service ID --tcp [--port PORT] で、TCP 接続を 1 回明示的に確認できます。"}}, nil
+		return map[string]any{"services": c.serviceViews(), "proxies": c.proxyViews(), "networkGuidance": c.networkGuidance(), "application": "unverified", "tcpProbePerformed": false, "nextSteps": map[string]string{"en": "Use doctor --service ID --tcp [--port PORT] for one explicit TCP connection check.", "ja": "doctor --service ID --tcp [--port PORT] で、TCP 接続を 1 回明示的に確認できます。"}}, nil
 	}
 	c.mu.RLock()
 	active := c.active[in.ServiceID]

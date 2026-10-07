@@ -35,6 +35,7 @@
 | --- | --- |
 | `profileBytes`・`lanStateBytes`・`messageStorageBytes` | プロフィール4 MiB、非公開 LAN 状態2 MiB、文字履歴4 MiB |
 | `messageTextBytes` | 復号した文字列の保存・通信枠16 KiB |
+| `portProposalResults`, `portProposalAttempts`, `portProposalBinds`, `portProposalSeconds` | 明示的なポート確認1回につき候補3個、候補範囲32回、一時的な待受確認の合計4096回、5秒 |
 | `materializedListeners` | UDP 共有・ローカル接続・任意のプロキシ待受で合計64件 |
 | `tcpConnections`・`tcpPerPolicy`・`tcpPerPeer` | 全体512、ポリシーごと128、相手ごと64接続 |
 | `udpSessions`・`udpPerPolicy` | 全体512、ポリシーごと256セッション |

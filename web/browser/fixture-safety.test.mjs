@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
 import SafeReporter from './reporter.mjs'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
+import { createSyntheticPairingInterception, SYNTHETIC_PAIRING_INVITATION, verifyCommandsBeforeCleanup } from './synthetic-pairing.mjs'
 
 const sentinel = 'PRIVATE_FIXTURE_SENTINEL_MUST_NOT_APPEAR'
 const valid = { url: 'http://127.0.0.1:43210/', code: sentinel, scenario: 'studio', receiveDirectory: '/tmp/fixture/received', capabilities: ['service-lifecycle', 'failed-upload-retry', 'application-stop'], localServicePort: 43919 }
@@ -168,4 +169,174 @@ test('fixture teardown preserves both route and cleanup failures', async () => {
   route.reject(routeFailure)
   await rejection
   assert.deepEqual(events, ['drain-started', 'cleanup-started'])
+})
+
+function pairingRequest(name = 'lan.join', requestId = 'synthetic-request-id') {
+  return { name, requestId, payload: { invitation: SYNTHETIC_PAIRING_INVITATION } }
+}
+function pairingRoute(request, { method = 'POST', terminalFailure, beforeTerminal } = {}) {
+  const actions = []
+  return {
+    actions,
+    request: () => ({ method: () => method, postDataJSON: () => request }),
+    async fulfill(options) {
+      actions.push({ fulfill: options })
+      await beforeTerminal?.()
+      if (terminalFailure) throw terminalFailure
+    },
+    async abort(code) {
+      actions.push({ abort: code })
+      await beforeTerminal?.()
+      if (terminalFailure) throw terminalFailure
+    },
+    fetch() { actions.push({ forbidden: 'fetch' }); assert.fail('Protected synthetic commands must never fetch') },
+    continue() { actions.push({ forbidden: 'continue' }); assert.fail('Protected synthetic commands must never continue') },
+    fallback() { actions.push({ forbidden: 'fallback' }); assert.fail('Protected synthetic commands must never fall back') },
+  }
+}
+async function pairingInterception(respond, scenario = 'offline') {
+  const interception = createSyntheticPairingInterception(scenario)
+  let handle
+  await interception.install({ async route(pattern, handler) { assert.equal(pattern, '**/api/command'); handle = handler } }, respond)
+  return { interception, handle }
+}
+const counts = values => async name => values[name] || 0
+const privateFailure = error => !error.message.includes(sentinel) && /details withheld/.test(error.message)
+
+test('synthetic pairing is explicit, offline-only and cannot replace an existing interceptor', async () => {
+  for (const scenario of ['studio', 'routes', 'receive-legacy', 'receive-damaged', 'unknown']) {
+    let installs = 0
+    await assert.rejects(createSyntheticPairingInterception(scenario).install({ route() { installs++ } }, () => ({ json: {} })), /offline/)
+    assert.equal(installs, 0)
+  }
+  const { interception } = await pairingInterception(() => ({ json: {} }))
+  await assert.rejects(interception.install({ route() { assert.fail('Must not install twice') } }, () => ({ json: {} })), /one explicit responder/)
+})
+
+test('synthetic pairing records exact settled commands including aborted retries without changing raw counts', async () => {
+  const seen = []
+  const { interception, handle } = await pairingInterception(function (command) {
+    assert.equal(arguments.length, 1)
+    assert.deepEqual(Object.keys(command).sort(), ['name', 'payload', 'requestId'])
+    assert.ok(Object.isFrozen(command) && Object.isFrozen(command.payload))
+    seen.push(command)
+    return seen.length === 2 ? { abort: 'failed' } : { json: { ok: true, result: { paired: command.name === 'lan.join' } } }
+  })
+  for (const name of ['lan.inspect', 'lan.join', 'lan.join']) {
+    const route = pairingRoute(pairingRequest(name))
+    await handle(route)
+    assert.equal(route.actions.length, 1)
+    if (seen.length === 2) assert.deepEqual(route.actions, [{ abort: 'failed' }])
+    else {
+      assert.equal(route.actions[0].fulfill.status, 200)
+      assert.equal(route.actions[0].fulfill.contentType, 'application/json')
+    }
+  }
+  const records = interception.records()
+  assert.deepEqual(records.map(record => record.command), seen)
+  assert.deepEqual(records.map(record => record.outcome), ['fulfilled', 'aborted', 'fulfilled'])
+  assert.equal(records[1].command.requestId, records[2].command.requestId)
+  assert.ok(Object.isFrozen(records) && records.every(Object.isFrozen))
+  assert.throws(() => records.pop())
+  assert.throws(() => { records[1].command.name = 'network.login' })
+  const raw = { 'lan.inspect': 1, 'lan.join': 2 }
+  await interception.verify(counts(raw))
+  assert.deepEqual(raw, { 'lan.inspect': 1, 'lan.join': 2 })
+  for (const values of [{ ...raw, 'lan.join': 3 }, { ...raw, 'lan.join': 1 }, { ...raw, 'lan.inspect': 2 }, { ...raw, 'network.login': 1 }, { ...raw, 'lan.invite': 1 }]) {
+    await assert.rejects(interception.verify(counts(values)), /Every enrollment attempt/)
+  }
+})
+
+test('default enrollment guard still rejects every unaccounted enrollment attempt', async () => {
+  for (const scenario of ['offline', 'studio', 'routes']) {
+    const interception = createSyntheticPairingInterception(scenario)
+    await interception.verify(counts({}))
+    for (const name of ['network.login', 'lan.invite', 'lan.join']) await assert.rejects(interception.verify(counts({ [name]: 1 })), /Every enrollment attempt/)
+  }
+})
+
+test('synthetic pairing blocks real payloads, malformed requests, other commands and non-POST requests before the responder', async () => {
+  const requests = [null, {}, { ...pairingRequest(), payload: { invitation: sentinel } }, { ...pairingRequest(), payload: { invitation: SYNTHETIC_PAIRING_INVITATION, other: sentinel } }, { ...pairingRequest(), requestId: '' }, { ...pairingRequest(), requestId: 123 }, { ...pairingRequest(), requestId: sentinel.repeat(30) }, { ...pairingRequest(), extra: sentinel }, ...['network.login', 'lan.invite', 'network.configure', 'unknown'].map(name => pairingRequest(name))]
+  for (const request of requests) {
+    const { interception, handle } = await pairingInterception(() => { assert.fail('Invalid data must not reach the responder') })
+    const route = pairingRoute(request)
+    await assert.rejects(handle(route), privateFailure)
+    assert.deepEqual(route.actions, [{ abort: 'blockedbyclient' }])
+    assert.deepEqual(interception.records(), [])
+    await assert.rejects(interception.verify(counts({})), privateFailure)
+  }
+  const { handle } = await pairingInterception(() => { assert.fail('GET must not reach the responder') })
+  const route = pairingRoute(pairingRequest(), { method: 'GET' })
+  await assert.rejects(handle(route), privateFailure)
+  assert.deepEqual(route.actions, [{ abort: 'blockedbyclient' }])
+})
+
+test('synthetic responders cannot request forwarding, fetch, fallback or arbitrary route options', async () => {
+  for (const result of [undefined, {}, { continue: true }, { fetch: true }, { fallback: true }, { response: sentinel }, { json: {}, response: sentinel }, { abort: 'other' }, { abort: 'failed', json: {} }, { json: null }, { json: [] }]) {
+    const { interception, handle } = await pairingInterception(() => result)
+    const route = pairingRoute(pairingRequest())
+    await assert.rejects(handle(route), privateFailure)
+    assert.deepEqual(route.actions, [{ abort: 'blockedbyclient' }])
+    assert.deepEqual(interception.records(), [])
+    await assert.rejects(interception.verify(counts({})), privateFailure)
+  }
+})
+
+test('thrown responders and rejected fulfill or abort actions cannot count as controlled interception', async () => {
+  for (const respond of [() => { throw new Error(sentinel) }, () => ({ json: {} }), () => ({ abort: 'failed' })]) {
+    const { interception, handle } = await pairingInterception(respond)
+    const route = pairingRoute(pairingRequest(), { terminalFailure: new Error(sentinel) })
+    await assert.rejects(handle(route), privateFailure)
+    assert.deepEqual(interception.records(), [])
+    await assert.rejects(interception.verify(counts({ 'lan.join': 1 })), privateFailure)
+  }
+  const interception = createSyntheticPairingInterception('offline')
+  await assert.rejects(interception.install({ route() { throw new Error(sentinel) } }, () => ({ json: {} })), privateFailure)
+  await assert.rejects(interception.verify(counts({})), privateFailure)
+})
+
+test('synthetic audit waits for the exact in-flight terminal action before mandatory cleanup', async () => {
+  const terminal = Promise.withResolvers()
+  const { interception, handle } = await pairingInterception(() => ({ json: {} }))
+  const route = pairingRoute(pairingRequest(), { beforeTerminal: () => terminal.promise })
+  const pending = handle(route)
+  let cleaned = false
+  const teardown = drainRoutesBeforeCleanup({
+    async unrouteAll(options) { assert.deepEqual(options, { behavior: 'wait' }); await pending },
+  }, () => verifyCommandsBeforeCleanup(interception, counts({ 'lan.join': 1 }), async () => { cleaned = true }))
+  await Promise.resolve()
+  assert.deepEqual(interception.records(), [])
+  assert.equal(cleaned, false)
+  terminal.resolve()
+  await teardown
+  assert.equal(interception.records().length, 1)
+  assert.equal(cleaned, true)
+})
+
+test('failed-test safety audit still detects unaccounted enrollment and always cleans up', async () => {
+  const interception = createSyntheticPairingInterception('offline')
+  let cleaned = false
+  await assert.rejects(verifyCommandsBeforeCleanup(interception, counts({ 'lan.join': 1 }), async () => { cleaned = true }), /Every enrollment attempt/)
+  assert.equal(cleaned, true)
+  cleaned = false
+  await assert.rejects(verifyCommandsBeforeCleanup(interception, async () => { throw new Error('page unavailable') }, async () => { cleaned = true }), /page unavailable/)
+  assert.equal(cleaned, true)
+  cleaned = false
+  await verifyCommandsBeforeCleanup(interception, null, async () => { cleaned = true })
+  assert.equal(cleaned, true)
+})
+
+test('route, command audit and cleanup failures are all preserved', async () => {
+  const routeFailure = new Error('synthetic drain failure'), cleanupFailure = new Error('synthetic cleanup failure')
+  const interception = createSyntheticPairingInterception('offline')
+  let cleaned = false
+  await assert.rejects(drainRoutesBeforeCleanup({ async unrouteAll() { throw routeFailure } }, () => verifyCommandsBeforeCleanup(interception, counts({ 'lan.join': 1 }), async () => { cleaned = true; throw cleanupFailure })), error => {
+    assert.ok(error instanceof AggregateError)
+    assert.equal(error.errors[0], routeFailure)
+    assert.ok(error.errors[1] instanceof AggregateError)
+    assert.match(error.errors[1].errors[0].message, /Every enrollment attempt/)
+    assert.equal(error.errors[1].errors[1], cleanupFailure)
+    return true
+  })
+  assert.equal(cleaned, true)
 })

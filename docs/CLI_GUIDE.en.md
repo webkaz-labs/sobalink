@@ -86,6 +86,6 @@ See the [startup guide](STARTUP.en.md) for reviewing and managing those separate
 
 ## Recovery and private inputs
 
-Port conflicts do not silently choose another port. Edit the reviewed local port or stop the conflicting listener deliberately. Refresh discovery after a grant or network change and select the current service again. Keep the agent and the provider application running for endpoint use.
+Port conflicts do not silently choose another port. For a stopped saved outbound connection, `soba service ports NAME_OR_ID` explicitly checks alternatives without changing its fixed port. Review the full definition and lifetime, then separately choose `soba service restart NAME_OR_ID --local-port PORT --expected-revision REVISION`. Proposals are not reservations; actual start rechecks every bind. See [alternate-port checks](PORT_PROPOSALS.en.md). You can also edit the reviewed local port or stop the conflicting listener deliberately. Refresh discovery after a grant or network change and select the current service again. Keep the agent and the provider application running for endpoint use.
 
 Credentials and private invitations do not belong in command arguments, shell history or logs. Use the existing private file/pipe input commands and explicit runtime approvals. No example above contains a credential or configures a real device.
