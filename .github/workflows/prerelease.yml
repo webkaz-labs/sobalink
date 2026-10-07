@@ -260,13 +260,14 @@ jobs:
               sys.executable, ".github/scripts/ci-go-test.py",
               "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
               "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCorePeerApplicationsIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCoreSavedHostStartIntegration",
               "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
               "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestManagedRelayCandidateFailoverIntegration",
               "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
               "--",
               "go", "test", "-count=1", "-v",
               "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestLANCoreSavedHostStartIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
               "-timeout=5m", "./internal/lanlink", "./internal/core", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PY
