@@ -487,16 +487,28 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.stopApplication(), nil
 	case "network.configure":
 		var v struct {
-			Mode              string              `json:"mode"`
-			Hostname          string              `json:"hostname"`
-			Mixed             *MixedSelection     `json:"mixed,omitempty"`
-			DirectLAN         *DirectLANSelection `json:"directLAN,omitempty"`
-			LAN               *LANSelection       `json:"lan,omitempty"`
-			RotateCertificate bool                `json:"rotateCertificate,omitempty"`
-			LANPolicy         *lanpolicy.Config   `json:"lanPolicy,omitempty"`
+			Mode                     string              `json:"mode"`
+			Hostname                 string              `json:"hostname"`
+			Mixed                    *MixedSelection     `json:"mixed,omitempty"`
+			DirectLAN                *DirectLANSelection `json:"directLAN,omitempty"`
+			LAN                      *LANSelection       `json:"lan,omitempty"`
+			RotateCertificate        bool                `json:"rotateCertificate,omitempty"`
+			LANPolicy                *lanpolicy.Config   `json:"lanPolicy,omitempty"`
+			ExpectedLANStartRevision json.RawMessage     `json:"expectedLANStartRevision,omitempty"`
 		}
 		if e := decodePayload(cmd.Payload, &v); e != nil {
 			return nil, e
+		}
+		if len(v.ExpectedLANStartRevision) != 0 {
+			var expected string
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(cmd.Payload, &fields)
+			if len(fields) != 2 || json.Unmarshal(v.ExpectedLANStartRevision, &expected) != nil || expected == "" || v.Mode != "lan" || v.Hostname != "" || v.LAN != nil || v.LANPolicy != nil || v.RotateCertificate || v.Mixed != nil || v.DirectLAN != nil {
+				return nil, &lanCommandError{"lan_saved_start_changed", "reviewed saved-host start cannot change the network, hostname, relay, certificate or destination policy"}
+			}
+			if err := c.checkSavedLANStart(expected); err != nil {
+				return nil, err
+			}
 		}
 		p := c.profileCopy()
 		if v.Mode != "tailnet" && v.Mode != "lan" && v.Mode != "direct-lan" && v.Mode != "mixed" && v.Mode != "none" {

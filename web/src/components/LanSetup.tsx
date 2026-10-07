@@ -4,6 +4,7 @@ import { timestamp, type Translate } from '../i18n'
 import { lanTranslator } from '../lan-i18n'
 import './LanSetup.css'
 import { DeviceCards } from './DeviceCards'
+import { SavedLanHost } from './SavedLanHost'
 import { PreparedLanRoutes } from './LanRoutes'
 import { InitialLanPolicy, SavedLanPolicy, selectedLANPolicy, PolicySummary, type LanPolicyDraft, type LanPolicySelection } from './LanPolicy'
 import { policyTranslator } from '../lan-policy-i18n'
@@ -28,6 +29,8 @@ export interface LanDraft extends LanPolicyDraft {
   joinedPeerId?: string
   hostname?: string
   hostAddress?: string
+  hostAddressMode?: 'list' | 'manual'
+  hostManualAddress?: string
   hostPort?: string
   relayAddress?: string
   relayPin?: string
@@ -84,16 +87,30 @@ function eligibleAddress(value: unknown): value is LanAddress {
   const parts = item.address.split('.').map(Number)
   return parts[0] === 10 || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) || (parts[0] === 192 && parts[1] === 168)
 }
+function manualHostChoice(value: string, source: string): LanAddress | undefined {
+  const choice = { interface: source, address: value.trim() }
+  // Validate the same private-address classes first. Canonical spelling is
+  // shared by the review, Core payload and saved-certificate comparison.
+  if (!eligibleAddress(choice)) return undefined
+  if (choice.address.includes(':')) choice.address = new URL(`https://[${choice.address}]`).hostname.slice(1, -1)
+  return choice
+}
 function HostRelay({ server, state, t, locale, hostname, setHostname, blocked, draft, setDraft }: { server: Server; state: State; t: Translate; locale: Locale; hostname: string; setHostname: (value: string) => void; blocked: boolean; draft: LanDraft; setDraft: Dispatch<SetStateAction<LanDraft>> }) {
   const lt = lanTranslator(locale)
   const alive = useAlive()
   const [addresses, setAddresses] = useState<LanAddress[]>()
   const selected = draft.hostAddress || ''
+  const manual = draft.hostAddressMode === 'manual'
+  const manualAddress = draft.hostManualAddress || ''
   const port = draft.hostPort ?? (state.lan?.relay?.kind === 'host' ? state.lan.relay.address.match(/:(\d+)$/)?.[1] : undefined) ?? '48443'
   const setSelected = (value: string | ((current: string) => string)) => setDraft(current => ({ ...current, hostAddress: typeof value === 'function' ? value(current.hostAddress || '') : value }))
   const setPort = (value: string) => setDraft(current => ({ ...current, hostPort: value }))
   const [validation, setValidation] = useState('')
-  const [review, setReview] = useState<{ address: LanAddress; port: number; hostname: string; policy?: LanPolicySelection }>()
+  const [prepared, setReview] = useState<{ address: LanAddress; port: number; hostname: string; policy?: LanPolicySelection; revision: number }>()
+  const binding = JSON.stringify([hostname, selected, port, manual, manualAddress, draft.policyMode, draft.policyPrefixes, state.settings?.network, state.lan?.publicKey, state.lan?.relay, state.lan?.policy, state.lan?.certificate?.state, server.auth, server.stale, state.csrfToken, blocked])
+  const context = useRef({ binding, revision: 0 })
+  if (context.current.binding !== binding) context.current = { binding, revision: context.current.revision + 1 }
+  const review = prepared?.revision === context.current.revision ? prepared : undefined
   const addressesRequest = useRef(0)
   const startPending = useRef(false)
   const [startAccepted, setStartAccepted] = useState(false)
@@ -124,46 +141,54 @@ function HostRelay({ server, state, t, locale, hostname, setHostname, blocked, d
   const reviewHost = (event: FormEvent) => {
     event.preventDefault(); setValidation('')
     if (blocked) return
-    const address = addresses?.find(item => `${item.interface}\n${item.address}` === selected)
-    if (!address) { setValidation(lt('addressRequired')); return }
+    const address = manual ? manualHostChoice(manualAddress, lt('manualAddressSource')) : addresses?.find(item => `${item.interface}\n${item.address}` === selected)
+    if (!address || !eligibleAddress(address)) { setValidation(lt(manual ? 'manualAddressInvalid' : 'addressRequired')); return }
     const portNumber = Number(port)
     if (!/^\d+$/.test(port) || !Number.isInteger(portNumber) || portNumber < 1024 || portNumber > 65535 || [54543, 54544, 54545, ...(state.reservedPorts || [])].includes(portNumber)) { setValidation(lt('hostPortInvalid')); return }
     const policy = !state.lan?.configured ? selectedLANPolicy(draft) : undefined
     if (policy?.mode === 'allowed-lan-destinations' && !policy.prefixes.length) { setValidation(policyTranslator(locale)('required')); return }
     setRotateCertificate(false)
-    setReview({ address, port: portNumber, hostname: hostname.trim(), policy })
+    setReview({ address, port: portNumber, hostname: hostname.trim(), policy, revision: context.current.revision })
   }
   const start = async () => {
     if (!review || blocked || rotationBlocked || (rotationRequired && !rotateCertificate) || startPending.current || startAccepted || server.busy.has('network.configure')) return
     startPending.current = true
     try {
       const response = await server.run('network.configure', { mode: 'lan', hostname: review.hostname, lan: { kind: 'host', address: reviewedEndpoint }, ...(rotateCertificate ? { rotateCertificate: true } : {}), ...(review.policy ? { lanPolicy: review.policy } : {}) })
-      if (response && alive.current) setStartAccepted(true)
+      if (response && alive.current && review.revision === context.current.revision) setStartAccepted(true)
     } finally { startPending.current = false }
   }
-  return <div className="relay-host form-stack"><p className="small muted">{lt('hostHint')}</p>{validation && <ErrorBanner message={validation} t={t} />}{review ? <div className="invitation-card relay-review" role="region" aria-label={lt('hostReview')} tabIndex={-1} ref={reviewRegion}><strong>{lt('hostReview')}</strong><dl><dt>{t('deviceName')}</dt><dd>{review.hostname}</dd><dt>{lt('selectedInterface')}</dt><dd>{review.address.interface}</dd><dt>{lt('tcpListener')}</dt><dd className="code-value">{relayEndpoint(review.address.address, review.port)}</dd></dl><p className="small muted">{lt('hostImpact')}</p>{review.policy && <PolicySummary policy={review.policy} locale={locale} />}{savedHost && <div className="form-stack"><p className="small muted">{lt('certificateReuse')}</p>{rotationRequired && <p className="scope-note">{lt('certificateRotationRequired')}</p>}<label className="checkbox-field"><input type="checkbox" checked={rotateCertificate} disabled={server.busy.has('network.configure') || startAccepted} onChange={event => setRotateCertificate(event.target.checked)} />{lt('rotateCertificate')}</label>{rotateCertificate && <p className="scope-note">{lt('certificateRotationImpact')}</p>}{rotationBlocked && <p role="alert" className="scope-note">{lt('certificatePairsPresent')}</p>}</div>}<div className="invitation-actions"><Button type="button" disabled={server.busy.has('network.configure') || startAccepted} onClick={() => { setReview(undefined); setStartAccepted(false); setRotateCertificate(false) }}>{t('cancel')}</Button><Button type="button" variant="primary" disabled={blocked || rotationBlocked || (rotationRequired && !rotateCertificate) || startAccepted} busy={server.busy.has('network.configure')} onClick={start}>{lt('startHost')}</Button></div>{startAccepted && <p role="status" className="small muted">{t('actionAccepted')}</p>}</div> : <form className="form-stack" onSubmit={reviewHost}><label className="field">{t('deviceName')}<input value={hostname} onChange={event => setHostname(event.target.value)} maxLength={63} pattern="[\p{L}\p{N}](?:[\p{L}\p{N}]|-){0,62}" title={t('hostnameHint')} required /></label><div><Button type="button" disabled={blocked} busy={server.busy.has('lan.addresses')} onClick={findAddresses}><Icon name="refresh" size={15} />{lt('refreshAddresses')}</Button></div>{addresses && addresses.length === 0 && <p className="scope-note" role="status">{lt('noAddresses')}</p>}<label className="field">{lt('addressChoice')}<select value={selected} onChange={event => { setSelected(event.target.value); setValidation('') }} required disabled={!addresses?.length || blocked}><option value="">{lt('chooseAddress')}</option>{addresses?.map(item => <option key={`${item.interface}\n${item.address}`} value={`${item.interface}\n${item.address}`}>{item.address} · {item.interface}</option>)}</select></label><label className="field">{lt('hostPort')}<input type="number" min="1024" max="65535" step="1" value={port} onChange={event => { setPort(event.target.value); setValidation('') }} required /><small className="muted">{lt('hostPortHint')}</small></label><Button type="submit" variant="primary" disabled={blocked || !selected}>{lt('reviewHost')}<Icon name="arrow" size={15} /></Button></form>}</div>
+  return <div className="relay-host form-stack"><p className="small muted">{lt('hostHint')}</p>{validation && <ErrorBanner message={validation} t={t} />}{review ? <div className="invitation-card relay-review" role="region" aria-label={lt('hostReview')} tabIndex={-1} ref={reviewRegion}><strong>{lt('hostReview')}</strong><dl><dt>{t('deviceName')}</dt><dd>{review.hostname}</dd><dt>{lt('selectedInterface')}</dt><dd>{review.address.interface}</dd><dt>{lt('tcpListener')}</dt><dd className="code-value">{relayEndpoint(review.address.address, review.port)}</dd></dl><p className="small muted">{lt('hostImpact')}</p>{review.policy && <PolicySummary policy={review.policy} locale={locale} />}{savedHost && <div className="form-stack"><p className="small muted">{lt('certificateReuse')}</p>{rotationRequired && <p className="scope-note">{lt('certificateRotationRequired')}</p>}<label className="checkbox-field"><input type="checkbox" checked={rotateCertificate} disabled={server.busy.has('network.configure') || startAccepted} onChange={event => setRotateCertificate(event.target.checked)} />{lt('rotateCertificate')}</label>{rotateCertificate && <p className="scope-note">{lt('certificateRotationImpact')}</p>}{rotationBlocked && <p role="alert" className="scope-note">{lt('certificatePairsPresent')}</p>}</div>}<div className="invitation-actions"><Button type="button" disabled={server.busy.has('network.configure') || startAccepted} onClick={() => { setReview(undefined); setStartAccepted(false); setRotateCertificate(false) }}>{t('cancel')}</Button><Button type="button" variant="primary" disabled={blocked || rotationBlocked || (rotationRequired && !rotateCertificate) || startAccepted} busy={server.busy.has('network.configure')} onClick={start}>{lt('startHost')}</Button></div>{startAccepted && <p role="status" className="small muted">{t('actionAccepted')}</p>}</div> : <form className="form-stack" onSubmit={reviewHost}><label className="field">{t('deviceName')}<input value={hostname} onChange={event => setHostname(event.target.value)} maxLength={63} pattern="[\p{L}\p{N}](?:[\p{L}\p{N}]|-){0,62}" title={t('hostnameHint')} required /></label><div><Button type="button" disabled={blocked} busy={server.busy.has('lan.addresses')} onClick={findAddresses}><Icon name="refresh" size={15} />{lt('refreshAddresses')}</Button></div>{addresses && addresses.length === 0 && <p className="scope-note" role="status">{lt('noAddresses')}</p>}<label className="checkbox-field"><input type="checkbox" checked={manual} disabled={blocked} onChange={event => { setDraft(current => ({ ...current, hostAddressMode: event.target.checked ? 'manual' : 'list' })); setValidation('') }} />{lt('manualHostAddress')}</label>{manual ? <label className="field">{lt('manualAddress')}<input value={manualAddress} onChange={event => { setDraft(current => ({ ...current, hostManualAddress: event.target.value })); setValidation('') }} required disabled={blocked} autoComplete="off" spellCheck={false} maxLength={45} placeholder="192.168.50.10" /><small className="muted">{lt('manualAddressHint')}</small></label> : <label className="field">{lt('addressChoice')}<select value={selected} onChange={event => { setSelected(event.target.value); setValidation('') }} required disabled={!addresses?.length || blocked}><option value="">{lt('chooseAddress')}</option>{addresses?.map(item => <option key={`${item.interface}\n${item.address}`} value={`${item.interface}\n${item.address}`}>{item.address} · {item.interface}</option>)}</select></label>}<label className="field">{lt('hostPort')}<input type="number" min="1024" max="65535" step="1" value={port} onChange={event => { setPort(event.target.value); setValidation('') }} required /><small className="muted">{lt('hostPortHint')}</small></label><Button type="submit" variant="primary" disabled={blocked || !(manual ? manualAddress.trim() : selected)}>{lt('reviewHost')}<Icon name="arrow" size={15} /></Button></form>}</div>
 }
 export function StopApplication({ server, state, t, locale, blocked, onStopping }: { server: Server; state: State; t: Translate; locale: Locale; blocked: boolean; onStopping: () => void }) {
   const lt = lanTranslator(locale)
   const alive = useAlive()
   const [review, setReview] = useState(false)
+  const pending = useRef(false)
+  const [stopPending, setStopPending] = useState(false)
+  const accepted = useRef(false)
   const reviewRegion = useRef<HTMLDivElement>(null)
   useEffect(() => { if (review) reviewRegion.current?.focus() }, [review])
   const transfers = state.transfers.filter(item => ['offered', 'awaiting-acceptance', 'queued', 'transferring', 'saving'].includes(item.status)).length
   const services = [...state.services, ...state.shares].filter(item => ['active', 'reconnecting'].includes(item.status)).length
   const stop = async () => {
-    if (!review || blocked) return
-    const response = await server.run('application.stop', {})
-    if (!alive.current || !response) return
-    if (response.result?.state !== 'stopping') { server.setError({ code: 'invalid_response' }); return }
-    onStopping()
+    if (!review || blocked || pending.current || accepted.current || server.busy.has('application.stop')) return
+    pending.current = true; setStopPending(true)
+    try {
+      const response = await server.run('application.stop', {})
+      if (!alive.current || !response) return
+      if (response.result?.state !== 'stopping') { server.setError({ code: 'invalid_response' }); return }
+      accepted.current = true
+      onStopping()
+    } finally { pending.current = false; if (alive.current) setStopPending(false) }
   }
-  return review ? <div className="invitation-card relay-stop-review" role="region" aria-label={lt('stopReview')} tabIndex={-1} ref={reviewRegion}><strong>{lt('stopReview')}</strong><p className="small muted">{lt('stopImpact')}</p><dl><dt>{lt('activeTransfers')}</dt><dd>{transfers}</dd><dt>{lt('activeServices')}</dt><dd>{services}</dd></dl><div className="invitation-actions"><Button disabled={server.busy.has('application.stop')} onClick={() => setReview(false)}>{t('cancel')}</Button><Button variant="danger" disabled={blocked} busy={server.busy.has('application.stop')} onClick={stop}>{lt('confirmStop')}</Button></div></div> : <div><Button variant="ghost" disabled={blocked} onClick={() => setReview(true)}><Icon name="stop" size={15} />{lt('stopApplication')}</Button></div>
+  return review ? <div className="invitation-card relay-stop-review" role="region" aria-label={lt('stopReview')} tabIndex={-1} ref={reviewRegion}><strong>{lt('stopReview')}</strong><p className="small muted">{lt('stopImpact')}</p><dl><dt>{lt('activeTransfers')}</dt><dd>{transfers}</dd><dt>{lt('activeServices')}</dt><dd>{services}</dd></dl><div className="invitation-actions"><Button disabled={stopPending || accepted.current || server.busy.has('application.stop')} onClick={() => setReview(false)}>{t('cancel')}</Button><Button variant="danger" disabled={blocked || accepted.current} busy={stopPending || server.busy.has('application.stop')} onClick={stop}>{lt('confirmStop')}</Button></div></div> : <div><Button variant="ghost" disabled={blocked} onClick={() => setReview(true)}><Icon name="stop" size={15} />{lt('stopApplication')}</Button></div>
 }
 
 export function LanSetup({ server, state, t, locale, hostname, setHostname, draft, setDraft, onViewPeer, showStopControl = true, applicationStopping = false }: { server: Server; state: State; t: Translate; locale: Locale; hostname: string; setHostname: (value: string) => void; draft: LanDraft; setDraft: Dispatch<SetStateAction<LanDraft>>; onViewPeer: (id: string) => void; showStopControl?: boolean; applicationStopping?: boolean }) {
   const lt = lanTranslator(locale)
   const [stopping, setStopping] = useState(false)
+  const [editSavedHost, setEditSavedHost] = useState(false)
   const [preview, setPreview] = useState<{ source: string; invitation: string; data: LanInvitationPreview; policy?: LanPolicySelection; scope: LanPolicySelection; revision: number }>()
   const [inspecting, setInspecting] = useState(false)
   const inspectPending = useRef(false)
@@ -196,7 +221,7 @@ export function LanSetup({ server, state, t, locale, hostname, setHostname, draf
   const ready = state.settings?.network === 'lan' && Boolean(state.lan?.configured && state.lan.pairingReady) && !server.stale
   // Bind read-only inspection and review to the exact input and current local
   // context. Reverting a field does not resurrect an earlier review.
-  const inputBinding = JSON.stringify([draft.joinInvitation, publicKey, hostname, draft.relayAddress, draft.relayPin, draft.hostAddress, draft.hostPort, draft.policyMode, draft.policyPrefixes, section, server.auth, server.stale, state.csrfToken, blocked, hasActiveInvite])
+  const inputBinding = JSON.stringify([draft.joinInvitation, publicKey, hostname, draft.relayAddress, draft.relayPin, draft.hostAddress, draft.hostAddressMode, draft.hostManualAddress, draft.hostPort, draft.policyMode, draft.policyPrefixes, section, server.auth, server.stale, state.csrfToken, blocked, hasActiveInvite])
   const runtimeBinding = joinRuntime(state)
   const binding = JSON.stringify([inputBinding, runtimeBinding])
   const context = useRef({ binding, revision: 0 })
@@ -319,10 +344,11 @@ export function LanSetup({ server, state, t, locale, hostname, setHostname, draf
   const changeSection = (value: 'invite' | 'join') => { ++joinSequence.current; setSection(value); setPreview(undefined); setJoinProgress(false); setValidation('') }
   return <div className="lan-setup">
     <section className="lan-step"><h3><span>1</span>{t('deviceIdentity')}</h3><p className="small muted">{t('publicIdHint')}</p>{publicKey ? <><p className="public-id code-value" aria-label={t('publicId')}>{publicKey}</p><CopyValue value={publicKey} label={t('copyPublicId')} t={t} /></> : <Button onClick={createIdentity} disabled={blocked} busy={server.busy.has('lan.identity')}><Icon name="shield" size={15} />{t('createIdentity')}</Button>}</section>
-    <DeviceCards server={server} locale={locale} mode="lan" publicKey={publicKey} disabled={blocked || joinProgress} canUseRecipient={!hasActiveInvite && !consumed} binding={JSON.stringify([state.settings?.network, state.lan?.relay, state.lan?.policy, state.lan?.configured, hostname, address, pin, draft.hostAddress, draft.hostPort, draft.policyMode, draft.policyPrefixes, section, draft.recipientPublicKey, draft.recipientName])} onUseRecipient={({ publicKey, name }) => setDraft(current => ({ ...current, recipientPublicKey: publicKey, recipientName: name }))} />
-    <section className="lan-step"><h3><span>2</span>{lt('connectLan')}</h3><div className="segmented pairing-tabs" role="group" aria-label={lt('connectLan')}><button type="button" disabled={joinProgress} aria-pressed={section === 'invite'} onClick={() => changeSection('invite')}>{state.lan?.configured ? t('inviteDevice') : lt('hostRelay')}</button><button type="button" disabled={joinProgress} aria-pressed={section === 'join'} onClick={() => changeSection('join')}>{t('joinDevice')}</button></div><RelaySummary state={state} t={t} locale={locale} />
+    <DeviceCards server={server} locale={locale} mode="lan" publicKey={publicKey} disabled={blocked || joinProgress} canUseRecipient={!hasActiveInvite && !consumed} binding={JSON.stringify([state.settings?.network, state.lan?.relay, state.lan?.policy, state.lan?.configured, hostname, address, pin, draft.hostAddress, draft.hostAddressMode, draft.hostManualAddress, draft.hostPort, draft.policyMode, draft.policyPrefixes, section, draft.recipientPublicKey, draft.recipientName])} onUseRecipient={({ publicKey, name }) => setDraft(current => ({ ...current, recipientPublicKey: publicKey, recipientName: name }))} />
+    <section className="lan-step"><h3><span>2</span>{lt('connectLan')}</h3>{!state.lan?.configured && <p className="small muted">{lt('chooseHostHint')}</p>}<div className="segmented pairing-tabs" role="group" aria-label={lt('connectLan')}><button type="button" disabled={joinProgress} aria-pressed={section === 'invite'} onClick={() => changeSection('invite')}>{state.lan?.configured ? t('inviteDevice') : lt('hostRelay')}</button><button type="button" disabled={joinProgress} aria-pressed={section === 'join'} onClick={() => changeSection('join')}>{t('joinDevice')}</button></div><RelaySummary state={state} t={t} locale={locale} />
       {!state.lan?.configured ? <InitialLanPolicy server={server} locale={locale} draft={draft} disabled={blocked || joinProgress} onChange={value => { ++joinSequence.current; setPreview(undefined); setValidation(''); setDraft(current => ({ ...current, ...value })) }} /> : <SavedLanPolicy server={server} state={state} locale={locale} t={t} disabled={blocked || joinProgress} />}
-      {section === 'invite' && (!state.lan?.configured || state.lan.relay?.kind === 'host' && !state.lan.relayReady) && <HostRelay server={server} state={state} t={t} locale={locale} hostname={hostname} setHostname={setHostname} blocked={blocked || joinProgress} draft={draft} setDraft={setDraft} />}
+      {section === 'invite' && state.lan?.savedStart && <SavedLanHost key={JSON.stringify([hostname, draft.hostAddress, draft.hostAddressMode, draft.hostManualAddress, draft.hostPort, draft.policyMode, draft.policyPrefixes])} server={server} state={state} locale={locale} t={t} blocked={blocked || joinProgress} />}
+      {section === 'invite' && (!state.lan?.configured || state.lan.relay?.kind === 'host' && !state.lan.relayReady) && (state.lan?.savedStart ? <details className="relay-config" onToggle={event => setEditSavedHost(event.currentTarget.open)}><summary>{lt('changeSavedHost')}</summary>{editSavedHost && <HostRelay server={server} state={state} t={t} locale={locale} hostname={hostname} setHostname={setHostname} blocked={blocked || joinProgress} draft={draft} setDraft={setDraft} />}</details> : <HostRelay server={server} state={state} t={t} locale={locale} hostname={hostname} setHostname={setHostname} blocked={blocked || joinProgress} draft={draft} setDraft={setDraft} />)}
       {section === 'join' && !ready && <p className="small muted">{lt('joinSetupHint')}</p>}
       <details className="relay-config manual-relay"><summary>{lt('manualRelay')}</summary><p className="small muted">{t('relayScope')}</p>
       <form className="form-stack" onSubmit={configure}><label className="field">{t('deviceName')}<input value={hostname} onChange={event => setHostname(event.target.value)} maxLength={63} pattern="[\p{L}\p{N}](?:[\p{L}\p{N}]|-){0,62}" title={t('hostnameHint')} required /></label><label className="field">{t('relayAddress')}<input value={address} onChange={event => { setAddress(event.target.value); setValidation('') }} placeholder="192.0.2.10:443" autoComplete="off" spellCheck={false} maxLength={80} required /><small className="muted">{t('relayAddressHint')}</small></label><label className="field">{t('certificatePin')}<input className="code-value" value={pin} onChange={event => { setPin(event.target.value); setValidation('') }} autoComplete="off" spellCheck={false} maxLength={64} required /><small className="muted">{t('certificateHint')}</small></label><Button type="submit" variant="primary" disabled={blocked || joinProgress} busy={server.busy.has('network.configure')}>{t('activateRelay')}<Icon name="arrow" size={15} /></Button></form></details>

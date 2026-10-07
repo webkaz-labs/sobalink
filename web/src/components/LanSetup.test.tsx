@@ -980,3 +980,137 @@ describe('Saved LAN configuration with networking disabled', () => {
     expect(view.draft().joinedPeerId).toBe(recipientPublicKey)
   })
 })
+
+describe('participant relay setup conveniences', () => {
+  it.each(['en', 'ja'] as const)('explains participant hosting and offers a manual fallback in %s', async locale => {
+    const d = lanTranslator(locale)
+    const view = setup({ state: unconfiguredState(), locale })
+    expect(screen.getByText(d('chooseHostHint'))).toBeInTheDocument()
+    expect(screen.getByText(d('hostHint'))).toBeInTheDocument()
+    await view.user.click(screen.getByRole('checkbox', { name: d('manualHostAddress') }))
+    await view.user.type(screen.getByRole('textbox', { name: new RegExp(d('manualAddress')) }), '192.168.50.10')
+    await view.user.click(screen.getByRole('button', { name: d('reviewHost') }))
+    const review = screen.getByRole('region', { name: d('hostReview') })
+    expect(review).toHaveTextContent('192.168.50.10:48443')
+    expect(review).toHaveTextContent(d('manualAddressSource'))
+    expect(view.run).not.toHaveBeenCalled()
+    await view.user.click(screen.getByRole('button', { name: translator(locale)('cancel') }))
+    expect(screen.getByRole('textbox', { name: new RegExp(d('manualAddress')) })).toHaveValue('192.168.50.10')
+    expect(view.run).not.toHaveBeenCalled()
+  })
+
+  it.each(['192.168.50.10', 'fd00::5'])('starts only the reviewed manual private address %s after a failed list lookup', async address => {
+    const view = setup({ state: unconfiguredState() })
+    view.readAddresses.mockResolvedValueOnce(undefined)
+    await view.user.click(screen.getByRole('button', { name: lt('refreshAddresses') }))
+    await view.user.click(screen.getByRole('checkbox', { name: lt('manualHostAddress') }))
+    await view.user.type(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) }), address)
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    await view.user.click(screen.getByRole('button', { name: lt('startHost') }))
+    expect(view.run.mock.calls).toEqual([['network.configure', { mode: 'lan', hostname: 'test-device', lan: { kind: 'host', address: `${address.includes(':') ? `[${address}]` : address}:48443` } }]])
+  })
+
+  it.each(['0.0.0.0', '::', '127.0.0.1', '::1', '8.8.8.8', '2001:db8::5', 'fd00::5%eth0', '[fd00::5]', '192.168.50.10:48443', '192.168.050.10', 'relay.example.test'])('does not broaden manual host address classes to %s', async address => {
+    const view = setup({ state: unconfiguredState() })
+    await view.user.click(screen.getByRole('checkbox', { name: lt('manualHostAddress') }))
+    fireEvent.change(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) }), { target: { value: address } })
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(lt('manualAddressInvalid'))
+    expect(view.run).not.toHaveBeenCalled()
+  })
+
+  it('retains manual input through a late address response, section change, and close', async () => {
+    const view = setup({ state: unconfiguredState() })
+    const pending = deferred<CommandResult | undefined>()
+    view.readAddresses.mockReturnValueOnce(pending.promise)
+    await view.user.click(screen.getByRole('button', { name: lt('refreshAddresses') }))
+    await view.user.click(screen.getByRole('checkbox', { name: lt('manualHostAddress') }))
+    await view.user.type(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) }), 'fd00::5')
+    await act(async () => { pending.resolve({ ok: true, result: { addresses: hostAddresses } }); await pending.promise })
+    expect(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) })).toHaveValue('fd00::5')
+    await view.user.click(screen.getByRole('button', { name: t('joinDevice') }))
+    await view.user.click(screen.getByRole('button', { name: lt('hostRelay') }))
+    expect(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) })).toHaveValue('fd00::5')
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    view.update(unconfiguredState(), false)
+    view.update(unconfiguredState(), true)
+    expect(screen.queryByRole('region', { name: lt('hostReview') })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) })).toHaveValue('fd00::5')
+    expect(view.run).not.toHaveBeenCalled()
+  })
+
+  it.each(['policy', 'session', 'stale'] as const)('does not resurrect a host review after %s changes and returns', async change => {
+    const state = unconfiguredState()
+    const view = setup({ state, addressOptions: hostAddresses })
+    await selectHost(view)
+    await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+    if (change === 'policy') view.update({ ...state, lan: { ...state.lan!, policy: { mode: 'allowed-lan-destinations', prefixes: ['192.168.20.0/24'], editable: true, restartRequired: true } } })
+    if (change === 'session') view.update({ ...state, csrfToken: 'new-session' })
+    if (change === 'stale') view.update(state, true, { stale: true })
+    view.update(state)
+    expect(screen.queryByRole('region', { name: lt('hostReview') })).not.toBeInTheDocument()
+    expect(view.run).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates whole-app Stop before busy state updates and ignores a late closed response', async () => {
+    const view = setup()
+    const pending = deferred<CommandResult | undefined>()
+    view.run.mockReturnValueOnce(pending.promise)
+    await view.user.click(screen.getByRole('button', { name: lt('stopApplication') }))
+    const confirm = screen.getByRole('button', { name: lt('confirmStop') })
+    fireEvent.click(confirm); fireEvent.click(confirm)
+    expect(view.run.mock.calls).toEqual([['application.stop', {}]])
+    expect(screen.getByRole('button', { name: t('cancel') })).toBeDisabled()
+    view.update(readyState(), false)
+    await act(async () => { pending.resolve({ ok: true, result: { state: 'stopping' } }); await pending.promise })
+    view.update(readyState(), true)
+    expect(screen.queryByText(lt('stopping'))).not.toBeInTheDocument()
+  })
+})
+
+it('starts an exact saved host without address discovery and invalidates its review when host drafts change', async () => {
+  const state: State = { ...readyState(), settings: { network: 'lan' }, lan: { ...readyState().lan!, pairingReady: false, relayReady: false, relay: { kind: 'host', address: '192.168.20.5:48443', certificateSHA256 }, savedStart: { publicKey, revision: 'f'.repeat(64), hostname: 'saved-host-name', relay: { kind: 'host', address: '192.168.20.5:48443', certificateSHA256 }, policy: { mode: 'trusted-relay', prefixes: [] }, pairedDevices: 1, trustedDevices: 0, automaticReceivers: 0, preparedRelays: [], pendingStartup: [] } } }
+  const view = setup({ state })
+  expect(view.readAddresses).not.toHaveBeenCalled()
+  await view.user.click(screen.getByRole('button', { name: lt('reviewSavedHost') }))
+  expect(screen.getByRole('region', { name: lt('savedHostReview') })).toHaveTextContent('saved-host-name')
+  view.setDraft({ ...view.draft(), hostManualAddress: '192.168.20.9' })
+  expect(screen.queryByRole('region', { name: lt('savedHostReview') })).not.toBeInTheDocument()
+  expect(view.run).not.toHaveBeenCalled()
+  expect(view.readAddresses).not.toHaveBeenCalled()
+  await view.user.click(screen.getByRole('button', { name: lt('reviewSavedHost') }))
+  await view.user.click(screen.getByRole('button', { name: lt('startSavedHost') }))
+  expect(view.run.mock.calls).toEqual([['network.configure', { mode: 'lan', expectedLANStartRevision: 'f'.repeat(64) }]])
+  expect(view.readAddresses).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['FD00::5', 'fd00::5'],
+  ['fd00:0:0:0:0:0:0:5', 'fd00::5'],
+  ['fd00::0005', 'fd00::5'],
+  ['fd00::192.168.1.1', 'fd00::c0a8:101'],
+])('canonicalizes manual ULA %s before review and submission, while preserving its draft', async (entered, canonical) => {
+  const view = setup({ state: unconfiguredState() })
+  await view.user.click(screen.getByRole('checkbox', { name: lt('manualHostAddress') }))
+  await view.user.type(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) }), entered)
+  await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+  expect(screen.getByRole('region', { name: lt('hostReview') })).toHaveTextContent(`[${canonical}]:48443`)
+  expect(view.run).not.toHaveBeenCalled()
+  await view.user.click(screen.getByRole('button', { name: t('cancel') }))
+  expect(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) })).toHaveValue(entered)
+  await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+  await view.user.click(screen.getByRole('button', { name: lt('startHost') }))
+  expect(view.run.mock.calls).toEqual([['network.configure', { mode: 'lan', hostname: 'test-device', lan: { kind: 'host', address: `[${canonical}]:48443` } }]])
+})
+
+it.each(['FD00::5', 'fd00:0:0:0:0:0:0:5', 'fd00::0005'])('reuses the saved certificate for equivalent ULA spelling %s', async entered => {
+  const state: State = { ...unconfiguredState(), peers: [pairedPeer()], lan: { configured: true, publicKey, pairingReady: false, relayReady: false, path: 'unknown', relay: { kind: 'host', address: '[fd00::5]:48443', certificateSHA256 }, certificate: { state: 'valid', notBefore: '2026-01-01T00:00:00Z', notAfter: '2027-01-01T00:00:00Z' } } }
+  const view = setup({ state })
+  await view.user.click(screen.getByRole('checkbox', { name: lt('manualHostAddress') }))
+  await view.user.type(screen.getByRole('textbox', { name: new RegExp(lt('manualAddress')) }), entered)
+  await view.user.click(screen.getByRole('button', { name: lt('reviewHost') }))
+  expect(screen.queryByText(lt('certificateRotationRequired'))).not.toBeInTheDocument()
+  expect(screen.getByRole('checkbox', { name: lt('rotateCertificate') })).not.toBeChecked()
+  await view.user.click(screen.getByRole('button', { name: lt('startHost') }))
+  expect(view.run.mock.calls).toEqual([['network.configure', { mode: 'lan', hostname: 'test-device', lan: { kind: 'host', address: '[fd00::5]:48443' } }]])
+})

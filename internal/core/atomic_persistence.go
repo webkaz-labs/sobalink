@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"path/filepath"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
 )
@@ -25,8 +26,21 @@ func privateAtomicError(outcome error, cause error) error {
 }
 
 func (c *Core) writeAtomic(path string, data []byte) error {
-	if c.atomicWrite != nil {
-		return c.atomicWrite(path, data)
+	// A saved-host review cannot survive an authority write and later revert.
+	// This process-local counter changes no persisted format or grant lifetime.
+	authority := false
+	switch filepath.Base(path) {
+	case "sobalink.json", "capacity.json", "startup.json", "startup-revocations.json", "saved-proxies.json":
+		authority = true
+		c.lanStartWriteRevision.Add(1)
 	}
-	return config.AtomicWrite(path, data)
+	write := c.atomicWrite
+	if write == nil {
+		write = config.AtomicWrite
+	}
+	err := write(path, data)
+	if authority && errors.Is(err, config.ErrAtomicCommitted) {
+		c.lanStartUncertain.Store(true)
+	}
+	return err
 }

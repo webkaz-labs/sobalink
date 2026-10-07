@@ -79,12 +79,14 @@ type lanState struct {
 }
 
 type lanStore struct {
-	mu            sync.Mutex
-	path          string
-	write         func(string, []byte) error
-	state         lanState
-	routeRecovery bool
-	limits        atomic.Pointer[lanStoreLimits]
+	reviewRevision uint64
+	startUncertain bool
+	mu             sync.Mutex
+	path           string
+	write          func(string, []byte) error
+	state          lanState
+	routeRecovery  bool
+	limits         atomic.Pointer[lanStoreLimits]
 }
 
 type lanStoreLimits struct{ peers, bytes int64 }
@@ -279,11 +281,13 @@ func (s *lanStore) saveLocked(next lanState) error {
 	if write == nil {
 		write = config.AtomicWrite
 	}
+	s.reviewRevision++
 	saveErr := write(s.path, append(data, '\n'))
 	if atomicPublished(saveErr) {
 		s.state = cloneLANState(next)
 	}
 	if errors.Is(saveErr, config.ErrAtomicCommitted) {
+		s.startUncertain = true
 		if next.Version >= 2 {
 			s.routeRecovery = true
 		}
@@ -719,6 +723,11 @@ func (c *Core) lanStatus() map[string]any {
 			host = state.Selection.Kind == "host"
 			if host {
 				status["certificate"] = localRelayCertificateStatus(state.RelayIdentity, time.Now())
+				if !saved.routesNeedRecovery() {
+					if review := c.savedLANStartReview(saved, state); review != nil {
+						status["savedStart"] = review
+					}
+				}
 			}
 		}
 	}

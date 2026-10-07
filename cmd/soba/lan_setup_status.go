@@ -113,6 +113,7 @@ func localizeLANSetupError(ja bool, err error) error {
 		"direct_lan_invitation_invalid":       "direct LANの招待が無効または期限切れです。この公開ID宛ての新しい招待を依頼してください",
 		"direct_lan_capacity":                 "direct LANの容量上限です。不要なペアを解除するか、実行中の処理が終わってから再試行してください",
 
+		"lan_saved_start_changed":           "保存済みホストの設定または許可が変更されました。状態を更新し、保存済みホストをもう一度確認してください",
 		"lan_policy_invalid":                "trusted-relay は範囲を指定せず、allowed-lan-destinations は正規表記のプライベート・ULA・ループバックCIDRを明示してください",
 		"lan_policy_setup_required":         "先にLANリレーを選択するか、setup でリレーとポリシーを一緒に保存してください",
 		"lan_policy_relay_outside":          "選択済みリレーと追加候補のリレーを許可範囲に含めるか、不要なリレー候補を先に削除してください",

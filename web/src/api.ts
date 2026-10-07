@@ -159,10 +159,23 @@ export interface State {
   reservedPorts?: number[]
   servicePresets?: ServicePreset[]
   limits?: ServiceLimits
-  lan?: { configured: boolean; readinessKnown?: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
+  lan?: { savedStart?: LANStartReview; configured: boolean; readinessKnown?: boolean; publicKey?: string; relay?: LanRelay; pairingReady: boolean; listenerReady?: boolean; relayReady?: boolean; policy?: LanPolicy; certificate?: { state: 'valid' | 'expiring' | 'expired' | 'not-yet-valid'; notBefore: string; notAfter: string }; path: 'unknown' | 'direct' | 'relay' }
   mixed?: MixedStatus
   directLAN?: DirectLanStatus
   settings?: { network?: 'none' | Network; locale?: 'auto' | Locale; theme?: Theme; hostname?: string; receiveDirectory?: string; maxFiles?: number; maxBatchBytes?: number }
+}
+export interface LANStartReview {
+  publicKey: string
+  revision: string
+  hostname: string
+  relay: LanRelay
+  policy: Pick<LanPolicy, 'mode' | 'prefixes'>
+  pairedDevices: number
+  trustedDevices: number
+  automaticReceivers: number
+  preparedRelays: LanRelay[]
+  wanCandidates?: { stunEndpoints: string[]; advertiseIPv6: boolean; probeBudget: number }
+  pendingStartup: string[]
 }
 export interface CommandResult { ok: boolean; result?: { authUrl?: string; [key: string]: unknown } }
 export interface ServiceConfiguration extends ServicePayload {
@@ -274,7 +287,7 @@ export interface CommandPayloads {
   'service.stop': { id: string }
   'service.config': { id: string }
   'service.ports': { id: string; expectedRevision: string; fromPort?: number; count?: number; attempts?: number }
-  'network.configure': { mode: 'none' | Network; mixed?: { backends: TransportBackend[] }; directLAN?: { listen: string; prefixes: string[] }; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
+  'network.configure': { mode: 'none' | Network; expectedLANStartRevision?: string; mixed?: { backends: TransportBackend[] }; directLAN?: { listen: string; prefixes: string[] }; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
   'network.logout': Record<string, never>
   'network.login': { refresh?: boolean; qr?: boolean }
   'network.login.status': { qr?: boolean }

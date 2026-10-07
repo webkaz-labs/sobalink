@@ -1,5 +1,6 @@
 import type { Locale } from './api'
 export const en = {
+  lan_saved_start_changed: 'Saved host settings or permissions changed. Refresh the status and review the saved host again.',
   lan_listener_conflict: 'A local relay port is already in use. Stop the conflicting listener separately, then retry the saved endpoint.',
   lan_listener_permission_denied: 'The operating system denied a local relay listener. Review local permissions before retrying.',
   lan_listener_capacity: 'Local relay listener resources are exhausted. Stop unused work or review available resources before retrying.',
@@ -154,6 +155,7 @@ export const en = {
 } as const
 export type TextKey = keyof typeof en
 export const ja: Record<TextKey, string> = {
+  lan_saved_start_changed: '保存済みホストの設定または許可が変更されました。状態を更新し、保存済みホストをもう一度確認してください。',
   lan_listener_conflict: 'ローカルリレーのポートが使用中です。競合する待受を別途停止し、保存済みの端点で再試行してください。',
   lan_listener_permission_denied: 'OSがローカルリレーの待受を拒否しました。再試行前にローカルのアクセス権を確認してください。',
   lan_listener_capacity: 'ローカルリレーの待受資源が不足しています。不要な処理を停止するか、使用可能な資源を確認してから再試行してください。',

@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import type { Locale, State } from '../api'
+import type { CommandResult, Locale, State } from '../api'
 import { cardDigest, type DeviceCardMode } from '../device-cards'
 import { deviceCardText } from '../device-card-i18n'
 import { directLanText } from '../direct-lan-i18n'
@@ -23,9 +23,11 @@ function setup(mode: DeviceCardMode, locale: Locale = 'en') {
   const currentState = state(mode)
   const server = { state: currentState, auth: 'ready', stale: false, run, busy: new Set(), setError: vi.fn(), refresh: vi.fn() } as unknown as Server
   let current: LanDraft | DirectLanDraft = original
+  let updateLANDraft = (_patch: Partial<LanDraft>) => {}
   function Harness({ next = currentState }: { next?: State }) {
     const [lanDraft, setLanDraft] = useState(original as LanDraft), [directDraft, setDirectDraft] = useState(original as DirectLanDraft), [hostname, setHostname] = useState('Synthetic local device')
     current = mode === 'lan' ? lanDraft : directDraft
+    updateLANDraft = patch => setLanDraft(value => ({ ...value, ...patch }))
     return mode === 'lan' ? <LanSetup server={server} state={next} t={translator(locale)} locale={locale} hostname={hostname} setHostname={setHostname} draft={lanDraft} setDraft={setLanDraft} onViewPeer={vi.fn()} />
       : <DirectLanSetup server={server} state={next} t={translator(locale)} locale={locale} hostname={hostname} setHostname={setHostname} draft={directDraft} setDraft={setDirectDraft} onViewPeer={vi.fn()} />
   }
@@ -37,7 +39,7 @@ function setup(mode: DeviceCardMode, locale: Locale = 'en') {
     run.mockResolvedValueOnce({ ok: true, result: { ...remote, verification: 'unverified', freshness: 'unknown', contentDigest: await cardDigest(text) } })
     await user.click(screen.getByRole('button', { name: c('inspect') })); await screen.findByRole('region', { name: c('review') })
   }
-  return { ...view, user, run, original, c, inspect, draft: () => current, update: (next: State) => view.rerender(<Harness next={next} />) }
+  return { ...view, user, run, original, c, inspect, remote, text, patchDraft: (patch: Partial<LanDraft>) => act(() => updateLANDraft(patch)), draft: () => current, update: (next: State) => view.rerender(<Harness next={next} />) }
 }
 describe('device cards inside existing network setup', () => {
   it.each([['lan', 'en'], ['lan', 'ja'], ['direct-lan', 'en'], ['direct-lan', 'ja']] as const)('fills only the inert %s draft in %s and keeps invitation creation separate', async (mode, locale) => {
@@ -57,4 +59,30 @@ describe('device cards inside existing network setup', () => {
     else next.directLAN!.prefixes = ['192.168.50.1/32']
     act(() => v.update(next)); expect(screen.queryByRole('button', { name: v.c('use') })).not.toBeInTheDocument(); expect(v.draft()).toEqual(v.original)
   })
+})
+
+
+it.each(['hostAddressMode', 'hostManualAddress'] as const)('invalidates a device-card review when %s changes', async field => {
+  const v = setup('lan'); await v.inspect()
+  v.patchDraft(field === 'hostAddressMode' ? { hostAddressMode: 'manual' } : { hostManualAddress: 'fd00::5' })
+  expect(screen.queryByRole('button', { name: v.c('use') })).not.toBeInTheDocument()
+  expect(v.draft()).toMatchObject({ recipientPublicKey: '', recipientName: '' })
+  expect(v.run.mock.calls.map(call => call[0])).toEqual(['device-card.inspect'])
+})
+
+it.each(['hostAddressMode', 'hostManualAddress'] as const)('drops a late device-card response when %s changes and returns', async field => {
+  const v = setup('lan')
+  let resolve!: (value: CommandResult) => void
+  const pending = new Promise<CommandResult>(done => { resolve = done })
+  fireEvent.click(screen.getByRole('button', { name: v.c('open') }))
+  fireEvent.change(screen.getByLabelText(v.c('input')), { target: { value: v.text } })
+  v.run.mockReturnValueOnce(pending)
+  await v.user.click(screen.getByRole('button', { name: v.c('inspect') }))
+  await waitFor(() => expect(v.run).toHaveBeenCalledTimes(1))
+  v.patchDraft(field === 'hostAddressMode' ? { hostAddressMode: 'manual' } : { hostManualAddress: 'fd00::5' })
+  v.patchDraft(field === 'hostAddressMode' ? { hostAddressMode: undefined } : { hostManualAddress: undefined })
+  await act(async () => { resolve({ ok: true, result: { ...v.remote, verification: 'unverified', freshness: 'unknown', contentDigest: await cardDigest(v.text) } }); await pending })
+  expect(screen.queryByRole('region', { name: v.c('review') })).not.toBeInTheDocument()
+  expect(v.draft()).toMatchObject({ recipientPublicKey: '', recipientName: '' })
+  expect(v.run.mock.calls.map(call => call[0])).toEqual(['device-card.inspect'])
 })
