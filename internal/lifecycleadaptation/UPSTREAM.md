@@ -101,6 +101,18 @@ cancellation, resource operations or waits. Bind/TUN/callback implementations mu
 satisfy their documented behavior; Go interfaces alone do not prove those
 properties. The joint lifecycle and caller lock graph requires its own review.
 
+The additive `device/owned_lifecycle_testing.go` overlay is compiled only when
+both `directlan_integration` and `directlan_lifecycle` are selected. Its fixture
+stats copy only the existing atomic handshake timestamps; no UAPI serialization,
+peer identity, endpoint or key material is exposed. Three named test operations
+invoke the existing expiry, flush and scheduled-on-next-send methods without
+changing their behavior or protocol thresholds. Each takes an API completion
+lease, holds the existing configuration serializer, rejects terminal stop and
+stale/non-running registrations, and invokes the operation after the admission
+gate and peer lookup lock are released. The lease lasts through synchronous
+session-state notifications. No raw handle or arbitrary callback escapes, and
+the production facade has no added surface when either fixture tag is absent.
+
 Source identity, compilation, lifecycle correctness, application compatibility and
 installed-binary verification are separate results. A successful source verification
 does not demonstrate worker termination, retained-listener behavior or network

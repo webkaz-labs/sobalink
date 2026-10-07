@@ -3,12 +3,9 @@
 package directlan
 
 import (
-	"bytes"
 	"context"
-	"encoding/hex"
 	"io"
 	"net"
-	"strconv"
 	"testing"
 	"time"
 
@@ -128,40 +125,15 @@ func lifecycleExchange(t *testing.T, cs []net.Conn) {
 	}
 }
 
-// Only numeric timestamps survive this writer. Never retain or log raw IPC
-// output, which also contains keys; the fixture has exactly one synthetic peer.
-type handshakeTimeWriter struct {
-	sec, nsec int64
-	fields    int
-}
-
-func (w *handshakeTimeWriter) Write(p []byte) (int, error) {
-	for _, line := range bytes.Split(p, []byte{'\n'}) {
-		for _, field := range []string{"last_handshake_time_sec=", "last_handshake_time_nsec="} {
-			if !bytes.HasPrefix(line, []byte(field)) {
-				continue
-			}
-			value, e := strconv.ParseInt(string(line[len(field):]), 10, 64)
-			if e != nil {
-				return 0, ErrUnavailable
-			}
-			if field == "last_handshake_time_sec=" {
-				w.sec = value
-			} else {
-				w.nsec = value
-			}
-			w.fields++
-		}
-	}
-	return len(p), nil
-}
+// Observe only copied numeric timestamps; never request raw IPC output or keys.
+// The fixture must still have exactly one peer with a completed handshake.
 func lastHandshake(t *testing.T, n *Node) time.Time {
 	t.Helper()
-	var w handshakeTimeWriter
-	if n.engine.IpcGetOperation(&w) != nil || w.fields != 2 || w.sec == 0 {
+	stats, err := n.engine.LifecycleTestPeerStats()
+	if err != nil || len(stats) != 1 || stats[0].LastHandshakeUnixNano/int64(time.Second) == 0 {
 		t.Fatal("no single completed fixture handshake")
 	}
-	return time.Unix(w.sec, w.nsec)
+	return time.Unix(0, stats[0].LastHandshakeUnixNano)
 }
 
 // This fast native check always runs independently of the minute-scale gate.
@@ -175,8 +147,11 @@ func TestNativeSessionSyntheticExpiryRekey(t *testing.T) {
 		target := []*Node{b, a}[i]
 		n.mu.Lock()
 		p := n.peers[target.PublicKey()]
-		p.enginePeer.ExpireCurrentKeypairs()
+		err := p.enginePeer.ExpireCurrentKeypairsForTest()
 		n.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
 		if p.session.ready() {
 			t.Fatal("expired key remained ready")
 		}
@@ -187,8 +162,11 @@ func TestNativeSessionSyntheticExpiryRekey(t *testing.T) {
 		target := []*Node{b, a}[i]
 		n.mu.Lock()
 		p := n.peers[target.PublicKey()]
-		p.enginePeer.ZeroAndFlushAll()
+		err := p.enginePeer.ZeroAndFlushAllForTest()
 		n.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
 		if p.session.ready() {
 			t.Fatal("flushed key remained ready")
 		}
@@ -198,11 +176,14 @@ func TestNativeSessionSyntheticExpiryRekey(t *testing.T) {
 	if a.PublicKey() > b.PublicKey() {
 		a, b = b, a
 	}
-	raw, _ := hex.DecodeString(b.cfg.Identity.TunnelKey())
-	var key device.NoisePublicKey
-	copy(key[:], raw)
 	before := lastHandshake(t, a)
-	a.engine.ScheduleHandshakeOnUserSend(key)
+	a.mu.Lock()
+	p := a.peers[b.PublicKey()]
+	err := p.enginePeer.ScheduleHandshakeOnUserSendForTest()
+	a.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
 	until := time.Now().Add(device.RekeyTimeout + time.Second)
 	for time.Now().Before(until) {
 		lifecycleExchange(t, renewed)
