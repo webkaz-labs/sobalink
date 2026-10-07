@@ -25,8 +25,30 @@ Install Japanese sans-serif fonts, such as Noto Sans CJK JP, before glyph accept
 - `browser/lifecycle-saved.spec.mjs` checks JA/EN logout cancellation, CLI-only startup guidance and offline create/edit/copy/reviewed-delete without visible peers. A separate logout case uses the fictional embedded backend and verifies one explicit acknowledgement followed by Go process exit; it never performs real enrollment or OS registration
 - `browser/advanced.spec.mjs` checks JA/EN exact proxy review, fictional private-input cancellation and no automatic start, plus explicit TCP transport failure and retained runtime history after stop. It uses the existing fictional peers and does not perform enrollment or proxy start; real proxy authentication/lifecycle and application compatibility remain separate gates
 - `browser/network.spec.mjs` checks offline setup, guided host review without activation, invalid relay inputs and whole-application Stop. Shutdown begins with an active service; cancellation preserves it, and one confirmed Stop must make the actual Go process exit zero within 20 seconds. Forced cleanup never counts as shutdown success
+- `browser/saved-host.spec.mjs` adds a production-backed offline saved-host review/cancel flow in JA/EN at 1440px and 390px. A tagged helper seeds a fresh private synthetic host through production validation/writing, with no pairs or application trust. The real Core supplies the revision and public review; the fixture denies activation and all non-presentation commands. Review, Cancel, Close and reopen must submit no commands and leave state unchanged. These four cases require hosted execution; listing or unit-testing them is not browser acceptance. Actual relay start and physical-device pairing remain separate gates.
+
+- `browser/advertised-overview.spec.mjs` covers JA/EN compact advertised-service review, cancellation, Back/Forward and one explicit start through the real Core API over the existing fictional backend. Its separate stale-route cases inject snapshot observations and failure; they establish presentation behavior, not a physical transport failure or recovery.
+- `browser/group-failure-states.spec.mjs` covers JA/EN reviewed identities and observed member states after an uncertain action. Group review, mutation errors and resulting snapshots are synthetic API substitutions; these cases do not establish Core rollback or real application outcomes. A read-only retry does not repeat the mutation.
 
 User interactions use Playwright locators and assertions through the real UI. Default fixture cases exercise the production Go management API. Selected UI regressions substitute responses: `layouts.spec.mjs` supplies synthetic layout state, and `message-uncertainty.spec.mjs` injects a message-error response. Those substitutions establish presentation/error-path behavior, not the corresponding backend outcome. The explicitly labelled `lan-pairing-review.spec.mjs` cases replace LAN state and fulfill or abort inspection/join responses for one fixed, invalid synthetic invitation. Those intercepted commands never reach Core and do not establish pairing, enrollment or permission acceptance. The helper preserves raw attempt counts and rejects unaccounted enrollment. Read-only observations and fixture setup remain separate from user interactions; instrumentation keeps command names and upload identity comparisons in memory. Synthetic composition events are likewise limited to frontend regression coverage.
+
+## Local PNG card scope
+
+`browser/device-card-png.spec.mjs` uses the unchanged production document CSP,
+manifest-bound worker policy and embedded pinned reader. It checks twelve
+synthetic digest-pinned images in both languages/modes (24 UI reads), a cropped
+public-QR screenshot after the same capture privacy checks, malformed/oversized/
+animated/metadata inputs, duplicate QR rejection, stale asset completion and
+explicit Review. A separate temporary page performs intentional CSP denial
+probes without replacing product scripts or weakening normal UI health checks.
+No camera, real pairing, transport or external decoder service is involved.
+
+The twelve representatives total 140,593 PNG bytes; they cover QR versions
+22/23/24, minimum/Japanese/escaped aliases, optional hints, 256–2048-pixel samples,
+rotation and transparency. The private 227-case research comparison is not a
+product-browser result. Worker/raster mocks and Node WASM runs establish only
+their stated boundaries. Run this existing Chromium gate against the exact
+integrated source; no extra browser matrix is required by this checkpoint.
 
 ## Evidence and privacy
 

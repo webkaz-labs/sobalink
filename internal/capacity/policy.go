@@ -200,6 +200,8 @@ var logicalDefinitions = map[string]Definition{
 	"stagingSeconds": {600, "seconds"},
 }
 var resourceDefinitions = map[string]Definition{
+	"pngEncodedBytes": {8 << 20, "bytes"}, "pngPixels": {4 << 20, "pixels"},
+	"pngWorkingBytes": {192 << 20, "bytes"}, "pngDeadlineMilliseconds": {10000, "milliseconds"},
 	"portProposalAttempts": {32, "windows"}, "portProposalResults": {3, "proposals"}, "portProposalBinds": {4096, "bind checks"}, "portProposalSeconds": {5, "seconds"},
 	"relayPresenceConnections": {4, "connections"}, "relayCandidateAttempts": {4, "attempts"},
 	"relayTLSConnections": {64, "connections"}, "relayAdmissionConnections": {16, "connections"},
@@ -229,6 +231,12 @@ func Defaults() Policy {
 	return Policy{Version: Version, Logical: map[string]Choice{}, Resources: map[string]Choice{}}
 }
 
+// Browser representation/admission ceilings; these do not cap WASM/native heaps.
+var pngResourceMaximums = map[string]int64{
+	"pngEncodedBytes": 64 << 20, "pngPixels": 16 << 20,
+	"pngWorkingBytes": 512 << 20, "pngDeadlineMilliseconds": 60000,
+}
+
 func (p Policy) Validate() error {
 	if p.Version != Version {
 		return errors.New("unsupported capacity policy version")
@@ -245,6 +253,9 @@ func (p Policy) Validate() error {
 			}
 			if err := choice.Validate(group.logical); err != nil {
 				return fmt.Errorf("%s: %w", key, err)
+			}
+			if maximum, exists := pngResourceMaximums[key]; !group.logical && exists && choice.Value != nil && *choice.Value > maximum {
+				return fmt.Errorf("%s exceeds the browser admission ceiling (%d)", key, maximum)
 			}
 			if definition.Unit == "seconds" && choice.Value != nil && *choice.Value > MaxDurationSeconds {
 				return fmt.Errorf("%s exceeds the time representation", key)

@@ -381,7 +381,8 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .device-overview h3 { font-size: 14px; margin-bottom: 6px; }
 .device-overview .service-rows { border-top: 1px solid var(--border); }
 .available-services { list-style: none; padding: 0; margin-top: 12px; }
-.available-services li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 13px 0; border-bottom: 1px solid var(--border); }
+.available-service-copy { display: grid; gap: 4px; min-width: 0; flex: 1 1 150px; overflow-wrap: anywhere; }
+.available-services li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 0; border-bottom: 1px solid var(--border); }
 .overview-summary { display: flex; flex-wrap: wrap; justify-content: center; gap: 24px; margin: 16px 0 28px; }
 .overview-summary span { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
 .overview-summary strong { color: var(--text); font-size: 23px; }

@@ -1,0 +1,324 @@
+{
+  "schema_version": 1,
+  "package": {
+    "name": "zxing-wasm",
+    "version": "3.1.5",
+    "npm_archive_url": "https://registry.npmjs.org/zxing-wasm/-/zxing-wasm-3.1.5.tgz",
+    "archive_sha256": "81e1cd4b01c98b35a30a3f1d16ef38bf338d6e3ada2a0591bd69595a94a07443"
+  },
+  "assets": [
+    {
+      "npm_path": "dist/es/share.js",
+      "vendor_path": "share.js",
+      "bytes": 10947,
+      "sha256": "68b09047a19c17ba74c0bf7e0a4341e77d46b36ae1cae4bdcca31d0c6757f3f2"
+    },
+    {
+      "npm_path": "dist/es/reader/index.js",
+      "vendor_path": "reader/index.js",
+      "bytes": 40597,
+      "sha256": "3c364d8477404a513d7c0629b1cf9e63ae11e01f9746146d3574f8b10a122320"
+    },
+    {
+      "npm_path": "dist/reader/zxing_reader.wasm",
+      "vendor_path": "reader/zxing_reader.wasm",
+      "bytes": 966895,
+      "sha256": "aecc1876de036c62c8419f67a5e1a16b1698a325bcd190aa84810d516e263931"
+    }
+  ],
+  "source_evidence": {
+    "wrapper_commit": "b7dcf63aefc7b94fb97ba09e9b1fb213d9399f54",
+    "zxing_cpp_commit": "2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4",
+    "declared_emsdk_version": "5.0.4",
+    "emscripten_tag_resolved_at_review": "62e22652509fbe7a00609ce48a653d0d66f27ba5",
+    "stb_actual_fetched_commit": null,
+    "stb_license_reference_commit": "49cbedfab6623f38a8fa65b32d10ab4b2fefd872",
+    "byte_identical_source_rebuild_verified": false,
+    "complete_link_map_available": false
+  },
+  "inventory_scope": "Exact distributed prebuilt files; library-level source/build evidence; conservative runtime notice superset. This is not a function-level SBOM or a complete transitive source-revision inventory.",
+  "licenses": [
+    {
+      "path": "licenses/zxing-wasm-MIT.txt",
+      "sha256": "fb506e4ade12d7a9efa67c9d76a9a28c8e15d347ca49a69e48e29b40b34ad2ab",
+      "sources": [
+        "https://github.com/Sec-ant/zxing-wasm/blob/b7dcf63aefc7b94fb97ba09e9b1fb213d9399f54/LICENSE"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/zxing-cpp-Apache-2.0.txt",
+      "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+      "sources": [
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/LICENSE"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/libzueci-BSD-3-Clause.txt",
+      "sha256": "9cb1265052e44cadab6ec1b00e2cafccecbb3b971b5932291040433d6deac040",
+      "sources": [
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci.c",
+        "https://github.com/spdx/license-list-data/blob/main/text/BSD-3-Clause.txt"
+      ],
+      "treatment": "Canonical SPDX BSD-3-Clause text, identified by the pinned source SPDX tag; placeholder copyright replaced with exact pinned source copyright"
+    },
+    {
+      "path": "licenses/utf8-decoder-notice.txt",
+      "sha256": "62751c33ae366825ac0b8b7fd6afd668de8be00a8cf79c87b5939355c8070fe5",
+      "sources": [
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci.c"
+      ],
+      "treatment": "Exact embedded notice; comment delimiter and indentation removed"
+    },
+    {
+      "path": "licenses/stb-MIT-or-public-domain.txt",
+      "sha256": "bebfe904b14301657e4e5d655c811d51fd31b97c455b9cc2d8600d6bac6cff63",
+      "sources": [
+        "https://github.com/nothings/stb/blob/49cbedfab6623f38a8fa65b32d10ab4b2fefd872/LICENSE"
+      ],
+      "treatment": "Verbatim inspected upstream license; actual fetched build revision unknown; MIT alternative selected"
+    },
+    {
+      "path": "licenses/emscripten-MIT-NCSA.txt",
+      "sha256": "51aea7641f81d560eb039bc97ce35e2517e2656fe8731eb49ce6a18498eb22fe",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/LICENSE"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/emscripten-AUTHORS.txt",
+      "sha256": "8585fa1b981f576f52806833481323007ccac5c00f31a873215e31c0f42820f0",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/AUTHORS"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/musl-COPYRIGHT.txt",
+      "sha256": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/COPYRIGHT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/libcxx-LICENSE.txt",
+      "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libcxx/LICENSE.TXT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/libcxxabi-LICENSE.txt",
+      "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libcxxabi/LICENSE.TXT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/compiler-rt-LICENSE.txt",
+      "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/compiler-rt/LICENSE.TXT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/llvm-libc-LICENSE.txt",
+      "sha256": "ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/llvm-libc/LICENSE.TXT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/libcxx-CREDITS.txt",
+      "sha256": "054e099bf5954c8821b880f5751d2fbf221bf43cf7c57ac1c2c5ff6263d6d9c3",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libcxx/CREDITS.TXT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/libcxxabi-CREDITS.txt",
+      "sha256": "809094e73796c7a5df747c8dd27b5dcff26de5b77abedd2cc7bed0f8f968148b",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libcxxabi/CREDITS.TXT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/compiler-rt-CREDITS.txt",
+      "sha256": "a9901f47a089da41e4690682d00ce4cedaa2baf41fedbe79beee366d43ac2461",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/compiler-rt/CREDITS.TXT"
+      ],
+      "treatment": "Verbatim upstream text"
+    },
+    {
+      "path": "licenses/musl-supplementary-notices.txt",
+      "sha256": "a6a95cb6e5e35e15ab3b1371fca918101ebaa1db047902f0f6a5bf0a9de799aa",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__cos.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__rem_pio2_large.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__sin.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/acos.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/acosl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/asin.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/asinl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/j0.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/j1.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/jn.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log10.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2_small.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log_small.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/scalb.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__cosdf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__rem_pio2f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__sindf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/acosf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/asinf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/atan.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/atan2f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/atanf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/atanl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/cbrtf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/cos.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/cosf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/erf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/erff.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/erfl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/expm1.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/expm1f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/j0f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/j1f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/jnf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/lgammaf_r.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/lgammal.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log10f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log1p.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log1pf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/scalbf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/sin.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/sincos.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/sincosf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/sinf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/tan.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/tanf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__cosl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__sinl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__polevll.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/erfl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/expl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/expm1l.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/lgammal.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log10l.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log1pl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2l.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/logl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/powl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/tgammal.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__rem_pio2.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__rem_pio2l.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__tan.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__tandf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/__tanl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/atan2.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/atan2l.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/lgamma_r.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/cbrt.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/cbrtl.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp2.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp2f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp2f_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp2f_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2f_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/logf_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/powf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/powf_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp2l.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/exp_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/pow_data.h",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/expf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/fmaf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/fmal.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2f.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log2f_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/log_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/logf.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/logf_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/pow.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/pow_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/pow_small.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/math/powf_data.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/stdlib/qsort.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/regex/regcomp.c",
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libc/musl/src/crypt/crypt_des.c"
+      ],
+      "treatment": "Complete copyright/license comment blocks from first 85 lines of all 245 generic musl math C/header files, plus qsort/TRE/crypt notices; source code excluded"
+    },
+    {
+      "path": "licenses/libcxx-ryu-notices.txt",
+      "sha256": "63d2aed9d127212bf9e83c20da1a54f7829ae3ab239a3aa9eca0e3e9e43c603e",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/libcxx/src/ryu/d2fixed.cpp"
+      ],
+      "treatment": "Verbatim source license header; conservative coverage, linked function not established"
+    },
+    {
+      "path": "licenses/dlmalloc-public-domain.txt",
+      "sha256": "7fbe1fa65fa5f1352860ad5e69e1737319d219293a6a55ec12577c2574085079",
+      "sources": [
+        "https://github.com/emscripten-core/emscripten/blob/62e22652509fbe7a00609ce48a653d0d66f27ba5/system/lib/dlmalloc.c"
+      ],
+      "treatment": "Verbatim public-domain declaration and version; comment delimiter omitted"
+    },
+    {
+      "path": "licenses/Unicode-3.0.txt",
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+      "sources": [
+        "https://www.unicode.org/license.txt",
+        "https://github.com/unicode-org/icu/blob/4e689969f24a31e32efcd590cabd944ca3550352/LICENSE"
+      ],
+      "treatment": "Verbatim Unicode License v3 section only; included conservatively with generated mapping-table attributions, not a claim about historic generator input revisions"
+    },
+    {
+      "path": "licenses/libzueci-mapping-attributions.txt",
+      "sha256": "78933e60205de7af9638fa87ee00fb651971037341de2e9c635d677debead06f",
+      "sources": [
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci_sb.h",
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci_big5.h",
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci_gbk.h",
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci_gb18030.h",
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci_gb2312.h",
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci_ksx1001.h",
+        "https://github.com/zxing-cpp/zxing-cpp/blob/2ecec3f5be0ee803f6e14a5a2c7028c0cfe525b4/core/src/libzueci/zueci_sjis.h"
+      ],
+      "treatment": "Verbatim generated-header attribution comments and SPDX tags; tables excluded"
+    }
+  ],
+  "excluded_runtime_claims": [
+    "Writer-only Zint and stb_image_write",
+    "Node.js executable runtime",
+    "type-fest and @types/emscripten runtime dependencies",
+    "libunwind under this JavaScript-exceptions build configuration"
+  ],
+  "remaining_limits": [
+    "The actual fetched stb revision is not recorded in inspected build inputs or npm archive.",
+    "The release workflow and source association do not establish a hermetic or byte-identical rebuild.",
+    "The stripped WASM does not supply a native object/function link map. Conservative runtime notices include some code that may be eliminated.",
+    "The exact historical input revisions and terms used to generate all libzueci mapping tables were not established. Pinned generated files identify BSD-3-Clause and retain source attributions."
+  ],
+  "publication_status": "Proposed local accompanying notice bundle; not published by this review."
+}

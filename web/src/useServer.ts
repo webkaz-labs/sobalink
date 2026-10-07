@@ -113,8 +113,11 @@ export function useServer() {
       const result = await api.command(name, payload, requestId)
       if (!live.current || epoch !== authEpoch.current) return undefined
       if (retainUncertain) uncertain.current.delete(key)
-      await refresh(true)
+      const refreshed = await refresh(true)
       if (!live.current || epoch !== authEpoch.current) return undefined
+      // Discovery is the first step of a reviewed connection. Do not let its
+      // response authorize that next step when the current snapshot is unknown.
+      if (name === 'discovery.refresh' && !refreshed) return undefined
       return result
     } catch (value) {
       if (messageClaimed && fingerprint && value instanceof api.ApiError && ['message_history_unavailable', 'message_peer_storage_unavailable'].includes(value.code)) {

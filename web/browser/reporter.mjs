@@ -43,6 +43,10 @@ export default class SafeReporter {
     const record = { name: test.titlePath().filter(Boolean).join(' > '), status: result.status, durationMs: result.duration, file: basename(test.location.file), line: test.location.line, failureCategory: failureCategory(result.errors), failureLocations: failureLocations(result.errors, test.location.file), artifacts }
     this.tests.push(record)
     console.log(`${result.status.toUpperCase()} ${record.name}`)
+    if (record.failureCategory) {
+      const locations = record.failureLocations.map(location => `${location.file}:${location.line}:${location.column}`).join(',')
+      console.log(`DIAGNOSTIC ${record.failureCategory}${locations ? ` ${locations}` : ''}`)
+    }
   }
   async onEnd(result) {
     const output = resolve(process.env.SOBA_SCREENSHOT_DIR || join(tmpdir(), 'sobalink-playwright-screenshots'))

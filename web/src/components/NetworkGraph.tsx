@@ -1,10 +1,12 @@
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { type Locale, type Peer, type State, type Transfer } from '../api'
-import { peerCommunicationAllowed, peerPermissionKey, peerPresenceKey } from '../peer-status'
+import { peerCommunicationAllowed, peerPermissionKey, peerPresenceKey, peerPath } from '../peer-status'
 import './NetworkGraph.css'
 
 export interface NetworkGraphProps {
   state: State
+  stale?: boolean
+  now?: number
   locale: Locale
   onSelectPeer: (peerId: string) => void
   onSelectSelf: () => void
@@ -16,6 +18,7 @@ export interface NetworkGraphProps {
 }
 
 const en = {
+  stale: 'Status is out of date. Routes are unknown; other activity below is from the last update.', lastReported: 'Last reported',
   heading: 'Network graph', intro: 'Select a device or connection to see its details.',
   diagram: 'Known connections from this device', list: 'Device list', showList: 'Show device list', showDiagram: 'Show network diagram',
   onlineCompact: 'Online', offlineCompact: 'Offline', self: 'This device', known: 'Known device', online: 'Network online', offline: 'Network offline', ready: 'Allowed here',
@@ -37,6 +40,7 @@ const en = {
 } as const
 type Labels = { [Key in keyof typeof en]: string }
 const ja: Labels = {
+  stale: '状態が古くなっています。経路は未確認です。その他の動作情報は最終更新時の内容です。', lastReported: '最終確認時',
   heading: 'ネットワーク図', intro: 'デバイスや接続を選ぶと詳細を確認できます。',
   diagram: 'この端末から確認できる接続', list: 'デバイス一覧', showList: 'デバイス一覧を表示', showDiagram: 'ネットワーク図を表示',
   onlineCompact: 'オンライン', offlineCompact: 'オフライン', self: 'この端末', known: '検出・登録済み', online: 'ネットワーク上でオンライン', offline: 'ネットワーク上でオフライン', ready: 'この端末で許可',
@@ -62,8 +66,8 @@ function appLabel(peer: Peer, labels: Labels) {
   return permission === 'paused' ? labels.paused : permission === 'trusted' ? labels.ready : labels.permissionNeeded
 }
 
-function presenceLabel(peer: Peer, labels: Labels, compact = false) {
-  const presence = peerPresenceKey(peer)
+function presenceLabel(peer: Peer, labels: Labels, compact = false, stale = false) {
+  const presence = peerPresenceKey(peer, stale)
   if (presence === 'online') return compact ? labels.onlineCompact : labels.online
   // Only Tailnet supplies a network-level online bit. Tailcat's false value
   // means no fresh authenticated discovery, not evidence of an offline host.
@@ -91,7 +95,7 @@ function transferProgress(transfers: Transfer[], locale: Locale, labels: Labels)
   return new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 }).format(Math.floor(completed / total * 100) / 100)
 }
 
-function peerFacts(peer: Peer, state: State, locale: Locale, labels: Labels) {
+function peerFacts(peer: Peer, state: State, locale: Locale, labels: Labels, now: number, stale: boolean) {
   const transfers = state.transfers.filter(item => item.peerId === peer.id)
   const active = transfers.filter(item => item.status === 'transferring')
   const incoming = active.filter(item => item.direction === 'incoming')
@@ -107,12 +111,13 @@ function peerFacts(peer: Peer, state: State, locale: Locale, labels: Labels) {
   const activeShares = state.shares.filter(item => item.status === 'active' && (item.peerIds ? item.peerIds.includes(peer.id) : item.peerId === peer.id))
   const shares = activeShares.length
   const listeners = [connections ? `${labels.connections}: ${connections}` : '', shares ? `${labels.shares}: ${shares}` : ''].filter(Boolean)
-  const path = labels[peer.path === 'direct' ? 'direct' : peer.path === 'relay' ? 'relay' : 'unknown']
+  const route = peerPath(peer, now, stale)
+  const path = labels[route]
   const app = appLabel(peer, labels)
   const networks = peer.networks.map(network => network === 'mixed' ? labels.mixed : network === 'direct-lan' ? labels.directLan : network === 'lan' ? labels.lan : 'Tailnet').join(' · ') || labels.networkUnknown
-  return { incoming: incoming.length > 0, outgoing: outgoing.length > 0, active: active.length > 0, hasTransferWork: active.length > 0 || pending > 0 || saving > 0, transferLabel, listeners, path, app,
+  return { route, incoming: !stale && incoming.length > 0, outgoing: !stale && outgoing.length > 0, active: !stale && active.length > 0, hasTransferWork: active.length > 0 || pending > 0 || saving > 0, transferLabel, listeners, path, app,
     networks, serviceSummary: `${labels.listenersCompact} ${connections} · ${labels.sharesCompact} ${shares}`,
-    serviceNames: [...activeConnections, ...activeShares].map(item => `${item.name} (${item.network.toUpperCase()})`), description: `${labels.known}; ${presenceLabel(peer, labels)}; ${app}; ${networks}; ${path}; ${listeners.join('; ') || labels.noListeners}; ${transferLabel}; ${peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}${peer.verified ? '' : `; ${labels.identityNeeded}`}` }
+    serviceNames: [...activeConnections, ...activeShares].map(item => `${item.name} (${item.network.toUpperCase()})`), description: `${labels.known}; ${presenceLabel(peer, labels, false, stale)}; ${app}; ${networks}; ${path}; ${listeners.join('; ') || labels.noListeners}; ${transferLabel}; ${!stale && peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}${peer.verified ? '' : `; ${labels.identityNeeded}`}` }
 }
 
 type Point = { x: number; y: number }
@@ -205,7 +210,7 @@ function DeviceGlyph({ local = false }: { local?: boolean }) {
   </svg></span>
 }
 
-export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, onViewChange, selectedPeerId, visiblePeers, onClearFilters }: NetworkGraphProps) {
+export function NetworkGraph({ state, stale = false, now = Date.now(), locale, onSelectPeer, onSelectSelf, view, onViewChange, selectedPeerId, visiblePeers, onClearFilters }: NetworkGraphProps) {
   const labels = locale === 'ja' ? ja : en
   const id = useId()
   const [hoveredPeerId, setHoveredPeerId] = useState<string | null>(null)
@@ -215,9 +220,9 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
   // Identity ordering keeps positions stable when polling changes names, statuses, or API order.
   const peers = useMemo(() => [...(visiblePeers ?? state.peers)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), [state.peers, visiblePeers])
   const geometry = useConnectors(JSON.stringify(peers.map(peer => peer.id)), view)
-  const facts = peers.map(peer => ({ peer, facts: peerFacts(peer, state, locale, labels) }))
+  const facts = peers.map(peer => ({ peer, facts: peerFacts(peer, state, locale, labels, now, stale) }))
   const selfName = state.self.name || labels.self
-  const localStatus = selfStatus(state.self.status, labels)
+  const localStatus = stale ? labels.networkUnknown : selfStatus(state.self.status, labels)
   const selectedNetwork = state.settings?.network ?? (state.self.networks?.length === 1 ? state.self.networks[0] : undefined)
   const selfNetworks = selectedNetwork === 'mixed' ? labels.mixed : selectedNetwork === 'direct-lan' ? labels.directLan : selectedNetwork === 'lan' ? labels.lan : selectedNetwork === 'tailnet' ? labels.tailnet : labels.networkUnknown
   const relayConfiguration = selectedNetwork === 'lan' && state.lan?.configured ? state.lan.relay : undefined
@@ -231,10 +236,11 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
     <header className="network-graph-header"><div><h2 id={`${id}-heading`}>{view === 'diagram' ? labels.heading : labels.list}</h2><p>{labels.intro}</p></div>
       {onViewChange && <button className="button button-secondary network-graph-view-toggle" type="button" onClick={() => onViewChange(view === 'diagram' ? 'list' : 'diagram')} aria-controls={`${id}-content`}>{view === 'diagram' ? labels.showList : labels.showDiagram}</button>}
     </header>
+    {stale && <p className="scope-note" role="status">{labels.stale}</p>}
     <ul className="network-graph-legend" aria-label={labels.explain}>
       <li><span className="network-graph-key known" aria-hidden="true" />{labels.knownCount}<strong>{peers.length}</strong></li>
-      <li><span className="network-graph-key online" aria-hidden="true" />{labels.onlineCompact}<strong>{peers.filter(peer => peer.online).length}</strong></li>
-      <li><span className="network-graph-key confirmed" aria-hidden="true" />{labels.confirmedCount}<strong>{peers.filter(peer => peer.bridge).length}</strong></li>
+      <li><span className="network-graph-key online" aria-hidden="true" />{labels.onlineCompact}<strong>{stale ? '—' : peers.filter(peer => peer.online).length}</strong></li>
+      <li><span className="network-graph-key confirmed" aria-hidden="true" />{labels.confirmedCount}<strong>{stale ? '—' : peers.filter(peer => peer.bridge).length}</strong></li>
     </ul>
     <div className="network-graph-context">
       <span className="network-graph-network-label"><span>{labels.network}</span><strong>{selfNetworks}</strong></span>
@@ -249,7 +255,7 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
               return <g key={peer.id} className={`${selectedPeerId === peer.id ? 'is-selected' : ''} ${emphasized(peer.id) ? 'is-emphasized' : ''}`} data-peer-id={peer.id}>
                 <path className="network-graph-line-glow" d={connector?.line} />
                 <path className="network-graph-line-track" d={connector?.line} />
-                <path className={`network-graph-line ${!peer.online || !['direct', 'relay'].includes(peer.path) ? 'is-unconfirmed' : 'is-reported'} ${facts.active ? 'has-transfer' : ''}`} d={connector?.line} />
+                <path className={`network-graph-line ${facts.route === 'unknown' ? 'is-unconfirmed' : 'is-reported'} ${facts.active ? 'has-transfer' : ''}`} d={connector?.line} />
                 <path className="network-graph-annotation" d={connector?.annotation} />
                 <path className="network-graph-line-hit" d={connector?.line} onMouseEnter={() => setHoveredPeerId(peer.id)} onMouseLeave={() => setHoveredPeerId(null)} onClick={() => onSelectPeer(peer.id)} />
                 {connector && <><circle className="network-graph-junction" cx={connector.junction.x} cy={connector.junction.y} r="4" /><circle className="network-graph-terminal-halo" cx={connector.target.x} cy={connector.target.y} r="8" /><circle className="network-graph-terminal" cx={connector.source.x} cy={connector.source.y} r="4" /><circle className="network-graph-terminal" cx={connector.target.x} cy={connector.target.y} r="4" /></>}
@@ -264,18 +270,18 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
               onMouseEnter={() => setHoveredPeerId(peer.id)} onMouseLeave={() => setHoveredPeerId(null)}
               onFocusCapture={() => setFocusedPeerId(peer.id)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusedPeerId(null) }}>
               <div className="network-graph-route-group">
-                <button ref={element => { if (element) geometry.edges.current.set(peer.id, element); else geometry.edges.current.delete(peer.id) }} type="button" data-path={peer.path}
+                <button ref={element => { if (element) geometry.edges.current.set(peer.id, element); else geometry.edges.current.delete(peer.id) }} type="button" data-path={facts.route}
                   className={`network-graph-edge ${facts.active ? 'has-transfer' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-pressed={selectedPeerId === peer.id} aria-label={`${labels.openConnection}: ${selfName} — ${peer.name}; ${facts.description}`} onClick={() => onSelectPeer(peer.id)}>
-                  <span className="network-graph-route"><RouteGlyph path={peer.path} /><span className="network-graph-path">{facts.path}</span></span>
+                  <span className="network-graph-route"><RouteGlyph path={facts.route} /><span className="network-graph-path">{facts.path}</span></span>
                 </button>
                 <span className="network-graph-wire-slot" aria-hidden="true" ref={element => { if (element) geometry.lanes.current.set(peer.id, element); else geometry.lanes.current.delete(peer.id) }} />
-                <span className="network-graph-lane-meta"><span>{facts.networks}</span>{facts.listeners.length > 0 && <span className="network-graph-lane-counts">{facts.serviceSummary}</span>}</span>
+                <span className="network-graph-lane-meta"><span>{facts.networks}</span>{stale && facts.listeners.length > 0 && <span>{labels.lastReported}</span>}{facts.listeners.length > 0 && <span className="network-graph-lane-counts">{facts.serviceSummary}</span>}</span>
                 {facts.hasTransferWork && <span className={`network-graph-transfer ${facts.active ? 'has-transfer' : ''}`}>{facts.transferLabel}</span>}
               </div>
-              <button ref={element => { if (element) geometry.nodes.current.set(peer.id, element); else geometry.nodes.current.delete(peer.id) }} type="button" className={`network-graph-node ${peerCommunicationAllowed(peer) ? 'is-ready' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.open}: ${peer.name}; ${facts.description}`} aria-pressed={selectedPeerId === peer.id} onClick={() => onSelectPeer(peer.id)}>
+              <button ref={element => { if (element) geometry.nodes.current.set(peer.id, element); else geometry.nodes.current.delete(peer.id) }} type="button" className={`network-graph-node ${!stale && peerCommunicationAllowed(peer) ? 'is-ready' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`} aria-label={`${labels.open}: ${peer.name}; ${facts.description}`} aria-pressed={selectedPeerId === peer.id} onClick={() => onSelectPeer(peer.id)}>
                 <span className="network-graph-device-heading"><DeviceGlyph /><span><span className="network-graph-node-kind">{labels.known}</span><strong title={peer.name}>{peer.name}</strong></span></span>
-                <span className="network-graph-node-meta"><span className="network-graph-online-status"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" /><span>{presenceLabel(peer, labels, true)}</span></span></span>
-                <span className={`network-graph-app ${peer.bridge ? 'is-confirmed' : ''}`}>{peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}</span>
+                <span className="network-graph-node-meta"><span className="network-graph-online-status"><span className={`network-graph-key ${!stale && peer.online ? 'online' : 'offline'}`} aria-hidden="true" /><span>{presenceLabel(peer, labels, true, stale)}</span></span></span>
+                <span className={`network-graph-app ${!stale && peer.bridge ? 'is-confirmed' : ''}`}>{!stale && peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}</span>
               </button>
             </div>)}
           </div>
@@ -288,7 +294,7 @@ export function NetworkGraph({ state, locale, onSelectPeer, onSelectSelf, view, 
         <ul>{facts.map(({ peer, facts }) => <li key={peer.id}>
           <button type="button" className={`network-graph-list-peer ${selectedPeerId === peer.id ? 'is-selected' : ''}`} onClick={() => onSelectPeer(peer.id)} aria-pressed={selectedPeerId === peer.id} aria-label={`${labels.open}: ${peer.name}; ${facts.description}`}>
             <span className="network-graph-list-title"><strong>{peer.name}</strong><span className="network-graph-node-kind">{labels.known}</span></span>
-            <span className="network-graph-list-state"><span className={`network-graph-key ${peer.online ? 'online' : 'offline'}`} aria-hidden="true" />{presenceLabel(peer, labels)}<span>·</span><span className={`network-graph-app ${peer.bridge ? 'is-confirmed' : ''}`}>{peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}</span><span>·</span>{facts.path}<span className="network-graph-networks">{facts.networks}</span></span>
+            <span className="network-graph-list-state"><span className={`network-graph-key ${!stale && peer.online ? 'online' : 'offline'}`} aria-hidden="true" />{presenceLabel(peer, labels, false, stale)}<span>·</span><span className={`network-graph-app ${!stale && peer.bridge ? 'is-confirmed' : ''}`}>{!stale && peer.bridge ? labels.bridgeConfirmed : labels.appUnknown}</span><span>·</span>{facts.path}<span className="network-graph-networks">{facts.networks}</span></span>
             <span className="network-graph-list-permission">{labels.localPermission}: {facts.app}</span>
             <span className="network-graph-listeners">{facts.listeners.join(' · ') || labels.noListeners}</span>
             <span className={`network-graph-transfer ${facts.active ? 'has-transfer' : ''}`}>{facts.transferLabel}</span>

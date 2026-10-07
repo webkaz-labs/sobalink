@@ -3,6 +3,8 @@ import type { Locale } from '../api'
 import type { Server } from '../useServer'
 import { cardDigest, MAX_CARD_INPUT_BYTES, readCardExport, readCardFile, readCardInput, readCardInspection, validCardName, type DeviceCardExport, type DeviceCardInspection, type DeviceCardMode } from '../device-cards'
 import { deviceCardText, type DeviceCardTextKey } from '../device-card-i18n'
+import { PngCardImporter } from '../qr/png-import'
+import { pngPolicy } from '../qr/png-policy'
 import { Button, useAlive } from './ui'
 import './DeviceCards.css'
 
@@ -16,7 +18,7 @@ type Props = {
 export function DeviceCards(props: Props) {
   const [open, setOpen] = useState(false), [used, setUsed] = useState(false)
   const c = (key: DeviceCardTextKey) => deviceCardText(props.locale, key)
-  const boundary = JSON.stringify([props.mode, props.publicKey, props.binding, props.disabled, props.canUseRecipient, props.server.auth, props.server.stale])
+  const boundary = JSON.stringify([props.mode, props.publicKey, props.binding, props.disabled, props.canUseRecipient, props.server.auth, props.server.stale, pngPolicy(props.server.state?.limits?.effective.resources)])
   return <section className="device-cards" aria-label={c('title')}>
     <Button type="button" variant="ghost" aria-expanded={open} onClick={() => { setUsed(false); setOpen(value => !value) }}>{c(open ? 'close' : 'open')}</Button>
     {used && <p role="status" className="scope-note">{c('used')}</p>}
@@ -27,16 +29,20 @@ function CardPanel({ server, locale, mode, publicKey, disabled, canUseRecipient,
   const c = (key: DeviceCardTextKey) => deviceCardText(locale, key)
   const alive = useAlive(), sequence = useRef(0), pending = useRef(false)
   const field = useRef<HTMLTextAreaElement>(null), reviewRegion = useRef<HTMLDivElement>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState(false), [readingPng, setReadingPng] = useState(false)
+  const png = useRef<PngCardImporter | undefined>(undefined)
+  useEffect(() => () => { png.current?.dispose(); png.current = undefined }, [])
+  const pngBudget = pngPolicy(server.state?.limits?.effective.resources)
   const [name, setName] = useState(''), [wantQR, setWantQR] = useState(false), [input, setInput] = useState('')
   const [error, setError] = useState<DeviceCardTextKey>(), [notice, setNotice] = useState<DeviceCardTextKey>()
   const [exported, setExported] = useState<DeviceCardExport>(), [review, setReview] = useState<{ input: string; generation: number; data: DeviceCardInspection }>()
   useEffect(() => { if (review) reviewRegion.current?.focus() }, [review])
-  const invalidate = () => { ++sequence.current; setExported(undefined); setReview(undefined); setError(undefined); setNotice(undefined) }
+  const invalidate = () => { ++sequence.current; png.current?.cancel(); setReadingPng(false); setExported(undefined); setReview(undefined); setError(undefined); setNotice(undefined) }
   const current = (generation: number) => alive.current && sequence.current === generation
   const run = async (action: (generation: number) => Promise<void>) => {
     if (disabled || pending.current) return
     pending.current = true; setBusy(true); setError(undefined); setNotice(undefined)
+    png.current?.cancel(); setReadingPng(false)
     const generation = ++sequence.current
     try { await action(generation) }
     catch { if (current(generation)) setError('failed') }
@@ -91,6 +97,26 @@ function CardPanel({ server, locale, mode, publicKey, disabled, canUseRecipient,
       setInput(parsed.text)
     }).catch(error => { if (current(generation)) setError(error instanceof Error && error.message === 'tooLarge' ? 'tooLarge' : 'invalid') })
   }
+  const selectPng = (file: File | undefined) => {
+    if (!file || disabled) return
+    invalidate(); setInput('')
+    if (!pngBudget) { setError('pngBudget'); return }
+    const generation = sequence.current
+    png.current ??= new PngCardImporter()
+    setReadingPng(true)
+    void png.current.start(file, mode, pngBudget).then(result => {
+      if (!current(generation)) return
+      setReadingPng(false)
+      if (result.ok) { setInput(result.text); setNotice('pngReady') }
+      else if (result.error !== 'cancelled') setError(result.error === 'unavailable' ? 'pngUnavailable'
+        : result.error === 'imageBudget' || result.error === 'invalidBudget' ? 'pngBudget'
+        : result.error === 'animatedPNG' ? 'pngAnimated'
+        : result.error === 'deadlineExceeded' ? 'pngDeadline'
+        : result.error === 'noQRCode' ? 'pngNoCode'
+        : result.error === 'ambiguousQRCode' ? 'pngAmbiguous'
+        : result.error === 'invalidCard' ? 'invalid' : 'pngInvalid')
+    })
+  }
   const copy = async () => {
     if (!exported || disabled) return
     const generation = sequence.current
@@ -137,8 +163,10 @@ function CardPanel({ server, locale, mode, publicKey, disabled, canUseRecipient,
         else setInput(event.target.value)
       }} rows={4} autoComplete="off" spellCheck={false} className="code-value private-copy" /></label>
       <label className="field">{c('file')}<input type="file" accept="text/plain,.txt" disabled={disabled} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; selectFile(file) }} /></label>
+      <label className="field">{c('pngFile')}<input type="file" accept="image/png,.png" disabled={disabled} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; selectPng(file) }} /></label>
+      {readingPng && <div className="device-card-actions"><p role="status">{c('pngReading')}</p><Button type="button" onClick={invalidate}>{c('pngCancel')}</Button></div>}
       <p className="small muted">{c('fallback')}</p>
-      <Button type="submit" disabled={disabled || !input || Boolean(review)} busy={busy}>{c('inspect')}</Button>
+      <Button type="submit" disabled={disabled || readingPng || !input || Boolean(review)} busy={busy}>{c('inspect')}</Button>
     </form>
     {review && <div className="invitation-card device-card-review" role="region" aria-label={c('review')} tabIndex={-1} ref={reviewRegion}>
       <h3>{c('review')}</h3><p className="scope-note">{c('unverified')} · {c('unknown')}</p>
