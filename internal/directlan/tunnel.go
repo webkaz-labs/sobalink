@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"time"
 
 	"github.com/tailscale/wireguard-go/device"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -18,8 +17,15 @@ import (
 )
 
 func (n *Node) refreshBindLocked() {
+	g := n.generation.Load()
+	if g != nil {
+		g.refreshBindPolicy(n.peers)
+	}
+}
+
+func (g *runtimeGeneration) refreshBindPolicy(peers map[string]*peerState) {
 	p := &bindPolicy{endpoints: map[netip.AddrPort]bool{}, sources: map[netip.Addr]bool{}, generations: map[netip.Addr]*peerState{}, sessions: map[[32]byte]*peerSession{}}
-	for _, peer := range n.peers {
+	for _, peer := range peers {
 		p.endpoints[peer.peer.Endpoint] = true
 		a, _ := OverlayAddress(peer.peer.Key)
 		p.sources[a] = true
@@ -29,132 +35,80 @@ func (n *Node) refreshBindLocked() {
 		copy(key[:], raw)
 		p.sessions[key] = peer.session
 	}
-	n.bind.policy.Store(p)
+	g.bind.policy.Store(p)
 }
 func (n *Node) installPeerLocked(p Peer) error {
-	a, _ := OverlayAddress(p.Key)
-	if e := n.engine.IpcSet(fmt.Sprintf("public_key=%s\nendpoint=%s\nreplace_allowed_ips=true\nallowed_ip=%s/128\npersistent_keepalive_interval=0\n", p.TunnelKey, p.Endpoint, a)); e != nil {
-		return e
+	g := n.generation.Load()
+	state := n.peers[p.Key]
+	if g == nil || state == nil || state.g != g {
+		return ErrRecovery
 	}
+	return g.installPeer(state)
+}
+
+// installPeer configures only the captured generation and exact fresh session.
+// The builder is exclusive before publication; Node.mu owns later pair edits.
+func (g *runtimeGeneration) installPeer(state *peerState) error {
+	if state == nil || state.g != g {
+		return ErrRecovery
+	}
+	p := state.peer
 	raw, _ := hex.DecodeString(p.TunnelKey)
 	var key device.NoisePublicKey
 	copy(key[:], raw)
-	handle := n.engine.LookupPeer(key)
+	// The builder or Node.mu serializes configuration. Capture the exact selected
+	// session before entering WG; the registration callback never discovers
+	// a session from the mutable current-key map.
+	target := &peerRegistrationTarget{key: key, session: state.session}
+	g.registrationTarget.Store(target)
+	defer g.registrationTarget.CompareAndSwap(target, nil)
+	engine := g.engine.Load()
+	if engine == nil {
+		return ErrRecovery
+	}
+	a, _ := OverlayAddress(p.Key)
+	if e := engine.IpcSet(fmt.Sprintf("public_key=%s\nendpoint=%s\nreplace_allowed_ips=true\nallowed_ip=%s/128\npersistent_keepalive_interval=0\n", p.TunnelKey, p.Endpoint, a)); e != nil {
+		return e
+	}
+	handle := engine.LookupPeer(key)
 	if handle == nil {
 		return ErrUntrusted
 	}
-	n.peers[p.Key].enginePeer = handle
-	return nil
-}
-func (n *Node) startTunnelLocked() error {
-	b := &lanBind{cfg: n.cfg}
-	n.bind = b
-	n.refreshBindLocked()
-	local := n.OverlayAddr()
-	t, e := newUserspaceTunnel(local, func(src, dst netip.Addr) bool {
-		p := b.policy.Load()
-		return p != nil && dst == local && p.sources[src]
-	})
-	if e != nil {
-		return e
+	registration := handle.Registration()
+	if registration == 0 || state.session.registration.Load() != uint64(registration) {
+		return ErrRecovery
 	}
-	n.tunnel = t
-	n.tcpIncoming = newTCPAdmissions(n.cfg.FlowLimit)
-	tf := tcp.NewForwarder(t.stack, 0, n.cfg.FlowLimit, func(r *tcp.ForwarderRequest) {
-		id := r.ID()
-		entry := n.tcpIncoming.get(id)
-		if entry == nil {
-			r.Complete(true)
-			return
-		}
-		retire := func() { n.tcpIncoming.retire(id, entry) }
-		if !n.dispatch(func() { n.acceptTCP(r, entry.peer, retire) }) {
-			r.Complete(true)
-			retire()
-		}
-	})
-	t.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
-		peer := n.packetPeer(id)
-		if peer == nil || !validService("tcp", id.LocalPort) {
-			return false
-		}
-		entry, added := n.tcpIncoming.begin(id, peer)
-		if entry == nil {
-			return true
-		}
-		handled := tf.HandlePacket(id, pkt)
-		if !handled && added {
-			n.tcpIncoming.retire(id, entry)
-		}
-		return handled
-	})
-	t.stack.SetTransportProtocolHandler(udp.ProtocolNumber, func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
-		peer := n.packetPeer(id)
-		if peer == nil || !validService("udp", id.LocalPort) {
-			return false
-		}
-		held := pkt.Clone()
-		if !n.dispatch(func() { defer held.DecRef(); n.acceptUDP(udp.NewForwarderRequest(t.stack, id, held), peer) }) {
-			held.DecRef()
-			return false
-		}
+	if !g.admit(func() bool {
+		g.peerRegistrations[registration] = state
 		return true
-	})
-	n.engine = device.NewDevice(t, b, device.NewLogger(device.LogLevelSilent, ""), device.WithQueueStagedSize(64), device.WithQueueInboundSize(128), device.WithQueueOutboundSize(128), device.WithQueueHandshakeSize(64))
-	n.engine.SetSessionStateFunc(func(key device.NoisePublicKey, state device.PeerSessionState) {
-		policy := b.policy.Load()
-		if policy == nil {
-			return
-		}
-		if session := policy.sessions[[32]byte(key)]; session != nil {
-			session.transition(state)
-		}
-	})
-	priv, e := n.cfg.Identity.tunnelPrivate()
-	if e == nil {
-		e = n.engine.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%d\n", hex.EncodeToString(priv), n.cfg.Listen.Port()))
+	}) {
+		return ErrRecovery
 	}
-	if e == nil {
-		for _, p := range n.peers {
-			if e = n.installPeerLocked(p.peer); e != nil {
-				break
-			}
-		}
-	}
-	if e == nil {
-		e = n.engine.Up()
-	}
-	if e != nil {
-		n.engine.Close()
-		n.engine = nil
-		n.tunnel = nil
-		return e
-	}
+	state.enginePeer = handle
 	return nil
 }
-func (n *Node) dispatch(f func()) bool {
-	n.dispatchMu.Lock()
-	defer n.dispatchMu.Unlock()
-	if n.dispatchClosed {
+func (n *Node) dispatch(g *runtimeGeneration, f func()) bool {
+	lease, e := g.acquireWork(nil, false)
+	if e != nil {
 		return false
 	}
 	select {
 	case n.dispatchSlots <- struct{}{}:
 	default:
+		lease.finish()
 		return false
 	}
-	n.wg.Add(1)
-	go func() { defer n.wg.Done(); defer func() { <-n.dispatchSlots }(); f() }()
+	go func() { defer lease.finish(); defer func() { <-n.dispatchSlots }(); f() }()
 	return true
 }
 func addrPort(address tcpip.Address, port uint16) netip.AddrPort {
 	a, _ := netip.AddrFromSlice(address.AsSlice())
 	return netip.AddrPortFrom(a, port)
 }
-func (n *Node) incoming(id stack.TransportEndpointID, network string, expected *peerState) (*peerState, *listener, func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)) {
+func (n *Node) incoming(g *runtimeGeneration, id stack.TransportEndpointID, network string, expected *peerState) (*peerState, *listener, func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.readyLocked() != nil || n.flowUsageLocked() >= n.cfg.FlowLimit || !validService(network, id.LocalPort) || addrPort(id.LocalAddress, id.LocalPort).Addr() != n.OverlayAddr() {
+	if n.readyLocked() != nil || n.generation.Load() != g || !g.open() || n.flowUsageLocked() >= n.cfg.FlowLimit || !validService(network, id.LocalPort) || addrPort(id.LocalAddress, id.LocalPort).Addr() != n.OverlayAddr() {
 		return nil, nil, nil
 	}
 	src := addrPort(id.RemoteAddress, id.RemotePort)
@@ -166,25 +120,31 @@ func (n *Node) incoming(id stack.TransportEndpointID, network string, expected *
 	}
 	return nil, nil, nil
 }
-func (n *Node) acceptTCP(r *tcp.ForwarderRequest, expected *peerState, retire func()) {
-	defer retire()
+func (n *Node) acceptTCP(g *runtimeGeneration, r *tcp.ForwarderRequest, expected *peerState, complete func(bool)) {
 	id := r.ID()
-	p, ln, fallback := n.incoming(id, "tcp", expected)
+	p, ln, fallback := n.incoming(g, id, "tcp", expected)
 	if p == nil || (ln == nil && fallback == nil) {
-		r.Complete(true)
+		complete(true)
 		return
 	}
 	var wq waiter.Queue
 	ep, e := r.CreateEndpoint(&wq)
 	if e != nil {
-		r.Complete(true)
+		complete(false)
 		return
 	}
-	r.Complete(false)
-	retire()
-	raw := gonet.NewTCPConn(&wq, ep)
+	owner := g.endpoint(ep)
+	// The owned forwarder installs this owner before returning success.
+	// An absent owner is an integration error, never permission to fake cleanup.
+	if owner == nil {
+		g.requestStop(ErrRecovery)
+		return
+	}
+	owner.attach(gonet.NewTCPConn(&wq, ep))
+	complete(false)
+	raw := owner
 	n.mu.Lock()
-	f, err := n.trackFlowLocked(raw, p, "tcp", true)
+	f, err := n.trackFlowLocked(g, raw, p, "tcp", true)
 	n.mu.Unlock()
 	if err != nil {
 		raw.Close()
@@ -203,10 +163,13 @@ func (n *Node) acceptTCP(r *tcp.ForwarderRequest, expected *peerState, retire fu
 	}
 	handler(f)
 }
-func (n *Node) acceptUDP(r *udp.ForwarderRequest, expected *peerState) {
+func (n *Node) acceptUDP(g *runtimeGeneration, creator *endpointCreator, r *udp.ForwarderRequest, expected *peerState) {
 	id := r.ID()
-	p, ln, _ := n.incoming(id, "udp", expected)
+	p, ln, _ := n.incoming(g, id, "udp", expected)
 	if p == nil || ln == nil {
+		return
+	}
+	if creator.ctx.Err() != nil {
 		return
 	}
 	var wq waiter.Queue
@@ -214,9 +177,17 @@ func (n *Node) acceptUDP(r *udp.ForwarderRequest, expected *peerState) {
 	if e != nil {
 		return
 	}
-	raw := gonet.NewUDPConn(&wq, ep)
+	creator.PublishEndpoint(ep)
 	n.mu.Lock()
-	f, err := n.trackFlowLocked(raw, p, "udp", true)
+	valid := n.readyLocked() == nil && n.generation.Load() == g && n.peers[p.peer.Key] == p
+	if !valid || !creator.TryHandoff(ep) {
+		n.mu.Unlock()
+		cleanupCreated(ep)
+		return
+	}
+	raw := creator.live
+	raw.attach(gonet.NewUDPConn(&wq, ep))
+	f, err := n.trackFlowLocked(g, raw, p, "udp", true)
 	n.mu.Unlock()
 	if err != nil {
 		raw.Close()
@@ -227,9 +198,13 @@ func (n *Node) acceptUDP(r *udp.ForwarderRequest, expected *peerState) {
 	}
 }
 func (n *Node) DialPeer(ctx context.Context, key, network string, port uint16) (net.Conn, error) {
-	if e := n.Ready(); e != nil {
+	capability, e := n.CapturePeer(key)
+	if e != nil {
 		return nil, e
 	}
+	return capability.DialPeer(ctx, network, port)
+}
+func (n *Node) dialCapturedPeer(ctx context.Context, expected *runtimeGeneration, p *peerState, network string, port uint16) (net.Conn, error) {
 	if !validService(network, port) {
 		return nil, ErrUnavailable
 	}
@@ -241,54 +216,54 @@ func (n *Node) DialPeer(ctx context.Context, key, network string, port uint16) (
 		n.mu.Unlock()
 		return nil, e
 	}
-	p := n.peers[key]
-	if p == nil {
+	if n.generation.Load() != expected || p == nil || p.g != expected || n.peers[p.peer.Key] != p {
 		n.mu.Unlock()
 		return nil, ErrUntrusted
 	}
+	key := p.peer.Key
 	if n.flowUsageLocked() >= n.cfg.FlowLimit {
 		n.mu.Unlock()
 		return nil, ErrCapacity
 	}
-	run, cancel := context.WithTimeout(ctx, 10*time.Second)
-	pending := &pendingDial{key: key, cancel: cancel}
+	g := expected
+	run, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	creator, e := g.acquireCreator(run, false)
+	if e != nil {
+		n.mu.Unlock()
+		cancel()
+		return nil, e
+	}
+	pending := &pendingDial{key: key, cancel: cancel, g: g}
 	n.dials[pending] = struct{}{}
-	t := n.tunnel
 	n.mu.Unlock()
-	defer func() { cancel(); n.mu.Lock(); delete(n.dials, pending); n.mu.Unlock() }()
-	if e := n.ensureSession(run, p); e != nil {
+	defer func() { cancel(); n.mu.Lock(); delete(n.dials, pending); n.mu.Unlock(); creator.finishOutgoing() }()
+	if e := localAddressReady(expected.bind.cfg.Listen.Addr()); e != nil {
+		return nil, e
+	}
+	if e := n.ensureSession(creator.ctx, p); e != nil {
 		return nil, e
 	}
 	target, _ := OverlayAddress(key)
 	ap := netip.AddrPortFrom(target, port)
-	var raw net.Conn
-	var e error
-	if network == "tcp" {
-		var c *gonet.TCPConn
-		c, e = t.dialTCP(run, ap)
-		if e == nil {
-			raw = c
-		}
-	} else {
-		var c *gonet.UDPConn
-		c, e = t.dialUDP(netip.AddrPortFrom(n.OverlayAddr(), 0), ap)
-		if e == nil {
-			raw = c
-		}
-	}
+	raw, ep, e := g.tunnel.dialOwned(creator, network, netip.AddrPortFrom(n.OverlayAddr(), 0), ap)
 	if e != nil {
-		return nil, e
-	}
-	if e = run.Err(); e != nil {
-		raw.Close()
+		cleanupCreated(ep)
 		return nil, e
 	}
 	n.mu.Lock()
+	valid := n.readyLocked() == nil && n.generation.Load() == g && n.peers[key] == p && creator.ctx.Err() == nil
+	if !valid || !creator.TryHandoff(ep) {
+		n.mu.Unlock()
+		cleanupCreated(ep)
+		return nil, net.ErrClosed
+	}
+	owner := creator.live
+	owner.attach(raw)
 	delete(n.dials, pending)
-	f, e := n.trackFlowLocked(raw, p, network, false)
+	f, e := n.trackFlowLocked(g, owner, p, network, false)
 	n.mu.Unlock()
 	if e != nil {
-		raw.Close()
+		owner.requestClose()
 		return nil, e
 	}
 	return f, nil
@@ -303,9 +278,12 @@ func (n *Node) DialPacketPeer(ctx context.Context, key string, port uint16) (Con
 
 // packetPeer is safe on the synchronous WireGuard receive path. It must never
 // acquire Node.mu: revocation holds that lock while joining the peer receiver.
-func (n *Node) packetPeer(id stack.TransportEndpointID) *peerState {
-	p := n.bind.policy.Load()
-	if p == nil || addrPort(id.LocalAddress, id.LocalPort).Addr() != n.OverlayAddr() {
+func (g *runtimeGeneration) packetPeer(id stack.TransportEndpointID) *peerState {
+	if !g.open() {
+		return nil
+	}
+	p := g.bind.policy.Load()
+	if p == nil || addrPort(id.LocalAddress, id.LocalPort).Addr() != g.n.OverlayAddr() {
 		return nil
 	}
 	return p.generations[addrPort(id.RemoteAddress, id.RemotePort).Addr()]

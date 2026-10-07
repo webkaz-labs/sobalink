@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/webkaz-labs/sobalink/internal/deadline"
-	"io"
+	"github.com/webkaz-labs/sobalink/internal/transport"
 	"net"
 	"net/netip"
 	"sort"
@@ -110,9 +110,9 @@ type flow struct {
 	peerID              string // guarded by engine.mu; immutable after initial authentication
 	ctx                 context.Context
 	cancel              context.CancelFunc
-	client              net.Conn
 	mu                  sync.Mutex
-	remote              net.Conn
+	stopping            bool
+	authorizations      sync.WaitGroup
 	release             func()
 	releasePeer         func()
 	done                chan struct{}
@@ -123,7 +123,8 @@ type flow struct {
 // checks addresses/intervals/lifetime, and returns a closure. It does not call
 // WhoIs, State, a dialer, a budget hook, or any other supplied callback.
 // Use one Engine per embedded node. Close revokes and cancels synchronously;
-// Wait(ctx) optionally waits for callbacks and stream workers to finish.
+// Wait(ctx) optionally waits for callbacks, stream workers and owned physical
+// connection cleanup to finish. A wait timeout does not release flow capacity.
 type Engine struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -310,7 +311,7 @@ func (e *Engine) Handle(src, dst netip.AddrPort) (func(net.Conn), bool) {
 	return nil, true // explicitly reject; never forward an unmatched port elsewhere
 }
 
-func (e *Engine) admit(p *permit, src, dst netip.AddrPort, client net.Conn) *flow {
+func (e *Engine) admit(p *permit, src, dst netip.AddrPort) *flow {
 	limits := e.limits()
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -335,7 +336,7 @@ func (e *Engine) admit(p *permit, src, dst netip.AddrPort, client net.Conn) *flo
 		cancel()
 		ctx, cancel = context.WithDeadline(e.ctx, p.rule.policy.ExpiresAt)
 	}
-	f := &flow{engine: e, permit: p, source: src, destination: dst, ctx: ctx, cancel: cancel, client: client, release: release, done: make(chan struct{})}
+	f := &flow{engine: e, permit: p, source: src, destination: dst, ctx: ctx, cancel: cancel, release: release, done: make(chan struct{})}
 	e.active[f] = struct{}{}
 	e.byPolicy[p.rule.policy.ID]++
 	e.bySource[src.Addr()]++
@@ -357,6 +358,20 @@ func (f *flow) permitted() error {
 }
 
 func (e *Engine) authorize(ctx context.Context, f *flow) (string, error) {
+	// Revalidate may retain a flow after taking its active-flow snapshot. Close
+	// this gate before joining callbacks, so a stale snapshot cannot start work
+	// after the enclosing transport session has released its origin lease.
+	f.mu.Lock()
+	if f.stopping {
+		f.mu.Unlock()
+		return "", net.ErrClosed
+	}
+	f.authorizations.Add(1)
+	f.mu.Unlock()
+	defer f.authorizations.Done()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := f.permitted(); err != nil {
 		return "", err
 	}
@@ -364,10 +379,25 @@ func (e *Engine) authorize(ctx context.Context, f *flow) (string, error) {
 	expected := f.peerID
 	e.mu.Unlock()
 	r := f.permit.rule.policy
-	check, cancel := context.WithTimeout(ctx, e.opts.DialTimeout)
-	defer cancel()
+	check, cancel := context.WithTimeout(f.ctx, e.opts.DialTimeout)
+	// Preserve the session's immutable origin and cancellation while allowing
+	// an external Revalidate caller to cancel its own authorization request.
+	canceled := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { cancel(); close(canceled) })
+	defer func() {
+		if !stop() {
+			<-canceled
+		}
+		cancel()
+	}()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	peer, err := e.opts.Authorize(check, Request{PolicyID: r.ID, Source: f.source, Destination: f.destination, PeerID: expected, ExpiresAt: r.ExpiresAt, UntilRevoked: r.UntilRevoked})
 	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if err := check.Err(); err != nil {
@@ -385,9 +415,12 @@ func (e *Engine) authorize(ctx context.Context, f *flow) (string, error) {
 
 func (e *Engine) bindPeer(f *flow, peer string) bool {
 	limits := e.limits()
+	if f.permitted() != nil {
+		return false
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if f.permitted() != nil || int64(e.byPeer[peer]) >= limits.PerPeer {
+	if f.ctx.Err() != nil || !validFlow(e.current.Load(), f.permit, f.source, f.destination) || int64(e.byPeer[peer]) >= limits.PerPeer {
 		return false
 	}
 	if e.opts.AdmitPeerTCP != nil {
@@ -402,25 +435,6 @@ func (e *Engine) bindPeer(f *flow, peer string) bool {
 	return true
 }
 
-func (f *flow) closeSockets() {
-	_ = f.client.Close()
-	f.mu.Lock()
-	remote := f.remote
-	f.mu.Unlock()
-	if remote != nil {
-		_ = remote.Close()
-	}
-}
-func (f *flow) install(remote net.Conn) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.permitted() != nil {
-		_ = remote.Close()
-		return false
-	}
-	f.remote = remote
-	return true
-}
 func decrement[K comparable](m map[K]int, key K) {
 	if m[key] <= 1 {
 		delete(m, key)
@@ -430,7 +444,6 @@ func decrement[K comparable](m map[K]int, key K) {
 }
 func (e *Engine) release(f *flow) {
 	f.cancel()
-	f.closeSockets()
 	e.mu.Lock()
 	delete(e.active, f)
 	decrement(e.byPolicy, f.permit.rule.policy.ID)
@@ -448,15 +461,29 @@ func (e *Engine) release(f *flow) {
 }
 
 func (e *Engine) serve(p *permit, src, dst netip.AddrPort, client net.Conn) {
-	f := e.admit(p, src, dst, client)
+	f := e.admit(p, src, dst)
 	if f == nil {
 		_ = client.Close()
 		return
 	}
-	defer e.release(f)
-	watched := make(chan struct{})
-	go func() { defer close(watched); <-f.ctx.Done(); f.closeSockets() }()
-	defer func() { f.cancel(); <-watched }()
+	// Finite admission precedes session resources and origin acquisition. This
+	// context is installed before peer binding makes f visible to Revalidate.
+	owned := transport.NewSession(f.ctx)
+	f.ctx = owned.Context()
+	defer func() {
+		f.mu.Lock()
+		f.stopping = true
+		f.mu.Unlock()
+		f.cancel()
+		owned.Stop()
+		f.authorizations.Wait()
+		owned.Finish()
+		e.release(f)
+	}()
+	client, err := owned.Adopt(client)
+	if err != nil {
+		return
+	}
 	peer, err := e.authorize(f.ctx, f)
 	if err != nil || !e.bindPeer(f, peer) {
 		return
@@ -473,13 +500,13 @@ func (e *Engine) serve(p *permit, src, dst netip.AddrPort, client net.Conn) {
 	remote, err := e.opts.DialLoopback(dialCtx, target)
 	dialErr := dialCtx.Err()
 	cancel()
-	if err != nil || dialErr != nil || remote == nil {
-		if remote != nil {
-			_ = remote.Close()
-		}
-		return
+	var adoptErr error
+	if remote != nil {
+		// Even an errored or late dial result transfers physical ownership to
+		// the session. Its wrapper stays retained until Finish joins cleanup.
+		remote, adoptErr = owned.Adopt(remote)
 	}
-	if !f.install(remote) {
+	if err != nil || dialErr != nil || adoptErr != nil || remote == nil {
 		return
 	}
 	if _, err := e.authorize(f.ctx, f); err != nil {
@@ -502,7 +529,7 @@ func (e *Engine) serve(p *permit, src, dst netip.AddrPort, client net.Conn) {
 			}
 		}
 	}()
-	bridge(&guardedConn{Conn: client, guard: f.permitted}, &guardedConn{Conn: remote, guard: f.permitted})
+	transport.Bridge(&guardedConn{Conn: client, guard: f.permitted}, &guardedConn{Conn: remote, guard: f.permitted})
 	f.cancel()
 	<-validated
 }
@@ -609,29 +636,4 @@ func (c *guardedConn) CloseWrite() error {
 		return conn.CloseWrite()
 	}
 	return c.Conn.Close()
-}
-
-// bridge preserves TCP half-close so a request-side EOF can still receive its
-// response. A canceled permit closes both directions via the flow watcher.
-func bridge(a, b net.Conn) {
-	done := make(chan struct{})
-	copyOne := func(dst, src net.Conn) {
-		_, err := io.Copy(dst, src)
-		if err != nil {
-			_ = a.Close()
-			_ = b.Close()
-			return
-		}
-		if conn, ok := dst.(interface{ CloseWrite() error }); ok {
-			if conn.CloseWrite() != nil {
-				_ = a.Close()
-				_ = b.Close()
-			}
-		} else {
-			_ = dst.Close()
-		}
-	}
-	go func() { defer close(done); copyOne(a, b) }()
-	copyOne(b, a)
-	<-done
 }

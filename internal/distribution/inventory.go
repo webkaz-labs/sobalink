@@ -14,8 +14,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/webkaz-labs/sobalink/internal/engineadaptation"
 )
 
 type goModule struct {
@@ -255,8 +253,8 @@ func moduleRef(m *goModule) string {
 	if m.Main {
 		return "application:sobalink"
 	}
-	if m.Path == engineadaptation.Module && m.Replace != nil {
-		return "source:" + engineadaptation.SourceDirectory
+	if path := engineSourcePath(m.Path); path != "" && m.Replace != nil {
+		return "source:" + path
 	}
 	return "golang:" + moduleKey(m.Path, m.Version)
 }

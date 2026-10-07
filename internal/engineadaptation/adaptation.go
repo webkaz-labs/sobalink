@@ -136,6 +136,16 @@ func treeHash(tree map[string][]byte) string {
 	return Hash([]byte(b.String()))
 }
 func ValidateInputs(root string) (Manifest, error) {
+	return validateInputs(root, false)
+}
+
+// ValidateOwnedInputs permits exactly the three pinned transport adaptations.
+// The default ValidateInputs still permits only the original Tailscale entry.
+func ValidateOwnedInputs(root string) (Manifest, error) {
+	return validateInputs(root, true)
+}
+
+func validateInputs(root string, owned bool) (Manifest, error) {
 	m, err := Load()
 	if err != nil {
 		return m, err
@@ -151,49 +161,76 @@ func ValidateInputs(root string) (Manifest, error) {
 	if err != nil {
 		return m, err
 	}
-	exact := "replace " + Module + " " + Version + " => " + Replacement
+	pins := ModulePins()
+	if !owned {
+		pins = pins[:1]
+	}
 	replacements := regexp.MustCompile(`(?m)^\s*replace\b`).FindAll(mod, -1)
-	if len(replacements) != 1 || !strings.Contains("\n"+string(mod), "\n"+exact+"\n") {
-		return m, errors.New("only the exact reviewed Tailscale module replacement is allowed")
+	if len(replacements) != len(pins) {
+		return m, errors.New("module replacements differ from the exact selected adaptation set")
+	}
+	for _, pin := range pins {
+		exact := "replace " + pin.Module + " " + pin.Version + " => " + pin.Replacement
+		if strings.Count("\n"+string(mod), "\n"+exact+"\n") != 1 {
+			return m, errors.New("missing, duplicate or changed pinned module replacement")
+		}
+		if owned {
+			// Require the selected upstream version as well as its replacement.
+			// Standalone and grouped require directives are both accepted.
+			count := 0
+			for _, line := range strings.Split(string(mod), "\n") {
+				line, _, _ = strings.Cut(line, "//")
+				fields := strings.Fields(line)
+				if len(fields) > 0 && fields[0] == "require" {
+					fields = fields[1:]
+				}
+				if len(fields) > 0 && fields[0] == pin.Module {
+					if len(fields) != 2 || fields[1] != pin.Version {
+						return m, errors.New("pinned adapted module requirement changed")
+					}
+					count++
+				}
+			}
+			if count != 1 {
+				return m, errors.New("pinned adapted module requirement missing or duplicated")
+			}
+		}
 	}
 	sums, err := regular(root, "go.sum")
 	if err != nil {
 		return m, err
 	}
-	for _, expected := range []struct{ version, sum string }{{Version, ModuleSum}, {Version + "/go.mod", GoModSum}} {
-		matches := 0
-		for _, line := range strings.Split(string(sums), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 && fields[0] == Module && fields[1] == expected.version {
-				if len(fields) != 3 || fields[2] != expected.sum {
-					return m, errors.New("original Tailscale module checksum changed")
+	for _, pin := range pins {
+		for _, expected := range []struct{ version, sum string }{{pin.Version, pin.ModuleSum}, {pin.Version + "/go.mod", pin.GoModSum}} {
+			matches := 0
+			for _, line := range strings.Split(string(sums), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && fields[0] == pin.Module && fields[1] == expected.version {
+					if len(fields) != 3 || fields[2] != expected.sum {
+						return m, errors.New("original adapted module checksum changed")
+					}
+					matches++
 				}
-				matches++
 			}
-		}
-		if matches != 1 {
-			return m, errors.New("original Tailscale module checksum missing or duplicated")
+			if matches != 1 {
+				return m, errors.New("original adapted module checksum missing or duplicated")
+			}
 		}
 	}
 	return m, nil
 }
 func Verify(root string) (Manifest, error) {
-	m, err := ValidateInputs(root)
+	return verify(root, false)
+}
+
+func VerifyOwned(root string) (Manifest, error) { return verify(root, true) }
+
+func verify(root string, owned bool) (Manifest, error) {
+	m, err := validateInputs(root, owned)
 	if err != nil {
 		return m, err
 	}
-	// Check every parent under the checkout, including the output parent.
-	if _, err := regular(root, Directory+"/go.mod"); err != nil {
-		return m, err
-	}
-	tree, err := readTree(filepath.Join(root, filepath.FromSlash(Directory)))
-	if err != nil {
-		return m, err
-	}
-	if treeHash(tree) != m.AdaptedTreeSHA256 {
-		return m, errors.New("adapted dependency drift detected; remove .sobalink-deps/tailscale and prepare again")
-	}
-	return m, nil
+	return m, VerifyPinnedTree(root, Directory, m.AdaptedTreeSHA256)
 }
 
 // moduleHash implements Go's documented dirhash Hash1 format. The archive's
@@ -289,88 +326,132 @@ func apply(tree map[string][]byte, m Manifest) error {
 // Downloads populate only Go's original module cache. Source is read from the
 // verified zip, never from a potentially modified extracted cache directory.
 func Prepare(root string) (Manifest, error) {
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return Manifest{}, err
-	}
-	m, err := ValidateInputs(root)
+	return prepare(root, false)
+}
+
+func PrepareOwned(root string) (Manifest, error) { return prepare(root, true) }
+
+func prepare(root string, owned bool) (Manifest, error) {
+	m, err := validateInputs(root, owned)
 	if err != nil {
 		return m, err
+	}
+	err = MaterializePinned(root, Directory, m, func(archive string) (map[string][]byte, error) {
+		tree, err := readZip(archive, m)
+		if err != nil {
+			return nil, err
+		}
+		if err := apply(tree, m); err != nil {
+			return nil, err
+		}
+		return tree, nil
+	})
+	if err != nil {
+		return m, err
+	}
+	return verify(root, owned)
+}
+
+// MaterializePinned obtains only the exact original archive, builds a separate
+// verified tree, and never changes extracted module-cache source. The assembler
+// must authenticate its inputs; its complete output digest is checked here too.
+func MaterializePinned(root, directory string, m Manifest, assemble func(string) (map[string][]byte, error)) error {
+	if !validOutputDirectory(directory) {
+		return errors.New("unrecognized adapted dependency output")
+	}
+	matched := false
+	for _, pin := range ModulePins() {
+		if directory == pin.Directory && m.Module == pin.Module && m.Version == pin.Version && m.ModuleSum == pin.ModuleSum && m.GoModSum == pin.GoModSum {
+			matched = true
+		}
+	}
+	if !matched {
+		return errors.New("unrecognized adapted dependency identity")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	if _, err := regular(root, "go.mod"); err != nil {
+		return err
 	}
 	cacheCommand := exec.Command("go", "env", "GOMODCACHE")
 	cacheCommand.Env = append(os.Environ(), "GOWORK=off", "GOENV=off", "GOFLAGS=", "GOTOOLCHAIN=local")
 	cacheRaw, err := cacheCommand.Output()
 	if err != nil {
-		return m, err
+		return err
 	}
 	cache, err := canonicalPath(strings.TrimSpace(string(cacheRaw)))
 	if err != nil {
-		return m, err
+		return err
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return m, err
+		return err
 	}
-	output := filepath.Join(resolvedRoot, filepath.FromSlash(Directory))
+	output := filepath.Join(resolvedRoot, filepath.FromSlash(directory))
 	if overlaps(cache, output) {
-		return m, errors.New("generated dependency must be outside the Go module cache")
+		return errors.New("generated dependency must be outside the Go module cache")
 	}
 	parent := filepath.Join(root, ".sobalink-deps")
-	dest := filepath.Join(root, filepath.FromSlash(Directory))
+	dest := filepath.Join(root, filepath.FromSlash(directory))
 	if err := os.Mkdir(parent, 0o755); err != nil && !os.IsExist(err) {
-		return m, err
+		return err
 	}
 	info, err := os.Lstat(parent)
 	if err != nil || !info.IsDir() || info.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
-		return m, errors.New("dependency output parent must be a real directory")
+		return errors.New("dependency output parent must be a real directory")
 	}
 	// An atomic directory lock prevents concurrent preparers from replacing work.
 	lock := filepath.Join(parent, ".prepare-lock")
 	if err := os.Mkdir(lock, 0o700); err != nil {
-		return m, errors.New("engine preparation already active, or stale .sobalink-deps/.prepare-lock; inspect before retrying")
+		return errors.New("engine preparation already active, or stale .sobalink-deps/.prepare-lock; inspect before retrying")
 	}
 	defer os.Remove(lock)
 	if _, err := os.Lstat(dest); err == nil {
-		return Verify(root)
+		return VerifyPinnedTree(root, directory, m.AdaptedTreeSHA256)
 	} else if !os.IsNotExist(err) {
-		return m, err
+		return err
 	}
-	stage, err := os.MkdirTemp(parent, ".tailscale-")
+	stage, err := os.MkdirTemp(parent, "."+filepath.Base(directory)+"-")
 	if err != nil {
-		return m, err
+		return err
 	}
 	defer removeStage(stage)
-	cmd := exec.Command("go", "mod", "download", "-json", Module+"@"+Version)
+	cmd := exec.Command("go", "mod", "download", "-json", m.Module+"@"+m.Version)
 	cmd.Dir = stage
 	cmd.Env = append(os.Environ(), "GOWORK=off", "GOENV=off", "GOFLAGS=", "GOTOOLCHAIN=local")
 	raw, err := cmd.Output()
 	if err != nil {
-		return m, fmt.Errorf("download original Tailscale module (warm cache supports GOPROXY=off): %w", err)
+		return fmt.Errorf("download original pinned module (warm cache supports GOPROXY=off): %w", err)
 	}
 	var download struct {
 		Path, Version, Zip, Sum, GoModSum string
 		Error                             any
 	}
 	if err := json.Unmarshal(raw, &download); err != nil {
-		return m, err
+		return err
 	}
-	if download.Path != Module || download.Version != Version || download.Sum != ModuleSum || download.GoModSum != GoModSum || download.Zip == "" || download.Error != nil {
-		return m, errors.New("downloaded module identity or checksum differs from reviewed pin")
+	if download.Path != m.Module || download.Version != m.Version || download.Sum != m.ModuleSum || download.GoModSum != m.GoModSum || download.Zip == "" || download.Error != nil {
+		return errors.New("downloaded module identity or checksum differs from reviewed pin")
 	}
-	tree, err := readZip(download.Zip, m)
+	tree, err := assemble(download.Zip)
 	if err != nil {
-		return m, err
+		return err
 	}
-	if err := apply(tree, m); err != nil {
-		return m, err
+	if treeHash(tree) != m.AdaptedTreeSHA256 {
+		return errors.New("assembled dependency differs from pinned complete tree")
 	}
 	for path, data := range tree {
+		if !fs.ValidPath(path) || strings.ContainsAny(path, "\\:\r\n") {
+			return errors.New("unsafe assembled source path")
+		}
 		p := filepath.Join(stage, filepath.FromSlash(path))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return m, err
+			return err
 		}
 		if err := os.WriteFile(p, data, 0o444); err != nil {
-			return m, err
+			return err
 		}
 	}
 	// Source files are read-only, matching Go's extracted module convention.
@@ -385,12 +466,20 @@ func Prepare(root string) (Manifest, error) {
 		}
 		return nil
 	}); err != nil {
-		return m, err
+		return err
+	}
+	// Re-read staging before publication. Reject a changed or linked entry.
+	staged, err := readTree(stage)
+	if err != nil {
+		return err
+	}
+	if treeHash(staged) != m.AdaptedTreeSHA256 {
+		return errors.New("staged dependency drift")
 	}
 	if err := os.Rename(stage, dest); err != nil {
-		return m, err
+		return err
 	}
-	return Verify(root)
+	return VerifyPinnedTree(root, directory, m.AdaptedTreeSHA256)
 }
 
 func overlaps(a, b string) bool {

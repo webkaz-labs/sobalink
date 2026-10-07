@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 const DefaultUDPIdleTimeout = 5 * time.Minute
@@ -45,21 +47,30 @@ type udpPacketIO interface {
 }
 
 type udpTable struct {
-	bytesMu     sync.Mutex
-	queuedBytes int64
-	budgetOnce  sync.Once
-	budget      *UDPBudget
-	authorize   SourceAuthorizer
-	guard       func() error
-	mu          sync.Mutex
-	sessions    map[netip.AddrPort]*udpSession
-	server      *Server
-	local       udpPacketIO
-	cfg         UDPConfig
-	dial        Dialer
+	bytesMu      sync.Mutex
+	queuedBytes  int64
+	budgetOnce   sync.Once
+	budget       *UDPBudget
+	authorize    SourceAuthorizer
+	guard        func() error
+	mu           sync.Mutex
+	sessions     map[netip.AddrPort]*udpSession
+	associations map[udpAssociationKey]*udpSession
+	server       *Server
+	local        udpPacketIO
+	cfg          UDPConfig
+	dial         Dialer
+}
+
+type udpAssociationKey struct {
+	source   netip.AddrPort
+	identity *transportorigin.Token
 }
 
 type udpSession struct {
+	owner         *Session
+	association   transportorigin.PacketAssociation
+	sourceAddr    net.Addr
 	sharedBudget  *UDPBudget
 	table         *udpTable
 	source        netip.AddrPort
@@ -111,10 +122,25 @@ func StartUDP(ctx context.Context, cfg UDPConfig, dial Dialer) (*Server, error) 
 	}), nil
 }
 
+// Read the capability-bearing address when the packet front supplies one.
+// The legacy numeric interface remains for ordinary OS sockets and test fronts.
+func (t *udpTable) readPacket(buffer []byte) (int, netip.AddrPort, net.Addr, error) {
+	if packet, ok := t.local.(net.PacketConn); ok {
+		n, addr, err := packet.ReadFrom(buffer)
+		if err != nil {
+			return 0, netip.AddrPort{}, nil, err
+		}
+		source, err := sourceAddress(addr)
+		return n, source, addr, err
+	}
+	n, source, err := t.local.ReadFromUDPAddrPort(buffer)
+	return n, source, net.UDPAddrFromAddrPort(source), err
+}
 func (t *udpTable) readLocal() {
 	buffer := make([]byte, maxDatagramSize)
+	defer clear(buffer)
 	for {
-		n, source, err := t.local.ReadFromUDPAddrPort(buffer)
+		n, source, addr, err := t.readPacket(buffer)
 		if err != nil {
 			t.server.fail(err)
 			return
@@ -122,35 +148,151 @@ func (t *udpTable) readLocal() {
 		if t.server.ctx.Err() != nil {
 			return
 		}
-		if t.authorize != nil {
-			if err := authorizeInbound(t.server.ctx, source, t.authorize, t.guard); err != nil {
-				t.mu.Lock()
-				if session := t.sessions[source]; session != nil {
-					session.stop()
-				}
-				t.mu.Unlock()
-				continue
-			}
+		if n < 0 || n > len(buffer) {
+			t.server.fail(errors.New("invalid datagram length"))
+			return
 		}
-		packet := buffer[:n]
-		t.mu.Lock()
-		session := t.sessions[source]
-		if session == nil && (t.cfg.MaxSessions == 0 || len(t.sessions) < t.cfg.MaxSessions) {
-			budget := t.resourceBudget()
-			if !budget.reserveSession() {
-				t.mu.Unlock()
-				continue
+		t.acceptPacket(source, addr, buffer[:n])
+	}
+}
+func (t *udpTable) acceptPacket(source netip.AddrPort, addr net.Addr, data []byte) {
+	association, associated := addr.(transportorigin.PacketAssociation)
+	var key udpAssociationKey
+	ctx := t.server.ctx
+	var delivery transportorigin.Lease
+	if associated {
+		key = udpAssociationKey{source, association.AssociationIdentity()}
+		if key.identity == nil {
+			return
+		}
+		if origin := association.TransportOrigin(); origin != nil {
+			var err error
+			delivery, err = origin.Acquire(ctx)
+			if err != nil {
+				return
 			}
-			ctx, cancel := context.WithCancel(t.server.ctx)
-			session = &udpSession{sharedBudget: budget, table: t, source: source, ctx: ctx, cancel: cancel, ready: make(chan struct{}, 1), lastActive: time.Now()}
+			defer delivery.Release()
+			ctx = delivery.Context()
+		}
+	} else if carrier, ok := addr.(transportorigin.Carrier); ok && carrier.TransportOrigin() != nil {
+		return // never degrade an origin-bearing address into a numeric tuple
+	}
+	if t.authorize != nil {
+		if err := authorizeInbound(ctx, source, t.authorize, t.guard); err != nil {
+			t.stopSource(source, key, associated)
+			return
+		}
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if associated {
+		if _, valid := association.PeerIdentity(); !valid {
+			t.stopSource(source, key, true)
+			return
+		}
+	}
+	t.mu.Lock()
+	var session *udpSession
+	if associated {
+		session = t.associations[key]
+	} else {
+		session = t.sessions[source]
+	}
+	if session == nil && (t.cfg.MaxSessions == 0 || len(t.sessions)+len(t.associations) < t.cfg.MaxSessions) {
+		budget := t.resourceBudget()
+		if !budget.reserveSession() {
+			t.mu.Unlock()
+			return
+		}
+		owner := NewSession(t.server.ctx)
+		run, cancel := context.WithCancel(owner.Context())
+		session = &udpSession{sharedBudget: budget, table: t, source: source, sourceAddr: addr, ctx: run, cancel: cancel, owner: owner, association: association, ready: make(chan struct{}, 1), lastActive: time.Now()}
+		if associated {
+			if t.associations == nil {
+				t.associations = make(map[udpAssociationKey]*udpSession)
+			}
+			t.associations[key] = session
+		} else {
 			t.sessions[source] = session
-			t.server.wg.Add(1)
-			go func() { defer t.server.wg.Done(); session.run() }()
 		}
-		if session != nil {
-			session.offer(packet)
+		t.server.mu.Lock()
+		if t.server.sessions == nil {
+			t.server.sessions = make(map[*Session]struct{})
 		}
+		t.server.sessions[owner] = struct{}{}
+		t.server.mu.Unlock()
+		owner.HoldRelease(func() {
+			t.server.mu.Lock()
+			delete(t.server.sessions, owner)
+			t.server.mu.Unlock()
+			t.mu.Lock()
+			if associated {
+				if t.associations[key] == session {
+					delete(t.associations, key)
+				}
+			} else if t.sessions[source] == session {
+				delete(t.sessions, source)
+			}
+			t.mu.Unlock()
+			budget.releaseSession()
+		})
+		t.server.wg.Add(1)
+		// Adoption and first publication occur before the worker starts. The table
+		// entry retains capacity until its cleanup path returns even on rejection.
 		t.mu.Unlock()
+		var adoptErr error
+		if associated {
+			adoptErr = owner.adoptAssociation(association)
+		}
+		if adoptErr == nil {
+			session.offer(data)
+		}
+		go func() {
+			defer t.server.wg.Done()
+			if adoptErr != nil {
+				session.cleanup()
+				return
+			}
+			session.run()
+		}()
+		return
+	}
+	t.mu.Unlock()
+	if session != nil {
+		session.offer(data)
+	}
+}
+func (t *udpTable) stopSource(source netip.AddrPort, key udpAssociationKey, associated bool) {
+	t.mu.Lock()
+	session := t.sessions[source]
+	if associated {
+		session = t.associations[key]
+	}
+	t.mu.Unlock()
+	if session != nil {
+		session.stop()
+	}
+}
+func (s *udpSession) cleanup() {
+	s.stop()
+	if s.owner != nil {
+		s.owner.Finish()
+		return
+	}
+	t := s.table
+	t.mu.Lock()
+	if s.association != nil {
+		key := udpAssociationKey{s.source, s.association.AssociationIdentity()}
+		if t.associations[key] == s {
+			delete(t.associations, key)
+		}
+	} else if t.sessions[s.source] == s {
+		delete(t.sessions, s.source)
+	}
+	t.mu.Unlock()
+	if s.sharedBudget != nil {
+		s.sharedBudget.releaseSession()
 	}
 }
 
@@ -236,6 +378,7 @@ func (s *udpSession) stop() {
 	for s.queue != nil {
 		packet := s.queue
 		s.queue = packet.next
+		clear(packet.data)
 		s.table.releaseBytes(packetStorage(len(packet.data)))
 	}
 	s.tail = nil
@@ -245,6 +388,11 @@ func (s *udpSession) stop() {
 func (s *udpSession) validate() error {
 	if s.ctx.Err() != nil {
 		return s.ctx.Err()
+	}
+	if s.association != nil {
+		if _, valid := s.association.PeerIdentity(); !valid {
+			return net.ErrClosed
+		}
 	}
 	if s.table.authorize != nil {
 		if err := authorizeInbound(s.ctx, s.source, s.table.authorize, s.table.guard); err != nil {
@@ -264,17 +412,7 @@ func (s *udpSession) validate() error {
 
 func (s *udpSession) run() {
 	t := s.table
-	defer func() {
-		s.stop()
-		if s.sharedBudget != nil {
-			s.sharedBudget.releaseSession()
-		}
-		t.mu.Lock()
-		if t.sessions[s.source] == s {
-			delete(t.sessions, s.source)
-		}
-		t.mu.Unlock()
-	}()
+	defer s.cleanup()
 	if err := s.validate(); err != nil {
 		return
 	}
@@ -337,6 +475,7 @@ func (s *udpSession) watchRemote(remote net.Conn) {
 func (s *udpSession) readRemote(remote net.Conn) {
 	defer s.stop()
 	buffer := make([]byte, maxDatagramSize)
+	defer clear(buffer)
 	for {
 		n, err := remote.Read(buffer)
 		if err != nil {
@@ -348,7 +487,24 @@ func (s *udpSession) readRemote(remote net.Conn) {
 		if !s.touch() {
 			return
 		}
-		written, err := s.table.local.WriteToUDPAddrPort(buffer[:n], s.source)
+		var delivery transportorigin.Lease
+		if s.owner != nil {
+			if origin := s.owner.BoundOrigin(); origin != nil {
+				delivery, err = origin.Acquire(s.ctx)
+				if err != nil {
+					return
+				}
+			}
+		}
+		var written int
+		if packet, ok := s.table.local.(net.PacketConn); ok && s.sourceAddr != nil {
+			written, err = packet.WriteTo(buffer[:n], s.sourceAddr)
+		} else {
+			written, err = s.table.local.WriteToUDPAddrPort(buffer[:n], s.source)
+		}
+		if delivery != nil {
+			delivery.Release()
+		}
 		if err != nil || written != n {
 			return
 		}
@@ -372,7 +528,7 @@ func normalizeUDPConfig(cfg *UDPConfig) error {
 }
 
 func (s *udpSession) sendPacket(remote net.Conn, packet []byte) error {
-	defer s.table.releaseBytes(packetStorage(len(packet)))
+	defer func() { clear(packet); s.table.releaseBytes(packetStorage(len(packet))) }()
 	if err := s.validate(); err != nil {
 		return err
 	}

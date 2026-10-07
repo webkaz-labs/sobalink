@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/netip"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 // SourceAuthorizer must check a pinned current peer identity, not just membership
@@ -67,8 +69,9 @@ func StartInboundTCP(ctx context.Context, cfg TCPConfig, l net.Listener, authori
 	}
 	return startServer(ctx, l, l.Addr(), func(s *Server) {
 		acceptConnections(s, l, func(client net.Conn) {
+			sessionCtx := sessionContext(client, s.ctx)
 			source, e := sourceAddress(client.RemoteAddr())
-			if e != nil || authorizeInbound(s.ctx, source, authorize, guard) != nil {
+			if e != nil || authorizeInbound(sessionCtx, source, authorize, guard) != nil {
 				return
 			}
 			dial := func(c context.Context, _, address string) (net.Conn, error) {
@@ -80,14 +83,14 @@ func StartInboundTCP(ctx context.Context, cfg TCPConfig, l net.Listener, authori
 				}
 				return (&net.Dialer{}).DialContext(c, "tcp"+family, cfg.Target)
 			}
-			dialCtx, cancel := context.WithTimeout(s.ctx, timeout)
+			dialCtx, cancel := context.WithTimeout(sessionCtx, timeout)
 			remote, e := dialTracked(s, dialCtx, dial, "tcp", cfg.Target)
 			cancel()
 			if e != nil {
 				return
 			}
 			defer s.release(remote)
-			flowCtx, stop := context.WithCancel(s.ctx)
+			flowCtx, stop := context.WithCancel(sessionCtx)
 			defer stop()
 			validate := func() error { return authorizeInbound(flowCtx, source, authorize, guard) }
 			if e := validate(); e != nil {
@@ -157,6 +160,10 @@ func (p packetAdapter) ReadFromUDPAddrPort(b []byte) (int, netip.AddrPort, error
 	n, a, e := p.ReadFrom(b)
 	if e != nil {
 		return 0, netip.AddrPort{}, e
+	}
+	if _, associated := a.(transportorigin.PacketAssociation); associated {
+		clear(b[:n])
+		return 0, netip.AddrPort{}, transportorigin.ErrMissingOrigin
 	}
 	ap, e := sourceAddress(a)
 	return n, ap, e

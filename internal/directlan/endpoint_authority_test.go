@@ -71,7 +71,7 @@ func TestNativeApprovedSourceCannotChangePeerIdentity(t *testing.T) {
 	if e := a.tunnel.stack.AddProtocolAddress(1, tcpip.ProtocolAddress{Protocol: ipv6.ProtocolNumber, AddressWithPrefix: tcpip.AddrFromSlice(fake.AsSlice()).WithPrefix()}, stack.AddressProperties{}); e != nil {
 		t.Fatal(e)
 	}
-	forged, err := a.tunnel.dialUDP(netip.AddrPortFrom(fake, 0), netip.AddrPortFrom(receiver.OverlayAddr(), 45221))
+	forged, err := dialNativeOwnedUDP(a.tunnel, netip.AddrPortFrom(fake, 0), netip.AddrPortFrom(receiver.OverlayAddr(), 45221))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,28 @@ func TestNativeApprovedSourceCannotChangePeerIdentity(t *testing.T) {
 		t.Fatal("forged B source acquired live identity")
 	}
 	positive("legitimate A after rejected forgery")
+}
+
+// dialNativeOwnedUDP permits a synthetic local address in this identity fixture
+// while retaining creator cleanup and live endpoint ownership.
+func dialNativeOwnedUDP(tunnel *userspaceTunnel, local, remote netip.AddrPort) (net.Conn, error) {
+	creator, err := tunnel.owner.acquireCreator(context.Background(), false)
+	if err != nil {
+		return nil, err
+	}
+	defer creator.finishOutgoing()
+	raw, ep, err := tunnel.dialOwned(creator, "udp", local, remote)
+	if err != nil {
+		cleanupCreated(ep)
+		return nil, err
+	}
+	if !creator.TryHandoff(ep) {
+		cleanupCreated(ep)
+		return nil, net.ErrClosed
+	}
+	owner := creator.live
+	owner.attach(raw)
+	return owner, nil
 }
 
 func TestNativeIPv6DatagramSizes(t *testing.T) {

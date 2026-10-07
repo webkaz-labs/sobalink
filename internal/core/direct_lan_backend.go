@@ -10,6 +10,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 // directLANBackend deliberately does not implement lanNetworkBackend: relay
@@ -35,7 +36,7 @@ func (c *Core) newDirectLANBackend(s *directLANStore) (NetworkBackend, error) {
 	if s.needsRecovery() {
 		return nil, codedDirectLANError(directlan.ErrRecovery)
 	}
-	cfg, err := directLANConfig(s.copy())
+	cfg, err := s.runtimeConfig()
 	if err != nil {
 		return nil, codedDirectLANError(err)
 	}
@@ -92,6 +93,9 @@ func (b *directLANBackend) State(ctx context.Context) (identity.State, error) {
 		if err := b.Node.Ready(); errors.Is(err, directlan.ErrLocalAddressUnavailable) {
 			ready = false
 			absent = true
+		} else if errors.Is(err, directlan.ErrRecovery) && b.TransportRecovering() {
+			ready = false
+			absent = true
 		} else if err != nil {
 			return identity.State{}, codedDirectLANError(err)
 		}
@@ -130,7 +134,22 @@ func (b *directLANBackend) DialIP(ctx context.Context, network string, ap netip.
 	}
 	for _, peer := range st.Snapshot.Peers {
 		if len(peer.IPs) == 1 && peer.IPs[0] == ap.Addr() {
-			return b.DialPeer(ctx, peer.ID, network, ap.Port())
+			capability, err := b.Node.CaptureDial(peer.ID, network, ap.Port())
+			if err != nil {
+				return nil, err
+			}
+			if err = transportorigin.BindSelected(ctx, capability.Origin()); err != nil {
+				return nil, err
+			}
+			conn, err := capability.Dial(ctx)
+			if conn != nil {
+				owned, adoptErr := transportorigin.AdoptSelected(ctx, conn)
+				conn = owned
+				if err == nil {
+					err = adoptErr
+				}
+			}
+			return conn, err
 		}
 	}
 	return nil, directlan.ErrUntrusted
@@ -194,4 +213,13 @@ func (b *directLANBackend) restartRequired() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.startAbsent
+}
+
+// TransportRecovering is runtime-only route unavailability. Persistent-store
+// recovery, closed backends and unknown errors retain their fail-closed paths.
+func (b *directLANBackend) TransportRecovering() bool {
+	b.mu.Lock()
+	ready, closed := b.ready, b.closed
+	b.mu.Unlock()
+	return ready && !closed && b.ctx.Err() == nil && !b.store.needsRecovery() && b.Node.TransportRecovering()
 }

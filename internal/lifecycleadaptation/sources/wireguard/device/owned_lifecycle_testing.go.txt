@@ -1,0 +1,100 @@
+//go:build directlan_integration && directlan_lifecycle
+
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2026 Sobalink contributors.
+ */
+
+package device
+
+// OwnedLifecycleTestPeerStats contains only copied observations for the explicit
+// native lifecycle fixture. It never contains peer identities or key material.
+type OwnedLifecycleTestPeerStats struct {
+	LastHandshakeUnixNano int64
+}
+
+// LifecycleTestPeerStats snapshots the same handshake timestamp used by UAPI,
+// without serializing private keys or exposing an arbitrary output callback.
+// It is available only with both explicit native lifecycle build tags.
+func (owned *OwnedDevice) LifecycleTestPeerStats() ([]OwnedLifecycleTestPeerStats, error) {
+	o := owned.owner
+	if !o.acquireAPI() {
+		return nil, ErrOwnedStopped
+	}
+	defer o.api.Done()
+	owned.configuration.Lock()
+	defer owned.configuration.Unlock()
+	if o.stopping.Load() {
+		return nil, ErrOwnedStopped
+	}
+	o.device.peers.RLock()
+	defer o.device.peers.RUnlock()
+	stats := make([]OwnedLifecycleTestPeerStats, 0, len(o.device.peers.keyMap))
+	for _, peer := range o.device.peers.keyMap {
+		stats = append(stats, OwnedLifecycleTestPeerStats{LastHandshakeUnixNano: peer.lastHandshakeNano.Load()})
+	}
+	return stats, nil
+}
+
+type ownedLifecycleTestMutation uint8
+
+const (
+	ownedLifecycleTestExpire ownedLifecycleTestMutation = iota
+	ownedLifecycleTestFlush
+	ownedLifecycleTestSchedule
+)
+
+// ExpireCurrentKeypairsForTest invokes the existing synthetic-expiry operation
+// on this exact registration. It does not change protocol timers or thresholds.
+func (handle *OwnedPeer) ExpireCurrentKeypairsForTest() error {
+	return handle.lifecycleTestMutate(ownedLifecycleTestExpire)
+}
+
+// ZeroAndFlushAllForTest invokes the existing key/queue flush on this exact
+// registration, including its synchronous session-state notification.
+func (handle *OwnedPeer) ZeroAndFlushAllForTest() error {
+	return handle.lifecycleTestMutate(ownedLifecycleTestFlush)
+}
+
+// ScheduleHandshakeOnUserSendForTest arms the existing next-user-send rekey
+// behavior for this exact registration. RekeyTimeout and the no-key no-op remain
+// unchanged; this does not send a handshake immediately.
+func (handle *OwnedPeer) ScheduleHandshakeOnUserSendForTest() error {
+	return handle.lifecycleTestMutate(ownedLifecycleTestSchedule)
+}
+
+// lifecycleTestMutate follows the same API lease and configuration serialization
+// as SendHandshakeInitiation. The lease keeps resources alive through callbacks;
+// configuration prevents peer replacement between validation and mutation.
+// Neither the WG admission gate nor an outer generation mutex is held during
+// the operation. Callers must not hold an outer generation mutex or wait for
+// shutdown while invoking a test hook. No callback or raw handle is accepted or
+// returned, and the production facade is unchanged without the explicit tags.
+func (handle *OwnedPeer) lifecycleTestMutate(operation ownedLifecycleTestMutation) error {
+	owned := handle.device
+	o := owned.owner
+	if !o.acquireAPI() {
+		return ErrOwnedStopped
+	}
+	defer o.api.Done()
+	owned.configuration.Lock()
+	defer owned.configuration.Unlock()
+	if o.stopping.Load() {
+		return ErrOwnedStopped
+	}
+	peer, ok := o.device.LookupActivePeer(handle.peer.handshake.remoteStatic)
+	if !ok || peer != handle.peer || handle.registration == 0 || peer.ownedRegistration != handle.registration || !peer.runningState.isRunning.Load() {
+		return ErrOwnedPeerRemoved
+	}
+	switch operation {
+	case ownedLifecycleTestExpire:
+		peer.ExpireCurrentKeypairs()
+	case ownedLifecycleTestFlush:
+		peer.ZeroAndFlushAll()
+	case ownedLifecycleTestSchedule:
+		o.device.ScheduleHandshakeOnUserSend(peer.handshake.remoteStatic)
+	default:
+		return ErrOwnedConfiguration
+	}
+	return nil
+}

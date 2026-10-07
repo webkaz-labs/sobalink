@@ -107,11 +107,15 @@ func localizeLANSetupError(ja bool, err error) error {
 		"direct_lan_pairs_present":            "接続先や許可範囲の変更前にdirect LANペアを解除し、変更後にペアリングとアプリの信頼を別途許可してください",
 		"direct_lan_remote_paired_local_save": "相手ではペアリングしましたが、この端末の保存を確認できません。停止して秘密の設定を確認し、相手側のペアも解除してから再試行してください",
 		"direct_lan_pair_uncertain":           "ペアリングの応答を受信できませんでした。相手側で完了したペアがないか確認し、解除してから再試行してください",
-		"direct_lan_recovery_required":        "秘密の設定保存に失敗したためdirect LANを停止しました。停止して保護された設定を確認してから再起動してください",
+		"direct_lan_recovery_required":        "direct LANの保護された状態に復旧が必要です。停止し、保存状態とシステム時刻を確認・整合させてから再起動してください",
 		"direct_lan_policy":                   "正確な数値のプライベート・ループバックIP、予約されていない高位ポート、正規表記の許可CIDRを指定してください",
 		"direct_lan_identity":                 "相手の正確なdirect LAN公開IDを指定してください",
 		"direct_lan_invitation_invalid":       "direct LANの招待が無効または期限切れです。この公開ID宛ての新しい招待を依頼してください",
 		"direct_lan_capacity":                 "direct LANの容量上限です。不要なペアを解除するか、実行中の処理が終わってから再試行してください",
+
+		"direct_lan_endpoint_integration_pending": "保存済みの接続先情報を使うには、通信と復旧処理の検証済み実装が必要です。direct LANを停止したまま、保護された状態を保持してください",
+		"direct_lan_migration_review_changed":     "移行の確認内容が古いか、保存状態が変わりました。ネットワークを停止したまま、現在の保護された状態を確認し直してください",
+		"direct_lan_migration_unavailable":        "現在の接続先設定を新しい形式で表せません。保存形式を維持し、移行前に接続先の許可範囲を確認してください",
 
 		"lan_saved_start_changed":           "保存済みホストの設定または許可が変更されました。状態を更新し、保存済みホストをもう一度確認してください",
 		"lan_policy_invalid":                "trusted-relay は範囲を指定せず、allowed-lan-destinations は正規表記のプライベート・ULA・ループバックCIDRを明示してください",

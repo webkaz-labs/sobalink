@@ -17,6 +17,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
 	"github.com/webkaz-labs/sobalink/internal/transport"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 // ProxyScope is an advanced, process-local permission. Credentials and live
@@ -272,6 +273,9 @@ func (c *Core) proxyDial(a *activeProxy) transport.Dialer {
 		if !ok {
 			return nil, errors.New("proxy peer connection capacity reached")
 		}
+		if transportorigin.RetainRelease(ctx, release) {
+			release = func() {}
+		}
 		conn, err := a.policy.Dial(ctx, network, address)
 		if err != nil {
 			release()
@@ -283,11 +287,56 @@ func (c *Core) proxyDial(a *activeProxy) transport.Dialer {
 
 type proxyBudgetConn struct {
 	net.Conn
-	once    sync.Once
-	release func()
+	once                  sync.Once
+	closeInit             sync.Once
+	closeDone             chan struct{}
+	closeErr, terminalErr error
+	release               func()
 }
 
-func (c *proxyBudgetConn) Close() error { err := c.Conn.Close(); c.once.Do(c.release); return err }
+func (c *proxyBudgetConn) closeCompletion() chan struct{} {
+	c.closeInit.Do(func() { c.closeDone = make(chan struct{}) })
+	return c.closeDone
+}
+func (c *proxyBudgetConn) Close() error {
+	done := c.closeCompletion()
+	c.once.Do(func() {
+		c.closeErr = c.Conn.Close()
+		finish := func(err error) {
+			c.terminalErr = err
+			if err == nil {
+				c.release()
+			}
+			close(done)
+		}
+		if terminal, ok := c.Conn.(interface{ WaitClosed(context.Context) error }); ok {
+			// This sole terminal observer retains the peer reservation and is joined
+			// by WaitClosed. A Close request alone never releases asynchronous work.
+			go func() { finish(terminal.WaitClosed(context.Background())) }()
+		} else if c.TransportOrigin() != nil {
+			finish(transportorigin.ErrMissingOrigin)
+		} else if c.closeErr != nil && !errors.Is(c.closeErr, net.ErrClosed) {
+			finish(c.closeErr)
+		} else {
+			finish(nil)
+		}
+	})
+	return c.closeErr
+}
+func (c *proxyBudgetConn) TransportOrigin() transportorigin.Origin {
+	if carrier, ok := c.Conn.(transportorigin.Carrier); ok {
+		return carrier.TransportOrigin()
+	}
+	return nil
+}
+func (c *proxyBudgetConn) WaitClosed(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.closeCompletion():
+		return c.terminalErr
+	}
+}
 func (c *proxyBudgetConn) CloseWrite() error {
 	if c, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return c.CloseWrite()

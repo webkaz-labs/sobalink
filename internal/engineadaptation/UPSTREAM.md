@@ -16,14 +16,17 @@ Unrestricted engines preserve upstream behavior. Policy revocation closes
 tracked relay connections and prevents future writes/dials.
 
 Run `go run ./cmd/prepare-engine` from the project root. The preparer obtains
-the exact original Go module archive, independently verifies its Go checksums,
+the three exact original Go module archives selected in `go.mod`, independently verifies their Go checksums,
 applies only exact manifest edits, and atomically writes a new generated module
-at `.sobalink-deps/tailscale`. It does not patch the Go module cache. Existing
+for each dependency. This component is written at `.sobalink-deps/tailscale`;
+the separately pinned WireGuard/gVisor overlays are described in
+[lifecycleadaptation/UPSTREAM.md](../lifecycleadaptation/UPSTREAM.md).
+It does not patch the Go module cache. Existing
 output is fully rehashed and rejected on drift. `--verify` performs read-only
 verification. With the original archive cached, preparation works with
 `GOPROXY=off`. No upstream source tree is committed to this repository.
 
-The package tool allows only the exact version-qualified local replacement,
+The package tool allows only the three exact version-qualified local replacements,
 checks the complete generated tree before and after compilation, retains all
 upstream module notices plus this file and the manifest, and records separate
 upstream and adapted provenance in its SBOM and build metadata. Standard

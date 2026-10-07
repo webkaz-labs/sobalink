@@ -181,7 +181,7 @@ class WorkflowCachePolicy(unittest.TestCase):
 
     def test_cache_keys_include_exact_runner_toolchain_manifests_and_source(self):
         prefix = "trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-"
-        suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-"
+        suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-"
         for job, runner in (("native", "${{ matrix.runner }}"), ("manifest-smoke", "ubuntu-24.04")):
             release_job = "native" if job == "native" else "provenance"
             with self.subTest(job=job):
@@ -318,13 +318,13 @@ class WorkflowCachePolicy(unittest.TestCase):
     def test_development_keys_and_fallbacks_stay_inside_their_full_boundary(self):
         restore = self.step("ci", "native", "id: development-go-cache\n")
         prefix = "development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-"
-        boundary = prefix + "${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-"
+        boundary = prefix + "${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-"
         self.assertEqual(self.key("ci", "native", "development-go-cache"), boundary + "${{ github.sha }}")
         self.assertEqual(re.findall(r"^          restore-keys: (.+)$", restore, re.MULTILINE), [boundary])
         self.assertNotIn("trusted-main-go", restore)
         values = {"steps.development-go-cache-scope.outputs.scope": self.development_scope(),
                   "runner.os": "Linux", "runner.arch": "X64", "matrix.runner": "ubuntu-24.04",
-                  "hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**')": "a" * 64, "github.sha": "b" * 40}
+                  "hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**')": "a" * 64, "github.sha": "b" * 40}
 
         def render(template, values):
             for expression, value in values.items():
@@ -341,7 +341,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         for expression, alternatives in (("steps.development-go-cache-scope.outputs.scope", other_scopes),
                                          ("runner.os", ["Windows"]), ("runner.arch", ["ARM64"]),
                                          ("matrix.runner", ["ubuntu-24.04-arm", "ubuntu-22.04"]),
-                                         ("hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**')", ["d" * 64])):
+                                         ("hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**')", ["d" * 64])):
             for alternative in alternatives:
                 with self.subTest(expression=expression, alternative=alternative):
                     other = dict(values, **{expression: alternative})

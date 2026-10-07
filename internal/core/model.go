@@ -125,6 +125,7 @@ type Core struct {
 	transferNetwork            string
 	networkReady               atomic.Bool
 	peerServer                 *peerServer
+	peerHTTPTransport          *peerHTTPFront
 	transfers                  *transfer.Manager
 	diskSpace                  *diskspace.Guard
 	messages                   []Message
@@ -240,6 +241,9 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		return nil, err
 	}
 	c.directLAN = direct
+	if direct != nil {
+		direct.write = c.writeAtomic
+	}
 	if err := c.reconcileDirectLANTrust(); err != nil {
 		cancel()
 		return nil, err
@@ -399,7 +403,11 @@ func (c *Core) beginWork() (func(), error) {
 func (c *Core) close() error {
 	c.mu.Lock()
 	c.closing = true
+	peerHTTP := c.peerHTTPTransport
 	c.mu.Unlock()
+	if peerHTTP != nil {
+		peerHTTP.close()
+	}
 	c.cancel()
 	c.op.Lock()
 	defer c.op.Unlock()

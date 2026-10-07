@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"github.com/webkaz-labs/sobalink/internal/connectionroute"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 	"net"
 	"net/netip"
 )
@@ -35,6 +36,21 @@ type exactPeerConn struct {
 }
 
 func (c *exactPeerConn) PeerIdentity() (string, bool) { return c.id, c.valid != nil && c.valid() }
+func (c *exactPeerConn) TransportOrigin() transportorigin.Origin {
+	if carrier, ok := c.Conn.(transportorigin.Carrier); ok {
+		return carrier.TransportOrigin()
+	}
+	return nil
+}
+func (c *exactPeerConn) WaitClosed(ctx context.Context) error {
+	if terminal, ok := c.Conn.(transportorigin.TerminalConnection); ok {
+		return terminal.WaitClosed(ctx)
+	}
+	if c.TransportOrigin() != nil {
+		return transportorigin.ErrMissingOrigin
+	}
+	return nil // the existing non-generation backend Close is synchronous
+}
 func (c *exactPeerConn) CloseWrite() error {
 	if v, ok := c.Conn.(interface{ CloseWrite() error }); ok {
 		return v.CloseWrite()

@@ -3,6 +3,7 @@ package directlan
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,29 +78,59 @@ func TestSessionRoleGenerationAndControlBudgets(t *testing.T) {
 	// The synthetic pending entries have no cancellation callbacks.
 	clear(a.dials)
 }
+
+// sessionGateContext acknowledges evaluation of ensureSession's waiting select.
+// Its initial Err/current-peer/readiness checks do not call Done. The full gate
+// therefore leaves cancellation as the only branch available after this signal.
+// Use this wrapper only at the direct session boundary, without derived contexts.
+type sessionGateContext struct {
+	context.Context
+	reached chan struct{}
+	once    sync.Once
+}
+
+func (c *sessionGateContext) Done() <-chan struct{} {
+	done := c.Context.Done()
+	c.once.Do(func() { close(c.reached) })
+	return done
+}
+
 func TestSessionWaitCancellationAndRevocation(t *testing.T) {
 	n := memoryNode(t, 64)
 	peer := Peer{Key: testIdentity(65).PublicKey(), Endpoint: n.Endpoint(), TunnelKey: testIdentity(65).TunnelKey()}
 	p := n.newPeerState(peer)
 	n.peers[peer.Key] = p
+	if capability, e := n.CapturePeer(peer.Key); capability != nil || !errors.Is(e, ErrUntrusted) {
+		t.Fatal("metadata-only peer acquired a public registered capability", e)
+	}
+	g := p.g
 	p.session.gate <- struct{}{} // Hold activation before any socket operation.
 	ctx, cancel := context.WithCancel(context.Background())
+	waiting := &sessionGateContext{Context: ctx, reached: make(chan struct{})}
+	pending := &pendingDial{g: g, key: peer.Key, cancel: cancel}
+	n.mu.Lock()
+	n.dials[pending] = struct{}{}
+	n.mu.Unlock()
 	result := make(chan error, 1)
-	go func() { _, e := n.DialPeer(ctx, peer.Key, "tcp", 42000); result <- e }()
-	deadline := time.After(time.Second)
-	for {
+	finished := make(chan struct{})
+	// This fixture covers the session gate and its exact cancellation entry,
+	// not captured-dial or creator ownership. Never free the occupied gate on
+	// failure: cancel and join, keeping absent engine/tunnel paths unreachable.
+	go func() {
+		defer close(finished)
+		e := n.ensureSession(waiting, p)
 		n.mu.Lock()
-		pending := len(n.dials)
+		delete(n.dials, pending)
 		n.mu.Unlock()
-		if pending > 0 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("dial did not enter session gate")
-		default:
-			time.Sleep(time.Millisecond)
-		}
+		result <- e
+	}()
+	defer func() { cancel(); <-finished }()
+	select {
+	case <-waiting.reached:
+	case e := <-result:
+		t.Fatal("session returned before entering its gate", e)
+	case <-time.After(time.Second):
+		t.Fatal("session did not enter its gate")
 	}
 	if e := n.Revoke(peer.Key); e != nil {
 		t.Fatal(e)

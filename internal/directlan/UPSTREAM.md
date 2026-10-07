@@ -35,15 +35,18 @@ peer's exact /128 source and this node's exact destination before stack delivery
 Application TCP and native UDP use WireGuard plus gVisor. TLS carries only the
 one-use pairing exchange and bounded session-activation control. Pairing binds
 both peers' distinct WireGuard keys to their mutually authenticated Ed25519
-identities. `session.go` uses existing upstream session notifications,
-PeerAwareEndpoint confirmation and handshake APIs; it does not modify the
-WireGuard engine. The deterministic lower-key initiator gates new application
+identities. This source uses the opt-in owned WireGuard facade and owned
+gVisor forwarder lifecycle. Their separately pinned source adaptations,
+preparation, module selection and distribution provenance are reviewed together. The deterministic lower-key initiator gates new application
 dials, with generation checks and separately bounded control work. Independent
 engine rekey/retransmission timers still govern established flows. Earlier experimental
 TLS-stream/framed-UDP test results do not establish this implementation's
-acceptance. Native localhost tests validate this adapter; real-device LAN,
-firewall reachability, application compatibility, suspend/resume and installed
-release acceptance remain separate gates.
+acceptance. The initial generation-ownership source has compiled and passed
+limited fixed-endpoint Linux race regressions, including IPv4/IPv6 cold sessions.
+The detached retirement/staging controller has also compiled; its execution and
+full acceptance remain pending. It has no replacement publication entrypoint. Full native/application
+acceptance and installed-release checks remain separate from these limited results.
+Real-device LAN, firewall reachability and suspend/resume also remain unverified.
 
 Capacity defaults are configurable finite resources, not an extra fixed logical
 peer ceiling. The caller supplies the selected flow, listener, invitation/control and
@@ -52,3 +55,31 @@ Core policy. The pinned WireGuard engine's own 65,536-peer table is a distinct
 implementation boundary. Control-frame bounds do not limit application stream
 or file length. Interface readiness reads local metadata only, and unknown
 inspection failures remain distinct from proven absence of the exact local IP.
+
+`creator.go` adapts the explicit TCP/UDP endpoint construction sequence from:
+
+- Module: `gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72`
+- Source file: `pkg/tcpip/adapters/gonet/gonet.go`
+- Source SHA-256: `700235f948cc7e363057e61ebf7d5186ea9fbfcc08d5abdea3b03f16879e809d`
+- Source: https://github.com/google/gvisor/blob/a6f909f08a72/pkg/tcpip/adapters/gonet/gonet.go
+- License: Apache-2.0; the original copyright/license header is retained and
+  the unchanged license is copied to `GVISOR_LICENSE`
+- License SHA-256: `0fbab5c58efbdf6d31e8085214f2dd821659c03d73cff3ed2b08e98826ea1cd9`
+
+The adaptation reserves capacity before creation, publishes the exact endpoint
+before bind/connect/wait, checks cancellation and transfers ownership only under
+the terminal admission gate. Creator failures retain one cleanup owner through
+endpoint terminal observation. The independent stack and WG joins remain
+required. Retained outer application/bridge/HTTP participants join through
+exact generation origins and leases. Local resource cleanup alone does not
+revalidate current application authority or authorize a replacement.
+`RetireTransport` remains explicitly incomplete; the detached controller has
+no replacement-publication path or Core request caller.
+
+`packetListener` preserves an exact association capability in each returned
+address. Adapters must propagate that address object unchanged for reverse
+writes; reconstructing an address from its string cannot select another
+association. Owned WG session/decryption callbacks carry a non-reused peer
+registration token. Registration is installed before WG peer publication, and
+callbacks verify it against the exact session; same-key re-pair cannot retarget
+an old callback to the new peer state.

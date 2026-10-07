@@ -15,6 +15,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/connectionroute"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 // mixedBackend never joins unrelated transport identities by names or addresses.
@@ -31,6 +32,7 @@ type mixedBackend struct {
 	scopes           map[string][]backendworker.TCPPolicy
 	cached           map[string]identity.State
 	next             uint16
+	tcpPending       map[*mixedConn]struct{}
 	closed           bool
 	sourceLimit      int
 	packetQueueLimit int
@@ -40,6 +42,7 @@ type mixedSource struct {
 	backend           string
 	remote            netip.AddrPort
 	identity, logical string
+	capturedPeer      interface{ PeerIdentity() (string, bool) }
 }
 type mixedPeerRoute struct {
 	backend, id string
@@ -93,6 +96,12 @@ func (n *mixedBackend) Start() error {
 	return nil
 }
 func (n *mixedBackend) routeSnapshot(ctx context.Context) (map[string][]mixedPeerRoute, map[string]identity.State, error) {
+	n.mu.Lock()
+	closed := n.closed
+	n.mu.Unlock()
+	if closed {
+		return nil, nil, net.ErrClosed
+	}
 	out := map[string][]mixedPeerRoute{}
 	states := map[string]identity.State{}
 	for _, name := range n.order {
@@ -127,6 +136,12 @@ func (n *mixedBackend) routeSnapshot(ctx context.Context) (map[string][]mixedPee
 			id := n.logical(name, p.ID)
 			out[id] = append(out[id], mixedPeerRoute{name, p.ID, p.IPs[0], p})
 		}
+	}
+	n.mu.Lock()
+	closed = n.closed
+	n.mu.Unlock()
+	if closed {
+		return nil, nil, net.ErrClosed
 	}
 	return out, states, nil
 }
@@ -224,7 +239,7 @@ func (n *mixedBackend) DialIP(ctx context.Context, network string, ap netip.Addr
 				_ = conn.Close()
 				return nil, e
 			}
-			if mixedUnavailable(e) {
+			if mixedUnavailable(e) && !transportorigin.Selected(ctx) {
 				continue
 			}
 			return nil, e
@@ -249,7 +264,7 @@ func (n *mixedBackend) Listen(network, address string) (net.Listener, error) {
 	if e != nil {
 		return nil, e
 	}
-	l := &mixedListener{owner: n, addr: net.TCPAddrFromAddrPort(ap), accepts: make(chan net.Conn, 16), done: make(chan struct{})}
+	l := &mixedListener{owner: n, addr: net.TCPAddrFromAddrPort(ap), owned: make(map[*mixedConn]*mixedAccept), wake: make(chan struct{}), done: make(chan struct{})}
 	for _, name := range n.order {
 		state := states[name]
 		if !state.Snapshot.Running || len(state.IPs) == 0 {
@@ -273,7 +288,20 @@ func (n *mixedBackend) WhoIs(ctx context.Context, remote netip.AddrPort) (string
 	if !ok || closed {
 		return "", connectionroute.ErrDenied
 	}
-	actual, e := n.nodes[source.backend].WhoIs(ctx, source.remote)
+	if peer, ok := source.capturedPeer.(*mixedTCPPeer); ok {
+		return peer.conn.AuthenticatedPeer(ctx)
+	}
+	var actual string
+	var e error
+	if source.capturedPeer != nil {
+		var valid bool
+		actual, valid = source.capturedPeer.PeerIdentity()
+		if !valid {
+			return "", connectionroute.ErrDenied
+		}
+	} else {
+		actual, e = n.nodes[source.backend].WhoIs(ctx, source.remote)
+	}
 	if e != nil || actual != source.identity {
 		return "", connectionroute.ErrDenied
 	}
@@ -282,39 +310,110 @@ func (n *mixedBackend) WhoIs(ctx context.Context, remote netip.AddrPort) (string
 	}
 	return source.logical, nil
 }
-func (n *mixedBackend) wrap(name string, c net.Conn) (net.Conn, error) {
-	remote, e := netip.ParseAddrPort(c.RemoteAddr().String())
-	if e != nil {
-		return nil, e
+
+// wrap consumes c on every outcome. Failed admission joins the same physical
+// cleanup as a successful wrapper before releasing its source reservation.
+func (n *mixedBackend) wrap(name string, c net.Conn) (_ net.Conn, err error) {
+	if c == nil {
+		return nil, connectionroute.ErrDenied
 	}
-	identityCtx, identityCancel := context.WithTimeout(n.ctx, 3*time.Second)
+	var origin transportorigin.Origin
+	if carrier, ok := c.(transportorigin.Carrier); ok {
+		origin = carrier.TransportOrigin()
+	}
+	wrapped := &mixedConn{raw: c, owner: n, origin: origin, ctx: n.ctx, borrows: 1, changed: make(chan struct{}), stop: make(chan struct{}), physicalDone: make(chan struct{}), done: make(chan struct{})}
+	n.mu.Lock()
+	if n.closed || len(n.sources) >= n.sourceBudget() {
+		n.mu.Unlock()
+		closeMixedUnadmitted(c, origin)
+		return nil, connectionroute.ErrCapacity
+	}
+	if n.tcpPending == nil {
+		n.tcpPending = make(map[*mixedConn]struct{})
+	}
+	n.tcpPending[wrapped] = struct{}{}
+	n.mu.Unlock()
+	var lease transportorigin.Lease
+	if origin != nil {
+		if origin.Identity() == nil {
+			err = transportorigin.ErrMissingOrigin
+		} else {
+			lease, err = origin.Acquire(n.ctx)
+		}
+	}
+	wrapped.lease = lease
+	if lease != nil {
+		wrapped.ctx = lease.Context()
+	}
+	go wrapped.own()
+	defer func() {
+		wrapped.returned()
+		if err != nil {
+			_ = wrapped.Close()
+			_ = wrapped.WaitClosed(context.Background())
+		}
+	}()
+	if err != nil {
+		return nil, err
+	}
+	if origin != nil {
+		if _, ok := c.(interface{ PeerIdentity() (string, bool) }); !ok {
+			return nil, transportorigin.ErrMissingOrigin
+		}
+	}
+	remote, err := netip.ParseAddrPort(c.RemoteAddr().String())
+	if err != nil {
+		return nil, err
+	}
+	local := c.LocalAddr()
+	identityCtx, identityCancel := context.WithTimeout(wrapped.ctx, 3*time.Second)
 	defer identityCancel()
-	actual, e := n.nodes[name].WhoIs(identityCtx, remote)
-	if e != nil {
-		return nil, e
+	actual, err := mixedTCPIdentity(identityCtx, n.nodes[name], c, origin)
+	if err != nil {
+		return nil, err
 	}
 	logical := n.logical(name, actual)
-	if e := n.admitMixedRoute(identityCtx, logical); e != nil {
-		return nil, e
+	if err := n.admitMixedRoute(identityCtx, logical); err != nil {
+		return nil, err
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.closed || len(n.sources) >= n.sourceBudget() {
-		return nil, connectionroute.ErrCapacity
+	wrapped.mu.Lock()
+	defer wrapped.mu.Unlock()
+	if n.closed || !wrapped.openLocked() || identityCtx.Err() != nil {
+		return nil, net.ErrClosed
 	}
+	var alias netip.AddrPort
 	for i := 0; i < 65535; i++ {
 		n.next++
 		if n.next == 0 {
 			n.next++
 		}
-		alias := netip.AddrPortFrom(mixedIP(logical), n.next)
-		if _, exists := n.sources[alias]; exists {
-			continue
+		candidate := netip.AddrPortFrom(mixedIP(logical), n.next)
+		if _, exists := n.sources[candidate]; !exists {
+			alias = candidate
+			break
 		}
-		n.sources[alias] = mixedSource{name, remote, actual, logical}
-		return &mixedConn{Conn: c, owner: n, alias: alias}, nil
 	}
-	return nil, connectionroute.ErrCapacity
+	if !alias.IsValid() {
+		return nil, connectionroute.ErrCapacity
+	}
+	var publication transportorigin.Lease
+	if origin != nil {
+		publication, err = origin.AcquirePublication(identityCtx)
+		if err != nil {
+			return nil, err
+		}
+		defer publication.Release()
+	}
+	wrapped.alias, wrapped.local = alias, local
+	wrapped.backend = name
+	wrapped.identity, wrapped.logical = actual, logical
+	wrapped.peer = &mixedTCPPeer{conn: wrapped}
+	wrapped.published = true
+	delete(n.tcpPending, wrapped)
+	n.sources[alias] = mixedSource{backend: name, remote: remote, identity: actual, logical: logical, capturedPeer: wrapped.peer}
+	return wrapped, nil
 }
 func (n *mixedBackend) Close() error {
 	n.mu.Lock()
@@ -323,7 +422,6 @@ func (n *mixedBackend) Close() error {
 		return nil
 	}
 	n.closed = true
-	clear(n.sources)
 	n.mu.Unlock()
 	var errs []error
 	for _, node := range n.nodes {
@@ -332,36 +430,13 @@ func (n *mixedBackend) Close() error {
 	return errors.Join(errs...)
 }
 
-type mixedConn struct {
-	net.Conn
-	owner *mixedBackend
-	alias netip.AddrPort
-	once  sync.Once
-	err   error
-}
-
-func (c *mixedConn) RemoteAddr() net.Addr { return net.TCPAddrFromAddrPort(c.alias) }
-func (c *mixedConn) Close() error {
-	c.once.Do(func() {
-		c.err = c.Conn.Close()
-		c.owner.mu.Lock()
-		delete(c.owner.sources, c.alias)
-		c.owner.mu.Unlock()
-	})
-	return c.err
-}
-func (c *mixedConn) CloseWrite() error {
-	if h, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return h.CloseWrite()
-	}
-	return errors.New("transport does not support half-close")
-}
-
 type mixedListener struct {
 	owner     *mixedBackend
 	addr      net.Addr
 	listeners []net.Listener
-	accepts   chan net.Conn
+	pending   []*mixedAccept
+	owned     map[*mixedConn]*mixedAccept
+	wake      chan struct{}
 	done      chan struct{}
 	once      sync.Once
 	wg        sync.WaitGroup
@@ -373,59 +448,48 @@ type mixedListener struct {
 func (l *mixedListener) accept(name string, base net.Listener) {
 	defer l.wg.Done()
 	for {
-		c, e := base.Accept()
-		if e != nil {
+		c, err := base.Accept()
+		if err != nil {
 			return
 		}
-		wrapped, e := l.owner.wrap(name, c)
-		if e != nil {
-			_ = c.Close()
-			continue
-		}
-		select {
-		case l.accepts <- wrapped:
-		case <-l.done:
-			_ = wrapped.Close()
+		l.mu.Lock()
+		closed := l.closed
+		l.mu.Unlock()
+		if closed {
+			var origin transportorigin.Origin
+			if carrier, ok := c.(transportorigin.Carrier); ok {
+				origin = carrier.TransportOrigin()
+			}
+			closeMixedUnadmitted(c, origin)
 			return
-		default:
-			_ = wrapped.Close()
 		}
-	}
-}
-func (l *mixedListener) Accept() (net.Conn, error) {
-	select {
-	case <-l.done:
-		return nil, net.ErrClosed
-	case c := <-l.accepts:
-		select {
-		case <-l.done:
-			_ = c.Close()
-			return nil, net.ErrClosed
-		default:
+		wrapped, err := l.owner.wrap(name, c)
+		if err != nil {
+			continue // wrap has already joined the rejected endpoint
 		}
-		return c, nil
+		owned := wrapped.(*mixedConn)
+		if !l.enqueue(owned) {
+			_ = owned.Close()
+			_ = owned.WaitClosed(context.Background())
+		}
 	}
 }
 func (l *mixedListener) Addr() net.Addr { return l.addr }
 func (l *mixedListener) Close() error {
 	l.once.Do(func() {
-		close(l.done)
 		l.mu.Lock()
 		l.closed = true
+		close(l.done)
+		for _, entry := range l.owned {
+			l.retireLocked(entry)
+		}
 		listeners := append([]net.Listener(nil), l.listeners...)
+		l.signalLocked()
 		l.mu.Unlock()
 		for _, base := range listeners {
 			_ = base.Close()
 		}
 		l.wg.Wait()
-		for {
-			select {
-			case c := <-l.accepts:
-				_ = c.Close()
-			default:
-				return
-			}
-		}
 	})
 	return nil
 }
@@ -478,11 +542,14 @@ func (l *mixedListener) watch(network string, port uint16) {
 	}
 }
 
+// Caller holds n.mu. Authenticating TCP endpoints consume the same finite
+// source budget as published TCP/UDP aliases until real cleanup acknowledges.
 func (n *mixedBackend) sourceBudget() int {
-	if n.sourceLimit > 0 {
-		return n.sourceLimit
+	limit := n.sourceLimit
+	if limit <= 0 {
+		limit = 1024
 	}
-	return 1024
+	return limit - len(n.tcpPending)
 }
 
 func (n *mixedBackend) bindingDenied(id string, routes map[string][]mixedPeerRoute, states map[string]identity.State) bool {

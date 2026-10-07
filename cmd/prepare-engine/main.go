@@ -1,19 +1,20 @@
-// prepare-engine materializes only the checksum-verified, reviewed dependency.
+// prepare-engine materializes the exact checksum-verified dependency set.
 package main
 
 import (
 	"fmt"
-	"github.com/webkaz-labs/sobalink/internal/engineadaptation"
 	"os"
+
+	"github.com/webkaz-labs/sobalink/internal/lifecycleadaptation"
 )
 
 func main() {
 	var err error
 	switch {
 	case len(os.Args) == 1:
-		_, err = engineadaptation.Prepare(".")
+		err = lifecycleadaptation.PrepareAll(".")
 	case len(os.Args) == 2 && os.Args[1] == "--verify":
-		_, err = engineadaptation.Verify(".")
+		err = lifecycleadaptation.VerifyAll(".")
 	default:
 		err = fmt.Errorf("usage: prepare-engine [--verify]")
 	}
@@ -21,5 +22,5 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println("Verified adapted Tailscale source:", engineadaptation.Version, engineadaptation.ManifestSHA256)
+	fmt.Println("Verified pinned Tailscale, WireGuard and gVisor source adaptations")
 }

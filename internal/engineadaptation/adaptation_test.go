@@ -137,6 +137,61 @@ func TestCacheAndGeneratedTreesCannotOverlap(t *testing.T) {
 	}
 }
 
+func TestPinnedTreeRejectsDriftExtraFilesAndLinks(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, Directory)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tree := map[string][]byte{"go.mod": []byte("module fixture\n"), "source.go": []byte("package fixture\n")}
+	for path, data := range tree {
+		if err := os.WriteFile(filepath.Join(dir, path), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := treeHash(tree)
+	if err := VerifyPinnedTree(root, Directory, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "unlisted.go"), []byte("package fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPinnedTree(root, Directory, want); err == nil {
+		t.Fatal("unlisted generated source accepted")
+	}
+	if err := os.Remove(filepath.Join(dir, "unlisted.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "source.go"), []byte("package changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyPinnedTree(root, Directory, want); err == nil {
+		t.Fatal("generated drift accepted")
+	}
+	if err := os.Remove(filepath.Join(dir, "source.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "go.mod"), filepath.Join(dir, "source.go")); err != nil {
+		t.Skip("symlink unavailable")
+	}
+	if err := VerifyPinnedTree(root, Directory, want); err == nil {
+		t.Fatal("linked generated source accepted")
+	}
+}
+
+func TestMaterializerRejectsUnknownIdentityBeforeToolchain(t *testing.T) {
+	called := false
+	assemble := func(string) (map[string][]byte, error) { called = true; return nil, nil }
+	for _, directory := range []string{Directory, ".sobalink-deps/unknown", "../outside"} {
+		if err := MaterializePinned(t.TempDir(), directory, Manifest{Module: "example.invalid/unreviewed"}, assemble); err == nil {
+			t.Fatal("unrecognized materialization accepted")
+		}
+	}
+	if called {
+		t.Fatal("unrecognized identity reached assembler")
+	}
+}
+
 func TestPinnedInputsRejectManifestAndChecksumChanges(t *testing.T) {
 	if _, err := Load(); err != nil {
 		t.Fatal(err)

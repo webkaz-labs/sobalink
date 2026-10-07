@@ -10,17 +10,21 @@ import (
 
 type flow struct {
 	n             *Node
+	g             *runtimeGeneration
+	work          *generationWork
 	w             *wire
-	c             net.Conn
+	c             *liveEndpoint
 	network       string
 	local, remote netip.AddrPort
 	inbound       bool
 	listener      *listener
+	mu            sync.Mutex
+	closed        bool
 	once          sync.Once
 }
 
-func (n *Node) trackFlowLocked(c net.Conn, p *peerState, network string, inbound bool) (*flow, error) {
-	if n.readyLocked() != nil || p == nil || n.peers[p.peer.Key] != p {
+func (n *Node) trackFlowLocked(g *runtimeGeneration, c *liveEndpoint, p *peerState, network string, inbound bool) (*flow, error) {
+	if n.readyLocked() != nil || n.generation.Load() != g || !g.open() || p == nil || p.g != g || n.peers[p.peer.Key] != p {
 		return nil, ErrUntrusted
 	}
 	if n.flowUsageLocked() >= n.cfg.FlowLimit {
@@ -34,8 +38,13 @@ func (n *Node) trackFlowLocked(c net.Conn, p *peerState, network string, inbound
 	if e != nil {
 		return nil, e
 	}
-	w := &wire{raw: c, key: p.peer.Key, peer: p}
-	f := &flow{n: n, w: w, c: c, network: network, local: local, remote: remote, inbound: inbound}
+	work, e := g.acquireWork(nil, false)
+	if e != nil {
+		return nil, e
+	}
+	w := &wire{raw: c, key: p.peer.Key, peer: p, g: g}
+	f := &flow{n: n, g: g, work: work, w: w, c: c, network: network, local: local, remote: remote, inbound: inbound}
+	w.flow = f
 	n.wires[w] = struct{}{}
 	if inbound {
 		if n.flows[remote] == nil {
@@ -47,31 +56,69 @@ func (n *Node) trackFlowLocked(c net.Conn, p *peerState, network string, inbound
 }
 func (n *Node) validFlowLocked(f *flow) bool {
 	_, present := n.wires[f.w]
-	return !n.closed && !n.recovery && present && n.peers[f.w.key] == f.w.peer && (!f.inbound || flowPresent(n.flows[f.remote], f))
-}
-func (f *flow) Valid() bool { f.n.mu.Lock(); defer f.n.mu.Unlock(); return f.n.validFlowLocked(f) }
-func (f *flow) Read(b []byte) (int, error) {
-	if !f.Valid() {
-		return 0, net.ErrClosed
+	if !f.c.valid() {
+		return false
 	}
-	n, e := f.c.Read(b)
+	return !n.closed && !n.recovery && f.g == n.generation.Load() && f.g.open() && present && n.peers[f.w.key] == f.w.peer && (!f.inbound || flowPresent(n.flows[f.remote], f))
+}
+func (f *flow) Valid() bool {
+	work, e := f.g.acquireWork(nil, false)
+	if e != nil {
+		return false
+	}
+	defer work.finish()
+	f.n.mu.Lock()
+	defer f.n.mu.Unlock()
+	return f.n.validFlowLocked(f)
+}
+
+// borrow pins current peer authority and the old endpoint under Node.mu ->
+// WG admission -> generation. Revocation cannot slip between validation and
+// registering the borrowed call. No I/O runs under those locks.
+func (f *flow) borrow(deadline bool) (net.Conn, error) {
+	f.n.mu.Lock()
+	defer f.n.mu.Unlock()
+	if !f.n.validFlowLocked(f) {
+		return nil, net.ErrClosed
+	}
+	raw, ok := f.c.borrow(deadline)
+	if !ok {
+		return nil, net.ErrClosed
+	}
+	return raw, nil
+}
+func (f *flow) Read(b []byte) (int, error) {
+	raw, e := f.borrow(false)
+	if e != nil {
+		return 0, e
+	}
+	defer f.c.release(false)
+	n, e := raw.Read(b)
 	if !f.Valid() {
+		clear(b[:n])
 		return 0, net.ErrClosed
 	}
 	return n, e
 }
 func (f *flow) Write(b []byte) (int, error) {
-	if !f.Valid() {
-		return 0, net.ErrClosed
-	}
 	if f.network == "udp" && len(b) > MaxDatagram {
 		return 0, errFrame
 	}
-	return f.c.Write(b)
+	raw, e := f.borrow(false)
+	if e != nil {
+		return 0, e
+	}
+	defer f.c.release(false)
+	return raw.Write(b)
 }
 func (f *flow) Close() error {
 	var e error
 	f.once.Do(func() {
+		defer f.work.finish()
+		f.mu.Lock()
+		f.closed = true
+		listener := f.listener
+		f.mu.Unlock()
 		e = f.c.Close()
 		f.n.mu.Lock()
 		delete(f.n.wires, f.w)
@@ -82,10 +129,10 @@ func (f *flow) Close() error {
 			}
 		}
 		f.n.mu.Unlock()
-		if f.listener != nil {
-			f.listener.mu.Lock()
-			delete(f.listener.flows, f)
-			f.listener.mu.Unlock()
+		if listener != nil {
+			listener.mu.Lock()
+			delete(listener.flows, f)
+			listener.mu.Unlock()
 		}
 	})
 	return e
@@ -94,20 +141,43 @@ func (f *flow) CloseWrite() error {
 	if f.network != "tcp" {
 		return errors.New("half-close is available only for TCP streams")
 	}
-	if !f.Valid() {
-		return net.ErrClosed
+	raw, e := f.borrow(false)
+	if e != nil {
+		return e
 	}
-	c, ok := f.c.(interface{ CloseWrite() error })
+	defer f.c.release(false)
+	c, ok := raw.(interface{ CloseWrite() error })
 	if !ok {
 		return ErrUnavailable
 	}
 	return c.CloseWrite()
 }
-func (f *flow) LocalAddr() net.Addr                { return f.c.LocalAddr() }
-func (f *flow) RemoteAddr() net.Addr               { return f.c.RemoteAddr() }
-func (f *flow) SetDeadline(t time.Time) error      { return f.c.SetDeadline(t) }
-func (f *flow) SetReadDeadline(t time.Time) error  { return f.c.SetReadDeadline(t) }
-func (f *flow) SetWriteDeadline(t time.Time) error { return f.c.SetWriteDeadline(t) }
+func (f *flow) LocalAddr() net.Addr  { return f.c.LocalAddr() }
+func (f *flow) RemoteAddr() net.Addr { return f.c.RemoteAddr() }
+func (f *flow) SetDeadline(t time.Time) error {
+	raw, e := f.borrow(true)
+	if e != nil {
+		return e
+	}
+	defer f.c.release(true)
+	return raw.SetDeadline(t)
+}
+func (f *flow) SetReadDeadline(t time.Time) error {
+	raw, e := f.borrow(true)
+	if e != nil {
+		return e
+	}
+	defer f.c.release(true)
+	return raw.SetReadDeadline(t)
+}
+func (f *flow) SetWriteDeadline(t time.Time) error {
+	raw, e := f.borrow(true)
+	if e != nil {
+		return e
+	}
+	defer f.c.release(true)
+	return raw.SetWriteDeadline(t)
+}
 func (f *flow) ReadFrom(b []byte) (int, net.Addr, error) {
 	if f.network != "udp" {
 		return 0, nil, ErrUnavailable
@@ -131,6 +201,11 @@ func flowPresent(flows map[*flow]struct{}, f *flow) bool { _, ok := flows[f]; re
 // TCP completion and incoming packets are carried by the paired WireGuard key.
 // It is invalid immediately on revocation, recovery or connection retirement.
 func (f *flow) PeerIdentity() (string, bool) {
+	work, e := f.g.acquireWork(nil, false)
+	if e != nil {
+		return "", false
+	}
+	defer work.finish()
 	f.n.mu.Lock()
 	defer f.n.mu.Unlock()
 	if !f.n.validFlowLocked(f) {

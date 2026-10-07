@@ -1,0 +1,82 @@
+package directlan
+
+import (
+	"context"
+	"net"
+	"sync"
+	"time"
+)
+
+// controlStream owns an exact numeric control socket. OS socket Close is safe
+// with concurrent calls and wakes them; every such call remains generation work
+// until it returns. TLS and cancellation callbacks receive only this wrapper.
+type controlStream struct {
+	g             *runtimeGeneration
+	raw           net.Conn
+	local, remote net.Addr
+	once          sync.Once
+}
+
+func newControlStream(g *runtimeGeneration, raw net.Conn) *controlStream {
+	return &controlStream{g: g, raw: raw, local: raw.LocalAddr(), remote: raw.RemoteAddr()}
+}
+func (c *controlStream) Read(b []byte) (int, error) {
+	w, e := c.g.acquireWork(nil, false)
+	if e != nil {
+		return 0, net.ErrClosed
+	}
+	defer w.finish()
+	n, e := c.raw.Read(b)
+	if !c.g.open() {
+		clear(b[:n])
+		return 0, net.ErrClosed
+	}
+	return n, e
+}
+func (c *controlStream) Write(b []byte) (int, error) {
+	w, e := c.g.acquireWork(nil, false)
+	if e != nil {
+		return 0, net.ErrClosed
+	}
+	defer w.finish()
+	return c.raw.Write(b)
+}
+func (c *controlStream) Close() error         { var e error; c.once.Do(func() { e = c.raw.Close() }); return e }
+func (c *controlStream) LocalAddr() net.Addr  { return c.local }
+func (c *controlStream) RemoteAddr() net.Addr { return c.remote }
+func (c *controlStream) SetDeadline(t time.Time) error {
+	w, e := c.g.acquireWork(nil, false)
+	if e != nil {
+		return net.ErrClosed
+	}
+	defer w.finish()
+	return c.raw.SetDeadline(t)
+}
+func (c *controlStream) SetReadDeadline(t time.Time) error {
+	w, e := c.g.acquireWork(nil, false)
+	if e != nil {
+		return net.ErrClosed
+	}
+	defer w.finish()
+	return c.raw.SetReadDeadline(t)
+}
+func (c *controlStream) SetWriteDeadline(t time.Time) error {
+	w, e := c.g.acquireWork(nil, false)
+	if e != nil {
+		return net.ErrClosed
+	}
+	defer w.finish()
+	return c.raw.SetWriteDeadline(t)
+}
+
+// watchConnection returns a joined stop function. A false AfterFunc stop result
+// means the callback may still be running; it is not cleanup completion.
+func watchConnection(ctx context.Context, c net.Conn) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { _ = c.Close(); close(done) })
+	return func() {
+		if !stop() {
+			<-done
+		}
+	}
+}

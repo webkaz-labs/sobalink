@@ -170,7 +170,7 @@ func (c *Core) newMixedBackendUsing(makeWorker func(context.Context, string, str
 			if store == nil || store.needsRecovery() {
 				return nil, errors.New("direct LAN requires reviewed durable state")
 			}
-			if _, e := directLANConfig(store.copy()); e != nil {
+			if _, e := store.runtimeConfig(); e != nil {
 				return nil, e
 			}
 		}

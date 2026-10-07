@@ -49,6 +49,61 @@ func TestEngineReplacementExactAllowlist(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnedEngineReplacementSetAndSourceReferences(t *testing.T) {
+	root := t.TempDir()
+	for _, pin := range engineadaptation.ModulePins() {
+		dir := filepath.Join(root, filepath.FromSlash(pin.Directory))
+		m := &goModule{Path: pin.Module, Version: pin.Version, Dir: dir, Replace: &goModule{Path: pin.Replacement, Dir: dir}}
+		if !allowedEngineModule(root, m) {
+			t.Fatalf("pinned replacement refused: %s", pin.Module)
+		}
+		if moduleRef(m) != "source:"+engineSourcePath(pin.Module) {
+			t.Fatalf("adapted module mislabeled as original: %s", pin.Module)
+		}
+		m.Replace.Main = true
+		if allowedEngineModule(root, m) {
+			t.Fatal("replacement main module accepted")
+		}
+		m.Replace.Main = false
+		m.Version = "v0.0.0-unreviewed"
+		if allowedEngineModule(root, m) {
+			t.Fatal("wrong pinned module version accepted")
+		}
+	}
+}
+
+func TestOwnedEngineSourcesRetainRecipesAndOriginalNotices(t *testing.T) {
+	sources, err := engineSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 3 {
+		t.Fatal("incomplete transport source set")
+	}
+	for _, source := range sources {
+		if source.component.ManifestSHA256 == "" || source.component.AdaptedTreeSHA256 == "" {
+			t.Fatal("missing source identity")
+		}
+		if source.retained["cmd/prepare-engine/main.go"] != "prepare-engine/main.go" {
+			t.Fatal("missing preparation recipe")
+		}
+		if source.pin.Module != engineadaptation.Module {
+			if source.component.Upstream.Files["LICENSE"] == "" || source.component.Upstream.Commit == "" {
+				t.Fatal("missing original lifecycle license/revision")
+			}
+			found := false
+			for from := range source.retained {
+				if strings.Contains(from, "/sources/") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("missing readable lifecycle overlays")
+			}
+		}
+	}
+}
 func TestAdaptedEngineSBOMHasSeparateIdentity(t *testing.T) {
 	root := t.TempDir()
 	m := engineModuleFixture(root)

@@ -44,7 +44,7 @@ func StartTCP(ctx context.Context, cfg TCPConfig, dial Dialer) (*Server, error) 
 
 // serveTCP keeps the connection lifecycle shared by the listener and tests.
 func serveTCP(s *Server, client net.Conn, target string, timeout time.Duration, dial Dialer) {
-	dialCtx, cancel := context.WithTimeout(s.ctx, timeout)
+	dialCtx, cancel := context.WithTimeout(sessionContext(client, s.ctx), timeout)
 	remote, err := dialTracked(s, dialCtx, dial, "tcp", target)
 	cancel()
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,13 +19,17 @@ const handshakeTimeout = 10 * time.Second
 type peerState struct {
 	peer       Peer
 	session    *peerSession
-	enginePeer *device.Peer
+	enginePeer *device.OwnedPeer
+	g          *runtimeGeneration
 }
 type service struct {
 	network string
 	port    uint16
 }
 type wire struct {
+	flow    *flow
+	g       *runtimeGeneration
+	work    *generationWork
 	control bool
 	raw     net.Conn
 	key     string
@@ -33,6 +38,7 @@ type wire struct {
 }
 
 type pendingDial struct {
+	g       *runtimeGeneration
 	control bool
 	key     string
 	cancel  context.CancelFunc
@@ -52,18 +58,20 @@ type Node struct {
 	fallback                  func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)
 	underlay                  net.Listener
 	started, closed, recovery bool
+	nonTransportRecovery      bool
+	closing                   atomic.Bool
 	ctx                       context.Context
 	cancel                    context.CancelFunc
 	stop                      func() bool
 	wg                        sync.WaitGroup
 	nextPort                  uint16
 	tunnel                    *userspaceTunnel
-	engine                    *device.Device
+	engine                    *device.OwnedDevice
+	generation                atomic.Pointer[runtimeGeneration]
+	building                  atomic.Pointer[generationBuild]
+	staged                    atomic.Pointer[PreparedTransport]
 	bind                      *lanBind
 	dispatchSlots             chan struct{}
-	dispatchMu                sync.Mutex
-	dispatchClosed            bool
-	tcpIncoming               *tcpAdmissions
 }
 
 // NewNode validates all policy and saved state before doing any network I/O.
@@ -85,10 +93,15 @@ func NewNode(cfg Config) (*Node, error) {
 	}
 	return n, nil
 }
-func (n *Node) PublicKey() string        { return n.cfg.Identity.PublicKey() }
-func (n *Node) OverlayAddr() netip.Addr  { a, _ := OverlayAddress(n.PublicKey()); return a }
-func (n *Node) Endpoint() netip.AddrPort { return n.cfg.Listen }
-func (n *Node) Peers() []Peer            { n.mu.Lock(); defer n.mu.Unlock(); return n.snapshotLocked() }
+func (n *Node) PublicKey() string       { return n.cfg.Identity.PublicKey() }
+func (n *Node) OverlayAddr() netip.Addr { a, _ := OverlayAddress(n.PublicKey()); return a }
+func (n *Node) Endpoint() netip.AddrPort {
+	if g := n.generation.Load(); g != nil {
+		return g.cfg.Listen
+	}
+	return n.cfg.Listen
+}
+func (n *Node) Peers() []Peer { n.mu.Lock(); defer n.mu.Unlock(); return n.snapshotLocked() }
 func (n *Node) snapshotLocked() []Peer {
 	out := make([]Peer, 0, len(n.peers))
 	for _, p := range n.peers {
@@ -98,10 +111,13 @@ func (n *Node) snapshotLocked() []Peer {
 	return out
 }
 func (n *Node) readyLocked() error {
-	if n.closed {
+	if n.closed || n.closing.Load() {
 		return net.ErrClosed
 	}
 	if n.recovery {
+		return ErrRecovery
+	}
+	if g := n.generation.Load(); g != nil && !g.trafficOpen() {
 		return ErrRecovery
 	}
 	if !n.started {
@@ -118,65 +134,117 @@ func (n *Node) Start(ctx context.Context) error {
 
 func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) error {
 	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.closed {
+	if n.closed || n.closing.Load() {
+		n.mu.Unlock()
 		return net.ErrClosed
 	}
 	if n.recovery {
+		n.mu.Unlock()
 		return ErrRecovery
 	}
 	if n.started {
-		return nil
-	}
-	if e := ctx.Err(); e != nil {
-		return e
-	}
-	if e := checkAddress(n.cfg.Listen.Addr()); e != nil {
-		return e
-	}
-	network := "tcp6"
-	if n.cfg.Listen.Addr().Is4() {
-		network = "tcp4"
-	}
-	ln, e := (&net.ListenConfig{}).Listen(ctx, network, n.cfg.Listen.String())
-	if e != nil {
-		return e
-	}
-	if e = n.startTunnelLocked(); e != nil {
-		ln.Close()
-		return e
-	}
-	n.underlay = ln
-	n.started = true
-	n.stop = context.AfterFunc(ctx, func() { n.Close() })
-	n.wg.Add(1)
-	go n.accept(ln)
-	return nil
-}
-func (n *Node) accept(ln net.Listener) {
-	defer n.wg.Done()
-	for {
-		raw, e := ln.Accept()
-		if e != nil {
-			return
-		}
-		ap, e := netip.ParseAddrPort(raw.RemoteAddr().String())
-		if e != nil || !n.cfg.permits(ap, false) {
-			raw.Close()
-			continue
-		}
-		w := &wire{raw: raw, control: true}
-		n.mu.Lock()
-		if n.readyLocked() != nil || n.controlUsageLocked() >= n.cfg.ControlLimit {
-			n.mu.Unlock()
-			raw.Close()
-			continue
-		}
-		n.wires[w] = struct{}{}
-		n.wg.Add(1)
+		err := n.readyLocked()
 		n.mu.Unlock()
-		go func() { defer n.wg.Done(); n.handle(w) }()
+		return err
 	}
+	if previous := n.building.Load(); previous != nil {
+		n.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-previous.done:
+			if previous.err != nil {
+				return previous.err
+			}
+			n.mu.Lock()
+			err := n.readyLocked()
+			n.mu.Unlock()
+			return err
+		}
+	}
+	if n.generation.Load() != nil {
+		n.mu.Unlock()
+		return ErrRecovery
+	}
+	if err := ctx.Err(); err != nil {
+		n.mu.Unlock()
+		return err
+	}
+	if err := checkAddress(n.cfg.Listen.Addr()); err != nil {
+		n.mu.Unlock()
+		return err
+	}
+	cfg := cloneGenerationConfig(n.cfg)
+	cfg.Peers = n.snapshotLocked()
+	build := newGenerationBuild(ctx)
+	n.building.Store(build)
+	if n.closing.Load() {
+		build.RequestStop()
+	}
+	n.mu.Unlock()
+
+	// Stop can reach this unpublished owner while setup is outside Node.mu.
+	callbackDone := make(chan struct{})
+	stopCallback := context.AfterFunc(build.ctx, func() {
+		build.signalResources()
+		close(callbackDone)
+	})
+	g, err := n.buildTransportGeneration(build, cfg)
+	n.mu.Lock()
+	if err == nil && (n.closed || n.closing.Load()) {
+		err = net.ErrClosed
+	}
+	if err == nil {
+		err = build.ctx.Err()
+	}
+	if err == nil {
+		buildDone := build.ctx.Done()
+		// Only initial Start may publish. There is no replacement entrypoint.
+		if !g.admit(func() bool {
+			if n.closing.Load() {
+				return false
+			}
+			select {
+			case <-buildDone:
+				return false
+			default:
+			}
+			n.peers = g.peers
+			n.bind, n.tunnel, n.engine = g.bind, g.tunnel, g.engine.Load()
+			n.underlay = g.underlay.listener
+			n.generation.Store(g)
+			n.started = true
+			g.traffic.Store(true)
+			close(g.published)
+			return true
+		}) {
+			err = ErrRecovery
+		}
+	}
+	if err == nil {
+		n.stop = context.AfterFunc(ctx, func() { n.Close() })
+	} else if g != nil || build.cleanupErr != nil {
+		n.recovery = true
+		n.nonTransportRecovery = true
+		if g != nil {
+			g.requestStop(err)
+		}
+	}
+	n.mu.Unlock()
+	if !stopCallback() {
+		<-callbackDone
+	}
+	build.cancel()
+	build.err = err
+	n.mu.Lock()
+	// A failed live construction remains retained until actual cleanup joins.
+	// A pre-generation error has already closed its only staged TCP resource.
+	if err == nil || g == nil && build.cleanupErr == nil {
+		n.building.CompareAndSwap(build, nil)
+	}
+	close(build.done)
+	n.mu.Unlock()
+	return err
 }
 
 type request struct {
@@ -213,7 +281,7 @@ func (n *Node) handle(w *wire) {
 		return
 	}
 	n.mu.Lock()
-	if n.readyLocked() != nil {
+	if n.readyLocked() != nil || n.generation.Load() != w.g {
 		n.mu.Unlock()
 		return
 	}
@@ -243,7 +311,7 @@ func (n *Node) handle(w *wire) {
 			writeJSON(c, response{Version: 1, Code: "pair_rejected"})
 			return
 		}
-		own := Peer{Key: n.PublicKey(), Endpoint: n.cfg.Listen, TunnelKey: n.cfg.Identity.TunnelKey()}
+		own := Peer{Key: n.PublicKey(), Endpoint: w.g.cfg.Listen, TunnelKey: w.g.cfg.Identity.TunnelKey()}
 		writeJSON(c, response{Version: 1, OK: true, Peer: &own})
 		return
 	}
@@ -263,6 +331,7 @@ func (n *Node) removeWire(w *wire) {
 	n.mu.Lock()
 	delete(n.wires, w)
 	n.mu.Unlock()
+	w.work.finish()
 }
 func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.Conn, *wire, error) {
 	bounded, cancel := context.WithTimeout(ctx, handshakeTimeout)
@@ -277,7 +346,8 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 		cancel()
 		return nil, nil, ErrUntrusted
 	}
-	if !n.cfg.permits(p.Endpoint, true) {
+	g := n.generation.Load()
+	if g == nil || !g.cfg.permits(p.Endpoint, true) {
 		n.mu.Unlock()
 		cancel()
 		return nil, nil, ErrPolicy
@@ -287,36 +357,55 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 		cancel()
 		return nil, nil, ErrCapacity
 	}
-	pending := &pendingDial{key: p.Key, cancel: cancel, control: true}
+	work, e := g.acquireWork(cancel, true)
+	if e != nil {
+		n.mu.Unlock()
+		cancel()
+		return nil, nil, e
+	}
+	pending := &pendingDial{key: p.Key, cancel: cancel, control: true, g: g}
 	n.dials[pending] = struct{}{}
 	n.mu.Unlock()
-	defer func() { n.mu.Lock(); delete(n.dials, pending); n.mu.Unlock() }()
+	transferred := false
+	defer func() {
+		n.mu.Lock()
+		delete(n.dials, pending)
+		n.mu.Unlock()
+		if !transferred {
+			work.finish()
+		}
+	}()
 	// Bind to the user's selected interface address. No resolver or proxy can
 	// influence this exact numeric peer-tunnel dial; no application address enters.
-	d := net.Dialer{LocalAddr: net.TCPAddrFromAddrPort(netip.AddrPortFrom(n.cfg.Listen.Addr(), 0))}
+	d := net.Dialer{LocalAddr: net.TCPAddrFromAddrPort(netip.AddrPortFrom(g.cfg.Listen.Addr(), 0))}
 	network := "tcp6"
 	if p.Endpoint.Addr().Is4() {
 		network = "tcp4"
 	}
 	raw, e := d.DialContext(bounded, network, p.Endpoint.String())
 	if e != nil {
+		if raw != nil {
+			raw.Close()
+		}
 		cancel()
 		return nil, nil, e
 	}
-	w := &wire{raw: raw, key: p.Key, peer: expected, cancel: cancel, control: true}
+	owned := newControlStream(g, raw)
+	w := &wire{raw: owned, key: p.Key, peer: expected, cancel: cancel, control: true, g: g, work: work}
 	n.mu.Lock()
 	delete(n.dials, pending)
-	if n.readyLocked() != nil || bounded.Err() != nil || (expected != nil && n.peers[p.Key] != expected) || n.controlUsageLocked() >= n.cfg.ControlLimit {
+	if n.readyLocked() != nil || n.generation.Load() != g || bounded.Err() != nil || (expected != nil && n.peers[p.Key] != expected) || n.controlUsageLocked() >= n.cfg.ControlLimit {
 		n.mu.Unlock()
 		raw.Close()
 		cancel()
 		return nil, nil, ErrUntrusted
 	}
 	n.wires[w] = struct{}{}
+	transferred = true
 	delete(n.dials, pending)
 	n.mu.Unlock()
-	stop := context.AfterFunc(bounded, func() { raw.Close() })
-	c := tls.Client(raw, tlsConfig(n.cert, p.Key, false))
+	stop := watchConnection(bounded, owned)
+	c := tls.Client(owned, tlsConfig(n.cert, p.Key, false))
 	c.SetDeadline(time.Now().Add(handshakeTimeout))
 	if e = c.HandshakeContext(bounded); e != nil {
 		stop()
@@ -374,25 +463,50 @@ func (n *Node) RegisterTCPFallback(f func(netip.AddrPort, netip.AddrPort) (func(
 	return func() { once.Do(func() { n.mu.Lock(); n.fallback = nil; n.mu.Unlock() }) }, nil
 }
 func (n *Node) Close() error {
+	n.RequestClose()
+	// Signal without Node.mu; a session initiator may own it while sending on
+	// the old UDP socket. The supervisor supplies the wake before its snapshot.
+	g := n.generation.Load()
+	if g != nil {
+		g.requestStop(net.ErrClosed)
+	}
 	n.mu.Lock()
+	g = n.generation.Load()
+	if g != nil {
+		g.requestStop(net.ErrClosed)
+	}
+	build := n.building.Load()
+	if build != nil {
+		build.RequestStop()
+	}
+	staged := n.staged.Load()
+	if staged != nil {
+		staged.Abort()
+	}
 	if n.closed {
 		n.mu.Unlock()
-		return nil
+		var err error
+		if build != nil {
+			err = build.wait(context.Background())
+		}
+		if g != nil {
+			err = errors.Join(err, g.wait(context.Background()))
+		}
+		if staged != nil {
+			err = errors.Join(err, staged.WaitClosed(context.Background()))
+		}
+		return err
 	}
 	n.closed = true
-	n.dispatchMu.Lock()
-	n.dispatchClosed = true
-	n.dispatchMu.Unlock()
 	n.cancel()
 	if n.stop != nil {
 		n.stop()
 	}
-	ln := n.underlay
-	ws := make([]*wire, 0, len(n.wires))
+	var ws []*wire
 	for w := range n.wires {
 		ws = append(ws, w)
 	}
-	ls := make([]*listener, 0, len(n.listeners))
+	var ls []*listener
 	for _, l := range n.listeners {
 		ls = append(ls, l)
 	}
@@ -404,33 +518,45 @@ func (n *Node) Close() error {
 	}
 	n.invites = map[string]pendingInvitation{}
 	n.mu.Unlock()
-	if ln != nil {
-		ln.Close()
-	}
 	for _, w := range ws {
-		n.removeWire(w)
+		if w.flow != nil {
+			w.flow.Close()
+		} else {
+			w.raw.Close()
+		}
 	}
 	for _, l := range ls {
 		l.Close()
 	}
-	if n.engine != nil {
-		n.engine.Close()
+	var err error
+	if build != nil {
+		err = build.wait(context.Background())
+	}
+	if g != nil {
+		err = errors.Join(err, g.wait(context.Background()))
+	}
+	if staged != nil {
+		err = errors.Join(err, staged.WaitClosed(context.Background()))
 	}
 	n.wg.Wait()
-	return nil
+	return err
 }
-func (n *Node) String() string { return fmt.Sprintf("directlan(%s)", n.cfg.Listen) }
+func (n *Node) String() string { return fmt.Sprintf("directlan(%s)", n.Endpoint()) }
 
 // Ready reports local listener/engine admission state without claiming remote
 // reachability. Failed persistence or engine admission is reported as recovery.
 func (n *Node) Ready() error {
 	n.mu.Lock()
 	e := n.readyLocked()
+	g := n.generation.Load()
 	n.mu.Unlock()
 	if e != nil {
 		return e
 	}
-	return localAddressReady(n.cfg.Listen.Addr())
+	if g == nil {
+		return ErrUnavailable
+	}
+	return localAddressReady(g.cfg.Listen.Addr())
 }
 
 func (n *Node) flowUsageLocked() int {

@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "module": "gvisor.dev/gvisor",
+  "version": "v0.0.0-20260915211658-a6f909f08a72",
+  "module_sum": "h1:EytKYr5WrVs+Aah/0xDO8ZAZZzS/iTEVC8ln4ipDbL0=",
+  "go_mod_sum": "h1:8aLQqUBHDH8fY5y60lzmwDpMMbQCcT3EBfoSwhfaGCY=",
+  "source_url": "https://github.com/google/gvisor/tree/a6f909f08a7250c080b5b70f3513e8b27b75f64a",
+  "revision": "a6f909f08a7250c080b5b70f3513e8b27b75f64a",
+  "license": "Apache-2.0",
+  "upstream_tree_sha256": "851bfb125ed38e026bf420e0be369d71f35260327a5ec7a463b187aceecb7d82",
+  "adapted_tree_sha256": "636b426fb6cf6b5d84c4c1966df873907828d48fe41f5696b44559b51d8c56c5",
+  "notices": [
+    {"path": "AUTHORS", "sha256": "16818597d03ff1b20e9a5e6eeedb3108acde75ec30c3edba534892b1a66b1e71"},
+    {"path": "LICENSE", "sha256": "0fbab5c58efbdf6d31e8085214f2dd821659c03d73cff3ed2b08e98826ea1cd9"}
+  ],
+  "changes": [
+    {
+      "path": "pkg/tcpip/transport/tcp/forwarder.go",
+      "original_sha256": "a71aaa2cea790e2954663292def3dc226ecb1da83d93a6a1c4d7c033762ae637",
+      "adapted_sha256": "d490ca8d1a402a0c5e3ba74cdfacfa3eeec3ee92a3d8447168bfdb13705a6335",
+      "source_path": "sources/gvisor/pkg/tcpip/transport/tcp/forwarder.go.txt"
+    },
+    {
+      "path": "pkg/tcpip/transport/tcp/forwarder_owned.go",
+      "original_sha256": "",
+      "adapted_sha256": "c9635a1b85f2d7533b9eed690f5d5d95f3ad6096ea3956beeb82c6dbde1d609c",
+      "source_path": "sources/gvisor/pkg/tcpip/transport/tcp/forwarder_owned.go.txt"
+    }
+  ]
+}

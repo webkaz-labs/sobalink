@@ -17,15 +17,32 @@ func memoryNode(t *testing.T, n byte) *Node {
 	if e != nil {
 		t.Fatal(e)
 	}
-	node.started = true
-	t.Cleanup(func() { node.Close() })
+	t.Cleanup(attachMemoryGeneration(node))
 	return node
 }
+
+// attachMemoryGeneration supplies explicit generation/config metadata only.
+// It creates no engine, tunnel, sockets or retirement supervisor. Detach this
+// exact synthetic owner before Node.Close, which must not wait for an unstarted
+// supervisor. Do not synthesize a completed retirement signal for the fixture.
+func attachMemoryGeneration(node *Node) func() {
+	g := newRuntimeGeneration(node, &lanBind{cfg: cloneGenerationConfig(node.cfg)}, nil)
+	g.peers = node.peers
+	g.traffic.Store(true)
+	close(g.published)
+	node.generation.Store(g)
+	node.started = true
+	return func() {
+		node.generation.CompareAndSwap(g, nil)
+		node.Close()
+	}
+}
+
 func memoryClient(t *testing.T, host, client *Node) (*tls.Conn, func()) {
 	t.Helper()
 	a, b := net.Pipe()
-	w := &wire{raw: a}
 	host.mu.Lock()
+	w := &wire{raw: a, g: host.generation.Load()}
 	host.wires[w] = struct{}{}
 	host.wg.Add(1)
 	host.mu.Unlock()

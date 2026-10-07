@@ -123,7 +123,7 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ needs.gate.outputs.commit }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ needs.gate.outputs.commit }}
       - name: Report Go cache result and require an exact release key
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}
@@ -370,7 +370,7 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ needs.gate.outputs.commit }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ needs.gate.outputs.commit }}
       - name: Report Go cache result and require an exact release key
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}

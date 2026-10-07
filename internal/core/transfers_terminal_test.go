@@ -118,11 +118,13 @@ func TestOutgoingReceiverDecisionReleasesStaging(t *testing.T) {
 	}
 }
 
-// Replace only the receiver's in-memory HTTP listener. The ordinary handler
-// still performs identity checks, receives files and supplies saved-file acks.
+// Replace only the receiver's in-memory HTTP listener, retaining its connection
+// ownership gate and server callbacks. The ordinary handler still performs
+// identity checks, receives files and supplies saved-file acks.
 func interceptTransferPeer(t *testing.T, p corePair, intercept func(http.ResponseWriter, *http.Request, http.Handler)) {
 	t.Helper()
-	original := p.b.peerServer.http.Handler
+	original := p.b.peerServer.http
+	owned := *p.b.peerServer.listeners[0].(*peerIncomingListener)
 	if err := p.b.peerServer.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +132,15 @@ func interceptTransferPeer(t *testing.T, p corePair, intercept func(http.Respons
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { intercept(w, r, original) })}
+	owned.Listener = listener
+	server := &http.Server{
+		Handler:     http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { intercept(w, r, original.Handler) }),
+		BaseContext: original.BaseContext,
+		ConnContext: original.ConnContext,
+		ConnState:   original.ConnState,
+	}
 	t.Cleanup(func() { _ = server.Close() })
-	go func() { _ = server.Serve(listener) }()
+	go func() { _ = server.Serve(&owned) }()
 }
 
 func TestOutgoingInterruptedFilePreservesSavedBytes(t *testing.T) {

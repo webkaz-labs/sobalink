@@ -21,7 +21,6 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/diskspace"
-	"github.com/webkaz-labs/sobalink/internal/httpbound"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
@@ -79,7 +78,7 @@ func (c *Core) startPeerServer(ips []netip.Addr) error {
 		return errors.New("no current self address")
 	}
 	p := &peerServer{connections: map[net.Conn]string{}, slots: make(chan struct{}, 16)}
-	p.http = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { c.peerHTTP(p, w, r) }), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Minute, WriteTimeout: 10 * time.Minute, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10, BaseContext: func(net.Listener) context.Context { return c.ctx }, ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+	p.http = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { c.serveOwnedPeerHTTP(p, w, r) }), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Minute, WriteTimeout: 10 * time.Minute, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8 << 10, BaseContext: func(net.Listener) context.Context { return c.ctx }, ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
 		p.mu.Lock()
 		p.connections[conn] = ""
 		p.mu.Unlock()
@@ -91,14 +90,15 @@ func (c *Core) startPeerServer(ips []netip.Addr) error {
 			p.mu.Unlock()
 		}
 	}}
-	gate := httpbound.New(16)
+	gate := make(chan struct{}, 16)
+	_, requireOrigin := n.(*directLANBackend)
 	for _, port := range []int{PeerPort, DiscoveryPort} {
 		l, e := n.Listen("tcp", config.Address(ip.String(), port))
 		if e != nil {
 			_ = p.Close()
 			return e
 		}
-		p.listeners = append(p.listeners, gate.Wrap(l))
+		p.listeners = append(p.listeners, &peerIncomingListener{Listener: l, core: c, slots: gate, requireOrigin: requireOrigin})
 	}
 	c.mu.Lock()
 	c.peerServer = p
@@ -169,13 +169,6 @@ func readJSON(r *http.Request, limit int64, v any) error {
 var errPeerRequestTooLarge = errors.New("peer request exceeds its JSON envelope limit")
 
 func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
-	select {
-	case p.slots <- struct{}{}:
-		defer func() { <-p.slots }()
-	default:
-		peerFailure(w, 503)
-		return
-	}
 	// Browser-originated requests have no role in the peer protocol.
 	if r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" {
 		peerFailure(w, 403)
@@ -253,45 +246,8 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 			peerFailure(w, 403)
 			return
 		}
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.closing || c.ctx.Err() != nil || r.Context().Err() != nil {
-			peerFailure(w, 403)
-			return
-		}
-		currentTrust := false
-		for _, current := range c.profile.Peers {
-			if current.ID == t.ID && current.Network == t.Network && current.Network == c.profile.Settings.Network && current.Generation == t.Generation && !current.Paused {
-				currentTrust = true
-				break
-			}
-		}
-		if !currentTrust {
-			peerFailure(w, 403)
-			return
-		}
-		for _, m := range c.messages {
-			if m.ID == msg.ID && m.PeerID == peerID && m.Direction == "incoming" {
-				if m.Text != msg.Text {
-					peerFailure(w, 409)
-					return
-				}
-				if c.messageHistoryUncertain {
-					if err := c.saveMessageHistoryLocked(c.messages); err != nil {
-						reply(w, http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, true).Error()})
-						return
-					}
-				}
-				reply(w, 200, map[string]string{"id": m.ID, "status": "received"})
-				return
-			}
-		}
-		message := Message{ID: msg.ID, PeerID: peerID, Text: msg.Text, Direction: "incoming", CreatedAt: time.Now().UTC(), Status: "received"}
-		if e := c.appendMessageLocked(message); e != nil {
-			reply(w, http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(e, errors.Is(e, config.ErrAtomicCommitted)).Error()})
-			return
-		}
-		reply(w, 200, map[string]string{"id": message.ID, "status": "received"})
+		status, result := c.commitIncomingPeerMessage(r.Context(), t, peerID, msg.ID, msg.Text)
+		reply(w, status, result)
 	case r.Method == "POST" && r.URL.Path == "/v1/offers":
 		var manifest transfer.Manifest
 		if readJSON(r, c.receiveManifestJSONBytes(), &manifest) != nil {
@@ -378,31 +334,42 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io.Reader, contentType string, out any) error {
-	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 5 * time.Second, MaxResponseHeaderBytes: 8 << 10, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		if network != "tcp" {
-			return nil, errors.New("TCP required")
+func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io.Reader, contentType string, out any) (requestErr error) {
+	ctx, releaseEntrance, e := c.enterPeerHTTP(ctx)
+	if e != nil {
+		if file, ok := body.(*os.File); ok {
+			_ = file.Close()
 		}
-		return c.dial(ctx, id, "tcp", PeerPort)
-	}}
-	if method == "PUT" && strings.HasPrefix(path, "/v1/batches/") {
-		// File upload and save confirmation share the caller's selected lifetime.
-		transport.ResponseHeaderTimeout = 0
+		return e
 	}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("peer redirects are refused") }}
-	req, e := http.NewRequestWithContext(ctx, method, "http://peer.invalid"+path, body)
+	defer releaseEntrance()
+	target, upload, e := validatePeerHTTPRequest(method, path, false)
+	if e != nil {
+		if file, ok := body.(*os.File); ok {
+			_ = file.Close()
+		}
+		return e
+	}
+	temporary, commit, e := privatePeerHTTPResult(out)
+	if e != nil {
+		if file, ok := body.(*os.File); ok {
+			_ = file.Close()
+		}
+		return e
+	}
+	h, size, e := c.preparePeerHTTPRequest(ctx, id, body)
 	if e != nil {
 		return e
 	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	resp, e := client.Do(req)
+	defer func() {
+		if err := h.finish(ctx); requestErr == nil {
+			requestErr = err
+		}
+	}()
+	resp, e := h.request(method, target.String(), contentType, size, upload, nil)
 	if e != nil {
 		return errors.New("peer did not respond; check its network and sobalink permissions")
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		if resp.StatusCode == http.StatusInsufficientStorage && (path == "/v1/offers" || strings.HasPrefix(path, "/v1/batches/")) {
 			return peerDiskSpaceError(resp.Body)
@@ -425,7 +392,10 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 	}
 	if out == nil {
 		_, e = io.Copy(io.Discard, io.LimitReader(resp.Body, 256<<10))
-		return e
+		if e != nil {
+			return e
+		}
+		return h.publish(commit)
 	}
 	responseLimit := int64(256 << 10)
 	if path == "/v1/offers" || strings.HasPrefix(path, "/v1/batches/") {
@@ -437,7 +407,7 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 	limited := &io.LimitedReader{R: resp.Body, N: responseLimit + 1}
 	d := json.NewDecoder(limited)
 	d.DisallowUnknownFields()
-	if err := d.Decode(out); err != nil {
+	if err := d.Decode(temporary); err != nil {
 		if limited.N <= 0 && strings.HasPrefix(path, "/.well-known/sobalink/services/") {
 			return &localCommandError{"discovery_capacity", "peer discovery exceeds the configured response budget; review discoveryBytes"}
 		}
@@ -452,12 +422,17 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 		}
 		return errors.New("peer response exceeds its configured framing budget")
 	}
-	if page, ok := out.(*servicePage); ok {
+	if page, ok := temporary.(*servicePage); ok {
 		page.receivedBytes = responseLimit + 1 - limited.N
 	}
-	return nil
+	return h.publish(commit)
 }
 func (c *Core) peerJSON(ctx context.Context, id, method, path string, input, out any) error {
+	ctx, releaseEntrance, err := c.enterPeerHTTP(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseEntrance()
 	var body io.Reader
 	if input != nil {
 		b, e := json.Marshal(input)
@@ -477,6 +452,11 @@ type peerRefreshAdmissionContext struct {
 type peerRefreshAdmissionKey struct{}
 
 func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
+	ctx, application, err := c.peerHTTPApplication(ctx)
+	if err != nil {
+		return err
+	}
+	defer application.finish()
 	callerCtx := ctx
 	var discovered []RemoteService
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -484,13 +464,21 @@ func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
 	defer func() {
 		if _, err := c.currentPeer(callerCtx, id); callerCtx.Err() == nil && err == nil {
 			publish := func() {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				release, err := application.publication()
+				if err != nil || c.closing {
+					if release != nil {
+						release()
+					}
+					return
+				}
+				defer release()
 				if probeErr == nil {
-					c.mu.Lock()
 					c.confirmed[id] = time.Now()
 					c.discovered[id] = discovered
-					c.mu.Unlock()
 				}
-				c.recordDiscoveryObservation(id, probeErr)
+				c.recordDiscoveryObservationLocked(id, probeErr)
 			}
 			if admission, ok := callerCtx.Value(peerRefreshAdmissionKey{}).(peerRefreshAdmissionContext); ok {
 				admission.scheduler.publish(admission.ticket, publish)
@@ -818,6 +806,11 @@ func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any
 	if !ok || t.Paused {
 		return nil, errors.New("approve this exact peer and resume communication first")
 	}
+	ctx, operation, err := c.beginPeerMessageOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer operation.finish()
 	msg := Message{ID: randomID(), PeerID: v.PeerID, Direction: "outgoing", Text: v.Text, CreatedAt: time.Now().UTC(), Status: "pending"}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -826,17 +819,21 @@ func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any
 		Status string `json:"status"`
 	}
 	e := c.peerJSON(ctx, v.PeerID, "POST", "/v1/messages", map[string]string{"id": msg.ID, "text": msg.Text}, &ack)
-	if e != nil {
-		msg.Status = "failed"
-	} else if ack.ID != msg.ID || ack.Status != "received" {
+	if ack.ID == msg.ID && ack.Status == "received" {
+		// peerRequest publishes the private decoded acknowledgement before
+		// waiting for physical cleanup. A later cancellation of that wait
+		// cannot erase the receipt already established for this exact ID.
+		msg.Status = "sent"
+		if e != nil {
+			e = errors.Join(&localCommandError{"message_completion_interrupted", "peer acknowledged receipt, but waiting for request completion was interrupted; do not resend the delivered message"}, e)
+		}
+	} else if e == nil {
 		e = errors.New("peer did not confirm receipt")
 		msg.Status = "failed"
 	} else {
-		msg.Status = "sent"
+		msg.Status = "failed"
 	}
-	c.mu.Lock()
-	saveErr := c.appendMessageLocked(msg)
-	c.mu.Unlock()
+	saveErr := operation.commit(c, msg)
 	if saveErr != nil {
 		message := "local message history could not be saved; check free storage and private state permissions, and check the receiver before retrying"
 		if msg.Status == "sent" {

@@ -18,6 +18,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/directlan"
+	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
 )
 
 // DirectLANSelection explicitly bounds every underlay connection. Its endpoint
@@ -37,20 +38,31 @@ type directLANState struct {
 	Identity  directlan.Identity `json:"identity"`
 	Selection DirectLANSelection `json:"selection"`
 	Peers     []directlan.Peer   `json:"peers"`
+	// Metadata is represented by the v3 peer records in the same private file.
+	// Peers remains a derived public DTO, never a second v3 authority source.
+	Metadata *endpointmeta.Snapshot `json:"-"`
 }
 type directLANStore struct {
-	limits       atomic.Pointer[lanStoreLimits]
-	mu           sync.Mutex
-	path         string
-	state        directLANState
-	recovery     bool
-	write        func(string, []byte) error
-	bytes, peers int64
+	limits         atomic.Pointer[lanStoreLimits]
+	mu             sync.Mutex
+	path           string
+	state          directLANState
+	recovery       bool
+	write          func(string, []byte) error
+	bytes, peers   int64
+	fileDigest     string
+	reviewRevision uint64
+	// Read-only endpoint inspection cannot persist a clock observation. Keep
+	// its process-local wall-time floor so a later rollback cannot reuse an
+	// expired approval within this owner; explicit recovery never resets it.
+	endpointObservedAt time.Time
+	endpointDeadlines  map[directLANEndpointDeadlineKey]directLANEndpointDeadline
 }
 
 func cloneDirectLANState(s directLANState) directLANState {
 	s.Selection.Prefixes = append([]string(nil), s.Selection.Prefixes...)
 	s.Peers = append([]directlan.Peer{}, s.Peers...)
+	s.Metadata = cloneDirectLANMetadata(s.Metadata)
 	return s
 }
 func directLANConfig(s directLANState) (directlan.Config, error) {
@@ -78,20 +90,23 @@ func ValidateDirectLANSelection(selection DirectLANSelection) error {
 	return err
 }
 func readDirectLANStore(path string, bytes, peers int64) (*directLANStore, error) {
-	var state directLANState
-	if err := readBoundedPrivateJSON(path, bytes, &state); err != nil {
+	state, digest, err := readDirectLANFile(path, bytes)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, &lanCommandError{"direct_lan_state_invalid", "private direct LAN state could not be read; inspect protected state before restarting"}
 	}
-	if state.Version != directLANStateVersion {
-		return nil, &lanCommandError{"direct_lan_state_invalid", "unsupported private direct LAN state"}
-	}
-	if _, err := directLANConfig(state); err != nil {
+	if err := validateDirectLANState(state); err != nil {
 		return nil, &lanCommandError{"direct_lan_state_invalid", "invalid private direct LAN state; inspect protected state before restarting"}
 	}
-	return &directLANStore{path: path, state: state, bytes: bytes, peers: peers}, nil
+	store := &directLANStore{path: path, state: state, bytes: bytes, peers: peers, fileDigest: digest}
+	// Reading is evidence, not reconciliation. A persisted fence or detected
+	// clock regression stays blocked; neither is cleared by a successful read.
+	if state.Metadata != nil {
+		store.recovery = state.Metadata.PendingChange != nil || state.Metadata.ValidateAt(time.Now()) != nil
+	}
+	return store, nil
 }
 func (s *directLANStore) copy() directLANState {
 	s.mu.Lock()
@@ -103,10 +118,27 @@ func (s *directLANStore) saveLocked(next directLANState) error {
 	if s.recovery {
 		return directlan.ErrRecovery
 	}
-	if next.Version != directLANStateVersion {
-		return errors.New("invalid direct LAN state version")
+	next, err := s.prepareLegacyEditLocked(next, time.Now())
+	if err != nil {
+		return err
 	}
-	if _, err := directLANConfig(next); err != nil {
+	return s.writeStateLocked(next)
+}
+
+// writeStateLocked is the single whole-file publication boundary. Its callers
+// must validate their transition under the store mutex and Core lifecycle owner.
+func (s *directLANStore) writeStateLocked(next directLANState) error {
+	if s.recovery {
+		return directlan.ErrRecovery
+	}
+	return s.publishStateLocked(next)
+}
+
+// publishStateLocked is the one AtomicWrite publisher. Ordinary callers enter
+// through writeStateLocked. Only exact, stopped/offline pending reconciliation
+// may enter here with recovery latched, after rereading its reviewed file.
+func (s *directLANStore) publishStateLocked(next directLANState) error {
+	if err := validateDirectLANState(next); err != nil {
 		return err
 	}
 	if len(next.Peers) > len(s.state.Peers) && int64(len(next.Peers)) > s.currentCapacity().peers {
@@ -119,13 +151,19 @@ func (s *directLANStore) saveLocked(next directLANState) error {
 	if int64(len(data))+1 > s.currentCapacity().bytes {
 		return directlan.ErrCapacity
 	}
+	if s.reviewRevision == ^uint64(0) {
+		return directlan.ErrCapacity
+	}
+	s.reviewRevision++
 	write := s.write
 	if write == nil {
 		write = config.AtomicWrite
 	}
-	err = write(s.path, append(data, '\n'))
+	data = append(data, '\n')
+	err = write(s.path, data)
 	if atomicPublished(err) {
 		s.state = cloneDirectLANState(next)
+		s.fileDigest = directLANFileDigest(data)
 	}
 	if err != nil {
 		s.recovery = true
@@ -222,7 +260,7 @@ func codedDirectLANError(err error) error {
 	case errors.Is(err, directlan.ErrPairUncertain):
 		code, message = "direct_lan_pair_uncertain", "pairing reply was not received; inspect and revoke any pair on the other device before retrying"
 	case errors.Is(err, directlan.ErrRecovery):
-		code, message = "direct_lan_recovery_required", "direct LAN is paused after a private-state save failure; stop and inspect protected state before reopening"
+		code, message = "direct_lan_recovery_required", "direct LAN requires protected-state recovery; stop, review saved state and the system clock, and reconcile before reopening"
 	case errors.Is(err, directlan.ErrLocalAddressUnavailable):
 		code, message = "direct_lan_address_unavailable", "the selected direct LAN address is no longer on an up local interface; reconnect that network or explicitly reconfigure while stopped"
 	case errors.Is(err, directlan.ErrLocalAddressUnknown):
@@ -260,6 +298,9 @@ func (c *Core) directLANStatus() map[string]any {
 		status["prefixes"] = state.Selection.Prefixes
 		status["recoveryRequired"] = s.needsRecovery()
 		status["peers"] = state.Peers
+		status["stateVersion"] = state.Version
+		status["endpointUpdatesEnabled"] = false
+		status["endpointMetadataPending"] = directLANMetadataManaged(state.Metadata)
 	}
 	if b, ok := c.nodeCopy().(*directLANBackend); ok {
 		status["resourceRestartRequired"] = b.resources != directRuntimeResources(c.capacityPolicy())
@@ -274,6 +315,12 @@ func (c *Core) directLANStatus() map[string]any {
 	return status
 }
 func (c *Core) directLANCommand(ctx context.Context, name string, raw json.RawMessage) (any, error) {
+	if strings.HasPrefix(name, "direct-lan.endpoint.") {
+		return c.directLANEndpointCommand(ctx, name, raw)
+	}
+	if name == "direct-lan.migration.review" || name == "direct-lan.migration.apply" {
+		return c.directLANMigrationCommand(ctx, name, raw)
+	}
 	if name == "direct-lan.status" || name == "direct-lan.identity" {
 		if err := decodePayload(raw, &struct{}{}); err != nil {
 			return nil, err
@@ -392,6 +439,12 @@ func (c *Core) revokeDirectLANPeer(id string) error {
 	s := c.directLANStoreCopy()
 	if s == nil {
 		return &lanCommandError{"direct_lan_setup_required", "there is no saved direct LAN identity to revoke"}
+	}
+	if directLANMetadataManaged(s.copy().Metadata) {
+		// Managed pair removal needs a durable pair-revoke/tombstone contract.
+		// Reject before changing application, startup or mixed grants; deleting
+		// only its legacy DTO would silently discard replay evidence.
+		return codedDirectLANError(directLANMetadataUnavailable())
 	}
 	active := c.nodeCopy()
 	b, ok := active.(*directLANBackend)

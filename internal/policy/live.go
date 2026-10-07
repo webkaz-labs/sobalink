@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 const liveValidationTimeout = 10 * time.Second
@@ -15,14 +17,16 @@ const liveValidationTimeout = 10 * time.Second
 // time. Hostname reuse and numeric-address reassignment cannot retarget it.
 type liveConn struct {
 	net.Conn
-	policy   *Policy
-	network  string
-	endpoint netip.AddrPort
-	peerID   string
-	ctx      context.Context
-	cancel   context.CancelFunc
-	once     sync.Once
-	closeErr error
+	policy    *Policy
+	network   string
+	endpoint  netip.AddrPort
+	peerID    string
+	ctx       context.Context
+	cancel    context.CancelFunc
+	once      sync.Once
+	closeInit sync.Once
+	closeDone chan struct{}
+	closeErr  error
 }
 
 func (c *liveConn) authorized(snapshot Snapshot) error {
@@ -119,13 +123,19 @@ func (c *liveConn) CloseRead() error {
 	return errors.ErrUnsupported
 }
 
+func (c *liveConn) closeCompletion() chan struct{} {
+	c.closeInit.Do(func() { c.closeDone = make(chan struct{}) })
+	return c.closeDone
+}
 func (c *liveConn) Close() error {
+	done := c.closeCompletion()
 	c.once.Do(func() {
 		c.cancel()
 		c.closeErr = c.Conn.Close()
 		c.policy.mu.Lock()
 		delete(c.policy.active, c)
 		c.policy.mu.Unlock()
+		close(done)
 	})
 	return c.closeErr
 }
@@ -168,4 +178,28 @@ func (p *Policy) RevalidateActive(ctx context.Context) error {
 		}
 	}
 	return result
+}
+
+func (c *liveConn) TransportOrigin() transportorigin.Origin {
+	if carrier, ok := c.Conn.(transportorigin.Carrier); ok {
+		return carrier.TransportOrigin()
+	}
+	return nil
+}
+func (c *liveConn) WaitClosed(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.closeCompletion():
+	}
+	if terminal, ok := c.Conn.(interface{ WaitClosed(context.Context) error }); ok {
+		return terminal.WaitClosed(ctx)
+	}
+	if c.TransportOrigin() != nil {
+		return transportorigin.ErrMissingOrigin
+	}
+	if c.closeErr != nil && !errors.Is(c.closeErr, net.ErrClosed) {
+		return c.closeErr
+	}
+	return nil
 }

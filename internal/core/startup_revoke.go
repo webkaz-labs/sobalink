@@ -36,6 +36,10 @@ func (c *Core) peerEpochsValid(epochs map[string]string) bool {
 	return samePeerEpochs(epochs, c.startup.Revocations)
 }
 func (c *Core) revokeStartupPeer(id string) error {
+	return c.revokeStartupPeerWithFailure(id, nil)
+}
+
+func (c *Core) revokeStartupPeerWithFailure(id string, failure *peerScopeFailure) error {
 	if !config.ValidPeerID(id) {
 		return errors.New("select an exact peer identity to revoke")
 	}
@@ -59,7 +63,8 @@ func (c *Core) revokeStartupPeer(id string) error {
 	if persistErr != nil && !errors.Is(persistErr, config.ErrAtomicCommitted) {
 		// A separate atomic store is a best-effort durable fallback. Neither
 		// failure rolls back the in-memory revocation or keeps live work running.
-		_ = c.writePrivateSettings("startup.json", next)
+		// Preserve fallback uncertainty without erasing the journal failure.
+		persistErr = errors.Join(persistErr, c.writePrivateSettings("startup.json", next))
 	}
 	c.mu.Lock()
 	c.startup = next
@@ -71,7 +76,7 @@ func (c *Core) revokeStartupPeer(id string) error {
 	c.mu.Unlock()
 	c.cancelSavedPeerProxies(id)
 	if persistErr != nil {
-		c.stopPeerServices(id)
+		scopeErr := c.stopPeerServicesWithFailure(id, failure)
 		c.stopPeerProxies(id)
 		c.mu.Lock()
 		c.startupSuppressed = true
@@ -80,7 +85,7 @@ func (c *Core) revokeStartupPeer(id string) error {
 		c.networkError = "Durable startup revocation could not be confirmed; repair private state before restarting"
 		c.networkErrorCode = "startup_revocation_unconfirmed"
 		c.mu.Unlock()
-		return errors.Join(&localCommandError{"startup_revocation_unconfirmed", "outbound work stopped; durable startup revocation could not be confirmed. Repair private state before restarting"}, persistErr)
+		return errors.Join(&localCommandError{"startup_revocation_unconfirmed", "outbound work stopped; durable startup revocation could not be confirmed. Repair private state before restarting"}, persistErr, scopeErr)
 	}
 	return nil
 }

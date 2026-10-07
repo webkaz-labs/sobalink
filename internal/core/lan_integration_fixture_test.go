@@ -5,6 +5,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -91,7 +92,15 @@ func (f *nativeLANCoreFixture) must(c *Core, name string, payload any) any {
 	f.t.Helper()
 	value, err := f.invoke(c, name, payload)
 	if err != nil {
-		f.t.Fatalf("native Core command %s failed", name)
+		code := "unclassified"
+		switch candidate := networkErrorCode(err); candidate {
+		case "lan_saved_start_changed", "lan_start_failed", "lan_environment_proxy", "lan_environment_override", "lan_relay_mismatch", "network_restart_required", "lan_state_capacity", "lan_recovery_required":
+			code = candidate
+		}
+		// Report only fixed classifications, never payloads, raw errors,
+		// identities, addresses, protected file paths or authorization material.
+		f.t.Fatalf("native Core command %s failed (code=%s permission=%t canceled=%t timeout=%t)", name, code,
+			errors.Is(err, os.ErrPermission), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded))
 	}
 	return value
 }

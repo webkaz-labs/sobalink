@@ -219,8 +219,8 @@ func TestRuntimeResourceSelectionsAndLivePeerAdmission(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	n.started = true
-	defer n.Close()
+	closeNode := attachMemoryGeneration(n)
+	defer closeNode()
 	if cap(n.dispatchSlots) != 11 {
 		t.Fatal("flow selection ignored")
 	}

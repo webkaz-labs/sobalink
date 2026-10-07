@@ -8,14 +8,17 @@ import (
 )
 
 type listener struct {
-	n       *Node
-	service service
-	pending chan *flow
-	done    chan struct{}
-	once    sync.Once
-	mu      sync.Mutex
-	flows   map[*flow]struct{}
-	stop    func() bool
+	n            *Node
+	service      service
+	pending      []*flow
+	pendingLimit int
+	changed      chan struct{}
+	done         chan struct{}
+	once         sync.Once
+	mu           sync.Mutex
+	flows        map[*flow]struct{}
+	stop         func() bool
+	packet       *packetListener
 }
 
 func (n *Node) ListenPeer(ctx context.Context, network string, port uint16) (net.Listener, error) {
@@ -37,13 +40,14 @@ func (n *Node) ListenPeer(ctx context.Context, network string, port uint16) (net
 	if len(n.listeners) >= n.cfg.ListenerLimit {
 		return nil, ErrCapacity
 	}
-	l := &listener{n: n, service: s, pending: make(chan *flow, n.cfg.PacketQueueLimit), done: make(chan struct{}), flows: map[*flow]struct{}{}}
+	l := &listener{n: n, service: s, pendingLimit: n.cfg.PacketQueueLimit, changed: make(chan struct{}), done: make(chan struct{}), flows: map[*flow]struct{}{}}
 	n.listeners[s] = l
 	l.mu.Lock()
 	l.stop = context.AfterFunc(ctx, func() { l.Close() })
 	l.mu.Unlock()
 	return l, nil
 }
+func (l *listener) notifyLocked() { close(l.changed); l.changed = make(chan struct{}) }
 func (l *listener) deliver(f *flow) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -52,34 +56,73 @@ func (l *listener) deliver(f *flow) bool {
 		return false
 	default:
 	}
-	f.listener = l
-	l.flows[f] = struct{}{}
-	select {
-	case l.pending <- f:
-		return true
-	default:
-		delete(l.flows, f)
-		f.listener = nil
+	if len(l.pending) >= l.pendingLimit {
 		return false
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed || !f.g.open() {
+		return false
+	}
+	f.listener = l
+	l.flows[f] = struct{}{}
+	l.pending = append(l.pending, f)
+	l.notifyLocked()
+	return true
 }
 func (l *listener) Accept() (net.Conn, error) {
 	for {
+		l.mu.Lock()
 		select {
 		case <-l.done:
+			l.mu.Unlock()
 			return nil, net.ErrClosed
-		case f := <-l.pending:
-			select {
-			case <-l.done:
-				f.Close()
-				return nil, net.ErrClosed
-			default:
-			}
-			if f.Valid() {
+		default:
+		}
+		if len(l.pending) != 0 {
+			f := l.pending[0]
+			l.pending[0] = nil
+			l.pending = l.pending[1:]
+			work, e := f.g.acquireWork(nil, false)
+			l.mu.Unlock()
+			if e == nil && f.Valid() {
+				defer work.finish()
 				return f, nil
 			}
 			f.Close()
+			work.finish()
+			continue
 		}
+		changed := l.changed
+		l.mu.Unlock()
+		select {
+		case <-l.done:
+			return nil, net.ErrClosed
+		case <-changed:
+		}
+	}
+}
+func (l *listener) retireGeneration(g *runtimeGeneration) {
+	l.mu.Lock()
+	var retired []*flow
+	kept := l.pending[:0]
+	for _, f := range l.pending {
+		if f.g == g {
+			retired = append(retired, f)
+		} else {
+			kept = append(kept, f)
+		}
+	}
+	clear(l.pending[len(kept):])
+	l.pending = kept
+	packet := l.packet
+	l.notifyLocked()
+	l.mu.Unlock()
+	if packet != nil {
+		packet.retireGeneration(g)
+	}
+	for _, f := range retired {
+		f.Close()
 	}
 }
 func (l *listener) Close() error {
@@ -98,6 +141,8 @@ func (l *listener) Close() error {
 		for f := range l.flows {
 			fs = append(fs, f)
 		}
+		clear(l.pending)
+		l.pending = nil
 		l.mu.Unlock()
 		for _, f := range fs {
 			f.Close()

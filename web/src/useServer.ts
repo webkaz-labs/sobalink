@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
 
-// Never evict an uncertain message to make room: Core's request cache is finite
+// Never evict a delivery guard to make room: Core's request cache is finite
 // too. Only this page lifetime is protected; nothing here claims durable dedupe.
 export const MAX_UNCERTAIN_MESSAGES = 256
-export type MessageBlock = 'message_resend_blocked' | 'message_safety_limit' | 'message_safety_unavailable'
+export type MessageBlock = 'message_resend_blocked' | 'message_completion_interrupted' | 'message_safety_limit' | 'message_safety_unavailable'
 async function messageFingerprint(peerId: string, text: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([peerId, text])))
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -19,7 +19,7 @@ export function useServer() {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
   const active = useRef(new Set<string>())
   const uncertain = useRef(new Map<string, { signature: string; requestId: string }>())
-  const uncertainMessages = useRef(new Set<string>())
+  const guardedMessages = useRef(new Map<string, 'message_resend_blocked' | 'message_completion_interrupted'>())
   const pendingMessages = useRef(new Set<string>())
   const [messageGuardRevision, setMessageGuardRevision] = useState(0)
   const controller = useRef<AbortController | null>(null)
@@ -72,10 +72,11 @@ export function useServer() {
     return () => { cancelled = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visible) }
   }, [auth, refresh])
   const messageBlock = useCallback(async (peerId: string, text: string): Promise<MessageBlock | null> => {
-    if (!uncertainMessages.current.size) return null
+    if (!guardedMessages.current.size) return null
     try {
-      if (uncertainMessages.current.has(await messageFingerprint(peerId, text))) return 'message_resend_blocked'
-      return uncertainMessages.current.size >= MAX_UNCERTAIN_MESSAGES ? 'message_safety_limit' : null
+      const blocked = guardedMessages.current.get(await messageFingerprint(peerId, text))
+      if (blocked) return blocked
+      return guardedMessages.current.size >= MAX_UNCERTAIN_MESSAGES ? 'message_safety_limit' : null
     } catch { return 'message_safety_unavailable' }
   }, [])
   const run = useCallback(async <N extends api.CommandName>(name: N, payload: api.CommandPayloads[N], key = name as string): Promise<api.CommandResult | undefined> => {
@@ -98,10 +99,11 @@ export function useServer() {
         try { fingerprint = await messageFingerprint(message.peerId, message.text) }
         catch { throw new api.ApiError('message_safety_unavailable', '') }
         if (!live.current || epoch !== authEpoch.current) return undefined
-        if (uncertainMessages.current.has(fingerprint)) throw new api.ApiError('message_resend_blocked', '')
+        const blocked = guardedMessages.current.get(fingerprint)
+        if (blocked) throw new api.ApiError(blocked, '')
         // Claim by peer+text, not by caller-selected UI key, before any request.
         if (pendingMessages.current.has(fingerprint)) return undefined
-        if (uncertainMessages.current.size + pendingMessages.current.size >= MAX_UNCERTAIN_MESSAGES) throw new api.ApiError('message_safety_limit', '')
+        if (guardedMessages.current.size + pendingMessages.current.size >= MAX_UNCERTAIN_MESSAGES) throw new api.ApiError('message_safety_limit', '')
         pendingMessages.current.add(fingerprint)
         messageClaimed = true
       }
@@ -120,8 +122,8 @@ export function useServer() {
       if (name === 'discovery.refresh' && !refreshed) return undefined
       return result
     } catch (value) {
-      if (messageClaimed && fingerprint && value instanceof api.ApiError && ['message_history_unavailable', 'message_peer_storage_unavailable'].includes(value.code)) {
-        uncertainMessages.current.add(fingerprint)
+      if (messageClaimed && fingerprint && value instanceof api.ApiError && ['message_history_unavailable', 'message_peer_storage_unavailable', 'message_completion_interrupted'].includes(value.code)) {
+        guardedMessages.current.set(fingerprint, value.code === 'message_completion_interrupted' ? 'message_completion_interrupted' : 'message_resend_blocked')
         if (live.current) setMessageGuardRevision(current => current + 1)
       }
       if (retainUncertain && requested && (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code))) uncertain.current.delete(key)
