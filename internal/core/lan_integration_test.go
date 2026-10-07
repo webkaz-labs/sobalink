@@ -7,106 +7,28 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"net"
-	"net/netip"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
-	"github.com/webkaz-labs/sobalink/internal/webui"
-	"tailscale.com/feature/buildfeatures"
 )
 
 // This opt-in native CI test uses stock Tailcat and an embedded TLS-pinned
 // loopback relay. It proves Core peer APIs and a TCP share over that path; it
 // does not claim real-device enrollment, direct UDP or network migration.
 func TestLANCorePeerApplicationsIntegration(t *testing.T) {
-	if os.Getenv("SOBALINK_RUN_LAN_INTEGRATION") != "1" {
-		t.Skip("requires an explicitly enabled isolated native CI environment")
-	}
-	if buildfeatures.HasUDPTransport {
-		t.Fatal("isolated Core integration requires ts_omit_udptransport")
-	}
-	if lanlink.ValidateBuild() != nil {
-		t.Fatal("isolated Core integration requires all LAN restriction build tags")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	var cores []*Core
-	var resources []io.Closer
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			cancel()
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				for i := len(resources) - 1; i >= 0; i-- {
-					_ = resources[i].Close()
-				}
-				for i := len(cores) - 1; i >= 0; i-- {
-					_ = cores[i].Close()
-				}
-			}()
-			select {
-			case <-done:
-			case <-time.After(10 * time.Second):
-				t.Error("native Core teardown did not complete")
-			}
-		})
-	}
-	t.Cleanup(cleanup)
-	open := func() *Core {
-		dir := t.TempDir()
-		t.Cleanup(cleanup) // Close engines before this directory's cleanup on failure.
-		c, err := Open(ctx, Options{Directory: dir, Version: "native-test", SkipNetworkStart: true})
-		if err != nil {
-			t.Fatal("could not open isolated Core state")
-		}
-		cores = append(cores, c)
-		return c
-	}
-	invoke := func(c *Core, name string, payload any) (any, error) {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
-		}
-		call, stop := context.WithTimeout(ctx, 30*time.Second)
-		defer stop()
-		return c.Command(call, webui.Command{RequestID: randomID(), Name: name, Payload: encoded})
-	}
-	must := func(c *Core, name string, payload any) any {
-		value, err := invoke(c, name, payload)
-		if err != nil {
-			t.Fatalf("native Core command %s failed", name)
-		}
-		return value
-	}
-	host, guest := open(), open()
+	f := newNativeLANCoreFixture(t)
+	ctx, cleanup := f.ctx, f.cleanup
+	invoke, must := f.invoke, f.must
+	host, guest := f.open(), f.open()
 	hostKey := must(host, "lan.identity", map[string]any{}).(map[string]string)["publicKey"]
 	guestKey := must(guest, "lan.identity", map[string]any{}).(map[string]string)["publicKey"]
-	var relayAddress netip.AddrPort
-	for attempt := 0; attempt < 8; attempt++ {
-		probe, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal("could not select an isolated relay port")
-		}
-		address := probe.Addr().(*net.TCPAddr).AddrPort()
-		_ = probe.Close()
-		if address.Port() >= 1024 && (address.Port() < DiscoveryPort || address.Port() > lanlink.PairingPort) {
-			relayAddress = address
-			break
-		}
-	}
-	if !relayAddress.IsValid() {
-		t.Fatal("could not select an unreserved relay port")
-	}
+	relayAddress := f.relayAddress()
 	must(host, "network.configure", map[string]any{"mode": "lan", "hostname": "native-host", "lan": LANSelection{Kind: "host", Address: relayAddress.String()}})
 	selection := *host.lanStoreCopy().copy().Selection
 	selection.Kind = "relay"
@@ -134,25 +56,7 @@ func TestLANCorePeerApplicationsIntegration(t *testing.T) {
 		from *Core
 		peer string
 	}{{guest, hostKey}, {host, guestKey}} {
-		window, stopWindow := context.WithTimeout(ctx, 30*time.Second)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		for {
-			call, stop := context.WithTimeout(window, 5*time.Second)
-			err := pair.from.peerJSON(call, pair.peer, "GET", "/v1/hello", nil, nil)
-			stop()
-			if err == nil {
-				break
-			}
-			select {
-			case <-window.Done():
-				ticker.Stop()
-				stopWindow()
-				t.Fatal("normal Core startup did not make the real peer API reachable")
-			case <-ticker.C:
-			}
-		}
-		ticker.Stop()
-		stopWindow()
+		f.waitPeerAPI(pair.from, pair.peer)
 	}
 	call, stop := context.WithTimeout(ctx, 10*time.Second)
 	err := guest.peerJSON(call, hostKey, "POST", "/v1/messages", map[string]string{"id": "before-trust", "text": "unapproved"}, nil)
@@ -266,7 +170,7 @@ func TestLANCorePeerApplicationsIntegration(t *testing.T) {
 	if target == nil {
 		t.Fatal("could not select an unreserved application target port")
 	}
-	resources = append(resources, target)
+	f.resources = append(f.resources, target)
 	targetDone := make(chan struct{})
 	go func() {
 		defer close(targetDone)
@@ -285,7 +189,7 @@ func TestLANCorePeerApplicationsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal("real Core service grant did not open a stream")
 	}
-	resources = append(resources, stream)
+	f.resources = append(f.resources, stream)
 	_ = stream.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := stream.Write([]byte("echo")); err != nil {
 		t.Fatal("real shared application write failed")
