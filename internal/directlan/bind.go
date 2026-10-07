@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	wgconn "github.com/tailscale/wireguard-go/conn"
+	"github.com/tailscale/wireguard-go/device"
 )
 
 type bindPolicy struct {
@@ -17,14 +18,27 @@ type bindPolicy struct {
 	sessions    map[[32]byte]*peerSession
 }
 type lanBind struct {
-	mu     sync.Mutex
-	cfg    Config
+	mu         sync.Mutex
+	cfg        Config
+	socket     *net.UDPConn
+	closeState *bindSocketClose
+	sealed     bool
+	owner      *runtimeGeneration
+	policy     atomic.Pointer[bindPolicy]
+}
+
+// bindSocketClose is the one physical-close owner. Closing done publishes the
+// immutable result to every ordinary/terminal caller. A failed close retains
+// the exact socket reference; detaching b.socket is never completion evidence.
+type bindSocketClose struct {
+	done   chan struct{}
 	socket *net.UDPConn
-	policy atomic.Pointer[bindPolicy]
+	err    error
 }
 type lanEndpoint struct {
 	destination, source netip.AddrPort
 	bind                *lanBind
+	policy              *bindPolicy
 }
 
 func (e *lanEndpoint) ClearSrc()           {}
@@ -36,6 +50,11 @@ func (e *lanEndpoint) DstToBytes() []byte  { b, _ := e.destination.MarshalBinary
 func (b *lanBind) Open(port uint16) ([]wgconn.ReceiveFunc, uint16, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// This generation's socket is single-use. Initial empty Close calls do
+	// not create closeState, but a real close can never be reset by Open.
+	if b.sealed || b.closeState != nil {
+		return nil, 0, net.ErrClosed
+	}
 	if b.socket != nil {
 		return nil, 0, wgconn.ErrBindAlreadyOpen
 	}
@@ -60,25 +79,57 @@ func (b *lanBind) Open(port uint16) ([]wgconn.ReceiveFunc, uint16, error) {
 			if e != nil {
 				return 0, e
 			}
+			if b.owner != nil && !b.owner.trafficOpen() {
+				continue
+			}
 			p := b.policy.Load()
 			if !b.cfg.permits(ap, true) || p == nil || !p.endpoints[ap] {
 				continue
 			}
-			packets[0] = wgconn.ReceivedPacket{Offset: 0, Size: n, Endpoint: &lanEndpoint{destination: ap, source: b.cfg.Listen, bind: b}}
+			packets[0] = wgconn.ReceivedPacket{Offset: 0, Size: n, Endpoint: &lanEndpoint{destination: ap, source: b.cfg.Listen, bind: b, policy: p}}
 			return 1, nil
 		}
 	}
 	return []wgconn.ReceiveFunc{recv}, port, nil
 }
-func (b *lanBind) Close() error {
+func (b *lanBind) Close() error { return b.closeSocket(false) }
+
+// SealAndClose is terminal; ordinary Close is also used by initial WG setup
+// and must never create or clear this irreversible seal. Both paths preserve
+// and await the first physical close, including a close already in flight.
+func (b *lanBind) SealAndClose() error { return b.closeSocket(true) }
+func (b *lanBind) closeSocket(terminal bool) error {
 	b.mu.Lock()
-	c := b.socket
-	b.socket = nil
-	b.mu.Unlock()
-	if c != nil {
-		return c.Close()
+	if terminal {
+		b.sealed = true
 	}
-	return nil
+	state := b.closeState
+	ownsClose := false
+	if state == nil && b.socket != nil {
+		state = &bindSocketClose{done: make(chan struct{}), socket: b.socket}
+		b.socket = nil
+		b.closeState = state
+		ownsClose = true
+	}
+	b.mu.Unlock()
+	if state == nil {
+		// Initial empty Close remains a no-op.
+		return nil
+	}
+	if ownsClose {
+		// No bind lock is held during physical I/O. No other
+		// caller owns this Close, even if terminal sealing races with it.
+		state.err = state.socket.Close()
+		if state.err == nil {
+			state.socket = nil
+		}
+		close(state.done)
+	} else {
+		// A detached socket can still have an incomplete or failed Close.
+		// Wait outside the mutex, then return exactly its published result.
+		<-state.done
+	}
+	return state.err
 }
 func (b *lanBind) SetMark(mark uint32) error {
 	if mark != 0 {
@@ -96,11 +147,14 @@ func (b *lanBind) ParseEndpoint(s string) (wgconn.Endpoint, error) {
 	if p == nil || !p.endpoints[ap] {
 		return nil, ErrUntrusted
 	}
-	return &lanEndpoint{destination: ap, source: b.cfg.Listen, bind: b}, nil
+	return &lanEndpoint{destination: ap, source: b.cfg.Listen, bind: b, policy: p}, nil
 }
 func (b *lanBind) Send(bufs [][]byte, ep wgconn.Endpoint, offset int) error {
+	if b.owner != nil && !b.owner.trafficOpen() {
+		return net.ErrClosed
+	}
 	target, ok := ep.(*lanEndpoint)
-	if !ok {
+	if !ok || target.bind != b {
 		return wgconn.ErrWrongEndpointType
 	}
 	p := b.policy.Load()
@@ -109,8 +163,9 @@ func (b *lanBind) Send(bufs [][]byte, ep wgconn.Endpoint, offset int) error {
 	}
 	b.mu.Lock()
 	c := b.socket
+	sealed := b.sealed
 	b.mu.Unlock()
-	if c == nil {
+	if c == nil || sealed {
 		return net.ErrClosed
 	}
 	for _, data := range bufs {
@@ -129,10 +184,12 @@ var _ wgconn.Bind = (*lanBind)(nil)
 // FromPeer is a notification after successful WireGuard decryption and keypair
 // confirmation. It supplies cryptographic key evidence, never source-IP trust.
 func (e *lanEndpoint) FromPeer(key [32]byte) {
-	if e.bind == nil {
+	// Legacy unowned engines keep their existing callback. An owned engine
+	// must carry the immutable registration and may not use key-only fallback.
+	if e.bind == nil || e.bind.owner != nil {
 		return
 	}
-	p := e.bind.policy.Load()
+	p := e.policy
 	if p == nil {
 		return
 	}
@@ -140,3 +197,14 @@ func (e *lanEndpoint) FromPeer(key [32]byte) {
 		session.confirm()
 	}
 }
+
+func (e *lanEndpoint) FromPeerRegistration(key [32]byte, registration device.PeerRegistration) {
+	if e.bind == nil || e.bind.owner == nil || e.policy == nil || registration == 0 {
+		return
+	}
+	if session := e.policy.sessions[key]; session != nil && session.registration.Load() == uint64(registration) {
+		session.confirm()
+	}
+}
+
+var _ device.OwnedEndpoint = (*lanEndpoint)(nil)

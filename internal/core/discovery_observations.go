@@ -17,6 +17,12 @@ type DiscoveryObservation struct {
 }
 
 func (c *Core) recordDiscoveryObservation(id string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.recordDiscoveryObservationLocked(id, err)
+}
+
+func (c *Core) recordDiscoveryObservationLocked(id string, err error) {
 	observation := DiscoveryObservation{State: "confirmed", CheckedAt: time.Now()}
 	if err != nil {
 		observation.State, observation.Code = "unconfirmed", "discovery_unconfirmed"
@@ -27,8 +33,6 @@ func (c *Core) recordDiscoveryObservation(id string, err error) {
 			observation.State, observation.Code = "limited", "discovery_capacity"
 		}
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.discoveryObservations == nil {
 		c.discoveryObservations = map[string]DiscoveryObservation{}
 	}

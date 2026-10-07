@@ -761,6 +761,10 @@ func (c *Core) stopServiceCommand(raw json.RawMessage) (any, error) {
 }
 
 func (c *Core) stopServiceIDs(ids []string) {
+	_ = c.stopServiceIDsWithFailure(ids, nil)
+}
+
+func (c *Core) stopServiceIDsWithFailure(ids []string, failure *peerScopeFailure) error {
 	c.cancelStartupServices(ids)
 	c.mu.Lock()
 	var stopped []*activeService
@@ -782,15 +786,23 @@ func (c *Core) stopServiceIDs(ids []string) {
 	if c.rangeState != nil {
 		c.rangeState.engine.RevokeIDs(ids)
 	}
+	var scopeErr error
 	if len(stopped) > 0 {
-		_ = c.syncWorkerTCPScopes()
+		scopeErr = c.syncWorkerTCPScopesWithFailure(failure)
 	}
 	// Every selected permission is cancelled before potentially slow listener drain.
 	for _, a := range stopped {
 		for _, s := range a.servers {
-			_ = s.Close()
+			if scopeErr != nil && failure != nil {
+				failure.deferDrain(s.Close)
+			} else {
+				if err := s.Close(); err != nil && failure != nil {
+					scopeErr = failure.fail(err)
+				}
+			}
 		}
 	}
+	return scopeErr
 }
 
 // reserveServicePort closes shares that could expose a newly created local
@@ -824,6 +836,10 @@ func (c *Core) stopAllServices() {
 	}
 }
 func (c *Core) stopPeerServices(id string) {
+	_ = c.stopPeerServicesWithFailure(id, nil)
+}
+
+func (c *Core) stopPeerServicesWithFailure(id string, failure *peerScopeFailure) error {
 	c.stopPeerProxies(id)
 	c.mu.RLock()
 	var ids []string
@@ -834,10 +850,11 @@ func (c *Core) stopPeerServices(id string) {
 	}
 	ps := c.peerServer
 	c.mu.RUnlock()
-	c.stopServiceIDs(ids)
+	err := c.stopServiceIDsWithFailure(ids, failure)
 	if ps != nil {
 		ps.revoke(id)
 	}
+	return err
 }
 func (c *Core) expireServices() {
 	c.mu.RLock()

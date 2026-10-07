@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "module": "github.com/tailscale/wireguard-go",
+  "version": "v0.0.0-20260928213032-417aef361226",
+  "module_sum": "h1:v3Lpj2iHPWQDqeCwemQPz4fWweIEMLqBkwJqCjRyJQc=",
+  "go_mod_sum": "h1:rUelGmuK4UnSJYM5gl5Mknp6YbwwcL8+VAPMhNYe+jg=",
+  "source_url": "https://github.com/tailscale/wireguard-go/tree/417aef361226c869ab29e15fe3539b01173c4719",
+  "revision": "417aef361226c869ab29e15fe3539b01173c4719",
+  "license": "MIT",
+  "upstream_tree_sha256": "7d4ffb61397e61a621e342fc263d13c8df20e3f61389ee97f9d06338d90333b3",
+  "adapted_tree_sha256": "5eb55463431a4a41ec95550b42b83f36bee2fe2cd1f78bd9952ef1d1147a5409",
+  "notices": [
+    {"path": "LICENSE", "sha256": "91276db973f25602d1aa43491f59cbc84cb88e6f151e1d0cc82a755563ce0195"}
+  ],
+  "changes": [
+    {
+      "path": "device/channels.go",
+      "original_sha256": "7cad59cb9113c493dcadcb924f9b1cc3cd1a743ac3e23b6703cae2af1693d926",
+      "adapted_sha256": "fe6ee62a60c5e0a338e95e8afe5e57e4fa1b035d0a5d8ddba256203c8ea5faf0",
+      "source_path": "sources/wireguard/device/channels.go.txt"
+    },
+    {
+      "path": "device/device.go",
+      "original_sha256": "08a6ba0464a97c238c39ec4ae482833cc593f88505519239775a2f32899b6979",
+      "adapted_sha256": "c9ff2165254879a28c78425b455c27133617601fd7ae86e18110790e593660c7",
+      "source_path": "sources/wireguard/device/device.go.txt"
+    },
+    {
+      "path": "device/owned.go",
+      "original_sha256": "",
+      "adapted_sha256": "40146cc643345bb415a4433c6702644b20fce5b4c40a58718c1e755c7443758e",
+      "source_path": "sources/wireguard/device/owned.go.txt"
+    },
+    {
+      "path": "device/owned_timers.go",
+      "original_sha256": "",
+      "adapted_sha256": "9759824f1792acecdc9850ecb9e03e4dcfb48fbc01f7fd893ff267b28b1f4dde",
+      "source_path": "sources/wireguard/device/owned_timers.go.txt"
+    },
+    {
+      "path": "device/peer.go",
+      "original_sha256": "8196605af4f93943d5a5a09eba5ba525df31f457b3248d667466d058dd61224f",
+      "adapted_sha256": "d58afba19c0aec5b1371431b290d5194f2ebaf20ce83acd7252d09f857b78f24",
+      "source_path": "sources/wireguard/device/peer.go.txt"
+    },
+    {
+      "path": "device/receive.go",
+      "original_sha256": "b3101eb87d6ff018b05e11d848b1c552d7077eb5d3c895a4d4f8d5023e9ad0e4",
+      "adapted_sha256": "f8bb7500c260d77a71b0d24d1c8075c5ccab9dcd2540a9abfd0c3d913a85fafb",
+      "source_path": "sources/wireguard/device/receive.go.txt"
+    },
+    {
+      "path": "device/send.go",
+      "original_sha256": "42042d2bd7ff5efd1514a204e1e0a39b9f13980e591135e3d9abbfe3c7f6477b",
+      "adapted_sha256": "cb022e7b94e4d6b68d0edf33fb6ade6ab45912934c3ac2fbdb489e85e7440ba8",
+      "source_path": "sources/wireguard/device/send.go.txt"
+    },
+    {
+      "path": "device/timers.go",
+      "original_sha256": "8186182ddb97e14607f08ea34f476ab767189644f7f4cc89c12b8ec66fa39116",
+      "adapted_sha256": "545d89224209b224566cc2f0ce4abbea570a9592695f1074daf26ac797109237",
+      "source_path": "sources/wireguard/device/timers.go.txt"
+    },
+    {
+      "path": "device/tun.go",
+      "original_sha256": "392b880ffb9ac58c28c2a79a6b91105c3a53bd093c3e0644508dc0347b141769",
+      "adapted_sha256": "4287b1d8a4c28394d2a67cccaf134abd304d438a459c7478b8554f1b5364714b",
+      "source_path": "sources/wireguard/device/tun.go.txt"
+    },
+    {
+      "path": "ratelimiter/owned.go",
+      "original_sha256": "",
+      "adapted_sha256": "7c374ed26c6e0ff20601804515228493386a7080a66ccc10163cd0c7da421bff",
+      "source_path": "sources/wireguard/ratelimiter/owned.go.txt"
+    },
+    {
+      "path": "ratelimiter/ratelimiter.go",
+      "original_sha256": "28e3a86aefc7d40fa8b2882d59684b43f42439e746ace54d8fe59002d1866ef0",
+      "adapted_sha256": "92d2604eb141d6d8a56e15434413112639b54ca1716265d95305fec88d50d474",
+      "source_path": "sources/wireguard/ratelimiter/ratelimiter.go.txt"
+    }
+  ]
+}

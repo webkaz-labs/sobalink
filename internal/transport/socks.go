@@ -90,7 +90,7 @@ func serveSOCKS(s *Server, client net.Conn, cfg SOCKSConfig, dial Dialer) {
 		return
 	}
 	address := net.JoinHostPort(host, strconv.Itoa(int(port)))
-	handshakeCtx, cancelHandshake := context.WithDeadline(s.ctx, deadline)
+	handshakeCtx, cancelHandshake := context.WithDeadline(sessionContext(client, s.ctx), deadline)
 	defer cancelHandshake()
 	dialCtx, cancel := context.WithTimeout(handshakeCtx, cfg.DialTimeout)
 	remote, err := dialTracked(s, dialCtx, dial, "tcp", address)

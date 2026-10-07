@@ -1,0 +1,75 @@
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2026 Sobalink contributors.
+ */
+
+package device
+
+import (
+	"sync/atomic"
+	"time"
+)
+
+// ownedTimerArm is immutable after scheduling. Exactly one of successful Stop
+// or the dispatched wrapper releases its reference. Reset is never used, so a
+// stale, dispatched callback cannot disappear from ownership accounting.
+type ownedTimerArm struct {
+	timer    *time.Timer
+	owner    *ownedDeviceState
+	released atomic.Bool
+}
+
+func (arm *ownedTimerArm) release() {
+	if arm.released.CompareAndSwap(false, true) {
+		arm.owner.timerArms.Done()
+	}
+}
+
+// cancelOwnedLocked invalidates the current arm. It never waits runningLock.
+// If Stop is false, the callback wrapper owns the reference even when it is
+// still waiting for runningLock or modifyingLock and will do no useful work.
+func (timer *Timer) cancelOwnedLocked() {
+	timer.isPending = false
+	arm := timer.ownedArm
+	timer.ownedArm = nil
+	if arm != nil && arm.timer.Stop() {
+		arm.release()
+	}
+}
+
+func (timer *Timer) modOwned(d time.Duration) {
+	timer.modifyingLock.Lock()
+	defer timer.modifyingLock.Unlock()
+	timer.cancelOwnedLocked()
+
+	// The only timer -> owner lock edge. No code holds owner.mu while
+	// acquiring either timer mutex. The supervisor snapshots and releases it.
+	o := timer.owner
+	o.mu.Lock()
+	if o.stopping.Load() {
+		o.mu.Unlock()
+		return
+	}
+	o.timerArms.Add(1)
+	o.mu.Unlock()
+
+	arm := &ownedTimerArm{owner: o}
+	timer.ownedArm = arm
+	timer.isPending = true
+	arm.timer = time.AfterFunc(d, func() {
+		// The reference outlives both timer locks and every expiration-body
+		// cleanup defer, including the stale/cancelled callback path.
+		defer arm.release()
+		timer.runningLock.Lock()
+		defer timer.runningLock.Unlock()
+		timer.modifyingLock.Lock()
+		if o.stopping.Load() || timer.ownedArm != arm || !timer.isPending {
+			timer.modifyingLock.Unlock()
+			return
+		}
+		timer.isPending = false
+		timer.ownedArm = nil
+		timer.modifyingLock.Unlock()
+		timer.expire()
+	})
+}

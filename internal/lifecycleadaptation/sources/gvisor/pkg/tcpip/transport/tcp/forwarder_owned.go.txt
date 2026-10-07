@@ -1,0 +1,145 @@
+// Copyright 2018 The gVisor Authors.
+// Modifications Copyright 2026 The Sobalink Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package tcp
+
+import (
+	"context"
+
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/waiter"
+)
+
+// ForwarderLifecycle admits a request before its handler starts or an endpoint
+// is allocated. A successful acquisition must return a non-nil lease with a
+// non-nil Context, reserving both request and potential live-endpoint capacity.
+// Its methods must perform only short bookkeeping; they must not call back into
+// the forwarder, operate on an endpoint, or wait for completion.
+type ForwarderLifecycle interface {
+	AcquireRequest() (ForwarderRequestLease, bool)
+}
+
+// ForwarderRequestLease belongs to one immutable stack generation. Cancellation
+// wakes the creator; it never transfers pre-handoff cleanup to the supervisor.
+//
+// PublishEndpoint records an allocated endpoint even after cancellation. Only
+// the creator may Abort or Close it until TryHandoff succeeds. TryHandoff must
+// atomically check the generation seal and cancellation while transferring the
+// published endpoint into a live registry protected by that same seal.
+//
+// RequestCompleted runs after Complete releases the request lock: endpoint
+// creation has then returned through handoff or completed failure cleanup, or
+// never started. HandlerReturned is separate, since handlers may dispatch
+// asynchronous creators. Neither notification alone releases the request slot.
+// A caller that omits Complete leaves its ticket outstanding.
+type ForwarderRequestLease interface {
+	Context() context.Context
+	PublishEndpoint(tcpip.Endpoint)
+	TryHandoff(tcpip.Endpoint) bool
+	RequestCompleted()
+	HandlerReturned()
+}
+
+// NewForwarderWithLifecycle opts into generation ownership without changing
+// NewForwarder callers. lifecycle must be non-nil. Owned requests permit at most
+// one CreateEndpoint call, and cancellation is reported as ErrAborted. The
+// handler must call Complete after CreateEndpoint returns; it must use
+// Complete(false) when retiring a generation.
+func NewForwarderWithLifecycle(s *stack.Stack, rcvWnd, maxInFlight int, lifecycle ForwarderLifecycle, handler func(*ForwarderRequest)) *Forwarder {
+	if lifecycle == nil {
+		panic("nil forwarder lifecycle")
+	}
+	f := NewForwarder(s, rcvWnd, maxInFlight, handler)
+	f.lifecycle = lifecycle
+	return f
+}
+
+// performOwnedHandshake keeps request.mu held, like performHandshake. The owner
+// cancels via the lease context and never acquires request.mu to do so.
+func (l *listenContext) performOwnedHandshake(s *segment, opts header.TCPSynOptions, queue *waiter.Queue, lease ForwarderRequestLease) (*Endpoint, tcpip.Error) {
+	ctx := lease.Context()
+	if ctx.Err() != nil {
+		return nil, &tcpip.ErrAborted{}
+	}
+
+	waitEntry, notifyCh := waiter.NewChannelEntry(waiter.WritableEvents)
+	queue.EventRegister(&waitEntry)
+	defer queue.EventUnregister(&waitEntry)
+
+	h, err := l.startHandshake(s, opts, queue, nil)
+	if err != nil {
+		// startHandshake already performed its failure cleanup.
+		return nil, err
+	}
+	ep := h.ep
+	// startHandshake released ep.mu. Publication includes the cancellation race
+	// during allocation/registration/start, before any handshake wait.
+	lease.PublishEndpoint(ep)
+	if ctx.Err() != nil {
+		return abortOwnedHandshake(ep)
+	}
+	select {
+	case <-notifyCh:
+	case <-ctx.Done():
+	}
+	if ctx.Err() != nil {
+		return abortOwnedHandshake(ep)
+	}
+
+	ep.mu.Lock()
+	if !ep.EndpointState().connected() {
+		// Preserve the ordinary failed-handshake cleanup exactly once.
+		ep.stack.Stats().TCP.FailedConnectionAttempts.Increment()
+		ep.stats.FailedConnectionAttempts.Increment()
+		ep.h = nil
+		ep.mu.Unlock()
+		ep.Close()
+		ep.notifyAborted()
+		ep.drainClosingSegmentQueue()
+		err := ep.LastError()
+		if err == nil {
+			err = &tcpip.ErrConnectionAborted{}
+		}
+		return nil, err
+	}
+
+	ep.isConnectNotified = true
+	ep.rcv.RcvWndScale = ep.h.effectiveRcvWndScale()
+	ep.h = nil
+	ep.mu.Unlock()
+
+	// This check also resolves simultaneous cancellation and writable readiness.
+	// The endpoint remains creator-owned until the atomic registry transfer.
+	if !lease.TryHandoff(ep) {
+		return abortOwnedHandshake(ep)
+	}
+	return ep, nil
+}
+
+// abortOwnedHandshake is called only by the creator, before handoff. Keep ep.h
+// until Abort has stopped the handshake; Close follows sequentially. Completion
+// here certifies creator cleanup, not all stack or dispatcher worker shutdown.
+func abortOwnedHandshake(ep *Endpoint) (*Endpoint, tcpip.Error) {
+	ep.Abort()
+	ep.Close()
+	ep.mu.Lock()
+	ep.h = nil
+	ep.mu.Unlock()
+	ep.notifyAborted()
+	ep.drainClosingSegmentQueue()
+	return nil, &tcpip.ErrAborted{}
+}

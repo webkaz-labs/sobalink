@@ -1,0 +1,479 @@
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2026 Sobalink contributors.
+ */
+
+package device
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"sync/atomic"
+
+	"github.com/tailscale/wireguard-go/conn"
+	"github.com/tailscale/wireguard-go/tun"
+)
+
+var (
+	ErrOwnedStopped               = errors.New("owned device stopping")
+	ErrOwnedConfiguration         = errors.New("unsupported owned device configuration")
+	ErrOwnedPeerRemoved           = errors.New("owned peer no longer current")
+	ErrOwnedCapacity              = errors.New("owned retained peer capacity exhausted")
+	ErrOwnedRegistrationExhausted = errors.New("owned peer registration identity exhausted")
+)
+
+// PeerRegistration identifies one immutable peer registration within exactly
+// one OwnedDevice. Zero is invalid. Values never repeat in that device, including
+// when the same public key is removed and paired again. It is not authorization
+// and must always be interpreted with the owning generation.
+type PeerRegistration uint64
+
+// OwnedSessionStateFunc observes only the exact peer registration that produced
+// a state change. It must never retarget a replacement session by public key.
+type OwnedSessionStateFunc func(NoisePublicKey, PeerRegistration, PeerSessionState)
+
+// OwnedEndpoint is required for authenticated packets in owned mode. The
+// callback must use the supplied registration together with its captured
+// generation, reject mismatches, and never bind a replacement by key alone.
+// Like SessionState, it may only update old-generation atomics or issue
+// nonblocking notifications; it must not acquire application mutation locks.
+type OwnedEndpoint interface {
+	conn.Endpoint
+	FromPeerRegistration(peerPublicKey [32]byte, registration PeerRegistration)
+}
+
+// OwnedBind is the narrow single-socket binding required by NewOwnedDevice.
+// BatchSize must be one and Open must return exactly one receive function.
+// Ordinary Close must not permanently seal the bind: initialization calls Close
+// on an empty bind before its first Open. SealAndClose must irreversibly reject
+// future Open and Send calls and detach the exact socket under the bind mutex,
+// then close that socket without the mutex. It must not acquire application or
+// device locks. A Send/receive already using that socket must be interrupted.
+// The bind must not launch its own workers or expose a standard OS route listener.
+// Endpoint callbacks must be synchronous, nonblocking, and must not call Device
+// or acquire application mutation locks. These are construction requirements,
+// not properties inferred from the structural interface.
+type OwnedBind interface {
+	conn.Bind
+	SealAndClose() error
+}
+
+// OwnedConfig contains the only callbacks admitted by the owned worker inventory.
+// No callback may wait for this device or call back into its facade.
+type OwnedConfig struct {
+	// SessionState must only update old-generation atomics or issue nonblocking
+	// notifications; it must not acquire application mutation locks.
+	SessionState OwnedSessionStateFunc
+	// PeerRegistered binds the already-selected exact application session to
+	// its immutable registration, synchronously before WG publication/start.
+	// It runs outside owner.mu, but while upstream peer-construction locks are
+	// held. It must only record the identity with nonblocking atomics, never
+	// acquire application/generation locks, and never look up a replacement
+	// session after selection. Configuration must preserve that selection.
+	PeerRegistered func(NoisePublicKey, PeerRegistration)
+	// AfterWake may seal/cancel external generation work. It runs once, after
+	// both terminal socket close and signal-only TUN Close, with no WG locks.
+	// Any application lock needed to snapshot cancellations is acquired here,
+	// after the socket has been closed to wake sends holding those locks.
+	AfterWake func()
+}
+
+// OwnedDevice is an opt-in lifecycle facade for a single-generation userspace
+// tunnel. It deliberately does not expose Device, arbitrary UAPI readers, Down,
+// rebind, lazy peers, metrics callbacks, priority messages, or bounded pools.
+// Each facade operation holds a completion lease through synchronous callbacks.
+// Never copy an OwnedDevice. Keep the bind, TUN and callbacks valid until
+// WaitStopped returns; a context timeout does not terminate or detach the owner.
+type OwnedDevice struct {
+	owner *ownedDeviceState
+	// configuration serializes the finite UAPI strings, first Up and peer
+	// sends. It is never held by the shutdown supervisor.
+	configuration sync.Mutex
+	setupBegun    bool
+	upStarted     bool
+	privateSet    bool
+	portSet       bool
+}
+
+// OwnedPeer is an old-generation peer handle. It provides only a leased,
+// membership-checked handshake operation and never exposes the raw Peer.
+type OwnedPeer struct {
+	device       *OwnedDevice
+	peer         *Peer
+	registration PeerRegistration
+}
+
+// Registration returns immutable handle metadata without entering the engine.
+// A value is meaningful only together with this handle's owning generation.
+func (handle *OwnedPeer) Registration() PeerRegistration { return handle.registration }
+
+type ownedDeviceState struct {
+	// mu protects admission, first cause and the retained registries. No
+	// resource lock, I/O, cancellation or wait is performed while holding it.
+	mu       sync.Mutex
+	stopping atomic.Bool
+	request  chan struct{}
+	stopped  chan struct{}
+	cause    error
+	result   error // published by closing stopped
+
+	device           *Device
+	bind             OwnedBind
+	sessionState     OwnedSessionStateFunc
+	peerRegistered   func(NoisePublicKey, PeerRegistration)
+	nextRegistration PeerRegistration // protected by mu; never wraps or decrements
+	afterWake        func()
+	peers            []*Peer  // includes unpublished and previously removed peers
+	timers           []*Timer // includes unarmed and previously stopped peers' timers
+
+	api        sync.WaitGroup
+	tun        sync.WaitGroup
+	receive    sync.WaitGroup
+	events     sync.WaitGroup
+	handshake  sync.WaitGroup
+	encryption sync.WaitGroup
+	decryption sync.WaitGroup
+	timerArms  sync.WaitGroup
+}
+
+// NewOwnedDevice constructs a restricted engine. The TUN must be a single-queue,
+// batch-one userspace adapter whose Close only seals ingress and wakes Read and
+// Events, without destroying its stack, joining workers, or acquiring application
+// mutation locks. It must not launch untracked workers. Stack teardown belongs
+// to the outer generation owner after WG and ingress/creator joins.
+//
+// The queue capacities match the reviewed narrow binding: staged and handshake
+// 64, inbound and outbound 128. Pools are unlimited, logging is silent, and no
+// optional protocol callbacks other than SessionState are installed. At most
+// MaxPeers peer objects (including removed/unpublished peers) are retained over
+// the entire generation; exhaustion requires retirement, not registry pruning.
+// The supplied
+// bind/TUN must satisfy the contracts above; arbitrary implementations are not
+// covered merely because they implement the Go interfaces.
+//
+// Validation failures occur before this constructor takes ownership or launches
+// anything. After construction starts, even an immediate worker failure retains
+// this same owner and is reported by StopRequested and StopCause.
+func NewOwnedDevice(tunDevice tun.Device, bind OwnedBind, config OwnedConfig) (*OwnedDevice, error) {
+	if tunDevice == nil || bind == nil || tunDevice.BatchSize() != 1 || bind.BatchSize() != 1 {
+		return nil, ErrOwnedConfiguration
+	}
+	if _, ok := tunDevice.(tun.MultiQueueDevice); ok {
+		return nil, ErrOwnedConfiguration
+	}
+	owner := &ownedDeviceState{
+		request:        make(chan struct{}),
+		stopped:        make(chan struct{}),
+		bind:           bind,
+		sessionState:   config.SessionState,
+		peerRegistered: config.PeerRegistered,
+		afterWake:      config.AfterWake,
+	}
+	// Keep the fixed construction transaction live before any worker starts.
+	owner.api.Add(1)
+	owned := &OwnedDevice{owner: owner}
+	newDevice(tunDevice, bind, NewLogger(LogLevelSilent, ""), owner,
+		WithQueueStagedSize(64), WithQueueInboundSize(128),
+		WithQueueOutboundSize(128), WithQueueHandshakeSize(64),
+		WithPreallocatedBuffersPerPool(0))
+	owner.api.Done()
+	return owned, nil
+}
+
+// Admit atomically performs a strictly short generation bookkeeping mutation
+// against the same gate as internal WG stop. This is not a general callback API.
+// The function must not do I/O, cancel, wait, invoke WG or application callbacks,
+// or retain the gate. Its only permitted nested lock is the outer generation's
+// bookkeeping mutex, in the order application -> this gate -> generation.
+// No path holding that generation mutex may enter this facade or RequestStop.
+// The caller owns completion references for the work it registers and must join
+// those references separately: Admit itself does not certify outer completion.
+func (owned *OwnedDevice) Admit(bookkeeping func() bool) bool {
+	o := owned.owner
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return !o.stopping.Load() && bookkeeping()
+}
+
+// BeginSetup holds one API lease across the initial configuration, all peer
+// installation/lookups and first Up. Call it once immediately after construction,
+// and release exactly after that transaction returns, including failure cleanup.
+// Never wait for shutdown while this lease is held. The returned release is
+// idempotent and does no cleanup. Individual facade calls retain their own leases.
+func (owned *OwnedDevice) BeginSetup() (release func(), ok bool) {
+	o := owned.owner
+	if !o.acquireAPI() {
+		return nil, false
+	}
+	owned.configuration.Lock()
+	if owned.setupBegun || owned.upStarted || o.stopping.Load() {
+		owned.configuration.Unlock()
+		o.api.Done()
+		return nil, false
+	}
+	owned.setupBegun = true
+	owned.configuration.Unlock()
+	var released atomic.Bool
+	return func() {
+		if released.CompareAndSwap(false, true) {
+			o.api.Done()
+		}
+	}, true
+}
+
+func (o *ownedDeviceState) acquireAPI() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.stopping.Load() {
+		return false
+	}
+	o.api.Add(1)
+	return true
+}
+
+// IpcSet accepts finite configuration strings only. Private key and listen port
+// can each be supplied once before the initial Up. Peer configuration is limited
+// to the reviewed non-lazy, zero-persistent-keepalive path. Unsupported strings
+// are rejected before any UAPI mutation; protocol validation remains upstream.
+func (owned *OwnedDevice) IpcSet(configuration string) error {
+	o := owned.owner
+	if !o.acquireAPI() {
+		return ErrOwnedStopped
+	}
+	defer o.api.Done()
+	owned.configuration.Lock()
+	defer owned.configuration.Unlock()
+	if o.stopping.Load() {
+		return ErrOwnedStopped
+	}
+	if !owned.setupBegun {
+		return ErrOwnedConfiguration
+	}
+	privateSet, portSet := owned.privateSet, owned.portSet
+	peerMode := false
+	for _, line := range strings.Split(configuration, "\n") {
+		if line == "" {
+			break // matches the upstream UAPI terminator
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return ErrOwnedConfiguration
+		}
+		if key == "public_key" {
+			peerMode = true
+			continue
+		}
+		if !peerMode {
+			switch key {
+			case "private_key":
+				if owned.upStarted || privateSet {
+					return ErrOwnedConfiguration
+				}
+				privateSet = true
+			case "listen_port":
+				if owned.upStarted || portSet {
+					return ErrOwnedConfiguration
+				}
+				portSet = true
+			default:
+				return ErrOwnedConfiguration
+			}
+			continue
+		}
+		switch key {
+		case "endpoint", "replace_allowed_ips", "allowed_ip", "remove":
+		case "persistent_keepalive_interval":
+			if value != "0" {
+				return ErrOwnedConfiguration
+			}
+		default:
+			return ErrOwnedConfiguration
+		}
+	}
+	// Consume device configuration slots even if UAPI validation fails after a
+	// partial update. Retrying/rebinding this partially configured engine is
+	// forbidden; the caller must stop it and retain it through completion.
+	owned.privateSet, owned.portSet = privateSet, portSet
+	if err := o.device.IpcSet(configuration); err != nil {
+		o.requestStop(err)
+		return err
+	}
+	return nil
+}
+
+// Up opens this generation's initial bind at most once. Repeated calls never
+// reopen an active or retired bind. An unsuccessful attempt requests terminal
+// stop of this same owner.
+func (owned *OwnedDevice) Up() error {
+	o := owned.owner
+	if !o.acquireAPI() {
+		return ErrOwnedStopped
+	}
+	defer o.api.Done()
+	owned.configuration.Lock()
+	defer owned.configuration.Unlock()
+	if o.stopping.Load() {
+		return ErrOwnedStopped
+	}
+	if !owned.setupBegun || owned.upStarted || !owned.privateSet || !owned.portSet {
+		return ErrOwnedConfiguration
+	}
+	owned.upStarted = true
+	if err := o.device.Up(); err != nil {
+		o.requestStop(err)
+		return err
+	}
+	return nil
+}
+
+func (owned *OwnedDevice) LookupPeer(key NoisePublicKey) *OwnedPeer {
+	o := owned.owner
+	if !o.acquireAPI() {
+		return nil
+	}
+	defer o.api.Done()
+	peer, ok := o.device.LookupActivePeer(key)
+	if !ok {
+		return nil
+	}
+	return &OwnedPeer{device: owned, peer: peer, registration: peer.ownedRegistration}
+}
+
+func (handle *OwnedPeer) SendHandshakeInitiation(isRetry bool) error {
+	owned := handle.device
+	o := owned.owner
+	if !o.acquireAPI() {
+		return ErrOwnedStopped
+	}
+	defer o.api.Done()
+	owned.configuration.Lock()
+	defer owned.configuration.Unlock()
+	if o.stopping.Load() {
+		return ErrOwnedStopped
+	}
+	peer, ok := o.device.LookupActivePeer(handle.peer.handshake.remoteStatic)
+	if !ok || peer != handle.peer || !peer.runningState.isRunning.Load() {
+		return ErrOwnedPeerRemoved
+	}
+	return peer.SendHandshakeInitiation(isRetry)
+}
+
+// RequestStop seals admission and wakes the single pre-created supervisor. It
+// never performs resource cleanup or waits, including when called by a worker.
+func (owned *OwnedDevice) RequestStop(cause error) { owned.owner.requestStop(cause) }
+
+func (o *ownedDeviceState) requestStop(cause error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.stopping.Load() {
+		return
+	}
+	o.cause = cause
+	o.stopping.Store(true)
+	close(o.request)
+}
+
+func (owned *OwnedDevice) StopRequested() <-chan struct{} { return owned.owner.request }
+
+// StopCause returns the first request's cause, which may be nil. The cause is
+// distinct from the terminal cleanup result returned by WaitStopped.
+func (owned *OwnedDevice) StopCause() error {
+	o := owned.owner
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.cause
+}
+
+// WaitStopped waits without initiating cleanup or spawning a goroutine. It must
+// be called outside all application/device locks and completion leases. A nil
+// result certifies the complete restricted WG worker/resource join, not outer
+// stack or application completion. A cleanup error or context error must retain
+// the outer generation reservation; a timeout never fabricates completion.
+func (owned *OwnedDevice) WaitStopped(ctx context.Context) error {
+	select {
+	case <-owned.owner.stopped:
+		return owned.owner.result
+	default:
+	}
+	select {
+	case <-owned.owner.stopped:
+		return owned.owner.result
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// run's completion is later than all the wrapped function's cleanup defers.
+func (o *ownedDeviceState) run(group *sync.WaitGroup, run func()) {
+	defer group.Done()
+	run()
+}
+
+func (o *ownedDeviceState) supervise() {
+	<-o.request
+	d := o.device
+	// These wakes must precede even an application cancellation snapshot. A
+	// synchronous send can hold that application's mutex and d.net.RLock.
+	bindErr := o.bind.SealAndClose()
+	tunErr := d.tun.device.Close()
+	if o.afterWake != nil {
+		o.afterWake()
+	}
+
+	// Keep all handshake, peer and crypto consumers alive for these producers.
+	o.api.Wait()
+	o.events.Wait()
+	o.tun.Wait()
+	o.receive.Wait()
+	d.state.Lock()
+	d.state.state.Store(uint32(deviceStateClosed))
+	d.state.Unlock()
+
+	// Receive workers and external APIs are gone; lazy peers are unavailable.
+	// Retain every peer, even if removed earlier or never published/started.
+	o.mu.Lock()
+	peers := append([]*Peer(nil), o.peers...)
+	timers := append([]*Timer(nil), o.timers...)
+	o.mu.Unlock()
+
+	d.queue.handshake.wg.Done()
+	<-d.queue.handshake.closedDone
+	o.handshake.Wait()
+
+	// Every immutable timer arm stays counted through cancellation or its
+	// wrapper's final return, including stale callbacks waiting runningLock.
+	for _, timer := range timers {
+		timer.Del()
+	}
+	o.timerArms.Wait()
+
+	for _, peer := range peers {
+		peer.Stop()
+		peer.ownedWorkers.Wait()
+		// Stop can be a no-op for a removed or never-started peer. A queued
+		// handshake could have retained it beyond its earlier local Stop.
+		peer.ZeroAndFlushAll()
+		d.allowedips.RemoveByPeer(peer)
+	}
+	d.peers.Lock()
+	clear(d.peers.keyMap)
+	d.peers.Unlock()
+
+	d.queue.encryption.wg.Done()
+	d.queue.decryption.wg.Done()
+	<-d.queue.encryption.closedDone
+	<-d.queue.decryption.closedDone
+	o.encryption.Wait()
+	o.decryption.Wait()
+
+	// Every Allow caller finished in the handshake phase. Never close the
+	// limiter notification channel while a producer can still send to it.
+	d.rate.limiter.Close()
+	<-d.rate.limiter.OwnedDone()
+	o.result = errors.Join(bindErr, tunErr)
+	close(d.closed)
+	// Last operation on WG resources precedes the terminal publication.
+	close(o.stopped)
+}

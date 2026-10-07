@@ -12,11 +12,12 @@ import (
 // fresh WireGuard handshakes. The responder waits for an
 // authenticated transport packet, not merely a derived next keypair.
 type peerSession struct {
-	initiator bool
-	state     atomic.Uint32
-	confirmed atomic.Bool
-	changed   chan struct{}
-	gate      chan struct{}
+	registration atomic.Uint64
+	initiator    bool
+	state        atomic.Uint32
+	confirmed    atomic.Bool
+	changed      chan struct{}
+	gate         chan struct{}
 }
 
 func newPeerSession(initiator bool) *peerSession {
@@ -38,17 +39,20 @@ func (s *peerSession) ready() bool {
 	return s != nil && device.PeerSessionState(s.state.Load()) == device.PeerSessionEstablished && (s.initiator || s.confirmed.Load())
 }
 func (n *Node) newPeerState(p Peer) *peerState {
-	return &peerState{peer: p, session: newPeerSession(n.PublicKey() < p.Key)}
+	return newPeerStateForGeneration(n.generation.Load(), n.PublicKey(), p)
+}
+func newPeerStateForGeneration(g *runtimeGeneration, localKey string, p Peer) *peerState {
+	return &peerState{peer: p, g: g, session: newPeerSession(localKey < p.Key)}
 }
 func (n *Node) currentSessionPeer(p *peerState) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.readyLocked() == nil && p != nil && n.peers[p.peer.Key] == p
+	return n.readyLocked() == nil && p != nil && p.g == n.generation.Load() && p.g.open() && n.peers[p.peer.Key] == p
 }
 func (n *Node) initiateSession(p *peerState) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.readyLocked() != nil || p == nil || n.peers[p.peer.Key] != p || p.session == nil || !p.session.initiator {
+	if n.readyLocked() != nil || p == nil || p.g != n.generation.Load() || !p.g.open() || n.peers[p.peer.Key] != p || p.session == nil || !p.session.initiator {
 		return ErrUntrusted
 	}
 	if p.enginePeer == nil {
@@ -66,7 +70,7 @@ func (n *Node) requestSession(ctx context.Context, p *peerState) error {
 		return e
 	}
 	defer n.removeWire(w)
-	stop := context.AfterFunc(ctx, func() { w.raw.Close() })
+	stop := watchConnection(ctx, w.raw)
 	defer stop()
 	if e = writeJSON(c, request{Version: 1, Operation: "session"}); e != nil {
 		return e

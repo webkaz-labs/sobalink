@@ -48,6 +48,7 @@ beforeEach(() => { localStorage.setItem('sobalink.locale', 'en') })
 it.each([
   ['en', 'message_history_unavailable'], ['en', 'message_peer_storage_unavailable'],
   ['ja', 'message_history_unavailable'], ['ja', 'message_peer_storage_unavailable'],
+  ['en', 'message_completion_interrupted'], ['ja', 'message_completion_interrupted'],
 ])('keeps a reviewable draft and blocks uncertain sends in %s for %s', async (locale, code) => {
   const { fetch, requests } = setup()
   fetch.mockImplementation(async (path: string, init?: RequestInit) => {
@@ -66,7 +67,13 @@ it.each([
   await waitFor(() => expect(send).toBeDisabled())
   expect(input).toHaveValue('Synthetic uncertain draft')
   expect(input).toBeEnabled()
-  expect(screen.getAllByRole('alert').map(alert => alert.textContent).join(' ')).toMatch(locale === 'ja' ? /届いている可能性/ : /may already/)
+  const alerts = screen.getAllByRole('alert').map(alert => alert.textContent).join(' ')
+  if (code === 'message_completion_interrupted') {
+    expect(alerts).toMatch(locale === 'ja' ? /受信確認が届きました/ : /acknowledged receipt/)
+    expect(alerts).not.toMatch(locale === 'ja' ? /不確か|届いている可能性/ : /uncertain|may already/)
+  } else {
+    expect(alerts).toMatch(locale === 'ja' ? /届いている可能性/ : /may already/)
+  }
   expect(screen.getAllByRole('alert').map(alert => alert.textContent).join(' ')).not.toMatch(locale === 'ja' ? /受け付けられませんでした/ : /not accepted/)
   await userEvent.click(screen.getByRole('button', { name: locale === 'ja' ? '閉じる' : 'Close' }))
   fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })

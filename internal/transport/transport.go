@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 // Dialer must honor cancellation and return a connected stream (tcp) or
@@ -36,6 +38,7 @@ type Server struct {
 	mu       sync.Mutex
 	closed   bool
 	active   map[net.Conn]struct{}
+	sessions map[*Session]struct{}
 	err      error
 	wg       sync.WaitGroup
 	done     chan struct{}
@@ -43,18 +46,23 @@ type Server struct {
 
 func startServer(ctx context.Context, listener io.Closer, addr net.Addr, run func(*Server)) *Server {
 	ctx, cancel := context.WithCancel(ctx)
-	s := &Server{ctx: ctx, cancel: cancel, listener: listener, addr: addr, active: make(map[net.Conn]struct{}), done: make(chan struct{})}
+	s := &Server{ctx: ctx, cancel: cancel, listener: listener, addr: addr, active: make(map[net.Conn]struct{}), sessions: make(map[*Session]struct{}), done: make(chan struct{})}
 	s.wg.Add(1)
 	go func() { defer s.wg.Done(); run(s) }()
 	go func() {
 		<-ctx.Done()
 		s.mu.Lock()
 		s.closed = true
-		_ = s.listener.Close()
+
+		active := make([]net.Conn, 0, len(s.active))
 		for c := range s.active {
-			_ = c.Close()
+			active = append(active, c)
 		}
 		s.mu.Unlock()
+		_ = s.listener.Close()
+		for _, c := range active {
+			_ = c.Close()
+		}
 		s.wg.Wait()
 		close(s.done)
 	}()
@@ -79,13 +87,15 @@ func (s *Server) Wait() error {
 
 func (s *Server) track(c net.Conn) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.ctx.Err() != nil {
-		_ = c.Close()
-		return false
+	admitted := !s.closed && s.ctx.Err() == nil
+	if admitted {
+		s.active[c] = struct{}{}
 	}
-	s.active[c] = struct{}{}
-	return true
+	s.mu.Unlock()
+	if !admitted {
+		_ = c.Close()
+	}
+	return admitted
 }
 
 func (s *Server) release(c net.Conn) {
@@ -166,22 +176,43 @@ func acceptConnections(s *Server, l net.Listener, handle func(net.Conn), configs
 			_ = c.Close()
 			continue
 		}
-		if !s.track(c) {
-			release()
-			return
+
+		owner := NewSession(s.ctx)
+		owned, ownErr := owner.Adopt(c)
+		s.mu.Lock()
+		if s.sessions == nil {
+			s.sessions = make(map[*Session]struct{})
 		}
+		s.sessions[owner] = struct{}{}
+		s.mu.Unlock()
+		owner.HoldRelease(func() { s.mu.Lock(); delete(s.sessions, owner); s.mu.Unlock(); release() })
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			defer release()
-			defer s.release(c)
-			handle(c)
+			defer owner.Finish()
+			if ownErr != nil || !s.track(owned) {
+				return
+			}
+			defer s.release(owned)
+			handle(owned)
 		}()
 	}
 }
 
 func dialTracked(s *Server, ctx context.Context, dial Dialer, network, address string) (net.Conn, error) {
 	c, err := dial(ctx, network, address)
+	if c != nil {
+		if owner := sessionFor(ctx); owner != nil {
+			owned, adoptErr := owner.Adopt(c)
+			c = owned
+			if err == nil {
+				err = adoptErr
+			}
+		}
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		if c != nil {
 			_ = c.Close()
@@ -191,14 +222,49 @@ func dialTracked(s *Server, ctx context.Context, dial Dialer, network, address s
 	if c == nil {
 		return nil, errors.New("dialer returned a nil connection")
 	}
-	if ctx.Err() != nil {
-		_ = c.Close()
-		return nil, ctx.Err()
-	}
 	if !s.track(c) {
 		return nil, context.Canceled
 	}
 	return c, nil
+}
+
+// BeginRetire stops only sessions already bound to this immutable origin.
+// The accept/read loops and unrelated Tailnet sessions retain their lifetimes.
+func (s *Server) BeginRetire(origin transportorigin.Origin) {
+	if origin == nil {
+		return
+	}
+	for _, owner := range s.originSessions(origin) {
+		owner.Stop()
+	}
+}
+func (s *Server) originSessions(origin transportorigin.Origin) []*Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var owners []*Session
+	for owner := range s.sessions {
+		selected := owner.BoundOrigin()
+		if selected != nil && selected.Identity() == origin.Identity() {
+			owners = append(owners, owner)
+		}
+	}
+	return owners
+}
+
+// WaitRetired never releases capacity on timeout or waits for retained fronts.
+// The generation's terminal fence must already be sealed before this snapshot.
+func (s *Server) WaitRetired(ctx context.Context, origin transportorigin.Origin) error {
+	if origin == nil {
+		return transportorigin.ErrMissingOrigin
+	}
+	for _, owner := range s.originSessions(origin) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-owner.Done():
+		}
+	}
+	return nil
 }
 
 // bridge preserves TCP half-close semantics, allowing a response after a
@@ -206,7 +272,7 @@ func dialTracked(s *Server, ctx context.Context, dial Dialer, network, address s
 func bridge(a, b net.Conn) {
 	done := make(chan struct{})
 	copyOne := func(dst, src net.Conn) {
-		_, err := io.Copy(dst, src)
+		err := copyBridge(dst, src)
 		if err != nil {
 			_ = a.Close()
 			_ = b.Close()
@@ -224,6 +290,27 @@ func bridge(a, b net.Conn) {
 	go func() { defer close(done); copyOne(a, b) }()
 	copyOne(b, a)
 	<-done
+}
+
+// Use explicit Read/Write calls so an embedded ReaderFrom/WriterTo cannot
+// bypass origin admission for bytes buffered by the other copy direction.
+func copyBridge(dst, src net.Conn) error {
+	buffer := make([]byte, 32*1024)
+	defer clear(buffer)
+	for {
+		n, err := src.Read(buffer)
+		if n > 0 {
+			if writeErr := writeFull(dst, buffer[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
 }
 
 func writeFull(w io.Writer, p []byte) error {

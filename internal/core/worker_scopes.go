@@ -13,7 +13,25 @@ import (
 // permission change. A failed update retires the worker rather than retaining
 // old permissions behind a successful parent reply.
 func (c *Core) syncWorkerTCPScopes() error {
+	return c.syncWorkerTCPScopesWithFailure(nil)
+}
+
+func (c *Core) syncWorkerTCPScopesWithFailure(failure *peerScopeFailure) error {
 	node := c.nodeCopy()
+	fail := func(cause error) error {
+		if failure != nil {
+			return failure.fail(cause)
+		}
+		return c.failWorkerScope(node, cause)
+	}
+	if failure != nil {
+		if failure.node != node {
+			return failure.fail(errors.New("network backend changed during scoped revocation"))
+		}
+		if err := failure.failure(); err != nil {
+			return err
+		}
+	}
 	scoped, ok := node.(interface {
 		SetTCPScopes(context.Context, []backendworker.TCPPolicy) error
 	})
@@ -22,6 +40,9 @@ func (c *Core) syncWorkerTCPScopes() error {
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 	defer cancel()
+	if failure != nil {
+		ctx = context.WithValue(ctx, peerScopeFailureKey{}, failure)
+	}
 	c.mu.RLock()
 	var active []*activeService
 	for _, a := range c.active {
@@ -35,7 +56,7 @@ func (c *Core) syncWorkerTCPScopes() error {
 	if len(active) > 0 {
 		state, e := node.State(ctx)
 		if e != nil {
-			return c.failWorkerScope(node, e)
+			return fail(e)
 		}
 		peers := map[string][]netip.Addr{}
 		for _, p := range state.Snapshot.Peers {
@@ -52,14 +73,14 @@ func (c *Core) syncWorkerTCPScopes() error {
 				s.Peers = append(s.Peers, peers[id]...)
 			}
 			if len(s.Peers) == 0 {
-				return c.failWorkerScope(node, errors.New("worker grant identities are unavailable"))
+				return fail(errors.New("worker grant identities are unavailable"))
 			}
 			sort.Slice(s.Peers, func(i, j int) bool { return s.Peers[i].Compare(s.Peers[j]) < 0 })
 			scopes = append(scopes, s)
 		}
 	}
 	if e := scoped.SetTCPScopes(ctx, scopes); e != nil {
-		return c.failWorkerScope(node, e)
+		return fail(e)
 	}
 	return nil
 }

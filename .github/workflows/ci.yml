@@ -160,9 +160,9 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.sha }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.sha }}
           # Reuse only identical runner, toolchain, and dependency manifests.
-          restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-
+          restore-keys: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
       # Development caches never restore from or save to trusted-main keys.
       - name: Restore isolated development Go caches
         id: development-go-cache
@@ -172,8 +172,8 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.sha }}
-          restore-keys: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-
+          key: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.sha }}
+          restore-keys: development-go-v1-webkaz-labs-sobalink-${{ steps.development-go-cache-scope.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
       - name: Report Go cache results
         if: always()
         env:
@@ -513,7 +513,7 @@ jobs:
           path: |
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
-          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.sha }}
+          key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.sha }}
       - name: Report Go cache result and require an exact source key
         if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
@@ -667,8 +667,8 @@ jobs:
           path: |
             ${{ steps.scoped-cache-info.outputs.gomodcache }}
             ${{ steps.scoped-cache-info.outputs.gocache }}
-          key: scoped-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.ref }}-${{ github.sha }}
-          restore-keys: scoped-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**') }}-${{ github.ref }}-
+          key: scoped-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: scoped-go-v1-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.ref }}-
       - name: Check exact toolchain and module graph
         run: |
           set -euo pipefail

@@ -1,0 +1,68 @@
+/* SPDX-License-Identifier: MIT
+ *
+ * Copyright (C) 2026 Sobalink contributors.
+ */
+
+package ratelimiter
+
+import (
+	"net/netip"
+	"time"
+)
+
+// InitOwned initializes a fresh limiter once for a lifecycle-owned device. The
+// owner must join every Allow caller before Close, then await OwnedDone. Do not
+// call Init or InitOwned again on this limiter. Ordinary Init is unchanged.
+func (rate *Ratelimiter) InitOwned() {
+	rate.mu.Lock()
+	defer rate.mu.Unlock()
+	if rate.stopReset != nil {
+		panic("owned limiter must be initialized once")
+	}
+	if rate.timeNow == nil {
+		rate.timeNow = time.Now
+	}
+	rate.owned = true
+	rate.stopReset = make(chan struct{}, 1)
+	rate.ownedDone = make(chan struct{})
+	rate.table = make(map[netip.Addr]*RatelimiterEntry)
+	stopReset, done := rate.stopReset, rate.ownedDone
+	go func() {
+		defer close(done)
+		var ticker *time.Ticker
+		var tick <-chan time.Time
+		defer func() {
+			if ticker != nil {
+				ticker.Stop()
+			}
+		}()
+		for {
+			select {
+			case _, ok := <-stopReset:
+				if ticker != nil {
+					ticker.Stop()
+				}
+				if !ok {
+					return
+				}
+				ticker = time.NewTicker(time.Second)
+				tick = ticker.C
+			case <-tick:
+				if rate.cleanup() {
+					ticker.Stop()
+					tick = nil
+				}
+			}
+		}
+	}()
+}
+
+// OwnedDone closes only after the owned cleanup worker's ticker is stopped and
+// the worker has returned. It is nil for an ordinary limiter. Receiving from
+// this channel must happen without rate.mu or any entry mutex held.
+func (rate *Ratelimiter) OwnedDone() <-chan struct{} {
+	rate.mu.RLock()
+	done := rate.ownedDone
+	rate.mu.RUnlock()
+	return done
+}

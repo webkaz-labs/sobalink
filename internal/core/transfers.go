@@ -487,19 +487,42 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 	if err != nil {
 		return err
 	}
+	if err := staging.Err(); err != nil {
+		done()
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		done()
+		return err
+	}
+	b.mu.Lock()
+	alreadyRunning := b.running
+	b.mu.Unlock()
+	if alreadyRunning {
+		done()
+		return nil
+	}
+	runCtx, application, err := c.peerHTTPApplication(ctx)
+	if err != nil {
+		done()
+		return err
+	}
 	b.mu.Lock()
 	if err := staging.Err(); err != nil {
 		b.mu.Unlock()
+		application.finish()
 		done()
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		b.mu.Unlock()
+		application.finish()
 		done()
 		return err
 	}
 	if b.running {
 		b.mu.Unlock()
+		application.finish()
 		done()
 		return nil
 	}
@@ -512,8 +535,12 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 	b.mu.Unlock()
 	go func() {
 		defer done()
-		defer close(runDone)
-		err := c.deliver(ctx, b)
+		// An application lease spans all HTTP requests, progress, terminal
+		// history and spool cleanup. A request deadline may return before its
+		// source owner; the run cannot publish completion or free staged bytes
+		// until the independently owned request cleanups have really joined.
+		err := c.deliver(runCtx, b)
+		application.waitRequests()
 		b.mu.Lock()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -529,6 +556,8 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 					b.Error = code
 				}
 			}
+		} else {
+			b.State = "completed"
 		}
 		finished := b.State == "completed" || b.State == "cancelled" || b.State == "declined"
 		if finished {
@@ -536,8 +565,15 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 				b.Error = "could not remove staged files; clear this transfer to retry cleanup"
 			}
 		}
-		b.running = false
 		b.mu.Unlock()
+		application.finishWithTerminal(func() {
+			// Sources and cancellation callbacks have joined. Keep the old
+			// origin accounted until this last bounded run publication.
+			b.mu.Lock()
+			b.running = false
+			close(runDone)
+			b.mu.Unlock()
+		})
 	}()
 	return nil
 }
@@ -627,16 +663,21 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 		call, cancel = c.operationContext(ctx, "fileTransferSeconds")
 		e = c.peerRequest(call, b.PeerID, "PUT", "/v1/batches/"+b.ID+"/files/"+entry.ID, f, "application/octet-stream", &ack)
 		cancel()
-		f.Close()
+		// peerRequest takes sole ownership of the staged source, including failures.
+		confirmed := ack.BatchID == b.ID && ack.FileID == entry.ID && ack.Size == entry.Size && ack.SHA256 == entry.SHA256
+		if confirmed {
+			// A published exact save acknowledgement remains a fact even if
+			// the subsequent cleanup wait was interrupted.
+			b.mu.Lock()
+			b.Completed += entry.Size
+			b.mu.Unlock()
+		}
 		if e != nil {
 			return c.outgoingRequestFailure(ctx, b, e)
 		}
-		if ack.BatchID != b.ID || ack.FileID != entry.ID || ack.Size != entry.Size || ack.SHA256 != entry.SHA256 {
+		if !confirmed {
 			return errors.New("receiver save confirmation did not match the file")
 		}
-		b.mu.Lock()
-		b.Completed += entry.Size
-		b.mu.Unlock()
 	}
 	b.mu.Lock()
 	b.State = "saving"
@@ -645,6 +686,15 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	remote = wireBatch{}
 	e = c.peerJSON(call, b.PeerID, "GET", "/v1/batches/"+b.ID, nil, &remote)
 	cancel()
+	if remote.ID == b.ID && remote.State == transfer.Completed {
+		// This exact terminal result was published before the request's final
+		// cleanup wait. The enclosing run still joins all owners before it
+		// publishes completed or releases the spool, even if that wait failed.
+		b.mu.Lock()
+		b.Completed = remote.CompletedBytes
+		b.mu.Unlock()
+		return nil
+	}
 	if e != nil {
 		return e
 	}
@@ -654,14 +704,7 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	if remote.State == transfer.Cancelled || remote.State == transfer.Rejected {
 		return errReceiverDeclined
 	}
-	if remote.State != transfer.Completed {
-		return errors.New("receiver has not confirmed the complete batch")
-	}
-	b.mu.Lock()
-	b.State = "completed"
-	b.Completed = remote.CompletedBytes
-	b.mu.Unlock()
-	return nil
+	return errors.New("receiver has not confirmed the complete batch")
 }
 
 // A failed file request can mean the receiver cancelled during transmission.

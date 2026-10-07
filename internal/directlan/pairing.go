@@ -113,7 +113,11 @@ func (n *Node) IssueNamedInvitation(ctx context.Context, recipient Peer, hostNam
 	if _, e := rand.Read(token); e != nil {
 		return Invitation{}, e
 	}
-	inv := Invitation{Version: 1, Host: Peer{Key: n.PublicKey(), Name: hostName, Endpoint: n.cfg.Listen, TunnelKey: n.cfg.Identity.TunnelKey()}, RecipientKey: recipient.Key, Token: base64.RawURLEncoding.EncodeToString(token), Expires: now.Add(ttl)}
+	g := n.generation.Load()
+	if g == nil {
+		return Invitation{}, ErrUnavailable
+	}
+	inv := Invitation{Version: 1, Host: Peer{Key: n.PublicKey(), Name: hostName, Endpoint: g.cfg.Listen, TunnelKey: n.cfg.Identity.TunnelKey()}, RecipientKey: recipient.Key, Token: base64.RawURLEncoding.EncodeToString(token), Expires: now.Add(ttl)}
 	n.invites[tokenHash(inv.Token)] = pendingInvitation{inv, recipient, inv.Expires}
 	return inv, nil
 }
@@ -128,6 +132,9 @@ func (n *Node) acceptPair(ctx context.Context, w *wire, req request) error {
 	if e := n.readyLocked(); e != nil {
 		return e
 	}
+	if n.generation.Load() != w.g {
+		return ErrRecovery
+	}
 	if e := ctx.Err(); e != nil {
 		return e
 	}
@@ -135,7 +142,7 @@ func (n *Node) acceptPair(ctx context.Context, w *wire, req request) error {
 		return ErrRecovery
 	}
 	p, ok := n.invites[tokenHash(req.Token)]
-	if !ok || !active(time.Now(), p.deadline) || req.Peer.Key != p.recipient.Key || w.key != p.recipient.Key || !n.cfg.permits(req.Peer.Endpoint, true) || !validName(req.Peer.Name) || !validTunnelKey(req.Peer.TunnelKey) || n.peers[w.key] != nil {
+	if !ok || !active(time.Now(), p.deadline) || req.Peer.Key != p.recipient.Key || w.key != p.recipient.Key || !w.g.cfg.permits(req.Peer.Endpoint, true) || !validName(req.Peer.Name) || !validTunnelKey(req.Peer.TunnelKey) || n.peers[w.key] != nil {
 		return ErrInvitation
 	}
 	if p.recipient.TunnelKey != "" && p.recipient.TunnelKey != req.Peer.TunnelKey {
@@ -189,6 +196,10 @@ func (n *Node) commitPeerLocked(p Peer) error {
 }
 func (n *Node) failClosedLocked() {
 	n.recovery = true
+	n.nonTransportRecovery = true
+	if g := n.generation.Load(); g != nil {
+		g.requestStop(ErrRecovery)
+	}
 	if n.bind != nil {
 		n.bind.policy.Store(&bindPolicy{endpoints: map[netip.AddrPort]bool{}, sources: map[netip.Addr]bool{}})
 	}
@@ -206,9 +217,6 @@ func (n *Node) failClosedLocked() {
 func (n *Node) PairInvitation(ctx context.Context, inv Invitation) error {
 	if e := inv.ValidateFor(n.PublicKey(), time.Now()); e != nil {
 		return e
-	}
-	if !n.cfg.permits(inv.Host.Endpoint, true) {
-		return ErrPolicy
 	}
 	if e := ctx.Err(); e != nil {
 		return e
@@ -241,17 +249,29 @@ func (n *Node) PairInvitation(ctx context.Context, inv Invitation) error {
 		}
 	}
 	attempt, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	g := n.generation.Load()
+	if g == nil || !g.cfg.permits(inv.Host.Endpoint, true) {
+		n.mu.Unlock()
+		cancel()
+		return ErrPolicy
+	}
+	work, e := g.acquireWork(cancel, false)
+	if e != nil {
+		n.mu.Unlock()
+		cancel()
+		return e
+	}
 	n.attempts[inv.Host.Key] = cancel
 	n.mu.Unlock()
-	defer func() { cancel(); n.mu.Lock(); delete(n.attempts, inv.Host.Key); n.mu.Unlock() }()
+	defer func() { cancel(); n.mu.Lock(); delete(n.attempts, inv.Host.Key); n.mu.Unlock(); work.finish() }()
 	c, w, e := n.connect(attempt, inv.Host, nil)
 	if e != nil {
 		return e
 	}
 	defer n.removeWire(w)
-	stop := context.AfterFunc(attempt, func() { w.raw.Close() })
+	stop := watchConnection(attempt, w.raw)
 	defer stop()
-	self := Peer{Key: n.PublicKey(), Endpoint: n.cfg.Listen, TunnelKey: n.cfg.Identity.TunnelKey()}
+	self := Peer{Key: n.PublicKey(), Endpoint: g.cfg.Listen, TunnelKey: g.cfg.Identity.TunnelKey()}
 	if e = writeJSON(c, request{Version: 1, Operation: "pair", Token: inv.Token, Peer: &self}); e != nil {
 		return e
 	}
@@ -286,6 +306,18 @@ func (n *Node) Revoke(key string) error {
 		return ErrIdentity
 	}
 	n.mu.Lock()
+	// Initial construction is outside Node.mu. Preserve the old serialization:
+	// revocation must see the completed initial snapshot, never be overwritten
+	// by its publication. Stop and failed construction still win below.
+	for !n.started && !n.closed && !n.recovery && !n.closing.Load() {
+		build := n.building.Load()
+		if build == nil {
+			break
+		}
+		n.mu.Unlock()
+		<-build.done
+		n.mu.Lock()
+	}
 	defer n.mu.Unlock()
 	if n.closed {
 		return net.ErrClosed

@@ -36,8 +36,7 @@ func scopePermits(scopes []backendworker.TCPPolicy, source, destination netip.Ad
 func (n *mixedBackend) SetTCPScopes(ctx context.Context, logical []backendworker.TCPPolicy) error {
 	routes, states, e := n.routeSnapshot(ctx)
 	if e != nil && len(logical) > 0 {
-		_ = n.Close()
-		return e
+		return n.failTCPScopes(ctx, e)
 	}
 	scopes := map[string][]backendworker.TCPPolicy{}
 	for _, p := range logical {
@@ -90,8 +89,7 @@ func (n *mixedBackend) SetTCPScopes(ctx context.Context, logical []backendworker
 				if errors.Is(e, net.ErrClosed) || errors.Is(e, backendworker.ErrClosed) {
 					continue
 				}
-				_ = n.Close()
-				return e
+				return n.failTCPScopes(ctx, e)
 			}
 		}
 	}
@@ -122,7 +120,6 @@ func (n *mixedBackend) RegisterTCPFallback(handler func(netip.AddrPort, netip.Ad
 			return func(c net.Conn) {
 				wrapped, e := n.wrap(name, c)
 				if e != nil {
-					_ = c.Close()
 					return
 				}
 				remote, e := netip.ParseAddrPort(wrapped.RemoteAddr().String())

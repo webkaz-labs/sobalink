@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/connectionroute"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 const mixedIdentityPath = "/v1/connection-identity"
@@ -115,7 +116,12 @@ func (c *Core) serveMixedIdentity(w http.ResponseWriter, r *http.Request) bool {
 	reply(w, 200, proof)
 	return true
 }
-func (n *mixedBackend) routeRequest(ctx context.Context, route mixedPeerRoute, method, path string, body, out any) error {
+func (c *Core) routeRequest(ctx context.Context, n *mixedBackend, route mixedPeerRoute, method, path string, body, out any) (requestErr error) {
+	ctx, releaseEntrance, err := c.enterPeerHTTP(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseEntrance()
 	var input io.Reader
 	if body != nil {
 		raw, e := json.Marshal(body)
@@ -124,55 +130,57 @@ func (n *mixedBackend) routeRequest(ctx context.Context, route mixedPeerRoute, m
 		}
 		input = bytes.NewReader(raw)
 	}
-	tr := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 5 * time.Second, MaxResponseHeaderBytes: 8 << 10, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		if network != "tcp" {
-			return nil, connectionroute.ErrDenied
-		}
-		conn, e := n.nodes[route.backend].DialIP(ctx, "tcp", netip.AddrPortFrom(route.address, PeerPort))
-		if e != nil {
-			return nil, e
-		}
-		check := func() error {
-			id, e := observedBackendPeer(ctx, n.nodes[route.backend], conn)
-			if e != nil || id != route.id {
-				return connectionroute.ErrDenied
-			}
-			return nil
-		}
-		if e = check(); e != nil {
-			_ = conn.Close()
-			return nil, e
-		}
-		return &proofIdentityConn{Conn: conn, check: check}, nil
-	}}
-	defer tr.CloseIdleConnections()
-	client := &http.Client{Transport: tr, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return connectionroute.ErrDenied }}
-	req, e := http.NewRequestWithContext(ctx, method, "http://peer.invalid"+path, input)
+	target, _, e := validatePeerHTTPRequest(method, path, true)
 	if e != nil {
 		return e
 	}
-	req.Header.Set("Content-Type", "application/json")
-	response, e := client.Do(req)
+	captured, e := capturePeerHTTPBackend(ctx, route.backend, n.nodes[route.backend], route.id, route.peer.DNSName, netip.AddrPortFrom(route.address, PeerPort), true)
 	if e != nil {
 		return e
 	}
-	defer response.Body.Close()
+	// The old client timeout covered dial, headers, body, and decoding.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	temporary, commit, e := privatePeerHTTPResult(out)
+	if e != nil {
+		return e
+	}
+	source, size, e := adoptPeerHTTPSource(input)
+	if e != nil {
+		return e
+	}
+	h, e := c.newPeerHTTPRequest(ctx, route.id, captured, source)
+	if e != nil {
+		return e
+	}
+	defer func() {
+		if err := h.finish(ctx); requestErr == nil {
+			requestErr = err
+		}
+	}()
+	if e = h.prepare(c, route.id, captured); e != nil {
+		return e
+	}
+	response, e := h.request(method, target.String(), "application/json", size, false, connectionroute.ErrDenied)
+	if e != nil {
+		return e
+	}
 	if response.StatusCode != 200 {
 		return connectionroute.ErrDenied
 	}
 	reader := &io.LimitedReader{R: response.Body, N: 16 << 10}
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
-	if e = decoder.Decode(out); e != nil {
+	if e = decoder.Decode(temporary); e != nil {
 		return e
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF || reader.N == 0 {
 		return connectionroute.ErrBinding
 	}
-	return nil
+	return h.publish(commit)
 }
-func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (any, error) {
+func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (result any, resultErr error) {
 	var in struct {
 		Peers []string `json:"peers"`
 	}
@@ -186,6 +194,16 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (any, er
 	if !ok {
 		return nil, &localCommandError{"mixed_network_required", "start the reviewed mixed network before verifying a peer binding"}
 	}
+	workDone, e := c.beginWork()
+	if e != nil {
+		return nil, e
+	}
+	defer workDone()
+	ctx, application, e := c.peerHTTPApplication(ctx)
+	if e != nil {
+		return nil, e
+	}
+	defer application.finish()
 	routes, states, e := n.routeSnapshot(ctx)
 	if e != nil {
 		return nil, e
@@ -202,7 +220,7 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (any, er
 		route := rs[0]
 		backends[route.backend] = true
 		var info mixedIdentityInfo
-		if e = n.routeRequest(ctx, route, "GET", mixedIdentityPath, nil, &info); e != nil {
+		if e = c.routeRequest(ctx, n, route, "GET", mixedIdentityPath, nil, &info); e != nil {
 			return nil, e
 		}
 		key, e := hex.DecodeString(info.PublicKey)
@@ -223,7 +241,7 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (any, er
 	}
 	for i, route := range selected {
 		var proof connectionroute.Proof
-		if e = n.routeRequest(ctx, route, "POST", mixedProofPath, challenge.Claim(), &proof); e != nil {
+		if e = c.routeRequest(ctx, n, route, "POST", mixedProofPath, challenge.Claim(), &proof); e != nil {
 			return nil, e
 		}
 		if e = challenge.Observe(claims[i], proof, time.Now()); e != nil {
@@ -250,11 +268,6 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (any, er
 	if int64(len(state.Bindings)) > c.limit("logical", "trustedPeers") {
 		return nil, errors.New("mixed binding capacity reached; review capacity settings")
 	}
-	// Old approvals remain bound to their old transport IDs, never copied to the
-	// newly verified logical peer. Stop their flows before publishing the mapping.
-	if e = c.pauseMixedApprovals(in.Peers); e != nil {
-		return nil, e
-	}
 	encoded, e := json.Marshal(state)
 	if e != nil {
 		return nil, e
@@ -262,10 +275,41 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (any, er
 	if int64(len(encoded)) > c.limit("resources", "lanStateBytes") {
 		return nil, errors.New("mixed identity state exceeds the configured storage budget")
 	}
+	// Command serialization already holds Core.op. Recheck the exact backend
+	// under Core.mu, then admit this precomputed durable transaction at each
+	// captured origin's stop fence. No origin mutex or publication permit spans
+	// approval revocation, disk I/O or the final mapping update.
+	c.mu.Lock()
+	if c.closing || c.ctx.Err() != nil || c.node != n || c.profile.Settings.Network != "mixed" {
+		c.mu.Unlock()
+		return nil, net.ErrClosed
+	}
+	releaseCommit, e := application.admitCommit()
+	c.mu.Unlock()
+	if e != nil {
+		return nil, e
+	}
+	failure := newPeerScopeFailure(c, n)
+	defer func() {
+		// Every transitive scope failure has already sealed logical authority
+		// and signalled children. Release this participant before any real
+		// backend/server join, and preserve failure through the result.
+		releaseCommit()
+		application.finish()
+		resultErr = failure.join(resultErr)
+		if resultErr != nil {
+			result = nil
+		}
+	}()
+	// Old approvals stay bound to their old transport IDs. They are closed
+	// before publication and are never copied to the new logical identity.
+	if e = c.pauseMixedApprovalsWithFailure(in.Peers, failure); e != nil {
+		return nil, e
+	}
 	saveErr := c.writeAtomic(filepath.Join(c.dir, "mixed.json"), encoded)
 	if saveErr != nil {
 		if atomicPublished(saveErr) {
-			_ = c.failWorkerScope(n, saveErr)
+			return nil, failure.fail(saveErr)
 		}
 		return nil, saveErr
 	}
@@ -276,11 +320,23 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (any, er
 }
 
 func (c *Core) pauseMixedApprovals(ids []string) error {
+	return c.pauseMixedApprovalsWithFailure(ids, nil)
+}
+
+func (c *Core) pauseMixedApprovalsWithFailure(ids []string, failure *peerScopeFailure) error {
+	fail := func(cause error) error {
+		if failure != nil {
+			return failure.fail(cause)
+		}
+		return c.failWorkerScope(c.nodeCopy(), cause)
+	}
 	p := c.profileCopy()
 	changed := false
 	// Runtime authority closes before the first fallible durability operation.
 	for _, id := range ids {
-		c.revokePeer(id)
+		if err := c.revokePeerWithFailure(id, failure); err != nil {
+			return fail(err)
+		}
 		for i := range p.Peers {
 			if p.Peers[i].ID == id && p.Peers[i].Network == "mixed" {
 				p.Peers[i].Paused = true
@@ -292,9 +348,8 @@ func (c *Core) pauseMixedApprovals(ids []string) error {
 	c.mu.Lock()
 	c.profile = p
 	c.mu.Unlock()
-	fail := func(e error) error { _ = c.failWorkerScope(c.nodeCopy(), e); return e }
 	for _, id := range ids {
-		if e := c.revokeStartupPeer(id); e != nil {
+		if e := c.revokeStartupPeerWithFailure(id, failure); e != nil {
 			return fail(e)
 		}
 	}
@@ -355,6 +410,23 @@ func (c *Core) unbindMixedPeer(raw json.RawMessage) (any, error) {
 type proofIdentityConn struct {
 	net.Conn
 	check func() error
+}
+
+func (c *proofIdentityConn) TransportOrigin() transportorigin.Origin {
+	if carrier, ok := c.Conn.(transportorigin.Carrier); ok {
+		return carrier.TransportOrigin()
+	}
+	return nil
+}
+
+func (c *proofIdentityConn) WaitClosed(ctx context.Context) error {
+	if terminal, ok := c.Conn.(transportorigin.TerminalConnection); ok {
+		return terminal.WaitClosed(ctx)
+	}
+	if c.TransportOrigin() != nil {
+		return transportorigin.ErrMissingOrigin
+	}
+	return nil
 }
 
 func (c *proofIdentityConn) Read(p []byte) (int, error) {

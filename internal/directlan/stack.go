@@ -8,6 +8,7 @@ package directlan
 import (
 	"context"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"sync"
@@ -28,13 +29,15 @@ import (
 // userspaceTunnel is an in-memory WireGuard TUN, never a kernel device. The
 // stack has a single local /128 and no forwarding, resolver or OS routes.
 type userspaceTunnel struct {
-	ep     *channel.Endpoint
-	stack  *stack.Stack
-	events chan tun.Event
-	done   chan struct{}
-	notify chan struct{}
-	once   sync.Once
-	allow  func(src, dst netip.Addr) bool
+	ep          *channel.Endpoint
+	stack       *stack.Stack
+	events      chan tun.Event
+	done        chan struct{}
+	notify      chan struct{}
+	once        sync.Once
+	destroyOnce sync.Once
+	owner       *runtimeGeneration
+	allow       func(src, dst netip.Addr) bool
 }
 
 func newUserspaceTunnel(local netip.Addr, allow func(netip.Addr, netip.Addr) bool) (*userspaceTunnel, error) {
@@ -47,6 +50,7 @@ func newUserspaceTunnel(local netip.Addr, allow func(netip.Addr, netip.Addr) boo
 	}
 	if e := s.AddProtocolAddress(1, tcpip.ProtocolAddress{Protocol: ipv6.ProtocolNumber, AddressWithPrefix: tcpip.AddrFromSlice(local.AsSlice()).WithPrefix()}, stack.AddressProperties{}); e != nil {
 		t.Close()
+		t.destroySealed()
 		return nil, io.ErrUnexpectedEOF
 	}
 	s.SetRouteTable([]tcpip.Route{{Destination: header.IPv6EmptySubnet, NIC: 1}})
@@ -74,6 +78,10 @@ func (t *userspaceTunnel) Read(slab []byte, packets []tun.ReadPacket) (int, erro
 		}
 		pkt := t.ep.Read()
 		if pkt != nil {
+			if t.owner != nil && !t.owner.trafficOpen() {
+				pkt.DecRef()
+				continue
+			}
 			view := pkt.ToView()
 			pkt.DecRef()
 			defer view.Release()
@@ -92,6 +100,16 @@ func (t *userspaceTunnel) Read(slab []byte, packets []tun.ReadPacket) (int, erro
 	}
 }
 func (t *userspaceTunnel) Write(bufs [][]byte, offset int) (int, error) {
+	if t.owner != nil {
+		if !t.owner.trafficOpen() {
+			return 0, os.ErrClosed
+		}
+		lease, err := t.owner.acquireWork(nil, false)
+		if err != nil {
+			return 0, os.ErrClosed
+		}
+		defer lease.finish()
+	}
 	select {
 	case <-t.done:
 		return 0, os.ErrClosed
@@ -119,24 +137,41 @@ func (t *userspaceTunnel) Write(bufs [][]byte, offset int) (int, error) {
 func (t *userspaceTunnel) Close() error {
 	t.once.Do(func() {
 		close(t.done)
-		t.stack.Close()
 		t.ep.Close()
-		t.stack.Wait()
-		t.stack.Destroy()
 		close(t.events)
 	})
+	if t.owner != nil {
+		t.owner.seal(net.ErrClosed)
+	} else {
+		t.destroySealed()
+	}
 	return nil
+}
+
+// destroySealed is supervisor-only after creator/ingress fences and WG join.
+// TUN.Close is deliberately only a permanent stop/wake signal.
+func (t *userspaceTunnel) destroySealed() {
+	t.destroyOnce.Do(func() { t.stack.Close(); t.stack.Wait(); t.stack.Destroy() })
 }
 func fullAddress(ap netip.AddrPort) tcpip.FullAddress {
 	return tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFromSlice(ap.Addr().AsSlice()), Port: ap.Port()}
 }
 func (t *userspaceTunnel) dialTCP(ctx context.Context, ap netip.AddrPort) (*gonet.TCPConn, error) {
+	if t.owner != nil {
+		return nil, ErrUnavailable
+	}
 	return gonet.DialContextTCP(ctx, t.stack, fullAddress(ap), ipv6.ProtocolNumber)
 }
 func (t *userspaceTunnel) listenTCP(ap netip.AddrPort) (*gonet.TCPListener, error) {
+	if t.owner != nil {
+		return nil, ErrUnavailable
+	}
 	return gonet.ListenTCP(t.stack, fullAddress(ap), ipv6.ProtocolNumber)
 }
 func (t *userspaceTunnel) dialUDP(local, remote netip.AddrPort) (*gonet.UDPConn, error) {
+	if t.owner != nil {
+		return nil, ErrUnavailable
+	}
 	l, r := fullAddress(local), fullAddress(remote)
 	return gonet.DialUDP(t.stack, &l, &r, ipv6.ProtocolNumber)
 }

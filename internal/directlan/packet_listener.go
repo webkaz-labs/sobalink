@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 const maxPacketSize = MaxDatagram
@@ -17,10 +19,15 @@ type receivedPacket struct {
 	flow   *packetFlow
 }
 type packetFlow struct {
+	g          *runtimeGeneration
+	work       *generationWork
 	conn       ConnPacketConn
 	mu         sync.Mutex
 	deadlineMu sync.Mutex
 	ready      chan struct{}
+	identity   *transportorigin.Token
+	done       chan struct{}
+	stopped    bool
 }
 
 // packetListener adapts authenticated netstack per-peer UDP flows to PacketConn.
@@ -32,7 +39,9 @@ type packetListener struct {
 	flows                       map[string]*packetFlow
 	readDeadline, writeDeadline time.Time
 	changed                     chan struct{}
-	packets                     chan receivedPacket
+	packets                     []receivedPacket
+	packetLimit                 int
+	packetChanged               chan struct{}
 	closed                      chan struct{}
 	once                        sync.Once
 	wg                          sync.WaitGroup
@@ -47,7 +56,12 @@ func (n *Node) ListenPacket(ctx context.Context, port uint16) (net.PacketConn, e
 	return newPacketListener(ctx, ln, n.cfg.FlowLimit, n.cfg.PacketQueueLimit), nil
 }
 func newPacketListener(ctx context.Context, ln net.Listener, flowLimit, queueLimit int) *packetListener {
-	p := &packetListener{ln: ln, maxFlows: flowLimit, flows: make(map[string]*packetFlow), changed: make(chan struct{}), packets: make(chan receivedPacket, queueLimit), closed: make(chan struct{})}
+	p := &packetListener{ln: ln, maxFlows: flowLimit, flows: make(map[string]*packetFlow), changed: make(chan struct{}), packetLimit: queueLimit, packetChanged: make(chan struct{}), closed: make(chan struct{})}
+	if front, ok := ln.(*listener); ok {
+		front.mu.Lock()
+		front.packet = p
+		front.mu.Unlock()
+	}
 	p.wg.Add(1)
 	p.mu.Lock()
 	p.stop = context.AfterFunc(ctx, func() { p.Close() })
@@ -82,23 +96,43 @@ func (p *packetListener) accept() {
 			c.Close()
 			continue
 		}
-		flow := &packetFlow{conn: pc, ready: make(chan struct{})}
-		p.flows[key] = flow
+		association := &packetFlow{conn: pc, ready: make(chan struct{}), identity: transportorigin.NewToken(), done: make(chan struct{})}
+		if direct, ok := c.(*flow); ok {
+			association.g = direct.g
+			work, e := direct.g.acquireWork(nil, false)
+			if e != nil {
+				p.mu.Unlock()
+				c.Close()
+				continue
+			}
+			association.work = work
+		}
+		p.flows[key] = association
 		p.mu.Unlock()
-		p.applyWriteDeadline(flow)
-		close(flow.ready)
+		p.applyWriteDeadline(association)
+		close(association.ready)
 		p.wg.Add(1)
-		go p.readFlow(key, flow)
+		go p.readFlow(key, association)
 	}
 }
 func (p *packetListener) readFlow(key string, flow *packetFlow) {
 	defer p.wg.Done()
+	defer close(flow.done)
+	defer flow.work.finish()
 	defer func() {
-		flow.conn.Close()
+		closeErr := flow.conn.Close()
+		if terminal, ok := flow.conn.(transportorigin.TerminalConnection); ok {
+			if terminal.WaitClosed(context.Background()) != nil {
+				select {}
+			}
+		} else if flow.g != nil || (closeErr != nil && !errors.Is(closeErr, net.ErrClosed)) {
+			select {} // retain the association when physical cleanup is unproven
+		}
 		p.mu.Lock()
 		if p.flows[key] == flow {
 			delete(p.flows, key)
 		}
+		p.discardPacketsLocked(func(packet receivedPacket) bool { return packet.flow == flow })
 		p.mu.Unlock()
 	}()
 	buf := make([]byte, maxPacketSize+1)
@@ -112,18 +146,135 @@ func (p *packetListener) readFlow(key string, flow *packetFlow) {
 			continue
 		}
 		packet := receivedPacket{data: append([]byte(nil), buf[:n]...), remote: flow.conn.RemoteAddr(), flow: flow}
-		select {
-		case p.packets <- packet:
-		case <-p.closed:
-			return
-		default: /* Bounded memory: drop excess datagrams. */
+		p.mu.Lock()
+		admit := func() bool {
+			if p.flows[key] != flow || flow.stopped || len(p.packets) >= p.packetLimit {
+				return false
+			}
+			p.packets = append(p.packets, packet)
+			close(p.packetChanged)
+			p.packetChanged = make(chan struct{})
+			return true
 		}
+		if flow.g != nil {
+			flow.g.admit(admit)
+		} else {
+			admit()
+		}
+		p.mu.Unlock()
+	}
+}
+
+// packetAssociation is an exact old association capability. String remains
+// the stable machine address, but a delayed WriteTo cannot resolve a new flow
+// from that string after retirement.
+type packetAssociation struct {
+	address  net.Addr
+	listener *packetListener
+	flow     *packetFlow
+}
+
+func (a *packetAssociation) Network() string                             { return a.address.Network() }
+func (a *packetAssociation) String() string                              { return a.address.String() }
+func (a *packetAssociation) AssociationIdentity() *transportorigin.Token { return a.flow.identity }
+func (a *packetAssociation) TransportOrigin() transportorigin.Origin {
+	if a.flow.g != nil {
+		return a.flow.g.origin
+	}
+	return nil
+}
+func (a *packetAssociation) PeerIdentity() (string, bool) {
+	if peer, ok := a.flow.conn.(interface{ PeerIdentity() (string, bool) }); ok {
+		return peer.PeerIdentity()
+	}
+	return "", false
+}
+func (a *packetAssociation) Close() error {
+	p := a.listener
+	p.mu.Lock()
+	if p.flows[a.address.String()] == a.flow {
+		a.flow.stopped = true
+	}
+	p.discardPacketsLocked(func(packet receivedPacket) bool { return packet.flow == a.flow })
+	p.mu.Unlock()
+	return a.flow.conn.Close()
+}
+func (a *packetAssociation) WaitClosed(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.flow.done:
+		return nil
+	}
+}
+
+var _ transportorigin.PacketAssociation = (*packetAssociation)(nil)
+
+func (p *packetListener) discardPacketsLocked(discard func(receivedPacket) bool) {
+	kept := p.packets[:0]
+	for _, packet := range p.packets {
+		if !discard(packet) {
+			kept = append(kept, packet)
+		}
+	}
+	clear(p.packets[len(kept):])
+	p.packets = kept
+	close(p.packetChanged)
+	p.packetChanged = make(chan struct{})
+}
+func (p *packetListener) retireGeneration(g *runtimeGeneration) {
+	p.mu.Lock()
+	var retired []*packetFlow
+	for _, flow := range p.flows {
+		if flow.g == g {
+			flow.stopped = true
+			retired = append(retired, flow)
+		}
+	}
+	p.discardPacketsLocked(func(packet receivedPacket) bool { return packet.flow.g == g })
+	p.mu.Unlock()
+	for _, flow := range retired {
+		flow.conn.Close()
 	}
 }
 func (p *packetListener) ReadFrom(b []byte) (int, net.Addr, error) {
 	for {
 		p.mu.Lock()
-		deadline, changed := p.readDeadline, p.changed
+		deadline, changed, packetsChanged := p.readDeadline, p.changed, p.packetChanged
+		select {
+		case <-p.closed:
+			p.mu.Unlock()
+			return 0, nil, net.ErrClosed
+		default:
+		}
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			p.mu.Unlock()
+			return 0, nil, os.ErrDeadlineExceeded
+		}
+		if len(p.packets) != 0 {
+			packet := p.packets[0]
+			p.packets[0] = receivedPacket{}
+			p.packets = p.packets[1:]
+			active := p.flows[packet.remote.String()] == packet.flow && !packet.flow.stopped
+			var work *generationWork
+			if active && packet.flow.g != nil {
+				var e error
+				work, e = packet.flow.g.acquireWork(nil, false)
+				active = e == nil
+			}
+			p.mu.Unlock()
+			if !active {
+				continue
+			}
+			if v, ok := packet.flow.conn.(interface{ Valid() bool }); ok && !v.Valid() {
+				work.finish()
+				continue
+			}
+			n := copy(b, packet.data)
+			remote := &packetAssociation{address: packet.remote, listener: p, flow: packet.flow}
+			defer work.finish()
+			return n, remote, nil
+		}
 		p.mu.Unlock()
 		var timer *time.Timer
 		var timeout <-chan time.Time
@@ -142,26 +293,12 @@ func (p *packetListener) ReadFrom(b []byte) (int, net.Addr, error) {
 			}
 			return 0, nil, net.ErrClosed
 		case <-changed:
-			if timer != nil {
-				timer.Stop()
-			}
-			continue
+		case <-packetsChanged:
 		case <-timeout:
 			return 0, nil, os.ErrDeadlineExceeded
-		case packet := <-p.packets:
-			if timer != nil {
-				timer.Stop()
-			}
-			p.mu.Lock()
-			active := p.flows[packet.remote.String()] == packet.flow
-			p.mu.Unlock()
-			if !active {
-				continue
-			}
-			if v, ok := packet.flow.conn.(interface{ Valid() bool }); ok && !v.Valid() {
-				continue
-			}
-			return copy(b, packet.data), packet.remote, nil
+		}
+		if timer != nil {
+			timer.Stop()
 		}
 	}
 }
@@ -169,8 +306,15 @@ func (p *packetListener) WriteTo(b []byte, a net.Addr) (int, error) {
 	if a == nil || len(b) > maxPacketSize {
 		return 0, errors.New("invalid UDP destination or oversized datagram")
 	}
+	association, ok := a.(*packetAssociation)
+	if !ok || association.listener != p {
+		return 0, ErrUntrusted
+	}
 	p.mu.Lock()
 	flow := p.flows[a.String()]
+	if flow != association.flow || flow.stopped {
+		flow = nil
+	}
 	p.mu.Unlock()
 	select {
 	case <-p.closed:
@@ -180,8 +324,21 @@ func (p *packetListener) WriteTo(b []byte, a net.Addr) (int, error) {
 	if flow == nil {
 		return 0, ErrUntrusted
 	}
+	var work *generationWork
+	var stopped <-chan struct{}
+	if flow.g != nil {
+		var e error
+		work, e = flow.g.acquireWork(nil, false)
+		if e != nil {
+			return 0, net.ErrClosed
+		}
+		stopped = flow.g.stop
+	}
+	defer work.finish()
 	select {
 	case <-flow.ready:
+	case <-stopped:
+		return 0, net.ErrClosed
 	case <-p.closed:
 		return 0, net.ErrClosed
 	}
@@ -205,6 +362,7 @@ func (p *packetListener) shutdown() {
 		for _, f := range p.flows {
 			cs = append(cs, f.conn)
 		}
+		p.discardPacketsLocked(func(receivedPacket) bool { return true })
 		p.mu.Unlock()
 		for _, c := range cs {
 			c.Close()

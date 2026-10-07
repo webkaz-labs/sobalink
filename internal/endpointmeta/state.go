@@ -63,10 +63,11 @@ type PeerRecord struct {
 	EndpointState    *EndpointState  `json:"endpoint_state,omitempty"`
 }
 
-// Snapshot is an isolated data model, not the production profile/file schema.
-// Identity secrets and application grants remain outside this model. No
-// application loader or constructor consumes it. Its unused file adapter reads
-// evidence only. All revision values are canonical decimal strings.
+// Snapshot is a data model, not the production profile/file schema. Core owns
+// its private-file representation and embeds these records beside its existing
+// identity and selection. Identity secrets and application grants remain outside
+// this model. The separate file adapter reads evidence only. All revision values
+// are canonical decimal strings; model eligibility is not runtime authority.
 type Snapshot struct {
 	Version               int            `json:"version"`
 	Revision              string         `json:"revision"`
@@ -85,8 +86,9 @@ type LegacySnapshot struct {
 	Peers      []PeerWire
 }
 
-// MigrateLegacy converts only a synthetic v2 model. It neither reads an existing
-// private file nor creates a context, approval, nonce, or application grant.
+// MigrateLegacy converts a caller-supplied v2 model. Core separately owns any
+// reviewed private-file migration. This function neither reads a private file
+// nor creates a context, approval, nonce, or application grant.
 func MigrateLegacy(old LegacySnapshot, now time.Time) (Snapshot, error) {
 	if old.Version != 2 || now.IsZero() {
 		return Snapshot{}, ErrInvalid

@@ -5,7 +5,7 @@ import { MAX_UNCERTAIN_MESSAGES, useServer } from './useServer'
 
 const messageState: State = { csrfToken: 'synthetic-csrf', self: { name: 'Synthetic', status: 'online' }, peers: [], messages: [], transfers: [], services: [], shares: [] }
 
-it.each(['message_history_unavailable', 'message_peer_storage_unavailable'])('blocks an identical %s draft despite refresh, unrelated commands and a successful different message', async code => {
+it.each(['message_history_unavailable', 'message_peer_storage_unavailable', 'message_completion_interrupted'])('blocks an identical %s draft despite refresh, unrelated commands and a successful different message', async code => {
   const requests: { name: string; payload: Record<string, unknown>; requestId: string }[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
     if (path === '/api/state') return new Response(JSON.stringify(messageState))
@@ -28,7 +28,9 @@ it.each(['message_history_unavailable', 'message_peer_storage_unavailable'])('bl
     await result.current.run('message.send', { peerId: 'a', text: 'Uncertain original' }, 'different-key')
   })
   expect(requests.filter(request => request.name === 'message.send')).toHaveLength(3)
-  expect(result.current.error).toMatchObject({ code: 'message_resend_blocked' })
+  const blocked = code === 'message_completion_interrupted' ? code : 'message_resend_blocked'
+  expect(result.current.error).toMatchObject({ code: blocked })
+  expect(await result.current.messageBlock('a', 'Uncertain original')).toBe(blocked)
 })
 
 it('bounds uncertainty memory without evicting old guards and fails closed at capacity', async () => {
