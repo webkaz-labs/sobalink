@@ -178,11 +178,21 @@ jobs:
           PYTHON
           python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
           go run ./cmd/prepare-engine --verify
-      - name: Verify direct LAN WireGuard and Core native applications
-        timeout-minutes: 8
+      - name: Verify Core context control over pinned TLS
+        timeout-minutes: 5
         run: |
           set -euo pipefail
-          go test -race -count=2 -timeout=120s -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
+          python .github/scripts/ci-context-control.py core-tls 2>&1 | tee logs/context-core-tls.txt
+      - name: Verify context control over fixed loopback TCP
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-context-control.py fixed-tcp 2>&1 | tee logs/context-fixed-tcp.txt
+      - name: Verify direct LAN WireGuard and Core native applications
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          go test -race -count=2 -v -timeout=3m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
           go vet -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
           go test -race -count=5 -timeout=5m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestDirectLAN' ./internal/core
       - name: Verify direct LAN session rekey and idle lifecycle

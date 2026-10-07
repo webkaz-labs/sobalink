@@ -132,7 +132,8 @@ class WorkflowCachePolicy(unittest.TestCase):
         for workflow in ("ci", "prerelease"):
             direct = self.step(workflow, "native", "name: Verify direct LAN WireGuard and Core native applications")
             self.assertNotIn("        if:", direct)
-            self.assertIn("go test -race -count=2 -timeout=120s", direct)
+            self.assertIn("timeout-minutes: 9", direct)
+            self.assertIn("go test -race -count=2 -v -timeout=3m", direct)
             self.assertIn("-run='^TestDirectLAN' ./internal/core", direct)
             self.assertIn("-count=5 -timeout=5m", direct)
             title = "name: Verify direct LAN session natural rekey and idle lifecycle" if workflow == "ci" else "name: Verify direct LAN session rekey and idle lifecycle"

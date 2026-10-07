@@ -57,10 +57,11 @@ type directLANStore struct {
 	// expired approval within this owner; explicit recovery never resets it.
 	endpointObservedAt time.Time
 	endpointDeadlines  map[directLANEndpointDeadlineKey]directLANEndpointDeadline
-	// Context metadata has no command or transport caller. These process-only
-	// bounds and publication evidence are never reconstructed from a file read.
+	// Context metadata has no command/startup caller. These process-only bounds,
+	// arm epochs and publication evidence are never reconstructed from a file read.
 	contextWindows     map[string]contextPreparationWindow
 	contextPublication *contextPublicationReceipt
+	contextEpoch       *directlan.ContextEpoch
 }
 
 func cloneDirectLANState(s directLANState) directLANState {
@@ -142,6 +143,19 @@ func (s *directLANStore) writeStateLocked(next directLANState) error {
 // through writeStateLocked. Only exact, stopped/offline pending reconciliation
 // may enter here with recovery latched, after rereading its reviewed file.
 func (s *directLANStore) publishStateLocked(next directLANState) error {
+	return s.publishStateWithContextLivenessLocked(next, nil)
+}
+
+// Only the closed context reducer supplies this concrete liveness guard. The
+// recovery, projection, file and capacity checks remain the same publisher.
+func (s *directLANStore) writeContextStateLocked(next directLANState, live *contextSaveLiveness) error {
+	if s.recovery {
+		return directlan.ErrRecovery
+	}
+	return s.publishStateWithContextLivenessLocked(next, live)
+}
+
+func (s *directLANStore) publishStateWithContextLivenessLocked(next directLANState, live *contextSaveLiveness) error {
 	if err := validateDirectLANState(next); err != nil {
 		return err
 	}
@@ -159,11 +173,26 @@ func (s *directLANStore) publishStateLocked(next directLANState) error {
 		return directlan.ErrCapacity
 	}
 	s.reviewRevision++
+	// This is signal-only: no Node lock, callback or join may run under mu.
+	// Every attempted publication, including same-byte or unrelated writes,
+	// invalidates all earlier context admissions and response slots.
+	if s.contextEpoch != nil {
+		s.contextEpoch.Invalidate()
+		s.contextEpoch = nil
+	}
+	s.contextPublication = nil
 	write := s.write
 	if write == nil {
 		write = config.AtomicWrite
 	}
 	data = append(data, '\n')
+	// The final signal-only check is publication admission. Stop completed
+	// before this check aborts; cancellation after admission cannot retract
+	// a write or roll back a published result. No watcher is needed here.
+	if err := live.err(); err != nil {
+		live.cancelledBeforeWrite = true
+		return err
+	}
 	err = write(s.path, data)
 	if atomicPublished(err) {
 		s.state = cloneDirectLANState(next)

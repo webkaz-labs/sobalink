@@ -25,6 +25,9 @@ type runtimeGeneration struct {
 	underlay                    *generationUnderlay
 	published                   chan struct{}
 	traffic                     atomic.Bool
+	controlOpen                 atomic.Bool
+	controlPeers                map[string]*contextPeerRegistration
+	failedControl               map[*controlStream]error
 	bind                        *lanBind
 	tunnel                      *userspaceTunnel
 	engine                      atomic.Pointer[device.OwnedDevice]
@@ -80,7 +83,9 @@ func (g *runtimeGeneration) admit(f func() bool) bool {
 	if engine := g.engine.Load(); engine != nil {
 		return engine.Admit(run)
 	}
-	return run() // Construction has not launched an externally reachable engine.
+	// The immutable TCP-only mode intentionally has no WG owner. Ordinary
+	// generations reach this branch only before engine construction.
+	return run()
 }
 func (g *runtimeGeneration) trafficOpen() bool { return g != nil && g.traffic.Load() && g.open() }
 func (g *runtimeGeneration) open() bool        { return g != nil && g.admit(func() bool { return true }) }
@@ -92,6 +97,7 @@ func (g *runtimeGeneration) seal(cause error) {
 	g.mu.Lock()
 	if !g.sealed {
 		g.sealed = true
+		g.controlOpen.Store(false)
 		g.cause = cause
 		close(g.stop)
 		g.changedLocked()
@@ -150,11 +156,21 @@ func (w *generationWork) finish() {
 // precedes Node.mu: an admitted handshake send may be holding that mutex.
 func (g *runtimeGeneration) supervise() {
 	<-g.stop
+	if g.n.contextControl {
+		// TCP-only construction never waits on an engine. Publish optional
+		// resources before reading them, including a cancelled late listen.
+		<-g.built
+	}
 	if g.underlay != nil {
 		g.underlay.RequestClose()
 	}
-	bindErr := g.bind.SealAndClose()
-	_ = g.tunnel.Close()
+	var bindErr error
+	if g.bind != nil {
+		bindErr = g.bind.SealAndClose()
+	}
+	if g.tunnel != nil {
+		_ = g.tunnel.Close()
+	}
 	<-g.built
 	g.mu.Lock()
 	var cancel []context.CancelFunc
@@ -228,12 +244,18 @@ func (g *runtimeGeneration) supervise() {
 	if bindErr == nil && engineErr == nil && underlayErr == nil {
 		// Admission is permanently sealed and all creators/ingress have exited.
 		// The adapter remains allocated for late inert references.
-		g.tunnel.destroySealed()
+		if g.tunnel != nil {
+			g.tunnel.destroySealed()
+		}
 	}
 	g.mu.Lock()
-	g.result = errors.Join(bindErr, engineErr, underlayErr)
+	var controlErr error
+	for _, err := range g.failedControl {
+		controlErr = errors.Join(controlErr, err)
+	}
+	g.result = errors.Join(bindErr, engineErr, underlayErr, controlErr)
 	g.mu.Unlock()
-	if bindErr == nil && engineErr == nil && underlayErr == nil {
+	if g.result == nil {
 		g.origin.detach()
 	}
 	close(g.done)

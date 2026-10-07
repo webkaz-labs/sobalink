@@ -88,6 +88,9 @@ func (g *runtimeGeneration) installPeer(state *peerState) error {
 	return nil
 }
 func (n *Node) dispatch(g *runtimeGeneration, f func()) bool {
+	if n.contextControl || g == nil {
+		return false
+	}
 	lease, e := g.acquireWork(nil, false)
 	if e != nil {
 		return false

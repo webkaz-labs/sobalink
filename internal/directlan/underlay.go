@@ -2,9 +2,11 @@ package directlan
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
+	"time"
 )
 
 // generationUnderlay owns one exact TCP listener and its accept loop. Closing
@@ -17,6 +19,10 @@ type generationUnderlay struct {
 	stopOnce   sync.Once
 	acceptOnce sync.Once
 	closeErr   error
+	// The accept loop owns at most one rejected socket outside admitted work.
+	// A failed rejection close stops acceptance and remains retained here.
+	rejected     net.Conn
+	rejectionErr error
 }
 
 func newGenerationUnderlay(ln net.Listener) *generationUnderlay {
@@ -51,7 +57,7 @@ func (u *generationUnderlay) WaitClosed(ctx context.Context) error {
 		return ctx.Err()
 	case <-u.accepted:
 	}
-	return u.closeErr
+	return errors.Join(u.closeErr, u.rejectionErr)
 }
 func (n *Node) accept(g *runtimeGeneration, u *generationUnderlay) {
 	select {
@@ -66,25 +72,61 @@ func (n *Node) accept(g *runtimeGeneration, u *generationUnderlay) {
 		}
 		ap, err := netip.ParseAddrPort(raw.RemoteAddr().String())
 		if err != nil || !g.cfg.permits(ap, false) {
-			raw.Close()
+			if !n.rejectAcceptedContext(g, u, raw) {
+				return
+			}
 			continue
 		}
 		n.mu.Lock()
-		if n.readyLocked() != nil || n.generation.Load() != g || !g.trafficOpen() || n.controlUsageLocked() >= g.cfg.ControlLimit {
+		if n.startReadyLocked() != nil || n.generation.Load() != g || n.controlUsageLocked() >= g.cfg.ControlLimit {
 			n.mu.Unlock()
-			raw.Close()
+			if !n.rejectAcceptedContext(g, u, raw) {
+				return
+			}
 			continue
 		}
 		work, err := g.acquireWork(nil, true)
 		if err != nil {
 			n.mu.Unlock()
-			raw.Close()
+			if !n.rejectAcceptedContext(g, u, raw) {
+				return
+			}
 			continue
 		}
 		w := &wire{raw: newControlStream(g, raw), control: true, g: g, work: work}
+		if n.contextControl {
+			w.contextDeadline = time.Now().Add(handshakeTimeout)
+			w.contextArmCutoff = n.contextArmRevision
+		}
 		n.wires[w] = struct{}{}
 		n.wg.Add(1)
 		n.mu.Unlock()
-		go func() { defer n.wg.Done(); n.handle(w) }()
+		go func() {
+			defer n.wg.Done()
+			if n.contextControl {
+				n.handleContext(w)
+			} else {
+				n.handle(w)
+			}
+		}()
 	}
+}
+
+// The listener's one rejection slot bounds cleanup even when ControlLimit is
+// already exhausted. It never becomes an authenticated work admission. A failed
+// close seals the owner immediately; no further raw socket can accumulate.
+func (n *Node) rejectAcceptedContext(g *runtimeGeneration, u *generationUnderlay, raw net.Conn) bool {
+	if !n.contextControl {
+		_ = raw.Close()
+		return true
+	}
+	u.rejected = raw
+	if err := raw.Close(); err != nil {
+		u.rejectionErr = err
+		u.RequestClose()
+		g.requestStop(ErrRecovery)
+		return false
+	}
+	u.rejected = nil
+	return true
 }

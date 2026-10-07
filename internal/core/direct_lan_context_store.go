@@ -13,6 +13,39 @@ import (
 
 // All helpers require Core.op, exclusive profile ownership and store.mu. There
 // is no network wait, second persistence owner, or recovery override here.
+// The concrete completion owner supplies terminal signals, never a callback.
+// The final publisher reads them synchronously: watcher scheduling cannot make
+// a stop that already completed invisible to publication admission.
+type contextSaveLiveness struct {
+	ctx                  context.Context
+	owner                *contextControlOwner
+	attempt              *directlan.ContextAttempt
+	cancelledBeforeWrite bool
+}
+
+func (l *contextSaveLiveness) err() error {
+	if l == nil {
+		return nil
+	}
+	if err := l.ctx.Err(); err != nil {
+		return err
+	}
+	if l.owner != nil {
+		if l.owner.stopping.Load() {
+			return context.Canceled
+		}
+		select {
+		case <-l.owner.ctx.Done():
+			return context.Canceled
+		default:
+		}
+	}
+	if l.attempt != nil && l.attempt.Cancelled() {
+		return context.Canceled
+	}
+	return nil
+}
+
 type contextAdmission struct {
 	store                                       *directLANStore
 	process, path, file, state, proposal        string
@@ -34,8 +67,8 @@ type contextPublicationReceipt struct {
 }
 
 // This describes only a local metadata operation. Observations have durable
-// false even if an earlier operation saved the same phase. No wire reply bytes
-// or reusable permission to acknowledge an exchange are returned.
+// false even if an earlier operation saved the same phase. The scoped exchange
+// owner must independently obtain a current receipt-backed response slot.
 type contextSaveResult struct {
 	changed, published, durable bool
 	phase                       string
@@ -90,7 +123,7 @@ func (s *directLANStore) captureContextAdmissionLocked(process string, input con
 		return contextAdmission{}, err
 	}
 	switch in.Operation {
-	case contextPrepare, contextResume, contextConfirmUpdate, contextRepublish:
+	case contextPrepare, contextResume, contextConfirmUpdate, contextRepublish, contextRepublishPrepared:
 		if _, _, err := s.stateWithContextMetadataLocked(in, contextTranscript{}, now); err != nil {
 			return contextAdmission{}, err
 		}
@@ -221,7 +254,7 @@ func (s *directLANStore) stateWithContextMetadataLocked(in contextInputs, transc
 	if err := validateContextProjection(*before, transition, in, now); err != nil {
 		return directLANState{}, transition, err
 	}
-	if (transition.Changed || in.Operation == contextRepublish) && s.reviewRevision == ^uint64(0) {
+	if (transition.Changed || in.Operation == contextRepublish || in.Operation == contextRepublishPrepared) && s.reviewRevision == ^uint64(0) {
 		return directLANState{}, transition, endpointmeta.ErrCapacity
 	}
 	next := cloneDirectLANState(s.state)
@@ -313,6 +346,61 @@ func (s *directLANStore) contextPublicationCurrentLocked(process string) bool {
 		r.file == s.fileDigest && r.state == privateRevision(s.state) && r.writeRevision == s.reviewRevision
 }
 
+func (s *directLANStore) contextEpochLocked() *directlan.ContextEpoch {
+	if s.contextEpoch == nil || !s.contextEpoch.Valid() {
+		s.contextEpoch = directlan.NewContextEpoch()
+	}
+	return s.contextEpoch
+}
+
+// A canonical reply requires both the just-claimed exact request and a current
+// process publication receipt. A duplicate can qualify without a new write;
+// reopening alone, an inert reducer result, or a receipt alone cannot qualify.
+func (s *directLANStore) contextReplyLocked(process string, in contextInputs, transcript contextTranscript, now time.Time) (endpointmeta.Reply, error) {
+	if !s.contextPublicationCurrentLocked(process) {
+		return nil, endpointmeta.ErrReview
+	}
+	if _, _, err := s.stateWithContextMetadataLocked(in, transcript, now); err != nil {
+		return nil, err
+	}
+	i, err := contextPeer(*s.state.Metadata, in.PeerKey)
+	if err != nil {
+		return nil, err
+	}
+	r := s.state.Metadata.Peers[i]
+	p := contextSavedPair(r)
+	if p == nil {
+		return nil, endpointmeta.ErrReview
+	}
+	binding, err := p.Binding()
+	if err != nil {
+		return nil, err
+	}
+	var reply endpointmeta.Reply
+	switch in.Operation {
+	case contextRecordInbound:
+		// Clone scopes with the complete saved record; do not expose a mutable
+		// alias into the private state through an interface-valued reply.
+		copy := cloneDirectLANMetadata(s.state.Metadata)
+		reply = endpointmeta.PrepareReply{Version: 2, Operation: "pair-context-prepare", OK: true, PairContext: *contextSavedPair(copy.Peers[i]), PairBinding: binding}
+	case contextCommit, contextStatusInbound:
+		if in.Bound.PairBinding != binding || transcript.Bound != in.Bound {
+			return nil, endpointmeta.ErrIdentity
+		}
+		state := "prepared"
+		if r.PairContext != nil {
+			state = "committed"
+		}
+		reply = endpointmeta.ContextReply{Version: 2, Operation: in.Bound.Operation, OK: true, PairBinding: binding, State: state}
+	default:
+		return nil, endpointmeta.ErrInvalid
+	}
+	if _, err := endpointmeta.Encode(reply); err != nil {
+		return nil, err
+	}
+	return reply, nil
+}
+
 func (s *directLANStore) applyContextTransitionLocked(ctx context.Context, process string, a contextAdmission, transcript contextTranscript, now time.Time) (contextSaveResult, error) {
 	return s.saveContextTransitionLocked(ctx, process, a, transcript, now)
 }
@@ -320,7 +408,11 @@ func (s *directLANStore) applyContextTransitionLocked(ctx context.Context, proce
 // This save boundary accepts only an earlier admission with its frozen closed
 // inputs. No caller-supplied Snapshot or Core state reaches the publisher.
 func (s *directLANStore) saveContextTransitionLocked(ctx context.Context, process string, a contextAdmission, transcript contextTranscript, now time.Time) (contextSaveResult, error) {
-	if err := ctx.Err(); err != nil {
+	return s.saveContextTransitionWithLivenessLocked(ctx, process, a, transcript, now, &contextSaveLiveness{ctx: ctx})
+}
+
+func (s *directLANStore) saveContextTransitionWithLivenessLocked(ctx context.Context, process string, a contextAdmission, transcript contextTranscript, now time.Time, live *contextSaveLiveness) (contextSaveResult, error) {
+	if err := live.err(); err != nil {
 		return contextSaveResult{}, err
 	}
 	if err := s.matchContextAdmissionLocked(process, a, now); err != nil {
@@ -345,18 +437,24 @@ func (s *directLANStore) saveContextTransitionLocked(ctx context.Context, proces
 			return contextSaveResult{}, err
 		}
 	}
-	if !transition.Changed && in.Operation != contextRepublish {
+	if !transition.Changed && in.Operation != contextRepublish && in.Operation != contextRepublishPrepared {
 		return contextSaveResult{phase: transition.Phase}, nil
 	}
 	if s.reviewRevision == ^uint64(0) {
 		return contextSaveResult{}, endpointmeta.ErrCapacity
 	}
-	if err := ctx.Err(); err != nil {
+	if err := live.err(); err != nil {
 		return contextSaveResult{}, err
 	}
 	before := *cloneDirectLANMetadata(s.state.Metadata)
 	s.contextPublication = nil
-	err = s.writeStateLocked(next)
+	err = s.writeContextStateLocked(next, live)
+	if live.cancelledBeforeWrite {
+		// Publication admission was rejected before invoking the writer.
+		// The epoch/revision remains invalidated, but no save uncertainty was
+		// created and no previous recovery latch is cleared.
+		return contextSaveResult{}, err
+	}
 	resolution := endpointmeta.ResolveSave(before, transition.Snapshot, atomicPublished(err), err)
 	// The existing publisher adopts the whole Core file exactly on publication.
 	// Retain that adoption on uncertainty; never roll it back or clear recovery.
@@ -372,7 +470,7 @@ func (s *directLANStore) saveContextTransitionLocked(ctx context.Context, proces
 	}
 	s.contextPublication = &contextPublicationReceipt{store: s, process: process, path: s.path, file: s.fileDigest,
 		state: privateRevision(s.state), writeRevision: s.reviewRevision}
-	if err := ctx.Err(); err != nil {
+	if err := live.err(); err != nil {
 		return contextSaveResult{published: true}, err
 	}
 	return contextSaveResult{changed: transition.Changed, published: true, durable: true, phase: transition.Phase}, nil

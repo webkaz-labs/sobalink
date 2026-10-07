@@ -114,7 +114,7 @@ type PreparedTransport struct {
 // Once registered, a non-nil candidate is returned even on construction failure
 // so callers can join cleanup. Node retains the owner if that handle is dropped.
 func (n *Node) PrepareTransport(ctx context.Context, retired *TransportRetirement, endpoints TransportEndpoints) (*PreparedTransport, error) {
-	if ctx == nil {
+	if n.contextControl || ctx == nil {
 		return nil, ErrUnavailable
 	}
 	if err := ctx.Err(); err != nil {
