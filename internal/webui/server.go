@@ -310,7 +310,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, "method", "Read-only asset route")
 		return
 	}
-	if r.URL.Path != "/" && !strings.HasPrefix(r.URL.Path, "/assets/") && r.URL.Path != "/favicon.svg" {
+	if r.URL.Path != "/" && !strings.HasPrefix(r.URL.Path, "/assets/") && r.URL.Path != "/favicon.svg" && r.URL.Path != "/png-worker-manifest.json" {
 		http.NotFound(w, r)
 		return
 	}

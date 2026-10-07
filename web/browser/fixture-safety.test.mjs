@@ -51,7 +51,8 @@ test('artifacts cannot overlap the private runtime in either direction', () => {
 })
 
 test('result reports omit private error details and never mark discovery-only runs as accepted', async context => {
-  context.mock.method(console, 'log', () => {})
+  const outputLines = []
+  context.mock.method(console, 'log', line => outputLines.push(line))
   const directory = await mkdtemp(join(tmpdir(), 'soba-reporter-safety-'))
   const previous = process.env.SOBA_SCREENSHOT_DIR
   process.env.SOBA_SCREENSHOT_DIR = directory
@@ -68,6 +69,9 @@ test('result reports omit private error details and never mark discovery-only ru
     assert.equal(result.includes('/private/workspace'), false)
     assert.equal(JSON.parse(result).requiredCoverageComplete, false)
     assert.deepEqual(JSON.parse(result).tests[0].failureLocations, [{ file: 'workflows.spec.mjs', line: 123, column: 7 }])
+    assert.ok(outputLines.includes('DIAGNOSTIC fixture-or-test-error workflows.spec.mjs:123:7'))
+    const consoleOutput = outputLines.join('\n')
+    for (const privateText of [sentinel, '/private/workspace', 'privateValue', 'other.spec.mjs', 'another']) assert.equal(consoleOutput.includes(privateText), false)
   } finally {
     if (previous === undefined) delete process.env.SOBA_SCREENSHOT_DIR
     else process.env.SOBA_SCREENSHOT_DIR = previous
