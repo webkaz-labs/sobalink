@@ -129,6 +129,21 @@ class FullProofTests(unittest.TestCase):
         result = self.audit(previous_proof=proof)
         self.assertEqual(result['full_validation']['id'], 11)
 
+    def test_schedule_is_canonical_but_never_manual_release_proof(self):
+        self.runs = [run(event="schedule")]
+        with self.assertRaisesRegex(ValueError, "force_full"):
+            self.audit()
+        self.runs = [run(), run(11, "2026-01-01T00:10:00Z", event="schedule")]
+        self.assertEqual(self.audit()["full_validation"]["id"], 10)
+        for status, conclusion in (("queued", None), ("in_progress", None),
+                                   ("completed", "failure"), ("completed", "cancelled")):
+            self.runs[1].update(status=status, conclusion=conclusion)
+            with self.subTest(status=status, conclusion=conclusion), self.assertRaises(ValueError):
+                self.audit()
+        self.runs = [run(9, event="schedule"), run(10, "2026-01-01T00:10:00Z")]
+        self.runs[0]["conclusion"] = "failure"
+        self.assertEqual(self.audit()["full_validation"]["id"], 10)
+
     def test_push_only_success_has_no_explicit_full_intent(self):
         self.runs[0]['event'] = 'push'
         with self.assertRaisesRegex(ValueError, 'force_full'):

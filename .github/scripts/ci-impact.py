@@ -23,7 +23,7 @@ GO_IMPORTS = {
     "internal/boundedlog": frozenset(("bytes", "errors", "fmt", "os", "path/filepath", "sync", "testing")),
 }
 GO_PACKAGES = frozenset(GO_IMPORTS)
-# Phase 1 is PR-only and intentionally file-level. These presentation paths do
+# The presentation boundary is intentionally file-level. These paths do
 # not implement transport/lease/rekey policy. New paths and imports stay full;
 # native-short still runs all four native short/safety and package gates.
 NATIVE_SHORT_IMPORTS = {
@@ -206,15 +206,16 @@ def classify_delta(changes, before, after):
         return "full", "unproven_or_shared_runtime_path", []
     if "dist" in kinds and "frontend" not in kinds:
         return "full", "generated_assets_without_source_change", []
-    if "go" in kinds and kinds.intersection(("frontend", "browser", "dist")):
-        return "full", "mixed_frontend_and_go", []
-    if "native-short" in kinds:
-        if kinds - {"native-short", "docs"}:
-            return "full", "mixed_native_short_change", []
-        return "native-short", "reviewed_presentation_pr", []
+    # Join only already-reviewed domains. Keep changed Go packages even when
+    # the joined scope runs native jobs: validate_contents must still inspect
+    # both complete package inventories/import sets, not only the changed file.
+    packages = sorted({"./" + path.rpartition("/")[0]
+                       for path in paths if path_kind(path) == "go"})
+    frontend = bool(kinds.intersection(("frontend", "browser")))
+    if "native-short" in kinds or ("go" in kinds and frontend):
+        reason = "reviewed_safe_scope_union" if frontend or packages else "reviewed_presentation"
+        return "native-short", reason, packages
     if "go" in kinds:
-        packages = sorted({"./" + path.rpartition("/")[0]
-                           for path in paths if path_kind(path) == "go"})
         return "go", "scoped_go_packages", packages
     if kinds.intersection(("frontend", "browser")):
         return "frontend", "frontend_only", []
@@ -468,6 +469,10 @@ def classify(root, *, head=None, force_full=False, environment=None):
         if report["head_sha"] != head:
             raise FailClosed("head_commit_mismatch")
         report["head_tree"] = object_id(root, head + "^{tree}")
+        event_environment = os.environ if environment is None else environment
+        if event_environment.get("GITHUB_EVENT_NAME") == "schedule":
+            # Periodic coverage is full even with no changed paths or inputs.
+            raise FailClosed("scheduled_full")
         if force_full:
             raise FailClosed("forced_full")
         if object_id(root, "HEAD^{commit}") != head:
@@ -487,9 +492,8 @@ def classify(root, *, head=None, force_full=False, environment=None):
         validate_delta(changes, before, after)
         report["changed_paths"] = sorted({path for change in changes for path in change["paths"]})
         scope, reason, packages = classify_delta(changes, before, after)
-        event_environment = os.environ if environment is None else environment
-        if scope == "native-short" and event_environment.get("GITHUB_EVENT_NAME") != "pull_request":
-            scope, reason, packages = "full", "native_short_requires_pr", []
+        # event_base already proves the exact PR merge or complete main-push
+        # range. Both may use native-short; dispatch/unknown events remain full.
         if scope != "full":
             validate_contents(root, changes, before, after, packages)
         report.update({"scope": scope, "reason": reason, "go_packages": packages})

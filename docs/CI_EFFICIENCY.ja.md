@@ -12,18 +12,19 @@
 | `web/src` のTypeScript/TSX/CSS、既存の `web/browser/*.mjs` のブラウザー試験コード。通常文書との混在も可 | Linuxでフロント単体試験、同一lockからの2回の再生成一致、fixture安全性試験、実ブラウザー試験 |
 | 上記に伴う生成済み `web/dist` の変更 | フロントソース変更がある場合のみフロント範囲。再生成の一致は必須 |
 | `internal/servicepresets` または `internal/boundedlog` の確認済みGo変更。通常文書との混在も可 | 変更パッケージと、テストからの参照を含む推移的な逆依存をLinuxでrace検出・vet |
-| 下記の確認済みCLI表示ファイルだけを変更するPR。通常文書との混在も可 | 4ターゲットの短時間・安全性試験、ブラウザー、配布物・manifest検証。実時間lifecycle/leaseの3工程は未実行 |
+| PRまたはmainの確認済みCLI表示ファイル変更。通常文書との混在も可 | 4ターゲットの短時間・安全性試験、ブラウザー、配布物・manifest検証。実時間lifecycle/leaseの3工程は未実行 |
 | 通信、認証、Core、設定、タイマー、共通helper、依存・lock、ビルド設定、CI判定・workflow、その他不明なパス | Linux amd64/arm64、macOS arm64、Windows amd64の全native試験、ブラウザー、配布物・manifest検証 |
-| フロントとGoの混在、OS固有Go、cgo、未確認のimport、方針・出所情報のMarkdown、不正なmode/type、判定できない入力 | 全件 |
-| 手動の全件確認、すべてのプレリリース | 全件 |
+| 確認済みCLI表示・フロント・限定Goの組み合わせ | 4ターゲットの短時間・安全性試験、ブラウザー、配布物・manifest検証。実時間lifecycle/leaseの3工程は未実行 |
+| OS固有Go、cgo、未確認のimport、方針・出所情報のMarkdown、不正なmode/type、判定できない入力 | 全件 |
+| 毎日の定期全件確認、手動の全件確認、すべてのプレリリース | 全件 |
 
-### PR限定native-shortの段階導入
+### 確認済み変更のnative-short
 
-`native-short` の対象は `cmd/soba/help.go`、`cmd/soba/errors.go`、`cmd/soba/errors_test.go`、`cmd/soba/human_output.go`、`cmd/soba/human_output_test.go` の5ファイルだけです。新しいパス・import・build directive、他のソース区分との混在は全件に戻します。変更前後の両方の内容を確認します。確認済みPR mergeの差分全体が条件を満たす必要があり、最後の表示修正だけで先行するruntime変更を隠せません。
+`native-short` の対象は `cmd/soba/help.go`、`cmd/soba/errors.go`、`cmd/soba/errors_test.go`、`cmd/soba/human_output.go`、`cmd/soba/human_output_test.go` の5ファイルだけです。新しいパス・import・build directive、未確認の区分との混在は全件に戻します。既存のフロント・限定Goとの組み合わせは4ターゲットのnative-shortで確認します。文書・フロント・限定Goだけの場合は従来の限定範囲を維持します。変更前後の両方を確認し、混在時も変更対象の限定Goパッケージ全体を調べます。確認済みPR mergeまたはmain pushの差分全体が条件を満たす必要があり、最後の表示修正だけで先行するruntime変更を隠せません。生成assetには引き続き対応するフロントのソース変更が必要です。
 
-この段階で省くのは、direct-LANの自然rekey/idle lifecycle、guarded relayの実時間lease継続、relay-onlyの実時間lease/idle継続の3工程だけです。4ターゲットのrace/vet、IPC反復、Windows directory barrier、TCP/TLSのcontext制御、managed activation/restart、direct/relayの機能・復旧、合成expiry/rekey、ブラウザー、配布物、manifest検証は残します。独立したWeb 7件とproduct 2件のジョブも既存の実行条件と失敗扱いを維持します。試験の反復回数や製品タイマーは変更しません。
+この区分で省くのは、direct-LANの自然rekey/idle lifecycle、guarded relayの実時間lease継続、relay-onlyの実時間lease/idle継続の3工程だけです。4ターゲットのrace/vet、IPC反復、Windows directory barrier、TCP/TLSのcontext制御、managed activation/restart、direct/relayの機能・復旧、合成expiry/rekey、ブラウザー、配布物、manifest検証は残します。独立したWeb 7件とproduct 2件のジョブも既存のPR・手動実行条件と失敗扱いを維持し、定期全件実行では両方を要求します。試験の反復回数や製品タイマーは変更しません。
 
-main pushでは、この新しい区分を全件へ戻します。既存の文書・フロント・限定Goの扱いは変えず、定期実行も追加しません。今後mainの短時間検証を広げる前にも、下記の同一ソース全件検証を要求するリリース入口を維持します。短時間workflowの緑色だけではリリース条件を満たしません。この段階では通信・lifecycle変更は全件のままです。関連する長時間試験だけの選択や、定期全件検証は別の段階で扱います。
+正当性を確認したmain pushもPRと同じ限定native-short判定を使えます。新規作成・削除・force pushされたmainや未対応イベントは全件に戻します。このmain短縮を導入する前から、下記の同一ソース全件検証を要求するリリース入口を維持します。短時間workflowの緑色だけではリリース条件を満たしません。通信・lifecycle変更は全件のままです。対象ファイルの追加、関連する長時間試験だけの選択、試験回数の削減は行いません。毎日の全件実行は下記のとおりです。
 
 Goの対象リストは小さく限定しています。任意のGo変更を1環境だけで済ませる意味ではありません。OS固有ファイル、ビルド制約、確認済み境界を超える依存は全環境の対象です。限定Go実行は、統合試験のbuild tagも含む現在のimport関係から逆依存を選びます。実行するのは通常のLinux試験で、長時間native統合試験ではありません。依存関係を確定できない場合は通常Goパッケージ全件を実行します。コマンド失敗や実際のテスト成功が確認できない場合は失敗です。
 
@@ -55,7 +56,17 @@ PRの試験対象はActionsの `GITHUB_SHA` と、正確な `refs/pull/<number>/
 
 証拠は正確なcommit/tree、workflow・判定ソースのhash、現在の有効attempt、4つのnative runner targetと必須工程すべてを結び付けます。実時間試験、ブラウザー、manifest、ci-required、Web 7件、product 2件も対象です。入口と公開直前の両方で、読み取り専用GitHub APIを独立に確認します。保存JSONだけで成功を許可しません。同じソースの新しい全件成功は公開時に使えますが、新しい失敗は無視しません。証拠artifactの保持は90日です。監査記録であり、追加の署名済みリリース資産ではありません。配布物の署名・実インストール検証は独立したまま変更しません。
 
-この段階ではmainの短縮や定期実行を追加しません。既存の文書・フロント・限定Goの成功も、明示的な全件検証が揃うまでは全件リリース条件を満たしません。
+文書・フロント・限定Go・native-shortの成功は、明示的な全件検証が揃うまでは全件リリース条件を満たしません。定期実行は検証を追加しますが、この手動リリース証拠の代わりにはしません。
+
+## 毎日の全件検証
+
+確認済みworkflowは `.github/workflows/ci.yml` の `0 18 * * *` で、**毎日18:00 UTC、翌日の03:00 JST（UTC+09:00）**に1回の全件実行を予約します。このworkflowがdefault branch（`main`）へmergeされて初めて有効になります。変更がなくても、GitHubはdefault branchの最新commitを使います。判定は明示的に `full` とし、空の差分や文書だけの差分から `native-short` にはしません。
+
+定期実行は4つのnative targetと全実時間工程、ブラウザー、配布物・manifest、Web 7件、product 2件を要求します。`nightly-full-check` は `ci-required` と両acceptanceジョブを待ち、必須工程の実行結果も確認します。未実行・欠落・中止・失敗を成功の証拠にはしません。既存のPR・手動acceptanceの入口条件と通常の `ci-required` の依存関係は維持します。短時間PRの結果は、この定期専用aggregateを待ちません。実行ごとに別のconcurrency識別子を使うため、定期実行がpushや明示的な手動リリース監査を中止することはありません。キャッシュの信頼範囲と読み取り専用のrepository権限も変えません。
+
+長時間native・acceptanceジョブを含む全件CIが毎日1回増えます。頻度を減らす場合は安定性・runner時間・費用の実績を確認し、cronの1行をレビューして変更します。自動で頻度を減らしません。定期実行の成功だけでは、上記の手動リリース証拠を満たしません。新しい定期実行が失敗・保留中なら、解消するか同じソースの後続手動全件検証が成功するまでリリースを止めます。
+
+GitHubの混雑時、特に毎時00分には遅延や実行の欠落があり得ます。03:00 JSTは開始希望時刻であり、正確な開始時刻の保証ではありません。公開repositoryでは60日間の活動がないと定期workflowが無効になる場合があります。[GitHubの定期実行条件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)を参照してください。外部schedulerや新しい認証情報は使いません。
 
 ## 文書だけの実行結果の読み方
 
