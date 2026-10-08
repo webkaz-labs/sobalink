@@ -63,7 +63,7 @@ class ManagedSessionPolicyTests(unittest.TestCase):
         for tag, files in FILES.items():
             actual = {}
             for filename in files:
-                source = (ROOT / 'internal/directlan' / filename).read_text()
+                source = (ROOT / 'internal/directlan' / filename).read_text(encoding="utf-8")
                 self.assertTrue(source.startswith('//go:build ' + tag + '\n\n'))
                 self.assertNotRegex(source, r'(?m)^func (?:init|TestMain)\(')
                 found = inventory(source)
@@ -130,7 +130,7 @@ class ManagedSessionPolicyTests(unittest.TestCase):
 
     def test_both_native_workflows_are_ordered_required_and_bounded(self):
         for workflow in ('ci', 'prerelease'):
-            source = (ROOT / '.github/workflows' / (workflow + '.yml')).read_text()
+            source = (ROOT / '.github/workflows' / (workflow + '.yml')).read_text(encoding="utf-8")
             native = re.search(r'^  native:\n(.*?)(?=^  [\w-]+:|\Z)', source, re.M | re.S)[0]
             offsets = []
             for suite in ORDER:
@@ -161,12 +161,12 @@ class ManagedSessionPolicyTests(unittest.TestCase):
                     if path.is_file() and path not in allowed and path.suffix in ('.go', '.py', '.pyc', '.yml', '.yaml'):
                         self.assertNotIn(tag.encode(), path.read_bytes(), str(path.relative_to(ROOT)))
         for name in ('ci', 'prerelease'):
-            source = (ROOT / '.github/workflows' / (name + '.yml')).read_text()
+            source = (ROOT / '.github/workflows' / (name + '.yml')).read_text(encoding="utf-8")
             self.assertIn('GOFLAGS: -mod=readonly -tags=' + gate.PRODUCT_TAGS + '\n', source)
 
     def test_plain_synthetic_tests_stay_untagged(self):
         for filename in ('managed_session_test.go', 'managed_session_admission_test.go', 'admission_test.go'):
-            source = (ROOT / 'internal/directlan' / filename).read_text()
+            source = (ROOT / 'internal/directlan' / filename).read_text(encoding="utf-8")
             self.assertNotIn('//go:build', source)
 
 

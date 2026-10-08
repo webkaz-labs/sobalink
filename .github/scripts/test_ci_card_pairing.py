@@ -16,7 +16,7 @@ TAGS = "lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_use
 
 class CardPairingSelectionTests(unittest.TestCase):
     def test_candidate_is_one_opt_in_native_test_without_initializers(self):
-        source = (ROOT / "internal/core/device_card_pairing_integration_test.go").read_text()
+        source = (ROOT / "internal/core/device_card_pairing_integration_test.go").read_text(encoding="utf-8")
         self.assertTrue(source.startswith("//go:build lanlink_integration\n\n"))
         self.assertEqual(re.findall(r"^func (Test\w+)\(", source, re.MULTILINE), [TEST])
         self.assertNotRegex(source, r"(?m)^func (?:init|TestMain)\(")
@@ -25,7 +25,7 @@ class CardPairingSelectionTests(unittest.TestCase):
     def test_both_existing_native_lanes_select_and_require_exact_pass(self):
         for name in ("ci.yml", "prerelease.yml"):
             with self.subTest(workflow=name):
-                source = (ROOT / ".github/workflows" / name).read_text()
+                source = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
                 marker = "      - name: " + STEP + "\n"
                 self.assertEqual(source.count(marker), 1)
                 block = source.split(marker, 1)[1].split("      - name:", 1)[0]

@@ -142,6 +142,41 @@ func controlLifecycleRejectWork(t *testing.T, g *runtimeGeneration, want error) 
 	}
 }
 
+// A failed physical Close is terminal recovery, not reusable capacity pressure.
+// The retained wrapper and the rejection slot can reference the same raw socket;
+// neither reference authorizes another physical Close or owner detachment.
+func controlLifecycleRequireRetainedFailure(t *testing.T, g *runtimeGeneration, raw *controlLifecycleConn, want error) {
+	t.Helper()
+	controlLifecycleRequireCounts(t, g, 1, 0, 1)
+	g.mu.Lock()
+	sealed := g.sealed
+	var retained *controlStream
+	var retainedErr error
+	for stream, err := range g.failedControl {
+		retained, retainedErr = stream, err
+	}
+	g.mu.Unlock()
+	if !sealed || g.open() || g.controlOpen.Load() || retained == nil || retained.g != g || retained.raw != raw || !errors.Is(retainedErr, want) || raw.closeCalls.Load() != 1 {
+		t.Fatal("failed Close lost its exact owner/error, retried physical cleanup, or left admission open")
+	}
+	controlLifecycleRejectWork(t, g, ErrRecovery)
+	// Even repeating Close on the exact retained owner must return its original
+	// error without increasing the retained charge or touching the raw socket.
+	if err := retained.Close(); !errors.Is(err, want) {
+		t.Fatalf("retained Close lost error: %v", err)
+	}
+	controlLifecycleRequireCounts(t, g, 1, 0, 1)
+	if raw.closeCalls.Load() != 1 {
+		t.Fatal("retained Close retried the raw socket")
+	}
+	g.origin.mu.Lock()
+	attached := g.origin.g == g
+	g.origin.mu.Unlock()
+	if !attached {
+		t.Fatal("failed cleanup detached its generation origin")
+	}
+}
+
 func controlLifecycleArm(t *testing.T, n *Node) *ContextAttempt {
 	t.Helper()
 	a, err := n.ArmContextAttempt(n.cfg.Peers[0].Key, endpointmeta.BoundRequest{
@@ -431,8 +466,13 @@ func TestContextControlRepeatedCloseRetainsError(t *testing.T) {
 	}
 	controlLifecycleRequireCounts(t, g, 2, 1, 1)
 	work.finish()
-	controlLifecycleRequireCounts(t, g, 1, 0, 1)
-	controlLifecycleRejectWork(t, g, ErrCapacity)
+	controlLifecycleRequireRetainedFailure(t, g, raw, want)
+	g.mu.Lock()
+	cause := g.cause
+	g.mu.Unlock()
+	if !errors.Is(cause, ErrRecovery) || !errors.Is(cause, want) {
+		t.Fatalf("failed Close did not seal with recovery and original cause: %v", cause)
+	}
 	for i := 0; i < 2; i++ {
 		if err := controlLifecycleClose(t, n); !errors.Is(err, want) {
 			t.Fatalf("Node.Close %d lost terminal error: %v", i, err)
@@ -503,9 +543,26 @@ func TestContextControlRejectedCloseRetainsOneSlot(t *testing.T) {
 				work.finish()
 			}
 			controlLifecycleAwait(t, g.done, controlLifecycleWait, "failed rejection supervision")
-			controlLifecycleRequireCounts(t, g, 0, 0, 0)
+			controlLifecycleRequireRetainedFailure(t, g, first, want)
+			g.mu.Lock()
+			cause := g.cause
+			g.mu.Unlock()
+			if branch == "concurrent-stop" {
+				if !errors.Is(cause, net.ErrClosed) {
+					t.Fatalf("cleanup replaced the earlier stop cause: %v", cause)
+				}
+			} else if !errors.Is(cause, ErrRecovery) || !errors.Is(cause, want) {
+				t.Fatalf("rejection failure did not seal with original cause: %v", cause)
+			}
 			if err := controlLifecycleClose(t, n); !errors.Is(err, want) {
 				t.Fatalf("rejection error missing from terminal owner: %v", err)
+			}
+			controlLifecycleRequireRetainedFailure(t, g, first, want)
+			l.mu.Lock()
+			finalCalls, finalQueued := l.calls, len(l.queue)
+			l.mu.Unlock()
+			if finalCalls != 1 || finalQueued != 1 || second.closeCalls.Load() != 0 {
+				t.Fatal("terminal cleanup resumed rejected acceptance")
 			}
 		})
 	}
@@ -523,8 +580,23 @@ func TestContextControlRejectedCloseRetainsOneSlot(t *testing.T) {
 			t.Fatal("successful rejection retained a slot or skipped a close")
 		}
 		controlLifecycleRequireCounts(t, g, 0, 0, 0)
+		if !g.open() || !g.controlOpen.Load() {
+			t.Fatal("successful rejected cleanup sealed the generation")
+		}
+		work, err := g.acquireWork(nil, true)
+		if err != nil {
+			t.Fatalf("successful rejection did not release capacity: %v", err)
+		}
+		work.finish()
 		if err := controlLifecycleClose(t, n); err != nil {
 			t.Fatal(err)
+		}
+		controlLifecycleRequireCounts(t, g, 0, 0, 0)
+		g.origin.mu.Lock()
+		detached := g.origin.g == nil
+		g.origin.mu.Unlock()
+		if !detached {
+			t.Fatal("successful terminal cleanup retained its origin")
 		}
 	})
 }
@@ -582,11 +654,17 @@ func TestContextControlHandshakeCapacityThroughCleanup(t *testing.T) {
 				t.Fatal("returned handler retained a wire")
 			}
 			if failed {
-				controlLifecycleRequireCounts(t, g, 1, 0, 1)
-				controlLifecycleRejectWork(t, g, ErrCapacity)
+				controlLifecycleRequireRetainedFailure(t, g, raw, want)
+				g.mu.Lock()
+				cause := g.cause
+				g.mu.Unlock()
+				if !errors.Is(cause, ErrRecovery) || !errors.Is(cause, want) {
+					t.Fatalf("handshake cleanup did not seal with original failure: %v", cause)
+				}
 				if err := controlLifecycleClose(t, n); !errors.Is(err, want) {
 					t.Fatalf("terminal failed Close = %v", err)
 				}
+				controlLifecycleRequireRetainedFailure(t, g, raw, want)
 			} else {
 				controlLifecycleRequireCounts(t, g, 0, 0, 0)
 				work, err := g.acquireWork(nil, true)
