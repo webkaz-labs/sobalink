@@ -8,6 +8,8 @@ The local Web UI and guided CLI support normal service workflows; explicit CLI c
 
 [Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
+Source-build addition: [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports inspection and preview only; it does not add apply, operation results or remote management.
+
 ## Start and open the local UI
 
 Use mise **2026.9.18** to select the published alpha.5 prerelease, verify the version, then start it. Keep signature verification enabled:

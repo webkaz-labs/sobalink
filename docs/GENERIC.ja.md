@@ -8,6 +8,8 @@
 
 [案内付き CLI](CLI_GUIDE.ja.md) · [アプリ設定・RustDesk](CLIENT_HELPERS.ja.md) · [ローカル画面の操作](WEB_CONTROLS.ja.md) · [機能対応と受入](FEATURE_PARITY.ja.md) · [文書一覧](README.md)
 
+ソースビルドの追加機能: [ローカル転送設定リソース](RESOURCE_SETTINGS.ja.md)は内容・変更案の確認のみ対応します。適用・操作結果・遠隔管理は追加しません。
+
 ## 起動して画面を開く
 
 mise **2026.9.18** で公開済みalpha.5を選び、版を確認して起動します。署名の検査を有効のまま使います:
