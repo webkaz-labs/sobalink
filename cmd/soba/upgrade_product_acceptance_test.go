@@ -339,18 +339,31 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 				if tty == nil {
 					return errors.New("private PTY missing")
 				}
+				// ExtraFiles deliberately inherited FD3 into this owner. Restrict
+				// the next exec to the explicit stdout duplicate: otherwise the
+				// CLI's successor inherits a second slave and prevents PTY EOF.
+				if _, err := unix.FcntlInt(tty.Fd(), unix.F_SETFD, unix.FD_CLOEXEC); err != nil {
+					return errors.Join(err, tty.Close())
+				}
 				exe, err := os.Executable()
 				if err != nil {
-					return err
+					return errors.Join(err, tty.Close())
 				}
 				cmd := exec.Command(exe, "--product-activation-cli")
 				cmd.Env = os.Environ()
 				cmd.Dir = dir
 				cmd.Stdout = tty
-				if err := cmd.Start(); err != nil {
-					return err
+				startErr := cmd.Start()
+				// Start has duplicated this owned slave into the child's stdout.
+				// Release the parent's copy exactly once on either result.
+				closeErr := tty.Close()
+				if startErr != nil {
+					return errors.Join(startErr, closeErr)
 				}
 				_ = cmd.Process.Release()
+				if closeErr != nil {
+					return closeErr
+				}
 				cliStarted = true
 			}
 		}
