@@ -52,11 +52,21 @@ func TestResourceIdentityRestartRenameAndOwnership(t *testing.T) {
 	if c.resourceIdentity != id || c.resourceNonce == nonce || c.lanStartWriteRevision.Load() != before {
 		t.Fatal("reopen changed identity or authority accounting")
 	}
+	// Renaming retained state is a closed-lifecycle operation on all platforms.
+	// Live-handle substitution is covered separately where the OS permits it.
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
 	renamed := filepath.Join(t.TempDir(), "renamed")
 	if err := os.Rename(c.dir, renamed); err != nil {
 		t.Fatal(err)
 	}
 	c.dir = renamed
+	lock, err := config.AcquireLock(renamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
 	c.initializeResourceIdentity(lock)
 	if c.resourceIdentity != id {
 		t.Fatal("rename changed identity")

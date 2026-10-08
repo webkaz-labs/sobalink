@@ -580,21 +580,9 @@ func TestResourceOperationLiveOwnershipRequired(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "profile_replaced":
-				if err := os.Rename(c.dir, c.dir+"-moved"); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = os.RemoveAll(c.dir + "-moved") })
-				if err := os.Mkdir(c.dir, 0700); err != nil {
-					t.Fatal(err)
-				}
+				replaceResourceBinding(t, c.dir, "profile", owner)
 			case "lock_replaced":
-				path := filepath.Join(c.dir, "process.lock")
-				if err := os.Rename(path, path+"-moved"); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte{}, 0600); err != nil {
-					t.Fatal(err)
-				}
+				replaceResourceBinding(t, c.dir, "lock", owner)
 			}
 			writes := 0
 			c.atomicWrite = func(string, []byte) error { writes++; return nil }

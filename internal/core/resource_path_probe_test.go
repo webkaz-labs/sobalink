@@ -13,7 +13,7 @@ func TestResourceOperationRejectsBetweenStageSubstitution(t *testing.T) {
 	for _, kind := range []string{"profile", "journal", "lock"} {
 		for _, after := range []int{1, 2, 3} {
 			t.Run(kind+string(rune('0'+after)), func(t *testing.T) {
-				c, _ := resourceFixture(t)
+				c, owner := resourceFixture(t)
 				in := resourceApplyRequest(t, c, 3)
 				writes := 0
 				c.atomicWrite = func(path string, data []byte) error {
@@ -22,7 +22,7 @@ func TestResourceOperationRejectsBetweenStageSubstitution(t *testing.T) {
 						return err
 					}
 					if writes == after {
-						replaceResourceBinding(t, c.dir, kind)
+						replaceResourceBinding(t, c.dir, kind, owner)
 					}
 					return nil
 				}

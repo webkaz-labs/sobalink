@@ -29,27 +29,41 @@ func TestResourceLifecycleOwnership(t *testing.T) {
 	if err := owner.WithOwnership(dir, nil); err == nil {
 		t.Fatal("nil callback accepted")
 	}
-	moved := filepath.Join(t.TempDir(), "moved")
-	if err := os.Rename(dir, moved); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	// Even the same process.lock inode cannot authorize a replaced profile root.
-	if err := os.Link(filepath.Join(moved, "process.lock"), filepath.Join(dir, "process.lock")); err == nil {
+	activeDir := dir
+	t.Run("live-root-substitution", func(t *testing.T) {
+		moved := filepath.Join(t.TempDir(), "moved")
+		if err := os.Rename(dir, moved); err != nil {
+			if !resourceOpenHandleRenameDenied(err) {
+				t.Fatal(err)
+			}
+			if err := owner.WithOwnership(dir, func() error { return nil }); err != nil {
+				t.Fatal("blocked rename changed lifecycle ownership", err)
+			}
+			if _, err := os.Lstat(moved); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("blocked rename created a destination", err)
+			}
+			t.Skip("Windows denied live-root substitution; original ownership remains valid")
+		}
+		activeDir = moved
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		// Even the same process.lock inode cannot authorize a replaced root.
+		if err := os.Link(filepath.Join(moved, "process.lock"), filepath.Join(dir, "process.lock")); err != nil {
+			t.Fatal(err)
+		}
 		if err := owner.WithOwnership(dir, callback); err == nil || called {
 			t.Fatal("replaced directory accepted")
 		}
-	}
-	if err := owner.WithOwnership(moved, callback); err != nil {
-		t.Fatal("renamed directory rejected", err)
-	}
+		if err := owner.WithOwnership(moved, callback); err != nil {
+			t.Fatal("renamed directory rejected", err)
+		}
+	})
 	if err := owner.Close(); err != nil {
 		t.Fatal(err)
 	}
 	called = false
-	if err := owner.WithOwnership(moved, callback); err == nil || called {
+	if err := owner.WithOwnership(activeDir, callback); err == nil || called {
 		t.Fatal("closed owner accepted")
 	}
 }
