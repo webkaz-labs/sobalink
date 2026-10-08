@@ -339,3 +339,53 @@ func TestWebHandoffExpiredUnclaimedLeaseCannotBeRevived(t *testing.T) {
 		t.Fatal("expired unclaimed capability revived")
 	}
 }
+
+// Use the real wire encoding rather than assigning the destination struct:
+// false restartRequired and empty binding fields are omitted by JSON.
+func TestSharedUpgradeControllerUsesFreshSuccessorJSONSnapshot(t *testing.T) {
+	in := handoffFixture().Intent
+	for _, tc := range []struct {
+		name      string
+		mutate    func(*core.UpgradeProgress)
+		wantError bool
+	}{
+		{name: "false_restart_omitted"},
+		{name: "missing_peer", mutate: func(p *core.UpgradeProgress) { p.PeerID = "" }, wantError: true},
+		{name: "missing_deadline", mutate: func(p *core.UpgradeProgress) { p.Deadline = "" }, wantError: true},
+		{name: "still_requires_restart", mutate: func(p *core.UpgradeProgress) { p.RestartRequired = true }, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls, restarts := 0, 0
+			query := func(name string, payload any, result any) error {
+				if name != "direct-lan.upgrade.run" || payload.(core.UpgradeIntent) != in {
+					t.Fatal("reviewed intent changed")
+				}
+				calls++
+				reply := core.UpgradeProgress{State: "preparing", PeerID: in.PeerID, Deadline: in.Deadline}
+				if calls == 1 {
+					reply.State, reply.RestartRequired = "restart-required", true
+				} else if tc.mutate != nil {
+					tc.mutate(&reply)
+				}
+				raw, err := json.Marshal(reply)
+				if err != nil {
+					return err
+				}
+				return json.Unmarshal(raw, result)
+			}
+			progress, err := applyManagedUpgradeIntent(in, query, func() error { restarts++; return nil })
+			if calls != 2 || restarts != 1 {
+				t.Fatal("unexpected restart or query count")
+			}
+			if tc.wantError {
+				if !errors.Is(err, errUpgradeSuccessor) {
+					t.Fatal("invalid successor snapshot was accepted")
+				}
+				return
+			}
+			if err != nil || progress.State != "preparing" || progress.RestartRequired || progress.PeerID != in.PeerID || progress.Deadline != in.Deadline {
+				t.Fatal("fresh successor snapshot retained old fields")
+			}
+		})
+	}
+}

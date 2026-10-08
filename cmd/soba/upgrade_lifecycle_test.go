@@ -163,3 +163,71 @@ func TestUpgradeApplyRefusesRedirectedOutputBeforeIPC(t *testing.T) {
 		t.Fatal("redirected apply accepted")
 	}
 }
+
+// Pure CLI orchestration: fake terminal/admission and control callbacks only;
+// no actual IPC, terminal, process, browser or authentication is opened.
+func TestUpgradeCLIStatusUsesFreshJSONSnapshot(t *testing.T) {
+	oldPrivate, oldPause := loginPrivateTerminal, loginPause
+	t.Cleanup(func() { loginPrivateTerminal, loginPause = oldPrivate, oldPause })
+	loginPrivateTerminal = func(io.Writer) bool { return true }
+	loginPause = func(ctx context.Context) error { return ctx.Err() }
+	for _, missing := range []string{"none", "peer", "deadline"} {
+		t.Run(missing, func(t *testing.T) {
+			deadline := time.Now().UTC().Add(time.Minute).Truncate(time.Second).Format(time.RFC3339)
+			args := []string{"--peer", "synthetic-peer", "--deadline", deadline, "--apply", "--review", "synthetic-review"}
+			calls := 0
+			client := func(_ context.Context, _ string, command string, result any) error {
+				var response any
+				if command == lifecycleIdentityCommand {
+					response = upgradeIdentity{ProcessID: 42, Instance: "synthetic-instance"}
+				} else {
+					if !strings.HasPrefix(command, lifecycleBoundPrefix) {
+						t.Fatal("unbound command")
+					}
+					var bound upgradeBound
+					if json.Unmarshal([]byte(strings.TrimPrefix(command, lifecycleBoundPrefix)), &bound) != nil || bound.ProcessID != 42 || bound.Instance != "synthetic-instance" {
+						t.Fatal("binding changed")
+					}
+					var request struct {
+						Name string `json:"name"`
+					}
+					if json.Unmarshal([]byte(bound.Command), &request) != nil {
+						t.Fatal("invalid command")
+					}
+					calls++
+					progress := core.UpgradeProgress{State: "preparing", PeerID: "synthetic-peer", Deadline: deadline}
+					if calls == 1 {
+						if request.Name != "direct-lan.upgrade.run" {
+							t.Fatal("unexpected initial query")
+						}
+					} else {
+						if calls != 2 || request.Name != "direct-lan.upgrade.status" {
+							t.Fatal("unexpected status query")
+						}
+						progress.State = "network-started"
+						if missing == "peer" {
+							progress.PeerID = ""
+						}
+						if missing == "deadline" {
+							progress.Deadline = ""
+						}
+					}
+					response = progress
+				}
+				raw, err := json.Marshal(response)
+				if err != nil {
+					return err
+				}
+				return json.Unmarshal(raw, result)
+			}
+			var out bytes.Buffer
+			err := managedUpgradeCLI(context.Background(), args, "synthetic-profile", "en", false, false, &out, client)
+			if calls != 2 || (err == nil) != (missing == "none") {
+				t.Fatal("status binding verdict incorrect")
+			}
+			if missing != "none" && !strings.Contains(err.Error(), "no longer matches") {
+				t.Fatal("missing binding was not rejected")
+			}
+		})
+	}
+}

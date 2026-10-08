@@ -138,9 +138,11 @@ func managedUpgradeCLI(ctx context.Context, args []string, dir, locale string, j
 		if err := loginPause(ctx); err != nil {
 			return fmt.Errorf("%s: %w", text(ja, "Upgrade observation ended; confirmation is not implied. Inspect upgrade status before retrying", "更新の確認を終了しました。完了を意味しません。再試行前に更新状態を確認してください"), err)
 		}
-		if err := query("direct-lan.upgrade.status", map[string]any{}, &progress); err != nil {
+		var next core.UpgradeProgress
+		if err := query("direct-lan.upgrade.status", map[string]any{}, &next); err != nil {
 			return err
 		}
+		progress = next
 	}
 }
 
@@ -178,9 +180,14 @@ func applyManagedUpgradeIntent(intent core.UpgradeIntent, query func(string, any
 		if err := restart(); err != nil {
 			return progress, err
 		}
-		if err := query("direct-lan.upgrade.run", intent, &progress); err != nil {
-			return progress, err
+		// Each IPC reply is a complete snapshot. JSON omits false/empty fields,
+		// so decoding into the old reply would retain its restart requirement
+		// (or stale peer/deadline) after the verified successor has started.
+		var successor core.UpgradeProgress
+		if err := query("direct-lan.upgrade.run", intent, &successor); err != nil {
+			return successor, err
 		}
+		progress = successor
 		if progress.RestartRequired || progress.PeerID != intent.PeerID || progress.Deadline != intent.Deadline {
 			return progress, errUpgradeSuccessor
 		}

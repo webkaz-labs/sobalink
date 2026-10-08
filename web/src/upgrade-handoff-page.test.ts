@@ -18,11 +18,17 @@ function fixture(locale: 'en' | 'ja' = 'en') {
   const calls: { path: string; options: { headers: Record<string, string> } }[] = []
   const review = { peerId: 'synthetic-peer', revision: 'synthetic-review', deadline: new Date(Date.now() + 60000).toISOString(), localEndpoint: '192.0.2.1:1234', peerEndpoint: '192.0.2.2:1234', scope: { family: 'ipv4', prefixes: ['192.0.2.0/24'] } }
   const results: Record<string, unknown> = { '/claim': { token: 'b'.repeat(64), review, locale }, '/commit': { state: 'acknowledgement' }, '/ack': { state: 'restarting' }, '/status': { state: 'ready', url: 'http://127.0.0.1:54321', code: 'synthetic-private-code' }, '/pulse': { state: 'ready' }, '/open': { state: 'open-requested' }, '/cancel': { state: 'cancelled' } }
-  const fetch = vi.fn(async (path: string, options: { headers: Record<string, string> }) => { calls.push({ path, options }); return { ok: results[path] !== false, json: async () => results[path] } })
+  const statuses: Record<string, number> = {}, failures: Record<string, Error> = {}
+  const fetch = vi.fn(async (path: string, options: { headers: Record<string, string> }) => {
+    calls.push({ path, options })
+    if (failures[path]) throw failures[path]
+    const status = statuses[path] ?? (results[path] === false ? 500 : 200)
+    return { ok: status >= 200 && status < 300, status, json: async () => results[path] }
+  })
   new Function('window', 'document', 'fetch', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'URL', 'AbortSignal', 'previousOrigin', script)(window, document, fetch, setTimeout, clearTimeout, setInterval, clearInterval, URL, { timeout: () => ({}) }, 'http://127.0.0.1:12345')
   const transfer = (source: unknown = parent, origin = 'http://127.0.0.1:12345') => listeners.get('message')?.({ source, origin, data: { kind: 'sobalink-upgrade-transfer', token: 'a'.repeat(64) } })
   const click = (id: string) => elements.get(id)?.onclick?.()
-  return { parent, listeners, elements, document, window, calls, review, results, fetch, transfer, click }
+  return { parent, listeners, elements, document, window, calls, review, results, statuses, failures, fetch, transfer, click }
 }
 async function drain() { for (let i = 0; i < 8; i++) await Promise.resolve() }
 describe('actual temporary restart page script', () => {
@@ -83,4 +89,38 @@ describe('actual temporary restart page script', () => {
     expect(f.elements.get('continue')?.hidden).toBe(true)
     expect(f.calls.some(call => call.path === '/cancel')).toBe(true)
   })
+  it.each(['/claim', '/commit', '/ack', '/status', '/pulse'])('terminal HTTP410 on %s clears without redundant cancellation traffic', async path => {
+    const f = fixture()
+    if (path === '/claim') f.statuses[path] = 410
+    await f.transfer()
+    if (path !== '/claim') {
+      f.statuses[path] = 410
+      if (path === '/pulse') await vi.advanceTimersByTimeAsync(1000)
+      else { await f.click('continue'); await drain() }
+    }
+    expect(f.calls.some(call => call.path === path)).toBe(true)
+    expect(f.calls.some(call => call.path === '/cancel')).toBe(false)
+    expect(f.elements.get('continue')?.hidden).toBe(true)
+    expect(f.elements.get('management')?.value).toBe('')
+    expect(f.elements.get('code')?.textContent).toBe('')
+    expect(f.parent.postMessage.mock.calls.some(([value]) => value.kind === 'sobalink-upgrade-ended')).toBe(true)
+    const count = f.calls.length
+    f.listeners.get('pagehide')?.({})
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(f.calls).toHaveLength(count)
+  })
+  it.each([400, 403, 409, 500])('nonterminal HTTP%s still requests cancellation after uncertain confirmation', async status => {
+    const f = fixture(); await f.transfer(); f.statuses['/commit'] = status
+    await f.click('continue'); await drain()
+    expect(f.calls.some(call => call.path === '/cancel')).toBe(true)
+    expect(f.calls.some(call => call.path === '/ack')).toBe(false)
+  })
+  it('network failure with an untrusted status property still requests cancellation', async () => {
+    const f = fixture(); await f.transfer()
+    f.failures['/commit'] = Object.assign(new Error('synthetic network failure'), { status: 410 })
+    await f.click('continue'); await drain()
+    expect(f.calls.some(call => call.path === '/cancel')).toBe(true)
+    expect(f.calls.some(call => call.path === '/ack')).toBe(false)
+  })
+
 })
