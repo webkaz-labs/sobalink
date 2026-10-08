@@ -144,9 +144,9 @@ The new route tests must additionally exercise two independent processes with ac
 
 ## Publication gates
 
-The prerelease workflow starts only through an explicit manual `workflow_dispatch` with a candidate version and exact tested commit. It requires that commit to be the current main with successful canonical CI. Publication must:
+The prerelease workflow starts only through an explicit manual `workflow_dispatch` with a candidate version and exact tested commit. It requires that commit to be the current main with an explicit successful `Cross-platform CI` manual run using `force_full=true`. The exact-source proof audits current effective jobs, including four native targets, all real-time checks and both activation suites; ordinary short CI success is insufficient. See [full-validation selection and retry rules](CI_EFFICIENCY.en.md#exact-source-full-validation-before-release) ([日本語](CI_EFFICIENCY.ja.md#リリース前の正確な同一ソース全件検証)). Publication must:
 
-1. Select a new explicit prerelease version and exact reviewed main commit, with successful CI for that commit
+1. Select a new explicit prerelease version and exact reviewed main commit, then establish its explicit full-CI proof with `force_full=true`
 2. Execute the four native race/vet/package jobs and the actual Go-backed local-browser acceptance job; record failures and unperformed real-network tests accurately
 3. Reproduce locked frontend assets, build every package twice, compare digests, and execute the packaged CLI with Japanese/English, native locale fallback and stable JSON checks
 4. Include build metadata, complete runtime dependency/SBOM/notice inventories, checksums and verified GitHub artifact provenance

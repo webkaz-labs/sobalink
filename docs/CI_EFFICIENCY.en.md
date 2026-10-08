@@ -23,7 +23,7 @@ The `native-short` allowlist contains exactly `cmd/soba/help.go`, `cmd/soba/erro
 
 This first rollout omits only natural direct-LAN rekey/idle lifecycle, guarded relay real-time lease continuity, and relay-only real-time lease/idle continuity. Four-target race/vet, repeated IPC, Windows directory barriers, context TCP/TLS control, managed activation/restart, functional direct/relay recovery, synthetic expiry/rekey, browser, packages and manifest validation remain. The independent seven-case Web and two-case product jobs retain their existing predicates and failure behavior. Test repetition counts and production timers are unchanged.
 
-Main pushes map this new scope back to full. Existing docs/frontend/scoped-Go behavior is unchanged; no schedule is added. Before any later expansion of short main validation, the release entry gate must require complete validation for the exact source, rather than accepting a short green workflow. Related transport/lifecycle changes remain full in this phase; per-family long-test selection and periodic full validation are separate later work.
+Main pushes map this new scope back to full. Existing docs/frontend/scoped-Go behavior is unchanged; no schedule is added. Before any later expansion of short main validation, keep the exact-source full validation gate below in place; a short green workflow cannot establish release eligibility. Related transport/lifecycle changes remain full in this phase; per-family long-test selection and periodic full validation are separate later work.
 
 The Go allowlist is deliberately small. It is not permission to run any Go change on one operating system. OS-specific files, build constraints and dependencies outside the reviewed package boundary require the full matrix. The scoped runner uses current Go import graphs, including integration-tag variants for reverse-dependency selection, but executes ordinary Linux tests rather than the long native integration suites. If graph discovery is uncertain, it runs all ordinary Go packages. Failed commands and missing actual test passes remain failures.
 
@@ -44,6 +44,18 @@ The classifier checks full Git tree inventories, both rename endpoints, file mod
 Repository protection settings need no change when this workflow is adopted: keep requiring `ci-required`. Main runs have separate concurrency identities, so a later documentation push cannot cancel an earlier code-validation run. Updated commits to the same PR may still cancel superseded PR runs.
 
 To request every check, use **Actions → Cross-platform CI → Run workflow** and leave **force_full** checked. There is no force-skip override. Release workflows do not consume the change-impact plan. A partial job rerun without complete current-attempt evidence cannot issue a full receipt.
+
+## Exact-source full validation before release
+
+After the reviewed commit is on main, run **Cross-platform CI → Run workflow → force_full=true** for that exact commit. The prerelease entry requires an explicit main `workflow_dispatch` full-validation run. Every manual CI dispatch is conservatively treated as full intent; a dispatch with `force_full=false` cannot qualify by omitting required checks. An ordinary main push, even if green, is not this explicit release proof.
+
+The release gate audits the latest manual attempt by attempt-start time, not merely run ID or the latest successful result. A newer failed/cancelled full attempt blocks an older success; any pending manual validation must finish or be cancelled and superseded by a later successful full attempt. A newer ordinary canonical CI success does not erase unchanged full evidence. A newer ordinary failure, cancellation or pending run blocks publication until resolved or superseded by a later successful full validation. Unclear chronology and incomplete API inventories fail closed.
+
+GitHub's effective current-attempt jobs can include carried-forward successful work when only failed jobs are rerun. Those current-attempt records are accepted, including original timestamps. The verifier never assembles successes across different runs or manually fills missing jobs from old attempts. Past failures remain in GitHub's history.
+
+The proof binds exact commit/tree, workflow and policy source hashes, current effective attempt, all four native runner targets and every required named step, including real-time gates, browser, manifest, ci-required, Web7 and product2. Both the entry gate and publication-time check independently query read-only GitHub APIs. A saved JSON receipt cannot authorize a pass by itself. Publication can use a newer successful full attempt for the same source, but cannot ignore a newer failure. Proof artifacts are retained for 90 days; they are audit evidence, not additional signed release assets. Distribution signing and installed-package checks remain independent and unchanged.
+
+This phase adds neither shorter main validation nor periodic execution. Existing docs/frontend/scoped-Go successes also fail full-release eligibility until a complete explicit full run is established.
 
 ## Reading a documentation-only result
 

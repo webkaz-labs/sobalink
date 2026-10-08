@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       tested_commit:
-        description: 'Exact current main SHA with successful Cross-platform CI (40 lowercase hex characters)'
+        description: 'Exact current main SHA with successful forced full CI (40 lowercase hex characters)'
         required: true
         type: string
 
@@ -50,17 +50,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
           TESTED_COMMIT: ${{ inputs.tested_commit }}
-        run: python .github/scripts/release-validation.py gate
+        run: python .github/scripts/release-validation.py gate --proof "$RUNNER_TEMP/ci-full-proof.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-validation-tools
           path: |
             .github/scripts/release-validation.py
+            .github/scripts/ci_full_validation.py
             .github/scripts/verify-installed.py
             .github/scripts/offline-smoke.py
             .github/scripts/source_provenance.py
           if-no-files-found: error
           retention-days: 14
+
+      - name: Preserve exact-source full-CI proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-full-validation-proof
+          path: ${{ runner.temp }}/ci-full-proof.json
+          if-no-files-found: error
+          retention-days: 90
 
   native:
     needs: gate
@@ -640,6 +649,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.gate.outputs.version }}
@@ -658,6 +668,10 @@ jobs:
         with:
           name: release-validation-tools
           path: tools
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-full-validation-proof
+          path: proof
       - name: Publish only the verified draft at the exact source commit
         shell: bash
         run: |
@@ -668,8 +682,17 @@ jobs:
             --cert-oidc-issuer https://token.actions.githubusercontent.com \
             --source-digest "$TESTED_COMMIT" --source-ref refs/heads/main --deny-self-hosted-runners
           gh release upload "$RELEASE_TAG" dist/packslip.sigstore.json --repo "$GITHUB_REPOSITORY" --clobber
-          python tools/release-validation.py publish-ready
+          python tools/release-validation.py publish-ready --proof proof/ci-full-proof.json --revalidated-proof proof/publication-full-proof.json
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+      - name: Preserve publication-time full-CI proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: publication-ci-full-validation-proof
+          path: proof/publication-full-proof.json
+          if-no-files-found: warn
+          retention-days: 90
+
 
   verify-published:
     needs: [gate, publish]
