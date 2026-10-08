@@ -32,6 +32,8 @@ func helpTopic(topic string, ja bool) (string, bool) {
 		return help, true
 	}
 	switch topic {
+	case "resource":
+		return text(ja, resourceHelpEN, resourceHelpJA), true
 	case "receive":
 		return text(ja,
 			"soba receive recovery confirm [--reviewed] [--json]\n\nWithout --reviewed, preview only. Review previous default, per-peer and manual receive folders, unfinished staging, and saved output. Keep saved files. Resolve unfinished old receives before confirming so no untracked partial data remains. Unknown old locations need your own review. --reviewed durably initializes only a missing legacy index; it cannot discard damaged records. Start soba first; this operation uses local control only.",
