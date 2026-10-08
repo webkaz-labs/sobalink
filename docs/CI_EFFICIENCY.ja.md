@@ -12,9 +12,18 @@
 | `web/src` のTypeScript/TSX/CSS、既存の `web/browser/*.mjs` のブラウザー試験コード。通常文書との混在も可 | Linuxでフロント単体試験、同一lockからの2回の再生成一致、fixture安全性試験、実ブラウザー試験 |
 | 上記に伴う生成済み `web/dist` の変更 | フロントソース変更がある場合のみフロント範囲。再生成の一致は必須 |
 | `internal/servicepresets` または `internal/boundedlog` の確認済みGo変更。通常文書との混在も可 | 変更パッケージと、テストからの参照を含む推移的な逆依存をLinuxでrace検出・vet |
+| 下記の確認済みCLI表示ファイルだけを変更するPR。通常文書との混在も可 | 4ターゲットの短時間・安全性試験、ブラウザー、配布物・manifest検証。実時間lifecycle/leaseの3工程は未実行 |
 | 通信、認証、Core、設定、タイマー、共通helper、依存・lock、ビルド設定、CI判定・workflow、その他不明なパス | Linux amd64/arm64、macOS arm64、Windows amd64の全native試験、ブラウザー、配布物・manifest検証 |
 | フロントとGoの混在、OS固有Go、cgo、未確認のimport、方針・出所情報のMarkdown、不正なmode/type、判定できない入力 | 全件 |
 | 手動の全件確認、すべてのプレリリース | 全件 |
+
+### PR限定native-shortの段階導入
+
+`native-short` の対象は `cmd/soba/help.go`、`cmd/soba/errors.go`、`cmd/soba/errors_test.go`、`cmd/soba/human_output.go`、`cmd/soba/human_output_test.go` の5ファイルだけです。新しいパス・import・build directive、他のソース区分との混在は全件に戻します。変更前後の両方の内容を確認します。確認済みPR mergeの差分全体が条件を満たす必要があり、最後の表示修正だけで先行するruntime変更を隠せません。
+
+この段階で省くのは、direct-LANの自然rekey/idle lifecycle、guarded relayの実時間lease継続、relay-onlyの実時間lease/idle継続の3工程だけです。4ターゲットのrace/vet、IPC反復、Windows directory barrier、TCP/TLSのcontext制御、managed activation/restart、direct/relayの機能・復旧、合成expiry/rekey、ブラウザー、配布物、manifest検証は残します。独立したWeb 7件とproduct 2件のジョブも既存の実行条件と失敗扱いを維持します。試験の反復回数や製品タイマーは変更しません。
+
+main pushでは、この新しい区分を全件へ戻します。既存の文書・フロント・限定Goの扱いは変えず、定期実行も追加しません。今後mainの短時間検証を広げる前には、短時間workflowの緑色だけを認めず、正確な同一ソースの全件検証を要求するリリース入口が必要です。この段階では通信・lifecycle変更は全件のままです。関連する長時間試験だけの選択や、定期全件検証は別の段階で扱います。
 
 Goの対象リストは小さく限定しています。任意のGo変更を1環境だけで済ませる意味ではありません。OS固有ファイル、ビルド制約、確認済み境界を超える依存は全環境の対象です。限定Go実行は、統合試験のbuild tagも含む現在のimport関係から逆依存を選びます。実行するのは通常のLinux試験で、長時間native統合試験ではありません。依存関係を確定できない場合は通常Goパッケージ全件を実行します。コマンド失敗や実際のテスト成功が確認できない場合は失敗です。
 
@@ -28,7 +37,7 @@ PRでは確認済みbase親と試験対象のmerge commit間の変更全体を�
 
 完全なGit tree一覧、renameの両端、ファイルmode、リポジトリとイベントの同一性を確認します。履歴不足、不完全・不正な差分、不明な変更は全件に戻します。集約側も差分判定を再実行するため、artifactの記載だけでは検証範囲を縮小できません。判定処理の失敗によってアプリ検証を無条件に省略しません。
 
-必須ステータスは引き続き `ci-required` です。アプリジョブが対象外でも必ず起動し、今回のattemptで必要なジョブと各工程が実際に成功したことを確認します。文書だけの場合は **「Documentation only; application tests, builds and packages NOT RUN」** と表示します。フロントと限定Goも実行した範囲を明示します。全native・ブラウザー・配布物を実行した場合のみ `full_native=true` とし、対象外は `not_run` に記録します。試験成功や再利用可能な全件検証として扱いません。
+必須ステータスは引き続き `ci-required` です。アプリジョブが対象外でも必ず起動し、今回のattemptで必要なジョブと各工程が実際に成功したことを確認します。文書だけの場合は **「Documentation only; application tests, builds and packages NOT RUN」** と表示します。フロントと限定Goも実行した範囲を明示します。全native・ブラウザー・配布物を実行した場合のみ `full_native=true` とします。schema 3の `native-short` 記録は各targetを `short_checks_passed`、各targetの `long_checks` を `not_run`、`full_native=false` とし、ブラウザーとmanifestは実際に成功した場合だけ成功を記録します。他の未実行範囲は `not_run` のままです。短時間検証を再利用可能な全件検証として扱いません。省略した実時間3工程も明示的なskipを要求し、失敗・欠落・未実行を成功に読み替えることは認めません。
 
 このworkflowの採用にリポジトリ保護設定の変更は不要です。`ci-required` の必須指定を維持します。mainの各実行は別のconcurrency識別子を使うため、後の文書pushが実行中のコード検証を中止しません。同じPRの更新では、古いPR実行の中止を引き続き許可します。
 

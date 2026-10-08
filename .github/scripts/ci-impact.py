@@ -15,14 +15,29 @@ import re
 import subprocess
 import sys
 
-VERSION = 2
-POLICY_ID = "minimum-ci-v2"
+VERSION = 3
+POLICY_ID = "minimum-ci-v3"
 REPOSITORY = "webkaz-labs/sobalink"
 GO_IMPORTS = {
     "internal/servicepresets": frozenset(("testing",)),
     "internal/boundedlog": frozenset(("bytes", "errors", "fmt", "os", "path/filepath", "sync", "testing")),
 }
 GO_PACKAGES = frozenset(GO_IMPORTS)
+# Phase 1 is PR-only and intentionally file-level. These presentation paths do
+# not implement transport/lease/rekey policy. New paths and imports stay full;
+# native-short still runs all four native short/safety and package gates.
+NATIVE_SHORT_IMPORTS = {
+    "cmd/soba/help.go": frozenset(("encoding/json",)),
+    "cmd/soba/errors.go": frozenset(("context", "encoding/json", "errors", "fmt", "io")),
+    "cmd/soba/errors_test.go": frozenset(("bytes", "context", "encoding/json", "errors", "strings", "testing",
+                                         "github.com/webkaz-labs/sobalink/internal/control")),
+    "cmd/soba/human_output.go": frozenset(("context", "encoding/json", "fmt", "io", "net", "strconv", "strings",
+                                          "github.com/webkaz-labs/sobalink/internal/control",
+                                          "github.com/webkaz-labs/sobalink/internal/core")),
+    "cmd/soba/human_output_test.go": frozenset(("bytes", "context", "encoding/json", "errors", "strings", "testing",
+                                               "github.com/webkaz-labs/sobalink/internal/core")),
+}
+
 GO_PLATFORMS = frozenset("""
     aix android darwin dragonfly freebsd hurd illumos ios js linux nacl netbsd
     openbsd plan9 solaris wasip1 windows zos 386 amd64 amd64p32 arm arm64 arm64be
@@ -170,6 +185,8 @@ def path_kind(path):
             and parts[:3] == ["web", "dist", "assets"]
             and path.endswith((".js", ".css"))):
         return "dist"
+    if path in NATIVE_SHORT_IMPORTS:
+        return "native-short"
     package, _, filename = path.rpartition("/")
     if package in GO_PACKAGES and filename.endswith(".go"):
         stem = filename[:-3].removesuffix("_test")
@@ -191,6 +208,10 @@ def classify_delta(changes, before, after):
         return "full", "generated_assets_without_source_change", []
     if "go" in kinds and kinds.intersection(("frontend", "browser", "dist")):
         return "full", "mixed_frontend_and_go", []
+    if "native-short" in kinds:
+        if kinds - {"native-short", "docs"}:
+            return "full", "mixed_native_short_change", []
+        return "native-short", "reviewed_presentation_pr", []
     if "go" in kinds:
         packages = sorted({"./" + path.rpartition("/")[0]
                            for path in paths if path_kind(path) == "go"})
@@ -204,7 +225,7 @@ def validate_contents(root, changes, before, after, packages):
     # Inspect both old and new blobs, including deleted/renamed prose. Inspect
     # whole eligible Go packages so an unchanged platform file cannot hide.
     paths = {path for change in changes for path in change["paths"]
-             if path_kind(path) in ("docs", "frontend", "browser", "dist")} | ROOT_DOCS
+             if path_kind(path) in ("docs", "frontend", "browser", "dist", "native-short")} | ROOT_DOCS
     for tree in (before, after):
         for package in packages:
             prefix = package.removeprefix("./") + "/"
@@ -230,7 +251,7 @@ def validate_contents(root, changes, before, after, packages):
             if any(ord(char) < 32 and char not in "\t\r\n" or ord(char) == 127
                    for char in content):
                 raise FailClosed("non_text_content")
-            if path_kind(path) == "go":
+            if path_kind(path) in ("go", "native-short"):
                 # Directives can introduce platform, embed or link dependencies.
                 # Reject C/unsafe imports conservatively, even inside comments.
                 if re.search(r"//\s*(?:go:|\+build\b)|[\"`]C[\"`]|[\"`]unsafe[\"`]",
@@ -245,7 +266,9 @@ def validate_go_imports(path, content):
     tokens = re.findall(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|`[^`]*`|[A-Za-z_][A-Za-z_0-9]*|[^\s]',
                         content, flags=re.DOTALL)
     tokens = [token for token in tokens if not token.startswith(("//", "/*"))]
-    allowed = GO_IMPORTS[path.rpartition("/")[0]]
+    allowed = NATIVE_SHORT_IMPORTS.get(path)
+    if allowed is None:
+        allowed = GO_IMPORTS[path.rpartition("/")[0]]
     for index, token in enumerate(tokens):
         if token != "import":
             continue
@@ -455,6 +478,9 @@ def classify(root, *, head=None, force_full=False, environment=None):
         validate_delta(changes, before, after)
         report["changed_paths"] = sorted({path for change in changes for path in change["paths"]})
         scope, reason, packages = classify_delta(changes, before, after)
+        event_environment = os.environ if environment is None else environment
+        if scope == "native-short" and event_environment.get("GITHUB_EVENT_NAME") != "pull_request":
+            scope, reason, packages = "full", "native_short_requires_pr", []
         if scope != "full":
             validate_contents(root, changes, before, after, packages)
         report.update({"scope": scope, "reason": reason, "go_packages": packages})

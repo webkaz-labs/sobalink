@@ -55,6 +55,23 @@ class ImpactRulesTests(unittest.TestCase):
                 self.assertEqual(classify_paths(path)[0], "full")
                 self.assertEqual(classify_paths("README.md", path)[0], "full")
 
+    def test_native_short_is_a_closed_presentation_allowlist(self):
+        for path in impact.NATIVE_SHORT_IMPORTS:
+            self.assertEqual(classify_paths(path, "README.md"),
+                             ("native-short", "reviewed_presentation_pr", []))
+            for extra in ("cmd/soba/lifecycle.go", "internal/directlan/session.go", "internal/lanlink/lease.go",
+                          "internal/routecat/relay.go", "internal/control/server.go", "internal/deadline/time.go",
+                          "go.mod", ".github/workflows/ci.yml", "web/src/App.tsx", "internal/boundedlog/writer.go"):
+                with self.subTest(path=path, extra=extra):
+                    self.assertEqual(classify_paths(path, extra)[0], "full")
+        for path in ("cmd/soba/help_windows.go", "cmd/soba/help/new.go", "cmd/soba/new_output.go"):
+            self.assertEqual(classify_paths(path)[0], "full")
+        root = pathlib.Path(__file__).resolve().parents[2]
+        for path in impact.NATIVE_SHORT_IMPORTS:
+            impact.validate_go_imports(path, (root / path).read_text())
+            with self.assertRaises(impact.FailClosed):
+                impact.validate_go_imports(path, 'package main; import "net/http"')
+
     def test_explicit_top_level_documentation(self):
         self.assertEqual(classify_paths("README.md", "README.en.md", "SECURITY.md",
                                         "docs/guide.md"),
@@ -90,6 +107,9 @@ class ImpactRulesTests(unittest.TestCase):
         roots = {path: blob() for path in impact.ROOT_DOCS}
         for old, new, expected in [
             ("internal/core/logic.go", "docs/guide.md", "full"),
+            ("internal/core/logic.go", "cmd/soba/help.go", "full"),
+            ("cmd/soba/help.go", "cmd/soba/new_help.go", "full"),
+            ("cmd/soba/help.go", "cmd/soba/errors.go", "native-short"),
             ("docs/guide.md", "internal/core/readme.md", "full"),
             ("docs/old.md", "docs/new.md", "docs"),
             ("web/src/old.ts", "web/src/new.ts", "frontend"),
@@ -180,6 +200,7 @@ class GitHistoryTests(unittest.TestCase):
         self.write("internal/servicepresets/catalog.go", "package servicepresets\n")
         self.write("internal/boundedlog/writer.go", 'package boundedlog\nimport "os"\nvar _ *os.File\n')
         self.write("web/src/App.tsx", "export const fixture = 1\n")
+        self.write("cmd/soba/errors.go", "package main\n")
         self.base = self.commit()
 
     def git(self, *args):
@@ -219,9 +240,13 @@ class GitHistoryTests(unittest.TestCase):
         self.write("README.md", "fixture documentation changed\n")
         return self.commit()
 
-    def pull_request_event(self):
+    def pull_request_event(self, change=None):
         self.git("checkout", "-qb", "fixture-topic")
-        self.docs_change()
+        if change is None:
+            self.docs_change()
+        else:
+            change()
+            self.commit()
         source = self.git("rev-parse", "HEAD")
         self.git("checkout", "main")
         self.git("merge", "--no-ff", "-m", "Synthetic tested merge", source)
@@ -231,13 +256,39 @@ class GitHistoryTests(unittest.TestCase):
                     "base": {"sha": self.base, "ref": "main", "repo": {"full_name": impact.REPOSITORY}},
                     "head": {"sha": source, "repo": {"full_name": "fixture-fork/sobalink"}}}}
 
+    def test_native_short_pr_and_identical_main_delta_stays_full(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", 'package main\nimport "errors"\nvar _ = errors.New\n'))
+        report = self.classify(event=event, name="pull_request")
+        self.assertEqual(report["scope"], "native-short")
+        self.assertEqual(report["changed_paths"], ["cmd/soba/errors.go"])
+        self.assertEqual(self.classify()["reason"], "native_short_requires_pr")
+        self.assertEqual(self.classify()["scope"], "full")
+        self.assertEqual(self.classify(event=event, name="pull_request", force_full=True)["scope"], "full")
+
+    def test_native_short_new_import_falls_back_to_full(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", 'package main\nimport "net/http"\n'))
+        self.assertEqual(self.classify(event=event, name="pull_request")["reason"], "unreviewed_go_dependency")
+        self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
+
+    def test_native_short_build_directive_falls_back_to_full(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", '//go:build linux\n\npackage main\n'))
+        self.assertEqual(self.classify(event=event, name="pull_request")["reason"], "platform_or_special_go_source")
+        self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
+
+    def test_native_short_mixed_lifecycle_pr_remains_full(self):
+        def change():
+            self.write("cmd/soba/errors.go", "package main\n// presentation\n")
+            self.write("internal/core/core.go", "package core\n// lifecycle change\n")
+        event = self.pull_request_event(change)
+        self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
+
     def test_docs_without_prior_baseline_emit_versioned_evidence(self):
         head = self.docs_change()
         report = self.classify()
         self.assertEqual(report["scope"], "docs")
         self.assertEqual(report["reason"], "documentation_only")
-        self.assertEqual(report["version"], 2)
-        self.assertEqual(report["policy_id"], "minimum-ci-v2")
+        self.assertEqual(report["version"], 3)
+        self.assertEqual(report["policy_id"], "minimum-ci-v3")
         self.assertEqual(report["head_sha"], head)
         self.assertEqual(report["base_sha"], self.base)
         self.assertEqual(report["head_tree"], self.git("rev-parse", "HEAD^{tree}"))

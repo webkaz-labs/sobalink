@@ -25,16 +25,20 @@ def job(name, steps=(), conclusion="success"):
 
 def jobs(scope="full"):
     result = [job("impact", (coverage.SCOPE_STEP,))]
-    if scope == "full":
+    if scope in ("native-short", "full"):
         for target, name in coverage.TARGETS.items():
             steps = coverage.FAST_STEPS + coverage.LONG_STEPS
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             result.append(job(name, steps))
+            if scope == "native-short":
+                for item in result[-1]["steps"]:
+                    if item["name"] in coverage.LONG_STEPS:
+                        item["conclusion"] = "skipped"
         result.append(job("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",)))
     else:
         result.extend([job("native", conclusion="skipped"), job("manifest-smoke", conclusion="skipped")])
-    result.append(job("browser", coverage.BROWSER_STEPS) if scope in ("full", "frontend")
+    result.append(job("browser", coverage.BROWSER_STEPS) if scope in ("full", "native-short", "frontend")
                   else job("browser", conclusion="skipped"))
     result.append(job("go-unit", coverage.GO_STEPS) if scope == "go"
                   else job("go-unit", conclusion="skipped"))
@@ -42,7 +46,7 @@ def jobs(scope="full"):
 
 
 def plan(scope="full"):
-    return {"version": 2, "policy_id": "minimum-ci-v2", "scope": scope, "reason": "verified_fixture",
+    return {"version": 3, "policy_id": "minimum-ci-v3", "scope": scope, "reason": "verified_fixture",
             "head_sha": HEAD, "head_tree": TREE, "policy_sha256": POLICY,
             "base_sha": "d" * 40, "changed_paths": [], "go_packages": []}
 
@@ -77,7 +81,7 @@ class ActualCoverageTests(unittest.TestCase):
                         coverage.evaluate_jobs(data, 'full')
 
     def test_selected_scopes_are_never_full(self):
-        for scope in ("docs", "frontend", "go"):
+        for scope in ("docs", "frontend", "go", "native-short"):
             with self.subTest(scope=scope):
                 self.assertFalse(coverage.evaluate_jobs(jobs(scope), scope))
 
@@ -121,12 +125,39 @@ class ActualCoverageTests(unittest.TestCase):
                 coverage.evaluate_jobs(data, scope)
 
     def test_full_rejects_selected_jobs_and_unknown_scope(self):
-        for scope in ("docs", "frontend", "go"):
+        for scope in ("docs", "frontend", "go", "native-short"):
             with self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs(scope), "full")
         for scope in (None, "", "changed", "FULL"):
             with self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs(), scope)
+
+    def test_native_short_requires_exact_skips_and_never_full_credit(self):
+        self.assertFalse(coverage.evaluate_jobs(jobs("native-short"), "native-short"))
+        with self.assertRaises(ValueError):
+            coverage.evaluate_jobs(jobs("native-short"), "full")
+        for target in coverage.TARGETS.values():
+            for name in coverage.LONG_STEPS:
+                for bad in ("success", "failure", "cancelled", None):
+                    data = jobs("native-short")
+                    selected = next(j for j in data if j["name"] == target)
+                    next(item for item in selected["steps"] if item["name"] == name)["conclusion"] = bad
+                    with self.subTest(target=target, step=name, bad=bad), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, "native-short")
+
+    def test_native_short_plan_disables_only_real_time_steps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory) / "outputs"
+            env = {"GITHUB_OUTPUT": str(output)}
+            with patch.dict(os.environ, env, clear=True):
+                coverage.write_plan(plan("native-short"), pathlib.Path(directory) / "plan.json")
+            self.assertEqual(output.read_text(), "scope=native-short\nlong_required=false\n")
+        workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text()
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 3)
+        self.assertIn("scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'", workflow)
+        self.assertIn("success() && steps.ci-plan.outputs.long_required != 'false'", workflow)
+        for name in ("Verify Core context control over pinned TLS", "Verify context control over fixed loopback TCP"):
+            self.assertIn(name, coverage.FAST_STEPS)
 
     def test_timings_only_record_fixed_names(self):
         data = jobs()
@@ -154,7 +185,7 @@ class PlanAndReceiptTests(unittest.TestCase):
             with patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
                 path.write_text(json.dumps(plan("docs")))
                 self.assertEqual(coverage.read_plan(path), plan("docs"))
-                for field, bad in (("version", 1), ("policy_id", "old"), ("scope", "skip"), ("head_sha", "0" * 40), ("head_tree", "0" * 40), ("policy_sha256", "0" * 64)):
+                for field, bad in (("version", 1), ("version", 2), ("policy_id", "old"), ("scope", "skip"), ("head_sha", "0" * 40), ("head_tree", "0" * 40), ("policy_sha256", "0" * 64)):
                     changed = plan("docs")
                     changed[field] = bad
                     path.write_text(json.dumps(changed))
@@ -183,12 +214,13 @@ class PlanAndReceiptTests(unittest.TestCase):
                 with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan(scope)), patch.object(coverage, "current_jobs", return_value=jobs(scope)), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
                     coverage.finalize("plan", output)
                 result = json.loads(output.read_text())
-                self.assertEqual(result["schema_version"], 2)
+                self.assertEqual(result["schema_version"], 3)
                 self.assertEqual(result["scope"], scope)
                 self.assertEqual(result["full_native"], scope == "full")
-                self.assertEqual(result["targets"], {t: "success" if scope == "full" else "not_run" for t in coverage.TARGETS})
-                self.assertEqual(result["browser"], "success" if scope in ("frontend", "full") else "not_run")
-                self.assertEqual(result["manifest"], "success" if scope == "full" else "not_run")
+                self.assertEqual(result["targets"], {t: "success" if scope == "full" else "short_checks_passed" if scope == "native-short" else "not_run" for t in coverage.TARGETS})
+                self.assertEqual(result["browser"], "success" if scope in ("frontend", "native-short", "full") else "not_run")
+                self.assertEqual(result["manifest"], "success" if scope in ("native-short", "full") else "not_run")
+                self.assertEqual(result["long_checks"], {t: "success" if scope == "full" else "not_run" for t in coverage.TARGETS})
                 self.assertEqual(result["go_unit"], "success" if scope == "go" else "not_run")
                 if scope != "full":
                     self.assertIn("NOT RUN", pathlib.Path(env["GITHUB_STEP_SUMMARY"]).read_text())

@@ -41,7 +41,7 @@ def fixture_graph():
 
 
 def plan():
-    return {"version": 2, "policy_id": "minimum-ci-v2", "scope": "go",
+    return {"version": 3, "policy_id": "minimum-ci-v3", "scope": "go",
             "go_packages": [CHANGED], "head_sha": "a" * 40, "head_tree": "b" * 40}
 
 
@@ -201,7 +201,7 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("all standard Go packages", stderr)
 
     def test_invalid_plan_stops_before_running_commands(self):
-        for field, value in (("version", 1), ("version", True), ("policy_id", "old"),
+        for field, value in (("version", 1), ("version", 2), ("version", True), ("policy_id", "old"),
                              ("scope", "full"), ("go_packages", []),
                              ("go_packages", [CHANGED, CHANGED]),
                              ("go_packages", ["./internal/core"]),
