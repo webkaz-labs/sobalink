@@ -35,6 +35,7 @@ type activationSupervisor struct {
 	reaped    int
 	failed    bool
 	oldExited bool
+	oldExit   string
 	dir       string
 	ctx       context.Context
 }
@@ -164,7 +165,7 @@ func runActivationSupervisor(dir string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
 	defer cancel()
-	s := &activationSupervisor{dir: dir, ctx: ctx, children: make(map[int]*activationChild), origins: make(map[string]int)}
+	s := &activationSupervisor{dir: dir, ctx: ctx, children: make(map[int]*activationChild), origins: make(map[string]int), oldExit: "not-observed"}
 	controlDir := filepath.Join(dir, ".supervisor")
 	if err := config.SecureDir(controlDir); err != nil {
 		return err
@@ -198,6 +199,7 @@ func runActivationSupervisor(dir string) error {
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	complete := false
+	noWaitableChildren, stopRequested := false, false
 	publishedOld := false
 	if e := config.WriteJSON(filepath.Join(dir, "native-progress.json"), map[string]bool{"oldExited": false}); e != nil {
 		s.mu.Lock()
@@ -231,6 +233,16 @@ func runActivationSupervisor(dir string) error {
 			s.reaped++
 			if pid == s.old {
 				s.oldExited = true
+				s.oldExit = "other"
+				if !status.Exited() {
+					s.oldExit = "signal"
+				} else {
+					for code, name := range map[int]string{0: "zero", 1: "one", 66: "race", 91: "profile-rejected", 92: "watchdog", 93: "mode-rejected", 94: "owner-failed", 95: "supervisor-failed", 96: "registration-failed"} {
+						if status.ExitStatus() == code {
+							s.oldExit = name
+						}
+					}
+				}
 			}
 			if !status.Exited() || status.ExitStatus() != 0 {
 				s.failed = true
@@ -255,6 +267,7 @@ func runActivationSupervisor(dir string) error {
 			}
 		}
 		_, stopErr := os.Stat(filepath.Join(dir, "stop-fixture"))
+		noWaitableChildren, stopRequested = noChildren, stopErr == nil
 		if stopErr == nil && noChildren && allObserved {
 			complete = true
 			break
@@ -266,6 +279,7 @@ func runActivationSupervisor(dir string) error {
 		}
 	}
 finished:
+	supervisorDeadlineExpired := ctx.Err() != nil
 	cancel()
 	s.mu.Lock()
 	children := make([]*activationChild, 0, len(s.children))
@@ -282,12 +296,16 @@ finished:
 		_ = child.observer.Close()
 	}
 	successorRegistered := false
+	observedExits := 0
 	for _, child := range s.children {
+		if child.exited {
+			observedExits++
+		}
 		if child.role == "successor" {
 			successorRegistered = true
 		}
 	}
-	proof := map[string]any{"successorRegistered": successorRegistered, "allDescendantsReaped": complete, "registeredNativeExits": complete, "reaped": s.reaped, "success": complete && !s.failed}
+	proof := map[string]any{"oldExit": s.oldExit, "registeredChildren": len(s.children), "observedExits": observedExits, "stopRequested": stopRequested, "supervisorDeadlineExpired": supervisorDeadlineExpired, "noWaitableChildren": noWaitableChildren, "successorRegistered": successorRegistered, "allDescendantsReaped": complete, "registeredNativeExits": complete, "reaped": s.reaped, "success": complete && !s.failed}
 	if e := config.WriteJSON(filepath.Join(dir, "exit-proof.json"), proof); e != nil {
 		return e
 	}

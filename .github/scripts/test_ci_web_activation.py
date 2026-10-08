@@ -18,7 +18,7 @@ def passed_report():
     result['diagnostics'].update(summaryAvailable=True, selectionValid=True, observed=7, passed=7)
     for row in result['diagnostics']['cases']:
         row.update(started=True, status='passed')
-        row['lifecycle'].update(stage='finished', supervisorExit='zero', **dict.fromkeys(('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved'), True))
+        row['lifecycle'].update(stage='finished', workCompleted=True, stopRequested=True, noWaitableChildren=True, registeredChildren=1, observedExits=1, reaped=1, supervisorExit='zero', **dict.fromkeys(('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved'), True))
     return result
 
 
@@ -45,7 +45,7 @@ class WebActivationPolicyTests(unittest.TestCase):
 
     def test_fixed_diagnostic_boundary_rejects_sensitive_and_untyped_values(self):
         self.assertEqual(gate.validate_diagnostics(gate.empty_diagnostics()), gate.empty_diagnostics())
-        mutations = [lambda d: d.update(error='synthetic private detail'), lambda d: d.update(observed=True), lambda d: d.update(globalErrors=256), lambda d: d['cases'].pop(), lambda d: d['cases'][0].update(id='synthetic secret'), lambda d: d['cases'][1].update(id=d['cases'][0]['id']), lambda d: d['cases'][0].update(status='other'), lambda d: d['cases'][0]['lifecycle'].update(path='/synthetic/private'), lambda d: d['cases'][0]['lifecycle'].update(reaped=True), lambda d: d['cases'][0]['lifecycle'].update(supervisorExit=0), lambda d: d['cases'][0]['lifecycle'].update(stage='https://example.invalid/private')]
+        mutations = [lambda d: d.update(error='synthetic private detail'), lambda d: d.update(observed=True), lambda d: d.update(globalErrors=256), lambda d: d['cases'].pop(), lambda d: d['cases'][0].update(id='synthetic secret'), lambda d: d['cases'][1].update(id=d['cases'][0]['id']), lambda d: d['cases'][0].update(status='other'), lambda d: d['cases'][0]['lifecycle'].update(path='/synthetic/private'), lambda d: d['cases'][0]['lifecycle'].update(reaped=True), lambda d: d['cases'][0]['lifecycle'].update(supervisorExit=0), lambda d: d['cases'][0]['lifecycle'].update(stage='https://example.invalid/private'), lambda d: d['cases'][0]['lifecycle'].update(workStage='cleanup-proof'), lambda d: d['cases'][0]['lifecycle'].update(oldExit=95)]
         for mutation in mutations:
             value = gate.empty_diagnostics()
             mutation(value)
@@ -60,6 +60,14 @@ class WebActivationPolicyTests(unittest.TestCase):
             broken['diagnostics']['cases'][row]['started'] = False
             with self.assertRaises(ValueError):
                 gate.validate_report(broken)
+
+    def test_supervisor_counts_remain_observations_not_cleanup_substitutes(self):
+        report = passed_report()
+        report['diagnostics']['cases'][0]['lifecycle'].update(registeredChildren=2, observedExits=2, reaped=1)
+        self.assertTrue(gate.validate_report(report)['accepted'])
+        report['diagnostics']['cases'][0]['lifecycle']['allDescendantsReaped'] = False
+        with self.assertRaises(ValueError):
+            gate.validate_report(report)
 
     def test_runtime_environment_has_no_inherited_authority(self):
         with mock.patch.dict(os.environ, {'PATH': '/synthetic/bin', 'SECRET_TOKEN': 'synthetic', 'DEBUG': '1', 'PWDEBUG': '1', 'HTTPS_PROXY': 'synthetic'}):

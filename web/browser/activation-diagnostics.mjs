@@ -2,16 +2,17 @@
 // capabilities, login codes, attachments or arbitrary test names.
 export const caseIds = Object.freeze(['normal-en', 'normal-ja', 'decline', 'closed-popup', 'logout-before-confirm', 'logout-before-stop', 'lost-ack'])
 export const statuses = Object.freeze(['not-started', 'passed', 'failed', 'timedOut', 'skipped', 'interrupted'])
-export const stages = Object.freeze(['not-started', 'preflight', 'native-start', 'native-ready', 'old-login', 'body', 'cleanup-context', 'cleanup-supervisor', 'cleanup-proof', 'cleanup-safety', 'cleanup-remove', 'finished'])
-export const exits = Object.freeze(['not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error'])
-const booleans = ['supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected']
-const counters = ['reaped', 'blockedRequests', 'runtimeErrors']
-const keys = ['stage', 'failureStage', 'supervisorExit', ...booleans, ...counters]
+export const workStages = Object.freeze(['not-started', 'preflight', 'native-start', 'native-ready', 'old-login', 'body', 'review-request', 'popup-request', 'handoff-ready', 'restart-confirm', 'successor-login'])
+export const stages = Object.freeze([...workStages, 'cleanup-context', 'cleanup-supervisor', 'cleanup-proof', 'cleanup-safety', 'cleanup-remove', 'finished'])
+export const exits = Object.freeze(['not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error', 'profile-rejected', 'watchdog', 'mode-rejected', 'owner-failed', 'supervisor-failed', 'registration-failed'])
+const booleans = ['workCompleted', 'workFailed', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected']
+const counters = ['registeredChildren', 'observedExits', 'reaped', 'blockedRequests', 'runtimeErrors']
+const keys = ['stage', 'workStage', 'failureStage', 'supervisorExit', 'oldExit', ...booleans, ...counters]
 export function counter(value) { return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 255) : 0 }
-export function lifecycle() { return { stage: 'not-started', failureStage: 'not-started', supervisorExit: 'not-observed', ...Object.fromEntries(booleans.map(k => [k, false])), ...Object.fromEntries(counters.map(k => [k, 0])) } }
+export function lifecycle() { return { stage: 'not-started', workStage: 'not-started', oldExit: 'not-observed', failureStage: 'not-started', supervisorExit: 'not-observed', ...Object.fromEntries(booleans.map(k => [k, false])), ...Object.fromEntries(counters.map(k => [k, 0])) } }
 function exact(value, names) { return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === names.length && names.every(k => Object.hasOwn(value, k)) }
 export function validateLifecycle(value) {
-  if (!exact(value, keys) || !stages.includes(value.stage) || !stages.includes(value.failureStage) || !exits.includes(value.supervisorExit) || booleans.some(k => typeof value[k] !== 'boolean') || counters.some(k => !Number.isInteger(value[k]) || value[k] < 0 || value[k] > 255)) throw Error('Invalid fixed lifecycle schema')
+  if (!exact(value, keys) || !stages.includes(value.stage) || !workStages.includes(value.workStage) || !exits.includes(value.oldExit) || !stages.includes(value.failureStage) || !exits.includes(value.supervisorExit) || booleans.some(k => typeof value[k] !== 'boolean') || counters.some(k => !Number.isInteger(value[k]) || value[k] < 0 || value[k] > 255)) throw Error('Invalid fixed lifecycle schema')
   return Object.fromEntries(keys.map(k => [k, value[k]]))
 }
 export function initialCases() { return caseIds.map(id => ({ id, started: false, status: 'not-started', lifecycle: lifecycle() })) }
@@ -32,5 +33,19 @@ export function validateDiagnostics(value) {
 
 export function passedLifecycle(value) {
   const life = validateLifecycle(value)
-  return life.stage === 'finished' && life.failureStage === 'not-started' && life.supervisorExit === 'zero' && ['supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved'].every(k => life[k] === true) && life.blockedRequests === 0 && life.runtimeErrors === 0 && !life.outputOverflow && !life.privateOutputDetected
+  return life.workCompleted && !life.workFailed && life.stage === 'finished' && life.failureStage === 'not-started' && life.supervisorExit === 'zero' && ['supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved'].every(k => life[k] === true) && life.blockedRequests === 0 && life.runtimeErrors === 0 && !life.outputOverflow && !life.privateOutputDetected
+}
+
+export function exitCategory(code) {
+  if (code === null) return 'signal'
+  return new Map([[0, 'zero'], [1, 'one'], [66, 'race'], [91, 'profile-rejected'], [92, 'watchdog'], [93, 'mode-rejected'], [94, 'owner-failed'], [95, 'supervisor-failed'], [96, 'registration-failed']]).get(code) || 'other'
+}
+
+export function advanceLifecycle(value, stage) {
+  if (!stages.includes(stage)) throw Error('Unknown fixed stage')
+  value.stage = stage
+  if (workStages.includes(stage)) value.workStage = stage
+}
+export function failLifecycle(value) {
+  if (value.failureStage === 'not-started') value.failureStage = value.stage
 }

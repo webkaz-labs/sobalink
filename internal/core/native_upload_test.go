@@ -229,17 +229,25 @@ func awaitNativeUpload(t *testing.T, f nativeUploadFixture) {
 }
 func nativeUploadResponse(t *testing.T, reader *bufio.Reader) *http.Response {
 	t.Helper()
-	resp, err := http.ReadResponse(reader, nil)
+	resp, err := readNativeUploadResponse(reader)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return resp
+}
+
+func readNativeUploadResponse(reader *bufio.Reader) (*http.Response, error) {
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		return nil, err
 	}
 	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
-	return resp
+	return resp, nil
 }
 func requireNativeCleanup(t *testing.T, f nativeUploadFixture, staged nativeUploadRead) {
 	t.Helper()
@@ -473,35 +481,74 @@ func TestNativeSlowUploadProgressAndUnlimited(t *testing.T) {
 			reader := bufio.NewReader(conn)
 			// Start pacing only after staging has installed its deadline and is
 			// about to read file bytes, so setup time cannot hide total expiry.
+			var staged nativeUploadRead
 			select {
-			case <-f.backend.ready:
+			case staged = <-f.backend.ready:
 			case <-f.backend.finished:
 				t.Fatalf("upload finished before payload pacing: reads=%+v", f.backend.readStats())
 			case <-time.After(3 * time.Second):
 				t.Fatal("upload did not reach payload staging")
 			}
+			// Observe the complete response while sending. Continuing to write an
+			// expired request before reading its reply can discard that reply on
+			// Windows when the peer closes with an unread request body.
+			var resp *http.Response
+			var responseErr error
+			responseDone := make(chan struct{})
+			go func() {
+				defer close(responseDone)
+				resp, responseErr = readNativeUploadResponse(reader)
+			}()
+			t.Cleanup(func() {
+				_ = conn.Close()
+				select {
+				case <-responseDone:
+				case <-time.After(time.Second):
+					t.Error("native upload response reader did not join")
+				}
+			})
 			started := time.Now()
 			lastWrite := started
 			var maxWriteGap time.Duration
 			ticker := time.NewTicker(50 * time.Millisecond)
 			defer ticker.Stop()
-			writeFailed := false
+			writeStopped := false
+		writePayload:
 			for range chunks {
-				<-ticker.C
+				select {
+				case <-responseDone:
+					writeStopped = true
+					break writePayload
+				case <-ticker.C:
+				}
+				// Prefer an already observed reply over a simultaneously ready tick.
+				select {
+				case <-responseDone:
+					writeStopped = true
+					break writePayload
+				default:
+				}
 				_, err := io.WriteString(conn, strings.Repeat("d", 64))
 				written := time.Now()
 				maxWriteGap = max(maxWriteGap, written.Sub(lastWrite))
 				lastWrite = written
 				if err != nil {
-					writeFailed = true
+					writeStopped = true
 					break
 				}
 			}
-			if !writeFailed {
+			if !writeStopped {
 				_, _ = io.WriteString(conn, nativeUploadSuffix)
 			}
 			awaitNativeUpload(t, f)
-			resp := nativeUploadResponse(t, reader)
+			select {
+			case <-responseDone:
+			case <-time.After(3 * time.Second):
+				t.Fatal("native upload response did not complete")
+			}
+			if responseErr != nil {
+				t.Fatalf("upload response failed: error_type=%T elapsed=%v max_write_gap=%v idle=%v reads=%+v", responseErr, time.Since(started), maxWriteGap, tc.idle, f.backend.readStats())
+			}
 			if resp.StatusCode != tc.want {
 				body, _ := io.ReadAll(resp.Body)
 				t.Fatalf("upload status=%d want=%d body=%s elapsed=%v max_write_gap=%v idle=%v reads=%+v", resp.StatusCode, tc.want, body, time.Since(started), maxWriteGap, tc.idle, f.backend.readStats())
@@ -534,8 +581,8 @@ func TestNativeSlowUploadProgressAndUnlimited(t *testing.T) {
 				if next.StatusCode != 200 {
 					t.Fatalf("next request contaminated: %d", next.StatusCode)
 				}
-			} else if len(f.pair.b.transfers.List()) != 0 {
-				t.Fatal("total-expired upload offered remote batch")
+			} else {
+				requireNativeCleanup(t, f, staged)
 			}
 		})
 	}

@@ -1,6 +1,6 @@
 import { test as rawTest, expect } from './activation-fixtures.mjs'
 
-function test(title, body) { rawTest(title, async ({ page, activation }, testInfo) => { try { await body({ page, activation }, testInfo) } catch { throw new Error('Synthetic acceptance assertion failed; private details withheld') } }) }
+function test(title, body) { rawTest(title, async ({ page, activation }, testInfo) => { try { await body({ page, activation }, testInfo); activation.bodyPassed() } catch { activation.bodyFailed(); throw new Error('Synthetic acceptance assertion failed; private details withheld') } }) }
 test.describe = rawTest.describe; test.use = rawTest.use
 
 for (const locale of ['en', 'ja']) {
@@ -8,7 +8,7 @@ for (const locale of ['en', 'ja']) {
     const popup = await activation.popup(locale)
     await expect(popup.locator('#review')).toContainText('synthetic-web-peer')
     await expect(popup.locator('#review')).toContainText('192.0.2.0/24')
-    await popup.locator('#continue').click()
+    activation.phase('restart-confirm'); await popup.locator('#continue').click()
     await expect(popup.locator('#management')).toBeVisible()
     await expect.poll(() => activation.oldExited()).toBe(true)
     await expect.poll(() => activation.successorStarted()).toBe(true)
@@ -49,7 +49,7 @@ test('logout of originating session before confirmation denies stop admission', 
   activation.expectNoSuccessor()
   const popup = await activation.popup()
   await page.locator('#logout').click(); await expect(page.locator('#status')).toHaveText('Signed out')
-  await popup.locator('#continue').click()
+  activation.phase('restart-confirm'); await popup.locator('#continue').click()
   await expect(popup.locator('#message')).toContainText('uncertain or unavailable')
   expect(await activation.oldExited()).toBe(false); expect(await activation.successorStarted()).toBe(false)
 })
@@ -59,7 +59,7 @@ test.describe('session-bound stop admission', () => {
   test.use({ activationCase: 'pause-before-stop' })
   test('logout after old run but before stop consumption denies shutdown', async ({ page, activation }) => {
     activation.expectNoSuccessor()
-    const popup = await activation.popup(); await popup.locator('#continue').click()
+    const popup = await activation.popup(); activation.phase('restart-confirm'); await popup.locator('#continue').click()
     await expect.poll(() => activation.waitingAtStop()).toBe(true)
     await page.locator('#logout').click(); await expect(page.locator('#status')).toHaveText('Signed out')
     await activation.permitStop()
@@ -73,7 +73,7 @@ test.describe('failed shutdown acknowledgement', () => {
   test.use({ activationCase: 'lost-ack' })
   test('old exit without final acknowledgement never launches a successor', async ({ activation }) => {
     activation.expectNoSuccessor()
-    const popup = await activation.popup(); await popup.locator('#continue').click()
+    const popup = await activation.popup(); activation.phase('restart-confirm'); await popup.locator('#continue').click()
     await expect.poll(() => activation.oldExited()).toBe(true)
     expect(await activation.successorStarted()).toBe(false)
     await expect(popup.locator('#management')).toBeHidden()

@@ -28,16 +28,17 @@ def validate_toolchain(versions, binaries):
 
 CASE_IDS = ('normal-en', 'normal-ja', 'decline', 'closed-popup', 'logout-before-confirm', 'logout-before-stop', 'lost-ack')
 STATUSES = ('not-started', 'passed', 'failed', 'timedOut', 'skipped', 'interrupted')
-STAGES = ('not-started', 'preflight', 'native-start', 'native-ready', 'old-login', 'body', 'cleanup-context', 'cleanup-supervisor', 'cleanup-proof', 'cleanup-safety', 'cleanup-remove', 'finished')
-EXITS = ('not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error')
-LIFECYCLE_BOOLS = ('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected')
-LIFECYCLE_COUNTS = ('reaped', 'blockedRequests', 'runtimeErrors')
-LIFECYCLE_KEYS = {'stage', 'failureStage', 'supervisorExit', *LIFECYCLE_BOOLS, *LIFECYCLE_COUNTS}
+WORK_STAGES = ('not-started', 'preflight', 'native-start', 'native-ready', 'old-login', 'body', 'review-request', 'popup-request', 'handoff-ready', 'restart-confirm', 'successor-login')
+STAGES = (*WORK_STAGES, 'cleanup-context', 'cleanup-supervisor', 'cleanup-proof', 'cleanup-safety', 'cleanup-remove', 'finished')
+EXITS = ('not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error', 'profile-rejected', 'watchdog', 'mode-rejected', 'owner-failed', 'supervisor-failed', 'registration-failed')
+LIFECYCLE_BOOLS = ('workCompleted', 'workFailed', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected')
+LIFECYCLE_COUNTS = ('registeredChildren', 'observedExits', 'reaped', 'blockedRequests', 'runtimeErrors')
+LIFECYCLE_KEYS = {'stage', 'workStage', 'failureStage', 'supervisorExit', 'oldExit', *LIFECYCLE_BOOLS, *LIFECYCLE_COUNTS}
 DIAGNOSTIC_KEYS = {'summaryAvailable', 'selectionValid', 'unexpected', 'globalErrors', 'observed', 'passed', 'cases'}
 
 
 def empty_diagnostics():
-    life = {'stage': 'not-started', 'failureStage': 'not-started', 'supervisorExit': 'not-observed', **dict.fromkeys(LIFECYCLE_BOOLS, False), **dict.fromkeys(LIFECYCLE_COUNTS, 0)}
+    life = {'stage': 'not-started', 'workStage': 'not-started', 'oldExit': 'not-observed', 'failureStage': 'not-started', 'supervisorExit': 'not-observed', **dict.fromkeys(LIFECYCLE_BOOLS, False), **dict.fromkeys(LIFECYCLE_COUNTS, 0)}
     return {'summaryAvailable': False, 'selectionValid': False, 'unexpected': False, 'globalErrors': 0, 'observed': 0, 'passed': 0,
             'cases': [{'id': name, 'started': False, 'status': 'not-started', 'lifecycle': dict(life)} for name in CASE_IDS]}
 
@@ -55,7 +56,7 @@ def validate_diagnostics(value):
         if not isinstance(row, dict) or set(row) != {'id', 'started', 'status', 'lifecycle'} or row['id'] != name or type(row['started']) is not bool or row['status'] not in STATUSES or (not row['started'] and row['status'] == 'passed'):
             raise ValueError('invalid fixed case status')
         life = row['lifecycle']
-        if not isinstance(life, dict) or set(life) != LIFECYCLE_KEYS or life['stage'] not in STAGES or life['failureStage'] not in STAGES or life['supervisorExit'] not in EXITS or any(type(life[k]) is not bool for k in LIFECYCLE_BOOLS) or any(type(life[k]) is not int or not 0 <= life[k] <= 255 for k in LIFECYCLE_COUNTS):
+        if not isinstance(life, dict) or set(life) != LIFECYCLE_KEYS or life['stage'] not in STAGES or life['workStage'] not in WORK_STAGES or life['oldExit'] not in EXITS or life['failureStage'] not in STAGES or life['supervisorExit'] not in EXITS or any(type(life[k]) is not bool for k in LIFECYCLE_BOOLS) or any(type(life[k]) is not int or not 0 <= life[k] <= 255 for k in LIFECYCLE_COUNTS):
             raise ValueError('invalid fixed lifecycle schema')
         cases.append({'id': name, 'started': row['started'], 'status': row['status'], 'lifecycle': {k: life[k] for k in sorted(LIFECYCLE_KEYS)}})
     if value['observed'] != sum(row['status'] != 'not-started' for row in cases) or value['passed'] != sum(row['status'] == 'passed' for row in cases):
@@ -64,13 +65,13 @@ def validate_diagnostics(value):
 
 
 def passed_lifecycle(value):
-    return value['stage'] == 'finished' and value['failureStage'] == 'not-started' and value['supervisorExit'] == 'zero' and all(value[k] for k in ('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved')) and value['blockedRequests'] == 0 and value['runtimeErrors'] == 0 and not value['outputOverflow'] and not value['privateOutputDetected']
+    return value['workCompleted'] and not value['workFailed'] and value['stage'] == 'finished' and value['failureStage'] == 'not-started' and value['supervisorExit'] == 'zero' and all(value[k] for k in ('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved')) and value['blockedRequests'] == 0 and value['runtimeErrors'] == 0 and not value['outputOverflow'] and not value['privateOutputDetected']
 
 
 def validate_report(value):
     if not isinstance(value, dict) or set(value) != KEYS:
         raise ValueError('invalid result schema')
-    if type(value['schema']) is not int or value['schema'] != 2 or type(value['expected']) is not int or value['expected'] != 7 or value['scope'] != SCOPE:
+    if type(value['schema']) is not int or value['schema'] != 3 or type(value['expected']) is not int or value['expected'] != 7 or value['scope'] != SCOPE:
         raise ValueError('invalid fixed result')
     if any(type(value[key]) is not bool for key in BOOLS):
         raise ValueError('invalid result types')
@@ -84,7 +85,7 @@ def validate_report(value):
 
 
 def failed_report():
-    return {'schema': 2, 'expected': 7, 'scope': SCOPE, 'diagnostics': empty_diagnostics(), **dict.fromkeys(BOOLS, False)}
+    return {'schema': 3, 'expected': 7, 'scope': SCOPE, 'diagnostics': empty_diagnostics(), **dict.fromkeys(BOOLS, False)}
 
 
 def digest(path):

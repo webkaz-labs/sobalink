@@ -33,7 +33,7 @@ export default class ActivationReporter {
   }
   async onEnd(result) {
     const accepted = this.selectionValid && !this.unexpected && this.globalErrors === 0 && result.status === 'passed' && this.results.size === 7 && activationCases.every(name => this.results.get(name) === true)
-    const summary = { schema: 2, expected: 7, observed: this.results.size, passed: [...this.results.values()].filter(Boolean).length, globalErrors: this.globalErrors, selectionValid: this.selectionValid, unexpected: this.unexpected, runnerPassed: result.status === 'passed', accepted }
+    const summary = { schema: 3, expected: 7, observed: this.results.size, passed: [...this.results.values()].filter(Boolean).length, globalErrors: this.globalErrors, selectionValid: this.selectionValid, unexpected: this.unexpected, runnerPassed: result.status === 'passed', accepted }
     summary.diagnostics = validateDiagnostics({ summaryAvailable: true, selectionValid: this.selectionValid, unexpected: this.unexpected, globalErrors: counter(this.globalErrors), observed: this.results.size, passed: [...this.results.values()].filter(Boolean).length, cases: this.cases })
     const root = process.env.SOBA_ACTIVATION_PRIVATE_RUN
     if (!root) return { status: 'failed' }

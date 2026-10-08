@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { caseIds, lifecycle, validateLifecycle, validateCases, emptyDiagnostics, validateDiagnostics, counter } from './activation-diagnostics.mjs'
+import { caseIds, lifecycle, validateLifecycle, validateCases, emptyDiagnostics, validateDiagnostics, counter, advanceLifecycle, failLifecycle, exitCategory, passedLifecycle } from './activation-diagnostics.mjs'
 import { activationCases } from './activation-contract.mjs'
 import Reporter from './activation-reporter.mjs'
 
@@ -55,7 +55,7 @@ async function reported(configure) {
     await rm(root, { recursive: true, force: true })
   }
 }
-function passedLife() { return { ...lifecycle(), stage: 'finished', supervisorExit: 'zero', ...Object.fromEntries(['supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved'].map(k => [k, true])) } }
+function passedLife() { return { ...lifecycle(), stage: 'finished', workCompleted: true, stopRequested: true, noWaitableChildren: true, registeredChildren: 1, observedExits: 1, reaped: 1, supervisorExit: 'zero', ...Object.fromEntries(['supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved'].map(k => [k, true])) } }
 function complete(reporter, item, status = 'passed', life = passedLife()) {
   reporter.onTestBegin(item)
   item.annotations.push({ type: 'activation-sanitized', description: JSON.stringify(life) })
@@ -91,4 +91,22 @@ test('seven exact passes remain required; skips and retries cannot pass', async 
   assert.equal(JSON.parse(skipped.raw).accepted, false)
   const retry = await reported((r, items) => { items.forEach(item => complete(r, item)); r.onTestEnd(items[0], { status: 'passed', retry: 1 }) })
   assert.equal(JSON.parse(retry.raw).accepted, false)
+})
+
+test('first work stage survives cleanup and known fixture exit codes stay bounded', () => {
+  const value = lifecycle()
+  advanceLifecycle(value, 'review-request'); failLifecycle(value)
+  advanceLifecycle(value, 'cleanup-proof'); failLifecycle(value)
+  assert.equal(value.workStage, 'review-request')
+  assert.equal(value.failureStage, 'review-request')
+  assert.equal(value.stage, 'cleanup-proof')
+  assert.throws(() => advanceLifecycle(value, 'synthetic-private-path'))
+  for (const [code, name] of [[0, 'zero'], [66, 'race'], [91, 'profile-rejected'], [92, 'watchdog'], [93, 'mode-rejected'], [94, 'owner-failed'], [95, 'supervisor-failed'], [96, 'registration-failed'], [null, 'signal'], [999, 'other'], ['private', 'other']]) assert.equal(exitCategory(code), name)
+})
+
+test('supervisor diagnostic counters never replace joined cleanup evidence', () => {
+  const value = { ...passedLife(), registeredChildren: 2, observedExits: 2, reaped: 1 }
+  assert.equal(passedLifecycle(value), true)
+  value.allDescendantsReaped = false
+  assert.equal(passedLifecycle(value), false)
 })
