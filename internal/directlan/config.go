@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/netip"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -84,8 +85,27 @@ type Peer struct {
 	TunnelKey string         `json:"tunnel_key"`
 }
 
+// ManagedTransportOwner is a constructor-bound replacement authority identity.
+// New identities cannot target an existing Node. Zero and copied values fail.
+// Core keeps its pointer private; it is not exported by Node or projections.
+type ManagedTransportOwner struct{ self *ManagedTransportOwner }
+
+func NewManagedTransportOwner() *ManagedTransportOwner {
+	o := &ManagedTransportOwner{}
+	o.self = o
+	return o
+}
+
 type Config struct {
-	// AuthorityCurrent is a constructor-only signal read. It must never lock,
+	// ReplacementOwner is immutable and optional. Nil disables the managed
+	// preparation/publication seam even when public projection data is valid.
+	ReplacementOwner *ManagedTransportOwner
+	// AuthorityDeadline is the owner's original process-monotonic bound, never
+	// a freshly reprojected wall deadline. Zero denotes no finite active bound.
+	AuthorityDeadline time.Time
+	// Inert sealed projection; not accepted by the production constructor yet.
+	currentEndpoints *currentEndpointAuthority
+	// AuthorityCurrent is an immutable generation signal read. It must never lock,
 	// call back into transport/Core, or perform I/O. Nil preserves legacy ownership.
 	AuthorityCurrent func() bool
 	// PeerLimit is an optional additional logical admission limit. Zero imposes
@@ -107,14 +127,16 @@ type Config struct {
 	Listen           netip.AddrPort
 	AllowedPrefixes  []netip.Prefix
 	Peers            []Peer
-	// PairContexts is constructor-only binding input. It conveys no durable
+	// PairContexts is immutable generation binding input. It conveys no durable
 	// publication authority and is never persisted through the legacy callback.
 	PairContexts map[string]endpointmeta.PairContext
-	// CompletionAdmission is constructor-only and nil by default. It observes
+	// CompletionAdmission is generation-owned and nil by default. It observes
 	// an already confirmed binding; it cannot authorize a session or publication.
 	// Core must supply its store-owned gate, never a DTO/confirmed-flag adapter.
 	CompletionAdmission func(context.Context, *ManagedCompletionRequest) (ContextResponse, error)
-	// DeniedPeerKeys is constructor-only terminal denial, disjoint from Peers.
+	// EndpointAdmission may hand off one bounded observation after old wire release.
+	EndpointAdmission func(context.Context, *ManagedEndpointRequest) (*endpointmeta.UpdateReply, error)
+	// DeniedPeerKeys is immutable generation terminal denial, disjoint from Peers.
 	// These keys never acquire transport state or legacy pairing authority.
 	DeniedPeerKeys []string
 	// Persist must atomically save the entire peer snapshot and return nil only
@@ -124,6 +146,9 @@ type Config struct {
 }
 
 func (c Config) Validate() error {
+	if c.currentEndpoints != nil && c.currentEndpoints.policy != currentEndpointPolicy(c) {
+		return ErrIdentity
+	}
 	if err := c.Identity.Validate(); err != nil {
 		return err
 	}
@@ -269,9 +294,16 @@ func (n *Node) peerCapacityLocked() bool {
 	return limit < 0 || len(n.peers) >= MaxEnginePeers || (limit > 0 && len(n.peers) >= limit)
 }
 
-// Denial and managed classification are immutable constructor policy, not live
+// Denial and managed classification are immutable generation policy, not live
 // peer membership. An absent terminal peer must never become unknown legacy.
 func (c Config) deniedKey(key string) bool {
+	if c.currentEndpoints != nil {
+		for _, inactive := range c.currentEndpoints.inactive {
+			if inactive == key {
+				return true
+			}
+		}
+	}
 	for _, denied := range c.DeniedPeerKeys {
 		if denied == key {
 			return true
@@ -281,7 +313,18 @@ func (c Config) deniedKey(key string) bool {
 }
 
 func (c Config) protectedPairs() bool {
-	return len(c.PairContexts) != 0 || len(c.DeniedPeerKeys) != 0
+	return c.currentEndpoints != nil || len(c.PairContexts) != 0 || len(c.DeniedPeerKeys) != 0
 }
 
-func (n *Node) deniedKey(key string) bool { return n.cfg.deniedKey(key) }
+// runtimeConfig selects one immutable policy snapshot. The constructor
+// configuration remains unchanged when a successor is published. Callers with
+// an existing wire or peer must use that captured generation's cfg instead.
+// The returned configuration and all of its referenced data are read-only.
+func (n *Node) runtimeConfig() *Config {
+	if g := n.generation.Load(); g != nil {
+		return &g.cfg
+	}
+	return &n.cfg
+}
+
+func (n *Node) deniedKey(key string) bool { return n.runtimeConfig().deniedKey(key) }

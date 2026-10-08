@@ -326,3 +326,11 @@ Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For in
 | Unknown route or reconnect | Inspect current state and retry the app connection; do not assume a relay or uninterrupted TCP |
 
 Report errors with secrets, local identity state, pairing capabilities and private endpoints removed. [Acceptance gates](VERIFICATION.en.md) distinguish source checks from real-device results.
+
+### Direct LAN endpoint update delivery
+
+Applying a reviewed local endpoint move saves and activates the local change separately from delivering its signed update to the selected peers. During that same action, delivery may make up to eight sequential attempts using the identical saved proof and exact reviewed destination. The waits are 250 ms, 500 ms, 1 s, 2 s, 4 s, 4 s and 4 s. The existing 30-second operation limit and original proof/approval deadlines can stop the action earlier; retries never extend them or renew consent. Every attempt checks current authority, and a changed receipt or destination stops delivery.
+
+A recipient may temporarily refuse an update while another operation is running. Temporary refusal or a lost response may be retried after the previous connection is fully cleaned up. A substantive reply, including “review required,” stops automatic retries. Connection refusal and timeouts are not automatically retried. A recipient may still be restarting its listener, so delivery can end unconfirmed even after an earlier attempt was accepted. The optional delivery attempt count includes local admission checks that may stop before opening a connection.
+
+“Saved” and “active” describe the local result. “Unconfirmed” does not prove that the recipient accepted or rejected the update. If the bounded attempts are exhausted, review the existing proof and current destination through the separate delivery preview/apply action before retrying. That explicit retry reuses the proof without changing its sequence or lifetime. It never discovers a new address automatically.

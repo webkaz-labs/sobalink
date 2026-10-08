@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -130,8 +131,20 @@ func TestInvitationCancelExpiredAndEndpointScope(t *testing.T) {
 	}
 }
 func TestPersistenceFailureDoesNotActivate(t *testing.T) {
-	host, client := memoryNode(t, 6), memoryNode(t, 7)
-	host.cfg.Persist = func([]Peer) error { return errors.New("synthetic save failure") }
+	// Persistence is captured by the generation. Configure the failure before
+	// constructing that immutable owner rather than changing the node template.
+	var saveCalled atomic.Bool
+	cfg := testConfig(6)
+	cfg.Persist = func([]Peer) error {
+		saveCalled.Store(true)
+		return errors.New("synthetic save failure")
+	}
+	host, e := NewNode(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(attachMemoryGeneration(host))
+	client := memoryNode(t, 7)
 	inv, e := host.IssueInvitation(context.Background(), Peer{Key: client.PublicKey()}, time.Minute)
 	if e != nil {
 		t.Fatal(e)
@@ -149,6 +162,9 @@ func TestPersistenceFailureDoesNotActivate(t *testing.T) {
 	host.mu.Lock()
 	recovery := host.recovery
 	host.mu.Unlock()
+	if !saveCalled.Load() {
+		t.Fatal("persistence failure was not exercised")
+	}
 	if !recovery || len(host.Peers()) != 0 {
 		t.Fatal("missing fail closed latch")
 	}

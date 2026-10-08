@@ -29,6 +29,7 @@ type service struct {
 	port    uint16
 }
 type wire struct {
+	endpointReleased chan error // one transport-owned handoff, signaled after removeWire
 	flow             *flow
 	g                *runtimeGeneration
 	work             *generationWork
@@ -86,6 +87,17 @@ type Node struct {
 
 // NewNode validates all policy and saved state before doing any network I/O.
 func NewNode(cfg Config) (*Node, error) {
+	// Current-endpoint projection is data only until the reviewed replacement
+	// owner supplies publication, deadlines and generation authority.
+	if cfg.currentEndpoints != nil {
+		return nil, ErrUnavailable
+	}
+	return newNode(cfg)
+}
+
+// Only the ordinary constructor and receipt-bound managed startup seam call
+// allocation. Native resources and fresh generation sessions remain in Start.
+func newNode(cfg Config) (*Node, error) {
 	cfg = cfg.withDefaults()
 	cfg = cloneGenerationConfig(cfg)
 	if e := cfg.Validate(); e != nil {
@@ -120,7 +132,8 @@ func (n *Node) snapshotLocked() []Peer {
 	return out
 }
 func (n *Node) readyLocked() error {
-	if n.cfg.AuthorityCurrent != nil && !n.cfg.AuthorityCurrent() {
+	cfg := n.runtimeConfig()
+	if cfg.AuthorityCurrent != nil && !cfg.AuthorityCurrent() {
 		return ErrRecovery
 	}
 	if n.contextControl {
@@ -191,7 +204,15 @@ func (n *Node) start(ctx context.Context, checkAddress func(netip.Addr) error) e
 	}
 	cfg := cloneGenerationConfig(n.cfg)
 	if !n.contextControl {
-		cfg.Peers = n.snapshotLocked()
+		peers := n.snapshotLocked()
+		if cfg.currentEndpoints == nil {
+			cfg.Peers = peers
+		} else if !currentStartupPeersMatch(cfg.Peers, peers) {
+			n.mu.Unlock()
+			return ErrUntrusted
+		}
+		// A current startup retains the sealed projection's peer order. The
+		// transport snapshot is sorted and is not a replacement authority.
 	}
 	build := newGenerationBuild(ctx)
 	n.building.Store(build)
@@ -293,7 +314,12 @@ func (n *Node) handle(w *wire) {
 	retained := false
 	defer func() {
 		if !retained {
-			n.removeWire(w)
+			err := n.removeWire(w)
+			if w.endpointReleased != nil {
+				observeAcceptanceEndpoint(n, "inbound-wire-released", err)
+				w.endpointReleased <- err
+				close(w.endpointReleased)
+			}
 		}
 	}()
 	deadline := w.contextDeadline
@@ -308,7 +334,8 @@ func (n *Node) handle(w *wire) {
 	defer cancel()
 	stop := watchConnection(ctx, w.raw)
 	defer stop()
-	if c.HandshakeContext(ctx) != nil {
+	if err := c.HandshakeContext(ctx); err != nil {
+		observeAcceptanceEndpoint(n, "ordinary-tls", err)
 		return
 	}
 	key, e := certificateKey([][]byte{c.ConnectionState().PeerCertificates[0].Raw}, time.Now())
@@ -322,9 +349,10 @@ func (n *Node) handle(w *wire) {
 	}
 	w.key = key
 	w.peer = n.peers[key]
-	managed := n.managedKey(key)
+	managed := w.g.cfg.managedKey(key)
 	n.mu.Unlock()
 	if managed {
+		observeAcceptanceEndpoint(n, "ordinary-managed", nil)
 		n.handleManagedSession(ctx, c, w)
 		return
 	}
@@ -385,18 +413,23 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 		cancel()
 		return nil, nil, e
 	}
-	if n.deniedKey(p.Key) || expected != nil && n.peers[p.Key] != expected || n.managedKey(p.Key) && (expected == nil || expected.binding == "") {
+	g := n.generation.Load()
+	if g == nil {
+		n.mu.Unlock()
+		cancel()
+		return nil, nil, ErrUnavailable
+	}
+	if g.cfg.deniedKey(p.Key) || expected != nil && n.peers[p.Key] != expected || g.cfg.managedKey(p.Key) && (expected == nil || expected.binding == "") {
 		n.mu.Unlock()
 		cancel()
 		return nil, nil, ErrUntrusted
 	}
-	g := n.generation.Load()
-	if g == nil || !g.cfg.permits(p.Endpoint, true) {
+	if !g.cfg.permits(p.Endpoint, true) {
 		n.mu.Unlock()
 		cancel()
 		return nil, nil, ErrPolicy
 	}
-	if n.controlUsageLocked() >= n.cfg.ControlLimit {
+	if n.controlUsageLocked() >= g.cfg.ControlLimit {
 		n.mu.Unlock()
 		cancel()
 		return nil, nil, ErrCapacity
@@ -436,7 +469,7 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 	w := &wire{raw: owned, key: p.Key, peer: expected, cancel: cancel, control: true, g: g, work: work, controlContext: bounded}
 	n.mu.Lock()
 	delete(n.dials, pending)
-	if n.readyLocked() != nil || n.generation.Load() != g || bounded.Err() != nil || (expected != nil && n.peers[p.Key] != expected) || n.controlUsageLocked() >= n.cfg.ControlLimit {
+	if n.readyLocked() != nil || n.generation.Load() != g || bounded.Err() != nil || (expected != nil && n.peers[p.Key] != expected) || n.controlUsageLocked() >= g.cfg.ControlLimit {
 		n.mu.Unlock()
 		closeErr := closeUnadmittedControl(g, owned, ErrUntrusted)
 		cancel()
@@ -448,7 +481,7 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 	n.mu.Unlock()
 	stop := watchConnection(bounded, owned)
 	protocol := protocolName
-	if n.managedKey(p.Key) {
+	if g.cfg.managedKey(p.Key) {
 		protocol = contextProtocolName
 	}
 	c := tls.Client(owned, tlsConfigProtocol(n.cert, p.Key, false, protocol))

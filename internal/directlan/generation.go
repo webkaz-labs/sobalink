@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tailscale/wireguard-go/device"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -16,8 +17,8 @@ import (
 var ErrRetirementIncomplete = errors.New("direct-LAN retirement participants incomplete")
 
 // runtimeGeneration is never reopened or rebound. Node owns the stable service
-// entrances; this object owns exactly one disposable transport. No replacement
-// publication path is provided here.
+// entrances; this object owns exactly one disposable transport. The separate
+// managed controller can publish a freshly constructed successor once.
 type runtimeGeneration struct {
 	n                           *Node
 	cfg                         Config
@@ -41,6 +42,7 @@ type runtimeGeneration struct {
 	stop                        chan struct{}
 	built                       chan struct{}
 	done                        chan struct{}
+	deadlineDone                chan struct{} // registered before supervisor; nil when unbounded
 	result                      error
 	work                        map[*generationWork]struct{}
 	creators                    map[*endpointCreator]struct{}
@@ -261,6 +263,9 @@ func (g *runtimeGeneration) supervise() {
 	if g.result == nil {
 		g.origin.detach()
 	}
+	if g.deadlineDone != nil {
+		<-g.deadlineDone
+	}
 	close(g.done)
 }
 func (g *runtimeGeneration) wait(ctx context.Context) error {
@@ -397,3 +402,17 @@ func (g *runtimeGeneration) endpoint(ep tcpip.Endpoint) *liveEndpoint {
 }
 
 var _ tcp.ForwarderRequestLease = (*endpointCreator)(nil)
+
+// The deadline belongs to this exact generation, independently of transaction
+// context lifetime. Expiry signals the existing physical supervisor; it is not
+// completion evidence and never releases capacity or reopens an owner.
+func (g *runtimeGeneration) watchAuthorityDeadline(deadline time.Time) {
+	defer close(g.deadlineDone)
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-g.stop:
+	case <-timer.C:
+		g.requestStop(ErrRecovery)
+	}
+}

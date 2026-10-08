@@ -134,8 +134,12 @@ func TestManagedAuthenticationExactRegistrationPolicyAndOwner(t *testing.T) {
 func TestManagedMutationAndDowngradeStayRefused(t *testing.T) {
 	n, g, p, remote := managedFixtureOwner(t)
 	saved := false
-	n.cfg.Persist = func([]Peer) error { saved = true; return nil }
-	if n.Revoke(p.peer.Key) == nil || n.commitPeerLocked(p.peer) == nil || saved {
+	g.cfg.Persist = func([]Peer) error { saved = true; return nil }
+	if err := n.runtimeConfig().Persist(nil); err != nil || !saved {
+		t.Fatal("active persistence observation hook was not selected", err)
+	}
+	saved = false
+	if !errors.Is(n.Revoke(p.peer.Key), ErrUntrusted) || !errors.Is(n.commitPeerLocked(p.peer), ErrUntrusted) || saved {
 		t.Fatal("legacy managed mutation reached persistence")
 	}
 	delete(n.peers, p.peer.Key)

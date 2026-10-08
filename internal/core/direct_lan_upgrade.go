@@ -434,6 +434,24 @@ func (c *Core) armUpgradeInboundLocked(ctx context.Context, owner *contextContro
 	return c.armContextInboundLocked(ctx, owner, key, op)
 }
 
+// CancelManagedUpgrade cancels only the exact locally reviewed workflow. It is
+// used by the short-lived lifecycle supervisor, never by a remote peer.
+func (c *Core) CancelManagedUpgrade(ctx context.Context, intent UpgradeIntent) (any, error) {
+	c.op.Lock()
+	defer c.op.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.mu.RLock()
+	job := c.contextUpgrade
+	c.mu.RUnlock()
+	if job == nil || job.intent != intent {
+		return nil, errors.New("upgrade cancellation binding changed")
+	}
+	job.cancel()
+	return map[string]bool{"cancelled": true}, nil
+}
+
 // The outbound wire may own its full handshake/cleanup bound. During that wait
 // an incoming one-shot response can be consumed or rejected, including a lost
 // duplicate PREPARE while the peer has not learned the binding. Keep inbound

@@ -1,0 +1,143 @@
+name: Activation diagnostics (not release validation)
+
+# Ref creation uses the workflow at the created ref; no default-branch
+# registration is needed. Create a fresh branch at the reviewed SHA.
+# No push trigger: ref creation must not run the same diagnostics twice.
+on:
+  create:
+
+permissions:
+  contents: read
+
+# Keep each exact-head diagnostic receipt, including failed sanitized evidence.
+concurrency:
+  group: diagnostic-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+
+jobs:
+  diagnostic-selection:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.ref_type == 'branch' && startsWith(github.ref, 'refs/heads/diagnostic/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      suite: ${{ steps.selection.outputs.suite }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate exact-head diagnostic branch
+        id: selection
+        run: |
+          python -m unittest discover -s .github/scripts -p test_ci_diagnostic.py -v
+          python .github/scripts/ci-diagnostic.py
+
+  diagnostic-product-activation:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'product' || needs.diagnostic-selection.outputs.suite == 'activation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+      - name: Prepare locked dependencies and official Chromium
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          # Fetch only the versions explicitly pinned in the main module.
+          # Broad "all" also pulls unrelated transitive test/tool graphs.
+          go mod download
+          go list -mod=readonly -deps -test -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native,product_activation_native ./cmd/soba >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify fixed product acceptance policy
+        run: |
+          python -m unittest discover -s .github/scripts -p 'test_ci_product_activation.py' -v
+          node --test web/browser/product-activation-diagnostics.test.mjs
+      - name: Build normal assets and run two private production-entry cases
+        id: product-activation
+        timeout-minutes: 25
+        run: python .github/scripts/ci-product-activation.py
+      - name: Preserve only reconstructed sanitized acceptance evidence
+        if: always() && steps.product-activation.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-product-activation-sanitized
+          path: |
+            ${{ runner.temp }}/soba-product-activation-sanitized/result.json
+            ${{ runner.temp }}/soba-product-activation-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+  diagnostic-web-activation:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'web' || needs.diagnostic-selection.outputs.suite == 'activation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+      - name: Prepare locked dependencies and official Chromium
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          # Fetch only the versions explicitly pinned in the main module.
+          # Broad "all" also pulls unrelated transitive test/tool graphs.
+          go mod download
+          go list -mod=readonly -deps -test -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native ./cmd/soba >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify fixed Web acceptance policy
+        run: |
+          python -m unittest discover -s .github/scripts -p 'test_ci_web_activation.py' -v
+          node --test web/browser/activation-diagnostics.test.mjs
+      - name: Compile and run seven private synthetic-owner cases
+        id: web-activation
+        timeout-minutes: 40
+        run: python .github/scripts/ci-web-activation.py
+      - name: Preserve only reconstructed sanitized acceptance evidence
+        if: always() && steps.web-activation.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-web-activation-sanitized
+          path: |
+            ${{ runner.temp }}/soba-web-activation-sanitized/result.json
+            ${{ runner.temp }}/soba-web-activation-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14

@@ -76,10 +76,11 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	if err != nil {
 		return err
 	}
-	url, code, err := app.StartWeb(files)
+	url, code, err := app.StartWeb(files, lifecycle.webHandoff(app))
 	if err != nil {
 		return err
 	}
+	observeForegroundWeb(url)
 	ipc, err = control.ServeWithLimits(ctx, dir, lifecycle.handler(app), app.LocalControlLimits)
 	if err != nil {
 		return err

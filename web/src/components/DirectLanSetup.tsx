@@ -7,6 +7,7 @@ import type { Server } from '../useServer'
 import { Badge, Button, ErrorBanner, useAlive } from './ui'
 import { DeviceCards } from './DeviceCards'
 import { DirectLanUpgrade } from './DirectLanUpgrade'
+import { DirectLanEndpoint } from './DirectLanEndpoint'
 import { isPublicKey, isRelayAddress } from './LanSetup'
 
 export interface DirectLanDraft {
@@ -115,6 +116,7 @@ export function DirectLanSetup({ server, state, locale, t, hostname, setHostname
   return <section className="form-stack subsection direct-lan-setup" aria-label={d('title')}>
     <p className="muted">{d('intro')}</p>
     <DirectLanUpgrade server={server} state={state} locale={locale} blocked={disabled} />
+    <DirectLanEndpoint server={server} state={state} locale={locale} blocked={blocked} />
     {error && <ErrorBanner message={error} t={t} />}
     {status?.resourceRestartRequired && <p className="scope-note" role="status">{d('resourceRestart')}</p>}
     {status?.recoveryRequired && <p className="scope-note" role="alert">{d('recovery')}</p>}

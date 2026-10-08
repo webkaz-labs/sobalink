@@ -1,0 +1,403 @@
+//go:build web_activation_native && managed_restart_native && linux
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/control"
+	"golang.org/x/sys/unix"
+)
+
+type activationSupervisorExtra interface {
+	Observe(*activationSupervisor) error
+	Close() error
+	FailureStage() string
+}
+
+type activationRegistration struct {
+	Kind, Role, Origin string
+	PID, Parent        int
+}
+type activationChild struct {
+	role     string
+	observer upgradeProcessObserver
+	exited   bool
+	done     chan struct{}
+}
+type activationSupervisor struct {
+	mu              sync.Mutex
+	children        map[int]*activationChild
+	origins         map[string]int
+	old             int
+	reaped          int
+	reapedOK        map[int]bool
+	failed          bool
+	oldExited       bool
+	oldExit         string
+	helperExit      string
+	successorExit   string
+	failure         string
+	resourceFailure string
+	dir             string
+	ctx             context.Context
+}
+
+// Literal first-failure evidence only; the existing sticky failure gate remains.
+func (s *activationSupervisor) failLocked(stage string) {
+	s.failed = true
+	if s.failure == "none" {
+		s.failure = stage
+	}
+}
+func activationExitCategory(status unix.WaitStatus) string {
+	if !status.Exited() {
+		return "signal"
+	}
+	for code, name := range map[int]string{0: "zero", 1: "one", 66: "race", 91: "profile-rejected", 92: "watchdog", 93: "mode-rejected", 94: "owner-failed", 95: "supervisor-failed", 96: "registration-failed"} {
+		if status.ExitStatus() == code {
+			return name
+		}
+	}
+	return "other"
+}
+
+func activationSupervisorCall(dir string, request activationRegistration) error {
+	raw, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return control.Call(ctx, filepath.Join(dir, ".supervisor"), string(raw), nil)
+}
+func registerActivationChild(dir, role string) error {
+	return activationSupervisorCall(dir, activationRegistration{Kind: "register", Role: role, PID: os.Getpid(), Parent: os.Getppid()})
+}
+func registerActivationOrigin(dir, role, origin string) error {
+	return activationSupervisorCall(dir, activationRegistration{Kind: "origin", Role: role, PID: os.Getpid(), Parent: os.Getppid(), Origin: origin})
+}
+func (s *activationSupervisor) observeLocked(pid int, role string) error {
+	observer, err := observeUpgradeProcess(pid)
+	if err != nil {
+		return err
+	}
+	child := &activationChild{role: role, observer: observer, done: make(chan struct{})}
+	s.children[pid] = child
+	go func() {
+		defer close(child.done)
+		err := observer.Wait(s.ctx)
+		s.mu.Lock()
+		child.exited = err == nil
+		if child.exited {
+			for origin, owner := range s.origins {
+				if owner == pid {
+					delete(s.origins, origin)
+				}
+			}
+			if e := s.writeOriginsLocked(); e != nil {
+				s.failLocked("origin-write")
+			}
+		}
+		if err != nil {
+			s.failLocked("observer-wait")
+		}
+		s.mu.Unlock()
+	}()
+	return nil
+}
+func (s *activationSupervisor) handle(_ context.Context, raw string) (any, error) {
+	var in activationRegistration
+	if json.Unmarshal([]byte(raw), &in) != nil {
+		return nil, errors.New("invalid fixture registration")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	child := s.children[in.PID]
+	if in.Kind == "register" {
+		if in.Role == "old" {
+			if in.PID != s.old || in.Parent != os.Getpid() || child == nil {
+				return nil, errors.New("unexpected old owner")
+			}
+			return map[string]bool{"registered": true}, nil
+		}
+		parent := s.children[in.Parent]
+		expected := "old"
+		if in.Role == "successor" {
+			expected = "helper"
+		} else if in.Role != "helper" {
+			return nil, errors.New("unexpected fixture role")
+		}
+		if child != nil || parent == nil || parent.role != expected || parent.exited {
+			return nil, errors.New("unowned fixture child")
+		}
+		for _, existing := range s.children {
+			if existing.role == in.Role {
+				return nil, errors.New("duplicate fixture child")
+			}
+		}
+		if err := s.observeLocked(in.PID, in.Role); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"registered": true}, nil
+	}
+	if in.Kind != "origin" || !validUpgradeUIURL(in.Origin) {
+		return nil, errors.New("invalid fixture origin")
+	}
+	// Synthetic helper origin comes from its verified old parent. The separately
+	// gated product fixture observes the actual helper private-pipe descriptor
+	// in that registered helper before forwarding it to the old parent.
+	ownerPID := in.PID
+	if in.Role == "helper" && productSelfOriginAllowed(child) {
+		ownerPID = in.PID
+	} else if in.Role == "helper" {
+		if child == nil || child.role != "old" {
+			return nil, errors.New("unowned helper descriptor")
+		}
+		found := false
+		for pid, c := range s.children {
+			if c.role == "helper" && !c.exited {
+				found = true
+				ownerPID = pid
+			}
+		}
+		if !found {
+			return nil, errors.New("helper not registered")
+		}
+	} else if child == nil || child.role != in.Role || child.exited {
+		return nil, errors.New("unowned origin")
+	}
+	s.origins[in.Origin] = ownerPID
+	if err := s.writeOriginsLocked(); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"registered": true}, nil
+}
+
+// Evidence writers use separate atomic-persistence parents. The real Core
+// profile and unrelated fixture writers must never compete for this lease.
+func activationEvidenceDir(dir, owner string) string {
+	switch owner {
+	case "origins", "supervisor", "old", "successor", "cli", "request":
+		return filepath.Join(dir, ".fixture-"+owner)
+	default:
+		panic("unknown fixed fixture evidence owner")
+	}
+}
+
+func (s *activationSupervisor) writeOriginsLocked() error {
+	origins := make([]string, 0, len(s.origins))
+	for origin := range s.origins {
+		origins = append(origins, origin)
+	}
+	return config.WriteJSON(filepath.Join(activationEvidenceDir(s.dir, "origins"), "owned-origins.json"), origins)
+}
+
+// Linux subreaping proves even children that die before TestMain registration
+// or startup markers. This never acts on unrelated OS processes: only this
+// supervisor's own descendants become waitable children.
+func runActivationSupervisor(dir string) error {
+	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
+		return err
+	}
+	// Establish all fixed private evidence parents before any Core or child starts.
+	for _, owner := range []string{"origins", "supervisor", "old", "successor", "cli", "request"} {
+		if err := config.SecureDir(activationEvidenceDir(dir, owner)); err != nil {
+			return err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
+	defer cancel()
+	s := &activationSupervisor{dir: dir, ctx: ctx, children: make(map[int]*activationChild), origins: make(map[string]int), oldExit: "not-observed", helperExit: "not-observed", successorExit: "not-observed", failure: "none", resourceFailure: "none", reapedOK: make(map[int]bool)}
+	controlDir := filepath.Join(dir, ".supervisor")
+	if err := config.SecureDir(controlDir); err != nil {
+		return err
+	}
+	server, err := control.Serve(ctx, controlDir, s.handle)
+	if err != nil {
+		return err
+	}
+	defer server.Close()
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	command := exec.Command(exe, "--web-activation-fixture")
+	command.Env = os.Environ()
+	command.Dir = dir
+	extra, extraErr := prepareProductSupervisor(dir, command)
+	if extraErr != nil {
+		return extraErr
+	}
+	if extra != nil {
+		defer extra.Close()
+	}
+	s.mu.Lock()
+	err = command.Start()
+	if err == nil {
+		s.old = command.Process.Pid
+		err = s.observeLocked(s.old, "old")
+		_ = command.Process.Release()
+	}
+	s.mu.Unlock()
+	if err != nil {
+		_ = os.WriteFile(filepath.Join(dir, "stop-fixture"), []byte("stop"), 0600)
+		s.mu.Lock()
+		s.failLocked("start-observe")
+		s.mu.Unlock()
+	}
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	complete := false
+	noWaitableChildren, stopRequested := false, false
+	publishedOld := false
+	if e := config.WriteJSON(filepath.Join(activationEvidenceDir(dir, "supervisor"), "native-progress.json"), map[string]bool{"oldExited": false}); e != nil {
+		s.mu.Lock()
+		s.failLocked("progress-write")
+		s.mu.Unlock()
+	}
+	for {
+		// Reap direct children and all orphaned descendants. Living descendants of
+		// living children prevent their ancestors from being considered all-exited.
+		noChildren := false
+		for {
+			var status unix.WaitStatus
+			pid, e := unix.Wait4(-1, &status, unix.WNOHANG, nil)
+			if errors.Is(e, unix.ECHILD) {
+				noChildren = true
+				break
+			}
+			if e != nil {
+				if errors.Is(e, unix.EINTR) {
+					continue
+				}
+				s.mu.Lock()
+				s.failLocked("wait-error")
+				s.mu.Unlock()
+				break
+			}
+			if pid == 0 {
+				break
+			}
+			s.mu.Lock()
+			s.reaped++
+			s.reapedOK[pid] = status.Exited() && status.ExitStatus() == 0
+			if child := s.children[pid]; child != nil {
+				if child.role == "helper" && s.helperExit == "not-observed" {
+					s.helperExit = activationExitCategory(status)
+				}
+				if child.role == "successor" && s.successorExit == "not-observed" {
+					s.successorExit = activationExitCategory(status)
+				}
+			}
+			if pid == s.old {
+				s.oldExited = true
+				s.oldExit = "other"
+				if !status.Exited() {
+					s.oldExit = "signal"
+				} else {
+					for code, name := range map[int]string{0: "zero", 1: "one", 66: "race", 91: "profile-rejected", 92: "watchdog", 93: "mode-rejected", 94: "owner-failed", 95: "supervisor-failed", 96: "registration-failed"} {
+						if status.ExitStatus() == code {
+							s.oldExit = name
+						}
+					}
+				}
+			}
+			if !status.Exited() || status.ExitStatus() != 0 {
+				s.failLocked("child-exit")
+			}
+			s.mu.Unlock()
+		}
+		s.mu.Lock()
+		allObserved := true
+		for _, child := range s.children {
+			if !child.exited {
+				allObserved = false
+			}
+		}
+		oldExited := s.oldExited
+		s.mu.Unlock()
+		if oldExited != publishedOld {
+			publishedOld = oldExited
+			if e := config.WriteJSON(filepath.Join(activationEvidenceDir(dir, "supervisor"), "native-progress.json"), map[string]bool{"oldExited": oldExited}); e != nil {
+				s.mu.Lock()
+				s.failLocked("progress-write")
+				s.mu.Unlock()
+			}
+		}
+		if extra != nil {
+			if e := extra.Observe(s); e != nil {
+				s.mu.Lock()
+				s.failLocked("extra-observe")
+				if s.resourceFailure == "none" {
+					s.resourceFailure = extra.FailureStage()
+				}
+				s.mu.Unlock()
+			}
+		}
+		_, stopErr := os.Stat(filepath.Join(dir, "stop-fixture"))
+		noWaitableChildren, stopRequested = noChildren, stopErr == nil
+		if stopErr == nil && noChildren && allObserved {
+			complete = true
+			break
+		}
+		select {
+		case <-ctx.Done():
+			goto finished
+		case <-tick.C:
+		}
+	}
+finished:
+	supervisorDeadlineExpired := ctx.Err() != nil
+	if extra != nil {
+		if e := extra.Close(); e != nil {
+			s.mu.Lock()
+			s.failLocked("extra-close")
+			if s.resourceFailure == "none" {
+				s.resourceFailure = extra.FailureStage()
+			}
+			s.mu.Unlock()
+		}
+	}
+	cancel()
+	s.mu.Lock()
+	children := make([]*activationChild, 0, len(s.children))
+	for _, child := range s.children {
+		children = append(children, child)
+	}
+	s.mu.Unlock()
+	for _, child := range children {
+		<-child.done
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, child := range s.children {
+		_ = child.observer.Close()
+	}
+	successorRegistered := false
+	observedExits := 0
+	for _, child := range s.children {
+		if child.exited {
+			observedExits++
+		}
+		if child.role == "successor" {
+			successorRegistered = true
+		}
+	}
+	proof := map[string]any{"supervisorFailure": s.failure, "resourceFailure": s.resourceFailure, "helperExit": s.helperExit, "successorExit": s.successorExit, "oldExit": s.oldExit, "registeredChildren": len(s.children), "observedExits": observedExits, "stopRequested": stopRequested, "supervisorDeadlineExpired": supervisorDeadlineExpired, "noWaitableChildren": noWaitableChildren, "successorRegistered": successorRegistered, "allDescendantsReaped": complete, "registeredNativeExits": complete, "reaped": s.reaped, "success": complete && !s.failed}
+	if e := config.WriteJSON(filepath.Join(activationEvidenceDir(dir, "supervisor"), "exit-proof.json"), proof); e != nil {
+		return e
+	}
+	if !complete || s.failed {
+		return errors.New("fixture descendant exit proof failed")
+	}
+	return nil
+}

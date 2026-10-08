@@ -389,6 +389,13 @@ func TestNativePairRestartAndFailedRevoke(t *testing.T) {
 	ac, bc := a.cfg, b.cfg
 	ac.Peers = append([]Peer(nil), (*as)...)
 	bc.Peers = append([]Peer(nil), (*bs)...)
+	// The restarted generation captures its persistence callback at construction.
+	// Inject failure there, without mutating a live generation or node template.
+	var saveCalled atomic.Bool
+	ac.Persist = func([]Peer) error {
+		saveCalled.Store(true)
+		return errors.New("synthetic persistence failure")
+	}
 	a.Close()
 	b.Close()
 	a, e := NewNode(ac)
@@ -427,9 +434,11 @@ func TestNativePairRestartAndFailedRevoke(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer c.Close()
-	a.cfg.Persist = func([]Peer) error { return errors.New("synthetic persistence failure") }
 	if e = a.Revoke(b.PublicKey()); !errors.Is(e, ErrRecovery) {
 		t.Fatal(e)
+	}
+	if !saveCalled.Load() {
+		t.Fatal("persistence failure was not exercised")
 	}
 	c.SetReadDeadline(time.Now().Add(time.Second))
 	if _, e = c.Read(make([]byte, 1)); e == nil {

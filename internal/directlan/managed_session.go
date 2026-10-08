@@ -23,7 +23,7 @@ func clonePairContexts(input map[string]endpointmeta.PairContext) map[string]end
 	return out
 }
 
-func (c Config) validatePairContexts() error {
+func configEndpointScope(c Config) (endpointmeta.Scope, error) {
 	scope := endpointmeta.Scope{Family: "ipv6"}
 	if c.Listen.Addr().Is4() {
 		scope.Family = "ipv4"
@@ -32,7 +32,16 @@ func (c Config) validatePairContexts() error {
 		scope.Prefixes = append(scope.Prefixes, prefix.String())
 	}
 	sort.Strings(scope.Prefixes)
-	expectedScope, err := endpointmeta.Encode(scope)
+	_, err := endpointmeta.Encode(scope)
+	return scope, err
+}
+
+func (c Config) validatePairContexts() error {
+	if c.currentEndpoints != nil && c.currentEndpoints.localEndpoint != c.Listen.String() {
+		return ErrIdentity
+	}
+	scope, err := configEndpointScope(c)
+	expectedScope, _ := endpointmeta.Encode(scope)
 	if len(c.PairContexts) != 0 && err != nil {
 		return ErrPolicy
 	}
@@ -58,6 +67,15 @@ func (c Config) validatePairContexts() error {
 			localEndpoint, remoteEndpoint = remoteEndpoint, localEndpoint
 			localScope = pair.JoinerScope
 		}
+		if c.currentEndpoints != nil {
+			current, ok := c.currentEndpoints.peers[key]
+			binding, _ := pair.Binding()
+			if !ok || current.binding != binding {
+				return ErrIdentity
+			}
+			localEndpoint = c.currentEndpoints.localEndpoint
+			remoteEndpoint = current.endpoint
+		}
 		encodedScope, err := endpointmeta.Encode(localScope)
 		if err != nil || !bytes.Equal(expectedScope, encodedScope) || localKey != c.Identity.PublicKey() || remoteKey != key || localTunnel != c.Identity.TunnelKey() || remoteTunnel != peer.TunnelKey || localEndpoint != c.Listen.String() || remoteEndpoint != peer.Endpoint.String() {
 			return ErrIdentity
@@ -66,8 +84,9 @@ func (c Config) validatePairContexts() error {
 	return nil
 }
 
-// Classification belongs to immutable constructor input, even after retirement.
-func (n *Node) managedKey(key string) bool { _, ok := n.cfg.PairContexts[key]; return ok }
+// Classification belongs to the immutable generation, even after retirement.
+func (c Config) managedKey(key string) bool { _, ok := c.PairContexts[key]; return ok }
+func (n *Node) managedKey(key string) bool  { return n.runtimeConfig().managedKey(key) }
 
 type managedAuthentication struct {
 	peer         *peerState
@@ -169,14 +188,21 @@ func (n *Node) requestManagedSession(ctx context.Context, p *peerState) (result 
 func (n *Node) handleManagedSession(ctx context.Context, c *tls.Conn, w *wire) {
 	captured := n.captureManagedSession(w.peer)
 	if captured == nil || captured.generation != w.g {
+		observeAcceptanceEndpoint(n, "inbound-capture", ErrUntrusted)
 		return
 	}
 	data, err := readFrame(c, endpointmeta.MaxFrameBytes)
 	if err != nil {
+		observeAcceptanceEndpoint(n, "inbound-frame", err)
 		return
 	}
 	request, err := endpointmeta.ParseRequest(data)
 	if err != nil {
+		return
+	}
+	if envelope, ok := endpointRequestEnvelope(request); ok {
+		observeAcceptanceEndpoint(n, "inbound-envelope", nil)
+		n.handleManagedEndpoint(ctx, c, w, captured, envelope)
 		return
 	}
 	bound, ok := request.(*endpointmeta.BoundRequest)

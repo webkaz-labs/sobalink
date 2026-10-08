@@ -56,13 +56,15 @@ type directLANStore struct {
 	// Read-only endpoint inspection cannot persist a clock observation. Keep
 	// its process-local wall-time floor so a later rollback cannot reuse an
 	// expired approval within this owner; explicit recovery never resets it.
-	endpointObservedAt time.Time
-	endpointDeadlines  map[directLANEndpointDeadlineKey]directLANEndpointDeadline
+	endpointObservedAt      time.Time
+	endpointDeadlines       map[directLANEndpointDeadlineKey]directLANEndpointDeadline
+	endpointIssuedDeadlines map[string]directLANEndpointDeadline
 	// Context metadata has no command/startup caller. These process-only bounds,
 	// arm epochs and publication evidence are never reconstructed from a file read.
-	contextWindows     map[string]contextPreparationWindow
-	contextPublication *contextPublicationReceipt
-	contextEpoch       *directlan.ContextEpoch
+	contextWindows      map[string]contextPreparationWindow
+	endpointTransaction *EndpointTransaction // store.mu; excludes competing whole-file writes
+	contextPublication  *contextPublicationReceipt
+	contextEpoch        *directlan.ContextEpoch
 }
 
 func cloneDirectLANState(s directLANState) directLANState {
@@ -157,6 +159,9 @@ func (s *directLANStore) writeContextStateLocked(next directLANState, live *cont
 }
 
 func (s *directLANStore) publishStateWithContextLivenessLocked(next directLANState, live *contextSaveLiveness) error {
+	if s.endpointTransaction != nil && (live == nil || live.endpoint != s.endpointTransaction) {
+		return endpointmeta.ErrReview
+	}
 	if err := validateDirectLANState(next); err != nil {
 		return err
 	}

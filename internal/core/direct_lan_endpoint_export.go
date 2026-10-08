@@ -96,7 +96,7 @@ func (c *Core) directLANEndpointExportCommand(ctx context.Context, name string, 
 	return result, directLANEndpointError(err)
 }
 
-func (s *directLANStore) endpointExportLocked(ctx context.Context, process string, input directLANEndpointExportInput, preview, reexport bool, now time.Time) (any, error) {
+func (s *directLANStore) endpointExportLocked(ctx context.Context, process string, input directLANEndpointExportInput, preview, reexport bool, now time.Time, publishers ...func(endpointmeta.Snapshot) (endpointmeta.SaveResolution, error)) (any, error) {
 	m, err := s.endpointModelLocked(now, false)
 	if err != nil {
 		return nil, err
@@ -212,7 +212,16 @@ func (s *directLANStore) endpointExportLocked(ctx context.Context, process strin
 			return nil, err
 		}
 	}
-	saved, err := s.saveEndpointSnapshotLocked(next)
+	s.preserveIssuedEndpointCandidateLocked(next, issueTime)
+	var saved endpointmeta.SaveResolution
+	if len(publishers) == 0 {
+		saved, err = s.saveEndpointSnapshotLocked(next)
+	} else if len(publishers) == 1 && publishers[0] != nil {
+		saved, err = publishers[0](next)
+	} else {
+		err = endpointmeta.ErrReview
+	}
+	s.pruneIssuedEndpointDeadlinesLocked(time.Now())
 	if err != nil {
 		return nil, err
 	}

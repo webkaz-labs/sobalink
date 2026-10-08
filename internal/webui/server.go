@@ -34,12 +34,17 @@ type Backend interface {
 	Upload(http.ResponseWriter, *http.Request)
 }
 
+// UpgradeHandoff is installed only by the local lifecycle owner. It is never
+// exposed through peer protocols or the generic command API.
+type UpgradeHandoff func(context.Context, string, string, json.RawMessage) (any, error)
+
 type session struct {
 	csrf    string
 	expires time.Time
 }
 
 type Server struct {
+	handoff       UpgradeHandoff
 	backend       Backend
 	assets        fs.FS
 	listener      net.Listener
@@ -49,6 +54,7 @@ type Server struct {
 	code          string
 	codeUntil     time.Time
 	sessions      map[string]session
+	handoffs      map[string]upgradeAuthorization
 	attempts      int
 	attemptWindow time.Time
 	slots         chan struct{}
@@ -69,7 +75,7 @@ func randomToken() (string, error) {
 
 // Start always binds a fresh numeric loopback port. No configurable wildcard,
 // LAN address, or peer listener can broaden the management surface.
-func Start(ctx context.Context, assets fs.FS, backend Backend) (*Server, error) {
+func Start(ctx context.Context, assets fs.FS, backend Backend, handoff ...UpgradeHandoff) (*Server, error) {
 	if backend == nil || assets == nil {
 		return nil, errors.New("management backend and assets required")
 	}
@@ -79,6 +85,9 @@ func Start(ctx context.Context, assets fs.FS, backend Backend) (*Server, error) 
 	}
 	ln = httpbound.New(32).Wrap(ln)
 	s := &Server{backend: backend, assets: assets, listener: ln, host: ln.Addr().String(), sessions: map[string]session{}, slots: make(chan struct{}, 16), done: make(chan error, 1), closeSignal: make(chan struct{}), watcherDone: make(chan struct{}), serveDone: make(chan struct{})}
+	if len(handoff) == 1 {
+		s.handoff = handoff[0]
+	}
 	s.url = "http://" + s.host
 	if _, err := s.IssueCode(); err != nil {
 		ln.Close()
@@ -127,6 +136,12 @@ func (s *Server) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.code = ""
 	clear(s.sessions)
+	for _, grant := range s.handoffs {
+		if grant.timer != nil {
+			grant.timer.Stop()
+		}
+	}
+	clear(s.handoffs)
 	s.mu.Unlock()
 	err := s.http.Shutdown(ctx)
 	if err != nil {
@@ -257,6 +272,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch {
+		case r.URL.Path == "/api/upgrade-handoff" && r.Method == "POST":
+			if s.handoff == nil {
+				fail(w, 503, "unavailable", "Local restart is unavailable")
+				return
+			}
+			var payload json.RawMessage
+			if decode(w, r, 2048, &payload) != nil {
+				fail(w, 400, "invalid", "Invalid handoff request")
+				return
+			}
+			authorization, err := s.issueUpgradeAuthorization(cookie.Value, session, payload)
+			if err != nil {
+				fail(w, 401, "unauthenticated", "The local session expired")
+				return
+			}
+			result, err := s.handoff(r.Context(), s.url, authorization, payload)
+			if err != nil {
+				s.discardUpgradeAuthorization(authorization)
+				fail(w, 400, "handoff_failed", "Restart handoff was not established; inspect current state before retrying")
+				return
+			}
+			jsonReply(w, 200, result)
 		case r.URL.Path == "/api/state" && r.Method == "GET":
 			state, err := s.backend.Snapshot(r.Context())
 			if err != nil {

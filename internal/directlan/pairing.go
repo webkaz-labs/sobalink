@@ -84,7 +84,7 @@ func (n *Node) IssueNamedInvitation(ctx context.Context, recipient Peer, hostNam
 	if e := ctx.Err(); e != nil {
 		return Invitation{}, e
 	}
-	if !validKey(recipient.Key) || recipient.Key == n.PublicKey() || (recipient.TunnelKey != "" && !validTunnelKey(recipient.TunnelKey)) || !validName(recipient.Name) || !validName(hostName) || ttl < time.Second || ttl > MaxInvitationTTL || (recipient.Endpoint.IsValid() && !n.cfg.permits(recipient.Endpoint, true)) {
+	if !validKey(recipient.Key) || recipient.Key == n.PublicKey() || (recipient.TunnelKey != "" && !validTunnelKey(recipient.TunnelKey)) || !validName(recipient.Name) || !validName(hostName) || ttl < time.Second || ttl > MaxInvitationTTL {
 		return Invitation{}, ErrInvitation
 	}
 	n.mu.Lock()
@@ -92,11 +92,18 @@ func (n *Node) IssueNamedInvitation(ctx context.Context, recipient Peer, hostNam
 	if e := n.readyLocked(); e != nil {
 		return Invitation{}, e
 	}
-	if n.cfg.Persist == nil {
-		return Invitation{}, errors.New("durable pairing persistence callback required")
+	g := n.generation.Load()
+	if g == nil {
+		return Invitation{}, ErrUnavailable
 	}
-	if n.deniedKey(recipient.Key) || n.managedKey(recipient.Key) || n.peers[recipient.Key] != nil {
+	if recipient.Endpoint.IsValid() && !g.cfg.permits(recipient.Endpoint, true) {
+		return Invitation{}, ErrInvitation
+	}
+	if g.cfg.deniedKey(recipient.Key) || g.cfg.managedKey(recipient.Key) || n.peers[recipient.Key] != nil {
 		return Invitation{}, ErrUntrusted
+	}
+	if g.cfg.Persist == nil {
+		return Invitation{}, errors.New("durable pairing persistence callback required")
 	}
 	now := time.Now()
 	for h, p := range n.invites {
@@ -106,18 +113,14 @@ func (n *Node) IssueNamedInvitation(ctx context.Context, recipient Peer, hostNam
 			return Invitation{}, errors.New("cancel the existing invitation before replacing it")
 		}
 	}
-	if len(n.invites) >= n.cfg.InvitationLimit || n.peerCapacityLocked() {
+	if len(n.invites) >= g.cfg.InvitationLimit || n.peerCapacityLocked() {
 		return Invitation{}, ErrCapacity
 	}
 	token := make([]byte, 32)
 	if _, e := rand.Read(token); e != nil {
 		return Invitation{}, e
 	}
-	g := n.generation.Load()
-	if g == nil {
-		return Invitation{}, ErrUnavailable
-	}
-	inv := Invitation{Version: 1, Host: Peer{Key: n.PublicKey(), Name: hostName, Endpoint: g.cfg.Listen, TunnelKey: n.cfg.Identity.TunnelKey()}, RecipientKey: recipient.Key, Token: base64.RawURLEncoding.EncodeToString(token), Expires: now.Add(ttl)}
+	inv := Invitation{Version: 1, Host: Peer{Key: n.PublicKey(), Name: hostName, Endpoint: g.cfg.Listen, TunnelKey: g.cfg.Identity.TunnelKey()}, RecipientKey: recipient.Key, Token: base64.RawURLEncoding.EncodeToString(token), Expires: now.Add(ttl)}
 	n.invites[tokenHash(inv.Token)] = pendingInvitation{inv, recipient, inv.Expires}
 	return inv, nil
 }
@@ -132,13 +135,13 @@ func (n *Node) acceptPair(ctx context.Context, w *wire, req request) error {
 	if e := n.readyLocked(); e != nil {
 		return e
 	}
-	if n.deniedKey(w.key) || n.managedKey(w.key) || n.generation.Load() != w.g {
+	if w.g == nil || w.g.cfg.deniedKey(w.key) || w.g.cfg.managedKey(w.key) || n.generation.Load() != w.g {
 		return ErrRecovery
 	}
 	if e := ctx.Err(); e != nil {
 		return e
 	}
-	if n.cfg.Persist == nil {
+	if w.g.cfg.Persist == nil {
 		return ErrRecovery
 	}
 	p, ok := n.invites[tokenHash(req.Token)]
@@ -159,10 +162,11 @@ func (n *Node) acceptPair(ctx context.Context, w *wire, req request) error {
 	return n.commitPeerLocked(remote)
 }
 func (n *Node) commitPeerLocked(p Peer) error {
-	if n.deniedKey(p.Key) || n.managedKey(p.Key) {
+	cfg := n.runtimeConfig()
+	if cfg.deniedKey(p.Key) || cfg.managedKey(p.Key) {
 		return ErrUntrusted
 	}
-	if !validTunnelKey(p.TunnelKey) || p.TunnelKey == n.cfg.Identity.TunnelKey() {
+	if !validTunnelKey(p.TunnelKey) || p.TunnelKey == cfg.Identity.TunnelKey() {
 		return ErrIdentity
 	}
 	for _, existing := range n.peers {
@@ -176,9 +180,12 @@ func (n *Node) commitPeerLocked(p Peer) error {
 	if n.peers[p.Key] != nil {
 		return ErrUntrusted
 	}
+	if cfg.Persist == nil {
+		return ErrRecovery
+	}
 	snapshot := append(n.snapshotLocked(), p)
 	sort.Slice(snapshot, func(i, j int) bool { return snapshot[i].Key < snapshot[j].Key })
-	if e := n.cfg.Persist(snapshot); e != nil {
+	if e := cfg.Persist(snapshot); e != nil {
 		n.failClosedLocked()
 		return errors.Join(ErrRecovery, e)
 	}
@@ -229,13 +236,14 @@ func (n *Node) PairInvitation(ctx context.Context, inv Invitation) error {
 		n.mu.Unlock()
 		return e
 	}
-	if n.cfg.Persist == nil {
-		n.mu.Unlock()
-		return errors.New("durable pairing persistence callback required")
-	}
-	if n.deniedKey(inv.Host.Key) || n.managedKey(inv.Host.Key) || n.peers[inv.Host.Key] != nil {
+	cfg := n.runtimeConfig()
+	if cfg.deniedKey(inv.Host.Key) || cfg.managedKey(inv.Host.Key) || n.peers[inv.Host.Key] != nil {
 		n.mu.Unlock()
 		return ErrUntrusted
+	}
+	if cfg.Persist == nil {
+		n.mu.Unlock()
+		return errors.New("durable pairing persistence callback required")
 	}
 	if n.peerCapacityLocked() {
 		n.mu.Unlock()
@@ -326,13 +334,19 @@ func (n *Node) Revoke(key string) error {
 		n.mu.Lock()
 	}
 	defer n.mu.Unlock()
+	// Publication may have changed classification since the pre-lock check or
+	// the initial-build wait. Legacy removal cannot consume managed authority.
+	cfg := n.runtimeConfig()
+	if cfg.deniedKey(key) || cfg.managedKey(key) {
+		return ErrUntrusted
+	}
 	if n.closed {
 		return net.ErrClosed
 	}
 	if n.recovery {
 		return ErrRecovery
 	}
-	if n.cfg.Persist == nil {
+	if cfg.Persist == nil {
 		return errors.New("durable revocation persistence callback required")
 	}
 	for p := range n.dials {
@@ -367,7 +381,7 @@ func (n *Node) Revoke(key string) error {
 			return errors.Join(ErrRecovery, e)
 		}
 	}
-	if e := n.cfg.Persist(n.snapshotLocked()); e != nil {
+	if e := cfg.Persist(n.snapshotLocked()); e != nil {
 		n.failClosedLocked()
 		return errors.Join(ErrRecovery, e)
 	}

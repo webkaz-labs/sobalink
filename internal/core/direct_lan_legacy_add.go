@@ -15,7 +15,7 @@ import (
 // record (including managed confirmation and replay history) remain unchanged.
 // Caller holds Core.op and store.mu; this performs no publication or Node calls.
 func (s *directLANStore) prepareLegacyPeerAdditionLocked(peers []directlan.Peer, now time.Time) (directLANState, error) {
-	projection, err := s.managedFixedEndpointProjectionLocked(now)
+	projection, err := s.managedCurrentEndpointProjectionLocked(now)
 	if err != nil {
 		return directLANState{}, err
 	}
@@ -69,8 +69,8 @@ func (s *directLANStore) prepareLegacyPeerAdditionLocked(peers []directlan.Peer,
 	if err := validateDirectLANState(next); err != nil {
 		return directLANState{}, err
 	}
-	after, err := projectManagedFixedEndpoint(next)
-	if err != nil || !reflect.DeepEqual(after.PairContexts, projection.PairContexts) || !reflect.DeepEqual(after.DeniedPeerKeys, projection.DeniedPeerKeys) {
+	after, err := projectManagedCurrentEndpoint(next, now)
+	if err != nil || !reflect.DeepEqual(after.PairContexts, projection.PairContexts) || !reflect.DeepEqual(after.DeniedPeerKeys, projection.DeniedPeerKeys) || !reflect.DeepEqual(after.InactiveEndpointPeerKeys(), projection.InactiveEndpointPeerKeys()) {
 		return directLANState{}, endpointmeta.ErrReview
 	}
 	return next, nil
@@ -110,7 +110,7 @@ func (o *managedCompletionOwner) persistLegacyAddition(peers []directlan.Peer) (
 	defer o.core.op.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.stopped.Load() || !o.coreCurrent("") {
+	if !o.authorityCurrent() || !o.coreCurrent("") {
 		return directlan.ErrUnavailable
 	}
 	for _, peer := range peers {
@@ -132,7 +132,7 @@ func (o *managedCompletionOwner) persistLegacyAddition(peers []directlan.Peer) (
 	}
 	// Recheck full projection after durable publication, before releasing the
 	// transport's commit lock. No added peer is installed if this step fails.
-	if _, err := s.managedFixedEndpointProjectionLocked(time.Now()); err != nil {
+	if _, err := o.projectionLocked(time.Now()); err != nil {
 		return err
 	}
 	if err := live.err(); err != nil {

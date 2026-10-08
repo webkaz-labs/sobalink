@@ -65,6 +65,8 @@ func managedUpgradeCLI(ctx context.Context, args []string, dir, locale string, j
 	}
 	ctx, cancel := context.WithDeadline(ctx, expires)
 	defer cancel()
+	commandClient := client
+	var pinned upgradeIdentity
 	query := func(name string, payload any, result any) error {
 		raw, err := json.Marshal(payload)
 		if err != nil {
@@ -74,7 +76,7 @@ func managedUpgradeCLI(ctx context.Context, args []string, dir, locale string, j
 		if err != nil {
 			return err
 		}
-		return client(ctx, dir, string(command), result)
+		return commandClient(ctx, dir, string(command), result)
 	}
 	if !*apply {
 		var review core.UpgradeReview
@@ -88,25 +90,33 @@ func managedUpgradeCLI(ctx context.Context, args []string, dir, locale string, j
 	if !loginPrivateTerminal(out) {
 		return errors.New(text(ja, "Apply requires a private terminal for progress and a fresh local sign-in code", "適用には進行状況と新しいローカルログインコードを表示する非公開の端末が必要です"))
 	}
-	fmt.Fprintln(out, text(ja, "Applying the reviewed upgrade. Connections may briefly stop; management may reopen and require a fresh local sign-in.", "確認済みの更新を適用します。接続が一時停止し、管理画面の再起動とローカル再ログインが必要な場合があります。"))
-	var progress core.UpgradeProgress
-	if err := query("direct-lan.upgrade.run", intent, &progress); err != nil {
+	if err := client(ctx, dir, lifecycleIdentityCommand, &pinned); err != nil {
 		return err
 	}
-	if progress.RestartRequired {
-		fmt.Fprintln(out, text(ja, "Waiting for acknowledged shutdown and old-process exit.", "停止完了の応答と旧プロセスの終了を確認しています。"))
-		if err := restartManagedUpgrade(ctx, dir, locale, ja, out, client); err != nil {
-			return err
-		}
-		// Exact original digest and deadline, never an automatically refreshed
-		// review. A changed file, scope, identity or expiry must fail closed.
-		if err := query("direct-lan.upgrade.run", intent, &progress); err != nil {
-			return err
-		}
-		if progress.RestartRequired {
-			return errors.New(text(ja, "Fresh offline management rejected the upgrade; review the current state again", "新しいオフライン管理で更新を拒否しました。現在の状態を再確認してください"))
-		}
+	if pinned.ProcessID <= 0 || pinned.Instance == "" {
+		return errors.New(text(ja, "The current process identity is unavailable", "現在のプロセスの識別情報を確認できません"))
 	}
+	commandClient = boundUpgradeClient(client, &pinned)
+	fmt.Fprintln(out, text(ja, "Applying the reviewed upgrade. Connections may briefly stop; management may reopen and require a fresh local sign-in.", "確認済みの更新を適用します。接続が一時停止し、管理画面の再起動とローカル再ログインが必要な場合があります。"))
+	progress, err := applyManagedUpgradeIntent(intent, query, func() error {
+		fmt.Fprintln(out, text(ja, "Waiting for acknowledged shutdown and old-process exit.", "停止完了の応答と旧プロセスの終了を確認しています。"))
+		var next upgradeIdentity
+		if err := restartManagedUpgradeProcess(ctx, dir, locale, ja, out, client, &pinned, &next); err != nil {
+			return err
+		}
+		pinned = next
+		return reopenUpgradeUI(ctx, dir, ja, out, commandClient)
+	})
+	if err != nil {
+		if errors.Is(err, errUpgradeBinding) {
+			return errors.New(text(ja, "Upgrade progress no longer matches the reviewed request", "更新の進行状況が確認済みの要求と一致しません"))
+		}
+		if errors.Is(err, errUpgradeSuccessor) {
+			return errors.New(text(ja, "Fresh offline management rejected the exact upgrade; review current state again", "新しいオフライン管理で更新を拒否しました。現在の状態を再確認してください"))
+		}
+		return err
+	}
+
 	last := ""
 	for {
 		if progress.PeerID != intent.PeerID || progress.Deadline != intent.Deadline {
@@ -128,9 +138,11 @@ func managedUpgradeCLI(ctx context.Context, args []string, dir, locale string, j
 		if err := loginPause(ctx); err != nil {
 			return fmt.Errorf("%s: %w", text(ja, "Upgrade observation ended; confirmation is not implied. Inspect upgrade status before retrying", "更新の確認を終了しました。完了を意味しません。再試行前に更新状態を確認してください"), err)
 		}
-		if err := query("direct-lan.upgrade.status", map[string]any{}, &progress); err != nil {
+		var next core.UpgradeProgress
+		if err := query("direct-lan.upgrade.status", map[string]any{}, &next); err != nil {
 			return err
 		}
+		progress = next
 	}
 }
 
@@ -151,7 +163,46 @@ func upgradeProgressText(state string, ja bool) string {
 	}
 }
 
+var errUpgradeBinding = errors.New("upgrade binding changed")
+var errUpgradeSuccessor = errors.New("fresh offline successor rejected the exact upgrade")
+
+// applyManagedUpgradeIntent is the shared CLI/Web controller entry. The exact
+// reviewed intent and deadline are reapplied only after the verified restart.
+func applyManagedUpgradeIntent(intent core.UpgradeIntent, query func(string, any, any) error, restart func() error) (core.UpgradeProgress, error) {
+	var progress core.UpgradeProgress
+	if err := query("direct-lan.upgrade.run", intent, &progress); err != nil {
+		return progress, err
+	}
+	if progress.PeerID != intent.PeerID || progress.Deadline != intent.Deadline {
+		return progress, errUpgradeBinding
+	}
+	if progress.RestartRequired {
+		if err := restart(); err != nil {
+			return progress, err
+		}
+		// Each IPC reply is a complete snapshot. JSON omits false/empty fields,
+		// so decoding into the old reply would retain its restart requirement
+		// (or stale peer/deadline) after the verified successor has started.
+		var successor core.UpgradeProgress
+		if err := query("direct-lan.upgrade.run", intent, &successor); err != nil {
+			return successor, err
+		}
+		progress = successor
+		if progress.RestartRequired || progress.PeerID != intent.PeerID || progress.Deadline != intent.Deadline {
+			return progress, errUpgradeSuccessor
+		}
+	}
+	return progress, nil
+}
+
 func restartManagedUpgrade(ctx context.Context, dir, locale string, ja bool, out io.Writer, client controlCaller) error {
+	if err := restartManagedUpgradeProcess(ctx, dir, locale, ja, out, client); err != nil {
+		return err
+	}
+	return reopenUpgradeUI(ctx, dir, ja, out, client)
+}
+
+func restartManagedUpgradeProcess(ctx context.Context, dir, locale string, ja bool, out io.Writer, client controlCaller, binding ...*upgradeIdentity) error {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return err
@@ -168,10 +219,13 @@ func restartManagedUpgrade(ctx context.Context, dir, locale string, ja bool, out
 	if err := client(ctx, dir, lifecycleIdentityCommand, &old); err != nil {
 		return err
 	}
+	if len(binding) != 0 && (len(binding) != 2 || binding[0] == nil || binding[1] == nil || old.ProcessID != binding[0].ProcessID || old.Instance != binding[0].Instance) {
+		return errors.New("reviewed process identity changed")
+	}
 	if !sameUpgradeExecutable(executable, old.Executable) || old.ProcessID <= 0 || old.Instance == "" {
 		return errors.New(text(ja, "The running application does not match this launcher; no restart was requested", "稼働中の本体がこの起動プログラムと一致しません。再起動は要求していません"))
 	}
-	_, err = managedUpgradeRestartSequence(old, func() error {
+	next, err := managedUpgradeRestartSequence(old, func() error {
 		return stopForManagedUpgrade(ctx, dir, old, client)
 	}, func() (upgradeIdentity, error) {
 		fmt.Fprintln(out, text(ja, "Old application closed and released its profile. Opening fresh offline management.", "旧本体の終了とプロファイル解放を確認しました。新しいオフライン管理を開きます。"))
@@ -205,7 +259,10 @@ func restartManagedUpgrade(ctx context.Context, dir, locale string, ja bool, out
 	if err != nil {
 		return err
 	}
-	return reopenUpgradeUI(ctx, dir, ja, out, client)
+	if len(binding) == 2 {
+		*binding[1] = next
+	}
+	return nil
 }
 
 // This gate contains no OS work. Its production shutdown callback returns only
@@ -269,4 +326,19 @@ func reopenUpgradeUI(ctx context.Context, dir string, ja bool, out io.Writer, cl
 		fmt.Fprintln(out, text(ja, "Browser could not open; use the local address and code above.", "ブラウザーを開けませんでした。上のローカルURLとコードを使ってください。"))
 	}
 	return nil
+}
+
+// boundUpgradeClient keeps CLI actions on the reviewed/verified instance. The
+// pointer is replaced only after the shared native restart gate succeeds.
+func boundUpgradeClient(client controlCaller, pinned *upgradeIdentity) controlCaller {
+	return func(ctx context.Context, dir, raw string, result any) error {
+		if raw == "ui" || raw == "ui.url" || len(raw) > 0 && raw[0] == '{' {
+			encoded, err := json.Marshal(upgradeBound{ProcessID: pinned.ProcessID, Instance: pinned.Instance, Command: raw})
+			if err != nil {
+				return err
+			}
+			return client(ctx, dir, lifecycleBoundPrefix+string(encoded), result)
+		}
+		return client(ctx, dir, raw, result)
+	}
 }

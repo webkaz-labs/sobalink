@@ -6,7 +6,8 @@ const en = {
   invalid: 'The upgrade response could not be verified. Check status before trying again.', unknown: 'The request outcome is unknown. Check status before retrying; closing this panel does not cancel an attempt.',
   preparing: 'Preparing the reviewed pair', exchanging: 'Exchanging pair context', confirming: 'Confirming local saved context', connecting: 'Starting the ordinary connection', connected: 'Ordinary backend started. Network and application readiness require separate checks.', 'network-started': 'Ordinary backend started. Network and application readiness require separate checks.', resume: 'Resume the saved preparation with the newly reviewed deadline', previous: 'Previous preparation deadline',
   failed: 'Upgrade failed. Check the failure code and review again before retrying.', cancelled: 'Upgrade attempt cancelled. Already saved confirmation is not undone.', 'local-confirmed': 'Local context confirmed; ordinary connection is not yet ready.', 'restart-required': 'A fresh process is required before this upgrade can continue.', idle: 'No upgrade attempt is running.',
-  restart: 'This browser cannot safely restart the running process. Use the managed upgrade command in a terminal for this same profile. Connections briefly stop, management reopens, and a fresh local sign-in may be required.',
+  restart: 'Applying opens a temporary private restart window. Confirm the same review there. Connections briefly stop; fresh offline management rechecks the original review. Enter its new one-time code in the normal login screen. Keep the restart window open; closing it requests cancellation.',
+  handoffPending: 'Continue in the private restart window. If interrupted, reopen normal local management and inspect current state. A restart is never retried automatically.',
   code: 'Failure code', currentPeer: 'Attempt peer', status: 'Upgrade progress', cancelHint: 'Cancellation stops this attempt. It does not revoke a saved pair or undo a confirmation already saved.',
 }
 const ja: typeof en = {
@@ -16,7 +17,8 @@ const ja: typeof en = {
   invalid: 'アップグレードの応答を検証できませんでした。再試行の前に状態を確認してください。', unknown: '要求の結果は不明です。再試行の前に状態を確認してください。この画面を閉じても試行は中止されません。',
   preparing: '確認したペアを準備中', exchanging: 'ペアのコンテキストを交換中', confirming: 'この端末に保存したコンテキストを確認中', connecting: '通常接続を開始中', connected: '通常接続のバックエンドを開始しました。ネットワークとアプリの準備状態は別途確認が必要です。', 'network-started': '通常接続のバックエンドを開始しました。ネットワークとアプリの準備状態は別途確認が必要です。', resume: '新たに確認した期限で保存済みの準備を再開します', previous: '以前の準備期限',
   failed: 'アップグレードに失敗しました。エラーコードを確認し、再試行の前に内容を再確認してください。', cancelled: 'アップグレードの試行を中止しました。保存済みの確認は取り消されません。', 'local-confirmed': 'この端末のコンテキストを確認済みです。通常接続はまだ準備できていません。', 'restart-required': 'アップグレードを続けるには新しいプロセスが必要です。', idle: '実行中のアップグレードはありません。',
-  restart: 'このブラウザーから実行中のプロセスを安全に再起動することはできません。同じプロファイルのターミナルで管理されたアップグレードコマンドを使用してください。接続が一時停止し、管理画面が開き直されます。ローカルの再サインインが必要な場合があります。',
+  restart: '適用すると一時的な非公開の再起動画面が開きます。同じ確認内容であることをそこで確認してください。接続が一時停止し、新しいオフライン管理で元の確認を再検証します。通常のログイン画面に新しい一回用コードを入力してください。再起動画面を閉じると中止を要求します。',
+  handoffPending: '非公開の再起動画面で続けてください。中断した場合は通常のローカル管理を開き直して現在の状態を確認してください。再起動を自動で再試行することはありません。',
   code: 'エラーコード', currentPeer: '試行対象の相手', status: 'アップグレードの進行状況', cancelHint: '中止するのはこの試行です。保存済みペアの失効や、保存済みの確認の取り消しは行いません。',
 }
 export function upgradeText(locale: Locale, key: keyof typeof en) { return (locale === 'ja' ? ja : en)[key] }

@@ -1,3 +1,4 @@
+import type { EndpointCommand, EndpointPayload } from './direct-lan-endpoint'
 export type TransportBackend = 'lan' | 'tailnet' | 'direct-lan'
 export type Network = TransportBackend | 'mixed'
 export type Locale = 'en' | 'ja'
@@ -226,7 +227,7 @@ export interface GroupList { groups: ServiceGroup[] | null; revision: string }
 export type FavoriteReference = { kind: 'service'; serviceId: string } | { kind: 'group'; groupName: string }
 export type FavoriteEntry = FavoriteReference & { available: boolean }
 export interface FavoritesView { version: 1; revision: string; entries: FavoriteEntry[]; durabilityUncertain: boolean }
-export interface CommandPayloads {
+export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload> {
   'device-card.export': { mode: 'lan' | 'direct-lan'; name: string; includeEndpointHint?: boolean; qr?: boolean }
   'device-card.inspect': { card: string; expectedMode: 'lan' | 'direct-lan' }
   'favorites.list': Record<string, never>
@@ -444,4 +445,8 @@ export function canUseServices(peer: Peer, state: State) {
   if (peer.networks.includes('direct-lan')) return state.settings?.network === 'direct-lan' && Boolean(state.directLAN?.configured && state.directLAN?.listenerReady && !state.directLAN?.recoveryRequired)
   if (peer.networks.includes('lan')) return state.settings?.network === 'lan' && Boolean(state.lan?.configured && state.lan?.pairingReady)
   return peer.networks.includes('tailnet')
+}
+
+export function createUpgradeHandoff(intent: { peerId: string; deadline: string; expectedRevision: string }, locale: Locale, signal?: AbortSignal) {
+  return jsonRequest<{ url: string; token: string; deadline: string }>('/api/upgrade-handoff', { intent, locale }, signal)
 }

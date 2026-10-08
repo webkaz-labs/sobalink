@@ -23,6 +23,8 @@ func directLANCLI(ctx context.Context, args []string, ja bool, out io.Writer, st
 	}
 	operation, rest := args[0], args[1:]
 	switch operation {
+	case "endpoint":
+		return directLANEndpointCLI(ctx, rest, ja, out, stdin, dryRun, query, request)
 	case "configure":
 		return directLANConfigureCLI(rest, ja, out, request)
 	case "status", "identity":
@@ -114,6 +116,7 @@ func directLANConfigureCLI(args []string, ja bool, out io.Writer, request action
 const directLANHelpEN = `Direct LAN: encrypted peer applications through a userspace WireGuard/netstack tunnel.
 
   soba direct-lan configure --listen IP:PORT --prefix CIDR [--prefix CIDR]
+  soba direct-lan endpoint --help
   soba direct-lan upgrade status|cancel
   soba direct-lan upgrade --peer ID [--deadline RFC3339]
   soba direct-lan upgrade --peer ID --deadline RFC3339 --apply --review REVISION
@@ -137,10 +140,12 @@ Invitations are private, short-lived and recipient-bound; keep them out of
 shell history and logs. --stdin accepts the same invitation JSON by pipe.
 Pairing does not grant messages, file reception or service access. Approve
 application trust and each scoped service separately. Revoke closes active
-peer flows; changed endpoints/prefixes require stop, offline restart and re-pairing.`
+peer flows. Confirmed signed endpoint pairs can use endpoint management for reviewed
+endpoint changes within unchanged scope. Changing prefixes still requires separate setup.`
 const directLANHelpJA = `Direct LAN: ユーザー空間のWireGuard/netstackトンネルでアプリ通信を暗号化します。
 
   soba direct-lan configure --listen IP:PORT --prefix CIDR [--prefix CIDR]
+  soba direct-lan endpoint --help
   soba direct-lan upgrade status|cancel
   soba direct-lan upgrade --peer ID [--deadline RFC3339]
   soba direct-lan upgrade --peer ID --deadline RFC3339 --apply --review REVISION
@@ -164,7 +169,8 @@ JSON出力は全言語で同じです。招待は宛先限定・短時間・一�
 履歴やログに残さず交換してください。--stdin で招待JSONのパイプ入力もできます。
 ペアリングだけではメッセージ・受信・サービス接続を許可しません。アプリの信頼と
 サービスごとの範囲は別途承認します。revoke は通信中の接続も終了します。
-接続先・許可範囲の変更は停止・オフライン起動・ペアリングのやり直しが必要です。`
+確認済みの署名付きペアでは endpoint 管理で許可範囲内の接続先を変更できます。
+許可範囲の変更には別途設定が必要です。`
 
 // A saved endpoint is distinct from an active listener and application success.
 type humanDirectLANStatus struct {

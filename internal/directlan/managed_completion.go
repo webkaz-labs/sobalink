@@ -45,14 +45,21 @@ func (r *ManagedCompletionRequest) Request() endpointmeta.BoundRequest {
 // Current performs only bounded current-owner checks. It never waits for a
 // Node lock, invokes Core, or grants application access. Contention fails closed.
 func (r *ManagedCompletionRequest) Current() bool {
-	if r == nil || r.self != r || r.node == nil || r.capture == nil || r.capture.generation == nil || r.capture.peer == nil || r.capture.generation.n != r.node ||
-		!r.live.Load() || r.ctx == nil || r.ctx.Err() != nil || !time.Now().Before(r.deadline) ||
-		r.request.Version != 2 || (r.request.Operation != "pair-context-commit" && r.request.Operation != "pair-context-status") ||
-		r.request.PairBinding != r.capture.binding || !r.node.mu.TryLock() {
+	if r == nil || r.self != r || !r.live.Load() || r.request.Version != 2 ||
+		(r.request.Operation != "pair-context-commit" && r.request.Operation != "pair-context-status") ||
+		r.capture == nil || r.request.PairBinding != r.capture.binding {
 		return false
 	}
-	defer r.node.mu.Unlock()
-	n, a := r.node, r.capture
+	return managedObservationCurrent(r.node, r.capture, r.ctx, r.deadline)
+}
+
+// Bounded identity observation shared by ordinary v2 control operations.
+func managedObservationCurrent(n *Node, a *managedAuthentication, ctx context.Context, deadline time.Time) bool {
+	if n == nil || a == nil || a.generation == nil || a.peer == nil || a.generation.n != n ||
+		ctx == nil || ctx.Err() != nil || !time.Now().Before(deadline) || !n.mu.TryLock() {
+		return false
+	}
+	defer n.mu.Unlock()
 	g, p := a.generation, a.peer
 	if !g.mu.TryLock() {
 		return false
@@ -64,19 +71,24 @@ func (r *ManagedCompletionRequest) Current() bool {
 		return false
 	}
 	if n.contextControl || n.closed || n.closing.Load() || n.recovery || !n.started || n.generation.Load() != g ||
-		n.peers[r.PeerKey()] != p || n.deniedKey(r.PeerKey()) || g.sealed || !g.traffic.Load() ||
+		n.peers[p.peer.Key] != p || g.cfg.deniedKey(p.peer.Key) || g.sealed || !g.traffic.Load() ||
+		(g.cfg.AuthorityCurrent != nil && !g.cfg.AuthorityCurrent()) ||
 		g.bind == nil || p.g != g || p.session == nil || a.registration == 0 || p.session.registration.Load() != a.registration {
 		return false
 	}
 	policy := g.bind.policy.Load()
 	address, _ := OverlayAddress(p.peer.Key)
 	return policy != nil && policy == a.policy && policy.generations[address] == p && p.binding == a.binding &&
-		r.live.Load() && r.ctx.Err() == nil && time.Now().Before(r.deadline)
+		ctx.Err() == nil && time.Now().Before(deadline)
 
 }
 
 func (n *Node) handleManagedCompletion(ctx context.Context, c *tls.Conn, w *wire, captured *managedAuthentication, bound endpointmeta.BoundRequest) {
-	if n.cfg.CompletionAdmission == nil || (bound.Operation != "pair-context-commit" && bound.Operation != "pair-context-status") {
+	if w == nil || w.g == nil || (bound.Operation != "pair-context-commit" && bound.Operation != "pair-context-status") {
+		return
+	}
+	completion := w.g.cfg.CompletionAdmission
+	if completion == nil {
 		return
 	}
 	deadline, ok := ctx.Deadline()
@@ -92,7 +104,7 @@ func (n *Node) handleManagedCompletion(ctx context.Context, c *tls.Conn, w *wire
 	}
 	// The same wire/quota, deadline, cancellation watcher and failed-close owner
 	// surround this callback. No Node lock crosses Core or the frame write.
-	response, err := n.cfg.CompletionAdmission(ctx, r)
+	response, err := completion(ctx, r)
 	if err != nil || !r.Current() || response.Admit == nil || !response.Epoch.Valid() {
 		return
 	}

@@ -69,7 +69,7 @@ func (c *Core) captureDirectLANJoinLocked(ctx context.Context, raw json.RawMessa
 	if s.recovery {
 		return nil, codedDirectLANError(directlan.ErrRecovery)
 	}
-	o := b.completion
+	o := b.currentCompletion()
 	if o != nil {
 		if !o.coreCurrent(invitation.Host.Key) || !o.authorityCurrent() || o.store != s || o.node != b.Node ||
 			s.contextPublication != o.receipt || s.reviewRevision != o.revision || !s.contextPublicationCurrentLocked(o.process) ||
@@ -95,7 +95,7 @@ func (a *directLANJoinAdmission) finishLocked(ctx context.Context) (any, error) 
 	if closing || !ready {
 		return nil, codedDirectLANError(directlan.ErrRecovery)
 	}
-	if c.ctx.Err() != nil || c.nodeCopy() != b || c.directLANStoreCopy() != s || b.Node != a.node || b.completion != a.owner {
+	if c.ctx.Err() != nil || c.nodeCopy() != b || c.directLANStoreCopy() != s || b.Node != a.node || b.currentCompletion() != a.owner {
 		return nil, codedDirectLANError(directlan.ErrRecovery)
 	}
 	if a.owner != nil && (!a.owner.coreCurrent(a.invitation.Host.Key) || !a.owner.authorityCurrent()) {

@@ -48,6 +48,7 @@ func newPeerStateForGeneration(g *runtimeGeneration, localKey string, p Peer) *p
 			state.binding, _ = context.Binding()
 		}
 	}
+	observeAcceptanceSessionBirth(state)
 	return state
 }
 func (n *Node) currentSessionPeer(p *peerState) bool {

@@ -22,6 +22,9 @@ type managedActivationAdmission struct {
 	limits                                    lanStoreLimits
 	limitsSource                              *lanStoreLimits
 	projection                                managedFixedEndpointProjection
+	currentEndpoints                          bool
+	currentProjection                         string
+	deadlines                                 map[directLANEndpointDeadlineKey]directLANEndpointDeadline
 	receipt                                   *contextPublicationReceipt
 	consumed                                  bool
 	mode, hostname                            string
@@ -43,6 +46,16 @@ func (c *Core) activationOwnerCurrent(ctx context.Context, a *managedActivationA
 
 func (s *directLANStore) captureActivationLocked(c *Core, now time.Time) (*managedActivationAdmission, error) {
 	projection, err := s.managedFixedEndpointProjectionLocked(now)
+	var current directlan.Config
+	currentEndpoints := err != nil
+	var deadlines map[directLANEndpointDeadlineKey]directLANEndpointDeadline
+	if currentEndpoints {
+		current, err = s.managedCurrentEndpointProjectionLocked(now)
+		if err == nil {
+			projection = managedFixedEndpointProjection{Peers: current.Peers, PairContexts: current.PairContexts, DeniedPeerKeys: current.DeniedPeerKeys}
+			deadlines, err = s.activeEndpointDeadlinesLocked(current, now)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +65,17 @@ func (s *directLANStore) captureActivationLocked(c *Core, now time.Time) (*manag
 		return nil, directlan.ErrCapacity
 	}
 	p := c.profileCopy()
-	return &managedActivationAdmission{core: c, store: s, process: c.lanStartNonce, path: s.path, file: s.fileDigest, state: privateRevision(s.state), configuration: contextConfigurationDigest(s.state), revision: s.reviewRevision, limits: limits, limitsSource: s.limits.Load(), projection: projection, mode: p.Settings.Network, hostname: p.Settings.Hostname, removal: c.managedRemoval}, nil
+	a := &managedActivationAdmission{core: c, store: s, process: c.lanStartNonce, path: s.path, file: s.fileDigest, state: privateRevision(s.state), configuration: contextConfigurationDigest(s.state), revision: s.reviewRevision, limits: limits, limitsSource: s.limits.Load(), projection: projection, mode: p.Settings.Network, hostname: p.Settings.Hostname, removal: c.managedRemoval, currentEndpoints: currentEndpoints, deadlines: deadlines}
+	if currentEndpoints {
+		a.currentProjection = endpointProjectionIdentity(current)
+	}
+	return a, nil
 }
 func (s *directLANStore) matchActivationLocked(a *managedActivationAdmission, now time.Time) error {
 	if a == nil || a.store != s || a.path != s.path || a.file != s.fileDigest || a.state != privateRevision(s.state) || a.configuration != contextConfigurationDigest(s.state) || a.revision != s.reviewRevision || a.limits != *s.currentCapacity() || a.limitsSource != s.limits.Load() {
 		return endpointmeta.ErrReview
 	}
-	projection, err := s.managedFixedEndpointProjectionLocked(now)
+	projection, err := s.activationProjectionLocked(a, now)
 	if err != nil {
 		return err
 	}
@@ -66,6 +83,33 @@ func (s *directLANStore) matchActivationLocked(a *managedActivationAdmission, no
 		return endpointmeta.ErrReview
 	}
 	return nil
+}
+
+// Current reopen uses the same exact successful no-delta publication boundary
+// as fixed activation. A saved flag or re-observed file never becomes a receipt.
+func (s *directLANStore) activationProjectionLocked(a *managedActivationAdmission, now time.Time) (managedFixedEndpointProjection, error) {
+	if !a.currentEndpoints {
+		return s.managedFixedEndpointProjectionLocked(now)
+	}
+	// Check original entries before observation could populate a missing key.
+	for key, bound := range a.deadlines {
+		got, ok := s.endpointDeadlines[key]
+		if !ok || got != bound || bound.expired || !now.Before(bound.monotonic) {
+			return managedFixedEndpointProjection{}, endpointmeta.ErrExpired
+		}
+	}
+	cfg, err := s.managedCurrentEndpointProjectionLocked(now)
+	if err != nil {
+		return managedFixedEndpointProjection{}, err
+	}
+	if endpointProjectionIdentity(cfg) != a.currentProjection {
+		return managedFixedEndpointProjection{}, endpointmeta.ErrReview
+	}
+	deadlines, err := s.activeEndpointDeadlinesLocked(cfg, now)
+	if err != nil || !reflect.DeepEqual(deadlines, a.deadlines) {
+		return managedFixedEndpointProjection{}, endpointmeta.ErrReview
+	}
+	return managedFixedEndpointProjection{Peers: cfg.Peers, PairContexts: cfg.PairContexts, DeniedPeerKeys: cfg.DeniedPeerKeys}, nil
 }
 
 // Whole-state no-delta republish deliberately has no peer target. All-terminal
@@ -170,10 +214,10 @@ func bindManagedActivationRoot(n NetworkBackend) {
 func managedActivationChild(n NetworkBackend) *managedCompletionOwner {
 	switch b := n.(type) {
 	case *directLANBackend:
-		return b.completion
+		return b.currentCompletion()
 	case *mixedBackend:
 		if child, ok := b.nodes["direct-lan"].(*directLANBackend); ok {
-			return child.completion
+			return child.currentCompletion()
 		}
 	}
 	return nil
