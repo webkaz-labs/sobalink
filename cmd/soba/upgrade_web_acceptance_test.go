@@ -2,9 +2,10 @@
 
 package main
 
-// Opt-in real HTTP/IPC/process/browser harness. Old and successor owners are
-// SYNTHETIC: no Core, network backend, account, peer transport or real profile is
-// opened. Production Web auth, helper, shutdown/lock/exit and launcher gates run.
+// Opt-in real HTTP/IPC/process/browser harness. In the original seven-case
+// mode old/successor owners are SYNTHETIC: no Core or peer transport is opened.
+// The separately compiled/opted-in product mode below uses genuine Core owners.
+// Both modes retain production authentication, helper and native-exit gates.
 import (
 	"context"
 	"encoding/json"
@@ -28,9 +29,13 @@ import (
 const webAcceptanceMarker = "SOBALINK_WEB_ACTIVATION_FIXTURE"
 
 // This dispatcher exists only in the explicitly tagged acceptance test binary.
-// Internal product argv is exercised unchanged, but run --offline selects a
-// fictional owner rather than opening Core. Unknown modes fail before I/O.
+// Internal product argv is exercised unchanged. Original synthetic mode maps
+// run --offline to a fictional owner; separately gated product mode calls the
+// genuine foreground/Core entry. Unknown modes fail before owner I/O.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "--product-browser-scope" {
+		os.Exit(runProductBrowserScope())
+	}
 	if os.Getenv(webAcceptanceMarker) != "1" {
 		os.Exit(m.Run())
 	}
@@ -45,6 +50,9 @@ func TestMain(m *testing.M) {
 	owned, e := os.ReadFile(filepath.Join(dir, "fixture-owned"))
 	if e != nil || string(owned) != "synthetic-web-activation-only" {
 		os.Exit(91)
+	}
+	if strings.HasPrefix(os.Getenv("SOBA_ACTIVATION_CASE"), "product-core-") {
+		os.Exit(runProductActivationDispatch(dir))
 	}
 	if len(os.Args) == 2 && os.Args[1] == "--web-activation-supervisor" {
 		if err := runActivationSupervisor(dir); err != nil {

@@ -17,6 +17,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type activationSupervisorExtra interface {
+	Observe(*activationSupervisor) error
+	Close() error
+}
+
 type activationRegistration struct {
 	Kind, Role, Origin string
 	PID, Parent        int
@@ -33,6 +38,7 @@ type activationSupervisor struct {
 	origins   map[string]int
 	old       int
 	reaped    int
+	reapedOK  map[int]bool
 	failed    bool
 	oldExited bool
 	oldExit   string
@@ -122,10 +128,13 @@ func (s *activationSupervisor) handle(_ context.Context, raw string) (any, error
 	if in.Kind != "origin" || !validUpgradeUIURL(in.Origin) {
 		return nil, errors.New("invalid fixture origin")
 	}
-	// Helper origin is announced by its verified old parent after the real
-	// anonymous-pipe descriptor arrives, before any browser receives it.
+	// Synthetic helper origin comes from its verified old parent. The separately
+	// gated product fixture observes the actual helper private-pipe descriptor
+	// in that registered helper before forwarding it to the old parent.
 	ownerPID := in.PID
-	if in.Role == "helper" {
+	if in.Role == "helper" && productSelfOriginAllowed(child) {
+		ownerPID = in.PID
+	} else if in.Role == "helper" {
 		if child == nil || child.role != "old" {
 			return nil, errors.New("unowned helper descriptor")
 		}
@@ -165,7 +174,7 @@ func runActivationSupervisor(dir string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
 	defer cancel()
-	s := &activationSupervisor{dir: dir, ctx: ctx, children: make(map[int]*activationChild), origins: make(map[string]int), oldExit: "not-observed"}
+	s := &activationSupervisor{dir: dir, ctx: ctx, children: make(map[int]*activationChild), origins: make(map[string]int), oldExit: "not-observed", reapedOK: make(map[int]bool)}
 	controlDir := filepath.Join(dir, ".supervisor")
 	if err := config.SecureDir(controlDir); err != nil {
 		return err
@@ -182,6 +191,13 @@ func runActivationSupervisor(dir string) error {
 	command := exec.Command(exe, "--web-activation-fixture")
 	command.Env = os.Environ()
 	command.Dir = dir
+	extra, extraErr := prepareProductSupervisor(dir, command)
+	if extraErr != nil {
+		return extraErr
+	}
+	if extra != nil {
+		defer extra.Close()
+	}
 	s.mu.Lock()
 	err = command.Start()
 	if err == nil {
@@ -231,6 +247,7 @@ func runActivationSupervisor(dir string) error {
 			}
 			s.mu.Lock()
 			s.reaped++
+			s.reapedOK[pid] = status.Exited() && status.ExitStatus() == 0
 			if pid == s.old {
 				s.oldExited = true
 				s.oldExit = "other"
@@ -266,6 +283,13 @@ func runActivationSupervisor(dir string) error {
 				s.mu.Unlock()
 			}
 		}
+		if extra != nil {
+			if e := extra.Observe(s); e != nil {
+				s.mu.Lock()
+				s.failed = true
+				s.mu.Unlock()
+			}
+		}
 		_, stopErr := os.Stat(filepath.Join(dir, "stop-fixture"))
 		noWaitableChildren, stopRequested = noChildren, stopErr == nil
 		if stopErr == nil && noChildren && allObserved {
@@ -280,6 +304,13 @@ func runActivationSupervisor(dir string) error {
 	}
 finished:
 	supervisorDeadlineExpired := ctx.Err() != nil
+	if extra != nil {
+		if e := extra.Close(); e != nil {
+			s.mu.Lock()
+			s.failed = true
+			s.mu.Unlock()
+		}
+	}
 	cancel()
 	s.mu.Lock()
 	children := make([]*activationChild, 0, len(s.children))

@@ -110,3 +110,12 @@ test('supervisor diagnostic counters never replace joined cleanup evidence', () 
   value.allDescendantsReaped = false
   assert.equal(passedLifecycle(value), false)
 })
+
+test('synthetic locale label excludes option text while retaining exact label lookup', async () => {
+  const html = await readFile(new URL('./activation-app/index.html', import.meta.url), 'utf8')
+  assert.equal((html.match(/<label for="locale">Locale<\/label>/g) || []).length, 1)
+  assert.equal((html.match(/<select id="locale">/g) || []).length, 1)
+  assert.match(html, /<label for="locale">Locale<\/label><select id="locale"><option value="en">English<\/option><option value="ja">日本語<\/option><\/select>/)
+  const fixture = await readFile(new URL('./activation-fixtures.mjs', import.meta.url), 'utf8')
+  assert.ok(fixture.includes("page.getByLabel('Locale', { exact: true }).selectOption(locale)"))
+})
