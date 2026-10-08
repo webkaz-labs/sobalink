@@ -68,9 +68,19 @@ class ImpactRulesTests(unittest.TestCase):
             self.assertEqual(classify_paths(path)[0], "full")
         root = pathlib.Path(__file__).resolve().parents[2]
         for path in impact.NATIVE_SHORT_IMPORTS:
-            impact.validate_go_imports(path, (root / path).read_text())
+            impact.validate_go_imports(path, (root / path).read_text(encoding="utf-8"))
             with self.assertRaises(impact.FailClosed):
                 impact.validate_go_imports(path, 'package main; import "net/http"')
+
+    def test_native_short_presentation_reads_are_locale_independent(self):
+        original = pathlib.Path.read_text
+        def explicit_utf8(path, *args, **kwargs):
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            return original(path, *args, **kwargs)
+        # Fail even on a UTF-8 host if the reviewed source read relies on the
+        # platform default (for example Windows cp1252 for bilingual Go text).
+        with mock.patch.object(pathlib.Path, "read_text", autospec=True, side_effect=explicit_utf8):
+            self.test_native_short_is_a_closed_presentation_allowlist()
 
     def test_explicit_top_level_documentation(self):
         self.assertEqual(classify_paths("README.md", "README.en.md", "SECURITY.md",

@@ -151,13 +151,21 @@ class ActualCoverageTests(unittest.TestCase):
             env = {"GITHUB_OUTPUT": str(output)}
             with patch.dict(os.environ, env, clear=True):
                 coverage.write_plan(plan("native-short"), pathlib.Path(directory) / "plan.json")
-            self.assertEqual(output.read_text(), "scope=native-short\nlong_required=false\n")
-        workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text()
+            self.assertEqual(output.read_text(encoding="utf-8"), "scope=native-short\nlong_required=false\n")
+        workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text(encoding="utf-8")
         self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 3)
         self.assertIn("scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'", workflow)
         self.assertIn("success() && steps.ci-plan.outputs.long_required != 'false'", workflow)
         for name in ("Verify Core context control over pinned TLS", "Verify context control over fixed loopback TCP"):
             self.assertIn(name, coverage.FAST_STEPS)
+
+    def test_native_short_plan_reads_are_locale_independent(self):
+        original = pathlib.Path.read_text
+        def explicit_utf8(path, *args, **kwargs):
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            return original(path, *args, **kwargs)
+        with patch.object(pathlib.Path, "read_text", autospec=True, side_effect=explicit_utf8):
+            self.test_native_short_plan_disables_only_real_time_steps()
 
     def test_timings_only_record_fixed_names(self):
         data = jobs()
