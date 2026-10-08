@@ -13,7 +13,7 @@ function validSummary(summary) {
   try { diagnostics = validateDiagnostics(summary?.diagnostics) } catch { return false }
   if (diagnostics.summaryAvailable && (!diagnostics.selectionValid || diagnostics.unexpected || diagnostics.globalErrors !== 0 || diagnostics.observed !== 2 || diagnostics.passed !== 2 || diagnostics.cases.some(row => !row.started || row.status !== 'passed'))) return false
   const keys = ['schema', 'expected', 'observed', 'passed', 'globalErrors', 'selectionValid', 'unexpected', 'runnerPassed', 'accepted', 'diagnostics']
-  return summary && Object.keys(summary).length === keys.length && keys.every(key => Object.hasOwn(summary, key)) && summary.schema === 2 && summary.expected === 2 && summary.observed === 2 && summary.passed === 2 && summary.globalErrors === 0 && summary.selectionValid === true && summary.unexpected === false && summary.runnerPassed === true && summary.accepted === true
+  return summary && Object.keys(summary).length === keys.length && keys.every(key => Object.hasOwn(summary, key)) && summary.schema === 3 && summary.expected === 2 && summary.observed === 2 && summary.passed === 2 && summary.globalErrors === 0 && summary.selectionValid === true && summary.unexpected === false && summary.runnerPassed === true && summary.accepted === true
 }
 
 function cleanScopeProof(proof) {
@@ -114,7 +114,7 @@ async function run() {
   }
   const schemaValid = validSummary(summary)
   const accepted = !cancellationRequested && !cancellationMarkerFailed && exitCode === 0 && !timedOut && !outputOverflow && cleanupProven && Boolean(schemaValid) && Boolean(cleanScopeProof(scopeProof))
-  await writeFile(report, JSON.stringify({ schema: 2, accepted, expected: 2, allSelectedPassed: Boolean(schemaValid), runnerExitedSuccessfully: exitCode === 0, timedOut, outputOverflow, nativeCleanupProven: cleanupProven, scope: productActivationScope, diagnostics: validateDiagnostics(diagnostics) }), { mode: 0o600 })
+  await writeFile(report, JSON.stringify({ schema: 3, accepted, expected: 2, allSelectedPassed: Boolean(schemaValid), runnerExitedSuccessfully: exitCode === 0, timedOut, outputOverflow, nativeCleanupProven: cleanupProven, scope: productActivationScope, diagnostics: validateDiagnostics(diagnostics) }), { mode: 0o600 })
   console.log(accepted ? 'PASS: two production-entry cases and private cleanup verified.' : 'FAIL: product-entry acceptance or private cleanup not verified. Raw diagnostics are never exportable.')
   process.exitCode = accepted ? 0 : 1
 }

@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { caseIds, lifecycle, validateLifecycle, validateCases, emptyDiagnostics, validateDiagnostics, counter, phase, failWork, cleanupPhase, failCleanup, nativeObservation, readNativeObservation, exitCategory } from './product-activation-diagnostics.mjs'
+import { caseIds, lifecycle, validateLifecycle, validateCases, emptyDiagnostics, validateDiagnostics, counter, phase, failWork, cleanupPhase, failCleanup, nativeObservation, readNativeObservation, exitCategory, exits, supervisorFailures, resourceFailures } from './product-activation-diagnostics.mjs'
 import { productActivationCases } from './product-activation-contract.mjs'
 import Reporter from './product-activation-reporter.mjs'
 
@@ -21,6 +21,18 @@ test('lifecycle rejects unknown fields, strings, types, missing keys and ranges'
   for (const change of [{ error: 'SYNTHETIC-PRIVATE' }, { workPhase: 'https://example.invalid/private' }, { firstFailurePhase: '/private/path' }, { cleanupPhase: 'maybe-clean' }, { firstCleanupFailurePhase: 'private-code' }, { supervisorExit: 1 }, { reaped: true }, { reaped: -1 }, { runtimeErrors: 256 }, { blockedRequests: 0.5 }, { proofRead: 1 }]) assert.throws(() => validateLifecycle({ ...lifecycle(), ...change }))
   for (const key of Object.keys(lifecycle())) { const value = lifecycle(); delete value[key]; assert.throws(() => validateLifecycle(value)) }
   for (const key of ['owner', 'helper', 'arbitrary']) { const value = lifecycle(); value.native[key] = nativeObservation(); assert.throws(() => validateLifecycle(value)) }
+})
+
+test('cleanup observations accept only fixed failure and role-exit categories', () => {
+  const defaults = lifecycle()
+  assert.equal(defaults.supervisorFailure, 'none')
+  assert.equal(defaults.resourceFailure, 'none')
+  assert.equal(defaults.helperExit, 'not-observed')
+  assert.equal(defaults.successorExit, 'not-observed')
+  for (const [key, values] of [['supervisorFailure', supervisorFailures], ['resourceFailure', resourceFailures], ['helperExit', exits], ['successorExit', exits]]) {
+    for (const value of values) assert.equal(validateLifecycle({ ...lifecycle(), [key]: value })[key], value)
+    for (const value of ['SYNTHETIC-PRIVATE', '/private/path', 'https://example.invalid/private', true, 1, null]) assert.throws(() => validateLifecycle({ ...lifecycle(), [key]: value }))
+  }
 })
 
 test('native files have exact closed shapes and unavailable is distinct from failed', () => {
@@ -90,7 +102,7 @@ function complete(reporter, item, status = 'passed', life) {
 test('optional diagnostics do not replace or expand the original acceptance gate', async () => {
   const absent = await reported((reporter, items) => items.forEach(item => complete(reporter, item)))
   assert.equal(absent.result.accepted, true)
-  assert.equal(absent.result.schema, 2)
+  assert.equal(absent.result.schema, 3)
   assert.equal(absent.result.diagnostics.cases[0].diagnosticAvailable, false)
   const evidenceOnly = await reported((reporter, items) => items.forEach(item => complete(reporter, item, 'passed', lifecycle())))
   assert.equal(evidenceOnly.result.accepted, true)

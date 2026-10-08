@@ -4,7 +4,7 @@ import { lstat, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { join, isAbsolute } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
-import { lifecycle, phase, failWork, cleanupPhase, failCleanup, validateLifecycle, counter, exits, exitCategory, nativeRoles, nativeObservation, readNativeObservation } from './product-activation-diagnostics.mjs'
+import { lifecycle, phase, failWork, cleanupPhase, failCleanup, validateLifecycle, counter, exits, supervisorFailures, resourceFailures, exitCategory, nativeRoles, nativeObservation, readNativeObservation } from './product-activation-diagnostics.mjs'
 export { expect }
 
 async function exists(path) { try { await lstat(path); return true } catch (error) { if (error.code === 'ENOENT') return false; throw error } }
@@ -191,7 +191,9 @@ export const test = base.extend({
             diagnostic.proofRead = true
             for (const key of ['allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren']) diagnostic[key] = proof[key] === true
             for (const key of ['registeredChildren', 'observedExits', 'reaped']) diagnostic[key] = counter(proof[key])
-            diagnostic.oldExit = exits.includes(proof.oldExit) ? proof.oldExit : 'not-observed'
+            for (const key of ['oldExit', 'helperExit', 'successorExit']) diagnostic[key] = exits.includes(proof[key]) ? proof[key] : 'not-observed'
+            diagnostic.supervisorFailure = supervisorFailures.includes(proof.supervisorFailure) ? proof.supervisorFailure : 'none'
+            diagnostic.resourceFailure = resourceFailures.includes(proof.resourceFailure) ? proof.resourceFailure : 'none'
             nativeComplete = proof.allDescendantsReaped === true && proof.registeredNativeExits === true
             assert.ok(nativeComplete && proof.success === true && exitCode === 0, 'Native descendant cleanup failed')
             assert.equal(proof.successorRegistered, true, 'Real successor registration required')

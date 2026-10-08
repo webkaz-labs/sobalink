@@ -36,7 +36,7 @@ export default class ProductActivationReporter {
   }
   async onEnd(result) {
     const accepted = this.selectionValid && !this.unexpected && this.globalErrors === 0 && result.status === 'passed' && this.results.size === 2 && productActivationCases.every(name => this.results.get(name) === true)
-    const summary = { schema: 2, expected: 2, observed: this.results.size, passed: [...this.results.values()].filter(Boolean).length, globalErrors: this.globalErrors, selectionValid: this.selectionValid, unexpected: this.unexpected, runnerPassed: result.status === 'passed', accepted }
+    const summary = { schema: 3, expected: 2, observed: this.results.size, passed: [...this.results.values()].filter(Boolean).length, globalErrors: this.globalErrors, selectionValid: this.selectionValid, unexpected: this.unexpected, runnerPassed: result.status === 'passed', accepted }
     summary.diagnostics = validateDiagnostics({ summaryAvailable: true, selectionValid: this.selectionValid, unexpected: this.unexpected, globalErrors: counter(this.globalErrors), observed: summary.observed, passed: summary.passed, cases: this.cases })
     const root = process.env.SOBA_PRODUCT_ACTIVATION_PRIVATE_RUN
     if (!root) return { status: 'failed' }

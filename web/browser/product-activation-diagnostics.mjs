@@ -8,12 +8,14 @@ export const failurePhases = Object.freeze(['none', 'unknown', ...workPhases])
 export const cleanupPhases = Object.freeze(['not-started', 'context', 'supervisor', 'proof', 'safety', 'remove', 'complete'])
 export const cleanupFailurePhases = Object.freeze(['none', 'unknown', ...cleanupPhases])
 export const exits = Object.freeze(['not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error', 'profile-rejected', 'watchdog', 'mode-rejected', 'owner-failed', 'supervisor-failed', 'registration-failed'])
+export const supervisorFailures = Object.freeze(['none', 'origin-write', 'observer-wait', 'start-observe', 'progress-write', 'wait-error', 'child-exit', 'extra-observe', 'extra-close'])
+export const resourceFailures = Object.freeze(['none', 'slave-close', 'master-close', 'capture-error', 'helper-exit', 'result-parse', 'result-write'])
 export const nativeStages = Object.freeze(['not-started', 'owner-start', 'peer-open', 'peer-review', 'peer-apply', 'foreground', 'identity', 'management-announced', 'cli-launch', 'review-read', 'owner-status', 'peer-status', 'review-binding', 'network-ready', 'persisted-context', 'pair-binding', 'proof-written', 'cli-terminal', 'cli-review', 'cli-review-binding', 'cli-apply', 'cli-complete'])
 export const nativeStatuses = Object.freeze(['unobserved', 'idle', 'restart-required', 'preparing', 'exchanging', 'local-confirmed', 'connected', 'network-started', 'failed', 'cancelled', 'other'])
 export const nativeRoles = Object.freeze(['old', 'successor', 'cli'])
 export const booleanKeys = Object.freeze(['workCompleted', 'workFailed', 'cleanupFailed', 'oldReadyObserved', 'oldExitObserved', 'successorStartObserved', 'cliCompleteObserved', 'controllerProofObserved', 'peerConfirmed', 'ownerConfirmed', 'ordinaryReady', 'originalReviewPreserved', 'supervisorStarted', 'supervisorExited', 'proofRead', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected'])
 export const counterKeys = Object.freeze(['registeredChildren', 'observedExits', 'reaped', 'blockedRequests', 'runtimeErrors'])
-const lifecycleKeys = ['workPhase', 'firstFailurePhase', 'cleanupPhase', 'firstCleanupFailurePhase', 'supervisorExit', 'oldExit', ...booleanKeys, ...counterKeys, 'native']
+const lifecycleKeys = ['workPhase', 'firstFailurePhase', 'cleanupPhase', 'firstCleanupFailurePhase', 'supervisorExit', 'oldExit', 'helperExit', 'successorExit', 'supervisorFailure', 'resourceFailure', ...booleanKeys, ...counterKeys, 'native']
 const nativeKeys = ['available', 'invalid', 'stage', 'failed', 'ownerStatus', 'peerStatus']
 function exact(value, keys) { return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) }
 export function counter(value) { return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 255) : 0 }
@@ -31,10 +33,10 @@ function validateNative(value) {
   }))
 }
 export function lifecycle() {
-  return { workPhase: 'not-started', firstFailurePhase: 'none', cleanupPhase: 'not-started', firstCleanupFailurePhase: 'none', supervisorExit: 'not-observed', oldExit: 'not-observed', ...Object.fromEntries(booleanKeys.map(key => [key, false])), ...Object.fromEntries(counterKeys.map(key => [key, 0])), native: Object.fromEntries(nativeRoles.map(role => [role, nativeObservation()])) }
+  return { workPhase: 'not-started', firstFailurePhase: 'none', cleanupPhase: 'not-started', firstCleanupFailurePhase: 'none', supervisorExit: 'not-observed', oldExit: 'not-observed', helperExit: 'not-observed', successorExit: 'not-observed', supervisorFailure: 'none', resourceFailure: 'none', ...Object.fromEntries(booleanKeys.map(key => [key, false])), ...Object.fromEntries(counterKeys.map(key => [key, 0])), native: Object.fromEntries(nativeRoles.map(role => [role, nativeObservation()])) }
 }
 export function validateLifecycle(value) {
-  if (!exact(value, lifecycleKeys) || !workPhases.includes(value.workPhase) || !failurePhases.includes(value.firstFailurePhase) || !cleanupPhases.includes(value.cleanupPhase) || !cleanupFailurePhases.includes(value.firstCleanupFailurePhase) || !exits.includes(value.supervisorExit) || !exits.includes(value.oldExit) || booleanKeys.some(key => typeof value[key] !== 'boolean') || counterKeys.some(key => !Number.isInteger(value[key]) || value[key] < 0 || value[key] > 255)) throw Error('Invalid fixed product lifecycle')
+  if (!exact(value, lifecycleKeys) || !workPhases.includes(value.workPhase) || !failurePhases.includes(value.firstFailurePhase) || !cleanupPhases.includes(value.cleanupPhase) || !cleanupFailurePhases.includes(value.firstCleanupFailurePhase) || ['supervisorExit', 'oldExit', 'helperExit', 'successorExit'].some(key => !exits.includes(value[key])) || !supervisorFailures.includes(value.supervisorFailure) || !resourceFailures.includes(value.resourceFailure) || booleanKeys.some(key => typeof value[key] !== 'boolean') || counterKeys.some(key => !Number.isInteger(value[key]) || value[key] < 0 || value[key] > 255)) throw Error('Invalid fixed product lifecycle')
   return { ...Object.fromEntries(lifecycleKeys.filter(key => key !== 'native').map(key => [key, value[key]])), native: validateNative(value.native) }
 }
 export function phase(value, next) {

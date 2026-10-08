@@ -25,9 +25,9 @@ class ProductActivationPolicyTests(unittest.TestCase):
         self.assertFalse(gate.validate_report(gate.failed_report())['accepted'])
         self.assertTrue(gate.validate_report(self.passing())['accepted'])
         self.assertEqual(gate.failed_report()['expected'], 2)
-        self.assertEqual(gate.failed_report()['schema'], 2)
+        self.assertEqual(gate.failed_report()['schema'], 3)
         self.assertEqual(set(self.passing()), gate.KEYS)
-        for change in ({'expected': 7}, {'expected': True}, {'schema': True}, {'schema': 1}, {'scope': 'other'},
+        for change in ({'expected': 7}, {'expected': True}, {'schema': True}, {'schema': 1}, {'schema': 2}, {'scope': 'other'},
                        {'allSevenPassed': True}, {'diagnostics': 'synthetic'}, {'timedOut': 0},
                        {'timedOut': True}, {'outputOverflow': True}, {'nativeCleanupProven': False},
                        {'allSelectedPassed': False}, {'runnerExitedSuccessfully': False}):
@@ -180,6 +180,7 @@ class ProductActivationPolicyTests(unittest.TestCase):
         source = (ROOT / 'web/browser/product-activation-diagnostics.mjs').read_text()
         constants = {'caseIds': gate.CASE_IDS, 'statuses': gate.STATUSES, 'workPhases': gate.WORK_PHASES,
                      'cleanupPhases': gate.CLEANUP_PHASES, 'exits': gate.EXITS, 'nativeStages': gate.NATIVE_STAGES,
+                     'supervisorFailures': gate.SUPERVISOR_FAILURES, 'resourceFailures': gate.RESOURCE_FAILURES,
                      'nativeStatuses': gate.NATIVE_STATUSES, 'nativeRoles': gate.NATIVE_ROLES,
                      'booleanKeys': gate.LIFECYCLE_BOOLS, 'counterKeys': gate.LIFECYCLE_COUNTS}
         for name, expected in constants.items():
@@ -191,6 +192,25 @@ class ProductActivationPolicyTests(unittest.TestCase):
         gate_source = Path(gate.__file__).read_text()
         self.assertIn('info.st_size > 16384', gate_source)
         self.assertIn('validate_report(strict_json(wrapper_report.read_text()))', gate_source)
+
+    def test_cleanup_detail_fields_are_closed_observations_only(self):
+        defaults = {'supervisorFailure': 'none', 'resourceFailure': 'none', 'helperExit': 'not-observed', 'successorExit': 'not-observed'}
+        for key, default in defaults.items():
+            self.assertEqual(gate.empty_lifecycle()[key], default)
+            for allowed in gate.LIFECYCLE_ENUMS[key]:
+                value = self.passing()
+                value['diagnostics']['cases'][0]['lifecycle'][key] = allowed
+                # Existing result and cleanup predicates alone determine pass.
+                self.assertTrue(gate.validate_report(value)['accepted'])
+            for invalid in ('synthetic-private-detail', 95, True, None, [], {}):
+                value = gate.empty_lifecycle()
+                value[key] = invalid
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    gate.validate_lifecycle(value)
+            value = gate.empty_lifecycle()
+            del value[key]
+            with self.assertRaises(ValueError):
+                gate.validate_lifecycle(value)
 
     def test_toolchain_exact(self):
         hashes = {'go': 'a' * 64, 'node': 'b' * 64}

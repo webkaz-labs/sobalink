@@ -2,7 +2,11 @@
 
 package main
 
-import "path/filepath"
+import (
+	"errors"
+	"path/filepath"
+	"testing"
+)
 
 // Fixed, best-effort observations of existing fixture-owned calls. These do not
 // grant authority, drive readiness or add any acceptance/cleanup predicate.
@@ -60,5 +64,26 @@ func (d *productNativeDiagnostic) status(peer bool, status string) {
 	if *value != observed {
 		*value = observed
 		d.flush()
+	}
+}
+
+func TestProductCleanupDiagnosticPreservesFirstFailure(t *testing.T) {
+	s := &activationSupervisor{failure: "none"}
+	s.failLocked("extra-observe")
+	s.failLocked("extra-close")
+	if !s.failed || s.failure != "extra-observe" {
+		t.Fatal("sticky cleanup failure changed")
+	}
+	r := &productSupervisorResources{}
+	if r.noteFailure("master-close", nil) != nil || r.FailureStage() != "none" {
+		t.Fatal("nil result invented failure")
+	}
+	first := errors.New("synthetic first failure")
+	if r.noteFailure("capture-error", first) != first {
+		t.Fatal("underlying error changed")
+	}
+	r.noteFailure("master-close", errors.New("synthetic later failure"))
+	if r.FailureStage() != "capture-error" {
+		t.Fatal("first resource failure changed")
 	}
 }

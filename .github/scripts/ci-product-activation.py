@@ -25,13 +25,17 @@ FAILURE_PHASES = ('none', 'unknown', *WORK_PHASES)
 CLEANUP_PHASES = ('not-started', 'context', 'supervisor', 'proof', 'safety', 'remove', 'complete')
 CLEANUP_FAILURE_PHASES = ('none', 'unknown', *CLEANUP_PHASES)
 EXITS = ('not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error', 'profile-rejected', 'watchdog', 'mode-rejected', 'owner-failed', 'supervisor-failed', 'registration-failed')
+SUPERVISOR_FAILURES = ('none', 'origin-write', 'observer-wait', 'start-observe', 'progress-write', 'wait-error', 'child-exit', 'extra-observe', 'extra-close')
+RESOURCE_FAILURES = ('none', 'slave-close', 'master-close', 'capture-error', 'helper-exit', 'result-parse', 'result-write')
 NATIVE_STAGES = ('not-started', 'owner-start', 'peer-open', 'peer-review', 'peer-apply', 'foreground', 'identity', 'management-announced', 'cli-launch', 'review-read', 'owner-status', 'peer-status', 'review-binding', 'network-ready', 'persisted-context', 'pair-binding', 'proof-written', 'cli-terminal', 'cli-review', 'cli-review-binding', 'cli-apply', 'cli-complete')
 NATIVE_STATUSES = ('unobserved', 'idle', 'restart-required', 'preparing', 'exchanging', 'local-confirmed', 'connected', 'network-started', 'failed', 'cancelled', 'other')
 NATIVE_ROLES = ('old', 'successor', 'cli')
 LIFECYCLE_BOOLS = ('workCompleted', 'workFailed', 'cleanupFailed', 'oldReadyObserved', 'oldExitObserved', 'successorStartObserved', 'cliCompleteObserved', 'controllerProofObserved', 'peerConfirmed', 'ownerConfirmed', 'ordinaryReady', 'originalReviewPreserved', 'supervisorStarted', 'supervisorExited', 'proofRead', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected')
 LIFECYCLE_COUNTS = ('registeredChildren', 'observedExits', 'reaped', 'blockedRequests', 'runtimeErrors')
 LIFECYCLE_ENUMS = {'workPhase': WORK_PHASES, 'firstFailurePhase': FAILURE_PHASES, 'cleanupPhase': CLEANUP_PHASES,
-                   'firstCleanupFailurePhase': CLEANUP_FAILURE_PHASES, 'supervisorExit': EXITS, 'oldExit': EXITS}
+                   'firstCleanupFailurePhase': CLEANUP_FAILURE_PHASES, 'supervisorExit': EXITS, 'oldExit': EXITS,
+                   'supervisorFailure': SUPERVISOR_FAILURES, 'resourceFailure': RESOURCE_FAILURES,
+                   'helperExit': EXITS, 'successorExit': EXITS}
 LIFECYCLE_KEYS = {*LIFECYCLE_ENUMS, *LIFECYCLE_BOOLS, *LIFECYCLE_COUNTS, 'native'}
 NATIVE_KEYS = {'available', 'invalid', 'stage', 'failed', 'ownerStatus', 'peerStatus'}
 CASE_KEYS = {'id', 'started', 'status', 'diagnosticAvailable', 'diagnosticRejected', 'lifecycle'}
@@ -41,6 +45,7 @@ DIAGNOSTIC_KEYS = {'summaryAvailable', 'selectionValid', 'unexpected', 'globalEr
 def empty_lifecycle():
     return {'workPhase': 'not-started', 'firstFailurePhase': 'none', 'cleanupPhase': 'not-started',
             'firstCleanupFailurePhase': 'none', 'supervisorExit': 'not-observed', 'oldExit': 'not-observed',
+            'supervisorFailure': 'none', 'resourceFailure': 'none', 'helperExit': 'not-observed', 'successorExit': 'not-observed',
             **dict.fromkeys(LIFECYCLE_BOOLS, False), **dict.fromkeys(LIFECYCLE_COUNTS, 0),
             'native': {role: {'available': False, 'invalid': False, 'stage': 'not-started', 'failed': False,
                               'ownerStatus': 'unobserved', 'peerStatus': 'unobserved'} for role in NATIVE_ROLES}}
@@ -121,7 +126,7 @@ def validate_toolchain(versions, binaries):
 def validate_report(value):
     if not isinstance(value, dict) or set(value) != KEYS:
         raise ValueError('invalid result schema')
-    if type(value['schema']) is not int or value['schema'] != 2 or type(value['expected']) is not int or value['expected'] != 2 or value['scope'] != SCOPE:
+    if type(value['schema']) is not int or value['schema'] != 3 or type(value['expected']) is not int or value['expected'] != 2 or value['scope'] != SCOPE:
         raise ValueError('invalid fixed result')
     if any(type(value[key]) is not bool for key in BOOLS):
         raise ValueError('invalid result types')
@@ -140,7 +145,7 @@ def validate_report(value):
 
 
 def failed_report(diagnostics=None):
-    return {'schema': 2, 'expected': 2, 'scope': SCOPE, 'diagnostics': validate_diagnostics(empty_diagnostics() if diagnostics is None else diagnostics), **dict.fromkeys(BOOLS, False)}
+    return {'schema': 3, 'expected': 2, 'scope': SCOPE, 'diagnostics': validate_diagnostics(empty_diagnostics() if diagnostics is None else diagnostics), **dict.fromkeys(BOOLS, False)}
 
 
 def digest(path):

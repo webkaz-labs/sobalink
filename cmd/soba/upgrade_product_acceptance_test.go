@@ -435,6 +435,7 @@ type productSupervisorResources struct {
 	once          sync.Once
 	closeErr      error
 	resultWritten bool
+	failure       string
 }
 
 func prepareProductSupervisor(dir string, command *exec.Cmd) (activationSupervisorExtra, error) {
@@ -541,10 +542,22 @@ func prepareProductSupervisor(dir string, command *exec.Cmd) (activationSupervis
 	}
 	return resources, nil
 }
+func (r *productSupervisorResources) FailureStage() string {
+	if r.failure == "" {
+		return "none"
+	}
+	return r.failure
+}
+func (r *productSupervisorResources) noteFailure(stage string, err error) error {
+	if err != nil && r.failure == "" {
+		r.failure = stage
+	}
+	return err
+}
 func (r *productSupervisorResources) Observe(s *activationSupervisor) error {
 	if r.slave != nil {
 		if err := r.slave.Close(); err != nil {
-			return err
+			return r.noteFailure("slave-close", err)
 		}
 		r.slave = nil
 	}
@@ -563,7 +576,7 @@ func (r *productSupervisorResources) Observe(s *activationSupervisor) error {
 	}
 	s.mu.Unlock()
 	if helperFailed {
-		return errors.New("actual CLI helper did not exit successfully")
+		return r.noteFailure("helper-exit", errors.New("actual CLI helper did not exit successfully"))
 	}
 	if !helperExited {
 		return nil
@@ -579,7 +592,7 @@ func (r *productSupervisorResources) Observe(s *activationSupervisor) error {
 	r.mu.Unlock()
 	defer clear(data)
 	if captureErr != nil {
-		return captureErr
+		return r.noteFailure("capture-error", captureErr)
 	}
 	// Production CLI writes its fresh code only to this real private terminal.
 	// Parse fixed presentation fields privately; no terminal byte is exported.
@@ -593,10 +606,10 @@ func (r *productSupervisorResources) Observe(s *activationSupervisor) error {
 		}
 	}
 	if !validUpgradeUIURL(address) || code == "" {
-		return errors.New("actual private CLI result unavailable")
+		return r.noteFailure("result-parse", errors.New("actual private CLI result unavailable"))
 	}
 	if err := productPrivateJSON(filepath.Join(r.dir, "cli-result.json"), map[string]any{"url": address, "code": code, "completed": true}); err != nil {
-		return err
+		return r.noteFailure("result-write", err)
 	}
 	r.resultWritten = true
 	return nil
@@ -604,17 +617,17 @@ func (r *productSupervisorResources) Observe(s *activationSupervisor) error {
 func (r *productSupervisorResources) Close() error {
 	r.once.Do(func() {
 		if r.slave != nil {
-			r.closeErr = errors.Join(r.closeErr, r.slave.Close())
+			r.closeErr = errors.Join(r.closeErr, r.noteFailure("slave-close", r.slave.Close()))
 			r.slave = nil
 		}
 		if r.master != nil {
-			r.closeErr = errors.Join(r.closeErr, r.master.Close())
+			r.closeErr = errors.Join(r.closeErr, r.noteFailure("master-close", r.master.Close()))
 			<-r.outputDone
 		}
 		r.mu.Lock()
 		clear(r.output)
 		r.output = nil
-		r.closeErr = errors.Join(r.closeErr, r.outputErr)
+		r.closeErr = errors.Join(r.closeErr, r.noteFailure("capture-error", r.outputErr))
 		r.mu.Unlock()
 	})
 	return r.closeErr
