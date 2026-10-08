@@ -133,7 +133,7 @@ func (e resourceTestError) Error() string     { return string(e) }
 func (e resourceTestError) ErrorCode() string { return string(e) }
 
 func TestResourceCLIErrorLocalizationAndMachineCodes(t *testing.T) {
-	for _, code := range []string{"resource_unavailable", "resource_invalid", "resource_not_found"} {
+	for _, code := range []string{"resource_unavailable", "resource_invalid", "resource_not_found", "resource_sequence_exhausted", "resource_revision_conflict", "resource_operation_not_retained", "resource_operation_not_found", "resource_operation_mismatch", "resource_journal_uncertain", "resource_journal_write_failed", "resource_journal_full"} {
 		original := resourceTestError(code)
 		for _, machine := range []bool{false, true} {
 			args := []string{"--locale", "ja", "--state-dir", t.TempDir()}
@@ -228,6 +228,108 @@ func TestResourceCLIProjectsPrivateControlErrors(t *testing.T) {
 						t.Fatal("error semantics changed", output)
 					}
 				}
+			}
+		}
+	}
+}
+
+func resourceApplyTestArgs() []string {
+	return []string{"apply", "--id", resourceTestID, "--operation-id", resource.OperationID(resourceTestID, resourceTestID, 1), "--base-revision", strings.Repeat("a", 64), "--revision", strings.Repeat("b", 64), "--concurrent-files", "default", "--concurrent-per-peer", "2"}
+}
+
+func TestResourceCLIExplicitApplyAndStatus(t *testing.T) {
+	for _, ja := range []bool{false, true} {
+		for _, action := range []string{"apply", "status"} {
+			args := resourceApplyTestArgs()
+			if action == "status" {
+				args = append([]string{"status"}, args[1:5]...)
+			}
+			for _, dryRun := range []bool{false, true} {
+				var out bytes.Buffer
+				calls := 0
+				client := func(_ context.Context, _ string, raw string, target any) error {
+					calls++
+					var cmd webui.Command
+					if err := json.Unmarshal([]byte(raw), &cmd); err != nil {
+						t.Fatal(err)
+					}
+					want := "resource.apply"
+					if action == "status" {
+						want = "resource.operation.status"
+					}
+					if cmd.Name != want {
+						t.Fatal(cmd.Name)
+					}
+					if action == "apply" {
+						var request resource.ApplyRequest
+						if err := json.Unmarshal(cmd.Payload, &request); err != nil {
+							t.Fatal(err)
+						}
+						if request.Validate() != nil || request.OperationID != args[4] || request.BaseRevision != args[6] || request.Revision != args[8] || request.Settings.TransferConcurrentFiles.Mode != "default" || *request.Settings.TransferConcurrentPerPeer.Value != 2 {
+							t.Fatal(request)
+						}
+					} else {
+						var request resource.StatusRequest
+						if err := json.Unmarshal(cmd.Payload, &request); err != nil {
+							t.Fatal(err)
+						}
+						if request.ResourceID != resourceTestID || request.OperationID != args[4] {
+							t.Fatal(request)
+						}
+					}
+					return json.Unmarshal([]byte(`{"operationId":"`+args[4]+`","outcome":{"status":"unknown"},"current":{"revision":"current"}}`), target)
+				}
+				if err := resourceCLI(t.Context(), args, t.TempDir(), ja, dryRun, &out, client); err != nil {
+					t.Fatal(err)
+				}
+				if dryRun {
+					if calls != 0 || !strings.Contains(out.String(), `"validation": "local-input-only"`) || !strings.Contains(out.String(), `"applied": false`) {
+						t.Fatal(calls, out.String())
+					}
+				} else if calls != 1 || !strings.Contains(out.String(), `"status": "unknown"`) || !strings.Contains(out.String(), `"current"`) {
+					t.Fatal(calls, out.String())
+				}
+			}
+		}
+	}
+}
+
+func TestResourceCLIRejectsIncompleteBinding(t *testing.T) {
+	noCall := func(context.Context, string, string, any) error {
+		t.Fatal("invalid binding contacted agent")
+		return nil
+	}
+	valid := resourceApplyTestArgs()
+	for _, ja := range []bool{false, true} {
+		for _, dryRun := range []bool{false, true} {
+			for i := 1; i < len(valid); i += 2 {
+				args := append([]string{}, valid[:i]...)
+				args = append(args, valid[i+2:]...)
+				if err := resourceCLI(t.Context(), args, t.TempDir(), ja, dryRun, io.Discard, noCall); err == nil {
+					t.Fatal("accepted missing flag", valid[i])
+				}
+			}
+			for index, values := range map[int][]string{4: {"bad", resource.OperationID(strings.Repeat("a", 32), resourceTestID, 1), resourceTestID + ":" + resourceTestID + ":01"}, 6: {"", strings.Repeat("A", 64)}, 8: {"bad", strings.Repeat("b", 63)}, 10: {"unlimited"}, 12: {"0"}} {
+				for _, value := range values {
+					args := append([]string{}, valid...)
+					args[index] = value
+					if err := resourceCLI(t.Context(), args, t.TempDir(), ja, dryRun, io.Discard, noCall); err == nil {
+						t.Fatal("accepted", args)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestResourceCLIOperationErrorsArePrivate(t *testing.T) {
+	for _, code := range []string{"resource_sequence_exhausted", "resource_revision_conflict", "resource_operation_not_retained", "resource_operation_not_found", "resource_operation_mismatch", "resource_journal_uncertain", "resource_journal_write_failed", "resource_journal_full"} {
+		original := &control.RemoteError{Code: code, Message: "/synthetic-private-state/operation.json 192.0.2.27"}
+		for _, ja := range []bool{false, true} {
+			err := localizeResourceError(ja, resourceControlError(original))
+			var coded interface{ ErrorCode() string }
+			if !errors.As(err, &coded) || coded.ErrorCode() != code || !errors.Is(err, original) || strings.Contains(err.Error(), "synthetic-private") || strings.Contains(err.Error(), "192.0.2.") {
+				t.Fatal(err)
 			}
 		}
 	}

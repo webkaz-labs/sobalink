@@ -1,9 +1,11 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
@@ -51,12 +53,16 @@ func (c *Core) resourceRevision(current capacity.Policy, profile Profile) string
 	}{c.resourceIdentity, c.resourceNonce, capacityRevision(current, profile), c.lanStartWriteRevision.Load()})
 }
 func (c *Core) resourceDescriptor(current capacity.Policy, profile Profile) resource.Descriptor {
-	return resource.Descriptor{Target: resource.Target{SchemaVersion: resource.SchemaVersion, ResourceID: c.resourceIdentity}, Type: resource.Type, Authority: "local", Provider: "local", Operations: []string{"list", "inspect", "preview"}, Revision: c.resourceRevision(current, profile), Requested: resourceSettings(current), Effective: resourceEffective(current)}
+	return resource.Descriptor{Target: resource.Target{SchemaVersion: resource.SchemaVersion, ResourceID: c.resourceIdentity}, Type: resource.Type, Authority: "local", Provider: "local", Operations: []string{"list", "inspect", "preview", "apply", "operation.status"}, Revision: c.resourceRevision(current, profile), Requested: resourceSettings(current), Effective: resourceEffective(current)}
 }
 
-// Called only under c.op through the existing authenticated local control path.
-// No transport handler, peer discovery capability or management grant is added.
+// Called only under c.op through existing authenticated local control (IPC or
+// the existing local Web command dispatcher). No peer management handler,
+// discovery capability or management grant is added.
 func (c *Core) resourceCommand(name string, raw json.RawMessage) (any, error) {
+	return c.resourceCommandContext(context.Background(), name, raw)
+}
+func (c *Core) resourceCommandContext(ctx context.Context, name string, raw json.RawMessage) (any, error) {
 	if c.resourceIdentity == "" {
 		return nil, resourceUnavailable()
 	}
@@ -71,8 +77,17 @@ func (c *Core) resourceCommand(name string, raw json.RawMessage) (any, error) {
 		if c.resourceDirectoryIdentity == nil || !os.SameFile(c.resourceDirectoryIdentity, binding.journalInfo) {
 			return errResourceBinding
 		}
-		result, commandErr = c.resourceCommandOwned(name, raw)
-		return binding.check()
+		if name == "resource.apply" {
+			result, commandErr = c.resourceApply(ctx, raw, binding)
+		} else if name == "resource.operation.status" {
+			result, commandErr = c.resourceStatus(raw)
+		} else {
+			result, commandErr = c.resourceCommandOwned(name, raw)
+		}
+		if name != "resource.apply" {
+			return binding.check()
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, resourceUnavailable()
@@ -123,10 +138,17 @@ func (c *Core) resourceCommandOwned(name string, raw json.RawMessage) (any, erro
 	if _, err := c.capacityCommand("policy.preview", policyRequest); err != nil {
 		return nil, &localCommandError{"resource_invalid", "transfer settings cannot be previewed against the current capacity policy"}
 	}
-	revision := resourceDigest(struct {
+	if *c.resourceState.HighWater == math.MaxUint64 {
+		return nil, resourceSequenceExhausted()
+	}
+	operationID := resource.OperationID(c.resourceIdentity, c.resourceNonce, *c.resourceState.HighWater+1)
+	revision := resourceReviewRevision(operationID, descriptor.Revision, capacityRevision(proposed, profile), settings)
+	return resource.Preview{Target: target, OperationID: operationID, BaseRevision: descriptor.Revision, Revision: revision, Requested: settings, Effective: resourceEffective(proposed), Destructive: false}, nil
+}
+func resourceReviewRevision(operationID, base, proposed string, settings resource.Settings) string {
+	return resourceDigest(struct {
 		Schema                            int
 		ID, Actor, Action, Base, Proposed string
 		Settings                          resource.Settings
-	}{resource.SchemaVersion, c.resourceIdentity, "local-control", "preview", descriptor.Revision, capacityRevision(proposed, profile), settings})
-	return resource.Preview{Target: target, BaseRevision: descriptor.Revision, Revision: revision, Requested: settings, Effective: resourceEffective(proposed), Destructive: false}, nil
+	}{resource.SchemaVersion, operationID, resource.LocalActor, "apply", base, proposed, settings})
 }

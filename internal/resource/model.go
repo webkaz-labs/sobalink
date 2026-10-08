@@ -58,6 +58,7 @@ type Catalog struct {
 }
 type Preview struct {
 	Target
+	OperationID  string    `json:"operationId"`
 	BaseRevision string    `json:"baseRevision"`
 	Revision     string    `json:"revision"`
 	Requested    Settings  `json:"requested"`

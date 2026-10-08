@@ -8,7 +8,7 @@ The local Web UI and guided CLI support normal service workflows; explicit CLI c
 
 [Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
-Source-build addition: [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports inspection and preview only; it does not add apply, operation results or remote management.
+Source-build addition: [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and is not part of the published alpha.5 acceptance above. It uses the existing authenticated local IPC and local Web command dispatcher, with no new Web UI controls. See [the local operation workflow](#local-transfer-settings-operations-source-build).
 
 ## Start and open the local UI
 
@@ -336,3 +336,28 @@ Applying a reviewed local endpoint move saves and activates the local change sep
 A recipient may temporarily refuse an update while another operation is running. Temporary refusal or a lost response may be retried after the previous connection is fully cleaned up. A substantive reply, including “review required,” stops automatic retries. Connection refusal and timeouts are not automatically retried. A recipient may still be restarting its listener, so delivery can end unconfirmed even after an earlier attempt was accepted. The optional delivery attempt count includes local admission checks that may stop before opening a connection.
 
 “Saved” and “active” describe the local result. “Unconfirmed” does not prove that the recipient accepted or rejected the update. If the bounded attempts are exhausted, review the existing proof and current destination through the separate delivery preview/apply action before retrying. That explicit retry reuses the proof without changing its sequence or lifetime. It never discovers a new address automatically.
+
+## Local transfer settings operations (source build)
+
+Start the local agent first. Use the opaque resource ID returned by `list`, then review both settings together:
+
+```sh
+soba resource list --json
+soba resource inspect --id RESOURCE_ID --json
+soba resource preview --id RESOURCE_ID --concurrent-files default --concurrent-per-peer 2 --json
+```
+
+Review the preview and retain its exact `operationId`, `baseRevision`, `revision` and both choices. Substitute those values below; `apply` never performs an implicit new preview:
+
+```sh
+soba resource apply --id RESOURCE_ID --operation-id OPERATION_ID --base-revision BASE_REVISION --revision REVIEW_REVISION --concurrent-files default --concurrent-per-peer 2 --json
+soba resource status --id RESOURCE_ID --operation-id OPERATION_ID --json
+```
+
+`default` and positive finite integers are supported; both choices are mandatory. Changing either choice requires a new preview. A stale review returns `resource_revision_conflict`; review the new preview before applying it. All output keys, IDs and status enums are stable JSON across locales. Global `--dry-run` validates inputs and prints the request without contacting the agent, reserving an operation, validating a review against current state or applying anything. `--offline` is unsupported.
+
+An operation's `outcome` is historical evidence. Its separately returned `current` descriptor is the current settings observation; a successful older operation does not mean its settings are still current. `evidenceDurable` distinguishes durably recorded outcomes from uncertain evidence. `saved_not_applied` means configuration was saved but a runtime stage failed; `unknown` means success or rollback cannot be asserted. Inspect the current descriptor and stage fields before deciding what to do next.
+
+Retries with the same operation ID and identical bound request return retained evidence without replaying the provider. Different content with the same ID is rejected. The bounded journal pins unfinished and unknown operations; they are not evicted or automatically replayed. Older evicted evidence is reported as `resource_operation_not_retained`, not executed again. Missing evidence is not proof of success or failure. Journal uncertainty blocks new applies until a later owned startup validates and durably republishes the evidence; startup does not replay the settings operation. Full pinned journals reject new operations. This is not an exactly-once guarantee, and local counters do not prevent whole-profile rollback.
+
+Downgrading to the earlier PR1 read-only resource implementation makes the resource interface unavailable when the operation journal is populated; legacy settings commands continue. Do not delete private state to restore resource availability. These are source-level implementation and mock-test boundaries, not evidence of real power-loss durability or published-release acceptance.

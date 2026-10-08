@@ -552,7 +552,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba profile --help           Export/import stopped service definitions
   soba rustdesk --help          Review and save RustDesk client settings
   soba group --help             Save and start service groups
-  soba resource --help          Inspect and preview local transfer settings
+  soba resource --help          Review, apply and track local transfer settings
   soba favorites --help         Mark inert service and group favorites
   soba task --help              Run a command with owned temporary services
   soba stop-shares              Stop every share; keep the node running
@@ -609,7 +609,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba profile --help           停止状態のサービス設定を書き出し・読込み
   soba rustdesk --help          RustDeskの接続設定を確認・保存
   soba group --help             サービスをまとめて保存・開始
-  soba resource --help          ローカル転送設定の内容・変更案を確認
+  soba resource --help          ローカル転送設定の確認・適用・結果照会
   soba favorites --help         サービスとグループにお気に入りの目印を付ける
   soba task --help              所有する一時サービスでコマンドを実行
   soba stop-shares              本体を維持してすべての共有を停止

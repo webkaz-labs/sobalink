@@ -17,14 +17,13 @@ import (
 const resourceStateMaxBytes = 256 << 10
 const resourceStateMaxRecords = 128
 
-// The final envelope reserves bounded operation evidence, but this read-only
-// slice accepts only zero high-water and empty records. Capacity remains the
-// sole settings authority. No sidecar state is written by a preview.
+// The bounded envelope stores operation evidence, not current settings.
+// Capacity remains the sole authority; preview never writes this file.
 type resourceEnvelope struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	ResourceID    string            `json:"resourceId"`
 	HighWater     *uint64           `json:"highWater"`
-	Records       []json.RawMessage `json:"records"`
+	Records       []resource.Record `json:"records"`
 }
 
 func resourceStatePath(dir string) string { return filepath.Join(dir, "resource-state", "state.json") }
@@ -56,8 +55,8 @@ func readResourceEnvelope(path string) (resourceEnvelope, error) {
 	if err := resource.Decode(data, resourceStateMaxBytes, &state); err != nil {
 		return state, err
 	}
-	if state.SchemaVersion != resource.SchemaVersion || !resource.ValidID(state.ResourceID) || state.HighWater == nil || *state.HighWater != 0 || state.Records == nil || len(state.Records) != 0 {
-		return state, errors.New("unsupported resource state")
+	if err := state.validate(); err != nil {
+		return state, err
 	}
 	return state, nil
 }
@@ -67,6 +66,7 @@ func readResourceEnvelope(path string) (resourceEnvelope, error) {
 // successfully before using it; a read alone cannot certify prior durability.
 func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 	c.resourceIdentity, c.resourceNonce, c.resourceLock = "", "", nil
+	c.resourceState, c.resourceFrozen = resourceEnvelope{}, false
 	c.resourceDirectoryIdentity = nil
 	err := owner.WithOwnershipInfo(c.dir, func(directory, lock os.FileInfo) error {
 		path := resourceStatePath(c.dir)
@@ -85,9 +85,15 @@ func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 				return idErr
 			}
 			zero := uint64(0)
-			state = resourceEnvelope{resource.SchemaVersion, id, &zero, []json.RawMessage{}}
+			state = resourceEnvelope{resource.SchemaVersion, id, &zero, []resource.Record{}}
 		} else if err != nil {
 			return err
+		}
+		for i := range state.Records {
+			if state.Records[i].Phase == "intent" {
+				state.Records[i].Phase = "result"
+				state.Records[i].Outcome = resource.UnknownOutcome()
+			}
 		}
 		nonce, err := newResourceID()
 		if err != nil {
@@ -106,10 +112,105 @@ func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 			return err
 		}
 		c.resourceIdentity, c.resourceNonce, c.resourceLock = state.ResourceID, nonce, owner
+		c.resourceState = state
 		c.resourceDirectoryIdentity = binding.journalInfo
 		return nil
 	})
 	if err != nil {
 		c.resourceIdentity, c.resourceNonce, c.resourceLock = "", "", nil
 	}
+}
+
+// A validated record is below this bound even with maximum finite choices,
+// uint64 sequence and every longest stage. Admission reserves a whole record
+// before invoking the provider, so terminal growth cannot exceed our budget.
+const resourceRecordMaxBytes = 2048
+
+func (s resourceEnvelope) validate() error {
+	if s.SchemaVersion != resource.SchemaVersion || !resource.ValidID(s.ResourceID) || s.HighWater == nil || s.Records == nil || len(s.Records) > resourceStateMaxRecords {
+		return errors.New("unsupported resource state")
+	}
+	var previous uint64
+	for _, record := range s.Records {
+		if err := record.Validate(s.ResourceID, *s.HighWater); err != nil {
+			return err
+		}
+		_, _, sequence, _ := resource.ParseOperationID(record.Request.OperationID)
+		if sequence <= previous {
+			return errors.New("duplicate or unordered resource sequence")
+		}
+		previous = sequence
+		encoded, err := json.Marshal(record)
+		if err != nil || len(encoded) > resourceRecordMaxBytes {
+			return errors.New("oversized operation record")
+		}
+	}
+	// Every consumed slot retains its latest evidence until a later slot is
+	// admitted. Empty nonzero/high-water holes cannot be produced by this writer.
+	if (*s.HighWater == 0) != (len(s.Records) == 0) || len(s.Records) != 0 && previous != *s.HighWater {
+		return errors.New("invalid resource high-water")
+	}
+	return nil
+}
+func (s resourceEnvelope) clone() resourceEnvelope {
+	next := s
+	high := *s.HighWater
+	next.HighWater = &high
+	next.Records = append([]resource.Record{}, s.Records...)
+	return next
+}
+func (s resourceEnvelope) find(id string) (resource.Record, bool) {
+	for _, record := range s.Records {
+		if record.Request.OperationID == id {
+			return record, true
+		}
+	}
+	return resource.Record{}, false
+}
+func (c *Core) writeResourceEnvelopeBound(state resourceEnvelope, binding *resourcePathBinding) error {
+	if err := state.validate(); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > resourceStateMaxBytes {
+		return errors.New("resource state is too large")
+	}
+	// No journal lease crosses the provider call. The ordinary atomic write
+	// releases its private-parent admission before the canonical settings write.
+	if binding == nil {
+		return errResourceBinding
+	}
+	return binding.write(resourceStatePath(c.dir), encoded, c.atomicWrite)
+}
+func (s resourceEnvelope) withIntent(record resource.Record) (resourceEnvelope, error) {
+	next := s.clone()
+	_, _, sequence, _ := resource.ParseOperationID(record.Request.OperationID)
+	*next.HighWater = sequence
+	for {
+		trial := next.clone()
+		trial.Records = append(trial.Records, record)
+		encoded, err := json.Marshal(trial)
+		recordBytes, _ := json.Marshal(record)
+		if err == nil && len(trial.Records) <= resourceStateMaxRecords && len(encoded)+resourceRecordMaxBytes-len(recordBytes) <= resourceStateMaxBytes {
+			return trial, trial.validate()
+		}
+		evict := -1
+		for i, previous := range next.Records {
+			if !previous.Pinned() {
+				evict = i
+				break
+			}
+		}
+		if evict < 0 {
+			return resourceEnvelope{}, &localCommandError{"resource_journal_full", "local resource evidence is full; unresolved operations cannot be evicted"}
+		}
+		next.Records = append(next.Records[:evict], next.Records[evict+1:]...)
+	}
+}
+func (c *Core) resourceJournalUsage() resource.JournalUsage {
+	encoded, _ := json.Marshal(c.resourceState)
+	return resource.JournalUsage{Records: len(c.resourceState.Records), Bytes: len(encoded), MaxRecords: resourceStateMaxRecords, MaxBytes: resourceStateMaxBytes, Writable: !c.resourceFrozen}
 }

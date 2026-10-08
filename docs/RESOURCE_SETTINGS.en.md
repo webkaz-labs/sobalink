@@ -1,32 +1,54 @@
-# Local transfer settings resource: source-build preview
+# Local transfer settings resource: source build
 
 [日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md)
 
-This checkout provides a local resource catalog, inspection and change preview for two transfer-admission settings. This is source-build functionality, not a new published release. Apply, durable operation results and remote management are not implemented in this slice. No version or release commitment is implied.
+This checkout provides local resource inspection, preview, explicitly bound apply and durable operation evidence for two transfer-admission settings. This is source-build functionality, not a new published release or a release commitment. Remote management and Web UI resource controls are not added.
 
-## Inspect and preview
+## Review, apply and check
 
-Start the local agent, then use another terminal with the same profile selection:
+Start the local agent and use the same profile selection in another terminal. Follow the [command workflow](GENERIC.en.md#local-transfer-settings-operations-source-build): list the resource, preview both choices, review the response, apply its exact binding, then check status if needed.
 
-```sh
-soba resource list
-soba resource inspect --id RESOURCE_ID
-soba resource preview --id RESOURCE_ID --concurrent-files 4 --concurrent-per-peer 2
-soba resource preview --id RESOURCE_ID --concurrent-files default --concurrent-per-peer default
-```
+`list`, `inspect`, `preview`, `apply` and `status` return language-independent JSON; `--json` is accepted explicitly. CLI `status` sends `resource.operation.status`. Human help and errors follow `--locale auto|ja|en`. Use the exact opaque resource ID from `list`. Both settings require `default` or a positive finite integer no greater than 9007199254740991. `unlimited`, zero and negative values are rejected. The provider also validates the complete proposed capacity policy. `requested` retains the choices and `effective` shows resolved values. Lower limits govern admission rather than canceling active transfers.
 
-Replace `RESOURCE_ID` with the exact opaque ID returned by `list`. Both preview choices are required. Use `default` or a positive finite integer; `unlimited`, zero, negative values and values outside the supported JSON integer range are rejected. The provider also checks the complete proposed capacity policy. Preview never changes settings or starts transfers. A lower limit in a future apply implementation would govern admission rather than cancel active transfers.
+Preview changes no settings, starts no transfers and reserves no operation slot. Global `--dry-run` validates local input and prints the request without contacting the agent; it neither validates current state nor produces an authoritative review. Global `--offline` definition editing does not support these commands. A running agent started with `start --offline` can manage local settings without starting its saved network.
 
-All three commands return language-independent JSON; `--json` is accepted explicitly. Human help and input errors follow `--locale auto|ja|en`. `requested` retains the requested choices and `effective` shows their resolved values. Global `--dry-run` only validates local input and prints the request without contacting the agent; it does not inspect current state or issue an authoritative review. Global `--offline` definition editing does not support these commands. A running agent started with `start --offline` can inspect settings without starting its saved network.
+## Review expiry and retry contract
 
-Only `list`, `inspect` and `preview` are advertised as supported operations. There is no usable apply or operation-status command. The commands use the existing authenticated local IPC and local Web `/api/command` dispatcher. This adds no Web UI controls, peer-management endpoint, remote management grant or discovery advertisement. The fixed `local-control` actor denotes this local authority scope; it does not identify an individual user.
+- Apply requires the preview's exact `operationId`, `baseRevision`, `revision` and both reviewed choices. There is no implicit re-preview or substitution of current revisions. Changing a choice requires reviewing a new preview.
+- Reviews bind the current policy/profile, exact choices, local actor/action, process authority revision and next operation slot. Authority write attempts, including failed writes or changes later reverted, conservatively invalidate unused reviews. Another admitted operation consumes the slot. Restart requires a new review for a new operation; expiry is state-based, not a wall-clock timeout.
+- Multiple previews may name the same unreserved slot. Only the admitted binding can own that ID. A different retained request returns `resource_operation_mismatch`; stale current-state/slot bindings return `resource_revision_conflict`. Inspect and review anew before attempting a new operation.
+- Retained evidence is checked before boot/revision checks. Repeating the same operation ID with identical bound content returns its historical evidence without provider replay, including after restart. Check `status` after a lost response; do not treat a missing response as permission to silently create a replacement operation.
+- An evicted/consumed operation returns `resource_operation_not_retained` and cannot execute again. `resource_operation_not_found` means no retained execution outcome is known. Neither code proves success or failure. The request ID used by local control is separate from this durable operation ID.
 
-## Identity, review and compatibility contract
+## Outcome and current state
 
-- The one resource has type `transfer-admission-settings`, local authority/provider scope and an opaque persistent ID. The ID is not a device name, path, address or peer identity. Copying the complete private state directory copies this local identity; no remote clone-resolution behavior is claimed.
-- Only `transferConcurrentFiles` and `transferConcurrentPerPeer` are represented. Their canonical owner remains the existing capacity policy. The adapter preserves every unrelated setting and the existing profile/capacity file formats.
-- Reviews bind the current policy/profile, exact requested choices and current process authority revision. Existing local authority writes invalidate a review, including changes later reverted. Restart requires a new review. A revision is an opaque review token, not a proof of historical completion.
-- A separate bounded private sidecar persists identity. Owned startup validates and atomically republishes it before exposing a usable resource. Invalid, unsupported or uncertain resource state disables this new feature rather than silently replacing its identity; legacy features remain available. Older builds need not understand the sidecar. Downgrading a resource-aware build may make resources unavailable if it cannot understand later sidecar records, without altering legacy policy/profile formats.
-- Descriptors and previews expose neither private paths nor peer lists, transport identities or full profiles. The fixed local authority scope does not identify an individual user. No management permission is inferred from pairing.
+The operation response contains `operationId`, historical `outcome`, `evidenceDurable`, a separate `current` descriptor and `journal` usage. The current descriptor reflects observation at response time; it may differ from the historical request because legacy commands or later operations changed settings. A previous success is not a claim that those settings remain current.
 
-Successful preview is not proof of saved settings, live transfer changes, durable operation recovery, remote application or physical-device acceptance. Those remain outside this slice. See the [development principles](DEVELOPMENT_PRINCIPLES.en.md) and [security boundary](../SECURITY.md).
+| `outcome.status` | Meaning |
+| --- | --- |
+| `applied` | Configuration was saved durably and required accounting/transfer stages succeeded |
+| `saved_not_applied` | Configuration was saved durably, but accounting or transfer-runtime application failed |
+| `failed` | Configuration was not attempted or was not published; runtime stages were not attempted |
+| `canceled` | Cancellation was observed after durable intent but before configuration application |
+| `unknown` | The result cannot be certified, including uncertain configuration durability or unfinished intent |
+
+`outcome.configuration` is `durable`, `not_attempted`, `not_published`, `uncertain` or `unobserved`. Each of `outcome.accounting` and `outcome.transfer` is `succeeded`, `not_required`, `failed`, `not_attempted` or `unobserved`. These fixed enums do not include raw provider errors. A returned `unknown` is not success or rollback. `evidenceDurable: true` describes a durably recorded result, which may itself record uncertainty; it does not prove application success. Cancellation before intent is admitted can instead return a canceled command error with no operation record.
+
+## Bounded evidence and recovery
+
+The private journal has fixed bounds of 128 records and 256 KiB (262144 bytes) for its serialized envelope. Admission reserves room for the completed record before invoking the provider; the byte bound can limit admission before 128 records. `journal` reports `records`, `bytes`, `maxRecords`, `maxBytes` and `writable`. `writable` reports whether uncertainty has frozen admission, not a guarantee that storage or space is available.
+
+Intent, canonical configuration and result are separate writes, not a multi-file transaction. A durably saved intent precedes the provider call, and a result write follows it. Completed known outcomes may be evicted oldest-first within the bounds; unfinished intents and unknown outcomes are pinned. No automatic replay or forced eviction resolves them. If only pinned records remain and capacity is exhausted, new operations return `resource_journal_full`.
+
+An intent write that did not publish returns `resource_journal_write_failed` without attempting settings changes. Uncertain intent publication or a failed result write returns unknown evidence and freezes new applies. A later owned startup validates and durably republishes available disk evidence before enabling the resource; it never replays settings operations. If startup cannot certify that evidence, the resource remains unavailable. Status/current observations do not automatically repair an unknown outcome.
+
+This provides bounded evidence and no-replay behavior, not an exactly-once guarantee, a multi-file rollback guarantee or proof of real power-loss recovery. Local high-water counters do not prevent whole-profile rollback. Do not delete private state to recover a resource identity or free pinned records.
+
+## Identity, compatibility and scope
+
+- The one resource has type `transfer-admission-settings`, local authority/provider scope and an opaque persistent ID. It is not a device name, path, address or peer identity. Copying the complete private state directory copies the identity; no remote clone-resolution behavior is claimed.
+- Only `transferConcurrentFiles` and `transferConcurrentPerPeer` are represented. Their canonical owner remains the existing capacity policy. Unrelated settings and legacy profile/capacity file formats are preserved.
+- Owned startup validates and republishes the bounded private resource envelope. Invalid, unsupported or uncertain state disables the resource feature rather than silently replacing its identity; legacy settings remain available. Downgrading to the earlier PR1 read-only implementation makes the resource interface unavailable with a populated operation journal, while legacy settings continue.
+- Responses expose no private paths, peer lists, transport identities or full profiles. The fixed local actor is not an individual user's identity. Existing authenticated local control is required: the CLI uses local IPC, and the existing local Web `/api/command` dispatcher can reach the same commands. Its authentication and Fetch Metadata protections are unchanged. The fixed `local-control` actor covers both front doors without individual attribution. No new Web UI controls, peer-management endpoint, management grant or discovery advertisement is added. Pairing grants no management permission.
+
+Mock tests establish bounded logic behavior only. Physical-device acceptance, actual power-loss durability and published distribution acceptance remain separate. See the [development principles](DEVELOPMENT_PRINCIPLES.en.md) and [security boundary](../SECURITY.md).

@@ -155,3 +155,14 @@ func TestResourceBindingReadRejectsSubstitutedIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestResourceBindingReadRejectsReplacedJournal(t *testing.T) {
+	c, _ := resourceFixture(t)
+	id := c.resourceIdentity
+	replaceResourceBinding(t, c.dir, "journal")
+	result, err := c.resourceCommand("resource.list", []byte(`{}`))
+	coded, ok := err.(*localCommandError)
+	if !ok || coded.ErrorCode() != "resource_unavailable" || result != nil || c.resourceIdentity != id {
+		t.Fatal("replacement journal accepted for cached identity", result, err)
+	}
+}
