@@ -34,6 +34,8 @@ FAST_STEPS = (
     "Check exact toolchain and native target",
     "Local and mock tests, race detector, and vet",
     "Verify adapted engine admission and native underlay denial",
+    "Verify Core context control over pinned TLS",
+    "Verify context control over fixed loopback TCP",
     'Verify managed session tls',
     'Verify managed session outbound-tcp',
     'Verify managed session native-caller',
@@ -51,7 +53,7 @@ FAST_STEPS = (
 )
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
-SCOPES = {"docs", "frontend", "go", "full"}
+SCOPES = {"docs", "frontend", "go", "native-short", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Verify actual UI workflows with isolated Playwright fixtures")
 GO_STEPS = ("Validate scoped Go selection", "Check exact toolchain and module graph",
@@ -86,7 +88,7 @@ def classify(sha, force=False):
         args.append("--force-full")
     result = subprocess.run(args, cwd=ROOT, check=True, capture_output=True, timeout=90)
     plan = json.loads(result.stdout)
-    require(plan.get("version") == 2 and plan.get("policy_id") == "minimum-ci-v2",
+    require(plan.get("version") == 3 and plan.get("policy_id") == "minimum-ci-v3",
             "unknown classifier policy")
     require(plan.get("scope") in SCOPES, "invalid classifier decision")
     return plan
@@ -94,7 +96,7 @@ def classify(sha, force=False):
 
 def read_plan(path):
     plan = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-    require(plan.get("version") == 2 and plan.get("policy_id") == "minimum-ci-v2",
+    require(plan.get("version") == 3 and plan.get("policy_id") == "minimum-ci-v3",
             "unknown plan schema")
     require(plan.get("scope") in SCOPES, "plan lacks explicit scope")
     require(plan.get("head_sha") == head(), "plan belongs to another checkout")
@@ -152,18 +154,24 @@ def evaluate_jobs(jobs, scope):
 
     passed("impact", (SCOPE_STEP,))
     required = {"impact"}
-    if scope in ("frontend", "full"):
+    if scope in ("frontend", "native-short", "full"):
         passed("browser", BROWSER_STEPS)
         required.add("browser")
     if scope == "go":
         passed("go-unit", GO_STEPS)
         required.add("go-unit")
-    if scope == "full":
+    if scope in ("native-short", "full"):
         for target, name in TARGETS.items():
-            steps = FAST_STEPS + LONG_STEPS
+            steps = FAST_STEPS + (LONG_STEPS if scope == "full" else ())
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             passed(name, steps)
+            if scope == "native-short":
+                for long_step in LONG_STEPS:
+                    matches = [s for s in index[name].get("steps", []) if s.get("name") == long_step]
+                    require(len(matches) == 1 and matches[0].get("status") == "completed"
+                            and matches[0].get("conclusion") == "skipped",
+                            "native-short must record the unexecuted real-time gate: " + name + ": " + long_step)
             required.add(name)
         passed("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",))
         required.add("manifest-smoke")
@@ -227,14 +235,15 @@ def finalize(input_path, output):
     scope = plan["scope"]
     jobs = current_jobs()
     full = evaluate_jobs(jobs, scope)
-    receipt = {"schema_version": 2, "repository": REPOSITORY,
+    receipt = {"schema_version": 3, "repository": REPOSITORY,
                "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
                "head_sha": head(), "head_tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
                "policy_sha256": digest(POLICY), "workflow_sha256": digest(WORKFLOW),
                "scope": scope, "full_native": full,
-               "targets": {t: "success" if full else "not_run" for t in TARGETS},
-               "browser": "success" if scope in ("frontend", "full") else "not_run",
-               "manifest": "success" if full else "not_run",
+               "targets": {t: "success" if full else "short_checks_passed" if scope == "native-short" else "not_run" for t in TARGETS},
+               "long_checks": {t: "success" if full else "not_run" for t in TARGETS},
+               "browser": "success" if scope in ("frontend", "native-short", "full") else "not_run",
+               "manifest": "success" if scope in ("native-short", "full") else "not_run",
                "go_unit": "success" if scope == "go" else "not_run",
                "selection": plan, "timings": job_timings(jobs)}
     pathlib.Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -242,6 +251,7 @@ def finalize(input_path, output):
         "docs": "Documentation only; application tests, builds and packages NOT RUN",
         "frontend": "Frontend checks passed; four-target native and package checks NOT RUN",
         "go": "Affected Go packages and reverse dependencies passed on Linux; full native, browser and package checks NOT RUN",
+        "native-short": "Four-target short native, browser and package checks passed; real-time lifecycle and lease checks NOT RUN",
         "full": "Full native, browser and package coverage passed",
     }
     summary = descriptions[scope]

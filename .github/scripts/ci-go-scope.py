@@ -61,7 +61,7 @@ def read_plan(path):
     except (OSError, ValueError, UnicodeError, RecursionError) as exc:
         raise InvalidInput("Cannot read a valid scoped Go plan.") from exc
     if (not isinstance(plan, dict) or type(plan.get("version")) is not int
-            or plan["version"] != 2 or plan.get("policy_id") != "minimum-ci-v2"
+            or plan["version"] != 3 or plan.get("policy_id") != "minimum-ci-v3"
             or plan.get("scope") != "go"):
         raise InvalidInput("Expected a current Go-scope plan.")
     packages = plan.get("go_packages")

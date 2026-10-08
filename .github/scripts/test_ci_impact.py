@@ -55,6 +55,33 @@ class ImpactRulesTests(unittest.TestCase):
                 self.assertEqual(classify_paths(path)[0], "full")
                 self.assertEqual(classify_paths("README.md", path)[0], "full")
 
+    def test_native_short_is_a_closed_presentation_allowlist(self):
+        for path in impact.NATIVE_SHORT_IMPORTS:
+            self.assertEqual(classify_paths(path, "README.md"),
+                             ("native-short", "reviewed_presentation_pr", []))
+            for extra in ("cmd/soba/lifecycle.go", "internal/directlan/session.go", "internal/lanlink/lease.go",
+                          "internal/routecat/relay.go", "internal/control/server.go", "internal/deadline/time.go",
+                          "go.mod", ".github/workflows/ci.yml", "web/src/App.tsx", "internal/boundedlog/writer.go"):
+                with self.subTest(path=path, extra=extra):
+                    self.assertEqual(classify_paths(path, extra)[0], "full")
+        for path in ("cmd/soba/help_windows.go", "cmd/soba/help/new.go", "cmd/soba/new_output.go"):
+            self.assertEqual(classify_paths(path)[0], "full")
+        root = pathlib.Path(__file__).resolve().parents[2]
+        for path in impact.NATIVE_SHORT_IMPORTS:
+            impact.validate_go_imports(path, (root / path).read_text(encoding="utf-8"))
+            with self.assertRaises(impact.FailClosed):
+                impact.validate_go_imports(path, 'package main; import "net/http"')
+
+    def test_native_short_presentation_reads_are_locale_independent(self):
+        original = pathlib.Path.read_text
+        def explicit_utf8(path, *args, **kwargs):
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            return original(path, *args, **kwargs)
+        # Fail even on a UTF-8 host if the reviewed source read relies on the
+        # platform default (for example Windows cp1252 for bilingual Go text).
+        with mock.patch.object(pathlib.Path, "read_text", autospec=True, side_effect=explicit_utf8):
+            self.test_native_short_is_a_closed_presentation_allowlist()
+
     def test_explicit_top_level_documentation(self):
         self.assertEqual(classify_paths("README.md", "README.en.md", "SECURITY.md",
                                         "docs/guide.md"),
@@ -90,6 +117,9 @@ class ImpactRulesTests(unittest.TestCase):
         roots = {path: blob() for path in impact.ROOT_DOCS}
         for old, new, expected in [
             ("internal/core/logic.go", "docs/guide.md", "full"),
+            ("internal/core/logic.go", "cmd/soba/help.go", "full"),
+            ("cmd/soba/help.go", "cmd/soba/new_help.go", "full"),
+            ("cmd/soba/help.go", "cmd/soba/errors.go", "native-short"),
             ("docs/guide.md", "internal/core/readme.md", "full"),
             ("docs/old.md", "docs/new.md", "docs"),
             ("web/src/old.ts", "web/src/new.ts", "frontend"),
@@ -180,6 +210,7 @@ class GitHistoryTests(unittest.TestCase):
         self.write("internal/servicepresets/catalog.go", "package servicepresets\n")
         self.write("internal/boundedlog/writer.go", 'package boundedlog\nimport "os"\nvar _ *os.File\n')
         self.write("web/src/App.tsx", "export const fixture = 1\n")
+        self.write("cmd/soba/errors.go", "package main\n")
         self.base = self.commit()
 
     def git(self, *args):
@@ -219,9 +250,13 @@ class GitHistoryTests(unittest.TestCase):
         self.write("README.md", "fixture documentation changed\n")
         return self.commit()
 
-    def pull_request_event(self):
+    def pull_request_event(self, change=None):
         self.git("checkout", "-qb", "fixture-topic")
-        self.docs_change()
+        if change is None:
+            self.docs_change()
+        else:
+            change()
+            self.commit()
         source = self.git("rev-parse", "HEAD")
         self.git("checkout", "main")
         self.git("merge", "--no-ff", "-m", "Synthetic tested merge", source)
@@ -231,13 +266,39 @@ class GitHistoryTests(unittest.TestCase):
                     "base": {"sha": self.base, "ref": "main", "repo": {"full_name": impact.REPOSITORY}},
                     "head": {"sha": source, "repo": {"full_name": "fixture-fork/sobalink"}}}}
 
+    def test_native_short_pr_and_identical_main_delta_stays_full(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", 'package main\nimport "errors"\nvar _ = errors.New\n'))
+        report = self.classify(event=event, name="pull_request")
+        self.assertEqual(report["scope"], "native-short")
+        self.assertEqual(report["changed_paths"], ["cmd/soba/errors.go"])
+        self.assertEqual(self.classify()["reason"], "native_short_requires_pr")
+        self.assertEqual(self.classify()["scope"], "full")
+        self.assertEqual(self.classify(event=event, name="pull_request", force_full=True)["scope"], "full")
+
+    def test_native_short_new_import_falls_back_to_full(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", 'package main\nimport "net/http"\n'))
+        self.assertEqual(self.classify(event=event, name="pull_request")["reason"], "unreviewed_go_dependency")
+        self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
+
+    def test_native_short_build_directive_falls_back_to_full(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", '//go:build linux\n\npackage main\n'))
+        self.assertEqual(self.classify(event=event, name="pull_request")["reason"], "platform_or_special_go_source")
+        self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
+
+    def test_native_short_mixed_lifecycle_pr_remains_full(self):
+        def change():
+            self.write("cmd/soba/errors.go", "package main\n// presentation\n")
+            self.write("internal/core/core.go", "package core\n// lifecycle change\n")
+        event = self.pull_request_event(change)
+        self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
+
     def test_docs_without_prior_baseline_emit_versioned_evidence(self):
         head = self.docs_change()
         report = self.classify()
         self.assertEqual(report["scope"], "docs")
         self.assertEqual(report["reason"], "documentation_only")
-        self.assertEqual(report["version"], 2)
-        self.assertEqual(report["policy_id"], "minimum-ci-v2")
+        self.assertEqual(report["version"], 3)
+        self.assertEqual(report["policy_id"], "minimum-ci-v3")
         self.assertEqual(report["head_sha"], head)
         self.assertEqual(report["base_sha"], self.base)
         self.assertEqual(report["head_tree"], self.git("rev-parse", "HEAD^{tree}"))
@@ -275,6 +336,78 @@ class GitHistoryTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertEqual(self.classify(event=bad, name="pull_request")["reason"], "unverified_pr_merge")
 
+    def test_actual_merge_proof_accepts_matching_null_and_stale_hint(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", "package main\n// presentation change\n"))
+        tested = self.git("rev-parse", "HEAD")
+        for hint in (tested, None, "f" * 40):
+            value = copy.deepcopy(event)
+            value["pull_request"]["merge_commit_sha"] = hint
+            with self.subTest(hint=hint):
+                report = self.classify(event=value, name="pull_request")
+                self.assertEqual(report["scope"], "native-short")
+                self.assertEqual(report["head_sha"], tested)
+                self.assertEqual(report["base_sha"], event["pull_request"]["base"]["sha"])
+        missing = copy.deepcopy(event)
+        del missing["pull_request"]["merge_commit_sha"]
+        self.assertEqual(self.classify(event=missing, name="pull_request")["scope"], "native-short")
+
+    def test_malformed_merge_hint_stays_full_despite_valid_parents(self):
+        event = self.pull_request_event()
+        for hint in ("", "0" * 40, "g" * 40, "A" * 40, "f" * 39, "f" * 40 + "\n", True, 42, [], {}):
+            value = copy.deepcopy(event)
+            value["pull_request"]["merge_commit_sha"] = hint
+            with self.subTest(hint=hint):
+                report = self.classify(event=value, name="pull_request")
+                self.assertEqual(report["scope"], "full")
+                self.assertEqual(report["reason"], "invalid_event_merge_hint")
+
+    def test_merge_hint_cannot_rescue_wrong_actual_parent_count_or_order(self):
+        event = self.pull_request_event()
+        tested = self.git("rev-parse", "HEAD")
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        base, source = event["pull_request"]["base"]["sha"], event["pull_request"]["head"]["sha"]
+        extra = self.git("commit-tree", tree, "-p", base, "-m", "Synthetic unrelated parent")
+        for parents in ((), (base,), (source, base), (base, extra), (base, source, extra)):
+            args = ["commit-tree", tree, "-m", "Synthetic parent shape"]
+            for parent in parents:
+                args += ["-p", parent]
+            forged = self.git(*args)
+            self.git("checkout", "--detach", forged)
+            for hint in (forged, None, tested):
+                value = copy.deepcopy(event)
+                value["pull_request"]["merge_commit_sha"] = hint
+                with self.subTest(parents=parents, hint=hint):
+                    report = self.classify(event=value, name="pull_request")
+                    self.assertEqual(report["scope"], "full")
+                    self.assertEqual(report["reason"], "unverified_pr_merge")
+
+    def test_stale_hint_does_not_weaken_environment_or_event_identity(self):
+        event = self.pull_request_event()
+        event["pull_request"]["merge_commit_sha"] = "f" * 40
+        for changes in ({"GITHUB_SHA": "e" * 40}, {"GITHUB_REF": None},
+                        {"GITHUB_REF": "refs/heads/main"}, {"GITHUB_REF": "refs/pull/43/merge"},
+                        {"GITHUB_REPOSITORY": "synthetic/other"}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.classify(event=event, name="pull_request", env_changes=changes)["scope"], "full")
+        for number in (True, 0, -1, "42", None):
+            with self.subTest(number=number):
+                self.assertEqual(self.classify(event=dict(event, number=number), name="pull_request")["scope"], "full")
+        for part in ("base", "head"):
+            value = copy.deepcopy(event)
+            value["pull_request"][part]["sha"] = "e" * 40
+            self.assertEqual(self.classify(event=value, name="pull_request")["scope"], "full")
+
+    def test_stale_hint_keeps_complete_runtime_delta_full(self):
+        def changes():
+            self.write("internal/core/core.go", "package core\n// earlier lifecycle change\n")
+            self.commit()
+            self.write("cmd/soba/errors.go", "package main\n// later presentation change\n")
+        event = self.pull_request_event(changes)
+        event["pull_request"]["merge_commit_sha"] = "f" * 40
+        report = self.classify(event=event, name="pull_request")
+        self.assertEqual(report["scope"], "full")
+        self.assertEqual(report["changed_paths"], ["cmd/soba/errors.go", "internal/core/core.go"])
+
     def test_pr_head_checkout_instead_of_tested_merge_is_full(self):
         event = self.pull_request_event()
         self.git("checkout", "--detach", event["pull_request"]["head"]["sha"])
@@ -284,7 +417,7 @@ class GitHistoryTests(unittest.TestCase):
     def test_pr_branch_repository_merge_sha_and_ref_mismatch_are_full(self):
         event = self.pull_request_event()
         for path, value in [(('base', 'ref'), 'other'), (('base', 'repo', 'full_name'), 'fixture/other'),
-                            (('head', 'repo', 'full_name'), 'malformed'), (('merge_commit_sha',), 'f' * 40)]:
+                            (('head', 'repo', 'full_name'), 'malformed'), (('merge_commit_sha',), 'malformed')]:
             bad = copy.deepcopy(event)
             target = bad['pull_request']
             for key in path[:-1]:
