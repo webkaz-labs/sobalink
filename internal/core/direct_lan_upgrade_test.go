@@ -106,3 +106,88 @@ func TestUpgradeExpiredLifetimeDeniesInboundPublication(t *testing.T) {
 		t.Fatal("expired workflow admitted inbound publication")
 	}
 }
+
+// No transport: deterministically prove that a pending outbound operation does
+// not prevent repeated inbound maintenance, and terminal signals stop it.
+func TestUpgradePendingOutboundMaintainsInboundService(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	calls := 0
+	err := waitUpgradeExchange(ctx, done, func() error {
+		calls++
+		if calls == 2 {
+			close(done)
+		}
+		return nil
+	})
+	if err != nil || calls != 2 {
+		t.Fatalf("pending outbound starved inbound maintenance: calls=%d error=%v", calls, err)
+	}
+}
+
+func TestUpgradePendingOutboundStopsOnCancellationAndRefreshFailure(t *testing.T) {
+	for _, mode := range []string{"cancel", "failure", "already-done"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			done := make(chan struct{})
+			if mode == "already-done" {
+				close(done)
+			}
+			failure := errors.New("synthetic inbound maintenance failure")
+			calls := 0
+			err := waitUpgradeExchange(ctx, done, func() error {
+				calls++
+				if mode == "failure" {
+					return failure
+				}
+				cancel()
+				return nil
+			})
+			switch mode {
+			case "cancel":
+				if calls != 1 || !errors.Is(err, context.Canceled) {
+					t.Fatal("cancellation did not stop maintenance", calls, err)
+				}
+			case "failure":
+				if calls != 1 || !errors.Is(err, failure) {
+					t.Fatal("maintenance error did not stop wait", calls, err)
+				}
+			case "already-done":
+				if calls != 0 || err != nil {
+					t.Fatal("completed exchange refreshed an arm", calls, err)
+				}
+			}
+		})
+	}
+}
+
+func TestUpgradeInboundRefreshRejectsChangedPolicyBeforeArming(t *testing.T) {
+	c := &Core{ctx: context.Background()}
+	policy := c.upgradePolicyDigest()
+	c.profile.Settings.Hostname = "synthetic-policy-change"
+	// Missing owner/outbound are intentional: the immutable policy must reject
+	// before inspecting an owner, performing store work or creating any arm.
+	if err := c.refreshUpgradeInbound(context.Background(), nil, nil, policy); !errors.Is(err, endpointmeta.ErrReview) {
+		t.Fatal("changed policy reached inbound owner admission", err)
+	}
+}
+
+func TestUpgradeInboundRefreshDoesNotQueueBehindCompletion(t *testing.T) {
+	c := &Core{ctx: context.Background()}
+	c.op.Lock()
+	done := make(chan error, 1)
+	go func() { done <- c.refreshUpgradeInbound(context.Background(), nil, nil, "") }()
+	select {
+	case err := <-done:
+		c.op.Unlock()
+		if err != nil {
+			t.Fatal("contended refresh inspected owner instead of yielding", err)
+		}
+	case <-time.After(time.Second):
+		c.op.Unlock()
+		<-done
+		t.Fatal("inbound maintenance queued behind a completion owner")
+	}
+}

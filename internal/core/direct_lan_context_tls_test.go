@@ -258,8 +258,8 @@ func TestContextCoreTLSPreparePublishesBeforeReply(t *testing.T) {
 		t.Fatal("reply did not describe the exact newly published context", bindErr)
 	}
 	if f.writes != setupWrites+1 || f.store.reviewRevision != setupRevision+1 || r.seen.writesAfter != r.seen.writesBefore+1 ||
-		!r.seen.oldEpochInvalid || !r.seen.currentResponseEpoch || !r.seen.currentReceipt || len(r.owner.operations) != 0 {
-		t.Fatal("successful completion did not replace its old arm with a current receipt-backed epoch")
+		!r.seen.oldEpochInvalid || !r.seen.currentResponseEpoch || !r.seen.currentReceipt || len(r.owner.operations) != 1 || r.owner.operations[armed.attempt] != armed || !armed.attempt.Cancelled() {
+		t.Fatal("successful completion lost its response epoch or retained live work after transport join")
 	}
 	contextTLSAssertDisk(t, f)
 	contextTLSAssertNoApplication(t, f)

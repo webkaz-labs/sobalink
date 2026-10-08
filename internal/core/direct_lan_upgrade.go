@@ -310,7 +310,14 @@ func (c *Core) driveContextUpgrade(ctx context.Context, job *contextUpgradeJob) 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		c.op.Lock()
+		// Never queue behind a completing inbound response. A queued controller
+		// can acquire Core.op between completion and its nonwaiting send gate.
+		if !c.op.TryLock() {
+			if err := waitUpgradePoll(ctx); err != nil {
+				return err
+			}
+			continue
+		}
 		if job.policy != c.upgradePolicyDigest() {
 			c.op.Unlock()
 			return endpointmeta.ErrReview
@@ -390,16 +397,14 @@ func (c *Core) driveContextUpgrade(ctx context.Context, job *contextUpgradeJob) 
 			return err
 		}
 		if outbound != nil {
-			_ = c.exchangeContext(ctx, outbound)
+			if err := c.exchangeUpgradeContext(ctx, owner, outbound, job.policy); err != nil {
+				return err
+			}
 		}
 		// Exchange completion alone is never success. The next pass reobserves the
 		// actual sole-publisher state and validates the current owner/record again.
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		if err := waitUpgradePoll(ctx); err != nil {
+			return err
 		}
 	}
 }
@@ -422,9 +427,112 @@ func upgradeExchangePlan(local string, r endpointmeta.PeerRecord) (directlan.Con
 // slow peer has not completed within one UI/controller polling interval.
 func (c *Core) armUpgradeInboundLocked(ctx context.Context, owner *contextControlOwner, key string, op directlan.ContextOperation) (*contextExchangeOperation, error) {
 	for attempt, existing := range owner.operations {
-		if existing.direction == directlan.ContextInbound && existing.operation == op && existing.admission.inputs.PeerKey == key && existing.epoch.Valid() && !attempt.Cancelled() {
+		if existing.direction == directlan.ContextInbound && existing.operation == op && existing.admission.inputs.PeerKey == key && (existing.epoch.Valid() || existing.responseEpoch.Valid()) && !attempt.Cancelled() {
 			return existing, nil
 		}
 	}
 	return c.armContextInboundLocked(ctx, owner, key, op)
+}
+
+// The outbound wire may own its full handshake/cleanup bound. During that wait
+// an incoming one-shot response can be consumed or rejected, including a lost
+// duplicate PREPARE while the peer has not learned the binding. Keep inbound
+// service armed independently; never start a second outbound exchange here.
+func (c *Core) exchangeUpgradeContext(ctx context.Context, owner *contextControlOwner, outbound *contextExchangeOperation, policy string) error {
+	run, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = c.exchangeContext(run, outbound)
+	}()
+	// Cancellation stops the exact wire; its cleanup is joined without Core.op.
+	// No callback, attempt or goroutine may escape this controller iteration.
+	defer func() { cancel(); <-done }()
+	return waitUpgradeExchange(ctx, done, func() error {
+		return c.refreshUpgradeInbound(run, owner, outbound, policy)
+	})
+}
+
+func (c *Core) refreshUpgradeInbound(run context.Context, owner *contextControlOwner, outbound *contextExchangeOperation, policy string) error {
+	// Skipping one maintenance tick retains current arms. Queueing a waiter can
+	// repeatedly steal this mutex immediately before the response's TryLock.
+	if !c.op.TryLock() {
+		return nil
+	}
+	defer c.op.Unlock()
+	if policy != c.upgradePolicyDigest() {
+		return endpointmeta.ErrReview
+	}
+	if err := c.currentContextOwnerLocked(owner); err != nil {
+		return err
+	}
+	owner.store.mu.Lock()
+	model, err := owner.store.endpointModelLocked(time.Now(), false)
+	var record endpointmeta.PeerRecord
+	local := ""
+	if err == nil {
+		var i int
+		i, err = contextPeer(*model, outbound.admission.inputs.PeerKey)
+		if err == nil {
+			record, local = model.Peers[i], model.LocalPeer.Key
+		}
+	}
+	owner.store.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if record.ContextConfirmed {
+		return nil
+	} // next pass performs the handoff
+	operation, sends, opposite := upgradeExchangePlan(local, record)
+	if !sends {
+		_, err = c.armUpgradeInboundLocked(run, owner, record.Peer.Key, operation)
+	}
+	if err == nil && opposite != 0 {
+		_, err = c.armUpgradeInboundLocked(run, owner, record.Peer.Key, opposite)
+	}
+	if err == nil && operation != directlan.ContextPrepare {
+		_, err = c.armUpgradeInboundLocked(run, owner, record.Peer.Key, directlan.ContextPrepare)
+	}
+	return err
+}
+
+// Waiting for an outbound result must not suspend inbound maintenance. The
+// refresh function runs synchronously, never concurrently with itself, and
+// only until the original bounded context or exact exchange has ended.
+func waitUpgradeExchange(ctx context.Context, done <-chan struct{}, refresh func() error) error {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-done:
+			return nil
+		case <-ticker.C:
+			// Prefer an already-ended exchange over creating an unnecessary arm.
+			select {
+			case <-done:
+				return nil
+			default:
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := refresh(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func waitUpgradePoll(ctx context.Context) error {
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

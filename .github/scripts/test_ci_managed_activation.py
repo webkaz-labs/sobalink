@@ -50,7 +50,7 @@ class ManagedActivationPolicyTests(unittest.TestCase):
                 self.assertEqual(actual.pop('TestManagedRestartChildFixture'), ())
                 self.assertIn('"-test.run=^TestManagedRestartChildFixture$"', source)
             self.assertEqual(actual, gate.SUITES[suite][3])
-            self.assertEqual((len(actual), sum(map(len, actual.values()))), (5, 4) if suite == 'activation' else (6, 11))
+            self.assertEqual((len(actual), sum(map(len, actual.values()))), (7, 6) if suite == 'activation' else (6, 11))
 
     def test_exact_expectations_and_closed_selectors(self):
         for suite, (package, tag, timeout, cases) in gate.SUITES.items():

@@ -20,6 +20,8 @@ SUITES = {
         "TestActivationNativeLostFirstPrepareReplyRecovery": (),
         "TestActivationNativeOrdinaryCompletionHandoff": (),
         "TestActivationNativeFinalPublicationDeniesEndedLifetime": ("cancel", "deadline"),
+        "TestActivationNativePendingStatusRearmsDuplicatePrepare": (),
+        "TestActivationNativeResponseAdmissionRetainsExactArm": ("self-publication", "superseded"),
     }),
     "restart": ("cmd/soba", "managed_restart_native", "120s", {
         "TestManagedRestartNativeCleanSuccessor": (),

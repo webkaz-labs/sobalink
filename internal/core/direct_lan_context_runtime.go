@@ -16,16 +16,17 @@ import (
 // controller constructs it; application backends never expose its authority.
 // Entry requires a fresh offline process; attemptedNetwork is never reset.
 type contextControlOwner struct {
-	node          *directlan.Node
-	store         *directLANStore
-	process       string
-	configuration string
-	ctx           context.Context
-	cancel        context.CancelFunc
-	started       chan struct{}
-	stopping      atomic.Bool
-	closeOnce     sync.Once
-	closeErr      error
+	node               *directlan.Node
+	store              *directLANStore
+	process            string
+	configuration      string
+	ctx                context.Context
+	cancel             context.CancelFunc
+	started            chan struct{}
+	stopping           atomic.Bool
+	responseContention atomic.Uint64 // diagnostic only; never admission authority
+	closeOnce          sync.Once
+	closeErr           error
 	// Core.op owns associations. Pointer identity, not serialized inputs or a
 	// caller-provided token, joins the admission to its transport attempt.
 	operations map[*directlan.ContextAttempt]*contextExchangeOperation
@@ -36,8 +37,11 @@ type contextExchangeOperation struct {
 	attempt   *directlan.ContextAttempt
 	admission contextAdmission
 	epoch     *directlan.ContextEpoch
-	direction directlan.ContextDirection
-	operation directlan.ContextOperation
+	// Set only by a successful inbound completion for its exact response.
+	// This preserves ownership after self-publication invalidates the arm epoch.
+	responseEpoch *directlan.ContextEpoch
+	direction     directlan.ContextDirection
+	operation     directlan.ContextOperation
 }
 
 type contextResponseSlot struct {
@@ -343,7 +347,7 @@ func (c *Core) captureContextExchangeLocked(ctx context.Context, o *contextContr
 		return nil, err
 	}
 	for attempt, old := range o.operations {
-		if !old.epoch.Valid() || old.admission.inputs.PeerKey == key && old.operation == operation {
+		if !old.epoch.Valid() && !old.responseEpoch.Valid() || old.admission.inputs.PeerKey == key && old.operation == operation {
 			attempt.Cancel()
 			delete(o.operations, attempt)
 		}
@@ -575,7 +579,21 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 		attempt.Cancel()
 		return directlan.ContextResponse{}, endpointmeta.ErrReview
 	}
-	delete(owner.operations, attempt)
+	if operation.responseEpoch != nil {
+		// A retained response owner is lifecycle bookkeeping, not a second claim.
+		delete(owner.operations, attempt)
+		attempt.Cancel()
+		return directlan.ContextResponse{}, endpointmeta.ErrReview
+	}
+	retainResponse := false
+	defer func() {
+		if !retainResponse {
+			delete(owner.operations, attempt)
+		}
+	}()
+	// Retain inbound ownership until transport finish cancels the exact attempt.
+	// The cancelled map entry is removed lazily by a later capture or owner close.
+	// Removing it here would let polling replace/cancel its still-unsent reply.
 	// Claim before store.mu. The transport's Node/generation locks have been
 	// released when this returns, including rejection on TryLock contention.
 	evidence, err := verified.TryClaimFor(attempt)
@@ -632,6 +650,8 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 		return directlan.ContextResponse{}, directlan.ErrUnavailable
 	}
 	epoch := s.contextEpochLocked()
+	operation.responseEpoch = epoch
+	retainResponse = true
 	slot := &contextResponseSlot{owner: owner, attempt: attempt, store: s, process: owner.process, receipt: s.contextPublication,
 		epoch: epoch, writeRevision: s.reviewRevision, replyDigest: privateRevision(reply), deadline: deadline}
 	return directlan.ContextResponse{Reply: reply, Epoch: epoch, Admit: func() bool { return c.admitContextResponse(ctx, slot, attempt, reply) }}, nil
@@ -641,7 +661,13 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 // not hold Core.op/store.mu during TLS I/O; DirectLAN repeats its current
 // Node/generation/registration/cancellation checks after this function returns.
 func (c *Core) admitContextResponse(ctx context.Context, slot *contextResponseSlot, attempt *directlan.ContextAttempt, reply endpointmeta.Reply) bool {
-	if slot == nil || !slot.used.CompareAndSwap(false, true) || !c.op.TryLock() {
+	if slot == nil || !slot.used.CompareAndSwap(false, true) {
+		return false
+	}
+	if !c.op.TryLock() {
+		if slot.owner != nil {
+			slot.owner.responseContention.Add(1)
+		}
 		return false
 	}
 	defer c.op.Unlock()

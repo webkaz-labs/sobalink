@@ -34,6 +34,44 @@ type activationNativePair struct {
 	endpoints    [2]netip.AddrPort
 	reservations [2]*testfixture.PortReservation
 	once         sync.Once
+	observations [2]activationNativeObservation
+	responseGate [2]func()
+}
+
+// Test-only, fixed numeric stages; never retain raw errors, peer data or proof.
+type activationNativeObservation struct {
+	callbacks          atomic.Int32
+	stage              atomic.Int32 // 1=entered, 2=completion denied, 3=completed, 4=admit denied, 5=admitted
+	errorClass         atomic.Int32 // 1=unavailable, 2=review, 3=capacity, 4=identity, 5=deadline, 6=cancel, 7=other
+	controlLimit       int
+	completed          atomic.Int32
+	rejected           atomic.Int32
+	errors             [8]atomic.Int32
+	admitted           atomic.Int32
+	denied             atomic.Int32
+	cancelledAdmission atomic.Int32
+	staleAdmission     atomic.Int32
+}
+
+func activationNativeErrorClass(err error) int32 {
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, directlan.ErrUnavailable):
+		return 1
+	case errors.Is(err, endpointmeta.ErrReview):
+		return 2
+	case errors.Is(err, directlan.ErrCapacity), errors.Is(err, endpointmeta.ErrCapacity):
+		return 3
+	case errors.Is(err, directlan.ErrUntrusted), errors.Is(err, endpointmeta.ErrIdentity):
+		return 4
+	case errors.Is(err, context.DeadlineExceeded):
+		return 5
+	case errors.Is(err, context.Canceled):
+		return 6
+	default:
+		return 7
+	}
 }
 
 func newActivationNativePair(t *testing.T) *activationNativePair {
@@ -288,11 +326,51 @@ func (f *activationNativePair) preparedOwner(i int, lifetime context.Context, su
 	ctx, cancel := context.WithCancel(lifetime)
 	o := &contextControlOwner{store: s, process: c.lanStartNonce, configuration: digest, ctx: ctx, cancel: cancel, started: make(chan struct{}), operations: make(map[*directlan.ContextAttempt]*contextExchangeOperation)}
 	dropped := &atomic.Bool{}
+	observation := &f.observations[i]
+	observation.controlLimit = cfg.ControlLimit
 	cfg.Completion = func(ctx context.Context, a *directlan.ContextAttempt, v directlan.VerifiedContextExchange) (directlan.ContextResponse, error) {
+		observation.callbacks.Add(1)
+		observation.stage.Store(1)
 		for _, gate := range before {
 			gate()
 		}
 		response, err := c.completeContextExchange(ctx, o, a, v)
+		code := activationNativeErrorClass(err)
+		observation.errorClass.Store(code)
+		observation.errors[code].Add(1)
+		if err == nil {
+			observation.completed.Add(1)
+		} else {
+			observation.rejected.Add(1)
+		}
+		observation.stage.Store(3)
+		if err != nil {
+			observation.stage.Store(2)
+		}
+		if response.Admit != nil {
+			admit := response.Admit
+			responseEpoch := response.Epoch
+			response.Admit = func() bool {
+				ok := admit()
+				if ok {
+					observation.stage.Store(5)
+					observation.admitted.Add(1)
+				} else {
+					observation.stage.Store(4)
+					observation.denied.Add(1)
+					if a.Cancelled() {
+						observation.cancelledAdmission.Add(1)
+					}
+					if !responseEpoch.Valid() {
+						observation.staleAdmission.Add(1)
+					}
+				}
+				return ok
+			}
+		}
+		if err == nil && response.Reply != nil && f.responseGate[i] != nil {
+			f.responseGate[i]()
+		}
 		if err == nil && suppressFirst {
 			if _, ok := response.Reply.(endpointmeta.PrepareReply); ok && dropped.CompareAndSwap(false, true) {
 				return directlan.ContextResponse{}, errors.New("synthetic lost preparation response")
@@ -500,6 +578,250 @@ func TestActivationNativeFinalPublicationDeniesEndedLifetime(t *testing.T) {
 			right.directLAN.mu.Unlock()
 			if !reflect.DeepEqual(before, after) || !sameReceipt {
 				t.Fatal("ended lifetime published authenticated request")
+			}
+		})
+	}
+}
+
+// A deterministic liveness regression: the responder's real outbound STATUS
+// remains blocked at the authenticated remote callback while two consecutive
+// duplicate PREPARE requests consume separate one-shot inbound arms. No test
+// code rearms the responder after its driver begins, and no reply is fabricated.
+func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
+	f := newActivationNativePair(t)
+	ctx, cancel := context.WithTimeout(f.ctx, 45*time.Second)
+	defer cancel()
+	statusReached, statusRelease := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	var statusHolding atomic.Bool
+	release := func() { releaseOnce.Do(func() { close(statusRelease) }) }
+	defer release()
+	initiator, _ := f.preparedOwner(0, ctx, false, func() {
+		statusHolding.Store(true)
+		defer statusHolding.Store(false)
+		close(statusReached)
+		select {
+		case <-statusRelease:
+		case <-ctx.Done():
+		}
+	})
+	responder, _ := f.preparedOwner(1, ctx, false)
+	owners := [2]*contextControlOwner{initiator, responder}
+	if err := f.exchange(0, ctx, owners, directlan.ContextPrepare); err != nil {
+		t.Fatal("initial authenticated preparation failed")
+	}
+	left, right := f.cores[0], f.cores[1]
+	left.op.Lock()
+	_, err := left.armContextInboundLocked(ctx, initiator, right.directLAN.copy().Identity.PublicKey(), directlan.ContextStatus)
+	left.op.Unlock()
+	if err != nil {
+		t.Fatal("fixed STATUS arm failed")
+	}
+	job := f.drive(1, ctx)
+	select {
+	case <-statusReached:
+	case <-ctx.Done():
+		t.Fatal("real STATUS did not reach authenticated barrier")
+	}
+	var heldStatus *contextExchangeOperation
+	right.op.Lock()
+	for _, operation := range responder.operations {
+		if operation.direction == directlan.ContextOutbound && operation.operation == directlan.ContextStatus {
+			heldStatus = operation
+			break
+		}
+	}
+	right.op.Unlock()
+	if heldStatus == nil {
+		t.Fatal("held callback did not retain exact STATUS exchange")
+	}
+	observation := &f.observations[1]
+	observation.completed.Store(0)
+	observation.rejected.Store(0)
+	observation.admitted.Store(0)
+	observation.denied.Store(0)
+	observation.cancelledAdmission.Store(0)
+	observation.staleAdmission.Store(0)
+	for i := range observation.errors {
+		observation.errors[i].Store(0)
+	}
+	observation.callbacks.Store(0)
+	observation.stage.Store(0)
+	observation.errorClass.Store(0)
+	var previous *contextExchangeOperation
+	for reply := 0; reply < 2; reply++ {
+		// Nonwaiting admission may legitimately reject a wire under contention.
+		// Require a genuine reply within the SAME absolute two-second budget;
+		// retry only after observing another controller-created one-shot arm.
+		until := time.Now().Add(2 * time.Second)
+		run, stop := context.WithDeadline(ctx, until)
+		success, attempts, last := false, 0, "no-arm"
+		for time.Now().Before(until) {
+			var armed *contextExchangeOperation
+			right.op.Lock()
+			for _, candidate := range responder.operations {
+				if candidate != previous && candidate.direction == directlan.ContextInbound && candidate.operation == directlan.ContextPrepare && candidate.epoch.Valid() && !candidate.attempt.Cancelled() {
+					armed = candidate
+					break
+				}
+			}
+			right.op.Unlock()
+			if armed == nil {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			previous = armed
+			left.op.Lock()
+			outbound, err := left.prepareContextOutboundLocked(run, initiator, right.directLAN.copy().Identity.PublicKey(), directlan.ContextPrepare)
+			left.op.Unlock()
+			if err != nil {
+				stop()
+				t.Fatal("duplicate PREPARE capture failed")
+			}
+			attempts++
+			err = left.exchangeContext(run, outbound)
+			if err == nil {
+				success = true
+				break
+			}
+			last = "transport-rejection"
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				last = "deadline"
+			case errors.Is(err, context.Canceled):
+				last = "cancelled"
+			case errors.Is(err, directlan.ErrUnavailable):
+				last = "unavailable"
+			case errors.Is(err, endpointmeta.ErrReview):
+				last = "review"
+			case errors.Is(err, endpointmeta.ErrIdentity), errors.Is(err, directlan.ErrUntrusted):
+				last = "identity"
+			}
+		}
+		stop()
+		if !success {
+			right.op.Lock()
+			sameStatus := responder.operations[heldStatus.attempt] == heldStatus && !heldStatus.attempt.Cancelled()
+			right.op.Unlock()
+			var classes [8]int32
+			for i := range classes {
+				classes[i] = observation.errors[i].Load()
+			}
+			t.Fatalf("pending STATUS duplicate PREPARE failed: reply=%d attempts=%d last=%s callbacks=%d completed=%d rejected=%d classes=%v admitted=%d denied=%d cancelled_admission=%d stale_admission=%d control_limit=%d status_held=%t exact_status_live=%t status_callbacks=%d response_lock_denials=%d", reply, attempts, last, observation.callbacks.Load(), observation.completed.Load(), observation.rejected.Load(), classes, observation.admitted.Load(), observation.denied.Load(), observation.cancelledAdmission.Load(), observation.staleAdmission.Load(), observation.controlLimit, statusHolding.Load(), sameStatus, f.observations[0].callbacks.Load(), responder.responseContention.Load())
+		}
+		select {
+		case <-job.done:
+			t.Fatal("STATUS wait ended before barrier release")
+		default:
+		}
+	}
+
+	// The blocked STATUS returns only after this explicit release. Cancel the
+	// unfinished reviewed workflow and join its real outbound work before cleanup.
+	cancel()
+	release()
+	f.await(job)
+}
+
+// Pause AFTER genuine Core publication and BEFORE the transport's response
+// admission. Polling must retain that exact one-shot response owner; only an
+// unrelated subsequent publication may supersede its new response epoch.
+func TestActivationNativeResponseAdmissionRetainsExactArm(t *testing.T) {
+	for _, mode := range []string{"self-publication", "superseded"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newActivationNativePair(t)
+			ctx, cancel := context.WithTimeout(f.ctx, 45*time.Second)
+			defer cancel()
+			reached, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			defer unblock()
+			f.responseGate[1] = func() {
+				close(reached)
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+			}
+			initiator, _ := f.preparedOwner(0, ctx, false)
+			responder, _ := f.preparedOwner(1, ctx, false)
+			left, right := f.cores[0], f.cores[1]
+			key := left.directLAN.copy().Identity.PublicKey()
+			right.op.Lock()
+			original, err := right.armContextInboundLocked(ctx, responder, key, directlan.ContextPrepare)
+			right.op.Unlock()
+			if err != nil {
+				t.Fatal("initial response arm failed")
+			}
+			left.op.Lock()
+			out, err := left.prepareContextOutboundLocked(ctx, initiator, right.directLAN.copy().Identity.PublicKey(), directlan.ContextPrepare)
+			left.op.Unlock()
+			if err != nil {
+				t.Fatal("initial response request failed")
+			}
+			done := make(chan error, 1)
+			go func() { done <- left.exchangeContext(ctx, out) }()
+			select {
+			case <-reached:
+			case <-ctx.Done():
+				t.Fatal("published response did not reach admission barrier")
+			}
+			right.op.Lock()
+			if responder.operations[original.attempt] != original || original.epoch.Valid() || !original.responseEpoch.Valid() || original.attempt.Cancelled() {
+				right.op.Unlock()
+				t.Fatal("successful self-publication lost the active response owner")
+			}
+			s := right.directLAN
+			s.mu.Lock()
+			receipt, revision := s.contextPublication, s.reviewRevision
+			s.mu.Unlock()
+			if mode == "superseded" {
+				// A real same-state sole publication is still unrelated supersession;
+				// retaining a transport owner must never revive its old reply authority.
+				s.mu.Lock()
+				err = s.writeContextPublicationLocked(responder.process, cloneDirectLANState(s.state), &contextSaveLiveness{ctx: ctx, owner: responder})
+				s.mu.Unlock()
+				if err != nil {
+					right.op.Unlock()
+					t.Fatal("superseding publication failed")
+				}
+			}
+			again, err := right.armUpgradeInboundLocked(ctx, responder, key, directlan.ContextPrepare)
+			if err != nil {
+				right.op.Unlock()
+				t.Fatal("poll response arm failed")
+			}
+			if mode == "self-publication" {
+				if again != original || original.attempt.Cancelled() {
+					right.op.Unlock()
+					t.Fatal("poll replaced a response before transport completion")
+				}
+				// Capturing another operation must not prune this old arm epoch while
+				// its exact successful response epoch remains current.
+				_, err = right.armUpgradeInboundLocked(ctx, responder, key, directlan.ContextStatus)
+				s.mu.Lock()
+				unchanged := s.contextPublication == receipt && s.reviewRevision == revision
+				s.mu.Unlock()
+				if err != nil || original.attempt.Cancelled() || !unchanged {
+					right.op.Unlock()
+					t.Fatal("other arm cancelled or republished active response")
+				}
+			} else if again == original || original.responseEpoch.Valid() || !original.attempt.Cancelled() {
+				right.op.Unlock()
+				t.Fatal("unrelated publication retained stale response authority")
+			}
+			right.op.Unlock()
+			unblock()
+			select {
+			case err := <-done:
+				if mode == "self-publication" && err != nil {
+					t.Fatal("retained response did not complete")
+				}
+				if mode == "superseded" && err == nil {
+					t.Fatal("superseded response was sent")
+				}
+			case <-ctx.Done():
+				t.Fatal("response exchange did not join")
 			}
 		})
 	}
