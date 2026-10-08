@@ -423,18 +423,27 @@ def event_base(root, head, environment):
             if head_repo is not None and not re.fullmatch(
                     r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", head_repo["full_name"]):
                 raise FailClosed("event_repository_mismatch")
+            number = event["number"]
+            if type(number) is not int or number <= 0:
+                raise FailClosed("invalid_event")
             ref = environment.get("GITHUB_REF")
-            if ref is not None and ref != "refs/pull/" + str(event["number"]) + "/merge":
+            if ref != "refs/pull/" + str(number) + "/merge":
                 raise FailClosed("event_branch_mismatch")
             base = pr["base"]["sha"]
             source = pr["head"]["sha"]
             if not isinstance(source, str) or not OID.fullmatch(source):
                 raise FailClosed("invalid_event")
-            if pr.get("merge_commit_sha") not in (None, head):
-                raise FailClosed("event_head_mismatch")
             parents = git(root, "rev-list", "--parents", "-n", "1", head).decode("ascii").split()
             if parents != [head, base, source] or base == source:
                 raise FailClosed("unverified_pr_merge")
+            # Actions GITHUB_SHA and the exact two parents identify the tested
+            # merge. The PR API's mergeability-derived hint can lag that event.
+            # A well-formed stale hint grants nothing; malformed metadata still
+            # fails closed. Never replace the tested SHA or its parents with it.
+            hint = pr.get("merge_commit_sha")
+            if hint is not None and (not isinstance(hint, str) or not OID.fullmatch(hint)
+                                     or set(hint) == {"0"}):
+                raise FailClosed("invalid_event_merge_hint")
         if not isinstance(base, str) or not OID.fullmatch(base) or set(base) == {"0"}:
             raise FailClosed("missing_or_invalid_event_base")
     except (KeyError, TypeError, ValueError, OSError, UnicodeError) as exc:

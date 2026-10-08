@@ -35,6 +35,8 @@ Goの対象リストは小さく限定しています。任意のGo変更を1環
 
 PRでは確認済みbase親と試験対象のmerge commit間の変更全体を確認します。main pushではイベントの `before` から `after` まで、push内の全commitを確認します。最後の1commitだけでは判断しません。Core変更を含むPRは、最後のcommitが画面試験の修正でも全件対象です。以前の成功したジョブを再利用する仕組みではありません。
 
+PRの試験対象はActionsの `GITHUB_SHA` と、正確な `refs/pull/<number>/merge` のcheckoutです。実commitの親は2つに限り、順序もイベントのbase、headと一致する必要があります。PRの背景mergeability計算による `merge_commit_sha` の参考値は、形式が正しくても古い場合があり、この証明の代わりにはしません。不正な参考値、誤ったref、実際の親の不一致は引き続き全件へ戻します。変化する最新PRのAPI応答ではなく、固定されたイベントとGitオブジェクトで判定します。GitHubの[Actions merge branchの識別](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)と[mergeability項目の説明](https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request)を参照してください。
+
 完全なGit tree一覧、renameの両端、ファイルmode、リポジトリとイベントの同一性を確認します。履歴不足、不完全・不正な差分、不明な変更は全件に戻します。集約側も差分判定を再実行するため、artifactの記載だけでは検証範囲を縮小できません。判定処理の失敗によってアプリ検証を無条件に省略しません。
 
 必須ステータスは引き続き `ci-required` です。アプリジョブが対象外でも必ず起動し、今回のattemptで必要なジョブと各工程が実際に成功したことを確認します。文書だけの場合は **「Documentation only; application tests, builds and packages NOT RUN」** と表示します。フロントと限定Goも実行した範囲を明示します。全native・ブラウザー・配布物を実行した場合のみ `full_native=true` とします。schema 3の `native-short` 記録は各targetを `short_checks_passed`、各targetの `long_checks` を `not_run`、`full_native=false` とし、ブラウザーとmanifestは実際に成功した場合だけ成功を記録します。他の未実行範囲は `not_run` のままです。短時間検証を再利用可能な全件検証として扱いません。省略した実時間3工程も明示的なskipを要求し、失敗・欠落・未実行を成功に読み替えることは認めません。

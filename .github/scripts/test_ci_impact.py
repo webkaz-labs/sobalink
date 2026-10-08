@@ -336,6 +336,78 @@ class GitHistoryTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertEqual(self.classify(event=bad, name="pull_request")["reason"], "unverified_pr_merge")
 
+    def test_actual_merge_proof_accepts_matching_null_and_stale_hint(self):
+        event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", "package main\n// presentation change\n"))
+        tested = self.git("rev-parse", "HEAD")
+        for hint in (tested, None, "f" * 40):
+            value = copy.deepcopy(event)
+            value["pull_request"]["merge_commit_sha"] = hint
+            with self.subTest(hint=hint):
+                report = self.classify(event=value, name="pull_request")
+                self.assertEqual(report["scope"], "native-short")
+                self.assertEqual(report["head_sha"], tested)
+                self.assertEqual(report["base_sha"], event["pull_request"]["base"]["sha"])
+        missing = copy.deepcopy(event)
+        del missing["pull_request"]["merge_commit_sha"]
+        self.assertEqual(self.classify(event=missing, name="pull_request")["scope"], "native-short")
+
+    def test_malformed_merge_hint_stays_full_despite_valid_parents(self):
+        event = self.pull_request_event()
+        for hint in ("", "0" * 40, "g" * 40, "A" * 40, "f" * 39, "f" * 40 + "\n", True, 42, [], {}):
+            value = copy.deepcopy(event)
+            value["pull_request"]["merge_commit_sha"] = hint
+            with self.subTest(hint=hint):
+                report = self.classify(event=value, name="pull_request")
+                self.assertEqual(report["scope"], "full")
+                self.assertEqual(report["reason"], "invalid_event_merge_hint")
+
+    def test_merge_hint_cannot_rescue_wrong_actual_parent_count_or_order(self):
+        event = self.pull_request_event()
+        tested = self.git("rev-parse", "HEAD")
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        base, source = event["pull_request"]["base"]["sha"], event["pull_request"]["head"]["sha"]
+        extra = self.git("commit-tree", tree, "-p", base, "-m", "Synthetic unrelated parent")
+        for parents in ((), (base,), (source, base), (base, extra), (base, source, extra)):
+            args = ["commit-tree", tree, "-m", "Synthetic parent shape"]
+            for parent in parents:
+                args += ["-p", parent]
+            forged = self.git(*args)
+            self.git("checkout", "--detach", forged)
+            for hint in (forged, None, tested):
+                value = copy.deepcopy(event)
+                value["pull_request"]["merge_commit_sha"] = hint
+                with self.subTest(parents=parents, hint=hint):
+                    report = self.classify(event=value, name="pull_request")
+                    self.assertEqual(report["scope"], "full")
+                    self.assertEqual(report["reason"], "unverified_pr_merge")
+
+    def test_stale_hint_does_not_weaken_environment_or_event_identity(self):
+        event = self.pull_request_event()
+        event["pull_request"]["merge_commit_sha"] = "f" * 40
+        for changes in ({"GITHUB_SHA": "e" * 40}, {"GITHUB_REF": None},
+                        {"GITHUB_REF": "refs/heads/main"}, {"GITHUB_REF": "refs/pull/43/merge"},
+                        {"GITHUB_REPOSITORY": "synthetic/other"}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.classify(event=event, name="pull_request", env_changes=changes)["scope"], "full")
+        for number in (True, 0, -1, "42", None):
+            with self.subTest(number=number):
+                self.assertEqual(self.classify(event=dict(event, number=number), name="pull_request")["scope"], "full")
+        for part in ("base", "head"):
+            value = copy.deepcopy(event)
+            value["pull_request"][part]["sha"] = "e" * 40
+            self.assertEqual(self.classify(event=value, name="pull_request")["scope"], "full")
+
+    def test_stale_hint_keeps_complete_runtime_delta_full(self):
+        def changes():
+            self.write("internal/core/core.go", "package core\n// earlier lifecycle change\n")
+            self.commit()
+            self.write("cmd/soba/errors.go", "package main\n// later presentation change\n")
+        event = self.pull_request_event(changes)
+        event["pull_request"]["merge_commit_sha"] = "f" * 40
+        report = self.classify(event=event, name="pull_request")
+        self.assertEqual(report["scope"], "full")
+        self.assertEqual(report["changed_paths"], ["cmd/soba/errors.go", "internal/core/core.go"])
+
     def test_pr_head_checkout_instead_of_tested_merge_is_full(self):
         event = self.pull_request_event()
         self.git("checkout", "--detach", event["pull_request"]["head"]["sha"])
@@ -345,7 +417,7 @@ class GitHistoryTests(unittest.TestCase):
     def test_pr_branch_repository_merge_sha_and_ref_mismatch_are_full(self):
         event = self.pull_request_event()
         for path, value in [(('base', 'ref'), 'other'), (('base', 'repo', 'full_name'), 'fixture/other'),
-                            (('head', 'repo', 'full_name'), 'malformed'), (('merge_commit_sha',), 'f' * 40)]:
+                            (('head', 'repo', 'full_name'), 'malformed'), (('merge_commit_sha',), 'malformed')]:
             bad = copy.deepcopy(event)
             target = bad['pull_request']
             for key in path[:-1]:
