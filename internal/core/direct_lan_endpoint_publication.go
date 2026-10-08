@@ -139,7 +139,7 @@ func (c *Core) publishEndpointTransaction(ctx context.Context, t *EndpointTransa
 		// from this published reviewed config before any later send unlocks it.
 		t.deliveries = make(map[string]*directlan.EndpointDelivery, len(cfg.Peers))
 		for _, peer := range cfg.Peers {
-			if target, err := b.Node.CaptureEndpointDelivery(peer.Key, peer.Endpoint.String()); err == nil {
+			if target, err := b.Node.CaptureEndpointDelivery(peer.Key, peer.Endpoint.String(), o.epoch); err == nil {
 				t.deliveries[peer.Key] = target
 			}
 		}

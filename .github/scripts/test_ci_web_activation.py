@@ -70,10 +70,14 @@ class WebActivationPolicyTests(unittest.TestCase):
     def test_cold_runner_prefetch_precedes_offline_gate(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
         job = workflow.split('\n  web-activation:\n', 1)[1].split('\n  browser:\n', 1)[0]
-        required = ['go run ./cmd/prepare-engine\n', 'go run ./cmd/prepare-engine --verify', 'go mod download all', 'git diff --exit-code -- go.mod go.sum', 'go mod verify', 'python .github/scripts/ci-web-activation.py']
+        required = ['go run ./cmd/prepare-engine\n', 'go run ./cmd/prepare-engine --verify', 'go mod download\n', 'go list -mod=readonly -deps -test -tags=' + gate.TAGS + ' ./cmd/soba >/dev/null', 'git diff --exit-code -- go.mod go.sum', 'go mod verify', 'python .github/scripts/ci-web-activation.py']
         positions = [job.index(text) for text in required]
         self.assertEqual(positions, sorted(positions))
-        self.assertEqual(job.count('go mod download all'), 1)
+        self.assertEqual(job.count('go mod download\n'), 1)
+        self.assertNotIn('go mod download all', job)
+        self.assertNotIn('git checkout', job)
+        self.assertNotIn('git restore', job)
+        self.assertNotIn('git reset', job)
 
     def test_toolchain_provenance_exact_types_and_fields(self):
         digests = {'go': 'a' * 64, 'node': 'b' * 64}

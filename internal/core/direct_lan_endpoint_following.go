@@ -59,8 +59,10 @@ func (c *Core) startEndpointFollowingLocked(ctx context.Context, b *directLANBac
 	job := &endpointFollowingJob{cancel: cancel, done: make(chan struct{}), backend: b}
 	c.endpointJob = job
 	c.mu.Unlock()
+	observeEndpointAcceptance(c, "job-accepted", nil)
 	go func() {
 		defer func() {
+			observeEndpointAcceptance(c, "job-finished", job.err)
 			b.replacing.Store(nil)
 			cancel()
 			c.mu.Lock()
@@ -71,6 +73,7 @@ func (c *Core) startEndpointFollowingLocked(ctx context.Context, b *directLANBac
 			c.mu.Unlock()
 		}()
 		if released != nil {
+			observeEndpointAcceptance(c, "job-wait-wire-release", nil)
 			select {
 			case <-run.Done():
 				job.err = run.Err()
@@ -82,6 +85,7 @@ func (c *Core) startEndpointFollowingLocked(ctx context.Context, b *directLANBac
 				}
 			}
 		}
+		observeEndpointAcceptance(c, "job-release-complete", nil)
 		var planned []endpointmeta.Envelope
 		t, err := c.saveEndpointTransactionWithOwner(run, b, mutation, old, time.Now, func(s *directLANStore) error {
 			if s.contextPublication != receipt || privateRevision(s.state) != state {
@@ -105,6 +109,7 @@ func (c *Core) startEndpointFollowingLocked(ctx context.Context, b *directLANBac
 			}
 			return nil
 		})
+		observeEndpointAcceptance(c, "job-save-returned", err)
 		c.op.Lock()
 		job.transaction = t
 		c.op.Unlock()
@@ -117,6 +122,7 @@ func (c *Core) startEndpointFollowingLocked(ctx context.Context, b *directLANBac
 		}
 		if err == nil {
 			err = c.publishEndpointTransaction(run, t)
+			observeEndpointAcceptance(c, "job-publish-returned", err)
 		}
 		if err == nil {
 			job.active = true
@@ -128,7 +134,9 @@ func (c *Core) startEndpointFollowingLocked(ctx context.Context, b *directLANBac
 			}
 			for i, proof := range proofs {
 				result := endpointDeliveryResult{PeerID: exports[i].PeerID, Sequence: proof.Update.Sequence, Outcome: "unconfirmed"}
-				reply, sendErr := b.Node.DeliverEndpointUpdate(deliveryCtx, t.deliveries[exports[i].PeerID], proof)
+				reply, attempts, sendErr := c.deliverEndpointWithRetry(deliveryCtx, b, t.receipt, t.deliveries[exports[i].PeerID], proof)
+				result.Attempts = attempts
+				observeEndpointAcceptance(c, "job-delivery-returned", sendErr)
 				if sendErr == nil {
 					result.Outcome = reply.Outcome
 				}
@@ -145,14 +153,22 @@ func endpointObservationReply(envelope endpointmeta.Envelope, outcome string) *e
 	return &endpointmeta.UpdateReply{Version: 2, Operation: "endpoint-update", OK: true, PairBinding: envelope.Update.PairBinding, Sequence: envelope.Update.Sequence, UpdateDigest: digest, Outcome: outcome}
 }
 
-func (o *managedCompletionOwner) admitEndpoint(ctx context.Context, r *directlan.ManagedEndpointRequest) (*endpointmeta.UpdateReply, error) {
+func (o *managedCompletionOwner) admitEndpoint(ctx context.Context, r *directlan.ManagedEndpointRequest) (_ *endpointmeta.UpdateReply, result error) {
+	stage := "admission-enter"
+	defer func() {
+		if o != nil && o.core != nil {
+			observeEndpointAcceptance(o.core, stage, result)
+		}
+	}()
 	if o == nil || o.core == nil || ctx == nil || !o.core.op.TryLock() {
 		return nil, directlan.ErrUnavailable
 	}
 	defer o.core.op.Unlock()
+	stage = "admission-owner"
 	if r == nil || r.Node() != o.node || !r.Current() || !o.authorityCurrent() || !o.coreCurrent(r.PeerKey()) || o.backend.currentCompletion() != o {
 		return nil, directlan.ErrUntrusted
 	}
+	stage = "admission-receipt"
 	s := o.store
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -165,6 +181,7 @@ func (o *managedCompletionOwner) admitEndpoint(ctx context.Context, r *directlan
 	if err != nil {
 		return nil, err
 	}
+	stage = "admission-proposal"
 	mutation, outcome, err := endpointmeta.ProposeReceive(*m, r.PeerKey(), r.Envelope(), nil, time.Now())
 	if err != nil {
 		return nil, err
@@ -175,6 +192,7 @@ func (o *managedCompletionOwner) admitEndpoint(ctx context.Context, r *directlan
 	if outcome != "candidate" {
 		return endpointObservationReply(r.Envelope(), outcome), nil
 	}
+	stage = "admission-start-job"
 	old := &endpointNodeOwner{node: o.node, origin: r.Origin()}
 	_, err = o.core.startEndpointFollowingLocked(ctx, o.backend, old, mutation, s.contextPublication, privateRevision(s.state), r.Released())
 	// No acknowledgement is emitted for a pending transaction. Idempotence comes

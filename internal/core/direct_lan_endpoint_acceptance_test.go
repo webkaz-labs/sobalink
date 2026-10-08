@@ -87,14 +87,15 @@ func reserveEndpointAcceptance(t *testing.T) *endpointAcceptanceReservation {
 }
 
 type endpointAcceptanceFixture struct {
-	t           *testing.T
-	ctx         context.Context
-	cancel      context.CancelFunc
-	cores       []*Core
-	dirs        []string
-	observer    *directlan.AcceptanceSessionLog
-	deadline    string
-	cleanupOnce sync.Once
+	diagnosticTargets []endpointAcceptanceDiagnosticTarget
+	t                 *testing.T
+	ctx               context.Context
+	cancel            context.CancelFunc
+	cores             []*Core
+	dirs              []string
+	observer          *directlan.AcceptanceSessionLog
+	deadline          string
+	cleanupOnce       sync.Once
 }
 
 func newEndpointAcceptanceFixture(t *testing.T) *endpointAcceptanceFixture {
@@ -171,6 +172,7 @@ func (f *endpointAcceptanceFixture) command(c *Core, name string, input any) any
 	}
 	value, err := c.Command(f.ctx, webui.Command{RequestID: randomID(), Name: name, Payload: raw})
 	if err != nil {
+		f.dumpEndpointDiagnostics("command-failed")
 		f.t.Fatalf("production command %s failed (class=%s)", name, networkErrorCode(err))
 	}
 	return value
@@ -185,6 +187,7 @@ func (f *endpointAcceptanceFixture) until(predicate func() bool, label string) {
 		}
 		select {
 		case <-f.ctx.Done():
+			f.dumpEndpointDiagnostics(label)
 			f.t.Fatal(label)
 		case <-ticker.C:
 		}
@@ -383,6 +386,9 @@ func runIntegratedEndpointMoveDelivery(t *testing.T) (*endpointAcceptanceFixture
 	}
 	oldA, oldB := f.capture(a, bid.PublicKey()), f.capture(b, aid.PublicKey())
 	traceA, traceB := f.observeWrites(a), f.observeWrites(b)
+	enableEndpointAcceptanceTrace(a, b)
+	t.Cleanup(func() { disableEndpointAcceptanceTrace(a, b) })
+	f.diagnosticTargets = []endpointAcceptanceDiagnosticTarget{{label: "sender", core: a, expected: br.endpoint, writes: traceA}, {label: "receiver", core: b, expected: moved.endpoint, writes: traceB}}
 	move := endpointMoveInput{Endpoint: moved.endpoint.String(), Deliveries: []endpointMoveDelivery{{PeerID: bid.PublicKey(), Lifetime: "finite", Expires: f.deadline}}}
 	review := f.command(a, "direct-lan.endpoint.move.preview", move).(endpointMoveReview)
 	if review.Destinations[bid.PublicKey()] != br.endpoint.String() {
@@ -393,6 +399,13 @@ func runIntegratedEndpointMoveDelivery(t *testing.T) (*endpointAcceptanceFixture
 		t.Fatal("new endpoint handoff failed")
 	}
 	result := f.command(a, "direct-lan.endpoint.move.apply", move).(map[string]any)
+	t.Logf("sender move saved=%v active=%v", result["saved"], result["active"])
+	if deliveries, ok := result["deliveries"].([]endpointDeliveryResult); ok {
+		for i, delivery := range deliveries {
+			t.Logf("sender delivery index=%d sequence=%s outcome=%s attempts=%d", i, delivery.Sequence, delivery.Outcome, delivery.Attempts)
+		}
+	}
+	f.dumpEndpointDiagnostics("move-command-returned")
 	if result["saved"] != true || result["active"] != true {
 		t.Fatal("move did not report saved and active separately")
 	}

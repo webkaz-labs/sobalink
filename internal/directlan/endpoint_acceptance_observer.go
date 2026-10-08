@@ -4,6 +4,10 @@ package directlan
 
 import (
 	"context"
+	"errors"
+	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
+	"io"
+	"net"
 	"sync"
 
 	"github.com/webkaz-labs/sobalink/internal/transportorigin"
@@ -13,8 +17,10 @@ import (
 // callable authorization, setter, publication callback or readiness override.
 // Only one opt-in acceptance fixture may install it; tests must not be parallel.
 type AcceptanceSessionLog struct {
-	mu     sync.Mutex
-	births map[*peerSession]bool
+	mu                             sync.Mutex
+	births                         map[*peerSession]bool
+	endpointEvents                 map[*Node][]AcceptanceEndpointEvent
+	endpointCount, endpointDropped int
 }
 
 var acceptanceSessionObserver struct {
@@ -96,4 +102,67 @@ func (a *AcceptanceGeneration) WaitPhysicalJoin(ctx context.Context) error {
 }
 func (a *AcceptanceGeneration) SessionReady() bool {
 	return a != nil && a.session.ready()
+}
+
+// AcceptanceEndpointEvent contains only fixed stage/code labels. It excludes
+// identifiers, endpoints, proofs, error text, and executable callbacks.
+type AcceptanceEndpointEvent struct{ Stage, Code string }
+
+func observeAcceptanceEndpoint(n *Node, stage string, err error) {
+	acceptanceSessionObserver.Lock()
+	defer acceptanceSessionObserver.Unlock()
+	l := acceptanceSessionObserver.active
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.endpointCount >= 128 {
+		l.endpointDropped++
+		return
+	}
+	if l.endpointEvents == nil {
+		l.endpointEvents = make(map[*Node][]AcceptanceEndpointEvent)
+	}
+	code := "other"
+	switch {
+	case err == nil:
+		code = "ok"
+	case errors.Is(err, context.Canceled):
+		code = "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		code = "deadline"
+	case errors.Is(err, io.EOF):
+		code = "eof"
+	case errors.Is(err, net.ErrClosed):
+		code = "closed"
+	case errors.Is(err, ErrUntrusted):
+		code = "untrusted"
+	case errors.Is(err, ErrUnavailable):
+		code = "unavailable"
+	case errors.Is(err, ErrRecovery), errors.Is(err, endpointmeta.ErrRecovery):
+		code = "recovery"
+	case errors.Is(err, ErrPolicy), errors.Is(err, endpointmeta.ErrPolicy):
+		code = "policy"
+	case errors.Is(err, ErrCapacity), errors.Is(err, endpointmeta.ErrCapacity):
+		code = "capacity"
+	case errors.Is(err, endpointmeta.ErrReview):
+		code = "review"
+	case errors.Is(err, endpointmeta.ErrIdentity):
+		code = "identity"
+	case errors.Is(err, endpointmeta.ErrExpired):
+		code = "expired"
+	default:
+		var timeout net.Error
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			code = "timeout"
+		}
+	}
+	l.endpointEvents[n] = append(l.endpointEvents[n], AcceptanceEndpointEvent{Stage: stage, Code: code})
+	l.endpointCount++
+}
+func (l *AcceptanceSessionLog) EndpointEvents(n *Node) ([]AcceptanceEndpointEvent, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]AcceptanceEndpointEvent(nil), l.endpointEvents[n]...), l.endpointDropped
 }

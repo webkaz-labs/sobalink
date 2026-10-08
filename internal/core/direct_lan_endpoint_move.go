@@ -18,6 +18,7 @@ type endpointMoveDelivery struct {
 	Expires  string `json:"expires,omitempty"`
 }
 type endpointDeliveryResult struct {
+	Attempts int    `json:"attempts,omitempty"`
 	PeerID   string `json:"peerId"`
 	Sequence string `json:"sequence"`
 	Outcome  string `json:"outcome"`

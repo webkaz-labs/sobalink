@@ -4,3 +4,5 @@ package directlan
 
 // Compiles away outside the explicit acceptance build. It never changes state.
 func observeAcceptanceSessionBirth(*peerState) {}
+
+func observeAcceptanceEndpoint(*Node, string, error) {}

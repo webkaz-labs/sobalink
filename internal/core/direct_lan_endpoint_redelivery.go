@@ -114,7 +114,7 @@ func (c *Core) endpointRedeliveryCommand(ctx context.Context, name string, raw j
 		c.op.Unlock()
 		return nil, directLANEndpointError(err)
 	}
-	target, err := b.Node.CaptureEndpointDelivery(in.PeerID, destination)
+	target, err := b.Node.CaptureEndpointDelivery(in.PeerID, destination, o.epoch)
 	if err != nil {
 		s.mu.Unlock()
 		o.mu.Unlock()

@@ -653,7 +653,10 @@ jobs:
           node web/node_modules/@playwright/test/cli.js install --with-deps chromium
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
-          go mod download all
+          # Fetch only the versions explicitly pinned in the main module.
+          # Broad "all" also pulls unrelated transitive test/tool graphs.
+          go mod download
+          go list -mod=readonly -deps -test -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native ./cmd/soba >/dev/null
           git diff --exit-code -- go.mod go.sum
           go mod verify
       - name: Verify fixed Web acceptance policy

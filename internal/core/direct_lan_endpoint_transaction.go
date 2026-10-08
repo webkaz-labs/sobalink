@@ -361,6 +361,7 @@ func (c *Core) saveEndpointTransactionWithOwner(ctx context.Context, b *directLA
 		s.endpointTransaction = t
 		// Signal-only: seals exact physical admissions before the fence publisher
 		// invalidates the old receipt. Any failure now retains both owner and slot.
+		observeEndpointAcceptance(c, "transaction-before-retirement", nil)
 		b.replacing.Store(t)
 		if err = old.begin(); err != nil {
 			return true, err
@@ -387,7 +388,9 @@ func (c *Core) saveEndpointTransactionWithOwner(ctx context.Context, b *directLA
 	c.op.Unlock()
 	// Exact old generation and origin accounting only; never a current-backend
 	// lookup. No operation, store, Core or Node lock is held during this join.
+	observeEndpointAcceptance(c, "transaction-before-join", nil)
 	joinErr := old.wait(ctx)
+	observeEndpointAcceptance(c, "transaction-after-join", joinErr)
 	c.op.Lock()
 	defer c.op.Unlock()
 	if joinErr != nil {

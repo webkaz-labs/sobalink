@@ -60,12 +60,12 @@ func TestEndpointDeliveryTargetRejectsChangedAttribution(t *testing.T) {
 	peer := Peer{Key: "synthetic", Endpoint: netip.MustParseAddrPort("127.0.0.2:12345")}
 	p := &peerState{g: g, peer: peer, binding: "synthetic-binding"}
 	a := &managedAuthentication{generation: g, peer: p, binding: p.binding}
-	target := &EndpointDelivery{node: n, capture: a, peer: peer}
+	target := &EndpointDelivery{node: n, capture: a, peer: peer, epoch: NewContextEpoch()}
 	target.self = target
 	if !target.matches(n) {
 		t.Fatal("unchanged attribution rejected")
 	}
-	copy := &EndpointDelivery{self: target, node: n, capture: a, peer: peer}
+	copy := &EndpointDelivery{self: target, node: n, capture: a, peer: peer, epoch: target.epoch}
 	if copy.matches(n) || target.matches(&Node{}) {
 		t.Fatal("copied or wrong-node target accepted")
 	}
@@ -74,8 +74,38 @@ func TestEndpointDeliveryTargetRejectsChangedAttribution(t *testing.T) {
 		t.Fatal("reviewed destination changed")
 	}
 	p.peer = peer
+	target.epoch.Invalidate()
+	if target.matches(n) {
+		t.Fatal("changed receipt epoch accepted")
+	}
+	target.epoch = NewContextEpoch()
 	n.generation.Store(&runtimeGeneration{n: n})
 	if target.matches(n) {
 		t.Fatal("target rediscovered a later generation")
+	}
+}
+
+func TestEndpointAdmissionTransientRefusalUsesExistingError(t *testing.T) {
+	for _, err := range []error{ErrUnavailable, ErrCapacity} {
+		refusal := endpointAdmissionRefusal(err)
+		if refusal == nil || refusal.OK || refusal.Operation != "endpoint-update" {
+			t.Fatal("transient refusal became acceptance")
+		}
+		data, encodeErr := endpointmeta.Encode(*refusal)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		parsed, parseErr := endpointmeta.ParseReply(data, "endpoint-update")
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		if _, ok := parsed.(*endpointmeta.ErrorReply); !ok {
+			t.Fatal("refusal became success reply")
+		}
+	}
+	for _, err := range []error{nil, ErrUntrusted, ErrRecovery, endpointmeta.ErrExpired, endpointmeta.ErrPolicy} {
+		if endpointAdmissionRefusal(err) != nil {
+			t.Fatal("terminal authority mislabeled transient")
+		}
 	}
 }

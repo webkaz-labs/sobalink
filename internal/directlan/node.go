@@ -316,6 +316,7 @@ func (n *Node) handle(w *wire) {
 		if !retained {
 			err := n.removeWire(w)
 			if w.endpointReleased != nil {
+				observeAcceptanceEndpoint(n, "inbound-wire-released", err)
 				w.endpointReleased <- err
 				close(w.endpointReleased)
 			}
@@ -333,7 +334,8 @@ func (n *Node) handle(w *wire) {
 	defer cancel()
 	stop := watchConnection(ctx, w.raw)
 	defer stop()
-	if c.HandshakeContext(ctx) != nil {
+	if err := c.HandshakeContext(ctx); err != nil {
+		observeAcceptanceEndpoint(n, "ordinary-tls", err)
 		return
 	}
 	key, e := certificateKey([][]byte{c.ConnectionState().PeerCertificates[0].Raw}, time.Now())
@@ -350,6 +352,7 @@ func (n *Node) handle(w *wire) {
 	managed := w.g.cfg.managedKey(key)
 	n.mu.Unlock()
 	if managed {
+		observeAcceptanceEndpoint(n, "ordinary-managed", nil)
 		n.handleManagedSession(ctx, c, w)
 		return
 	}

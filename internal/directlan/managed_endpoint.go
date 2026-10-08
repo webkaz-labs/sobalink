@@ -71,9 +71,20 @@ func (n *Node) handleManagedEndpoint(ctx context.Context, c *tls.Conn, w *wire, 
 	r.live.Store(true)
 	defer r.live.Store(false)
 	if !r.Current() {
+		observeAcceptanceEndpoint(n, "inbound-observation", ErrUntrusted)
 		return
 	}
 	reply, err := w.g.cfg.EndpointAdmission(ctx, r)
+	observeAcceptanceEndpoint(n, "inbound-admission-returned", err)
+	if err == nil && reply == nil {
+		observeAcceptanceEndpoint(n, "inbound-handoff", nil)
+	}
+	if refusal := endpointAdmissionRefusal(err); refusal != nil && r.Current() {
+		if data, encodeErr := endpointmeta.Encode(*refusal); encodeErr == nil && r.Current() {
+			_ = writeFrame(c, data, endpointmeta.MaxFrameBytes)
+		}
+		return
+	}
 	// An accepted transition has no early success reply: closing this old wire
 	// releases its counted work before Core waits for exact generation retirement.
 	// A lost reply is resolved by the unchanged signed proof on a later connection.
@@ -96,4 +107,19 @@ func (n *Node) handleManagedEndpoint(ctx context.Context, c *tls.Conn, w *wire, 
 func endpointRequestEnvelope(request endpointmeta.Request) (endpointmeta.Envelope, bool) {
 	envelope, ok := request.(endpointmeta.Envelope)
 	return envelope, ok
+}
+
+// A transient refusal is an existing protocol error, never accepted work or a
+// durable acknowledgement. All original transport checks still precede output.
+func endpointAdmissionRefusal(err error) *endpointmeta.ErrorReply {
+	code := ""
+	switch err {
+	case ErrUnavailable:
+		code = "unavailable"
+	case ErrCapacity:
+		code = "capacity"
+	default:
+		return nil
+	}
+	return &endpointmeta.ErrorReply{Version: 2, Operation: "endpoint-update", OK: false, Code: code}
 }

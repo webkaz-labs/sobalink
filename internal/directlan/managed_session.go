@@ -188,10 +188,12 @@ func (n *Node) requestManagedSession(ctx context.Context, p *peerState) (result 
 func (n *Node) handleManagedSession(ctx context.Context, c *tls.Conn, w *wire) {
 	captured := n.captureManagedSession(w.peer)
 	if captured == nil || captured.generation != w.g {
+		observeAcceptanceEndpoint(n, "inbound-capture", ErrUntrusted)
 		return
 	}
 	data, err := readFrame(c, endpointmeta.MaxFrameBytes)
 	if err != nil {
+		observeAcceptanceEndpoint(n, "inbound-frame", err)
 		return
 	}
 	request, err := endpointmeta.ParseRequest(data)
@@ -199,6 +201,7 @@ func (n *Node) handleManagedSession(ctx context.Context, c *tls.Conn, w *wire) {
 		return
 	}
 	if envelope, ok := endpointRequestEnvelope(request); ok {
+		observeAcceptanceEndpoint(n, "inbound-envelope", nil)
 		n.handleManagedEndpoint(ctx, c, w, captured, envelope)
 		return
 	}
