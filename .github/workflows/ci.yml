@@ -660,7 +660,9 @@ jobs:
           git diff --exit-code -- go.mod go.sum
           go mod verify
       - name: Verify fixed Web acceptance policy
-        run: python -m unittest discover -s .github/scripts -p 'test_ci_web_activation.py' -v
+        run: |
+          python -m unittest discover -s .github/scripts -p 'test_ci_web_activation.py' -v
+          node --test web/browser/activation-diagnostics.test.mjs
       - name: Compile and run seven private synthetic-owner cases
         id: web-activation
         timeout-minutes: 40

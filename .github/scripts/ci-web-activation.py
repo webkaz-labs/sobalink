@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TAGS = 'ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native'
 SCOPE = 'Linux real helper/HTTP/browser with synthetic owners; Core and OS-open excluded'
 BOOLS = ('accepted', 'allSevenPassed', 'runnerExitedSuccessfully', 'timedOut', 'outputOverflow', 'nativeCleanupProven')
-KEYS = {'schema', 'expected', 'scope', *BOOLS}
+KEYS = {'schema', 'expected', 'scope', 'diagnostics', *BOOLS}
 VERSIONS = {'go': 'go1.27.1', 'node': 'v24.19.0', 'npm': '11.9.0'}
 
 
@@ -26,21 +26,65 @@ def validate_toolchain(versions, binaries):
     return {'versions': dict(versions), 'binarySha256': dict(binaries)}
 
 
+CASE_IDS = ('normal-en', 'normal-ja', 'decline', 'closed-popup', 'logout-before-confirm', 'logout-before-stop', 'lost-ack')
+STATUSES = ('not-started', 'passed', 'failed', 'timedOut', 'skipped', 'interrupted')
+STAGES = ('not-started', 'preflight', 'native-start', 'native-ready', 'old-login', 'body', 'cleanup-context', 'cleanup-supervisor', 'cleanup-proof', 'cleanup-safety', 'cleanup-remove', 'finished')
+EXITS = ('not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error')
+LIFECYCLE_BOOLS = ('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected')
+LIFECYCLE_COUNTS = ('reaped', 'blockedRequests', 'runtimeErrors')
+LIFECYCLE_KEYS = {'stage', 'failureStage', 'supervisorExit', *LIFECYCLE_BOOLS, *LIFECYCLE_COUNTS}
+DIAGNOSTIC_KEYS = {'summaryAvailable', 'selectionValid', 'unexpected', 'globalErrors', 'observed', 'passed', 'cases'}
+
+
+def empty_diagnostics():
+    life = {'stage': 'not-started', 'failureStage': 'not-started', 'supervisorExit': 'not-observed', **dict.fromkeys(LIFECYCLE_BOOLS, False), **dict.fromkeys(LIFECYCLE_COUNTS, 0)}
+    return {'summaryAvailable': False, 'selectionValid': False, 'unexpected': False, 'globalErrors': 0, 'observed': 0, 'passed': 0,
+            'cases': [{'id': name, 'started': False, 'status': 'not-started', 'lifecycle': dict(life)} for name in CASE_IDS]}
+
+
+def validate_diagnostics(value):
+    if not isinstance(value, dict) or set(value) != DIAGNOSTIC_KEYS or any(type(value[k]) is not bool for k in ('summaryAvailable', 'selectionValid', 'unexpected')):
+        raise ValueError('invalid fixed diagnostic schema')
+    for key, maximum in (('globalErrors', 255), ('observed', 7), ('passed', 7)):
+        if type(value[key]) is not int or not 0 <= value[key] <= maximum:
+            raise ValueError('invalid fixed diagnostic count')
+    if not isinstance(value['cases'], list) or len(value['cases']) != 7:
+        raise ValueError('invalid fixed case inventory')
+    cases = []
+    for name, row in zip(CASE_IDS, value['cases']):
+        if not isinstance(row, dict) or set(row) != {'id', 'started', 'status', 'lifecycle'} or row['id'] != name or type(row['started']) is not bool or row['status'] not in STATUSES or (not row['started'] and row['status'] == 'passed'):
+            raise ValueError('invalid fixed case status')
+        life = row['lifecycle']
+        if not isinstance(life, dict) or set(life) != LIFECYCLE_KEYS or life['stage'] not in STAGES or life['failureStage'] not in STAGES or life['supervisorExit'] not in EXITS or any(type(life[k]) is not bool for k in LIFECYCLE_BOOLS) or any(type(life[k]) is not int or not 0 <= life[k] <= 255 for k in LIFECYCLE_COUNTS):
+            raise ValueError('invalid fixed lifecycle schema')
+        cases.append({'id': name, 'started': row['started'], 'status': row['status'], 'lifecycle': {k: life[k] for k in sorted(LIFECYCLE_KEYS)}})
+    if value['observed'] != sum(row['status'] != 'not-started' for row in cases) or value['passed'] != sum(row['status'] == 'passed' for row in cases):
+        raise ValueError('inconsistent fixed diagnostic counts')
+    return {**{k: value[k] for k in sorted(DIAGNOSTIC_KEYS - {'cases'})}, 'cases': cases}
+
+
+def passed_lifecycle(value):
+    return value['stage'] == 'finished' and value['failureStage'] == 'not-started' and value['supervisorExit'] == 'zero' and all(value[k] for k in ('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved')) and value['blockedRequests'] == 0 and value['runtimeErrors'] == 0 and not value['outputOverflow'] and not value['privateOutputDetected']
+
+
 def validate_report(value):
     if not isinstance(value, dict) or set(value) != KEYS:
         raise ValueError('invalid result schema')
-    if type(value['schema']) is not int or value['schema'] != 1 or type(value['expected']) is not int or value['expected'] != 7 or value['scope'] != SCOPE:
+    if type(value['schema']) is not int or value['schema'] != 2 or type(value['expected']) is not int or value['expected'] != 7 or value['scope'] != SCOPE:
         raise ValueError('invalid fixed result')
     if any(type(value[key]) is not bool for key in BOOLS):
         raise ValueError('invalid result types')
+    diagnostics = validate_diagnostics(value['diagnostics'])
+    if value['allSevenPassed'] and not (diagnostics['summaryAvailable'] and diagnostics['selectionValid'] and not diagnostics['unexpected'] and diagnostics['globalErrors'] == 0 and diagnostics['observed'] == 7 and diagnostics['passed'] == 7 and all(row['started'] and passed_lifecycle(row['lifecycle']) for row in diagnostics['cases'])):
+        raise ValueError('inconsistent seven-case diagnostic evidence')
     accepted = (value['allSevenPassed'] and value['runnerExitedSuccessfully'] and not value['timedOut'] and not value['outputOverflow'] and value['nativeCleanupProven'])
     if value['accepted'] != accepted:
         raise ValueError('inconsistent acceptance')
-    return {key: value[key] for key in sorted(KEYS)}
+    return {key: diagnostics if key == 'diagnostics' else value[key] for key in sorted(KEYS)}
 
 
 def failed_report():
-    return {'schema': 1, 'expected': 7, 'scope': SCOPE, **dict.fromkeys(BOOLS, False)}
+    return {'schema': 2, 'expected': 7, 'scope': SCOPE, 'diagnostics': empty_diagnostics(), **dict.fromkeys(BOOLS, False)}
 
 
 def digest(path):
@@ -125,7 +169,8 @@ def main(argv=None):
         result = subprocess.run(['node', 'browser/activation-runner.mjs'], cwd=web,
                                 env=child_environment(private, binary, assets, chromium, wrapper_report),
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False)
-        if wrapper_report.is_symlink() or wrapper_report.stat().st_size > 4096:
+        # The closed seven-case diagnostic inventory has a fixed 16 KiB ceiling.
+        if wrapper_report.is_symlink() or wrapper_report.stat().st_size > 16384:
             raise ValueError('invalid result file')
         report = validate_report(json.loads(wrapper_report.read_text()))
         if result.returncode != 0 and report['accepted']:

@@ -12,16 +12,26 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
 
+def passed_report():
+    result = gate.failed_report()
+    result.update(accepted=True, allSevenPassed=True, runnerExitedSuccessfully=True, nativeCleanupProven=True)
+    result['diagnostics'].update(summaryAvailable=True, selectionValid=True, observed=7, passed=7)
+    for row in result['diagnostics']['cases']:
+        row.update(started=True, status='passed')
+        row['lifecycle'].update(stage='finished', supervisorExit='zero', **dict.fromkeys(('supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'contextClosed', 'profileRemoved'), True))
+    return result
+
+
 class WebActivationPolicyTests(unittest.TestCase):
     def test_exact_schema_accepts_pass_and_failure(self):
         failed = gate.failed_report()
         self.assertFalse(gate.validate_report(failed)['accepted'])
-        passed = dict(failed, accepted=True, allSevenPassed=True, runnerExitedSuccessfully=True, nativeCleanupProven=True)
+        passed = passed_report()
         self.assertTrue(gate.validate_report(passed)['accepted'])
         self.assertEqual(set(passed), gate.KEYS)
 
     def test_schema_rejects_leaks_types_and_partial_success(self):
-        original = dict(gate.failed_report(), accepted=True, allSevenPassed=True, runnerExitedSuccessfully=True, nativeCleanupProven=True)
+        original = passed_report()
         mutations = [{'error': 'synthetic private detail'}, {'expected': 6}, {'schema': True}, {'scope': 'other'}, {'timedOut': 0}, {'timedOut': True}, {'nativeCleanupProven': False}, {'allSevenPassed': False}, {'outputOverflow': True}, {'runnerExitedSuccessfully': False}]
         for change in mutations:
             with self.subTest(change=tuple(change)):
@@ -30,6 +40,24 @@ class WebActivationPolicyTests(unittest.TestCase):
         for key in gate.KEYS:
             broken = dict(original)
             del broken[key]
+            with self.assertRaises(ValueError):
+                gate.validate_report(broken)
+
+    def test_fixed_diagnostic_boundary_rejects_sensitive_and_untyped_values(self):
+        self.assertEqual(gate.validate_diagnostics(gate.empty_diagnostics()), gate.empty_diagnostics())
+        mutations = [lambda d: d.update(error='synthetic private detail'), lambda d: d.update(observed=True), lambda d: d.update(globalErrors=256), lambda d: d['cases'].pop(), lambda d: d['cases'][0].update(id='synthetic secret'), lambda d: d['cases'][1].update(id=d['cases'][0]['id']), lambda d: d['cases'][0].update(status='other'), lambda d: d['cases'][0]['lifecycle'].update(path='/synthetic/private'), lambda d: d['cases'][0]['lifecycle'].update(reaped=True), lambda d: d['cases'][0]['lifecycle'].update(supervisorExit=0), lambda d: d['cases'][0]['lifecycle'].update(stage='https://example.invalid/private')]
+        for mutation in mutations:
+            value = gate.empty_diagnostics()
+            mutation(value)
+            with self.assertRaises(ValueError):
+                gate.validate_diagnostics(value)
+        broken = passed_report()
+        broken['diagnostics'] = gate.empty_diagnostics()
+        with self.assertRaises(ValueError):
+            gate.validate_report(broken)
+        for row in range(7):
+            broken = passed_report()
+            broken['diagnostics']['cases'][row]['started'] = False
             with self.assertRaises(ValueError):
                 gate.validate_report(broken)
 
@@ -66,6 +94,7 @@ class WebActivationPolicyTests(unittest.TestCase):
         exports = job.split('          path: |\n', 1)[1].split('          if-no-files-found:', 1)[0]
         self.assertEqual(exports.splitlines(), ['            ${{ runner.temp }}/soba-web-activation-sanitized/result.json', '            ${{ runner.temp }}/soba-web-activation-sanitized/provenance.json'])
         self.assertNotIn('*', exports)
+        self.assertIn('node --test web/browser/activation-diagnostics.test.mjs', job)
 
     def test_cold_runner_prefetch_precedes_offline_gate(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')

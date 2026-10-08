@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
 	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
@@ -27,6 +30,9 @@ import (
 // and do not cover the separately outstanding old-byte or revocation cases.
 const endpointAcceptanceSelector = "^TestIntegratedEndpointMoveDelivery$"
 const endpointReopenAcceptanceSelector = "^TestIntegratedEndpointStillValidReopen$"
+const endpointIPTCPAcceptanceSelector = "^TestIntegratedEndpointIPMoveRejectsStaleTCP$"
+const endpointFollowExpiryAcceptanceSelector = "^TestIntegratedFiniteFollowExpiryDeniesTraffic$"
+const endpointDisableFollowAcceptanceSelector = "^TestIntegratedDisableFollowDeniesResumption$"
 const endpointAcceptanceOptIn = "reviewed-production-loopback-v1"
 
 type endpointAcceptanceReservation struct {
@@ -63,8 +69,14 @@ func (r *endpointAcceptanceReservation) close() error {
 
 // One ephemeral allocation only. No port sweep, endpoint probing or retry.
 func reserveEndpointAcceptance(t *testing.T) *endpointAcceptanceReservation {
+	return reserveEndpointAcceptanceAt(t, netip.MustParseAddr("127.0.0.1"))
+}
+func reserveEndpointAcceptanceAt(t *testing.T, ip netip.Addr) *endpointAcceptanceReservation {
 	t.Helper()
-	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
+	if ip != netip.MustParseAddr("127.0.0.1") && ip != netip.MustParseAddr("127.0.0.2") {
+		t.Fatal("fixture address not explicitly owned loopback choice")
+	}
+	tcp, err := net.Listen("tcp4", netip.AddrPortFrom(ip, 0).String())
 	if err != nil {
 		t.Fatal("could not reserve fixture TCP endpoint")
 	}
@@ -75,7 +87,7 @@ func reserveEndpointAcceptance(t *testing.T) *endpointAcceptanceReservation {
 			t.Error("reservation cleanup failed")
 		}
 	})
-	if endpoint.Addr() != netip.MustParseAddr("127.0.0.1") || endpoint.Port() < 1024 || endpoint.Port() == DiscoveryPort || endpoint.Port() == PeerPort || endpoint.Port() == 54545 {
+	if endpoint.Addr() != ip || endpoint.Port() < 1024 || endpoint.Port() == DiscoveryPort || endpoint.Port() == PeerPort || endpoint.Port() == 54545 {
 		t.Fatal("fixture endpoint allocation outside permitted set")
 	}
 	udp, err := net.ListenPacket("udp4", endpoint.String())
@@ -92,9 +104,11 @@ type endpointAcceptanceFixture struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
 	cores             []*Core
+	resources         []io.Closer
 	dirs              []string
 	observer          *directlan.AcceptanceSessionLog
 	deadline          string
+	followDeadline    string
 	cleanupOnce       sync.Once
 }
 
@@ -105,9 +119,12 @@ func newEndpointAcceptanceFixture(t *testing.T) *endpointAcceptanceFixture {
 		t.Skip("requires separately reviewed production-path acceptance opt-in")
 	}
 	run := flag.Lookup("test.run")
-	expected := map[string]string{"TestIntegratedEndpointMoveDelivery": endpointAcceptanceSelector, "TestIntegratedEndpointStillValidReopen": endpointReopenAcceptanceSelector}[t.Name()]
+	expected := map[string]string{"TestIntegratedEndpointMoveDelivery": endpointAcceptanceSelector, "TestIntegratedEndpointStillValidReopen": endpointReopenAcceptanceSelector, "TestIntegratedEndpointIPMoveRejectsStaleTCP": endpointIPTCPAcceptanceSelector, "TestIntegratedFiniteFollowExpiryDeniesTraffic": endpointFollowExpiryAcceptanceSelector, "TestIntegratedDisableFollowDeniesResumption": endpointDisableFollowAcceptanceSelector}[t.Name()]
 	if run == nil || expected == "" || run.Value.String() != expected {
 		t.Fatal("exact acceptance selector required")
+	}
+	if t.Name() == "TestIntegratedEndpointIPMoveRejectsStaleTCP" && runtime.GOOS != "linux" {
+		t.Fatal("IP transition acceptance is scoped to the reviewed Linux executor")
 	}
 	if !directLANNetstackReady {
 		t.Fatal("userspace native transport build required")
@@ -124,6 +141,10 @@ func newEndpointAcceptanceFixture(t *testing.T) *endpointAcceptanceFixture {
 		t.Fatal("acceptance observer already owned")
 	}
 	f := &endpointAcceptanceFixture{t: t, ctx: ctx, cancel: cancel, observer: observer, deadline: time.Now().Add(90 * time.Second).UTC().Format(time.RFC3339Nano)}
+	if t.Name() == "TestIntegratedFiniteFollowExpiryDeniesTraffic" {
+		overall, _ := ctx.Deadline()
+		f.followDeadline = overall.Add(-75 * time.Second).UTC().Format(time.RFC3339Nano)
+	}
 	t.Cleanup(f.cleanup)
 	return f
 }
@@ -132,14 +153,17 @@ func (f *endpointAcceptanceFixture) cleanup() {
 		f.cancel()
 		// Signal every independent owner before waiting. A blocked first close must
 		// not prevent the other Core receiving its own shutdown request.
-		outcomes := make(chan error, len(f.cores))
+		outcomes := make(chan error, len(f.cores)+len(f.resources))
+		for _, resource := range f.resources {
+			go func(r io.Closer) { outcomes <- r.Close() }(resource)
+		}
 		for _, c := range f.cores {
 			go func(c *Core) { outcomes <- c.Close() }(c)
 		}
 		watchdog := time.NewTimer(10 * time.Second)
 		defer watchdog.Stop()
 		joined := true
-		for range f.cores {
+		for i := 0; i < len(f.cores)+len(f.resources); i++ {
 			select {
 			case err := <-outcomes:
 				if err != nil {
@@ -203,6 +227,9 @@ func (f *endpointAcceptanceFixture) openSeed(local, remote directlan.Identity, o
 	// Synthetic legacy pair only: no confirmed context, approval, ready flag,
 	// publication receipt, epoch or completed transport is fabricated here.
 	scope := endpointmeta.Scope{Family: "ipv4", Prefixes: []string{"127.0.0.1/32"}}
+	if f.t.Name() == "TestIntegratedEndpointIPMoveRejectsStaleTCP" {
+		scope.Prefixes = []string{"127.0.0.1/32", "127.0.0.2/32"}
+	}
 	remotePeer := directlan.Peer{Key: remote.PublicKey(), Name: "synthetic-peer", Endpoint: peer, TunnelKey: remote.TunnelKey()}
 	model := endpointmeta.Snapshot{Version: 3, Revision: "1", LocalPeer: endpointmeta.PeerWire{Key: local.PublicKey(), TunnelKey: local.TunnelKey(), Endpoint: own.String()}, LocalScope: scope, PreviousLocalEndpoint: own.String(), ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Peers: []endpointmeta.PeerRecord{{Peer: directLANPeerWire(remotePeer), Revision: "1"}}}
 	state := directLANState{Version: 3, Identity: local, Selection: DirectLANSelection{Listen: own.String(), Prefixes: scope.Prefixes}, Peers: []directlan.Peer{remotePeer}, Metadata: &model}
@@ -283,7 +310,15 @@ func (f *endpointAcceptanceFixture) follow(c *Core, key string) endpointmeta.Fol
 	if err != nil {
 		f.t.Fatal("synthetic scope digest failed")
 	}
-	follow := endpointmeta.FollowApproval{ScopeDigest: scopeDigest, Revision: "1", Granted: time.Now().UTC().Format(time.RFC3339Nano), Lifetime: "finite", Expires: f.deadline, Active: true}
+	expires := f.deadline
+	if f.followDeadline != "" {
+		expires = f.followDeadline
+	}
+	follow := endpointmeta.FollowApproval{ScopeDigest: scopeDigest, Revision: "1", Granted: time.Now().UTC().Format(time.RFC3339Nano), Lifetime: "finite", Expires: expires, Active: true}
+	if f.t.Name() == "TestIntegratedDisableFollowDeniesResumption" {
+		follow.Lifetime = "until-revoked"
+		follow.Expires = ""
+	}
 	in := directLANEndpointInput{PeerID: key, Follow: &follow}
 	review := f.command(c, "direct-lan.endpoint.follow.preview", in).(directLANEndpointReview)
 	in.ExpectedRevision = review.Revision
@@ -369,20 +404,26 @@ func TestIntegratedEndpointMoveDelivery(t *testing.T) {
 	runIntegratedEndpointMoveDelivery(t)
 }
 func runIntegratedEndpointMoveDelivery(t *testing.T) (*endpointAcceptanceFixture, *Core, *Core) {
+	return runIntegratedEndpointMoveDeliveryAt(t, netip.MustParseAddr("127.0.0.1"), nil)
+}
+func runIntegratedEndpointMoveDeliveryAt(t *testing.T, moveIP netip.Addr, beforeMove func(*endpointAcceptanceFixture, *Core, *Core)) (*endpointAcceptanceFixture, *Core, *Core) {
 	f := newEndpointAcceptanceFixture(t)
-	ar, br, moved := reserveEndpointAcceptance(t), reserveEndpointAcceptance(t), reserveEndpointAcceptance(t)
+	ar, br, moved := reserveEndpointAcceptance(t), reserveEndpointAcceptance(t), reserveEndpointAcceptanceAt(t, moveIP)
 	aid, bid := directlan.Identity{Seed: strings.Repeat("01", 32)}, directlan.Identity{Seed: strings.Repeat("02", 32)}
 	a, b := f.openSeed(aid, bid, ar.endpoint, br.endpoint), f.openSeed(bid, aid, br.endpoint, ar.endpoint)
 	f.upgrade(a, b, ar, br)
 	follow := f.follow(b, aid.PublicKey())
-	// Application consent is explicit. This fixture retains no pre-move TCP
-	// stream; normal production peer refresh may still exchange application data.
-	// Old-byte/resumption acceptance remains a separate outstanding case.
+	// Application consent is explicit. Default move/reopen cases retain no
+	// pre-move TCP stream; the optional IP/TCP case captures one owned baseline
+	// flow. Normal production peer refresh may also exchange application data.
 	for _, item := range []struct {
 		c   *Core
 		key string
 	}{{a, bid.PublicKey()}, {b, aid.PublicKey()}} {
 		f.command(item.c, "peer.trust", map[string]any{"peerId": item.key, "trusted": true})
+	}
+	if beforeMove != nil {
+		beforeMove(f, a, b)
 	}
 	oldA, oldB := f.capture(a, bid.PublicKey()), f.capture(b, aid.PublicKey())
 	traceA, traceB := f.observeWrites(a), f.observeWrites(b)
@@ -434,8 +475,9 @@ func runIntegratedEndpointMoveDelivery(t *testing.T) (*endpointAcceptanceFixture
 	if !received {
 		t.Fatal("fresh application message absent at owned receiver")
 	}
-	// Explicit reviewed retry uses the identical persisted proof and original
-	// cutoff. Already-applied must derive from B's durable high-water state.
+	// Explicit reviewed redelivery is one bounded attempt and may remain
+	// unconfirmed. Neither outcome may renew the original proof or receiver
+	// authority; only already_applied confirms a reply to this replay.
 	before := a.directLANStoreCopy().copy().Metadata.Peers[0].EndpointState
 	proof := *before.IssuedProof
 	digest, _ := proof.Digest()
@@ -446,12 +488,67 @@ func runIntegratedEndpointMoveDelivery(t *testing.T) (*endpointAcceptanceFixture
 	if !cutoffPresent || cutoff.expired {
 		t.Fatal("missing original issued-proof cutoff")
 	}
+	// Snapshot actual receiver state/receipt/owner before the one-shot replay.
+	// This observes authority without minting a receipt or starting a generation.
+	type receiverReplayState struct {
+		state    directLANState
+		receipt  *contextPublicationReceipt
+		owner    *managedCompletionOwner
+		epoch    *directlan.ContextEpoch
+		origin   *transportorigin.Token
+		deadline time.Time
+		bounds   map[directLANEndpointDeadlineKey]directLANEndpointDeadline
+	}
+	snapshotReceiver := func() (receiverReplayState, error) {
+		b.op.Lock()
+		defer b.op.Unlock()
+		backend := b.endpointBackendLocked()
+		if backend == nil || backend.Node == nil {
+			return receiverReplayState{}, endpointmeta.ErrReview
+		}
+		owner := backend.currentCompletion()
+		origin, err := backend.Node.CaptureTransportOrigin()
+		if err != nil || origin == nil || owner == nil || !owner.authorityCurrent() {
+			return receiverReplayState{}, endpointmeta.ErrReview
+		}
+		s := b.directLANStoreCopy()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.contextPublication == nil || s.contextPublication != owner.receipt || s.contextEpoch != owner.epoch || !s.contextPublicationCurrentLocked(b.lanStartNonce) {
+			return receiverReplayState{}, endpointmeta.ErrReview
+		}
+		bounds := make(map[directLANEndpointDeadlineKey]directLANEndpointDeadline, len(s.endpointDeadlines))
+		for key, bound := range s.endpointDeadlines {
+			bounds[key] = bound
+		}
+		return receiverReplayState{cloneDirectLANState(s.state), s.contextPublication, owner, owner.epoch, origin.Identity(), owner.deadline, bounds}, nil
+	}
+	receiverBefore, receiverErr := snapshotReceiver()
+	if receiverErr != nil {
+		t.Fatal("receiver authority unavailable before exact-proof redelivery")
+	}
+	receivedState := receiverBefore.state.Metadata.Peers[0].EndpointState
+	if receivedState == nil || receivedState.ReceivedProof == nil || *receivedState.ReceivedProof != proof || receivedState.ReceivedHighwater != proof.Update.Sequence {
+		t.Fatal("receiver lacks original durable proof/high-water before redelivery")
+	}
 	in := directLANEndpointExportInput{PeerID: bid.PublicKey()}
 	deliveryReview := f.command(a, "direct-lan.endpoint.delivery.preview", in).(map[string]any)
 	in.ExpectedRevision = deliveryReview["revision"].(string)
 	retry := f.command(a, "direct-lan.endpoint.delivery.apply", in).(endpointDeliveryResult)
-	if retry.Outcome != "already_applied" || retry.Sequence != proof.Update.Sequence {
-		t.Fatal("explicit exact-proof retry was not durably recognized")
+	loggedOutcome := "other"
+	switch retry.Outcome {
+	case "already_applied", "unconfirmed", "applied", "withdrawn", "accepted_inactive", "review_required", "saved_pending_activation":
+		loggedOutcome = retry.Outcome
+	}
+	t.Logf("manual exact-proof redelivery outcome=%s sequence_matches=%t reply_confirmed=%t", loggedOutcome, retry.Sequence == proof.Update.Sequence, retry.Outcome == "already_applied")
+	if (retry.Outcome != "already_applied" && retry.Outcome != "unconfirmed") || retry.Sequence != proof.Update.Sequence {
+		f.dumpEndpointDiagnostics("manual-redelivery-result")
+		t.Fatal("explicit exact-proof redelivery returned an unexpected outcome or sequence")
+	}
+	receiverAfter, receiverErr := snapshotReceiver()
+	if receiverErr != nil || receiverBefore.receipt != receiverAfter.receipt || receiverBefore.owner != receiverAfter.owner || receiverBefore.epoch != receiverAfter.epoch || receiverBefore.origin != receiverAfter.origin || receiverBefore.deadline != receiverAfter.deadline || !reflect.DeepEqual(receiverBefore.bounds, receiverAfter.bounds) || !reflect.DeepEqual(receiverBefore.state, receiverAfter.state) {
+		f.dumpEndpointDiagnostics("manual-redelivery-authority")
+		t.Fatal("exact-proof redelivery changed receiver state, receipt or generation authority")
 	}
 	store.mu.Lock()
 	retainedCutoff := store.endpointIssuedDeadlines[digest]

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, relative } from 'node:path'
+import { emptyDiagnostics, validateDiagnostics, passedLifecycle } from './activation-diagnostics.mjs'
 
 async function run() {
   assert.equal(process.argv.length, 2, 'Acceptance selection cannot be overridden')
@@ -38,9 +39,11 @@ async function run() {
       if (cleanupProven) await rm(root, { recursive: true, force: true })
     }
   }
-  const schemaValid = summary && summary.schema === 1 && summary.expected === 7 && summary.observed === 7 && summary.passed === 7 && summary.globalErrors === 0 && summary.selectionValid === true && summary.unexpected === false && summary.runnerPassed === true && summary.accepted === true
+  let diagnostics = emptyDiagnostics()
+  try { diagnostics = validateDiagnostics(summary?.diagnostics) } catch {}
+  const schemaValid = summary && summary.schema === 2 && summary.expected === 7 && summary.observed === 7 && summary.passed === 7 && summary.globalErrors === 0 && summary.selectionValid === true && summary.unexpected === false && summary.runnerPassed === true && summary.accepted === true && diagnostics.summaryAvailable === true && diagnostics.passed === 7 && diagnostics.observed === 7 && diagnostics.selectionValid === true && diagnostics.unexpected === false && diagnostics.globalErrors === 0 && diagnostics.cases.every(row => row.started && passedLifecycle(row.lifecycle))
   const accepted = exitCode === 0 && !timedOut && !outputOverflow && cleanupProven && Boolean(schemaValid)
-  await writeFile(report, JSON.stringify({ schema: 1, accepted, expected: 7, allSevenPassed: Boolean(schemaValid), runnerExitedSuccessfully: exitCode === 0, timedOut, outputOverflow, nativeCleanupProven: cleanupProven, scope: 'Linux real helper/HTTP/browser with synthetic owners; Core and OS-open excluded' }), { mode: 0o600 })
+  await writeFile(report, JSON.stringify({ schema: 2, accepted, expected: 7, allSevenPassed: Boolean(schemaValid), runnerExitedSuccessfully: exitCode === 0, timedOut, outputOverflow, nativeCleanupProven: cleanupProven, diagnostics, scope: 'Linux real helper/HTTP/browser with synthetic owners; Core and OS-open excluded' }), { mode: 0o600 })
   console.log(accepted ? 'PASS: seven synthetic-owner cases and private cleanup verified.' : 'FAIL: synthetic-owner acceptance or private cleanup not verified. Raw diagnostics are never exportable.')
   process.exitCode = accepted ? 0 : 1
 }

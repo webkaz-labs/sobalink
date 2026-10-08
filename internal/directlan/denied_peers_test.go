@@ -55,7 +55,12 @@ func TestDeniedConfigCanonicalDisjointAndCopied(t *testing.T) {
 func TestDeniedKeysNeverBecomeUnknownLegacyOrPairingAuthority(t *testing.T) {
 	n, g, denied := deniedFixtureOwner()
 	saves := 0
-	n.cfg.Persist = func([]Peer) error { saves++; return nil }
+	g.cfg.Persist = func([]Peer) error { saves++; return nil }
+	// Establish that the active synthetic owner selects this observation hook.
+	if err := n.runtimeConfig().Persist(nil); err != nil || saves != 1 {
+		t.Fatal("active persistence observation hook was not selected", err)
+	}
+	saves = 0
 	for _, protocol := range []string{"", protocolName, contextProtocolName} {
 		if err := n.ordinaryPeerProtocolLocked(g, denied.Key, protocol); !errors.Is(err, ErrUntrusted) {
 			t.Fatalf("terminal TLS/frame dispatch accepted %q: %v", protocol, err)
@@ -119,7 +124,10 @@ func TestDeniedMixedClassificationPreservesLegacyAndManaged(t *testing.T) {
 	}
 	// All-terminal owners keep the movement/preparer guard even without an
 	// active managed context. Exercise only its early pure classification.
-	n.cfg.PairContexts = nil
+	g.cfg.PairContexts = nil
+	if len(n.runtimeConfig().PairContexts) != 0 || !n.runtimeConfig().deniedKey(denied.Key) {
+		t.Fatal("all-terminal synthetic owner was not exercised")
+	}
 	if _, err := n.candidateConfigLocked(nil, TransportEndpoints{}); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("all-terminal owner lost preparer guard", err)
 	}

@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promise
 import { join, resolve, isAbsolute } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
+import { lifecycle, validateLifecycle, counter } from './activation-diagnostics.mjs'
 export { expect }
 async function exists(path) { try { await stat(path); return true } catch (error) { if (error.code === 'ENOENT') return false; throw error } }
 async function until(predicate, deadline, description) {
@@ -20,10 +21,13 @@ export const test = base.extend({
   activation: async ({ page, context, activationCase }, use, testInfo) => {
     const deadline = Date.now() + 150000 // shared setup/body/cleanup deadline
     testInfo.setTimeout(120000) // reserve part of the same budget for teardown
-    let dir, child, exited = false, exitCode, output = '', leak = false, blockedRequests = 0, runtimeErrors = 0, noSuccessorExpected = false
+    let dir, child, exited = false, exitCode, output = '', leak = false, outputOverflow = false, privateOutputDetected = false, blockedRequests = 0, runtimeErrors = 0, noSuccessorExpected = false
+    const diagnostic = lifecycle()
+    const failedStage = () => { if (diagnostic.failureStage === 'not-started') diagnostic.failureStage = diagnostic.stage }
     const secrets = []
     const root = process.env.SOBA_ACTIVATION_PRIVATE_RUN
     try {
+      diagnostic.stage = 'preflight'
       assert.equal(process.platform, 'linux', 'Native subreaper fixture is Linux-only')
       assert.ok(root && isAbsolute(root), 'Use the reviewed private runner')
       assert.ok(!process.env.DEBUG && !process.env.PWDEBUG, 'Debug logging is forbidden')
@@ -48,10 +52,12 @@ export const test = base.extend({
       const observePage = p => p.on('pageerror', () => runtimeErrors++)
       observePage(page); context.on('page', observePage)
       const env = { SOBA_ACTIVATION_CASE: activationCase, SOBALINK_WEB_ACTIVATION_FIXTURE: '1', SOBA_ACTIVATION_PROFILE: dir, SOBA_ACTIVATION_ASSETS: assets, HOME: dir, TMPDIR: dir, TMP: dir, TEMP: dir, GORACE: 'halt_on_error=1 exitcode=66 atexit_sleep_ms=0' }
+      diagnostic.stage = 'native-start'
       child = spawn(binary, ['--web-activation-supervisor'], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] })
-      const outputChunk = chunk => { output += chunk.toString(); if (output.length > 65536) { leak = true; output = output.slice(-65536) } }
+      diagnostic.supervisorStarted = Boolean(child.pid)
+      const outputChunk = chunk => { output += chunk.toString(); if (output.length > 65536) { leak = true; outputOverflow = true; output = output.slice(-65536) } }
       child.stdout.on('data', outputChunk); child.stderr.on('data', outputChunk)
-      child.once('error', () => { exited = true; exitCode = -1 }); child.once('exit', code => { exited = true; exitCode = code })
+      child.once('error', () => { exited = true; exitCode = -1; diagnostic.supervisorExit = 'spawn-error' }); child.once('exit', code => { exited = true; exitCode = code; diagnostic.supervisorExit = code === null ? 'signal' : code === 0 ? 'zero' : code === 1 ? 'one' : code === 66 ? 'race' : 'other' })
     await context.addInitScript(() => {
       const original = window.fetch
       let token = ''
@@ -74,6 +80,7 @@ export const test = base.extend({
       }
       window.addEventListener('pagehide', () => { token = '' })
     })
+      diagnostic.stage = 'native-ready'
       await until(async () => exited || await exists(join(dir, 'session.json')), Math.min(deadline, Date.now() + 10000), 'Synthetic old owner readiness timed out')
       assert.ok(!exited, 'Synthetic old owner failed before readiness')
       const info = await stat(join(dir, 'session.json'))
@@ -91,8 +98,10 @@ export const test = base.extend({
           await expect(target.locator('#code')).toHaveValue('')
         } catch { throw new Error('Private synthetic normal-login acceptance failed; details withheld') }
       }
+      diagnostic.stage = 'old-login'
       await signIn(page, session.url, session.code)
       session.code = ''
+      diagnostic.stage = 'body'
       await bounded(use({
         async popup(locale = 'en') {
           await page.getByLabel('Locale', { exact: true }).selectOption(locale)
@@ -126,35 +135,56 @@ export const test = base.extend({
         async permitStop() { await writeFile(join(dir, 'permit-stop'), 'permit synthetic admission check', { mode: 0o600 }) },
         async sessionStopDenied() { return exists(join(dir, 'session-stop-denied')) },
       }), deadline - 30000)
-    } catch { throw new Error('Synthetic Web activation fixture failed; private details withheld') }
+    } catch { failedStage(); throw new Error('Synthetic Web activation fixture failed; private details withheld') }
     finally {
+      try {
       if (dir) {
         let nativeComplete = !child, cleanupFailed = false
         try {
           // Closing the browser context requests cancellation and denies further
           // traffic. The same deadline bounds teardown; waits cannot stack.
+          diagnostic.stage = 'cleanup-context'
           await bounded(context.close(), Math.min(deadline, Date.now() + 5000))
-        } catch { cleanupFailed = true }
+          diagnostic.contextClosed = true
+        } catch { failedStage(); cleanupFailed = true }
         try {
           if (child) {
+            diagnostic.stage = 'cleanup-supervisor'
             await writeFile(join(dir, 'stop-fixture'), 'stop synthetic descendants', { mode: 0o600 })
             await until(() => exited, deadline, 'Native supervisor exit unconfirmed')
+            diagnostic.stage = 'cleanup-proof'
             const proof = JSON.parse(await readFile(join(dir, 'exit-proof.json'), 'utf8'))
+            diagnostic.proofRead = true
+            for (const key of ['allDescendantsReaped', 'registeredNativeExits', 'successorRegistered']) diagnostic[key] = proof[key] === true
+            diagnostic.reaped = counter(proof.reaped)
             nativeComplete = proof.allDescendantsReaped === true && proof.registeredNativeExits === true
             assert.ok(nativeComplete && proof.success === true && exitCode === 0, 'Native descendant cleanup failed')
             if (noSuccessorExpected) assert.equal(proof.successorRegistered, false, 'A late successor owner was registered')
             assert.ok(!(await readdir(dir)).some(name => name.startsWith('.upgrade-')), 'Acknowledgement cleanup failed')
           }
+          diagnostic.stage = 'cleanup-safety'
           const log = await exists(join(dir, 'startup.log')) ? await readFile(join(dir, 'startup.log'), 'utf8') : ''
-          for (const secret of secrets) if (output.includes(secret) || log.includes(secret)) leak = true
+          for (const secret of secrets) if (output.includes(secret) || log.includes(secret)) { leak = true; privateOutputDetected = true }
           assert.equal(leak, false, 'Private value or excessive output reached child logs')
           assert.equal(blockedRequests, 0, 'Browser attempted an unowned origin or websocket')
           assert.equal(runtimeErrors, 0, 'Browser runtime health failed')
-        } catch { cleanupFailed = true }
+        } catch { failedStage(); cleanupFailed = true }
         // Never remove profiles based on a marker or a cancellation request.
         // All descendants, including failed/unregistered starts, must be reaped.
-        if (nativeComplete) await bounded(rm(dir, { recursive: true, force: true }), deadline).catch(() => { cleanupFailed = true })
+        if (nativeComplete) {
+          diagnostic.stage = 'cleanup-remove'
+          await bounded(rm(dir, { recursive: true, force: true }), deadline).then(() => { diagnostic.profileRemoved = true }).catch(() => { failedStage(); cleanupFailed = true })
+        }
         if (cleanupFailed) throw new Error('Private fixture cleanup or safety gate failed; details withheld')
+      }
+      diagnostic.stage = 'finished'
+      } finally {
+        diagnostic.supervisorExited = exited
+        diagnostic.blockedRequests = counter(blockedRequests)
+        diagnostic.runtimeErrors = counter(runtimeErrors)
+        diagnostic.outputOverflow = outputOverflow
+        diagnostic.privateOutputDetected = privateOutputDetected
+        testInfo.annotations.push({ type: 'activation-sanitized', description: JSON.stringify(validateLifecycle(diagnostic)) })
       }
     }
   },
