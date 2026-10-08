@@ -148,7 +148,7 @@ func (c *Core) startupView() map[string]any {
 		if state == "" {
 			state = "saved"
 		}
-		entries = append(entries, map[string]any{"name": entry.Name, "ids": entry.IDs, "group": entry.Group, "services": entry.Services, "enabled": entry.Enabled, "valid": startupEntryValid(p, entry) && samePeerEpochs(entry.PeerEpochs, c.startup.Revocations), "revision": entry.Revision, "state": state})
+		entries = append(entries, map[string]any{"name": entry.Name, "ids": entry.IDs, "group": entry.Group, "services": entry.Services, "enabled": entry.Enabled, "valid": startupEntryValid(p, entry) && c.startupApprovalValidLocked(entry), "revision": entry.Revision, "state": state})
 	}
 	return map[string]any{"entries": entries, "revision": privateRevision(c.startup), "suppressed": c.startupSuppressed}
 }
@@ -167,9 +167,9 @@ func (c *Core) reviewStartup(in startupSelection) (StartupReview, error) {
 		}
 	}
 	entry := StartupEntry{Name: in.Name, IDs: append([]string(nil), in.IDs...), Group: in.Group, Services: selected, SelectionRevision: revision, Network: p.Settings.Network, Hostname: p.Settings.Hostname}
-	ids := []string{}
-	for _, s := range selected {
-		ids = append(ids, s.PeerID)
+	ids := startupEntryPeerIDs(entry)
+	if c.managedPeersDenied(ids) {
+		return StartupReview{}, &localCommandError{"direct_lan_peer_revoked", "startup scope includes a terminally removed direct LAN peer"}
 	}
 	entry.PeerEpochs = c.reviewPeerEpochs(ids)
 	entry.Revision = privateRevision(entry)
@@ -279,7 +279,7 @@ func (c *Core) runStartupSelections(ctx context.Context, start func(context.Cont
 			continue
 		}
 		state := "stale"
-		if startupEntryValid(c.profileCopy(), entry) && c.peerEpochsValid(entry.PeerEpochs) {
+		if startupEntryValid(c.profileCopy(), entry) && c.startupApprovalValid(entry) {
 			raw, _ := json.Marshal(serviceSelection{IDs: entry.IDs, Group: entry.Group, ExpectedRevision: entry.SelectionRevision})
 			_, err := start(ctx, "services.start", raw)
 			state = "started"

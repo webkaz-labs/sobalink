@@ -226,7 +226,7 @@ func TestContextOutboundCommitCapturesAfterLocalCommit(t *testing.T) {
 	}
 	f.core.op.Lock()
 	f.store.mu.Lock()
-	a, request, epoch, err := f.store.contextExchangeAdmissionLocked(context.Background(), o, f.peer, directlan.ContextCommit, directlan.ContextOutbound, f.now)
+	a, request, epoch, err := f.core.contextExchangeAdmissionLocked(context.Background(), o, f.peer, directlan.ContextCommit, directlan.ContextOutbound, f.now)
 	f.store.mu.Unlock()
 	f.core.op.Unlock()
 	if err != nil || !sawCommit || f.writes != writes+1 || request != bound || a.inputs.Operation != contextConfirmCommit || a.inputs.Bound != bound ||
@@ -236,7 +236,7 @@ func TestContextOutboundCommitCapturesAfterLocalCommit(t *testing.T) {
 	if err := f.store.matchContextAdmissionLocked(o.process, old, f.now); !errors.Is(err, endpointmeta.ErrReview) {
 		t.Fatal("pre-commit admission remained current", err)
 	}
-	if err := f.store.matchContextAdmissionLocked(o.process, a, f.now); err != nil || !f.store.contextPublicationCurrentLocked(o.process) {
+	if err := f.store.matchContextAdmissionLocked(o.process, a, f.now); err != nil || !f.store.contextPublicationCurrentLocked(o.process) || o.configuration != contextConfigurationDigest(f.store.state) {
 		t.Fatal("post-commit admission/receipt was not current", err)
 	}
 	// Core cannot create an authentic reply proof. A zero proof must leave the
@@ -411,7 +411,7 @@ func TestContextPublicationCancellationPreservesSavedStateAndSuppressesResult(t 
 			if route == "pre-arm publication" {
 				err = f.store.publishContextBeforeArmLocked(ctx, o, f.peer, f.now)
 			} else {
-				_, _, _, err = f.store.contextExchangeAdmissionLocked(ctx, o, f.peer, directlan.ContextCommit, directlan.ContextOutbound, f.now)
+				_, _, _, err = f.core.contextExchangeAdmissionLocked(ctx, o, f.peer, directlan.ContextCommit, directlan.ContextOutbound, f.now)
 			}
 			f.store.mu.Unlock()
 			f.core.op.Unlock()

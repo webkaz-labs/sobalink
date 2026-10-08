@@ -38,8 +38,11 @@ func MigrateManagedV4(before Snapshot, now time.Time, budget int) (Snapshot, err
 // RevokeManagedPairV4 retains the complete saved old binding as historical
 // evidence. expected must equal the whole current record, including any marker;
 // a stale review is not an idempotent request. Changed describes model values,
-// never publication or durability. Prepared-only cancellation and new-context
-// re-pair require separate contracts and are not implemented by this reducer.
+// never publication or durability. A saved preparation with an exact proposal
+// binding can be terminally cancelled without committing it or deleting evidence.
+// Records without a proposal receive a distinct exact local-record denial.
+// This includes legacy records with no earlier context review.
+// New-context re-pair remains separate.
 func RevokeManagedPairV4(before Snapshot, expected PeerRecord, now time.Time, budget int) (Snapshot, bool, error) {
 	if before.Version != SnapshotVersionV4 {
 		return Snapshot{}, false, ErrReview
@@ -58,8 +61,13 @@ func RevokeManagedPairV4(before Snapshot, expected PeerRecord, now time.Time, bu
 	if !reflect.DeepEqual(r, expected) {
 		return Snapshot{}, false, ErrReview
 	}
-	if r.PairContext == nil || r.EndpointState == nil {
-		return Snapshot{}, false, ErrReview
+	binding, bindingErr := TerminalPairBinding(r)
+	var review string
+	if bindingErr != nil {
+		review, err = LocalRecordDenialDigest(r)
+		if err != nil {
+			return Snapshot{}, false, err
+		}
 	}
 	if r.PairRevocation != nil {
 		w := wireSizer{left: budget}
@@ -72,13 +80,13 @@ func RevokeManagedPairV4(before Snapshot, expected PeerRecord, now time.Time, bu
 	if err != nil {
 		return Snapshot{}, false, err
 	}
-	binding, err := r.PairContext.Binding()
-	if err != nil {
-		return Snapshot{}, false, err
-	}
 	next := before
 	next.Revision, next.ObservedAt = revision, now.UTC().Format(time.RFC3339Nano)
 	r.PairRevocation = &PairRevocation{PairBinding: binding, Revision: revision, RevokedAt: next.ObservedAt}
+	if bindingErr != nil {
+		r.PairRevocation.Kind = "local-record"
+		r.PairRevocation.PeerKey, r.PairRevocation.RecordRevision, r.PairRevocation.RecordDigest = r.Peer.Key, r.Revision, review
+	}
 	w := wireSizer{left: budget}
 	if budget <= 0 || !next.measureReplacing(&w, i, &r, false) {
 		return Snapshot{}, false, ErrCapacity
@@ -90,4 +98,27 @@ func RevokeManagedPairV4(before Snapshot, expected PeerRecord, now time.Time, bu
 		return Snapshot{}, false, err
 	}
 	return cloneSnapshot(next), true, nil
+}
+
+// TerminalPairBinding selects retained evidence only. It grants no active
+// context authority and must never be used for session admission.
+func TerminalPairBinding(r PeerRecord) (string, error) {
+	if r.PairContext != nil && r.EndpointState != nil {
+		return r.PairContext.Binding()
+	}
+	if r.PairContext == nil && r.EndpointState == nil && r.UpgradePending != nil && r.UpgradePending.Context != nil {
+		return r.UpgradePending.Context.Binding()
+	}
+	return "", ErrReview
+}
+
+// LocalRecordDenialDigest binds the exact retained local record when no pair
+// binding ever existed. It is negative identity authority only: it neither
+// invents a pair binding nor permits legacy fallback or future re-pair.
+func LocalRecordDenialDigest(r PeerRecord) (string, error) {
+	if r.PairContext != nil || r.EndpointState != nil || r.ContextConfirmed || r.UpgradePending != nil && r.UpgradePending.Context != nil {
+		return "", ErrReview
+	}
+	r.PairRevocation = nil
+	return modelDigest(r), nil
 }

@@ -120,6 +120,9 @@ func (n *Node) snapshotLocked() []Peer {
 	return out
 }
 func (n *Node) readyLocked() error {
+	if n.cfg.AuthorityCurrent != nil && !n.cfg.AuthorityCurrent() {
+		return ErrRecovery
+	}
 	if n.contextControl {
 		return ErrUnavailable
 	}
@@ -313,17 +316,13 @@ func (n *Node) handle(w *wire) {
 		return
 	}
 	n.mu.Lock()
-	if n.readyLocked() != nil || n.generation.Load() != w.g {
+	if n.ordinaryPeerProtocolLocked(w.g, key, c.ConnectionState().NegotiatedProtocol) != nil {
 		n.mu.Unlock()
 		return
 	}
 	w.key = key
 	w.peer = n.peers[key]
 	managed := n.managedKey(key)
-	if managed && (w.peer == nil || c.ConnectionState().NegotiatedProtocol != contextProtocolName) || !managed && c.ConnectionState().NegotiatedProtocol != protocolName {
-		n.mu.Unlock()
-		return
-	}
 	n.mu.Unlock()
 	if managed {
 		n.handleManagedSession(ctx, c, w)
@@ -386,7 +385,7 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 		cancel()
 		return nil, nil, e
 	}
-	if expected != nil && n.peers[p.Key] != expected || n.managedKey(p.Key) && (expected == nil || expected.binding == "") {
+	if n.deniedKey(p.Key) || expected != nil && n.peers[p.Key] != expected || n.managedKey(p.Key) && (expected == nil || expected.binding == "") {
 		n.mu.Unlock()
 		cancel()
 		return nil, nil, ErrUntrusted

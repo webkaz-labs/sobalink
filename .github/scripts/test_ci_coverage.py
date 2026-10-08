@@ -59,6 +59,23 @@ class ActualCoverageTests(unittest.TestCase):
                     with self.subTest(target=target, required=required, bad=bad), self.assertRaises(ValueError):
                         coverage.evaluate_jobs(data, "full")
 
+    def test_managed_acceptance_steps_are_explicit_and_required(self):
+        required_names = ('Verify managed session tls', 'Verify managed session outbound-tcp', 'Verify managed session native-caller', 'Verify managed session native-simultaneous', 'Verify managed session native-udp-capacity', 'Verify managed activation acceptance', 'Verify managed restart acceptance')
+        workflow = (pathlib.Path(__file__).resolve().parents[1] / 'workflows/ci.yml').read_text(encoding='utf-8')
+        for required in required_names:
+            self.assertEqual(coverage.FAST_STEPS.count(required), 1)
+            self.assertEqual(workflow.count('      - name: ' + required + '\n'), 1)
+            for target, name in coverage.TARGETS.items():
+                for mode in ('missing', 'skipped'):
+                    data = jobs()
+                    target_job = next(j for j in data if j['name'] == name)
+                    if mode == 'missing':
+                        target_job['steps'] = [s for s in target_job['steps'] if s['name'] != required]
+                    else:
+                        next(s for s in target_job['steps'] if s['name'] == required)['conclusion'] = 'skipped'
+                    with self.subTest(target=target, step=required, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, 'full')
+
     def test_selected_scopes_are_never_full(self):
         for scope in ("docs", "frontend", "go"):
             with self.subTest(scope=scope):

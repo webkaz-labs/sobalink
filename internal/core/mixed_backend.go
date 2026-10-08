@@ -22,6 +22,8 @@ import (
 // Every inbound address maps to an actual worker plus its authenticated source.
 // Backend grants remain checked by that worker and parent resource checks.
 type mixedBackend struct {
+	closeOnce        sync.Once
+	closeErr         error
 	ctx              context.Context
 	mu               sync.Mutex
 	self             netip.Addr
@@ -416,18 +418,17 @@ func (n *mixedBackend) wrap(name string, c net.Conn) (_ net.Conn, err error) {
 	return wrapped, nil
 }
 func (n *mixedBackend) Close() error {
-	n.mu.Lock()
-	if n.closed {
+	n.closeOnce.Do(func() {
+		n.mu.Lock()
+		n.closed = true
 		n.mu.Unlock()
-		return nil
-	}
-	n.closed = true
-	n.mu.Unlock()
-	var errs []error
-	for _, node := range n.nodes {
-		errs = append(errs, node.Close())
-	}
-	return errors.Join(errs...)
+		var errs []error
+		for _, node := range n.nodes {
+			errs = append(errs, node.Close())
+		}
+		n.closeErr = errors.Join(errs...)
+	})
+	return n.closeErr
 }
 
 type mixedListener struct {

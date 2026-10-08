@@ -99,8 +99,10 @@ func TestPairRecordSchemaAndClosedEntryMatrix(t *testing.T) {
 			if err = json.Unmarshal(data, &reopened); err != nil || !reflect.DeepEqual(state, reopened) {
 				t.Fatal("lossy v4 read", err)
 			}
-			if _, err = projectManagedFixedEndpointContexts(state); err == nil {
-				t.Fatal("v4 projection")
+			if projected, err := projectManagedFixedEndpoint(state); err != nil {
+				t.Fatal("supported v4 projection rejected", err)
+			} else if kind == "terminal" && (len(projected.Peers) != 0 || len(projected.PairContexts) != 0 || len(projected.DeniedPeerKeys) != 1) {
+				t.Fatal("terminal projection lost denial")
 			}
 			c, s := pairRecordStoreFixture(t, state)
 			s.write = func(string, []byte) error { t.Fatal("unexpected publisher"); return nil }
@@ -422,8 +424,11 @@ func TestPairRecordPassiveObservationsPreserveLatches(t *testing.T) {
 	if s.contextWindows[state.Peers[0].Key] != window {
 		t.Fatal("preparation cutoff changed")
 	}
-	if _, err := s.endpointModelLocked(now, false); err == nil {
-		t.Fatal("active observation widened")
+	if _, err := s.endpointModelLocked(now, false); err != nil {
+		t.Fatal("active v4 observation rejected", err)
+	}
+	if s.endpointDeadlineErrorLocked(e, "status", now) == nil || s.endpointDeadlines[key] != prior {
+		t.Fatal("active observation reset the conservative deadline")
 	}
 	if _, err := s.pairRecordModelLocked(now.Add(-time.Second)); err == nil || !s.recovery {
 		t.Fatal("wall rollback not latched")

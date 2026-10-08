@@ -130,7 +130,7 @@ func (s *directLANStore) observeEndpointTimeLocked(now time.Time) error {
 }
 
 func (s *directLANStore) endpointModelLocked(now time.Time, pending bool) (*endpointmeta.Snapshot, error) {
-	if s.state.Version != directLANMetadataStateVersion || s.state.Metadata == nil {
+	if !directLANActiveMetadataSchema(s.state) {
 		return nil, directLANEndpointContextRequired()
 	}
 	if err := s.endpointFileCurrentLocked(); err != nil {
@@ -170,16 +170,22 @@ func (s *directLANStore) endpointBudgetLocked() (int, error) {
 // from DTOs; identity, allowed prefixes and application grants are untouched.
 func (s *directLANStore) stateWithEndpointMetadataLocked(m endpointmeta.Snapshot) (directLANState, error) {
 	before := s.state
-	if before.Version != directLANMetadataStateVersion || before.Metadata == nil ||
+	if !directLANActiveMetadataSchema(before) || m.Version != before.Version ||
 		m.LocalPeer.Key != before.Metadata.LocalPeer.Key || m.LocalPeer.TunnelKey != before.Metadata.LocalPeer.TunnelKey ||
 		!reflect.DeepEqual(m.LocalScope, before.Metadata.LocalScope) || len(m.Peers) != len(before.Metadata.Peers) {
 		return directLANState{}, endpointmeta.ErrIdentity
+	}
+	if err := validateEndpointProjection(*before.Metadata, m); err != nil {
+		return directLANState{}, err
 	}
 	next := cloneDirectLANState(before)
 	next.Selection.Listen = m.LocalPeer.Endpoint
 	next.Peers = make([]directlan.Peer, 0, len(m.Peers))
 	for i, r := range m.Peers {
 		old := before.Metadata.Peers[i]
+		if !reflect.DeepEqual(r.PairRevocation, old.PairRevocation) || old.PairRevocation != nil && !reflect.DeepEqual(r, old) {
+			return directLANState{}, endpointmeta.ErrIdentity
+		}
 		// Endpoint transactions do not establish/confirm contexts, remove
 		// pairs, change tunnel identity or migrate application authority.
 		if r.Peer.Key != old.Peer.Key || r.Peer.TunnelKey != old.Peer.TunnelKey || r.Peer.Name != old.Peer.Name ||
@@ -202,7 +208,15 @@ func (s *directLANStore) stateWithEndpointMetadataLocked(m endpointmeta.Snapshot
 // The compact model budget is not the production file budget. Check the whole
 // indented Core representation, including identity/selection and its newline.
 func (s *directLANStore) preflightEndpointSnapshotLocked(m endpointmeta.Snapshot, final bool) error {
-	next, err := s.stateWithEndpointMetadataLocked(m)
+	return s.preflightEndpointSnapshotFromLocked(*s.state.Metadata, m, final)
+}
+
+func (s *directLANStore) preflightEndpointSnapshotFromLocked(before, m endpointmeta.Snapshot, final bool) error {
+	// A final preflight may precede publication of its already-validated fence.
+	// Use an inert value copy; never substitute prospective state in the owner.
+	preview := &directLANStore{state: cloneDirectLANState(s.state)}
+	preview.state.Metadata = cloneDirectLANMetadata(&before)
+	next, err := preview.stateWithEndpointMetadataLocked(m)
 	if err != nil {
 		return err
 	}
@@ -282,7 +296,7 @@ func (s *directLANStore) applyEndpointMutationLocked(ctx context.Context, m endp
 	if err := s.preflightEndpointSnapshotLocked(fence, false); err != nil {
 		return endpointmeta.SaveResolution{}, "", err
 	}
-	if err := s.preflightEndpointSnapshotLocked(final, true); err != nil {
+	if err := s.preflightEndpointSnapshotFromLocked(fence, final, true); err != nil {
 		return endpointmeta.SaveResolution{}, "", err
 	}
 	if err := ctx.Err(); err != nil {

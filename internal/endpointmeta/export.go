@@ -27,13 +27,13 @@ func PrepareExport(s Snapshot, remoteKey string, options ExportOptions, now time
 // The model harness historically accepts an explicit earlier Issued time. Keep
 // that narrow compatibility here; production PrepareExport always captures now.
 func prepareExportAt(s Snapshot, remoteKey string, options ExportOptions, issued string, now time.Time, budget int) (UpdateBody, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return UpdateBody{}, ErrReview
 	}
 	if s.PendingChange != nil {
 		return UpdateBody{}, ErrRecovery
 	}
-	i, err := recordForKey(s, remoteKey)
+	i, err := activeRecordForKey(s, remoteKey)
 	if err != nil {
 		return UpdateBody{}, err
 	}
@@ -110,13 +110,13 @@ func ProposeIssued(s Snapshot, remoteKey string, e Envelope, now time.Time, budg
 }
 
 func proposeIssued(s Snapshot, remoteKey string, e Envelope, expected UpdateBody, now time.Time, budget int) (Snapshot, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return Snapshot{}, ErrReview
 	}
 	if err := matchIssuedBody(e.Update, expected); err != nil {
 		return Snapshot{}, err
 	}
-	i, err := recordForKey(s, remoteKey)
+	i, err := activeRecordForKey(s, remoteKey)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -146,7 +146,7 @@ func proposeIssued(s Snapshot, remoteKey string, e Envelope, expected UpdateBody
 // replacement was published. The input recovery latch cannot be bypassed here.
 func ExportModel(model SaveResolution, remoteKey string, u UpdateBody, key ed25519.PrivateKey, now time.Time, budget int, save SaveModel) (SaveResolution, []byte, error) {
 	s := model.Snapshot
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return model, nil, ErrReview
 	}
 	if model.Recovery || !model.Durable || s.PendingChange != nil {
@@ -154,7 +154,7 @@ func ExportModel(model SaveResolution, remoteKey string, u UpdateBody, key ed255
 	}
 	// Preserve the harness's nonallocating prospective-budget rejection and
 	// missing-target error priority before hashing/deriving any body fields.
-	i, err := recordForKey(s, remoteKey)
+	i, err := activeRecordForKey(s, remoteKey)
 	if err != nil {
 		return model, nil, err
 	}
@@ -198,7 +198,7 @@ func ExportModel(model SaveResolution, remoteKey string, u UpdateBody, key ed255
 
 func ReexportModel(model SaveResolution, remoteKey string) ([]byte, error) {
 	s := model.Snapshot
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return nil, ErrReview
 	}
 	if model.Recovery || !model.Durable || s.PendingChange != nil {
@@ -207,7 +207,7 @@ func ReexportModel(model SaveResolution, remoteKey string) ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
-	i, err := recordForKey(s, remoteKey)
+	i, err := activeRecordForKey(s, remoteKey)
 	if err != nil {
 		return nil, err
 	}

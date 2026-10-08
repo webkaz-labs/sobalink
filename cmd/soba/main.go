@@ -180,6 +180,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	if command == "start" || command == "run" {
 		return startCommand(ctx, command, dir, locale, args, ja, *dryRun, out, client)
 	}
+	if command == "direct-lan" && len(args) > 0 && args[0] == "upgrade" {
+		return managedUpgradeCLI(ctx, args[1:], dir, locale, ja, *dryRun, out, client)
+	}
 	if command == "autostart" {
 		return autostartCommand(ctx, dir, args, ja, *dryRun, out, currentAutostartEnvironment, runAutostartManager)
 	}

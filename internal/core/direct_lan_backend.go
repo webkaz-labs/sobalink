@@ -17,10 +17,13 @@ import (
 // invitations and relay identities are incompatible with direct LAN pairing.
 type directLANBackend struct {
 	*directlan.Node
+	completion    *managedCompletionOwner
 	mu            sync.Mutex
 	ctx           context.Context
 	store         *directLANStore
 	ready, closed bool
+	closeOnce     sync.Once
+	closeErr      error
 	startAbsent   bool
 	resources     directLANRuntimeResources
 }
@@ -54,6 +57,9 @@ func (c *Core) newDirectLANBackend(s *directLANStore) (NetworkBackend, error) {
 	return &directLANBackend{Node: n, ctx: c.ctx, store: s, resources: resources}, nil
 }
 func (b *directLANBackend) Start() error {
+	if b.completion != nil && !b.completion.activationCurrent() {
+		return directlan.ErrRecovery
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
@@ -85,6 +91,10 @@ func (b *directLANBackend) State(ctx context.Context) (identity.State, error) {
 	b.mu.Unlock()
 	if closed || b.ctx.Err() != nil {
 		return identity.State{}, net.ErrClosed
+	}
+	if b.completion != nil && !b.completion.activationCurrent() {
+		b.completion.invalidate()
+		return identity.State{}, directlan.ErrRecovery
 	}
 	if b.store.needsRecovery() {
 		return identity.State{}, codedDirectLANError(directlan.ErrRecovery)
@@ -196,15 +206,17 @@ func (b *directLANBackend) WhoIs(ctx context.Context, remote netip.AddrPort) (st
 	return "", directlan.ErrUntrusted
 }
 func (b *directLANBackend) Close() error {
-	b.mu.Lock()
-	if b.closed {
+	b.closeOnce.Do(func() {
+		// Revoke response admission before any potentially blocking owner join.
+		if b.completion != nil {
+			b.completion.invalidate()
+		}
+		b.mu.Lock()
+		b.ready, b.closed = false, true
 		b.mu.Unlock()
-		return nil
-	}
-	b.ready = false
-	b.closed = true
-	b.mu.Unlock()
-	return b.Node.Close()
+		b.closeErr = b.Node.Close()
+	})
+	return b.closeErr
 }
 
 var _ NetworkBackend = (*directLANBackend)(nil)

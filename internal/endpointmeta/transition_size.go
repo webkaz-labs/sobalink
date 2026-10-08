@@ -51,7 +51,7 @@ func fitsFence(s Snapshot, m Mutation, reviewDigest, transactionID string, now t
 	}
 	count := 0
 	for _, r := range s.Peers {
-		if r.EndpointState != nil {
+		if r.PairRevocation == nil && r.EndpointState != nil {
 			if count > 0 && !w.reserve(1) || !w.str(r.EndpointState.PairBinding) {
 				return false
 			}

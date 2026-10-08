@@ -187,6 +187,9 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (result 
 	if e := decodePayload(raw, &in); e != nil {
 		return nil, e
 	}
+	if c.managedPeersDenied(in.Peers) {
+		return nil, connectionroute.ErrBinding
+	}
 	if len(in.Peers) < 2 || len(in.Peers) > 3 {
 		return nil, &localCommandError{"mixed_binding_selection", "select two or three authenticated peer routes from different backends"}
 	}
@@ -259,6 +262,14 @@ func (c *Core) bindMixedPeers(ctx context.Context, raw json.RawMessage) (result 
 	for _, old := range state.Bindings {
 		if old.PeerID == binding.PeerID {
 			return nil, errors.New("logical identity already has a binding; remove it before changing routes")
+		}
+	}
+	if c.managedPeerDenied(binding.PeerID) {
+		return nil, connectionroute.ErrBinding
+	}
+	for _, claim := range binding.Identities {
+		if claim.Backend == "direct-lan" && c.managedPeerDenied(claim.ID) {
+			return nil, connectionroute.ErrBinding
 		}
 	}
 	state.Bindings = append(state.Bindings, binding)
@@ -477,6 +488,9 @@ func (c *Core) retireMixedTransport(backend, id string) error {
 		return nil
 	}
 	pauseErr := c.pauseMixedApprovals(affected)
+	if pauseErr != nil {
+		return pauseErr
+	} // retain the only saved synthetic-to-raw denial link
 	state.Bindings = kept
 	raw, e := json.Marshal(state)
 	if e != nil {

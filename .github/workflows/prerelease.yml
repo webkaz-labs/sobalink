@@ -81,7 +81,8 @@ jobs:
             goos: windows
             goarch: amd64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # Preserve per-gate bounds while allowing the complete native/package chain.
+    timeout-minutes: 60
     env:
       RELEASE_VERSION: ${{ needs.gate.outputs.version }}
       TESTED_COMMIT: ${{ needs.gate.outputs.commit }}
@@ -213,6 +214,16 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-managed-session.py native-udp-capacity 2>&1 | tee logs/managed-session-native-udp-capacity.txt
+      - name: Verify managed activation acceptance
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-managed-activation.py activation 2>&1 | tee logs/managed-activation.txt
+      - name: Verify managed restart acceptance
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-managed-activation.py restart 2>&1 | tee logs/managed-restart.txt
       - name: Verify direct LAN WireGuard and Core native applications
         timeout-minutes: 9
         run: |

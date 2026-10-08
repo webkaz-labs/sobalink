@@ -12,8 +12,8 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
 )
 
-// Private source-only operations. No command, startup, runtime or application
-// caller is installed. Callers must hold Core.op and exclusive profile ownership.
+// Private record operations used only by the reduction coordinator. Ordinary
+// activation remains separate. Callers hold Core.op and exclusive profile ownership.
 // A terminal marker denies the old binding; future re-pair/history is deferred.
 type pairRecordOperation uint8
 
@@ -30,6 +30,7 @@ type pairRecordInputs struct {
 
 type pairRecordAdmission struct {
 	core                                    *Core
+	removal                                 *managedRemovalOwner
 	store                                   *directLANStore
 	process, path, file, state, inputDigest string
 	writeRevision                           uint64
@@ -48,6 +49,18 @@ type pairRecordSaveResult struct{ changed, published, durable bool }
 type pairRecordContext struct {
 	context.Context
 	core context.Context
+}
+
+// Pair-record publication must retain passive access to exact terminal records
+// for repeat-marker review and guarded republication. This grants no endpoint,
+// context or runtime authority; those paths continue using active lookups.
+func pairRecordPeer(m endpointmeta.Snapshot, key string) (int, error) {
+	for i := range m.Peers {
+		if m.Peers[i].Peer.Key == key {
+			return i, nil
+		}
+	}
+	return -1, endpointmeta.ErrIdentity
 }
 
 func (c pairRecordContext) Err() error { return errors.Join(c.Context.Err(), c.core.Err()) }
@@ -71,10 +84,13 @@ func (c *Core) pairRecordOwnerLocked(ctx context.Context, s *directLANStore, pro
 // Preserve existing clock/expiry latches and preparation windows. Retained
 // expired consent is evidence and cannot veto a terminal reduction.
 func (s *directLANStore) pairRecordModelLocked(now time.Time) (*endpointmeta.Snapshot, error) {
+	return s.pairRecordModelForRemovalLocked(now, false)
+}
+func (s *directLANStore) pairRecordModelForRemovalLocked(now time.Time, removal bool) (*endpointmeta.Snapshot, error) {
 	if (s.state.Version != directLANMetadataStateVersion && s.state.Version != directLANPairRecordStateVersion) || s.state.Metadata == nil {
 		return nil, endpointmeta.ErrReview
 	}
-	if s.recovery || s.state.Metadata.PendingChange != nil {
+	if s.recovery && !(removal && s.removalRetryCurrentLocked()) || s.state.Metadata.PendingChange != nil {
 		return nil, directlan.ErrRecovery
 	}
 	if err := s.endpointFileCurrentLocked(); err != nil {
@@ -105,14 +121,17 @@ func pairRecordInputDigest(in pairRecordInputs) string {
 
 // Requires store.mu as well as the lifecycle ownership documented above.
 func (c *Core) capturePairRecordAdmissionLocked(ctx context.Context, s *directLANStore, process string, in pairRecordInputs, now time.Time) (pairRecordAdmission, error) {
-	if err := c.pairRecordOwnerLocked(ctx, s, process); err != nil {
+	return c.capturePairRecordRemovalAdmissionLocked(ctx, s, process, in, now, nil)
+}
+func (c *Core) capturePairRecordRemovalAdmissionLocked(ctx context.Context, s *directLANStore, process string, in pairRecordInputs, now time.Time, removal *managedRemovalOwner) (pairRecordAdmission, error) {
+	if err := c.pairRemovalOwnerLocked(ctx, s, process, removal); err != nil {
 		return pairRecordAdmission{}, err
 	}
-	m, err := s.pairRecordModelLocked(now)
+	m, err := s.pairRecordModelForRemovalLocked(now, removal != nil)
 	if err != nil {
 		return pairRecordAdmission{}, err
 	}
-	a := pairRecordAdmission{core: c, store: s, process: process, path: s.path, file: s.fileDigest, state: privateRevision(s.state), writeRevision: s.reviewRevision, capacity: *s.currentCapacity(), inputs: in, inputDigest: pairRecordInputDigest(in)}
+	a := pairRecordAdmission{core: c, removal: removal, store: s, process: process, path: s.path, file: s.fileDigest, state: privateRevision(s.state), writeRevision: s.reviewRevision, capacity: *s.currentCapacity(), inputs: in, inputDigest: pairRecordInputDigest(in)}
 	switch in.operation {
 	case pairRecordMigrate:
 		if in.peer != "" || in.republish || m.Version != directLANMetadataStateVersion {
@@ -122,15 +141,12 @@ func (c *Core) capturePairRecordAdmissionLocked(ctx context.Context, s *directLA
 		if m.Version != directLANPairRecordStateVersion || in.peer == "" {
 			return pairRecordAdmission{}, endpointmeta.ErrReview
 		}
-		i, err := contextPeer(*m, in.peer)
+		i, err := pairRecordPeer(*m, in.peer)
 		if err != nil {
 			return pairRecordAdmission{}, err
 		}
 		a.target = m.Peers[i] // m is already a deep copy, never a caller-owned record.
-		if a.target.PairContext == nil || a.target.EndpointState == nil {
-			return pairRecordAdmission{}, endpointmeta.ErrReview
-		}
-		a.binding, err = a.target.PairContext.Binding()
+		a.binding, err = pairRecordDenialBinding(a.target)
 		if err != nil {
 			return pairRecordAdmission{}, err
 		}
@@ -145,22 +161,22 @@ func (c *Core) capturePairRecordAdmissionLocked(ctx context.Context, s *directLA
 }
 
 func (c *Core) matchPairRecordAdmissionLocked(ctx context.Context, s *directLANStore, process string, a pairRecordAdmission, now time.Time) error {
-	if err := c.pairRecordOwnerLocked(ctx, s, process); err != nil {
+	if err := c.pairRemovalOwnerLocked(ctx, s, process, a.removal); err != nil {
 		return err
 	}
 	if a.core != c || a.store != s || a.process != process || a.path != s.path || a.file != s.fileDigest || a.state != privateRevision(s.state) || a.writeRevision != s.reviewRevision || a.capacity != *s.currentCapacity() || a.inputDigest != pairRecordInputDigest(a.inputs) {
 		return endpointmeta.ErrReview
 	}
-	m, err := s.pairRecordModelLocked(now)
+	m, err := s.pairRecordModelForRemovalLocked(now, a.removal != nil)
 	if err != nil {
 		return err
 	}
 	if a.inputs.operation == pairRecordRevoke {
-		i, err := contextPeer(*m, a.inputs.peer)
-		if err != nil || a.targetDigest == "" || a.targetDigest != privateRevision(a.target) || !reflect.DeepEqual(a.target, m.Peers[i]) || a.target.PairContext == nil {
+		i, err := pairRecordPeer(*m, a.inputs.peer)
+		if err != nil || a.targetDigest == "" || a.targetDigest != privateRevision(a.target) || !reflect.DeepEqual(a.target, m.Peers[i]) {
 			return endpointmeta.ErrReview
 		}
-		binding, err := a.target.PairContext.Binding()
+		binding, err := pairRecordDenialBinding(a.target)
 		if err != nil || binding != a.binding {
 			return endpointmeta.ErrReview
 		}
@@ -230,7 +246,7 @@ func validatePairRecordDelta(before, next directLANState, in pairRecordInputs, c
 		if in.operation != pairRecordRevoke || before.Version != directLANPairRecordStateVersion {
 			return endpointmeta.ErrInvalid
 		}
-		i, err := contextPeer(*before.Metadata, in.peer)
+		i, err := pairRecordPeer(*before.Metadata, in.peer)
 		if err != nil || before.Metadata.Peers[i].PairRevocation == nil {
 			return endpointmeta.ErrReview
 		}
@@ -255,19 +271,24 @@ func validatePairRecordDelta(before, next directLANState, in pairRecordInputs, c
 		if before.Version != directLANPairRecordStateVersion {
 			return endpointmeta.ErrReview
 		}
-		i, err := contextPeer(*before.Metadata, in.peer)
+		i, err := pairRecordPeer(*before.Metadata, in.peer)
 		if err != nil {
 			return err
 		}
 		r := &expected.Metadata.Peers[i]
-		if r.PairContext == nil || r.EndpointState == nil || r.PairRevocation != nil {
+		if r.PairRevocation != nil {
 			return endpointmeta.ErrReview
 		}
-		binding, err := r.PairContext.Binding()
-		if err != nil {
-			return err
+		binding, bindingErr := endpointmeta.TerminalPairBinding(*r)
+		marker := &endpointmeta.PairRevocation{PairBinding: binding, Revision: expected.Metadata.Revision, RevokedAt: expected.Metadata.ObservedAt}
+		if bindingErr != nil {
+			review, err := endpointmeta.LocalRecordDenialDigest(*r)
+			if err != nil {
+				return err
+			}
+			marker.Kind, marker.PeerKey, marker.RecordRevision, marker.RecordDigest = "local-record", r.Peer.Key, r.Revision, review
 		}
-		r.PairRevocation = &endpointmeta.PairRevocation{PairBinding: binding, Revision: expected.Metadata.Revision, RevokedAt: expected.Metadata.ObservedAt}
+		r.PairRevocation = marker
 	default:
 		return endpointmeta.ErrInvalid
 	}
@@ -295,13 +316,27 @@ func (c *Core) savePairRecordLocked(ctx context.Context, s *directLANStore, proc
 	}
 	// This is a ctx-only data guard, not a context owner or receipt-producing save.
 	live := &contextSaveLiveness{ctx: pairRecordContext{Context: ctx, core: c.ctx}}
-	return s.publishPairRecordLocked(next, changed, live)
+	result, err := s.publishPairRecordRemovalLocked(next, changed, live, a.removal != nil)
+	return result, err
 }
 
 // Narrow receipt-free result adapter for the existing single publisher. The
 // enclosing save has already checked frozen admission and the exact delta.
 func (s *directLANStore) publishPairRecordLocked(next directLANState, changed bool, live *contextSaveLiveness) (pairRecordSaveResult, error) {
-	err := s.writeContextStateLocked(next, live)
+	return s.publishPairRecordRemovalLocked(next, changed, live, false)
+}
+func (s *directLANStore) publishPairRecordRemovalLocked(next directLANState, changed bool, live *contextSaveLiveness, removal bool) (pairRecordSaveResult, error) {
+	var err error
+	if removal && s.recovery && s.removalRetryCurrentLocked() {
+		// A reduction-only retry may republish the exact validated current evidence;
+		// it cannot clear the general recovery latch or produce activation authority.
+		err = s.publishStateWithContextLivenessLocked(next, live)
+	} else {
+		err = s.writeContextStateLocked(next, live)
+	}
+	if removal && !live.cancelledBeforeWrite && (err != nil || s.removalRetry != nil) {
+		s.removalRetry = &pairRemovalRetry{privateRevision(s.state), s.fileDigest, s.reviewRevision}
+	}
 	if live.cancelledBeforeWrite {
 		// No writer ran. Publisher review revision/epoch/receipt were invalidated;
 		// that invalidation remains, but no new uncertainty latch is manufactured.
@@ -311,4 +346,17 @@ func (s *directLANStore) publishPairRecordLocked(next directLANState, changed bo
 	// The sole publisher adopts only published outcomes and latches writer
 	// failures. Late cancellation cannot retract a successful durable publication.
 	return result, errors.Join(err, live.err())
+}
+
+// Empty binding is accepted only for the separately tagged negative local-record
+// variant. The admission still freezes the complete exact target digest.
+func pairRecordDenialBinding(r endpointmeta.PeerRecord) (string, error) {
+	binding, err := endpointmeta.TerminalPairBinding(r)
+	if err == nil {
+		return binding, nil
+	}
+	if _, err = endpointmeta.LocalRecordDenialDigest(r); err != nil {
+		return "", err
+	}
+	return "", nil
 }

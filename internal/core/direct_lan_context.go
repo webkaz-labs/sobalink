@@ -12,7 +12,8 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
 )
 
-// This closed, private metadata boundary has no command or startup caller.
+// This private metadata boundary is used only by the reviewed upgrade controller
+// and the scoped authenticated context owner; management cannot supply evidence.
 // Transcript values are data, not verified evidence. The separate scoped owner
 // authenticates and claims them; neither admission nor durable save alone is a
 // wire-success permit.
@@ -165,8 +166,14 @@ func (in contextInputs) frozen() (contextInputs, error) {
 }
 
 func contextPeer(m endpointmeta.Snapshot, key string) (int, error) {
+	if m.Version != endpointmeta.SnapshotVersionV3 && m.Version != endpointmeta.SnapshotVersionV4 {
+		return -1, endpointmeta.ErrReview
+	}
 	for i := range m.Peers {
 		if m.Peers[i].Peer.Key == key {
+			if m.Peers[i].PairRevocation != nil {
+				return -1, endpointmeta.ErrReview
+			}
 			return i, nil
 		}
 	}
@@ -205,7 +212,22 @@ func (c *Core) applyContextLocked(ctx context.Context, admission contextAdmissio
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.applyContextTransitionLocked(ctx, process, admission, transcript, time.Now())
+	c.mu.RLock()
+	owner := c.contextControl
+	c.mu.RUnlock()
+	before := cloneDirectLANState(s.state)
+	live := &contextSaveLiveness{ctx: ctx, owner: owner}
+	if owner != nil && (c.currentContextOwnerLocked(owner) != nil || owner.configuration != contextConfigurationDigest(before)) {
+		return contextSaveResult{}, endpointmeta.ErrReview
+	}
+	result, err := s.saveContextTransitionWithLivenessLocked(ctx, process, admission, transcript, time.Now(), live)
+	if err == nil && result.durable {
+		err = c.refreshContextConfigurationLocked(owner, before, admission.inputs, result, live)
+	}
+	if err != nil && owner != nil && (s.recovery || result.published) {
+		owner.requestClose()
+	}
+	return result, err
 }
 
 // A preparation's nonce is owner-generated once. An exact re-review reuses the
@@ -298,6 +320,10 @@ func contextSavedPair(r endpointmeta.PeerRecord) *endpointmeta.PairContext {
 // Status and republication preserve the complete snapshot, including an expired
 // preparation. Neither operation creates or renews a preparation window.
 func contextObservation(m endpointmeta.Snapshot, r endpointmeta.PeerRecord, budget int) (endpointmeta.ContextTransition, error) {
+	i, err := contextPeer(m, r.Peer.Key)
+	if err != nil || !reflect.DeepEqual(m.Peers[i], r) {
+		return endpointmeta.ContextTransition{}, endpointmeta.ErrReview
+	}
 	if _, err := endpointmeta.EncodeSnapshot(m, budget); err != nil {
 		return endpointmeta.ContextTransition{}, err
 	}

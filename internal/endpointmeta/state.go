@@ -59,12 +59,18 @@ type UpgradePending struct {
 	Context         *PairContext `json:"context,omitempty"`
 }
 
-// PairRevocation is terminal evidence for the retained old binding, not an
-// endpoint approval revocation. Future new-context re-pair is not modeled here.
+// PairRevocation is terminal negative authority for a retained binding or exact
+// local record with no binding. Empty Kind preserves the original binding wire
+// format; local-record does not claim a prior context review. New-context re-pair
+// remains separate.
 type PairRevocation struct {
-	PairBinding string `json:"pair_binding"`
-	Revision    string `json:"revision"`
-	RevokedAt   string `json:"revoked_at"`
+	PairBinding    string `json:"pair_binding,omitempty"`
+	Revision       string `json:"revision"`
+	RevokedAt      string `json:"revoked_at"`
+	Kind           string `json:"kind,omitempty"`
+	PeerKey        string `json:"peer_key,omitempty"`
+	RecordRevision string `json:"record_revision,omitempty"`
+	RecordDigest   string `json:"record_digest,omitempty"`
 }
 
 type PeerRecord struct {
@@ -275,10 +281,6 @@ func (s Snapshot) Validate() error {
 	if err != nil {
 		return err
 	}
-	// Active endpoint fences have v3-bound digests and no v4 contract yet.
-	if s.Version == SnapshotVersionV4 && s.PendingChange != nil {
-		return ErrRecovery
-	}
 	keys := map[string]bool{s.LocalPeer.Key: true}
 	tunnels := map[string]bool{s.LocalPeer.TunnelKey: true}
 	for _, r := range s.Peers {
@@ -316,12 +318,22 @@ func (s Snapshot) Validate() error {
 			}
 		}
 		if terminal := r.PairRevocation; terminal != nil {
-			if s.Version != SnapshotVersionV4 || r.PairContext == nil || r.EndpointState == nil {
+			if s.Version != SnapshotVersionV4 {
 				return ErrInvalid
 			}
-			binding, err := r.PairContext.Binding()
-			if err != nil || terminal.PairBinding != binding {
-				return ErrIdentity
+			switch terminal.Kind {
+			case "":
+				binding, err := TerminalPairBinding(r)
+				if err != nil || terminal.PairBinding != binding || terminal.PeerKey != "" || terminal.RecordRevision != "" || terminal.RecordDigest != "" {
+					return ErrIdentity
+				}
+			case "local-record":
+				review, err := LocalRecordDenialDigest(r)
+				if err != nil || terminal.PairBinding != "" || terminal.PeerKey != r.Peer.Key || terminal.RecordRevision != r.Revision || terminal.RecordDigest != review {
+					return ErrIdentity
+				}
+			default:
+				return ErrInvalid
 			}
 			removed, err := sequence(terminal.Revision, false)
 			if err != nil || removed < rv || removed > revision {
@@ -354,7 +366,9 @@ func (s Snapshot) Validate() error {
 				}
 				a, _ := Encode(scope)
 				b, _ := Encode(s.LocalScope)
-				if nonce != u.OwnNonce || localEndpoint != s.LocalPeer.Endpoint || localTunnel != s.LocalPeer.TunnelKey || !bytes.Equal(a, b) {
+				// Terminal preparation is historical evidence after local movement;
+				// retain its exact endpoint while still checking its full context.
+				if nonce != u.OwnNonce || r.PairRevocation == nil && localEndpoint != s.LocalPeer.Endpoint || localTunnel != s.LocalPeer.TunnelKey || !bytes.Equal(a, b) {
 					return ErrIdentity
 				}
 				if r.PairContext != nil {

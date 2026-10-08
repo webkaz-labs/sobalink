@@ -29,6 +29,18 @@ func ReadLaunchReview(dir string) (LaunchReview, error) {
 		return result, err
 	}
 	c := &Core{dir: dir, profile: profile, capacity: limits}
+	direct, err := readDirectLANStore(filepath.Join(dir, "direct-lan.json"), limits.Number("resources", "lanStateBytes"), limits.Number("logical", "trustedPeers"))
+	if err != nil {
+		return result, err
+	}
+	c.directLAN = direct
+	if direct != nil {
+		ids, err := c.terminalDirectLANDeniedIDs(terminalDirectLANPeers(direct.copy()))
+		if err != nil {
+			return result, err
+		}
+		c.installTerminalDirectLANDenials(ids)
+	}
 	if err := c.loadStartupSettings(true, false); err != nil {
 		return result, err
 	}
@@ -39,12 +51,12 @@ func ReadLaunchReview(dir string) (LaunchReview, error) {
 		return result, nil
 	}
 	for _, entry := range c.startup.Entries {
-		if entry.Enabled && startupEntryValid(profile, entry) && samePeerEpochs(entry.PeerEpochs, c.startup.Revocations) {
+		if entry.Enabled && startupEntryValid(profile, entry) && c.startupApprovalValid(entry) {
 			result.ServicesRestart = true
 		}
 	}
 	for _, entry := range c.savedProxies.Entries {
-		if entry.StartOnLaunch && entry.Hostname == profile.Settings.Hostname && entry.Scope.Backend == profile.Settings.Network && samePeerEpochs(entry.PeerEpochs, c.startup.Revocations) {
+		if entry.StartOnLaunch && entry.Hostname == profile.Settings.Hostname && entry.Scope.Backend == profile.Settings.Network && c.savedProxyApprovalValid(entry) {
 			result.ProxiesRestart = true
 		}
 	}

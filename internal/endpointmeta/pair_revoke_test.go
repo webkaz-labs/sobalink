@@ -138,10 +138,11 @@ func TestPairRemovalPreservesEvidenceAndExactRetry(t *testing.T) {
 			t.Fatal("output aliases historical evidence")
 		}
 	}
-	for _, old := range []Snapshot{f.legacy, f.reviewed, recordedContext(t, f)} {
+	for _, old := range []Snapshot{f.legacy, f.reviewed} {
 		s := migratePairFixture(t, old)
-		if _, _, err := RevokeManagedPairV4(s, s.Peers[0], testNow(), modelBudget); err == nil {
-			t.Fatal("preparation-only cancellation was silently implemented")
+		next, changed, err := RevokeManagedPairV4(s, s.Peers[0], testNow(), modelBudget)
+		if err != nil || !changed || next.Peers[0].PairRevocation == nil || next.Peers[0].PairRevocation.Kind != "local-record" {
+			t.Fatal("local review was not terminally denied", err)
 		}
 	}
 }
@@ -259,27 +260,23 @@ func TestPairMigrationAndRemovalFailureBoundaries(t *testing.T) {
 	}
 }
 
-// Every public snapshot-to-authority route rejects v4 before duplicate/no-op
-// branches. Passive parsing, sizing and save-result accounting are not authority.
-func TestV4OldAuthorityEntrypointMatrix(t *testing.T) {
+// Every public target-to-authority route rejects terminal records before
+// duplicate/no-op branches. Passive parsing and sizing retain their evidence.
+func TestV4TerminalAuthorityEntrypointMatrix(t *testing.T) {
 	old, proof, key := pairModelFixture(t)
 	managed := migratePairFixture(t, accept(t, old, proof, testNow()))
 	terminal, _, err := RevokeManagedPairV4(managed, managed.Peers[0], testNow(), modelBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := cloneSnapshot(managed)
-	legacy.Peers[0] = PeerRecord{Peer: old.Peers[0].Peer, Revision: "1"}
-	empty := cloneSnapshot(managed)
-	empty.Peers = []PeerRecord{}
-	for _, s := range []Snapshot{empty, legacy, managed, terminal} {
+	for _, s := range []Snapshot{terminal} {
 		peer := old.Peers[0].Peer.Key
 		binding := old.Peers[0].EndpointState.PairBinding
 		now := testNow()
 		check := func(name string, err error) {
 			t.Helper()
 			if err == nil {
-				t.Fatal(name, "accepted v4")
+				t.Fatal(name, "accepted a terminal target")
 			}
 		}
 		_, err := PrepareContextUpgrade(s, peer, "1", "", "", now, modelBudget)
@@ -301,7 +298,7 @@ func TestV4OldAuthorityEntrypointMatrix(t *testing.T) {
 		_, _, err = ProposeReceive(s, peer, proof, nil, now)
 		check("receive duplicate", err)
 		if SavedEligibility(s, binding, now) {
-			t.Fatal("saved eligibility accepted v4")
+			t.Fatal("saved eligibility accepted terminal target")
 		}
 		_, err = ProposeReapproval(s, binding, Approval{}, now)
 		check("reapproval", err)
@@ -309,7 +306,7 @@ func TestV4OldAuthorityEntrypointMatrix(t *testing.T) {
 		check("reduction", err)
 		_, err = ProposeFollow(s, binding, FollowApproval{}, now)
 		check("follow", err)
-		_, err = PreviewMutation(s, Mutation{Kind: "local-endpoint", LocalEndpoint: "127.0.0.3:4444"})
+		_, err = PreviewMutation(s, Mutation{Kind: "revoke", PairBinding: binding, State: s.Peers[0].EndpointState})
 		check("direct mutation", err)
 		_, err = Fence(s, Mutation{}, "", "", now, modelBudget)
 		check("fence", err)
@@ -326,12 +323,12 @@ func TestV4OldAuthorityEntrypointMatrix(t *testing.T) {
 		})
 		check("export", err)
 		if called || len(wire) != 0 {
-			t.Fatal("v4 exported bytes or invoked publisher")
+			t.Fatal("terminal target exported bytes or invoked publisher")
 		}
 		wire, err = ReexportModel(SaveResolution{Snapshot: s, Durable: true}, peer)
 		check("reexport", err)
 		if len(wire) != 0 {
-			t.Fatal("v4 reexported bytes")
+			t.Fatal("terminal target reexported bytes")
 		}
 	}
 }

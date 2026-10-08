@@ -97,7 +97,7 @@ func (n *Node) accept(g *runtimeGeneration, u *generationUnderlay) {
 			continue
 		}
 		w := &wire{raw: newControlStream(g, raw), control: true, g: g, work: work}
-		if n.contextControl || len(g.cfg.PairContexts) > 0 {
+		if n.contextControl || g.cfg.protectedPairs() {
 			w.contextDeadline = time.Now().Add(handshakeTimeout)
 			w.contextArmCutoff = n.contextArmRevision
 		}
@@ -119,7 +119,7 @@ func (n *Node) accept(g *runtimeGeneration, u *generationUnderlay) {
 // already exhausted. It never becomes an authenticated work admission. A failed
 // close seals the owner immediately; no further raw socket can accumulate.
 func (n *Node) rejectAcceptedContext(g *runtimeGeneration, u *generationUnderlay, raw net.Conn) bool {
-	if !n.contextControl && len(g.cfg.PairContexts) == 0 {
+	if !n.contextControl && !g.cfg.protectedPairs() {
 		_ = raw.Close()
 		return true
 	}

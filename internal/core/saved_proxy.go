@@ -99,7 +99,7 @@ func (c *Core) savedProxyView() map[string]any {
 	entries := make([]SavedProxyView, 0, len(c.savedProxies.Entries))
 	for _, entry := range c.savedProxies.Entries {
 		view := savedProxyPublic(entry)
-		view.Valid = entry.Hostname == c.profile.Settings.Hostname && entry.Scope.Backend == c.profile.Settings.Network && samePeerEpochs(entry.PeerEpochs, c.startup.Revocations)
+		view.Valid = entry.Hostname == c.profile.Settings.Hostname && entry.Scope.Backend == c.profile.Settings.Network && c.savedProxyApprovalValidLocked(entry)
 		if state := c.startupStates["proxy:"+entry.Scope.Name]; state != "" {
 			view.State = state
 		}
@@ -278,7 +278,7 @@ func (c *Core) savedProxyCommand(ctx context.Context, name string, raw json.RawM
 }
 func (c *Core) startSavedProxy(ctx context.Context, entry savedProxy, recovery *savedProxyRun) (any, error) {
 	p := c.profileCopy()
-	if entry.Hostname != p.Settings.Hostname || entry.Scope.Backend != p.Settings.Network || !c.peerEpochsValid(entry.PeerEpochs) {
+	if entry.Hostname != p.Settings.Hostname || entry.Scope.Backend != p.Settings.Network || !c.savedProxyApprovalValid(entry) {
 		return nil, &localCommandError{"proxy_saved_revision_conflict", "saved proxy belongs to another node, network or approval; review it again"}
 	}
 	c.mu.RLock()

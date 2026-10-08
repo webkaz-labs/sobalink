@@ -22,7 +22,7 @@ func (s Snapshot) measureReplacing(w *wireSizer, replacementIndex int, replaceme
 			if replacement != nil && i == replacementIndex {
 				r = *replacement
 			}
-			if clearUpgrades {
+			if clearUpgrades && r.PairRevocation == nil {
 				r.UpgradePending = nil
 			}
 			if !r.measure(w) {
@@ -78,5 +78,10 @@ func (m Mutation) measure(w *wireSizer) bool {
 }
 
 func (p PairRevocation) measure(w *wireSizer) bool {
-	return w.reserve(len(`{"pair_binding":,"revision":,"revoked_at":}`)) && w.strings(p.PairBinding, p.Revision, p.RevokedAt)
+	return w.reserve(len(`{"revision":,"revoked_at":}`)) && w.strings(p.Revision, p.RevokedAt) &&
+		(p.PairBinding == "" || w.reserve(len(`,"pair_binding":`)) && w.str(p.PairBinding)) &&
+		(p.Kind == "" || w.reserve(len(`,"kind":`)) && w.str(p.Kind)) &&
+		(p.PeerKey == "" || w.reserve(len(`,"peer_key":`)) && w.str(p.PeerKey)) &&
+		(p.RecordRevision == "" || w.reserve(len(`,"record_revision":`)) && w.str(p.RecordRevision)) &&
+		(p.RecordDigest == "" || w.reserve(len(`,"record_digest":`)) && w.str(p.RecordDigest))
 }

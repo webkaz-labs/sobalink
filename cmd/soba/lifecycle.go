@@ -42,16 +42,36 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	lifecycle, err := newUpgradeLifecycle(dir, offline)
+	if err != nil {
+		return err
+	}
 	lock, err := config.AcquireLock(dir)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
-	app, err := core.Open(ctx, core.Options{Directory: dir, Version: version, SkipNetworkStart: offline})
+	var app *core.Core
+	var ipc *control.Server
+	var handoff *upgradeStop
+	defer func() {
+		// Typed nil pointers must not be converted to non-nil io.Closer values.
+		var application, controlOwner io.Closer
+		if app != nil {
+			application = app
+		}
+		if ipc != nil {
+			controlOwner = ipc
+		}
+		closeErr, lockErr := shutdownManagedOwners(controlOwner, application, lock)
+		err = errors.Join(err, closeErr, lockErr)
+		if handoff != nil {
+			err = errors.Join(err, acknowledgeUpgradeShutdown(*handoff, errors.Join(err, closeErr), lockErr))
+		}
+	}()
+	app, err = core.Open(ctx, core.Options{Directory: dir, Version: version, SkipNetworkStart: offline})
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, app.Close()) }()
 	files, err := assets.Assets()
 	if err != nil {
 		return err
@@ -60,11 +80,10 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	if err != nil {
 		return err
 	}
-	ipc, err := control.ServeWithLimits(ctx, dir, app.IPC, app.LocalControlLimits)
+	ipc, err = control.ServeWithLimits(ctx, dir, lifecycle.handler(app), app.LocalControlLimits)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, ipc.Close()) }()
 	fmt.Fprintln(out, text(ja, "Local UI:", "ローカル画面:"), url)
 	if file, ok := out.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
 		fmt.Fprintln(out, text(ja, "One-time code (5 minutes):", "一回用コード（5分）:"), code)
@@ -73,10 +92,15 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	}
 	fmt.Fprintln(out, text(ja, "Keep this process running. Ctrl+C stops connections and shares.", "このプロセスを起動したまま使います。Ctrl+C で接続と共有を停止します。"))
 	select {
+	case request := <-lifecycle.stop:
+		handoff = &request
+		// Cancellation occurs in the outer owner, never inside HTTP Shutdown or
+		// the IPC request handler. Its accepted response receives normal drain.
+		_, err = app.IPC(context.Background(), "stop")
 	case <-ctx.Done():
 	case <-app.Done():
 	}
-	return nil
+	return err
 }
 
 type backgroundProcess struct {

@@ -61,7 +61,7 @@ func (c *controlStream) Write(b []byte) (int, error) {
 func (c *controlStream) Close() error {
 	c.once.Do(func() {
 		c.closeErr = c.raw.Close()
-		if c.closeErr != nil && (c.g.n.contextControl || len(c.g.cfg.PairContexts) > 0) {
+		if c.closeErr != nil && (c.g.n.contextControl || c.g.cfg.protectedPairs()) {
 			c.g.mu.Lock()
 			c.g.failedControl[c] = c.closeErr
 			c.g.controlCount++ // retained failure remains charged after work returns

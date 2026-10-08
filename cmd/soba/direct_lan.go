@@ -114,6 +114,9 @@ func directLANConfigureCLI(args []string, ja bool, out io.Writer, request action
 const directLANHelpEN = `Direct LAN: encrypted peer applications through a userspace WireGuard/netstack tunnel.
 
   soba direct-lan configure --listen IP:PORT --prefix CIDR [--prefix CIDR]
+  soba direct-lan upgrade status|cancel
+  soba direct-lan upgrade --peer ID [--deadline RFC3339]
+  soba direct-lan upgrade --peer ID --deadline RFC3339 --apply --review REVISION
   soba direct-lan status [--json]
   soba direct-lan identity [--json]
   soba direct-lan invite --to PUBLIC_KEY [--name device] [--ttl 5m]
@@ -122,7 +125,11 @@ const directLANHelpEN = `Direct LAN: encrypted peer applications through a users
   soba direct-lan cancel --json-file INVITATION_FILE
   soba direct-lan revoke PEER_ID
 
-Run soba start --offline first. Configure explicitly generates and saves this mode's
+Upgrade reviews exact saved inputs. Applying the review requires a private terminal;
+it manages any needed restart and reopens local management with a fresh code.
+Brief interruption and a new local sign-in may be needed. No old session is copied.
+
+For initial configuration, run soba start --offline first. Configure explicitly generates and saves this mode's
 private identity. Repeat configuration preserves it. Use exact numeric private
 or loopback addresses and explicitly chosen prefixes; no relay, public DNS,
 STUN, router changes or system-wide tunnel is implied. JSON output is stable.
@@ -134,6 +141,9 @@ peer flows; changed endpoints/prefixes require stop, offline restart and re-pair
 const directLANHelpJA = `Direct LAN: ユーザー空間のWireGuard/netstackトンネルでアプリ通信を暗号化します。
 
   soba direct-lan configure --listen IP:PORT --prefix CIDR [--prefix CIDR]
+  soba direct-lan upgrade status|cancel
+  soba direct-lan upgrade --peer ID [--deadline RFC3339]
+  soba direct-lan upgrade --peer ID --deadline RFC3339 --apply --review REVISION
   soba direct-lan status [--json]
   soba direct-lan identity [--json]
   soba direct-lan invite --to PUBLIC_KEY [--name device] [--ttl 5m]
@@ -142,7 +152,11 @@ const directLANHelpJA = `Direct LAN: ユーザー空間のWireGuard/netstackト�
   soba direct-lan cancel --json-file INVITATION_FILE
   soba direct-lan revoke PEER_ID
 
-先に soba start --offline で起動してください。configure の明示操作でこのモードの
+upgrade で保存内容を確認し、非公開の端末で確認結果を適用します。必要な再起動を
+自動で管理し、新しいコードで管理画面を開き直します。一時停止と再ログインが
+必要な場合があります。古いログイン状態は引き継ぎません。
+
+初期設定では先に soba start --offline で起動してください。configure の明示操作でこのモードの
 秘密IDを生成して保存します。同じ設定を繰り返してもIDは変わりません。
 数値のプライベート・ループバックアドレスと許可範囲を明示してください。
 リレー・公開DNS・STUN・ルーター変更・OS全体のトンネルは暗黙に利用しません。

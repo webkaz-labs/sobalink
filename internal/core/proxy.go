@@ -97,6 +97,9 @@ func (c *Core) reviewProxyScope(ctx context.Context, scope ProxyScope, retainedA
 	}
 	peerIDs := map[string]bool{}
 	for _, target := range scope.Targets {
+		if c.managedPeerDenied(target.PeerID) {
+			return proxyReview{}, &localCommandError{"direct_lan_peer_revoked", "proxy scope includes a terminally removed direct LAN peer"}
+		}
 		peerIDs[target.PeerID] = true
 	}
 	if !retainedAdmission && int64(len(peerIDs)) > c.limit("logical", "sharePeers") {

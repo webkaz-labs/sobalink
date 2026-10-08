@@ -175,6 +175,25 @@ identity from an IP, display name or saved configuration alone.
   optional `resourceRestartRequired`. Local readiness does not prove remote
   reachability. A known missing/down exact local interface is unavailable;
   inspection errors are unknown and cannot authorize fallback
+- `direct-lan.upgrade.review`: `{peerId,deadline}`. Deadline is a canonical UTC
+  RFC3339Nano absolute time, at most five minutes ahead. Returns
+  `{revision,peerId,deadline,localEndpoint,peerEndpoint,scope:{family,prefixes},restartRequired,resumePreparation,previousDeadline?}`.
+  Display the exact target, both endpoints, scope and deadline before consent;
+  resuming preparation explicitly displays its previous and newly reviewed deadline.
+- `direct-lan.upgrade.run`: `{peerId,deadline,expectedRevision}` using the exact
+  reviewed values, only after explicit apply. No wire transcripts, receipts or
+  caller-provided confirmation flags are accepted. The Core owns real exchanges.
+- `direct-lan.upgrade.status` and `direct-lan.upgrade.cancel`: `{}`. Progress is
+  `{state,peerId?,deadline?,errorCode?,error?,restartRequired?}`. States include
+  `idle`, `preparing`, `exchanging`, `confirming`, `connecting`, `network-started`,
+  `failed`, `cancelled`, `local-confirmed`, and `restart-required`. Backend start
+  is distinct from network readiness and application admission. Cancellation
+  does not undo a saved confirmation. An unknown request outcome requires a
+  status check, not blind resubmission.
+  The Web panel supports fresh-offline-process review/apply and bounded progress.
+  It does not launch a restart helper or preserve a browser session across restart;
+  restart-required users need the managed CLI upgrade action in a private terminal
+  for the same profile, with a possible fresh local sign-in.
 - `direct-lan.invite`: `{recipientPublicKey,name,ttlSeconds,qr?}` returns private
   `{invitation,expires,recipientPublicKey,qr?}`. Lifetime is 1–600 whole seconds;
   Web defaults to 300. Optional `qr` is a locally generated boolean pixel matrix
