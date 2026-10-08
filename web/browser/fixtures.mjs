@@ -161,9 +161,11 @@ export const test = base.extend({
           await page.screenshot({ path: join(output, filename), fullPage: true })
           testInfo.annotations.push({ type: 'safe-artifact', description: filename })
         },
-        async captureForm(name) {
+        async captureForm(name, scope = page.locator('dialog')) {
           await this.capture(name)
-          await page.locator('dialog .modal-actions').scrollIntoViewIfNeeded()
+          const actions = scope.locator('.modal-actions')
+          await expect(actions).toHaveCount(1)
+          await actions.scrollIntoViewIfNeeded()
           await this.capture(`${name}-actions`)
         },
         async writeMetrics(name, data) {

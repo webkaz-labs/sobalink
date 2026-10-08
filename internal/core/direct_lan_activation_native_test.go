@@ -182,7 +182,13 @@ func (f *activationNativePair) assertOrdinary(i int, job *contextUpgradeJob) {
 	c.mu.RUnlock()
 	b, ok := node.(*directLANBackend)
 	if phase != "network-started" || owner != nil || !ok || b.completion == nil {
-		f.t.Fatal("ordinary ownership handoff incomplete")
+		s := c.directLAN
+		s.mu.Lock()
+		r := s.state.Metadata.Peers[0]
+		prepared, committed, confirmed := contextSavedPair(r) != nil, r.PairContext != nil, r.ContextConfirmed
+		receipt, recovery, revision := s.contextPublicationCurrentLocked(c.lanStartNonce), s.recovery, s.reviewRevision
+		s.mu.Unlock()
+		f.t.Fatalf("ordinary ownership handoff incomplete: side=%d phase=%s code=%s context_owner=%t ordinary_backend=%t prepared=%t committed=%t confirmed=%t receipt=%t recovery=%t publication_revision=%d", i, phase, job.view.ErrorCode, owner != nil, ok, prepared, committed, confirmed, receipt, recovery, revision)
 	}
 	if b.ctx.Err() != nil || c.ctx.Err() != nil || b.Node.Endpoint() != f.endpoints[i] {
 		f.t.Fatal("ordinary lifetime or fixed endpoint changed")
