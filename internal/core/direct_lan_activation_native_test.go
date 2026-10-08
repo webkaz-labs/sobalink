@@ -649,6 +649,14 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 	observation.stage.Store(0)
 	observation.errorClass.Store(0)
 	var previous *contextExchangeOperation
+	var diagnostics activationDiagnosticAttempts
+	observe := func() activationDiagnosticCounters {
+		return activationDiagnosticCounters{
+			Callbacks: observation.callbacks.Load(), Completed: observation.completed.Load(),
+			Rejected: observation.rejected.Load(), Admitted: observation.admitted.Load(),
+			Denied: observation.denied.Load(), ResponseContention: responder.responseContention.Load(),
+		}
+	}
 	for reply := 0; reply < 2; reply++ {
 		// Nonwaiting admission may legitimately reject a wire under contention.
 		// Require a genuine reply within the SAME absolute two-second budget;
@@ -679,7 +687,16 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 				t.Fatal("duplicate PREPARE capture failed")
 			}
 			attempts++
+			before, started := observe(), time.Now()
 			err = left.exchangeContext(run, outbound)
+			finished := time.Now()
+			diagnostics.add(activationDiagnosticAttempt{
+				Reply: reply, Attempt: attempts,
+				ElapsedMS:   activationDiagnosticMillis(finished.Sub(started)),
+				RemainingMS: activationDiagnosticMillis(until.Sub(finished)),
+				Error:       activationDiagnosticError(err), Context: activationDiagnosticError(run.Err()),
+				Before: before, After: observe(),
+			})
 			if err == nil {
 				success = true
 				break
@@ -707,6 +724,7 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 			for i := range classes {
 				classes[i] = observation.errors[i].Load()
 			}
+			t.Logf("duplicate PREPARE attempt observations (independent snapshots, not joined inbound completion): records=%+v omitted=%d", diagnostics.Records[:diagnostics.Count], diagnostics.Omitted)
 			t.Fatalf("pending STATUS duplicate PREPARE failed: reply=%d attempts=%d last=%s callbacks=%d completed=%d rejected=%d classes=%v admitted=%d denied=%d cancelled_admission=%d stale_admission=%d control_limit=%d status_held=%t exact_status_live=%t status_callbacks=%d response_lock_denials=%d", reply, attempts, last, observation.callbacks.Load(), observation.completed.Load(), observation.rejected.Load(), classes, observation.admitted.Load(), observation.denied.Load(), observation.cancelledAdmission.Load(), observation.staleAdmission.Load(), observation.controlLimit, statusHolding.Load(), sameStatus, f.observations[0].callbacks.Load(), responder.responseContention.Load())
 		}
 		select {
