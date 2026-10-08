@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join, resolve, isAbsolute } from 'node:path'
+import { lstat, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve, isAbsolute } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
 import { lifecycle, validateLifecycle, counter, workStages, exits, exitCategory, advanceLifecycle, failLifecycle } from './activation-diagnostics.mjs'
 export { expect }
 async function exists(path) { try { await stat(path); return true } catch (error) { if (error.code === 'ENOENT') return false; throw error } }
+async function privateJSON(path) {
+  const parent = await lstat(dirname(path))
+  assert.ok(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid() && (parent.mode & 0o077) === 0, 'Protected fixture writer directory required')
+  const info = await lstat(path)
+  assert.ok(info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.size <= 8192 && (info.mode & 0o077) === 0, 'Protected bounded fixture data required')
+  return JSON.parse(await readFile(path, 'utf8'))
+}
 async function until(predicate, deadline, description) {
   while (Date.now() < deadline) { if (await predicate()) return; await delay(50) }
   throw new Error(description)
@@ -44,7 +51,7 @@ export const test = base.extend({
       await context.route('**/*', async route => {
         try {
           const url = new URL(route.request().url())
-          const origins = JSON.parse(await readFile(join(dir, 'owned-origins.json'), 'utf8'))
+          const origins = await privateJSON(join(dir, '.fixture-origins', 'owned-origins.json'))
           if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.search || url.hash || !Array.isArray(origins) || !origins.includes(url.origin)) throw Error('unowned origin')
           await route.continue()
         } catch { blockedRequests++; await route.abort('blockedbyclient').catch(() => {}) }
@@ -138,7 +145,7 @@ export const test = base.extend({
         },
         async opened() { return exists(join(dir, 'browser-opened')) },
         async successorStarted() { return exists(join(dir, 'successor-started')) },
-        async oldExited() { try { return JSON.parse(await readFile(join(dir, 'native-progress.json'), 'utf8')).oldExited === true } catch { return false } },
+        async oldExited() { try { return (await privateJSON(join(dir, '.fixture-supervisor', 'native-progress.json'))).oldExited === true } catch (error) { if (error.code === 'ENOENT') return false; throw new Error('Private native progress validation failed; details withheld') } },
         expectNoSuccessor() { noSuccessorExpected = true },
         async waitingAtStop() { return exists(join(dir, 'stop-admission-waiting')) },
         async permitStop() { await writeFile(join(dir, 'permit-stop'), 'permit synthetic admission check', { mode: 0o600 }) },
@@ -163,7 +170,7 @@ export const test = base.extend({
             await writeFile(join(dir, 'stop-fixture'), 'stop synthetic descendants', { mode: 0o600 })
             await until(() => exited, deadline, 'Native supervisor exit unconfirmed')
             mark('cleanup-proof')
-            const proof = JSON.parse(await readFile(join(dir, 'exit-proof.json'), 'utf8'))
+            const proof = await privateJSON(join(dir, '.fixture-supervisor', 'exit-proof.json'))
             diagnostic.proofRead = true
             for (const key of ['allDescendantsReaped', 'registeredNativeExits', 'successorRegistered']) diagnostic[key] = proof[key] === true
             diagnostic.reaped = counter(proof.reaped)

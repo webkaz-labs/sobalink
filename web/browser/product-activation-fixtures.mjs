@@ -1,16 +1,25 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { lstat, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join, isAbsolute } from 'node:path'
+import { dirname, join, isAbsolute } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
 import { lifecycle, phase, failWork, cleanupPhase, failCleanup, validateLifecycle, counter, exits, supervisorFailures, resourceFailures, exitCategory, nativeRoles, nativeObservation, readNativeObservation } from './product-activation-diagnostics.mjs'
 export { expect }
 
 async function exists(path) { try { await lstat(path); return true } catch (error) { if (error.code === 'ENOENT') return false; throw error } }
+async function privateParent(path) {
+  const parent = await lstat(dirname(path))
+  assert.ok(parent.isDirectory() && !parent.isSymbolicLink() && parent.uid === process.getuid() && (parent.mode & 0o077) === 0, 'Protected fixture writer directory required')
+}
+async function privateExists(path) {
+  try { await privateParent(path); return await exists(path) }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error }
+}
 async function privateJSON(path) {
+  await privateParent(path)
   const info = await lstat(path)
-  assert.ok(info.isFile() && !info.isSymbolicLink() && info.size <= 8192 && (info.mode & 0o077) === 0, 'Protected bounded fixture data required')
+  assert.ok(info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.size <= 8192 && (info.mode & 0o077) === 0, 'Protected bounded fixture data required')
   return JSON.parse(await readFile(path, 'utf8'))
 }
 async function until(predicate, deadline, description) {
@@ -44,7 +53,7 @@ export const test = base.extend({
     const observeNative = async () => {
       if (!dir) return
       for (const role of nativeRoles) {
-        try { diagnostic.native[role] = readNativeObservation(await privateJSON(join(dir, `product-${role}-diagnostic.json`))) }
+        try { diagnostic.native[role] = readNativeObservation(await privateJSON(join(dir, `.fixture-${role}`, 'native.json'))) }
         catch (error) { diagnostic.native[role] = { ...nativeObservation(), invalid: error.code !== 'ENOENT' } }
       }
     }
@@ -70,7 +79,7 @@ export const test = base.extend({
       await context.route('**/*', async route => {
         try {
           const url = new URL(route.request().url())
-          const origins = await privateJSON(join(dir, 'owned-origins.json'))
+          const origins = await privateJSON(join(dir, '.fixture-origins', 'owned-origins.json'))
           if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.search || url.hash || !Array.isArray(origins) || !origins.includes(url.origin)) throw Error('unowned origin')
           await route.continue()
         } catch { blockedRequests++; await route.abort('blockedbyclient').catch(() => {}) }
@@ -92,9 +101,9 @@ export const test = base.extend({
       child.stdout.on('data', outputChunk); child.stderr.on('data', outputChunk)
       child.once('error', () => { exited = true; exitCode = -1; diagnostic.supervisorExit = 'spawn-error' }); child.once('exit', code => { exited = true; exitCode = code; diagnostic.supervisorExit = exitCategory(code) })
       mark('native-ready')
-      await until(async () => exited || await exists(join(dir, 'session.json')), Math.min(deadline, Date.now() + 15000), 'Product old owner readiness timed out')
+      await until(async () => exited || await privateExists(join(dir, '.fixture-old', 'session.json')), Math.min(deadline, Date.now() + 15000), 'Product old owner readiness timed out')
       assert.ok(!exited, 'Product old owner failed before readiness')
-      const session = await privateJSON(join(dir, 'session.json'))
+      const session = await privateJSON(join(dir, '.fixture-old', 'session.json'))
       assert.ok(session.productCore === true && /^[a-f0-9]{64}$/.test(session.peerId), 'Invalid product session descriptor')
       managementAddress(session.url); privateCode(session.code)
       diagnostic.oldReadyObserved = true
@@ -147,9 +156,9 @@ export const test = base.extend({
           try {
             mark('cli-pty-complete')
             assert.equal(activationCase, 'product-core-cli', 'CLI result requires its exact case')
-            await until(async () => exited || await exists(join(dir, 'cli-result.json')), Math.min(deadline - 30000, Date.now() + 60000), 'Private CLI completion timed out')
+            await until(async () => exited || await privateExists(join(dir, '.fixture-supervisor', 'cli-result.json')), Math.min(deadline - 30000, Date.now() + 60000), 'Private CLI completion timed out')
             assert.ok(!exited, 'Native supervisor exited before CLI completion')
-            const result = await privateJSON(join(dir, 'cli-result.json'))
+            const result = await privateJSON(join(dir, '.fixture-supervisor', 'cli-result.json'))
             assert.equal(result.completed, true, 'Production CLI completion required')
             diagnostic.cliCompleteObserved = true
             return await freshLogin(result.url, result.code)
@@ -159,12 +168,12 @@ export const test = base.extend({
         // This marker proves only fresh offline management, never networking.
         async successorStarted() { const observed = await exists(join(dir, 'successor-started')); diagnostic.successorStartObserved ||= observed; return observed },
         async oldExited() {
-          try { const observed = (await privateJSON(join(dir, 'native-progress.json'))).oldExited === true; diagnostic.oldExitObserved ||= observed; return observed }
+          try { const observed = (await privateJSON(join(dir, '.fixture-supervisor', 'native-progress.json'))).oldExited === true; diagnostic.oldExitObserved ||= observed; return observed }
           catch (error) { if (error.code === 'ENOENT') return false; throw error }
         },
         async nativeActivationConfirmed() {
           try {
-            const proof = await privateJSON(join(dir, 'product-activation.json'))
+            const proof = await privateJSON(join(dir, '.fixture-successor', 'product-activation.json'))
             diagnostic.controllerProofObserved = true
             for (const key of ['peerConfirmed', 'ownerConfirmed', 'ordinaryReady', 'originalReviewPreserved']) diagnostic[key] = proof[key] === true
             return proof.schema === 1 && proof.peerConfirmed === true && proof.ownerConfirmed === true && proof.ordinaryReady === true && proof.originalReviewPreserved === true
@@ -187,7 +196,7 @@ export const test = base.extend({
             await writeFile(join(dir, 'stop-fixture'), 'stop fixture-owned descendants', { mode: 0o600 })
             await until(() => exited, deadline, 'Native supervisor exit unconfirmed')
             markCleanup('proof')
-            const proof = await privateJSON(join(dir, 'exit-proof.json'))
+            const proof = await privateJSON(join(dir, '.fixture-supervisor', 'exit-proof.json'))
             diagnostic.proofRead = true
             for (const key of ['allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren']) diagnostic[key] = proof[key] === true
             for (const key of ['registeredChildren', 'observedExits', 'reaped']) diagnostic[key] = counter(proof[key])

@@ -4,7 +4,10 @@ package main
 
 import (
 	"errors"
+	"github.com/webkaz-labs/sobalink/internal/config"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -26,7 +29,7 @@ type productNativeDiagnostic struct {
 var productNativeStages = []string{"not-started", "owner-start", "peer-open", "peer-review", "peer-apply", "foreground", "identity", "management-announced", "cli-launch", "review-read", "owner-status", "peer-status", "review-binding", "network-ready", "persisted-context", "pair-binding", "proof-written", "cli-terminal", "cli-review", "cli-review-binding", "cli-apply", "cli-complete"}
 
 func newProductNativeDiagnostic(dir, role string) *productNativeDiagnostic {
-	d := &productNativeDiagnostic{path: filepath.Join(dir, "product-"+role+"-diagnostic.json"), view: productNativeObservation{Schema: 1, Stage: "not-started", OwnerStatus: "unobserved", PeerStatus: "unobserved"}}
+	d := &productNativeDiagnostic{path: filepath.Join(activationEvidenceDir(dir, role), "native.json"), view: productNativeObservation{Schema: 1, Stage: "not-started", OwnerStatus: "unobserved", PeerStatus: "unobserved"}}
 	d.flush()
 	return d
 }
@@ -85,5 +88,52 @@ func TestProductCleanupDiagnosticPreservesFirstFailure(t *testing.T) {
 	r.noteFailure("master-close", errors.New("synthetic later failure"))
 	if r.FailureStage() != "capture-error" {
 		t.Fatal("first resource failure changed")
+	}
+}
+
+// Real temporary-file writes only: no Core, network, IPC, process or PTY.
+func TestProductEvidenceWritersUseIndependentParents(t *testing.T) {
+	root := t.TempDir()
+	owners := []string{"origins", "supervisor", "old", "successor", "cli", "request"}
+	parents := map[string]bool{root: true}
+	for _, owner := range owners {
+		dir := activationEvidenceDir(root, owner)
+		if parents[dir] {
+			t.Fatal("evidence writer shares an atomic parent")
+		}
+		parents[dir] = true
+		if err := config.SecureDir(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := make(chan struct{})
+	results := make(chan error, len(owners)+1)
+	var joined sync.WaitGroup
+	for parent := range parents {
+		joined.Add(1)
+		go func(dir string) {
+			defer joined.Done()
+			<-start
+			path := filepath.Join(dir, "synthetic.json")
+			for i := 0; i < 3; i++ {
+				if err := config.WriteJSON(path, map[string]int{"iteration": i}); err != nil {
+					results <- err
+					return
+				}
+			}
+			info, err := os.Lstat(path)
+			if err == nil && (!info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0) {
+				err = errors.New("unsafe evidence file")
+			}
+			results <- err
+		}(parent)
+	}
+	close(start)
+	joined.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -161,7 +161,7 @@ func runProductWebHelper(dir string) error {
 	if json.Unmarshal(input, &bootstrap) != nil {
 		return errors.New("invalid private bootstrap")
 	}
-	if err := productPrivateJSON(filepath.Join(dir, "product-review.json"), bootstrap.Intent); err != nil {
+	if err := productPrivateJSON(filepath.Join(activationEvidenceDir(dir, "request"), "product-review.json"), bootstrap.Intent); err != nil {
 		return err
 	}
 	inR, inW, err := os.Pipe()
@@ -325,7 +325,7 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 				if productIPC(ctx, dir, "ui", &ui) != nil || !validUpgradeUIURL(ui.URL) || ui.Code == "" {
 					continue
 				}
-				if productPrivateJSON(filepath.Join(dir, "session.json"), map[string]any{"url": ui.URL, "code": ui.Code, "productCore": true, "peerId": manifest.PeerID}) != nil {
+				if productPrivateJSON(filepath.Join(activationEvidenceDir(dir, "old"), "session.json"), map[string]any{"url": ui.URL, "code": ui.Code, "productCore": true, "peerId": manifest.PeerID}) != nil {
 					return errors.New("private readiness write failed")
 				}
 			}
@@ -370,7 +370,7 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 		if successor && !proofWritten && peer != nil {
 			diagnostic.stage("review-read")
 			var intent core.UpgradeIntent
-			if readProductJSON(filepath.Join(dir, "product-review.json"), &intent, 4096) != nil {
+			if readProductJSON(filepath.Join(activationEvidenceDir(dir, "request"), "product-review.json"), &intent, 4096) != nil {
 				continue
 			}
 			raw, _ := json.Marshal(webui.Command{RequestID: randomProductRequest(), Name: "direct-lan.upgrade.status", Payload: json.RawMessage(`{}`)})
@@ -416,7 +416,7 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 			if e1 != nil || e2 != nil || first != second || ownerState.Peers[0].EndpointState == nil || peerState.Peers[0].EndpointState == nil || ownerState.Peers[0].EndpointState.PairBinding != first || peerState.Peers[0].EndpointState.PairBinding != second {
 				return errors.New("saved actual pair contexts differ")
 			}
-			if productPrivateJSON(filepath.Join(dir, "product-activation.json"), map[string]any{"schema": 1, "peerConfirmed": true, "ownerConfirmed": true, "ordinaryReady": true, "originalReviewPreserved": true}) != nil {
+			if productPrivateJSON(filepath.Join(activationEvidenceDir(dir, "successor"), "product-activation.json"), map[string]any{"schema": 1, "peerConfirmed": true, "ownerConfirmed": true, "ordinaryReady": true, "originalReviewPreserved": true}) != nil {
 				return errors.New("private evidence write failed")
 			}
 			proofWritten = true
@@ -608,7 +608,7 @@ func (r *productSupervisorResources) Observe(s *activationSupervisor) error {
 	if !validUpgradeUIURL(address) || code == "" {
 		return r.noteFailure("result-parse", errors.New("actual private CLI result unavailable"))
 	}
-	if err := productPrivateJSON(filepath.Join(r.dir, "cli-result.json"), map[string]any{"url": address, "code": code, "completed": true}); err != nil {
+	if err := productPrivateJSON(filepath.Join(activationEvidenceDir(r.dir, "supervisor"), "cli-result.json"), map[string]any{"url": address, "code": code, "completed": true}); err != nil {
 		return r.noteFailure("result-write", err)
 	}
 	r.resultWritten = true
@@ -665,7 +665,7 @@ func runProductCLIDriver(ctx context.Context, dir string) (result error) {
 		return errors.New("actual CLI review binding invalid")
 	}
 	intent := core.UpgradeIntent{PeerID: review.PeerID, Deadline: review.Deadline, ExpectedRevision: review.Revision}
-	if err := productPrivateJSON(filepath.Join(dir, "product-review.json"), intent); err != nil {
+	if err := productPrivateJSON(filepath.Join(activationEvidenceDir(dir, "request"), "product-review.json"), intent); err != nil {
 		return err
 	}
 	diagnostic.stage("cli-apply")

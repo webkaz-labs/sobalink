@@ -181,12 +181,24 @@ func (s *activationSupervisor) handle(_ context.Context, raw string) (any, error
 	}
 	return map[string]bool{"registered": true}, nil
 }
+
+// Evidence writers use separate atomic-persistence parents. The real Core
+// profile and unrelated fixture writers must never compete for this lease.
+func activationEvidenceDir(dir, owner string) string {
+	switch owner {
+	case "origins", "supervisor", "old", "successor", "cli", "request":
+		return filepath.Join(dir, ".fixture-"+owner)
+	default:
+		panic("unknown fixed fixture evidence owner")
+	}
+}
+
 func (s *activationSupervisor) writeOriginsLocked() error {
 	origins := make([]string, 0, len(s.origins))
 	for origin := range s.origins {
 		origins = append(origins, origin)
 	}
-	return config.WriteJSON(filepath.Join(s.dir, "owned-origins.json"), origins)
+	return config.WriteJSON(filepath.Join(activationEvidenceDir(s.dir, "origins"), "owned-origins.json"), origins)
 }
 
 // Linux subreaping proves even children that die before TestMain registration
@@ -195,6 +207,12 @@ func (s *activationSupervisor) writeOriginsLocked() error {
 func runActivationSupervisor(dir string) error {
 	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
 		return err
+	}
+	// Establish all fixed private evidence parents before any Core or child starts.
+	for _, owner := range []string{"origins", "supervisor", "old", "successor", "cli", "request"} {
+		if err := config.SecureDir(activationEvidenceDir(dir, owner)); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
 	defer cancel()
@@ -241,7 +259,7 @@ func runActivationSupervisor(dir string) error {
 	complete := false
 	noWaitableChildren, stopRequested := false, false
 	publishedOld := false
-	if e := config.WriteJSON(filepath.Join(dir, "native-progress.json"), map[string]bool{"oldExited": false}); e != nil {
+	if e := config.WriteJSON(filepath.Join(activationEvidenceDir(dir, "supervisor"), "native-progress.json"), map[string]bool{"oldExited": false}); e != nil {
 		s.mu.Lock()
 		s.failLocked("progress-write")
 		s.mu.Unlock()
@@ -309,7 +327,7 @@ func runActivationSupervisor(dir string) error {
 		s.mu.Unlock()
 		if oldExited != publishedOld {
 			publishedOld = oldExited
-			if e := config.WriteJSON(filepath.Join(dir, "native-progress.json"), map[string]bool{"oldExited": oldExited}); e != nil {
+			if e := config.WriteJSON(filepath.Join(activationEvidenceDir(dir, "supervisor"), "native-progress.json"), map[string]bool{"oldExited": oldExited}); e != nil {
 				s.mu.Lock()
 				s.failLocked("progress-write")
 				s.mu.Unlock()
@@ -375,7 +393,7 @@ finished:
 		}
 	}
 	proof := map[string]any{"supervisorFailure": s.failure, "resourceFailure": s.resourceFailure, "helperExit": s.helperExit, "successorExit": s.successorExit, "oldExit": s.oldExit, "registeredChildren": len(s.children), "observedExits": observedExits, "stopRequested": stopRequested, "supervisorDeadlineExpired": supervisorDeadlineExpired, "noWaitableChildren": noWaitableChildren, "successorRegistered": successorRegistered, "allDescendantsReaped": complete, "registeredNativeExits": complete, "reaped": s.reaped, "success": complete && !s.failed}
-	if e := config.WriteJSON(filepath.Join(dir, "exit-proof.json"), proof); e != nil {
+	if e := config.WriteJSON(filepath.Join(activationEvidenceDir(dir, "supervisor"), "exit-proof.json"), proof); e != nil {
 		return e
 	}
 	if !complete || s.failed {
