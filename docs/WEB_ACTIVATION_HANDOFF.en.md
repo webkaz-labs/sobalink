@@ -2,7 +2,7 @@
 
 [日本語](WEB_ACTIVATION_HANDOFF.ja.md)
 
-This source candidate adds Web-requested restart to the existing reviewed Direct LAN activation controller. Source implementation is not native or browser acceptance. Compilation, mocked tests, browser behavior and native process behavior require separate verification before release.
+This source candidate adds Web-requested restart to the reviewed Direct LAN activation controller. Both Web and CLI initial activation passed the real-Core product cases at `719d6bfa`, with original review, ordinary readiness, bilateral native confirmation and complete cleanup preserved. The seven synthetic-owner helper cases also passed on that source. These bounded Linux loopback results do not establish final-source full CI or release verification, which remain pending. See the [exact-source evidence and limits](CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
 
 ## Web flow
 
