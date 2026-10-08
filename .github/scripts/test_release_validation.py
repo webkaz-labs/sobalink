@@ -6,6 +6,7 @@ import io
 import importlib.util
 import json
 import os
+import sys
 import pathlib
 import re
 import shlex
@@ -629,6 +630,13 @@ class ReleaseGuards(unittest.TestCase):
         self.repo = {"full_name": checks.REPOSITORY, "private": False, "default_branch": "main"}
         self.ref = {"object": {"type": "commit", "sha": COMMIT}}
         self.run = {"id": 10, "head_sha": COMMIT, "head_branch": "main", "event": "push", "name": "Cross-platform CI", "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success", "html_url": "https://github.com/" + checks.REPOSITORY + "/actions/runs/10"}
+        self.run.update(event="workflow_dispatch", run_attempt=1,
+                        created_at="2026-01-01T00:00:00Z", run_started_at="2026-01-01T00:00:00Z")
+        # Detailed source/job audit is tested in test_ci_full_validation.py;
+        # these tests retain the release identity, candidate and staging guard coverage.
+        self.proof_mock = patch.object(checks.full_validation, "audit", return_value={"fixture": True})
+        self.proof_mock.start()
+        self.addCleanup(self.proof_mock.stop)
         self.runs = [self.run]
         self.tag = None
         self.release = None
@@ -642,7 +650,7 @@ class ReleaseGuards(unittest.TestCase):
         if path == "git/ref/heads/main":
             return self.ref
         if path.startswith("actions/workflows/"):
-            return {"workflow_runs": self.runs}
+            return {"total_count": len(self.runs), "workflow_runs": self.runs}
         if path.startswith("git/ref/tags/"):
             return self.tag
         if path.startswith("releases/tags/"):
@@ -662,6 +670,25 @@ class ReleaseGuards(unittest.TestCase):
 
     def test_accept_exact_main_and_successful_ci(self):
         self.assertEqual(self.gate()["id"], 10)
+
+    def test_gate_requires_and_persists_full_validation_proof(self):
+        environment = dict(self.env, RELEASE_VERSION=VERSION, TESTED_COMMIT=COMMIT)
+        with patch.dict(os.environ, environment, clear=True), patch.object(sys, "argv", ["release-validation.py", "gate"]):
+            with self.assertRaisesRegex(ValueError, "proof output"):
+                checks.main()
+        with tempfile.TemporaryDirectory() as directory:
+            proof = pathlib.Path(directory) / "full-proof.json"
+            with patch.dict(os.environ, environment, clear=True), patch.object(sys, "argv", ["release-validation.py", "gate", "--proof", str(proof)]):
+                checks.main()
+            self.assertEqual(json.loads(proof.read_text(encoding="utf-8")), {"fixture": True})
+            self.assertTrue(checks.full_validation.audit.called)
+
+    def test_publish_ready_cannot_omit_full_validation_proof(self):
+        self.draft()
+        environment = dict(self.env, RELEASE_VERSION=VERSION, TESTED_COMMIT=COMMIT)
+        with patch.dict(os.environ, environment, clear=True), patch.object(sys, "argv", ["release-validation.py", "publish-ready"]):
+            with self.assertRaisesRegex(ValueError, "proof paths"):
+                checks.main()
 
     def test_valid_prerelease_versions(self):
         for version in (VERSION, "1.2.3-rc.0", "10.20.30-beta-1"):

@@ -7,6 +7,7 @@ workflow's two contents:write jobs; tests replace the read-only API function.
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -15,6 +16,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+_FULL_SPEC = importlib.util.spec_from_file_location("ci_full_validation", pathlib.Path(__file__).with_name("ci_full_validation.py"))
+full_validation = importlib.util.module_from_spec(_FULL_SPEC)
+_FULL_SPEC.loader.exec_module(full_validation)
 
 REPOSITORY = "webkaz-labs/sobalink"
 PROJECT = "github.com/" + REPOSITORY
@@ -61,14 +66,11 @@ def source_gate(version, commit, env):
     repository = api("")
     require(repository["full_name"] == REPOSITORY and repository["private"] is False and repository["default_branch"] == "main", "expected public repository with main default branch")
     require(api("git/ref/heads/main")["object"]["sha"] == commit, "main has moved; test and dispatch the new commit")
-    runs = api("actions/workflows/ci.yml/runs?branch=main&head_sha=" + commit + "&per_page=100")["workflow_runs"]
-    runs = [run for run in runs if run["head_sha"] == commit and run["head_branch"] == "main" and run["event"] in ("push", "workflow_dispatch")]
-    require(bool(runs), "Cross-platform CI has not run for this exact main commit")
-    latest = max(runs, key=lambda run: run["id"])
-    require(latest["name"] == "Cross-platform CI" and latest["path"] == ".github/workflows/ci.yml", "unexpected CI workflow")
-    require(latest["status"] == "completed" and latest["conclusion"] == "success", "latest Cross-platform CI for this commit must be successful")
-    print("Exact-source CI gate:", latest["html_url"])
-    return latest
+    latest = full_validation.select_candidate(api, commit)
+    proof = full_validation.audit(api, commit, latest=latest, local_root=pathlib.Path(__file__).resolve().parents[2])
+    print("Exact-source full-CI gate:", latest["html_url"])
+    return dict(latest, full_validation_proof=proof)
+
 
 
 
@@ -234,11 +236,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("gate", "draft", "publish-ready", "assets", "bundle", "download-public"))
     parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path("dist"))
+    parser.add_argument("--proof", type=pathlib.Path, help="full-validation proof from this release gate")
+    parser.add_argument("--revalidated-proof", type=pathlib.Path, help="write publication-time full-validation evidence")
     args = parser.parse_args()
     version, commit = os.environ["RELEASE_VERSION"], os.environ["TESTED_COMMIT"]
     validate_inputs(version, commit)
     if args.command == "gate":
-        source_gate(version, commit, os.environ)
+        require(args.proof is not None, "gate proof output is required")
+        result = source_gate(version, commit, os.environ)
+        args.proof.write_text(json.dumps(result["full_validation_proof"], sort_keys=True, indent=2) + "\n", encoding="utf-8")
         release_state(version, commit)
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -247,6 +253,12 @@ def main():
         require(api("git/ref/heads/main")["object"]["sha"] == commit, "main moved before publication; do not publish stale source")
         _, release = release_state(version, commit, required=True)
         if args.command == "publish-ready":
+            require(args.proof is not None and args.revalidated_proof is not None, "publication full-CI proof paths required")
+            require(args.proof.stat().st_size <= 1024 * 1024, "oversized full-CI proof")
+            previous = json.loads(args.proof.read_text(encoding="utf-8"))
+            require(isinstance(previous, dict), "invalid full-CI proof")
+            proof = full_validation.audit(api, commit, previous_proof=previous)
+            args.revalidated_proof.write_text(json.dumps(proof, sort_keys=True, indent=2) + "\n", encoding="utf-8")
             check_assets(args.root, version, commit, bundle=True)
             check_bundle(args.root, version, commit)
             require({a["name"] for a in release["assets"]} == filenames(version) | {"packslip.sigstore.json"}, "draft assets are incomplete")
