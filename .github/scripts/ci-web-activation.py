@@ -28,7 +28,7 @@ def validate_toolchain(versions, binaries):
 
 CASE_IDS = ('normal-en', 'normal-ja', 'decline', 'closed-popup', 'logout-before-confirm', 'logout-before-stop', 'lost-ack')
 STATUSES = ('not-started', 'passed', 'failed', 'timedOut', 'skipped', 'interrupted')
-WORK_STAGES = ('not-started', 'preflight', 'native-start', 'native-ready', 'old-login', 'body', 'review-request', 'popup-request', 'handoff-ready', 'restart-confirm', 'successor-login')
+WORK_STAGES = ('not-started', 'preflight', 'native-start', 'native-ready', 'old-login', 'body', 'review-request', 'popup-request', 'handoff-ready', 'restart-confirm', 'management-ready', 'old-exit', 'successor-start', 'open-not-automatic', 'open-request', 'open-observed', 'open-consumed', 'successor-login')
 STAGES = (*WORK_STAGES, 'cleanup-context', 'cleanup-supervisor', 'cleanup-proof', 'cleanup-safety', 'cleanup-remove', 'finished')
 EXITS = ('not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error', 'profile-rejected', 'watchdog', 'mode-rejected', 'owner-failed', 'supervisor-failed', 'registration-failed')
 LIFECYCLE_BOOLS = ('workCompleted', 'workFailed', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'supervisorStarted', 'supervisorExited', 'proofRead', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected')

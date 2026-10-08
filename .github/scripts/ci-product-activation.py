@@ -16,8 +16,98 @@ ROOT = Path(__file__).resolve().parents[2]
 TAGS = 'ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native,product_activation_native'
 SCOPE = 'Linux production Web and CLI with real Core owners and synthetic loopback peers; OS-open stubbed; other behavior not established'
 BOOLS = ('accepted', 'allSelectedPassed', 'runnerExitedSuccessfully', 'timedOut', 'outputOverflow', 'nativeCleanupProven')
-KEYS = {'schema', 'expected', 'scope', *BOOLS}
+KEYS = {'schema', 'expected', 'scope', 'diagnostics', *BOOLS}
 VERSIONS = {'go': 'go1.27.1', 'node': 'v24.19.0', 'npm': '11.9.0'}
+CASE_IDS = ('product-web', 'product-cli')
+STATUSES = ('not-started', 'passed', 'failed', 'timedOut', 'skipped', 'interrupted')
+WORK_PHASES = ('not-started', 'preflight', 'native-ready', 'old-login', 'full-panel', 'review', 'popup', 'helper', 'restart-confirm', 'management-ready', 'old-exit', 'successor-start', 'open-before', 'open-request', 'open-observed', 'open-disabled', 'fresh-login', 'cli-start', 'cli-pty-complete', 'status', 'controller-proof', 'complete')
+FAILURE_PHASES = ('none', 'unknown', *WORK_PHASES)
+CLEANUP_PHASES = ('not-started', 'context', 'supervisor', 'proof', 'safety', 'remove', 'complete')
+CLEANUP_FAILURE_PHASES = ('none', 'unknown', *CLEANUP_PHASES)
+EXITS = ('not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error', 'profile-rejected', 'watchdog', 'mode-rejected', 'owner-failed', 'supervisor-failed', 'registration-failed')
+NATIVE_STAGES = ('not-started', 'owner-start', 'peer-open', 'peer-review', 'peer-apply', 'foreground', 'identity', 'management-announced', 'cli-launch', 'review-read', 'owner-status', 'peer-status', 'review-binding', 'network-ready', 'persisted-context', 'pair-binding', 'proof-written', 'cli-terminal', 'cli-review', 'cli-review-binding', 'cli-apply', 'cli-complete')
+NATIVE_STATUSES = ('unobserved', 'idle', 'restart-required', 'preparing', 'exchanging', 'local-confirmed', 'connected', 'network-started', 'failed', 'cancelled', 'other')
+NATIVE_ROLES = ('old', 'successor', 'cli')
+LIFECYCLE_BOOLS = ('workCompleted', 'workFailed', 'cleanupFailed', 'oldReadyObserved', 'oldExitObserved', 'successorStartObserved', 'cliCompleteObserved', 'controllerProofObserved', 'peerConfirmed', 'ownerConfirmed', 'ordinaryReady', 'originalReviewPreserved', 'supervisorStarted', 'supervisorExited', 'proofRead', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected')
+LIFECYCLE_COUNTS = ('registeredChildren', 'observedExits', 'reaped', 'blockedRequests', 'runtimeErrors')
+LIFECYCLE_ENUMS = {'workPhase': WORK_PHASES, 'firstFailurePhase': FAILURE_PHASES, 'cleanupPhase': CLEANUP_PHASES,
+                   'firstCleanupFailurePhase': CLEANUP_FAILURE_PHASES, 'supervisorExit': EXITS, 'oldExit': EXITS}
+LIFECYCLE_KEYS = {*LIFECYCLE_ENUMS, *LIFECYCLE_BOOLS, *LIFECYCLE_COUNTS, 'native'}
+NATIVE_KEYS = {'available', 'invalid', 'stage', 'failed', 'ownerStatus', 'peerStatus'}
+CASE_KEYS = {'id', 'started', 'status', 'diagnosticAvailable', 'diagnosticRejected', 'lifecycle'}
+DIAGNOSTIC_KEYS = {'summaryAvailable', 'selectionValid', 'unexpected', 'globalErrors', 'observed', 'passed', 'cases'}
+
+
+def empty_lifecycle():
+    return {'workPhase': 'not-started', 'firstFailurePhase': 'none', 'cleanupPhase': 'not-started',
+            'firstCleanupFailurePhase': 'none', 'supervisorExit': 'not-observed', 'oldExit': 'not-observed',
+            **dict.fromkeys(LIFECYCLE_BOOLS, False), **dict.fromkeys(LIFECYCLE_COUNTS, 0),
+            'native': {role: {'available': False, 'invalid': False, 'stage': 'not-started', 'failed': False,
+                              'ownerStatus': 'unobserved', 'peerStatus': 'unobserved'} for role in NATIVE_ROLES}}
+
+
+def empty_diagnostics():
+    return {'summaryAvailable': False, 'selectionValid': False, 'unexpected': False, 'globalErrors': 0,
+            'observed': 0, 'passed': 0, 'cases': [
+                {'id': name, 'started': False, 'status': 'not-started', 'diagnosticAvailable': False,
+                 'diagnosticRejected': False, 'lifecycle': empty_lifecycle()} for name in CASE_IDS]}
+
+
+def validate_lifecycle(value):
+    if type(value) is not dict or set(value) != LIFECYCLE_KEYS:
+        raise ValueError('invalid fixed lifecycle schema')
+    if any(type(value[key]) is not str or value[key] not in choices for key, choices in LIFECYCLE_ENUMS.items()):
+        raise ValueError('invalid fixed lifecycle phase')
+    if any(type(value[key]) is not bool for key in LIFECYCLE_BOOLS) or any(type(value[key]) is not int or not 0 <= value[key] <= 255 for key in LIFECYCLE_COUNTS):
+        raise ValueError('invalid fixed lifecycle value')
+    native = value['native']
+    if type(native) is not dict or set(native) != set(NATIVE_ROLES):
+        raise ValueError('invalid fixed native inventory')
+    observations = {}
+    for role in NATIVE_ROLES:
+        row = native[role]
+        if type(row) is not dict or set(row) != NATIVE_KEYS:
+            raise ValueError('invalid fixed native schema')
+        if any(type(row[key]) is not bool for key in ('available', 'invalid', 'failed')) or type(row['stage']) is not str or row['stage'] not in NATIVE_STAGES or any(type(row[key]) is not str or row[key] not in NATIVE_STATUSES for key in ('ownerStatus', 'peerStatus')):
+            raise ValueError('invalid fixed native value')
+        if row['available'] and row['invalid'] or not row['available'] and (row['stage'] != 'not-started' or row['failed'] or row['ownerStatus'] != 'unobserved' or row['peerStatus'] != 'unobserved'):
+            raise ValueError('inconsistent fixed native observation')
+        observations[role] = {key: row[key] for key in sorted(NATIVE_KEYS)}
+    return {**{key: value[key] for key in sorted(LIFECYCLE_KEYS - {'native'})}, 'native': observations}
+
+
+def validate_diagnostics(value):
+    if type(value) is not dict or set(value) != DIAGNOSTIC_KEYS or any(type(value[key]) is not bool for key in ('summaryAvailable', 'selectionValid', 'unexpected')):
+        raise ValueError('invalid fixed diagnostic schema')
+    if any(type(value[key]) is not int or not 0 <= value[key] <= limit for key, limit in (('globalErrors', 255), ('observed', 2), ('passed', 2))) or value['passed'] > value['observed']:
+        raise ValueError('invalid fixed diagnostic count')
+    if type(value['cases']) is not list or len(value['cases']) != 2:
+        raise ValueError('invalid fixed case inventory')
+    cases = []
+    for name, row in zip(CASE_IDS, value['cases']):
+        if type(row) is not dict or set(row) != CASE_KEYS or type(row['id']) is not str or row['id'] != name or type(row['status']) is not str or row['status'] not in STATUSES or any(type(row[key]) is not bool for key in ('started', 'diagnosticAvailable', 'diagnosticRejected')):
+            raise ValueError('invalid fixed case schema')
+        if not row['started'] and row['status'] == 'passed' or row['diagnosticAvailable'] and row['diagnosticRejected']:
+            raise ValueError('inconsistent fixed case evidence')
+        cases.append({'id': name, 'started': row['started'], 'status': row['status'],
+                      'diagnosticAvailable': row['diagnosticAvailable'], 'diagnosticRejected': row['diagnosticRejected'],
+                      'lifecycle': validate_lifecycle(row['lifecycle'])})
+    if value['observed'] != sum(row['status'] != 'not-started' for row in cases) or value['passed'] != sum(row['status'] == 'passed' for row in cases):
+        raise ValueError('inconsistent fixed diagnostic counts')
+    return {**{key: value[key] for key in sorted(DIAGNOSTIC_KEYS - {'cases'})}, 'cases': cases}
+
+
+def strict_json(text):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate report field')
+            result[key] = value
+        return result
+    def nonfinite(value):
+        raise ValueError('nonfinite report value')
+    return json.loads(text, object_pairs_hook=unique, parse_constant=nonfinite)
 
 
 def validate_toolchain(versions, binaries):
@@ -31,18 +121,26 @@ def validate_toolchain(versions, binaries):
 def validate_report(value):
     if not isinstance(value, dict) or set(value) != KEYS:
         raise ValueError('invalid result schema')
-    if type(value['schema']) is not int or value['schema'] != 1 or type(value['expected']) is not int or value['expected'] != 2 or value['scope'] != SCOPE:
+    if type(value['schema']) is not int or value['schema'] != 2 or type(value['expected']) is not int or value['expected'] != 2 or value['scope'] != SCOPE:
         raise ValueError('invalid fixed result')
     if any(type(value[key]) is not bool for key in BOOLS):
         raise ValueError('invalid result types')
+    diagnostics = validate_diagnostics(value['diagnostics'])
+    if diagnostics['summaryAvailable'] and value['allSelectedPassed'] and not (
+            diagnostics['selectionValid'] and not diagnostics['unexpected'] and diagnostics['globalErrors'] == 0
+            and diagnostics['observed'] == 2 and diagnostics['passed'] == 2
+            and all(row['started'] and row['status'] == 'passed' for row in diagnostics['cases'])):
+        raise ValueError('inconsistent fixed case result evidence')
+    # Closed diagnostic observations are evidence only. Do not derive a new
+    # acceptance condition from owner/peer statuses or missing annotations.
     accepted = (value['allSelectedPassed'] and value['runnerExitedSuccessfully'] and not value['timedOut'] and not value['outputOverflow'] and value['nativeCleanupProven'])
     if value['accepted'] != accepted:
         raise ValueError('inconsistent acceptance')
-    return {key: value[key] for key in sorted(KEYS)}
+    return {key: diagnostics if key == 'diagnostics' else value[key] for key in sorted(KEYS)}
 
 
-def failed_report():
-    return {'schema': 1, 'expected': 2, 'scope': SCOPE, **dict.fromkeys(BOOLS, False)}
+def failed_report(diagnostics=None):
+    return {'schema': 2, 'expected': 2, 'scope': SCOPE, 'diagnostics': validate_diagnostics(empty_diagnostics() if diagnostics is None else diagnostics), **dict.fromkeys(BOOLS, False)}
 
 
 def digest(path):
@@ -237,11 +335,12 @@ def _main(cancellation, argv=None):
         # cleanup attached beyond 405s. CI hard kill is failure containment.
         code = cancellation.run_node(['node', 'browser/product-activation-runner.mjs'], cwd=web,
                                      env=child_environment(private, binary, chromium, wrapper_report))
-        cancellation.checkpoint()
         info = wrapper_report.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_size > 4096:
+        # Fixed two-case diagnostics, including three native roles per case.
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_size > 16384:
             raise ValueError('invalid result file')
-        report = validate_report(json.loads(wrapper_report.read_text()))
+        report = validate_report(strict_json(wrapper_report.read_text()))
+        cancellation.checkpoint()
         if code != 0 and report['accepted']:
             raise ValueError('runner result mismatch')
         if before != {name: digest(ROOT / name) for name in tracked} or digest(binary) != provenance['fixtureSha256'] or asset_hashes(assets) != provenance['assetSha256']:
@@ -258,12 +357,12 @@ def _main(cancellation, argv=None):
             private = None
     except Exception:
         # Never serialize exceptions, child output, private paths or environment.
-        report = failed_report()
+        report = failed_report(report['diagnostics'])
         accepted = False
     try:
         if cancellation.requested:
             accepted = False
-            report = failed_report()
+            report = failed_report(report['diagnostics'])
             provenance['stage'] = 'cancelled'
         if not export_ready:
             raise ValueError('export directory was not created')

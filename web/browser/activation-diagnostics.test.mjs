@@ -119,3 +119,14 @@ test('synthetic locale label excludes option text while retaining exact label lo
   const fixture = await readFile(new URL('./activation-fixtures.mjs', import.meta.url), 'utf8')
   assert.ok(fixture.includes("page.getByLabel('Locale', { exact: true }).selectOption(locale)"))
 })
+
+test('normal handoff observations have distinct fixed stages without skipped assertions', async () => {
+  const source = await readFile(new URL('./activation-native.acceptance.mjs', import.meta.url), 'utf8')
+  let previous = -1
+  for (const name of ['restart-confirm', 'management-ready', 'old-exit', 'successor-start', 'open-not-automatic', 'open-request', 'open-observed', 'open-consumed']) {
+    const value = lifecycle(); advanceLifecycle(value, name); assert.equal(value.workStage, name)
+    const index = source.indexOf("activation.phase('" + name + "')")
+    assert.ok(index > previous); previous = index
+  }
+  for (const assertion of ["expect(popup.locator('#management')).toBeVisible()", "expect.poll(() => activation.oldExited()).toBe(true)", "expect.poll(() => activation.successorStarted()).toBe(true)", "expect(await activation.opened()).toBe(false)", "expect.poll(() => activation.opened()).toBe(true)", "expect(popup.locator('#open')).toBeDisabled()"]) assert.ok(source.includes(assertion))
+})

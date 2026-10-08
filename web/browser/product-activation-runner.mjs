@@ -4,10 +4,16 @@ import { chmod, lstat, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { productActivationScope } from './product-activation-contract.mjs'
+import { emptyDiagnostics, validateDiagnostics } from './product-activation-diagnostics.mjs'
 
 function validSummary(summary) {
-  const keys = ['schema', 'expected', 'observed', 'passed', 'globalErrors', 'selectionValid', 'unexpected', 'runnerPassed', 'accepted']
-  return summary && Object.keys(summary).length === keys.length && keys.every(key => Object.hasOwn(summary, key)) && summary.schema === 1 && summary.expected === 2 && summary.observed === 2 && summary.passed === 2 && summary.globalErrors === 0 && summary.selectionValid === true && summary.unexpected === false && summary.runnerPassed === true && summary.accepted === true
+  // Preserve complete schema validation before private evidence deletion.
+  // Valid default/missing observations remain evidence-only, never pass gates.
+  let diagnostics
+  try { diagnostics = validateDiagnostics(summary?.diagnostics) } catch { return false }
+  if (diagnostics.summaryAvailable && (!diagnostics.selectionValid || diagnostics.unexpected || diagnostics.globalErrors !== 0 || diagnostics.observed !== 2 || diagnostics.passed !== 2 || diagnostics.cases.some(row => !row.started || row.status !== 'passed'))) return false
+  const keys = ['schema', 'expected', 'observed', 'passed', 'globalErrors', 'selectionValid', 'unexpected', 'runnerPassed', 'accepted', 'diagnostics']
+  return summary && Object.keys(summary).length === keys.length && keys.every(key => Object.hasOwn(summary, key)) && summary.schema === 2 && summary.expected === 2 && summary.observed === 2 && summary.passed === 2 && summary.globalErrors === 0 && summary.selectionValid === true && summary.unexpected === false && summary.runnerPassed === true && summary.accepted === true
 }
 
 function cleanScopeProof(proof) {
@@ -15,9 +21,9 @@ function cleanScopeProof(proof) {
   return proof && Object.keys(proof).length === keys.length && keys.every(key => Object.hasOwn(proof, key)) && proof.schema === 1 && proof.complete === true && proof.descendantsReaped === true && proof.playwrightExit === 0 && proof.forced === false && proof.deadlineExceeded === false && proof.errors === 0 && Number.isSafeInteger(proof.observed) && proof.observed > 0 && Number.isSafeInteger(proof.reaped) && proof.reaped > 0
 }
 
-async function privateReport(root, name) {
+async function privateReport(root, name, limit = 4096) {
   const path = join(root, name), info = await lstat(path)
-  assert.ok(info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.size <= 4096 && (info.mode & 0o077) === 0, 'Protected bounded private report required')
+  assert.ok(info.isFile() && !info.isSymbolicLink() && info.uid === process.getuid() && info.size <= limit && (info.mode & 0o077) === 0, 'Protected bounded private report required')
   return JSON.parse(await readFile(path, 'utf8'))
 }
 
@@ -30,6 +36,7 @@ async function run() {
   assert.ok(process.env.SOBA_WEB_ACTIVATION_BINARY && isAbsolute(process.env.SOBA_WEB_ACTIVATION_BINARY), 'Prepared product acceptance binary required')
   const report = resolve(process.env.SOBA_PRODUCT_ACTIVATION_REPORT || 'product-activation-sanitized-result.json')
   let root, child, scopeExit, childExited = false, exitCode = -1, timedOut = false, outputOverflow = false, bytes = 0, summary, scopeProof, cleanupProven = false
+  let diagnostics = emptyDiagnostics()
   let cancellationRequested = false, cancellationMarkerFailed = false, cancellationWrite
   const writeCancellation = () => {
     if (!root || cancellationWrite) return cancellationWrite
@@ -80,7 +87,10 @@ async function run() {
       // 30s. In either case the scope stays attached until ECHILD. Node has no
       // direct-kill, timer, unref or detach path that can abandon this join.
       exitCode = await scopeExit
-      try { summary = await privateReport(root, 'sanitized-summary.json') } catch {}
+      try { summary = await privateReport(root, 'sanitized-summary.json', 16384) } catch {}
+      // Reconstruct optional evidence independently from the acceptance gates.
+      // An unavailable or malformed diagnostic payload is never copied raw.
+      try { diagnostics = validateDiagnostics(summary?.diagnostics) } catch {}
       try { scopeProof = await privateReport(root, 'scope-proof.json') } catch {}
       timedOut = scopeProof?.deadlineExceeded === true
     }
@@ -104,7 +114,7 @@ async function run() {
   }
   const schemaValid = validSummary(summary)
   const accepted = !cancellationRequested && !cancellationMarkerFailed && exitCode === 0 && !timedOut && !outputOverflow && cleanupProven && Boolean(schemaValid) && Boolean(cleanScopeProof(scopeProof))
-  await writeFile(report, JSON.stringify({ schema: 1, accepted, expected: 2, allSelectedPassed: Boolean(schemaValid), runnerExitedSuccessfully: exitCode === 0, timedOut, outputOverflow, nativeCleanupProven: cleanupProven, scope: productActivationScope }), { mode: 0o600 })
+  await writeFile(report, JSON.stringify({ schema: 2, accepted, expected: 2, allSelectedPassed: Boolean(schemaValid), runnerExitedSuccessfully: exitCode === 0, timedOut, outputOverflow, nativeCleanupProven: cleanupProven, scope: productActivationScope, diagnostics: validateDiagnostics(diagnostics) }), { mode: 0o600 })
   console.log(accepted ? 'PASS: two production-entry cases and private cleanup verified.' : 'FAIL: product-entry acceptance or private cleanup not verified. Raw diagnostics are never exportable.')
   process.exitCode = accepted ? 0 : 1
 }

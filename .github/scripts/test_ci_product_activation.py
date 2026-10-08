@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
@@ -24,8 +25,9 @@ class ProductActivationPolicyTests(unittest.TestCase):
         self.assertFalse(gate.validate_report(gate.failed_report())['accepted'])
         self.assertTrue(gate.validate_report(self.passing())['accepted'])
         self.assertEqual(gate.failed_report()['expected'], 2)
+        self.assertEqual(gate.failed_report()['schema'], 2)
         self.assertEqual(set(self.passing()), gate.KEYS)
-        for change in ({'expected': 7}, {'expected': True}, {'schema': True}, {'scope': 'other'},
+        for change in ({'expected': 7}, {'expected': True}, {'schema': True}, {'schema': 1}, {'scope': 'other'},
                        {'allSevenPassed': True}, {'diagnostics': 'synthetic'}, {'timedOut': 0},
                        {'timedOut': True}, {'outputOverflow': True}, {'nativeCleanupProven': False},
                        {'allSelectedPassed': False}, {'runnerExitedSuccessfully': False}):
@@ -39,6 +41,156 @@ class ProductActivationPolicyTests(unittest.TestCase):
         for key in gate.BOOLS:
             with self.assertRaises(ValueError):
                 gate.validate_report(dict(gate.failed_report(), **{key: 0}))
+
+    def test_diagnostic_inventory_deep_reconstruction_and_closed_keys(self):
+        value = gate.empty_diagnostics()
+        copied = gate.validate_diagnostics(value)
+        self.assertEqual(copied, value)
+        self.assertEqual([row['id'] for row in copied['cases']], ['product-web', 'product-cli'])
+        targets = [(), ('cases', 0), ('cases', 0, 'lifecycle'), ('cases', 0, 'lifecycle', 'native'), ('cases', 0, 'lifecycle', 'native', 'old')]
+        for path in targets:
+            for operation in ('add', 'remove'):
+                bad = gate.empty_diagnostics()
+                target = bad
+                for part in path:
+                    target = target[part]
+                if operation == 'add':
+                    target['rawException'] = 'synthetic-private-detail'
+                else:
+                    del target[next(iter(target))]
+                with self.subTest(path=path, operation=operation), self.assertRaises(ValueError):
+                    gate.validate_diagnostics(bad)
+        copied['cases'][0]['lifecycle']['native']['old']['invalid'] = True
+        self.assertFalse(value['cases'][0]['lifecycle']['native']['old']['invalid'])
+
+    def test_diagnostic_case_order_duplicates_statuses_and_start_flags(self):
+        for mutation in ('reverse', 'duplicate', 'short', 'long', 'unknown', 'passed-unstarted', 'coerced-start', 'both-flags'):
+            value = gate.empty_diagnostics()
+            cases = value['cases']
+            if mutation == 'reverse': cases.reverse()
+            if mutation == 'duplicate': cases[1] = cases[0]
+            if mutation == 'short': cases.pop()
+            if mutation == 'long': cases.append(cases[0])
+            if mutation == 'unknown': cases[0]['status'] = 'synthetic-private-detail'
+            if mutation == 'passed-unstarted':
+                cases[0]['status'] = 'passed'
+                value.update(observed=1, passed=1)
+            if mutation == 'coerced-start': cases[0]['started'] = 1
+            if mutation == 'both-flags': cases[0].update(diagnosticAvailable=True, diagnosticRejected=True)
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                gate.validate_diagnostics(value)
+
+    def test_diagnostic_counts_reject_coercion_overflow_and_disagreement(self):
+        for key, limit in (('globalErrors', 255), ('observed', 2), ('passed', 2)):
+            for invalid in (True, False, -1, limit + 1, 1.0, '1', None):
+                value = gate.empty_diagnostics()
+                value[key] = invalid
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    gate.validate_diagnostics(value)
+        for key in gate.LIFECYCLE_COUNTS:
+            for invalid in (True, -1, 256, 1.0, '1'):
+                value = gate.empty_lifecycle()
+                value[key] = invalid
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    gate.validate_lifecycle(value)
+        for key in ('observed', 'passed'):
+            value = gate.empty_diagnostics()
+            value[key] = 1
+            with self.assertRaises(ValueError):
+                gate.validate_diagnostics(value)
+
+    def test_lifecycle_enums_booleans_and_native_roles_are_closed(self):
+        for key in gate.LIFECYCLE_ENUMS:
+            for invalid in ('synthetic-private-detail', '', 1, True, {}, []):
+                value = gate.empty_lifecycle()
+                value[key] = invalid
+                with self.subTest(key=key), self.assertRaises(ValueError):
+                    gate.validate_lifecycle(value)
+        for key in gate.LIFECYCLE_BOOLS:
+            value = gate.empty_lifecycle()
+            value[key] = 1
+            with self.assertRaises(ValueError):
+                gate.validate_lifecycle(value)
+        for key in gate.NATIVE_KEYS:
+            value = gate.empty_lifecycle()
+            value['native']['old'][key] = 'synthetic-private-detail'
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                gate.validate_lifecycle(value)
+        for change in ({'available': True, 'invalid': True}, {'stage': 'owner-start'}, {'failed': True}, {'ownerStatus': 'connected'}, {'peerStatus': 'connected'}):
+            value = gate.empty_lifecycle()
+            value['native']['old'].update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                gate.validate_lifecycle(value)
+        value = gate.empty_lifecycle()
+        value['native']['old']['invalid'] = True
+        self.assertTrue(gate.validate_lifecycle(value)['native']['old']['invalid'])
+
+    def test_work_and_cleanup_failures_stay_separate_and_evidence_only(self):
+        value = self.passing()
+        # Missing diagnostics and independently observed states cannot invent
+        # a new owner/peer success predicate over the existing product gate.
+        self.assertTrue(gate.validate_report(value)['accepted'])
+        value.update(accepted=False, allSelectedPassed=False)
+        diagnostics = value['diagnostics']
+        diagnostics.update(summaryAvailable=True, selectionValid=True, observed=1)
+        row = diagnostics['cases'][0]
+        row.update(started=True, status='failed', diagnosticAvailable=True)
+        row['lifecycle'].update(workPhase='restart-confirm', firstFailurePhase='review', workFailed=True,
+                                cleanupPhase='complete', firstCleanupFailurePhase='proof', cleanupFailed=True)
+        row['lifecycle']['native']['old'].update(available=True, stage='owner-status', ownerStatus='local-confirmed', peerStatus='connected')
+        result = gate.validate_report(value)
+        self.assertFalse(result['accepted'])
+        life = result['diagnostics']['cases'][0]['lifecycle']
+        self.assertEqual(life['firstFailurePhase'], 'review')
+        self.assertEqual(life['firstCleanupFailurePhase'], 'proof')
+        self.assertEqual(life['native']['old']['ownerStatus'], 'local-confirmed')
+        failed = gate.failed_report(result['diagnostics'])
+        self.assertFalse(failed['accepted'])
+        self.assertEqual(failed['diagnostics'], result['diagnostics'])
+        # Actual case failure contradicts allSelectedPassed even though the
+        # independently observed owner/peer statuses remain evidence only.
+        with self.assertRaises(ValueError):
+            gate.validate_report(dict(value, accepted=True, allSelectedPassed=True))
+        diagnostics.update(observed=2, passed=2)
+        for case in diagnostics['cases']:
+            case.update(started=True, status='passed')
+        # Original case results now agree. Native statuses and separate work/
+        # cleanup observations still do not introduce new success predicates.
+        self.assertTrue(gate.validate_report(dict(value, accepted=True, allSelectedPassed=True))['accepted'])
+
+    def test_available_case_summary_must_support_all_selected_passed(self):
+        value = self.passing()
+        value['diagnostics'].update(summaryAvailable=True, selectionValid=True, observed=2, passed=2)
+        for case in value['diagnostics']['cases']:
+            case.update(started=True, status='passed')
+        self.assertTrue(gate.validate_report(value)['accepted'])
+        for change in ({'selectionValid': False}, {'unexpected': True}, {'globalErrors': 1}):
+            bad = json.loads(json.dumps(value))
+            bad['diagnostics'].update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                gate.validate_report(bad)
+
+    def test_report_parser_rejects_duplicates_and_nonfinite_values(self):
+        for raw in ('{"diagnostics": {}, "diagnostics": {}}', '{"nested": {"stage": "one", "stage": "two"}}', '{"value": NaN}', '{"value": Infinity}', '{"value": -Infinity}'):
+            with self.assertRaises(ValueError):
+                gate.strict_json(raw)
+        self.assertEqual(gate.strict_json(json.dumps(gate.failed_report())), gate.failed_report())
+
+    def test_browser_diagnostic_vocabulary_matches_python_exactly(self):
+        source = (ROOT / 'web/browser/product-activation-diagnostics.mjs').read_text()
+        constants = {'caseIds': gate.CASE_IDS, 'statuses': gate.STATUSES, 'workPhases': gate.WORK_PHASES,
+                     'cleanupPhases': gate.CLEANUP_PHASES, 'exits': gate.EXITS, 'nativeStages': gate.NATIVE_STAGES,
+                     'nativeStatuses': gate.NATIVE_STATUSES, 'nativeRoles': gate.NATIVE_ROLES,
+                     'booleanKeys': gate.LIFECYCLE_BOOLS, 'counterKeys': gate.LIFECYCLE_COUNTS}
+        for name, expected in constants.items():
+            match = re.search(r'export const ' + name + r' = Object\.freeze\(\[(.*?)\]\)', source, re.S)
+            self.assertIsNotNone(match, name)
+            self.assertEqual(tuple(re.findall(r"'([^']*)'", match.group(1))), expected, name)
+        self.assertIn("export const failurePhases = Object.freeze(['none', 'unknown', ...workPhases])", source)
+        self.assertIn("export const cleanupFailurePhases = Object.freeze(['none', 'unknown', ...cleanupPhases])", source)
+        gate_source = Path(gate.__file__).read_text()
+        self.assertIn('info.st_size > 16384', gate_source)
+        self.assertIn('validate_report(strict_json(wrapper_report.read_text()))', gate_source)
 
     def test_toolchain_exact(self):
         hashes = {'go': 'a' * 64, 'node': 'b' * 64}
@@ -80,12 +232,14 @@ class ProductActivationPolicyTests(unittest.TestCase):
             executable.write_bytes(b'synthetic executable fixture')
             executable.chmod(0o700)
             browsers = {'browsers': [{'name': 'chromium', 'revision': '123'}]}
-            self.assertEqual(gate.validate_chromium(browsers, executable, cache), '123')
+            with mock.patch.object(gate.os, 'access', return_value=True):
+                self.assertEqual(gate.validate_chromium(browsers, executable, cache), '123')
             for revision in ('124', 'other', True):
                 with self.assertRaises(ValueError):
                     gate.validate_chromium({'browsers': [{'name': 'chromium', 'revision': revision}]}, executable, cache)
-            executable.chmod(0o600)
-            with self.assertRaises(ValueError):
+            # os.access(X_OK) is platform-specific; exercise the explicit
+            # validator branch portably instead of relying on POSIX chmod.
+            with mock.patch.object(gate.os, 'access', return_value=False), self.assertRaises(ValueError):
                 gate.validate_chromium(browsers, executable, cache)
 
     def test_runtime_environment_is_allowlisted(self):

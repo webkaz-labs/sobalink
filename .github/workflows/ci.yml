@@ -662,6 +662,7 @@ jobs:
       - name: Verify fixed product acceptance policy
         run: |
           python -m unittest discover -s .github/scripts -p 'test_ci_product_activation.py' -v
+          node --test web/browser/product-activation-diagnostics.test.mjs
       - name: Build normal assets and run two private production-entry cases
         id: product-activation
         timeout-minutes: 25

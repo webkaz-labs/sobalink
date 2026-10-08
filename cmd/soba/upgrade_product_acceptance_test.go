@@ -215,6 +215,9 @@ func runProductOwner(dir string, successor bool) (result error) {
 	if successor {
 		role = "successor"
 	}
+	diagnostic := newProductNativeDiagnostic(dir, role)
+	diagnostic.stage("owner-start")
+	defer func() { diagnostic.finish(result) }()
 	var observationFailed atomic.Bool
 	observeForegroundWebURL = func(url string) {
 		if registerActivationOrigin(dir, role, url) != nil {
@@ -229,6 +232,7 @@ func runProductOwner(dir string, successor bool) (result error) {
 	var peer *core.Core
 	var peerLock io.Closer
 	if successor {
+		diagnostic.stage("peer-open")
 		peerDir := filepath.Join(dir, "peer")
 		lock, err := config.AcquireLock(peerDir)
 		if err != nil {
@@ -245,18 +249,21 @@ func runProductOwner(dir string, successor bool) (result error) {
 			raw, _ := json.Marshal(in)
 			return peer.Command(ctx, webui.Command{RequestID: randomProductRequest(), Name: name, Payload: raw})
 		}
+		diagnostic.stage("peer-review")
 		reviewed, err := invoke("direct-lan.upgrade.review", intent)
 		if err != nil {
 			return err
 		}
 		intent.ExpectedRevision = reviewed.(core.UpgradeReview).Revision
+		diagnostic.stage("peer-apply")
 		if _, err := invoke("direct-lan.upgrade.run", intent); err != nil {
 			return err
 		}
 	}
+	diagnostic.stage("foreground")
 	monitorDone := make(chan error, 1)
 	go func() {
-		err := monitorProductOwner(ctx, cancel, dir, successor, manifest, peer, &observationFailed)
+		err := monitorProductOwner(ctx, cancel, dir, successor, manifest, peer, &observationFailed, diagnostic)
 		if err != nil {
 			cancel()
 		}
@@ -275,7 +282,7 @@ func productIPC(ctx context.Context, dir, command string, out any) error {
 	defer cancel()
 	return control.Call(call, dir, command, out)
 }
-func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir string, successor bool, manifest productFixtureManifest, peer *core.Core, failed *atomic.Bool) error {
+func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir string, successor bool, manifest productFixtureManifest, peer *core.Core, failed *atomic.Bool, diagnostic *productNativeDiagnostic) error {
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	announced, cliStarted, proofWritten := false, false, false
@@ -297,6 +304,7 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 		if productIPC(ctx, dir, lifecycleIdentityCommand, &identity) != nil || identity.ProcessID != os.Getpid() {
 			continue
 		}
+		diagnostic.stage("identity")
 		if !announced {
 			if successor {
 				if !identity.Offline {
@@ -322,9 +330,11 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 				}
 			}
 			announced = true
+			diagnostic.stage("management-announced")
 		}
 		if !successor && os.Getenv("SOBA_ACTIVATION_CASE") == "product-core-cli" && !cliStarted {
 			if _, err := os.Stat(filepath.Join(dir, "product-cli-start")); err == nil {
+				diagnostic.stage("cli-launch")
 				tty := os.NewFile(3, "private-product-pty")
 				if tty == nil {
 					return errors.New("private PTY missing")
@@ -345,25 +355,38 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 			}
 		}
 		if successor && !proofWritten && peer != nil {
+			diagnostic.stage("review-read")
 			var intent core.UpgradeIntent
 			if readProductJSON(filepath.Join(dir, "product-review.json"), &intent, 4096) != nil {
 				continue
 			}
 			raw, _ := json.Marshal(webui.Command{RequestID: randomProductRequest(), Name: "direct-lan.upgrade.status", Payload: json.RawMessage(`{}`)})
 			var status core.UpgradeProgress
-			if productIPC(ctx, dir, string(raw), &status) != nil || status.State != "network-started" {
+			diagnostic.stage("owner-status")
+			if productIPC(ctx, dir, string(raw), &status) != nil {
 				continue
 			}
+			diagnostic.status(false, status.State)
+			if status.State != "network-started" {
+				continue
+			}
+			diagnostic.stage("peer-status")
 			peerStatus, err := peer.Command(ctx, webui.Command{RequestID: randomProductRequest(), Name: "direct-lan.upgrade.status", Payload: json.RawMessage(`{}`)})
+			if err == nil {
+				diagnostic.status(true, peerStatus.(core.UpgradeProgress).State)
+			}
 			if err != nil || peerStatus.(core.UpgradeProgress).State != "network-started" {
 				continue
 			}
+			diagnostic.stage("review-binding")
 			if status.PeerID != intent.PeerID || status.Deadline != intent.Deadline || intent.PeerID != manifest.PeerID || intent.ExpectedRevision == "" {
 				return errors.New("actual original review binding changed")
 			}
+			diagnostic.stage("network-ready")
 			if productIPC(ctx, dir, lifecycleIdentityCommand, &identity) != nil || !identity.NetworkReady || !peer.ManagedLifecycleState().NetworkReady {
 				continue
 			}
+			diagnostic.stage("persisted-context")
 			var ownerState, peerState productPrivateState
 			if readProductJSON(filepath.Join(dir, "direct-lan.json"), &ownerState, 1<<20) != nil || readProductJSON(filepath.Join(dir, "peer", "direct-lan.json"), &peerState, 1<<20) != nil {
 				continue
@@ -374,6 +397,7 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 			if ownerState.Identity.PublicKey() != manifest.OwnerID || peerState.Identity.PublicKey() != manifest.PeerID || ownerState.Peers[0].Peer.Key != manifest.PeerID || peerState.Peers[0].Peer.Key != manifest.OwnerID || ownerState.PendingChange != nil || peerState.PendingChange != nil || ownerState.Peers[0].UpgradePending != nil || peerState.Peers[0].UpgradePending != nil {
 				return errors.New("actual saved owner identity or completion changed")
 			}
+			diagnostic.stage("pair-binding")
 			first, e1 := ownerState.Peers[0].PairContext.Binding()
 			second, e2 := peerState.Peers[0].PairContext.Binding()
 			if e1 != nil || e2 != nil || first != second || ownerState.Peers[0].EndpointState == nil || peerState.Peers[0].EndpointState == nil || ownerState.Peers[0].EndpointState.PairBinding != first || peerState.Peers[0].EndpointState.PairBinding != second {
@@ -383,6 +407,7 @@ func monitorProductOwner(ctx context.Context, cancel context.CancelFunc, dir str
 				return errors.New("private evidence write failed")
 			}
 			proofWritten = true
+			diagnostic.stage("proof-written")
 		}
 	}
 }
@@ -590,7 +615,10 @@ func (w *productReviewWriter) Write(data []byte) (int, error) {
 	}
 	return w.Buffer.Write(data)
 }
-func runProductCLIDriver(ctx context.Context, dir string) error {
+func runProductCLIDriver(ctx context.Context, dir string) (result error) {
+	diagnostic := newProductNativeDiagnostic(dir, "cli")
+	diagnostic.stage("cli-terminal")
+	defer func() { diagnostic.finish(result) }()
 	if !loginPrivateTerminal(os.Stdout) {
 		return errors.New("actual private terminal required")
 	}
@@ -600,10 +628,12 @@ func runProductCLIDriver(ctx context.Context, dir string) error {
 	}
 	deadline := time.Now().Add(45 * time.Second).UTC().Truncate(time.Second).Format(time.RFC3339)
 	args := []string{"--state-dir", dir, "--locale", "en", "direct-lan", "upgrade", "--peer", manifest.PeerID, "--deadline", deadline}
+	diagnostic.stage("cli-review")
 	var out productReviewWriter
 	if err := run(ctx, args, &out); err != nil {
 		return err
 	}
+	diagnostic.stage("cli-review-binding")
 	var review core.UpgradeReview
 	if json.Unmarshal(out.Bytes(), &review) != nil || review.PeerID != manifest.PeerID || review.Deadline != deadline || review.Revision == "" || !review.RestartRequired {
 		return errors.New("actual CLI review binding invalid")
@@ -612,5 +642,10 @@ func runProductCLIDriver(ctx context.Context, dir string) error {
 	if err := productPrivateJSON(filepath.Join(dir, "product-review.json"), intent); err != nil {
 		return err
 	}
-	return run(ctx, append(args, "--apply", "--review", review.Revision), os.Stdout)
+	diagnostic.stage("cli-apply")
+	err := run(ctx, append(args, "--apply", "--review", review.Revision), os.Stdout)
+	if err == nil {
+		diagnostic.stage("cli-complete")
+	}
+	return err
 }
