@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/identity"
@@ -17,15 +18,20 @@ import (
 // invitations and relay identities are incompatible with direct LAN pairing.
 type directLANBackend struct {
 	*directlan.Node
-	completion    *managedCompletionOwner
-	mu            sync.Mutex
-	ctx           context.Context
-	store         *directLANStore
-	ready, closed bool
-	closeOnce     sync.Once
-	closeErr      error
-	startAbsent   bool
-	resources     directLANRuntimeResources
+	replacing           atomic.Pointer[EndpointTransaction] // exact owned interruption; never traffic authority
+	endpointStopped     atomic.Bool                         // signal-only Stop path, including transaction joins
+	endpointTransaction *EndpointTransaction                // Core.op; retained through failure or future publication
+	completion          *managedCompletionOwner             // initial owner, immutable after root binding
+	successor           atomic.Pointer[managedCompletionOwner]
+	replacementOwner    *directlan.ManagedTransportOwner // private immutable constructor capability
+	mu                  sync.Mutex
+	ctx                 context.Context
+	store               *directLANStore
+	ready, closed       bool
+	closeOnce           sync.Once
+	closeErr            error
+	startAbsent         bool
+	resources           directLANRuntimeResources
 }
 
 // Applications use the validated userspace WireGuard/gVisor data plane.
@@ -57,7 +63,7 @@ func (c *Core) newDirectLANBackend(s *directLANStore) (NetworkBackend, error) {
 	return &directLANBackend{Node: n, ctx: c.ctx, store: s, resources: resources}, nil
 }
 func (b *directLANBackend) Start() error {
-	if b.completion != nil && !b.completion.activationCurrent() {
+	if o := b.currentCompletion(); o != nil && !o.activationCurrent() {
 		return directlan.ErrRecovery
 	}
 	b.mu.Lock()
@@ -92,8 +98,19 @@ func (b *directLANBackend) State(ctx context.Context) (identity.State, error) {
 	if closed || b.ctx.Err() != nil {
 		return identity.State{}, net.ErrClosed
 	}
-	if b.completion != nil && !b.completion.activationCurrent() {
-		b.completion.invalidate()
+	if t := b.replacing.Load(); t != nil && t.backend == b && t.store == b.store && !b.endpointStopped.Load() {
+		st := identity.State{SelfID: b.PublicKey(), Backend: "reconnecting", IPs: []netip.Addr{b.OverlayAddr()}, ReservedPorts: []uint16{b.Endpoint().Port()}, Snapshot: policy.Snapshot{Running: false}}
+		for _, peer := range b.Peers() {
+			ip, err := directlan.OverlayAddress(peer.Key)
+			if err != nil {
+				return identity.State{}, err
+			}
+			st.Snapshot.Peers = append(st.Snapshot.Peers, policy.Peer{ID: peer.Key, DNSName: peer.Key + ".direct-lan.sobalink", IPs: []netip.Addr{ip}})
+		}
+		return st, nil
+	}
+	if o := b.currentCompletion(); o != nil && !o.activationCurrent() {
+		o.invalidate()
 		return identity.State{}, directlan.ErrRecovery
 	}
 	if b.store.needsRecovery() {
@@ -206,10 +223,11 @@ func (b *directLANBackend) WhoIs(ctx context.Context, remote netip.AddrPort) (st
 	return "", directlan.ErrUntrusted
 }
 func (b *directLANBackend) Close() error {
+	b.endpointStopped.Store(true)
 	b.closeOnce.Do(func() {
 		// Revoke response admission before any potentially blocking owner join.
-		if b.completion != nil {
-			b.completion.invalidate()
+		if o := b.currentCompletion(); o != nil {
+			o.invalidate()
 		}
 		b.mu.Lock()
 		b.ready, b.closed = false, true
@@ -234,4 +252,13 @@ func (b *directLANBackend) TransportRecovering() bool {
 	ready, closed := b.ready, b.closed
 	b.mu.Unlock()
 	return ready && !closed && b.ctx.Err() == nil && !b.store.needsRecovery() && b.Node.TransportRecovering()
+}
+
+// Successor authority is separately published; initial constructor input stays
+// immutable for concurrent Stop and late callbacks from retired generations.
+func (b *directLANBackend) currentCompletion() *managedCompletionOwner {
+	if o := b.successor.Load(); o != nil {
+		return o
+	}
+	return b.completion
 }

@@ -94,27 +94,30 @@ type TransportEndpoints struct {
 	Peers  []Peer
 }
 
-// PreparedTransport owns one detached, non-admitting candidate. There is no
-// publication method or Origin/peer capability export. Abort and WaitClosed
-// manage resources only; this type cannot transfer authorization to a caller.
+// PreparedTransport owns one detached, non-admitting candidate. The private
+// Core coordinator may transfer a managed candidate through the exact one-use
+// publication gate. No Origin/peer capability is exported by this handle.
 type PreparedTransport struct {
-	mu      sync.Mutex // protects detachable build references against Abort
-	self    *PreparedTransport
-	node    *Node
-	retired *TransportRetirement
-	build   *generationBuild
-	done    chan struct{}
-	result  error // immutable after done
+	mu                              sync.Mutex // protects detachable build references against Abort
+	self                            *PreparedTransport
+	node                            *Node
+	retired                         *TransportRetirement
+	build                           *generationBuild
+	done                            chan struct{}
+	result                          error           // immutable after done
+	transaction                     context.Context // managed staging lifetime only
+	transferred                     chan struct{}
+	managed, published, publishUsed bool // p.mu; publication transfers ownership to Node
 }
 
 // PrepareTransport may bind only after the exact old physical owner succeeded.
-// It never waits for retirement while holding a Node/authority mutex. Until a
-// separately reviewed Core transaction and publication gate exist, every
-// candidate remains staged; RetireTransport still returns its incomplete guard.
+// It never waits for retirement while holding a Node/authority mutex. Legacy
+// candidates have no publication route; managed replacement requires the
+// separate Core transaction seam. RetireTransport keeps its incomplete guard.
 // Once registered, a non-nil candidate is returned even on construction failure
 // so callers can join cleanup. Node retains the owner if that handle is dropped.
 func (n *Node) PrepareTransport(ctx context.Context, retired *TransportRetirement, endpoints TransportEndpoints) (*PreparedTransport, error) {
-	if n.contextControl || ctx == nil || n.cfg.protectedPairs() {
+	if n.contextControl || ctx == nil || n.runtimeConfig().protectedPairs() {
 		return nil, ErrUnavailable
 	}
 	if err := ctx.Err(); err != nil {
@@ -194,13 +197,13 @@ func (p *PreparedTransport) construct(cfg Config) {
 }
 
 func (n *Node) candidateConfigLocked(retired *TransportRetirement, endpoints TransportEndpoints) (Config, error) {
-	if n.cfg.protectedPairs() {
+	if n.runtimeConfig().protectedPairs() {
 		return Config{}, ErrUnavailable
 	}
 	if !endpoints.Listen.IsValid() || endpoints.Listen.Addr().Is4() != retired.g.cfg.Listen.Addr().Is4() {
 		return Config{}, ErrPolicy
 	}
-	cfg := cloneGenerationConfig(n.cfg)
+	cfg := cloneGenerationConfig(retired.g.cfg)
 	cfg.Listen = endpoints.Listen
 	cfg.Peers = append([]Peer(nil), endpoints.Peers...)
 	for _, peer := range cfg.Peers {
@@ -229,8 +232,8 @@ func (p *PreparedTransport) Abort() {
 	}
 	p.mu.Lock()
 	build := p.build
-	p.mu.Unlock()
-	if build != nil {
+	defer p.mu.Unlock()
+	if build != nil && !p.published {
 		build.RequestStop()
 	}
 }
@@ -242,12 +245,54 @@ func (p *PreparedTransport) WaitClosed(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-p.done:
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.published {
+			return ErrUnavailable
+		} // transferred does not mean closed
 		return p.result
 	}
 }
 
 func (p *PreparedTransport) supervise() {
 	build := p.build
+	if p.managed {
+		select {
+		case <-p.transaction.Done():
+			p.Abort()
+		case <-p.transferred:
+			p.finishTransfer()
+			return
+		case <-build.ctx.Done():
+		case <-build.done:
+			if build.err == nil {
+				g := build.generation.Load()
+				if g != nil {
+					select {
+					case <-p.transaction.Done():
+						p.Abort()
+					case <-p.transferred:
+						p.finishTransfer()
+						return
+					case <-build.ctx.Done():
+					case <-g.stop:
+						p.Abort()
+					}
+				}
+			}
+		}
+		// Abort serializes with transfer. A cancellation selected just after the
+		// successful swap must never reach the successor's build/resources.
+		p.mu.Lock()
+		published := p.published
+		p.mu.Unlock()
+		if published {
+			p.finishTransfer()
+			return
+		}
+		build.RequestStop()
+	}
+
 	select {
 	case <-build.ctx.Done():
 		build.signalResources()
@@ -284,4 +329,13 @@ func (p *PreparedTransport) supervise() {
 	}
 	close(p.done)
 	n.mu.Unlock()
+}
+
+// Completion of the staging supervisor is not physical close evidence. A
+// published handle is consumed; stale Abort is inert and WaitClosed refuses it.
+func (p *PreparedTransport) finishTransfer() {
+	p.mu.Lock()
+	p.build, p.node, p.retired, p.transaction = nil, nil, nil, nil
+	p.mu.Unlock()
+	close(p.done)
 }

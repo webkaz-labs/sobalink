@@ -76,7 +76,7 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	if err != nil {
 		return err
 	}
-	url, code, err := app.StartWeb(files)
+	url, code, err := app.StartWeb(files, lifecycle.webHandoff(app))
 	if err != nil {
 		return err
 	}

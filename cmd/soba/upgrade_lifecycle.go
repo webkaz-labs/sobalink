@@ -17,9 +17,21 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/control"
 	"github.com/webkaz-labs/sobalink/internal/core"
+	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
 const lifecycleIdentityCommand = "lifecycle.upgrade.identity"
+const lifecycleBoundPrefix = "lifecycle.upgrade.bound "
+
+type upgradeBound struct {
+	ProcessID            int                 `json:"processId"`
+	Instance             string              `json:"instance"`
+	Command              string              `json:"command"`
+	CancelIntent         *core.UpgradeIntent `json:"cancelIntent,omitempty"`
+	Authorization        string              `json:"authorization,omitempty"`
+	AuthorizationPayload json.RawMessage     `json:"authorizationPayload,omitempty"`
+}
+
 const lifecycleStopPrefix = "lifecycle.upgrade.stop "
 
 type upgradeIdentity struct {
@@ -31,10 +43,12 @@ type upgradeIdentity struct {
 }
 
 type upgradeStop struct {
-	ProcessID          int    `json:"processId"`
-	Instance           string `json:"instance"`
-	AcknowledgementDir string `json:"acknowledgementDir"`
-	Token              string `json:"token"`
+	ProcessID            int             `json:"processId"`
+	Instance             string          `json:"instance"`
+	AcknowledgementDir   string          `json:"acknowledgementDir"`
+	Token                string          `json:"token"`
+	Authorization        string          `json:"authorization,omitempty"`
+	AuthorizationPayload json.RawMessage `json:"authorizationPayload,omitempty"`
 }
 
 type upgradeClosed struct {
@@ -46,10 +60,11 @@ type upgradeClosed struct {
 }
 
 type upgradeLifecycle struct {
-	identity upgradeIdentity
-	dir      string
-	stop     chan upgradeStop
-	stopping atomic.Bool
+	identity   upgradeIdentity
+	dir        string
+	stop       chan upgradeStop
+	stopping   atomic.Bool
+	webPending atomic.Bool
 }
 
 func newUpgradeLifecycle(dir string, offline bool) (*upgradeLifecycle, error) {
@@ -77,11 +92,42 @@ func upgradeRandomToken() (string, error) {
 }
 
 // Only the protected local IPC owner exposes this route. There is intentionally
-// no Web command capable of selecting a filesystem path or launching a helper.
+// no generic Web command capable of selecting a filesystem path. The separate
+// authenticated Web handoff receives only an exact intent and locale.
 func (l *upgradeLifecycle) handler(app *core.Core) control.Handler {
 	return func(ctx context.Context, raw string) (any, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if l.stopping.Load() {
 			return nil, errors.New("managed shutdown is in progress")
+		}
+		if strings.HasPrefix(raw, lifecycleBoundPrefix) {
+			var in upgradeBound
+			if json.Unmarshal([]byte(strings.TrimPrefix(raw, lifecycleBoundPrefix)), &in) != nil || in.ProcessID != l.identity.ProcessID || in.Instance != l.identity.Instance {
+				return nil, errors.New("process binding changed")
+			}
+			if in.Authorization != "" {
+				if err := app.CheckWebUpgradeAuthorization(in.Authorization, in.AuthorizationPayload, false); err != nil {
+					return nil, err
+				}
+			}
+			if in.CancelIntent != nil {
+				if in.Command != "" {
+					return nil, errors.New("ambiguous bound command")
+				}
+				return app.CancelManagedUpgrade(ctx, *in.CancelIntent)
+			}
+			if in.Command == "ui.url" {
+				return app.UpgradeUIURL()
+			}
+			if in.Command != "ui" {
+				var command webui.Command
+				if json.Unmarshal([]byte(in.Command), &command) != nil || (command.Name != "direct-lan.upgrade.run" && command.Name != "direct-lan.upgrade.status") {
+					return nil, errors.New("invalid bound command")
+				}
+			}
+			return app.IPC(ctx, in.Command)
 		}
 		if raw == lifecycleIdentityCommand {
 			identity := l.identity
@@ -95,6 +141,14 @@ func (l *upgradeLifecycle) handler(app *core.Core) control.Handler {
 			}
 			if !validUpgradeStop(l.dir, l.identity, request) {
 				return nil, errors.New("invalid managed shutdown binding")
+			}
+			if request.Authorization != "" {
+				if err := app.CheckWebUpgradeAuthorization(request.Authorization, request.AuthorizationPayload, true); err != nil {
+					return nil, err
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
 			if !l.stopping.CompareAndSwap(false, true) {
 				return nil, errors.New("managed shutdown already requested")
@@ -163,7 +217,7 @@ func stopForManagedUpgrade(ctx context.Context, dir string, identity upgradeIden
 	if err != nil {
 		return err
 	}
-	request := upgradeStop{identity.ProcessID, identity.Instance, ackDir, token}
+	request := upgradeStop{ProcessID: identity.ProcessID, Instance: identity.Instance, AcknowledgementDir: ackDir, Token: token}
 	acks := make(chan upgradeClosed, 1)
 	server, err := control.Serve(ctx, ackDir, func(_ context.Context, raw string) (any, error) {
 		var ack upgradeClosed

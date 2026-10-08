@@ -64,7 +64,7 @@ func validateEndpointProjection(before, next endpointmeta.Snapshot) error {
 			if r.PairRevocation != nil || r.EndpointState == nil || r.EndpointState.IssuedProof == nil {
 				return endpointmeta.ErrIdentity
 			}
-			want, err := endpointmeta.ProposeIssued(before, r.Peer.Key, *r.EndpointState.IssuedProof, now, math.MaxInt)
+			want, err := endpointmeta.ProposePreparedIssued(before, r.Peer.Key, *r.EndpointState.IssuedProof, now, math.MaxInt)
 			if err == nil && reflect.DeepEqual(want, next) {
 				return nil
 			}

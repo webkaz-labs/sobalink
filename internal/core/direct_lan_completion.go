@@ -28,6 +28,8 @@ type managedCompletionOwner struct {
 	limits                 lanStoreLimits
 	limitsSource           *lanStoreLimits
 	stopped                atomic.Bool
+	currentEndpoints       bool      // exact current-projection startup or successor
+	deadline               time.Time // earliest original process cutoff; immutable
 }
 
 func (o *managedCompletionOwner) invalidate() {
@@ -57,11 +59,14 @@ func (c *Core) newManagedCompletionBackendLocked(s *directLANStore, a *managedAc
 	if s.matchActivationLocked(a, time.Now()) != nil || s.contextPublication != a.receipt || !s.contextPublicationCurrentLocked(c.lanStartNonce) || s.contextEpoch != nil {
 		return nil, endpointmeta.ErrReview
 	}
-	projection, err := s.managedFixedEndpointProjectionLocked(time.Now())
+	projection, err := s.activationProjectionLocked(a, time.Now())
 	if err != nil {
 		return nil, err
 	}
 	cfg, err := directLANConfig(cloneDirectLANState(s.state))
+	if a.currentEndpoints {
+		cfg, err = s.managedCurrentEndpointProjectionLocked(time.Now())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -75,14 +80,33 @@ func (c *Core) newManagedCompletionBackendLocked(s *directLANStore, a *managedAc
 	cfg.FlowLimit, cfg.ListenerLimit, cfg.InvitationLimit, cfg.PacketQueueLimit = resources.Flows, resources.Listeners, resources.Invitations, resources.PacketQueue
 	cfg.PeerLimitCurrent = s.transportPeerLimit
 	// Membership additions use an exact evidence-preserving pairing delta.
-	b := &directLANBackend{ctx: c.ctx, store: s, resources: resources}
+	b := &directLANBackend{ctx: c.ctx, store: s, resources: resources, replacementOwner: directlan.NewManagedTransportOwner()}
+	cfg.ReplacementOwner = b.replacementOwner
 	o := &managedCompletionOwner{core: c, backend: b, store: s, activation: a, process: c.lanStartNonce,
 		configuration: contextConfigurationDigest(s.state), receipt: s.contextPublication,
-		revision: s.reviewRevision, limits: *s.currentCapacity(), limitsSource: s.limits.Load()}
+		revision: s.reviewRevision, limits: *s.currentCapacity(), limitsSource: s.limits.Load(),
+		currentEndpoints: a.currentEndpoints, deadline: earliestEndpointDeadline(a.deadlines)}
 	cfg.CompletionAdmission = o.admit
+	cfg.EndpointAdmission = o.admitEndpoint
 	cfg.Persist = o.persistLegacyAddition
 	cfg.AuthorityCurrent = o.authorityCurrent
-	n, err := directlan.NewNode(cfg)
+	cfg.AuthorityDeadline = o.deadline
+	var n *directlan.Node
+	if a.currentEndpoints {
+		// This is the sole production issuer across the trusted internal Core /
+		// directlan boundary. No external API accepts a Config, callback or owner.
+		// Consume the exact admission even if construction fails; the transport
+		// owner rechecks its original receipt/file/process/cutoffs on both sides.
+		a.consumed = true
+		startup := directlan.NewManagedStartupOwner(cfg, func() bool {
+			return c.activationOwnerCurrent(c.ctx, a) && s.contextEpoch == nil &&
+				s.contextPublication == a.receipt && s.contextPublicationCurrentLocked(a.process) &&
+				s.matchActivationLocked(a, time.Now()) == nil
+		})
+		n, err = directlan.NewManagedStartupNode(startup)
+	} else {
+		n, err = directlan.NewNode(cfg)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +133,7 @@ func (o *managedCompletionOwner) current(r *directlan.ManagedCompletionRequest) 
 	if !b.mu.TryLock() {
 		return false
 	}
-	current := b.Node == o.node && b.completion == o && b.store == o.store && b.ready && !b.closed && b.ctx != nil && b.ctx.Err() == nil
+	current := b.Node == o.node && b.currentCompletion() == o && b.store == o.store && b.ready && !b.closed && b.ctx != nil && b.ctx.Err() == nil
 	b.mu.Unlock()
 	return current && !o.stopped.Load()
 }
@@ -147,7 +171,7 @@ func (o *managedCompletionOwner) currentReplyLocked(key string, request endpoint
 	if request.Version != 2 || (request.Operation != "pair-context-commit" && request.Operation != "pair-context-status") {
 		return endpointmeta.ContextReply{}, endpointmeta.ErrInvalid
 	}
-	projection, err := s.managedFixedEndpointProjectionLocked(now)
+	projection, err := o.projectionLocked(now)
 	if err != nil {
 		return endpointmeta.ContextReply{}, err
 	}
@@ -221,7 +245,7 @@ func (s *managedCompletionSlot) admit(ctx context.Context) bool {
 // Signal-only, safe under Node/WG/generation locks. Every attempted publication
 // invalidates the referenced epoch synchronously before the writer is invoked.
 func (o *managedCompletionOwner) authorityCurrent() bool {
-	return o != nil && !o.stopped.Load() && o.authority.Load().Valid() && o.core != nil && o.core.ctx != nil && o.core.ctx.Err() == nil
+	return o != nil && !o.stopped.Load() && o.authority.Load().Valid() && o.core != nil && o.core.ctx != nil && o.core.ctx.Err() == nil && (o.deadline.IsZero() || time.Now().Before(o.deadline)) && (o.backend == nil || !o.backend.endpointStopped.Load())
 }
 
 // Core.op held; never invoke with Node.mu or backend.mu held.
@@ -240,6 +264,17 @@ func (o *managedCompletionOwner) activationCurrent() bool {
 	if s.contextPublication != o.receipt || !s.contextPublicationCurrentLocked(o.process) || s.contextEpoch != o.epoch || s.reviewRevision != o.revision || s.limits.Load() != o.limitsSource || *s.currentCapacity() != o.limits || contextConfigurationDigest(s.state) != o.configuration {
 		return false
 	}
-	_, err := s.managedFixedEndpointProjectionLocked(time.Now())
+	_, err := o.projectionLocked(time.Now())
 	return err == nil && o.authorityCurrent()
+}
+
+func (o *managedCompletionOwner) projectionLocked(now time.Time) (managedFixedEndpointProjection, error) {
+	if o.currentEndpoints {
+		cfg, err := o.store.managedCurrentEndpointProjectionLocked(now)
+		if err != nil {
+			return managedFixedEndpointProjection{}, err
+		}
+		return managedFixedEndpointProjection{Peers: cfg.Peers, PairContexts: cfg.PairContexts, DeniedPeerKeys: cfg.DeniedPeerKeys}, nil
+	}
+	return o.store.managedFixedEndpointProjectionLocked(now)
 }

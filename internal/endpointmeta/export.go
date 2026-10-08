@@ -109,6 +109,19 @@ func ProposeIssued(s Snapshot, remoteKey string, e Envelope, now time.Time, budg
 	return proposeIssued(s, remoteKey, e, expected, now, budget)
 }
 
+// ProposePreparedIssued commits an already privately prepared local proof at a
+// later observation. All body fields are derived again from CURRENT state;
+// only its signed Issued timestamp is retained. Current-time validation and
+// signature/freshness checks still run, and no deadline or sequence is renewed.
+// This reducer is not publication evidence and never releases proof bytes.
+func ProposePreparedIssued(s Snapshot, remoteKey string, e Envelope, now time.Time, budget int) (Snapshot, error) {
+	expected, err := prepareExportAt(s, remoteKey, ExportOptions{e.Update.Operation, e.Update.Lifetime, e.Update.Expires}, e.Update.Issued, now, budget)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return proposeIssued(s, remoteKey, e, expected, now, budget)
+}
+
 func proposeIssued(s Snapshot, remoteKey string, e Envelope, expected UpdateBody, now time.Time, budget int) (Snapshot, error) {
 	if !activeSnapshotVersion(s.Version) {
 		return Snapshot{}, ErrReview

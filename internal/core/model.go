@@ -94,10 +94,11 @@ type Options struct {
 }
 
 type Core struct {
-	managedCleanupPending      bool                 // protected by mu; ancillary durability only
-	managedCleanupError        error                // protected by mu; retained reopen/repair failures
-	managedDenied              map[string]bool      // terminal and in-flight removal denial, protected by mu
-	managedRemoval             *managedRemovalOwner // reduction-only owner, protected by mu
+	endpointJob                *endpointFollowingJob // mu: bounded coordinator, joined before op on Close
+	managedCleanupPending      bool                  // protected by mu; ancillary durability only
+	managedCleanupError        error                 // protected by mu; retained reopen/repair failures
+	managedDenied              map[string]bool       // terminal and in-flight removal denial, protected by mu
+	managedRemoval             *managedRemovalOwner  // reduction-only owner, protected by mu
 	lanStartNonce              string
 	lanStartWriteRevision      atomic.Uint64
 	lanStartUncertain          atomic.Bool
@@ -425,6 +426,7 @@ func (c *Core) close() error {
 	peerHTTP := c.peerHTTPTransport
 	control := c.contextControl
 	upgrade := c.contextUpgrade
+	endpoint := c.endpointJob
 	c.mu.Unlock()
 	if control != nil {
 		control.requestClose()
@@ -437,6 +439,10 @@ func (c *Core) close() error {
 	if upgrade != nil {
 		upgrade.cancel()
 		<-upgrade.done
+	}
+	if endpoint != nil {
+		endpoint.cancel()
+		<-endpoint.done
 	}
 	c.op.Lock()
 	defer c.op.Unlock()

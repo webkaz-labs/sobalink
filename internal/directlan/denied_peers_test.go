@@ -110,7 +110,7 @@ func TestDeniedMixedClassificationPreservesLegacyAndManaged(t *testing.T) {
 			t.Fatalf("classification mismatch: %v", err)
 		}
 	}
-	n.cfg.Persist = func([]Peer) error { return nil }
+	g.cfg.Persist = func([]Peer) error { return nil }
 	if err := n.ordinaryPeerProtocolLocked(g, unknown, protocolName); err != nil {
 		t.Fatal("genuine unknown legacy pairing contract changed", err)
 	}

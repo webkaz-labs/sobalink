@@ -17,6 +17,7 @@ import (
 // The final publisher reads them synchronously: watcher scheduling cannot make
 // a stop that already completed invisible to publication admission.
 type contextSaveLiveness struct {
+	endpoint             *EndpointTransaction
 	ctx                  context.Context
 	core                 context.Context
 	ordinary             *managedCompletionOwner
@@ -29,11 +30,29 @@ func (l *contextSaveLiveness) err() error {
 	if l == nil {
 		return nil
 	}
+	if l.endpoint != nil && l.endpoint.backend.endpointStopped.Load() {
+		return context.Canceled
+	}
+	if l.endpoint != nil {
+		if err := l.endpoint.deadlineErrorAt(time.Now()); err != nil {
+			return err
+		}
+	}
 	if l.core != nil && l.core.Err() != nil {
 		return l.core.Err()
 	}
 	if l.ordinary != nil && l.ordinary.stopped.Load() {
 		return context.Canceled
+	}
+	if l.ordinary != nil {
+		if l.ordinary.backend != nil && l.ordinary.backend.endpointStopped.Load() {
+			return context.Canceled
+		}
+		// The publisher deliberately invalidates the old epoch before checking
+		// liveness. Use immutable deadline/Stop signals, not authorityCurrent.
+		if !l.ordinary.deadline.IsZero() && !time.Now().Before(l.ordinary.deadline) {
+			return endpointmeta.ErrExpired
+		}
 	}
 	if err := l.ctx.Err(); err != nil {
 		return err
@@ -488,7 +507,7 @@ func (s *directLANStore) saveContextTransitionWithLivenessLocked(ctx context.Con
 	return contextSaveResult{changed: transition.Changed, published: true, durable: true, phase: transition.Phase}, nil
 }
 
-// All context and activation receipts are assigned at this sole successful
+// All context, activation and endpoint receipts are assigned at this sole successful
 // publication boundary. Callers must validate a closed transition or exact
 // no-delta admission before entering; reads never reconstruct this receipt.
 func (s *directLANStore) writeContextPublicationLocked(process string, next directLANState, live *contextSaveLiveness) error {

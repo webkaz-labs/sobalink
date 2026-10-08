@@ -107,6 +107,21 @@ func TestUpgradeExpiredLifetimeDeniesInboundPublication(t *testing.T) {
 	}
 }
 
+func TestUpgradeSupervisorCancellationRequiresExactIntent(t *testing.T) {
+	intent := UpgradeIntent{PeerID: "synthetic-peer", Deadline: "2026-01-01T00:01:00Z", ExpectedRevision: "synthetic-review"}
+	lifetime, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &Core{contextUpgrade: &contextUpgradeJob{intent: intent, cancel: cancel}}
+	for _, bad := range []UpgradeIntent{{PeerID: "another-peer", Deadline: intent.Deadline, ExpectedRevision: intent.ExpectedRevision}, {PeerID: intent.PeerID, Deadline: "another-deadline", ExpectedRevision: intent.ExpectedRevision}, {PeerID: intent.PeerID, Deadline: intent.Deadline, ExpectedRevision: "another-review"}} {
+		if _, err := c.CancelManagedUpgrade(context.Background(), bad); err == nil || lifetime.Err() != nil {
+			t.Fatal("unrelated supervisor cancelled the workflow")
+		}
+	}
+	if _, err := c.CancelManagedUpgrade(context.Background(), intent); err != nil || lifetime.Err() == nil {
+		t.Fatal("exact supervisor cancellation not observed", err)
+	}
+}
+
 // No transport: deterministically prove that a pending outbound operation does
 // not prevent repeated inbound maintenance, and terminal signals stop it.
 func TestUpgradePendingOutboundMaintainsInboundService(t *testing.T) {

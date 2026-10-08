@@ -825,3 +825,12 @@ textarea.code-value, .client-copy textarea.code-value, .composer textarea { font
 .network-filter { flex-wrap: wrap; }
 .network-filter button { flex: 1 1 40%; }
 .direct-lan-setup .code-value { overflow-wrap: anywhere; }
+
+/* Compact endpoint consent views: long identities never widen the panel. */
+.endpoint-controls > summary { cursor: pointer; font-weight: 600; }
+.endpoint-controls fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.endpoint-details { margin: 0; }
+.endpoint-details > div { margin-block: .35rem; }
+.endpoint-details dt { font-size: .8rem; opacity: .8; }
+.endpoint-details dd { margin: .1rem 0 0; overflow-wrap: anywhere; white-space: normal; }
+.endpoint-controls .code-value { overflow-wrap: anywhere; min-width: 0; }

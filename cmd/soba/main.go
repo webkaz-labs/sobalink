@@ -27,6 +27,9 @@ func main() {
 }
 
 func mainExitCode() int {
+	if code, ok := runUpgradeHandoffProcess(); ok {
+		return code
+	}
 	if code, ok := runBackendWorkerProcess(); ok {
 		return code
 	}

@@ -21,7 +21,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
-func (c *Core) StartWeb(assets fs.FS) (string, string, error) {
+func (c *Core) StartWeb(assets fs.FS, handoff ...webui.UpgradeHandoff) (string, string, error) {
 	c.op.Lock()
 	defer c.op.Unlock()
 	c.mu.RLock()
@@ -29,7 +29,7 @@ func (c *Core) StartWeb(assets fs.FS) (string, string, error) {
 	c.mu.RUnlock()
 	if web == nil {
 		var e error
-		web, e = webui.Start(c.ctx, assets, c)
+		web, e = webui.Start(c.ctx, assets, c, handoff...)
 		if e != nil {
 			return "", "", e
 		}
@@ -226,7 +226,11 @@ func (c *Core) maintain() {
 			}
 			ps := c.peerServer
 			c.mu.Unlock()
-			if e == nil && st.Snapshot.Running {
+			if c.endpointReplacementOwnedLocked() {
+				c.mu.Lock()
+				c.networkState, c.networkError, c.networkErrorCode = "reconnecting", "", ""
+				c.mu.Unlock()
+			} else if e == nil && st.Snapshot.Running {
 				if ps == nil {
 					if err := c.startPeerServer(st.IPs); err != nil {
 						c.mu.Lock()
@@ -360,8 +364,28 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 		return nil, err
 	}
 	switch cmd.Name {
+	case "direct-lan.endpoint.status":
+		c.mu.RLock()
+		live := c.node != nil
+		c.mu.RUnlock()
+		if live {
+			return c.liveEndpointStatus(ctx, cmd.Payload)
+		}
+	case "direct-lan.endpoint.delivery.preview", "direct-lan.endpoint.delivery.apply":
+		return c.endpointRedeliveryCommand(ctx, cmd.Name, cmd.Payload)
+	case "direct-lan.endpoint.move.preview", "direct-lan.endpoint.move.apply":
+		return c.localEndpointMoveCommand(ctx, cmd.Name, cmd.Payload)
 	case "direct-lan.upgrade.review", "direct-lan.upgrade.run", "direct-lan.upgrade.status", "direct-lan.upgrade.cancel":
 		return c.upgradeCommand(ctx, cmd.Name, cmd.Payload)
+	}
+	switch cmd.Name {
+	case "direct-lan.endpoint.inspect", "direct-lan.endpoint.accept", "direct-lan.endpoint.reapprove-current", "direct-lan.endpoint.revoke", "direct-lan.endpoint.expire", "direct-lan.endpoint.follow.preview", "direct-lan.endpoint.follow.apply":
+		c.mu.RLock()
+		live := c.node != nil
+		c.mu.RUnlock()
+		if live {
+			return c.liveEndpointCommand(ctx, cmd.Name, cmd.Payload)
+		}
 	}
 	// These explicit reads are never retained in request history. A device
 	// card must reflect the current component identity/configuration on retry.
@@ -375,6 +399,12 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	// Retrying an old apply review must not return a cached proof or issue again.
 	switch cmd.Name {
 	case "direct-lan.endpoint.export.preview", "direct-lan.endpoint.export", "direct-lan.endpoint.reexport.preview", "direct-lan.endpoint.reexport":
+		c.mu.RLock()
+		live := c.node != nil
+		c.mu.RUnlock()
+		if live {
+			return c.liveEndpointExportCommand(ctx, cmd.Name, cmd.Payload)
+		}
 		return c.executeCommand(ctx, cmd)
 	}
 	digest := sha256.Sum256(append([]byte(cmd.Name+"\x00"), cmd.Payload...))
@@ -919,3 +949,24 @@ func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, p
 
 // Keep profile utilities reused by command-only integrations in one boundary.
 var _ = config.ValidPeerID
+
+func (c *Core) CheckWebUpgradeAuthorization(token string, payload json.RawMessage, consume bool) error {
+	c.mu.RLock()
+	web := c.web
+	closing := c.closing
+	c.mu.RUnlock()
+	if web == nil || closing || c.ctx.Err() != nil {
+		return errors.New("local management is unavailable")
+	}
+	return web.CheckUpgradeAuthorization(token, payload, consume)
+}
+
+func (c *Core) UpgradeUIURL() (string, error) {
+	c.mu.RLock()
+	web := c.web
+	c.mu.RUnlock()
+	if web == nil {
+		return "", errors.New("local management is unavailable")
+	}
+	return web.URL(), nil
+}

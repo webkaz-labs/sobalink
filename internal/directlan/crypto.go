@@ -80,7 +80,7 @@ func tlsConfigProtocol(cert tls.Certificate, pin string, server bool, protocol s
 }
 
 // Server ALPN advertisement is not downgrade authorization. Classification is
-// checked only after authenticating the certificate and stays constructor-owned.
+// checked only after authenticating the certificate and stays generation-owned.
 func (n *Node) ordinaryServerTLS(g *runtimeGeneration) *tls.Config {
 	cfg := tlsConfig(n.cert, "", true)
 	cfg.NextProtos = []string{contextProtocolName, protocolName}
@@ -103,16 +103,16 @@ func (n *Node) ordinaryServerTLS(g *runtimeGeneration) *tls.Config {
 // Called only after certificate authentication in both TLS admission and frame
 // dispatch. Terminal denial precedes the unknown-legacy pairing exception.
 func (n *Node) ordinaryPeerProtocolLocked(g *runtimeGeneration, key, protocol string) error {
-	if n.deniedKey(key) || n.readyLocked() != nil || n.generation.Load() != g {
+	if g == nil || g.cfg.deniedKey(key) || n.readyLocked() != nil || n.generation.Load() != g {
 		return ErrUntrusted
 	}
 	expected := protocolName
-	if n.managedKey(key) {
+	if g.cfg.managedKey(key) {
 		expected = contextProtocolName
 		if n.peers[key] == nil || n.peers[key].g != g {
 			return ErrUntrusted
 		}
-	} else if n.peers[key] == nil && n.cfg.Persist == nil {
+	} else if n.peers[key] == nil && g.cfg.Persist == nil {
 		return ErrUntrusted
 	}
 	if protocol != expected {

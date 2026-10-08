@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Locale, State } from '../api'
 import type { Server } from '../useServer'
 import { upgradeText } from '../upgrade-i18n'
+import { openUpgradeHandoff } from '../upgrade-handoff'
+vi.mock('../upgrade-handoff', () => ({ openUpgradeHandoff: vi.fn(() => vi.fn()) }))
 import { DirectLanUpgrade } from './DirectLanUpgrade'
 const peer = { id: 'synthetic-peer', name: 'Sample peer', networks: ['direct-lan'] as const, online: false, verified: true, trusted: true, bridge: false, path: 'unknown' as const }
 function setup(locale: Locale = 'en', restartRequired = false) {
@@ -23,6 +25,7 @@ function setup(locale: Locale = 'en', restartRequired = false) {
   return { ...view, run, server, state, u, inspect }
 }
 describe('Direct LAN upgrade user consent', () => {
+  beforeEach(() => { vi.mocked(openUpgradeHandoff).mockReset().mockReturnValue(vi.fn()) })
   it.each(['en', 'ja'] as const)('shows exact scope and resume lifetime before a separate apply in %s', async locale => {
     const v = setup(locale)
     expect(v.run).not.toHaveBeenCalled()
@@ -36,11 +39,34 @@ describe('Direct LAN upgrade user consent', () => {
     await screen.findByText(v.u('network-started'))
     expect(JSON.stringify(v.run.mock.calls)).not.toMatch(/transcript|confirmed|receipt/)
   })
-  it('does not offer a browser restart when the safe lifecycle helper is absent', async () => {
+  it('opens the bounded browser restart flow only after a separate reviewed apply', async () => {
     const v = setup('en', true); await v.inspect()
-    expect(screen.getByRole('button', { name: v.u('apply') })).toBeDisabled()
+    expect(screen.getByRole('button', { name: v.u('apply') })).toBeEnabled()
     expect(screen.getByText(v.u('restart'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: v.u('apply') }))
+    expect(openUpgradeHandoff).toHaveBeenCalledWith(expect.objectContaining({ peerId: peer.id, revision: 'synthetic-revision', restartRequired: true }), 'en', expect.any(Function))
     expect(v.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows a new explicit review after a synchronously blocked popup', async () => {
+    vi.mocked(openUpgradeHandoff).mockImplementationOnce((_review, _locale, failed) => { failed(); return vi.fn() })
+    const v = setup('en', true); await v.inspect()
+    fireEvent.click(screen.getByRole('button', { name: v.u('apply') }))
+    expect(screen.getByRole('button', { name: v.u('review') })).toBeEnabled()
+    expect(v.run).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: v.u('review') }))
+    await screen.findByRole('region', { name: v.u('review') })
+    fireEvent.click(screen.getByRole('button', { name: v.u('apply') }))
+    expect(openUpgradeHandoff).toHaveBeenCalledTimes(2)
+  })
+  it('recovers after a delayed failed handoff without automatically reapplying', async () => {
+    const v = setup('ja', true); await v.inspect()
+    fireEvent.click(screen.getByRole('button', { name: v.u('apply') }))
+    expect(screen.getByRole('button', { name: v.u('review') })).toBeDisabled()
+    act(() => vi.mocked(openUpgradeHandoff).mock.calls[0][2]())
+    expect(screen.getByRole('button', { name: v.u('review') })).toBeEnabled()
+    expect(v.run).toHaveBeenCalledTimes(1)
+    expect(openUpgradeHandoff).toHaveBeenCalledTimes(1)
   })
   it('discards reviewed consent after selected inputs change', async () => {
     const v = setup(); await v.inspect()

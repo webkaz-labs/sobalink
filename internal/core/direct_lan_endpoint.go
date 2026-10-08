@@ -222,6 +222,9 @@ func endpointPeerViews(m endpointmeta.Snapshot) []map[string]any {
 		if r.PairContext != nil && r.EndpointState != nil {
 			e := r.EndpointState
 			view["state"], view["pairBinding"] = e.ReceiveStatus, e.PairBinding
+			// Presentation only: the command reducer still rechecks the exact scope/proof.
+			view["scope"] = m.LocalScope
+			view["scopeDigest"], _ = m.LocalScope.Digest()
 			view["receivedHighwater"], view["issuedHighwater"] = e.ReceivedHighwater, e.IssuedHighwater
 			view["authorityRevision"] = e.AuthorityRevision
 			if e.Approval != nil {
@@ -235,6 +238,7 @@ func endpointPeerViews(m endpointmeta.Snapshot) []map[string]any {
 			}
 			if e.ReceivedProof != nil {
 				view["proofDigest"], _ = e.ReceivedProof.Digest()
+				view["signedEndpoint"] = e.ReceivedProof.Update.Endpoint
 				view["operation"], view["issued"], view["lifetime"], view["expires"] = e.ReceivedProof.Update.Operation, e.ReceivedProof.Update.Issued, e.ReceivedProof.Update.Lifetime, e.ReceivedProof.Update.Expires
 			}
 		}

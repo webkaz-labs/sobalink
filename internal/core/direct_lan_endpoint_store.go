@@ -145,6 +145,7 @@ func (s *directLANStore) endpointModelLocked(now time.Time, pending bool) (*endp
 		return nil, directlan.ErrRecovery
 	}
 	s.observeEndpointDeadlinesLocked(*m, now)
+	s.observeIssuedEndpointDeadlinesLocked(*m, now)
 	if pending {
 		// This is not a general recovery override. Only a valid saved fence is
 		// reviewable here; uncertain final writes without a fence stay blocked.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sync/atomic"
 
 	"github.com/tailscale/wireguard-go/device"
@@ -56,15 +57,18 @@ func (b *generationBuild) wait(ctx context.Context) error {
 	return b.cleanupErr
 }
 func cloneGenerationConfig(cfg Config) Config {
-	cfg.AllowedPrefixes = append([]netip.Prefix(nil), cfg.AllowedPrefixes...)
-	cfg.Peers = append([]Peer(nil), cfg.Peers...)
+	cfg.currentEndpoints = cloneCurrentEndpointAuthority(cfg.currentEndpoints)
+	// Preserve nil versus empty slices: current projection seals cover their
+	// exact JSON shape, including a valid all-inactive empty peer projection.
+	cfg.AllowedPrefixes = slices.Clone(cfg.AllowedPrefixes)
+	cfg.Peers = slices.Clone(cfg.Peers)
 	cfg.PairContexts = clonePairContexts(cfg.PairContexts)
-	cfg.DeniedPeerKeys = append([]string(nil), cfg.DeniedPeerKeys...)
+	cfg.DeniedPeerKeys = slices.Clone(cfg.DeniedPeerKeys)
 	return cfg
 }
 
 // buildTransportGeneration constructs private state only. Traffic remains staged;
-// only initial Start has a publication path. The caller registers b with Node
+// initial Start or the exact managed transaction gate must publish it. The caller registers b with Node
 // before entry and owns cancellation/completion through b.done.
 func (n *Node) buildTransportGeneration(b *generationBuild, cfg Config) (*runtimeGeneration, error) {
 	network := "tcp6"
@@ -101,8 +105,14 @@ func (n *Node) buildTransportGeneration(b *generationBuild, cfg Config) (*runtim
 		g.peers[peer.Key] = newPeerStateForGeneration(g, cfg.Identity.PublicKey(), peer)
 	}
 	g.refreshBindPolicy(g.peers)
+	if !cfg.AuthorityDeadline.IsZero() {
+		g.deadlineDone = make(chan struct{})
+	}
 	b.generation.Store(g)
 	go g.supervise()
+	if g.deadlineDone != nil {
+		go g.watchAuthorityDeadline(cfg.AuthorityDeadline)
+	}
 	defer close(g.built)
 	underlay.start(n, g)
 	if err := b.ctx.Err(); err != nil {

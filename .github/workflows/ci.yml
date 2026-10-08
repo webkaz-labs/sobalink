@@ -623,6 +623,56 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  web-activation:
+    # Independent draft-PR validation; no default-branch registration required.
+    # The existing workflow_dispatch/force_full route is an additional entry.
+    # Endpoint-following acceptance is deliberately excluded from this job.
+    if: github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.force_full))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+      - name: Prepare locked dependencies and official Chromium
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download all
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify fixed Web acceptance policy
+        run: python -m unittest discover -s .github/scripts -p 'test_ci_web_activation.py' -v
+      - name: Compile and run seven private synthetic-owner cases
+        id: web-activation
+        timeout-minutes: 40
+        run: python .github/scripts/ci-web-activation.py
+      - name: Preserve only reconstructed sanitized acceptance evidence
+        if: always() && steps.web-activation.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-web-activation-sanitized
+          path: |
+            ${{ runner.temp }}/soba-web-activation-sanitized/result.json
+            ${{ runner.temp }}/soba-web-activation-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
   browser:
     # Real Go management HTTP and embedded assets; networking peers are fixtures.
     needs: impact
