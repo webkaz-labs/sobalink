@@ -391,7 +391,7 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	// card must reflect the current component identity/configuration on retry.
 	// Port availability is an observation, not a reservation; never retain large
 	// raised-budget proposal results or replay stale bind observations.
-	if cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" || cmd.Name == "direct-lan.migration.review" {
+	if strings.HasPrefix(cmd.Name, "resource.") || cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" || cmd.Name == "direct-lan.migration.review" {
 		return c.executeCommand(ctx, cmd)
 	}
 	// Endpoint proof bytes are never request-history results. Every release
@@ -546,6 +546,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.selectionCommand(ctx, cmd.Name, cmd.Payload)
 	case "service.stop-shares":
 		return c.stopSharesCommand(cmd.Payload)
+	case "resource.list", "resource.inspect", "resource.preview":
+		return c.resourceCommand(cmd.Name, cmd.Payload)
 	case "policy.config", "policy.preview", "policy.apply":
 		return c.capacityCommand(cmd.Name, cmd.Payload)
 	case "service.list":

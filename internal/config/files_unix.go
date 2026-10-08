@@ -6,6 +6,7 @@ import (
 	"errors"
 	"golang.org/x/sys/unix"
 	"os"
+	"sync"
 )
 
 func Protect(path string, dir bool) error {
@@ -33,7 +34,11 @@ func SecureDir(path string) error {
 }
 func replace(from, to string) error { return os.Rename(from, to) }
 
-type Lock struct{ f *os.File }
+type Lock struct {
+	f         *os.File
+	mu        sync.Mutex
+	directory os.FileInfo
+}
 
 func AcquireLock(dir string) (*Lock, error) {
 	if e := SecureDir(dir); e != nil {
@@ -49,6 +54,21 @@ func AcquireLock(dir string) (*Lock, error) {
 		f.Close()
 		return nil, errors.New("another sobalink process owns this profile")
 	}
-	return &Lock{f}, nil
+	directory, err := os.Stat(dir)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &Lock{f: f, directory: directory}, nil
 }
-func (l *Lock) Close() error { _ = unix.Flock(int(l.f.Fd()), unix.LOCK_UN); return l.f.Close() }
+func (l *Lock) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil {
+		return nil
+	}
+	_ = unix.Flock(int(l.f.Fd()), unix.LOCK_UN)
+	err := l.f.Close()
+	l.f = nil
+	return err
+}
