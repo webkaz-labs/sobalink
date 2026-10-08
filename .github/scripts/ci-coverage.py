@@ -58,6 +58,12 @@ BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Verify actual UI workflows with isolated Playwright fixtures")
 GO_STEPS = ("Validate scoped Go selection", "Check exact toolchain and module graph",
             "Test affected Go packages and reverse dependencies")
+SCHEDULE_ACCEPTANCE = {
+    "web-activation": ("Verify fixed Web acceptance policy",
+                       "Compile and run seven private synthetic-owner cases"),
+    "product-activation": ("Verify fixed product acceptance policy",
+                           "Build normal assets and run two private production-entry cases"),
+}
 SCOPE_STEP = "Select minimum CI scope"
 
 
@@ -137,8 +143,9 @@ def successful_step(job, name):
     return len(steps) == 1 and steps[0].get("status") == "completed" and steps[0].get("conclusion") == "success"
 
 
-def evaluate_jobs(jobs, scope):
+def evaluate_jobs(jobs, scope, *, scheduled=False):
     require(scope in SCOPES, "unknown required scope")
+    require(not scheduled or scope == "full", "scheduled CI must require full coverage")
     index = {}
     for job in jobs:
         name = job.get("name")
@@ -185,6 +192,10 @@ def evaluate_jobs(jobs, scope):
             require(index[name].get("status") == "completed"
                     and index[name].get("conclusion") == "skipped",
                     "unexpected out-of-scope job result: " + name)
+    if scheduled:
+        passed("ci-required", ("Require every check selected for this change",))
+        for name, steps in SCHEDULE_ACCEPTANCE.items():
+            passed(name, steps)
     return scope == "full"
 
 
@@ -230,11 +241,13 @@ def job_timings(jobs):
             for j in jobs if j.get("name") in names]
 
 
-def finalize(input_path, output):
+def finalize(input_path, output, *, scheduled=False):
+    require(not scheduled or os.environ.get("GITHUB_EVENT_NAME") == "schedule",
+            "nightly aggregate requires a schedule event")
     plan = verified_plan(input_path)
     scope = plan["scope"]
     jobs = current_jobs()
-    full = evaluate_jobs(jobs, scope)
+    full = evaluate_jobs(jobs, scope, scheduled=scheduled)
     receipt = {"schema_version": 3, "repository": REPOSITORY,
                "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
                "head_sha": head(), "head_tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
@@ -246,6 +259,8 @@ def finalize(input_path, output):
                "manifest": "success" if scope in ("native-short", "full") else "not_run",
                "go_unit": "success" if scope == "go" else "not_run",
                "selection": plan, "timings": job_timings(jobs)}
+    if scheduled:
+        receipt["scheduled_acceptance"] = {name: "success" for name in SCHEDULE_ACCEPTANCE}
     pathlib.Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     descriptions = {
         "docs": "Documentation only; application tests, builds and packages NOT RUN",
@@ -268,13 +283,13 @@ def finalize(input_path, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "resolve", "finalize"))
+    parser.add_argument("command", choices=("plan", "resolve", "finalize", "nightly-finalize"))
     parser.add_argument("--input")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     require(os.environ.get("GITHUB_REPOSITORY", REPOSITORY) == REPOSITORY, "unexpected repository")
-    if args.command == "finalize":
-        finalize(args.input, args.output)
+    if args.command in ("finalize", "nightly-finalize"):
+        finalize(args.input, args.output, scheduled=args.command == "nightly-finalize")
     else:
         plan = verified_plan(args.input) if args.command == "resolve" else classify(head(), force_full())
         write_plan(plan, args.output)

@@ -4,6 +4,7 @@ import contextlib
 import copy
 import importlib.util
 import io
+import itertools
 import json
 import os
 import pathlib
@@ -58,10 +59,10 @@ class ImpactRulesTests(unittest.TestCase):
     def test_native_short_is_a_closed_presentation_allowlist(self):
         for path in impact.NATIVE_SHORT_IMPORTS:
             self.assertEqual(classify_paths(path, "README.md"),
-                             ("native-short", "reviewed_presentation_pr", []))
+                             ("native-short", "reviewed_presentation", []))
             for extra in ("cmd/soba/lifecycle.go", "internal/directlan/session.go", "internal/lanlink/lease.go",
                           "internal/routecat/relay.go", "internal/control/server.go", "internal/deadline/time.go",
-                          "go.mod", ".github/workflows/ci.yml", "web/src/App.tsx", "internal/boundedlog/writer.go"):
+                          "go.mod", ".github/workflows/ci.yml"):
                 with self.subTest(path=path, extra=extra):
                     self.assertEqual(classify_paths(path, extra)[0], "full")
         for path in ("cmd/soba/help_windows.go", "cmd/soba/help/new.go", "cmd/soba/new_output.go"):
@@ -109,9 +110,65 @@ class ImpactRulesTests(unittest.TestCase):
         self.assertEqual(classify_paths("internal/boundedlog/writer_test.go",
                                         "internal/servicepresets/catalog.go")[2],
                          ["./internal/boundedlog", "./internal/servicepresets"])
-        for extra in ["web/src/App.tsx", "web/browser/app.spec.mjs", "internal/core/core.go", "go.mod", "web/embed.go"]:
+        for extra in ["internal/core/core.go", "go.mod", "web/embed.go"]:
             with self.subTest(extra=extra):
                 self.assertEqual(classify_paths("internal/boundedlog/writer.go", extra)[0], "full")
+
+    def test_every_existing_safe_scope_union_has_the_least_sufficient_tier(self):
+        choices = [("docs", "README.md"), ("frontend", "web/src/App.tsx"),
+                   ("browser", "web/browser/app.spec.mjs"), ("dist", "web/dist/assets/index-fixture.js"),
+                   ("go", "internal/servicepresets/catalog.go"), ("go", "internal/boundedlog/writer.go"),
+                   ("native-short", "cmd/soba/errors.go")]
+        for size in range(len(choices) + 1):
+            for selected in itertools.combinations(choices, size):
+                kinds = {kind for kind, _ in selected}
+                paths = tuple(path for _, path in selected)
+                packages = sorted({"./" + path.rpartition("/")[0] for kind, path in selected if kind == "go"})
+                frontend = bool(kinds & {"frontend", "browser"})
+                if "dist" in kinds and "frontend" not in kinds:
+                    expected, packages = "full", []
+                elif "native-short" in kinds or ("go" in kinds and frontend):
+                    expected = "native-short"
+                elif "go" in kinds:
+                    expected = "go"
+                elif frontend:
+                    expected = "frontend"
+                else:
+                    expected = "docs"
+                with self.subTest(paths=paths):
+                    forward = classify_paths(*paths)
+                    self.assertEqual((forward[0], forward[2]), (expected, packages))
+                    self.assertEqual(classify_paths(*reversed(paths)), forward)
+        paths = tuple(path for _, path in choices)
+        expected = classify_paths(*paths)
+        for permutation in itertools.permutations(paths):
+            self.assertEqual(classify_paths(*permutation), expected)
+
+    def test_unknown_runtime_dependency_and_ci_dominate_every_safe_union(self):
+        safe = ("README.md", "web/src/App.tsx", "web/browser/app.spec.mjs",
+                "internal/boundedlog/writer.go", "cmd/soba/errors.go")
+        unsafe = ("internal/core/core.go", "internal/deadline/clock.go", "internal/directlan/session.go",
+                  "internal/lanlink/node.go", "internal/routecat/relay.go", "go.mod", "go.sum",
+                  ".github/workflows/ci.yml", ".github/scripts/ci-impact.py", "unknown/file.go",
+                  "internal/boundedlog/writer_windows.go", "cmd/soba/terminal_editor_i18n.go")
+        for size in range(len(safe) + 1):
+            for selected in itertools.combinations(safe, size):
+                for extra in unsafe:
+                    with self.subTest(safe=selected, unsafe=extra):
+                        self.assertEqual(classify_paths(*selected, extra)[0], "full")
+                        self.assertEqual(classify_paths(extra, *selected)[0], "full")
+
+    def test_main_shortening_depends_on_the_exact_full_release_gate(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        verifier = root / ".github/scripts/ci_full_validation.py"
+        self.assertTrue(verifier.is_file(), "deploy the full-proof gate before main shortening")
+        release = (root / ".github/scripts/release-validation.py").read_text(encoding="utf-8")
+        workflow = (root / ".github/workflows/prerelease.yml").read_text(encoding="utf-8")
+        self.assertIn("full_validation.select_candidate(api, commit)", release)
+        self.assertIn("full_validation.audit(api, commit, latest=latest", release)
+        self.assertIn("full_validation.audit(api, commit, previous_proof=previous)", release)
+        self.assertIn("publish-ready --proof proof/ci-full-proof.json", workflow)
+        self.assertTrue((root / ".github/scripts/test_ci_full_validation.py").is_file())
 
     def test_rename_validates_both_endpoints(self):
         roots = {path: blob() for path in impact.ROOT_DOCS}
@@ -124,6 +181,9 @@ class ImpactRulesTests(unittest.TestCase):
             ("docs/old.md", "docs/new.md", "docs"),
             ("web/src/old.ts", "web/src/new.ts", "frontend"),
             ("internal/servicepresets/a.go", "internal/boundedlog/a.go", "go"),
+            ("internal/servicepresets/a.go", "web/src/a.ts", "native-short"),
+            ("web/src/old.ts", "cmd/soba/help.go", "native-short"),
+            ("internal/directlan/session.go", "cmd/soba/help.go", "full"),
         ]:
             with self.subTest(old=old, new=new):
                 changes = [{"status": "R100", "paths": [old, new]}]
@@ -266,14 +326,60 @@ class GitHistoryTests(unittest.TestCase):
                     "base": {"sha": self.base, "ref": "main", "repo": {"full_name": impact.REPOSITORY}},
                     "head": {"sha": source, "repo": {"full_name": "fixture-fork/sobalink"}}}}
 
-    def test_native_short_pr_and_identical_main_delta_stays_full(self):
+    def test_native_short_pr_and_authenticated_main_delta_match(self):
         event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", 'package main\nimport "errors"\nvar _ = errors.New\n'))
         report = self.classify(event=event, name="pull_request")
         self.assertEqual(report["scope"], "native-short")
         self.assertEqual(report["changed_paths"], ["cmd/soba/errors.go"])
-        self.assertEqual(self.classify()["reason"], "native_short_requires_pr")
-        self.assertEqual(self.classify()["scope"], "full")
+        self.assertEqual(self.classify()["reason"], "reviewed_presentation")
+        self.assertEqual(self.classify()["scope"], "native-short")
         self.assertEqual(self.classify(event=event, name="pull_request", force_full=True)["scope"], "full")
+
+    def test_mixed_safe_pr_and_main_keep_package_content_validation(self):
+        def change():
+            self.write("cmd/soba/errors.go", "package main\n// presentation\n")
+            self.write("web/src/App.tsx", "export const fixture = 2\n")
+            self.write("internal/boundedlog/writer.go", 'package boundedlog\nimport "os"\nvar fixture *os.File\n')
+        event = self.pull_request_event(change)
+        for name, value in (("pull_request", event), ("push", self.push_event())):
+            with self.subTest(event=name):
+                report = self.classify(event=value, name=name)
+                self.assertEqual(report["scope"], "native-short")
+                self.assertEqual(report["reason"], "reviewed_safe_scope_union")
+                self.assertEqual(report["go_packages"], ["./internal/boundedlog"])
+                self.assertEqual(self.classify(event=value, name=name, force_full=True)["scope"], "full")
+        for values in ({"forced": True}, {"deleted": True}, {"created": True}, {"ref": "refs/heads/other"}):
+            self.assertEqual(self.classify(event=self.push_event() | values)["scope"], "full")
+
+    def test_mixed_frontend_cannot_hide_unreviewed_go_import(self):
+        def change():
+            self.write("web/src/App.tsx", "export const fixture = 2\n")
+            self.write("internal/boundedlog/writer.go", 'package boundedlog\nimport "net/http"\n')
+        event = self.pull_request_event(change)
+        for name, value in (("pull_request", event), ("push", self.push_event())):
+            report = self.classify(event=value, name=name)
+            self.assertEqual(report["scope"], "full")
+            self.assertEqual(report["reason"], "unreviewed_go_dependency")
+
+    def test_mixed_presentation_cannot_hide_unchanged_platform_package_file(self):
+        self.write("internal/boundedlog/writer_windows.go", "package boundedlog\n")
+        self.base = self.commit()
+        def change():
+            self.write("cmd/soba/errors.go", "package main\n// presentation\n")
+            self.write("internal/boundedlog/writer.go", 'package boundedlog\nimport "os"\nvar fixture *os.File\n')
+        event = self.pull_request_event(change)
+        for name, value in (("pull_request", event), ("push", self.push_event())):
+            report = self.classify(event=value, name=name)
+            self.assertEqual(report["scope"], "full")
+            self.assertEqual(report["reason"], "unsupported_go_package_file")
+
+    def test_mixed_generated_assets_without_frontend_source_stay_full(self):
+        def change():
+            self.write("cmd/soba/errors.go", "package main\n// presentation\n")
+            self.write("web/dist/index.html", "<p>synthetic output</p>\n")
+            self.write("web/browser/app.spec.mjs", "// synthetic fixture test\n")
+        event = self.pull_request_event(change)
+        self.assertEqual(self.classify(event=event, name="pull_request")["reason"], "generated_assets_without_source_change")
 
     def test_native_short_new_import_falls_back_to_full(self):
         event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", 'package main\nimport "net/http"\n'))
@@ -465,6 +571,19 @@ class GitHistoryTests(unittest.TestCase):
                                         environment=environment)['reason'], 'invalid_event')
         self.assertEqual(impact.classify(self.root, head=self.git('rev-parse', 'HEAD'),
                                         environment={})['scope'], 'full')
+
+    def test_schedule_always_requests_full_without_a_delta(self):
+        for changed in (False, True):
+            if changed:
+                self.docs_change()
+            for force in (False, True):
+                report = self.classify(name="schedule", event={}, force_full=force,
+                                       env_changes={"GITHUB_REF": "refs/heads/main"})
+                self.assertEqual(report["scope"], "full")
+                self.assertEqual(report["reason"], "scheduled_full")
+                self.assertIsNone(report["base_sha"])
+                self.assertEqual(report["go_packages"], [])
+                self.assertEqual(report["head_sha"], self.git("rev-parse", "HEAD"))
 
     def test_force_full_and_identical_tree(self):
         self.assertEqual(self.classify()['scope'], 'docs')

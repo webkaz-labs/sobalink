@@ -72,7 +72,7 @@ def pages(api, path, key):
 def identity(run, commit):
     require(run.get('head_sha') == commit and run.get('head_branch') == 'main'
             and run.get('name') == 'Cross-platform CI' and run.get('path') == WORKFLOW
-            and run.get('event') in ('push', 'workflow_dispatch')
+            and run.get('event') in ('push', 'workflow_dispatch', 'schedule')
             and positive(run.get('id')) and positive(run.get('run_attempt')),
             'unexpected canonical CI identity')
 

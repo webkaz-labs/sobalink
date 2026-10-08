@@ -1,9 +1,11 @@
 """Offline checks for honest scope receipts and mandatory aggregate failures."""
+import ast
 import copy
 import importlib.util
 import json
 import os
 import pathlib
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -79,6 +81,85 @@ class ActualCoverageTests(unittest.TestCase):
                         next(s for s in target_job['steps'] if s['name'] == required)['conclusion'] = 'skipped'
                     with self.subTest(target=target, step=required, mode=mode), self.assertRaises(ValueError):
                         coverage.evaluate_jobs(data, 'full')
+
+    def test_schedule_workflow_routes_full_and_preserves_concurrency(self):
+        workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("  schedule:\n    # Daily 03:00 JST (UTC+09:00); changes to cadence require review.\n    - cron: '0 18 * * *'", workflow)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
+        self.assertIn("|| format('ci-run-{0}', github.run_id)", workflow)
+        self.assertIn("needs: [impact, native, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [ci-required, web-activation, product-activation]", workflow)
+        nightly = workflow.split("  nightly-full-check:\n", 1)[1]
+        self.assertIn("ci-coverage.py nightly-finalize", nightly)
+        self.assertIn("contents: read", nightly)
+        self.assertIn("actions: read", nightly)
+        self.assertNotIn(": write", nightly)
+        values = {"github.event.repository.private": False, "github.event_name": "schedule",
+                  "github.event.pull_request.head.repo.full_name": "",
+                  "github.repository": coverage.REPOSITORY, "github.ref": "refs/heads/main",
+                  "github.event.repository.default_branch": "main", "inputs.force_full": False,
+                  "needs.impact.outputs.scope": "full"}
+
+        def enabled(name, overrides=None):
+            # Job-level fields are indented four spaces, so extract until next
+            # two-space job header rather than nested steps.
+            block = re.split(r"\n  [a-z][a-z-]*:", workflow.split("  " + name + ":\n", 1)[1])[0]
+            condition = re.search(r"^    if: (.+)$", block, re.M).group(1)
+            for key, value in sorted((values | (overrides or {})).items(), key=lambda item: -len(item[0])):
+                condition = condition.replace(key, repr(value))
+            condition = condition.replace("always()", "True").replace("cancelled()", "False")
+            condition = condition.replace("false", "False").replace("&&", " and ").replace("||", " or ")
+            condition = re.sub(r"!(?!=)", " not ", condition).strip()
+            expression = ast.parse(condition, mode="eval")
+            allowed = (ast.Expression, ast.BoolOp, ast.UnaryOp, ast.Compare, ast.Constant,
+                       ast.And, ast.Or, ast.Not, ast.Eq, ast.NotEq)
+            self.assertTrue(all(isinstance(node, allowed) for node in ast.walk(expression)))
+            return eval(compile(expression, "<workflow condition>", "eval"), {"__builtins__": {}})
+
+        for name in ("native", "browser", "web-activation", "product-activation", "nightly-full-check"):
+            self.assertTrue(enabled(name), name)
+            self.assertFalse(enabled(name, {"github.event.repository.private": True}), name)
+        for name in (*coverage.SCHEDULE_ACCEPTANCE, "nightly-full-check"):
+            for key, wrong in (("github.repository", "example/fork"),
+                               ("github.ref", "refs/heads/topic"),
+                               ("github.event.repository.default_branch", "other")):
+                self.assertFalse(enabled(name, {key: wrong}), (name, key))
+            self.assertFalse(enabled(name, {"github.event_name": "push"}), name)
+            self.assertEqual(enabled(name, {"github.event_name": "workflow_dispatch", "inputs.force_full": True}), name != "nightly-full-check")
+            if name == "nightly-full-check":
+                self.assertFalse(enabled(name, {"github.event_name": "pull_request"}))
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 3)
+        self.assertIn("  manifest-smoke:\n    needs: native\n", workflow)
+        self.assertEqual(set(coverage.TARGETS), {"linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"})
+
+    def test_schedule_requires_full_and_both_complete_acceptance_jobs(self):
+        data = jobs() + [job("ci-required", ("Require every check selected for this change",))] + [job(name, steps) for name, steps in coverage.SCHEDULE_ACCEPTANCE.items()]
+        self.assertTrue(coverage.evaluate_jobs(data, "full", scheduled=True))
+        for scope in ("docs", "frontend", "go", "native-short"):
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                coverage.evaluate_jobs(data, scope, scheduled=True)
+        for index, required in enumerate(data):
+            if required["conclusion"] == "skipped":
+                continue
+            missing = copy.deepcopy(data)
+            missing.pop(index)
+            with self.subTest(missing=required["name"]), self.assertRaises(ValueError):
+                coverage.evaluate_jobs(missing, "full", scheduled=True)
+            for bad in ("skipped", "failure", "cancelled", None):
+                invalid = copy.deepcopy(data)
+                invalid[index]["conclusion"] = bad
+                with self.subTest(job=required["name"], bad=bad), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(invalid, "full", scheduled=True)
+                for step_index in range(len(required["steps"])):
+                    invalid = copy.deepcopy(data)
+                    invalid[index]["steps"][step_index]["conclusion"] = bad
+                    with self.subTest(job=required["name"], step=step_index, bad=bad), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(invalid, "full", scheduled=True)
+            for step_index in range(len(required["steps"])):
+                invalid = copy.deepcopy(data)
+                invalid[index]["steps"].pop(step_index)
+                with self.subTest(job=required["name"], missing_step=step_index), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(invalid, "full", scheduled=True)
 
     def test_selected_scopes_are_never_full(self):
         for scope in ("docs", "frontend", "go", "native-short"):
@@ -232,6 +313,35 @@ class PlanAndReceiptTests(unittest.TestCase):
                 self.assertEqual(result["go_unit"], "success" if scope == "go" else "not_run")
                 if scope != "full":
                     self.assertIn("NOT RUN", pathlib.Path(env["GITHUB_STEP_SUMMARY"]).read_text())
+
+    def test_nightly_command_and_receipt_are_separate_from_normal_aggregate(self):
+        for command, scheduled in (("finalize", False), ("nightly-finalize", True)):
+            with patch("sys.argv", ["ci-coverage.py", command, "--input", "plan", "--output", "receipt"]), patch.object(coverage, "finalize") as finalize:
+                coverage.main()
+                finalize.assert_called_once_with("plan", "receipt", scheduled=scheduled)
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory) / "receipt.json"
+            data = jobs() + [job("ci-required", ("Require every check selected for this change",))] + [job(name, steps) for name, steps in coverage.SCHEDULE_ACCEPTANCE.items()]
+            env = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1"}
+            with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan("full")), patch.object(coverage, "current_jobs", return_value=data), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
+                coverage.finalize("plan", output, scheduled=True)
+                result = json.loads(output.read_text())
+                self.assertTrue(result["full_native"])
+                self.assertEqual(result["scheduled_acceptance"], {name: "success" for name in coverage.SCHEDULE_ACCEPTANCE})
+            with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}, clear=True), self.assertRaisesRegex(ValueError, "schedule event"):
+                coverage.finalize("plan", output, scheduled=True)
+            env = {"GITHUB_OUTPUT": str(pathlib.Path(directory) / "output")}
+            with patch.dict(os.environ, env, clear=True):
+                coverage.write_plan(plan("full"), pathlib.Path(directory) / "plan.json")
+            self.assertEqual(pathlib.Path(env["GITHUB_OUTPUT"]).read_text(), "scope=full\nlong_required=true\n")
+
+    def test_schedule_finalize_cannot_write_receipt_without_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory) / "receipt.json"
+            with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule"}, clear=True), patch.object(coverage, "verified_plan", return_value=plan("full")), patch.object(coverage, "current_jobs", return_value=jobs()):
+                with self.assertRaisesRegex(ValueError, "ci-required"):
+                    coverage.finalize("plan", output, scheduled=True)
+            self.assertFalse(output.exists())
 
     def test_failed_required_coverage_does_not_write_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
