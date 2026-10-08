@@ -94,6 +94,10 @@ type Options struct {
 }
 
 type Core struct {
+	managedCleanupPending      bool                 // protected by mu; ancillary durability only
+	managedCleanupError        error                // protected by mu; retained reopen/repair failures
+	managedDenied              map[string]bool      // terminal and in-flight removal denial, protected by mu
+	managedRemoval             *managedRemovalOwner // reduction-only owner, protected by mu
 	lanStartNonce              string
 	lanStartWriteRevision      atomic.Uint64
 	lanStartUncertain          atomic.Bool
@@ -161,6 +165,7 @@ type Core struct {
 	closeErr                   error
 	directLAN                  *directLANStore
 	contextControl             *contextControlOwner
+	contextUpgrade             *contextUpgradeJob
 	lan                        *lanStore
 	lanFactory                 func(*lanStore) (lanNetworkBackend, error)
 	lanAddresses               func() ([]LANLocalAddress, error)
@@ -208,6 +213,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if err := validateCapacityBackend(p.Settings.Network, limits); err != nil {
 		return nil, err
 	}
+	loadedProfileRevision := privateRevision(p)
 	ctx, cancel := context.WithCancel(parent)
 	c := &Core{lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
 	c.capacity = limits
@@ -216,13 +222,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 			c.trustGeneration = peer.Generation
 		}
 	}
-	if err := c.loadStartup(opts.SkipNetworkStart); err != nil {
-		cancel()
-		return nil, err
-	}
-	c.inventoryOutgoingSpool()
-	p = c.profileCopy()
-	if err := c.writeProfile(p); err != nil {
+	if err := c.loadStartup(true); err != nil {
 		cancel()
 		return nil, err
 	}
@@ -245,6 +245,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if direct != nil {
 		direct.write = c.writeAtomic
 	}
+	cleanupErr := c.reconcileTerminalDirectLAN()
 	if err := c.reconcileDirectLANTrust(); err != nil {
 		cancel()
 		return nil, err
@@ -253,7 +254,15 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 		cancel()
 		return nil, err
 	}
+	c.armReconciledStartup(opts.SkipNetworkStart)
+	c.inventoryOutgoingSpool()
 	p = c.profileCopy()
+	if cleanupErr == nil && (errors.Is(profileLoadErr, os.ErrNotExist) || privateRevision(p) != loadedProfileRevision) {
+		if err := c.writeProfile(p); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	for _, peer := range p.Peers {
 		if peer.Generation > c.trustGeneration {
 			c.trustGeneration = peer.Generation
@@ -268,7 +277,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	c.transfers = m
 	c.transferNetwork = p.Settings.Network
 	for _, peer := range p.Peers {
-		if peer.Network != p.Settings.Network {
+		if peer.Network != p.Settings.Network || c.managedPeerDenied(peer.ID) {
 			continue
 		}
 		if err := c.bindTransferPeer(peer); err != nil {
@@ -286,8 +295,11 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	go c.maintain()
 	// Explicit saved network choice permits reconnect; no saved service grant
 	// or transfer is restarted or renewed after process restart.
-	if !opts.SkipNetworkStart && (p.Settings.Network == "tailnet" || p.Settings.Network == "lan" || p.Settings.Network == "direct-lan" || p.Settings.Network == "mixed") {
-		if err := c.startNetwork(ctx); err != nil {
+	if cleanupErr == nil && !opts.SkipNetworkStart && (p.Settings.Network == "tailnet" || p.Settings.Network == "lan" || p.Settings.Network == "direct-lan" || p.Settings.Network == "mixed") {
+		c.op.Lock()
+		startErr := c.startNetwork(ctx)
+		c.op.Unlock()
+		if err := startErr; err != nil {
 			c.mu.Lock()
 			c.networkState = "error"
 			c.networkError = err.Error()
@@ -369,6 +381,9 @@ func (c *Core) profileCopy() Profile {
 	return cloneProfile(c.profile)
 }
 func (c *Core) trust(id string) (Trust, bool) {
+	if c.managedPeerDenied(id) {
+		return Trust{}, false
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, p := range c.profile.Peers {
@@ -381,6 +396,9 @@ func (c *Core) trust(id string) (Trust, bool) {
 func (c *Core) nodeCopy() NetworkBackend { c.mu.RLock(); defer c.mu.RUnlock(); return c.node }
 
 func (c *Core) bindTransferPeer(p Trust) error {
+	if c.managedPeerDenied(p.ID) {
+		return &localCommandError{"direct_lan_peer_revoked", "this peer has a terminal direct LAN removal record"}
+	}
 	peer := transfer.Peer{ID: p.ID, Generation: p.Generation}
 	if err := c.transfers.BindPeer(peer); err != nil {
 		return err
@@ -406,6 +424,7 @@ func (c *Core) close() error {
 	c.closing = true
 	peerHTTP := c.peerHTTPTransport
 	control := c.contextControl
+	upgrade := c.contextUpgrade
 	c.mu.Unlock()
 	if control != nil {
 		control.requestClose()
@@ -414,6 +433,11 @@ func (c *Core) close() error {
 		peerHTTP.close()
 	}
 	c.cancel()
+	// Join the bounded controller before taking its mutation lock.
+	if upgrade != nil {
+		upgrade.cancel()
+		<-upgrade.done
+	}
 	c.op.Lock()
 	defer c.op.Unlock()
 	c.stopAllServices()

@@ -95,7 +95,7 @@ func (n *Node) IssueNamedInvitation(ctx context.Context, recipient Peer, hostNam
 	if n.cfg.Persist == nil {
 		return Invitation{}, errors.New("durable pairing persistence callback required")
 	}
-	if n.managedKey(recipient.Key) || n.peers[recipient.Key] != nil {
+	if n.deniedKey(recipient.Key) || n.managedKey(recipient.Key) || n.peers[recipient.Key] != nil {
 		return Invitation{}, ErrUntrusted
 	}
 	now := time.Now()
@@ -132,7 +132,7 @@ func (n *Node) acceptPair(ctx context.Context, w *wire, req request) error {
 	if e := n.readyLocked(); e != nil {
 		return e
 	}
-	if n.managedKey(w.key) || n.generation.Load() != w.g {
+	if n.deniedKey(w.key) || n.managedKey(w.key) || n.generation.Load() != w.g {
 		return ErrRecovery
 	}
 	if e := ctx.Err(); e != nil {
@@ -159,7 +159,7 @@ func (n *Node) acceptPair(ctx context.Context, w *wire, req request) error {
 	return n.commitPeerLocked(remote)
 }
 func (n *Node) commitPeerLocked(p Peer) error {
-	if n.managedKey(p.Key) {
+	if n.deniedKey(p.Key) || n.managedKey(p.Key) {
 		return ErrUntrusted
 	}
 	if !validTunnelKey(p.TunnelKey) || p.TunnelKey == n.cfg.Identity.TunnelKey() {
@@ -233,7 +233,7 @@ func (n *Node) PairInvitation(ctx context.Context, inv Invitation) error {
 		n.mu.Unlock()
 		return errors.New("durable pairing persistence callback required")
 	}
-	if n.managedKey(inv.Host.Key) || n.peers[inv.Host.Key] != nil {
+	if n.deniedKey(inv.Host.Key) || n.managedKey(inv.Host.Key) || n.peers[inv.Host.Key] != nil {
 		n.mu.Unlock()
 		return ErrUntrusted
 	}
@@ -306,7 +306,7 @@ func (n *Node) PairInvitation(ctx context.Context, inv Invitation) error {
 // closes all established streams for the key, even if persistence fails.
 func (n *Node) Revoke(key string) error {
 	// Legacy snapshots cannot encode a managed terminal tombstone.
-	if n.managedKey(key) {
+	if n.deniedKey(key) || n.managedKey(key) {
 		return ErrUntrusted
 	}
 	if !validKey(key) {

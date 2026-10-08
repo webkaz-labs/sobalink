@@ -47,11 +47,39 @@ func recordForKey(s Snapshot, key string) (int, error) {
 	return -1, ErrIdentity
 }
 
+// Active operations admit exactly the supported schemas. Passive record lookups
+// remain separate because terminal records are still validated retained evidence.
+func activeSnapshotVersion(version int) bool {
+	return version == SnapshotVersionV3 || version == SnapshotVersionV4
+}
+
+func activeRecordForKey(s Snapshot, key string) (int, error) {
+	i, err := recordForKey(s, key)
+	if err != nil {
+		return -1, err
+	}
+	if s.Peers[i].PairRevocation != nil {
+		return -1, ErrReview
+	}
+	return i, nil
+}
+
+func activeRecordForBinding(s Snapshot, binding string) (int, error) {
+	i, err := findRecord(s, binding)
+	if err != nil {
+		return -1, err
+	}
+	if s.Peers[i].PairRevocation != nil {
+		return -1, ErrReview
+	}
+	return i, nil
+}
+
 // ProposeReceive creates an inert candidate. Exact approval is a separate local
 // input; nil means only existing follow consent can admit a new set. Duplicate
 // proofs are classified before current-time freshness and never refresh state.
 func ProposeReceive(s Snapshot, remoteKey string, e Envelope, exact *Approval, now time.Time) (Mutation, string, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return Mutation{}, "", ErrReview
 	}
 	if err := s.ValidateAt(now); err != nil {
@@ -60,7 +88,7 @@ func ProposeReceive(s Snapshot, remoteKey string, e Envelope, exact *Approval, n
 	if s.PendingChange != nil {
 		return Mutation{}, "", ErrRecovery
 	}
-	i, err := recordForKey(s, remoteKey)
+	i, err := activeRecordForKey(s, remoteKey)
 	if err != nil {
 		return Mutation{}, "", err
 	}
@@ -129,7 +157,7 @@ func ProposeReceive(s Snapshot, remoteKey string, e Envelope, exact *Approval, n
 // It cannot account for runtime generations, workers, monotonic process clocks,
 // local address ownership, or current application permissions.
 func SavedEligibility(s Snapshot, binding string, now time.Time) bool {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return false
 	}
 	if s.ValidateAt(now) != nil {
@@ -142,7 +170,7 @@ func SavedEligibility(s Snapshot, binding string, now time.Time) bool {
 			}
 		}
 	}
-	i, err := findRecord(s, binding)
+	i, err := activeRecordForBinding(s, binding)
 	if err != nil {
 		return false
 	}
@@ -162,7 +190,7 @@ func SavedEligibility(s Snapshot, binding string, now time.Time) bool {
 // ProposeReapproval is the local-only equal-sequence operation. It cannot select
 // an older proof or a withdrawal and does not change the remote issue/deadline.
 func ProposeReapproval(s Snapshot, binding string, approval Approval, now time.Time) (Mutation, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return Mutation{}, ErrReview
 	}
 	if err := s.ValidateAt(now); err != nil {
@@ -171,7 +199,7 @@ func ProposeReapproval(s Snapshot, binding string, approval Approval, now time.T
 	if s.PendingChange != nil {
 		return Mutation{}, ErrRecovery
 	}
-	i, err := findRecord(s, binding)
+	i, err := activeRecordForBinding(s, binding)
 	if err != nil {
 		return Mutation{}, err
 	}
@@ -202,7 +230,7 @@ type ReductionResult struct {
 }
 
 func ProposeReduction(s Snapshot, binding, kind string, now time.Time) (ReductionResult, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return ReductionResult{}, ErrReview
 	}
 	if err := s.ValidateAt(now); err != nil {
@@ -211,7 +239,7 @@ func ProposeReduction(s Snapshot, binding, kind string, now time.Time) (Reductio
 	if s.PendingChange != nil {
 		return ReductionResult{}, ErrRecovery
 	}
-	i, err := findRecord(s, binding)
+	i, err := activeRecordForBinding(s, binding)
 	if err != nil {
 		return ReductionResult{}, err
 	}
@@ -265,7 +293,7 @@ func ProposeReduction(s Snapshot, binding, kind string, now time.Time) (Reductio
 // ProposeFollow records an explicitly chosen local lifetime. It does not change
 // the current endpoint approval or revive a stopped managed endpoint.
 func ProposeFollow(s Snapshot, binding string, follow FollowApproval, now time.Time) (Mutation, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return Mutation{}, ErrReview
 	}
 	if err := s.ValidateAt(now); err != nil {
@@ -274,7 +302,7 @@ func ProposeFollow(s Snapshot, binding string, follow FollowApproval, now time.T
 	if s.PendingChange != nil {
 		return Mutation{}, ErrRecovery
 	}
-	i, err := findRecord(s, binding)
+	i, err := activeRecordForBinding(s, binding)
 	if err != nil {
 		return Mutation{}, err
 	}
@@ -298,7 +326,7 @@ func ProposeFollow(s Snapshot, binding string, follow FollowApproval, now time.T
 }
 
 func PreviewMutation(s Snapshot, m Mutation) (string, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return "", ErrReview
 	}
 	if err := s.Validate(); err != nil {
@@ -317,12 +345,15 @@ func PreviewMutation(s Snapshot, m Mutation) (string, error) {
 }
 
 func validateMutation(s Snapshot, m Mutation) error {
+	if !activeSnapshotVersion(s.Version) {
+		return ErrReview
+	}
 	if m.Kind == "local-endpoint" {
 		if m.PairBinding != "" || m.State != nil || m.LocalEndpoint == s.LocalPeer.Endpoint || !s.LocalScope.Contains(m.LocalEndpoint) {
 			return ErrPolicy
 		}
 		for _, r := range s.Peers {
-			if r.PairContext != nil && (!r.PairContext.HostScope.Contains(m.LocalEndpoint) || !r.PairContext.JoinerScope.Contains(m.LocalEndpoint)) {
+			if r.PairRevocation == nil && r.PairContext != nil && (!r.PairContext.HostScope.Contains(m.LocalEndpoint) || !r.PairContext.JoinerScope.Contains(m.LocalEndpoint)) {
 				return ErrPolicy
 			}
 		}
@@ -331,7 +362,7 @@ func validateMutation(s Snapshot, m Mutation) error {
 	if m.LocalEndpoint != "" || m.State == nil {
 		return ErrInvalid
 	}
-	i, err := findRecord(s, m.PairBinding)
+	i, err := activeRecordForBinding(s, m.PairBinding)
 	if err != nil {
 		return err
 	}
@@ -464,7 +495,7 @@ func validateMutationAt(s Snapshot, m Mutation, now time.Time) error {
 // Fence returns an in-memory candidate for the first durable save. Its presence
 // represents blocked activation, not confirmation that a write succeeded.
 func Fence(s Snapshot, m Mutation, reviewDigest, transactionID string, now time.Time, budget int) (Snapshot, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return Snapshot{}, ErrReview
 	}
 	if s.PendingChange != nil {
@@ -497,7 +528,7 @@ func Fence(s Snapshot, m Mutation, reviewDigest, transactionID string, now time.
 	pairs := []string{}
 	if m.Kind == "local-endpoint" {
 		for _, r := range s.Peers {
-			if r.EndpointState != nil {
+			if r.PairRevocation == nil && r.EndpointState != nil {
 				pairs = append(pairs, r.EndpointState.PairBinding)
 			}
 		}
@@ -545,7 +576,7 @@ func (s Snapshot) validatePending() error {
 	expected := []string{}
 	if p.Mutation.Kind == "local-endpoint" {
 		for _, r := range base.Peers {
-			if r.EndpointState != nil {
+			if r.PairRevocation == nil && r.EndpointState != nil {
 				expected = append(expected, r.EndpointState.PairBinding)
 			}
 		}
@@ -564,7 +595,7 @@ func (s Snapshot) validatePending() error {
 // Cancellation is only valid for a new set and retains its received evidence.
 // This returns no runtime activation result and executes no worker barrier.
 func FinishPending(s Snapshot, cancel bool, now time.Time, budget int) (Snapshot, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return Snapshot{}, ErrReview
 	}
 	if s.PendingChange == nil {
@@ -575,7 +606,7 @@ func FinishPending(s Snapshot, cancel bool, now time.Time, budget int) (Snapshot
 		return Snapshot{}, ErrReview
 	}
 	if m.Kind != "local-endpoint" {
-		if _, err := findRecord(s, m.PairBinding); err != nil {
+		if _, err := activeRecordForBinding(s, m.PairBinding); err != nil {
 			return Snapshot{}, err
 		}
 		if m.State == nil {
@@ -600,10 +631,12 @@ func FinishPending(s Snapshot, cancel bool, now time.Time, budget int) (Snapshot
 		next.PreviousLocalEndpoint = next.LocalPeer.Endpoint
 		next.LocalPeer.Endpoint = m.LocalEndpoint
 		for i := range next.Peers {
-			next.Peers[i].UpgradePending = nil
+			if next.Peers[i].PairRevocation == nil {
+				next.Peers[i].UpgradePending = nil
+			}
 		}
 	} else {
-		i, _ := findRecord(next, m.PairBinding)
+		i, _ := activeRecordForBinding(next, m.PairBinding)
 		r := &next.Peers[i]
 		state := cloneState(*m.State)
 		if cancel {

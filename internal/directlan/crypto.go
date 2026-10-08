@@ -95,22 +95,28 @@ func (n *Node) ordinaryServerTLS(g *runtimeGeneration) *tls.Config {
 		}
 		n.mu.Lock()
 		defer n.mu.Unlock()
-		if n.readyLocked() != nil || n.generation.Load() != g {
-			return ErrUntrusted
-		}
-		expected := protocolName
-		if n.managedKey(key) {
-			expected = contextProtocolName
-			if n.peers[key] == nil || n.peers[key].g != g {
-				return ErrUntrusted
-			}
-		} else if n.peers[key] == nil && n.cfg.Persist == nil {
-			return ErrUntrusted
-		}
-		if s.NegotiatedProtocol != expected {
-			return ErrIdentity
-		}
-		return nil
+		return n.ordinaryPeerProtocolLocked(g, key, s.NegotiatedProtocol)
 	}
 	return cfg
+}
+
+// Called only after certificate authentication in both TLS admission and frame
+// dispatch. Terminal denial precedes the unknown-legacy pairing exception.
+func (n *Node) ordinaryPeerProtocolLocked(g *runtimeGeneration, key, protocol string) error {
+	if n.deniedKey(key) || n.readyLocked() != nil || n.generation.Load() != g {
+		return ErrUntrusted
+	}
+	expected := protocolName
+	if n.managedKey(key) {
+		expected = contextProtocolName
+		if n.peers[key] == nil || n.peers[key].g != g {
+			return ErrUntrusted
+		}
+	} else if n.peers[key] == nil && n.cfg.Persist == nil {
+		return ErrUntrusted
+	}
+	if protocol != expected {
+		return ErrIdentity
+	}
+	return nil
 }

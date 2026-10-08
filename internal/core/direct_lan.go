@@ -48,6 +48,7 @@ type directLANStore struct {
 	path           string
 	state          directLANState
 	recovery       bool
+	removalRetry   *pairRemovalRetry
 	write          func(string, []byte) error
 	bytes, peers   int64
 	fileDigest     string
@@ -372,7 +373,7 @@ func (c *Core) directLANCommand(ctx context.Context, name string, raw json.RawMe
 		state := s.copy()
 		return map[string]string{"publicKey": state.Identity.PublicKey(), "endpoint": state.Selection.Listen}, nil
 	}
-	if name == "direct-lan.revoke" {
+	if name == "direct-lan.revoke" || name == "direct-lan.revoke.retry" {
 		var input struct {
 			PeerID string `json:"peerId"`
 		}
@@ -381,6 +382,12 @@ func (c *Core) directLANCommand(ctx context.Context, name string, raw json.RawMe
 		}
 		if !validLANPublicKey(input.PeerID) {
 			return nil, codedDirectLANError(directlan.ErrIdentity)
+		}
+		if s := c.directLANStoreCopy(); s != nil {
+			saved := s.copy()
+			if saved.Version == directLANPairRecordStateVersion || directLANMetadataManaged(saved.Metadata) {
+				return c.removeManagedDirectLANLocked(ctx, input.PeerID)
+			}
 		}
 		return nil, c.revokeDirectLANPeer(input.PeerID)
 	}
@@ -462,12 +469,9 @@ func (c *Core) directLANCommand(ctx context.Context, name string, raw json.RawMe
 		node.CancelInvitation(invitation.Token)
 		return map[string]bool{"cancelled": true}, nil
 	case "direct-lan.join":
-		pairCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := node.PairInvitation(pairCtx, invitation); err != nil {
-			return nil, codedDirectLANError(err)
-		}
-		return map[string]any{"peerId": invitation.Host.Key, "paired": true, "trusted": false}, nil
+		// The public executor owns the operation-specific two-stage admission.
+		// Never run pairing while a generic command holds Core.op.
+		return nil, codedDirectLANError(directlan.ErrUnavailable)
 	default:
 		return nil, errors.New("unknown direct LAN action")
 	}
@@ -478,12 +482,14 @@ func (c *Core) revokeDirectLANPeer(id string) error {
 		return &lanCommandError{"direct_lan_setup_required", "there is no saved direct LAN identity to revoke"}
 	}
 	saved := s.copy()
-	if (saved.Version != directLANStateVersion && saved.Version != directLANMetadataStateVersion) || directLANMetadataManaged(saved.Metadata) {
-		// Managed pair removal needs a durable pair-revoke/tombstone contract.
-		// Reject before changing application, startup or mixed grants; deleting
-		// only its legacy DTO would silently discard replay evidence.
+	if saved.Version == directLANPairRecordStateVersion || directLANMetadataManaged(saved.Metadata) {
+		_, err := c.removeManagedDirectLANLocked(c.ctx, id)
+		return err
+	}
+	if saved.Version != directLANStateVersion && saved.Version != directLANMetadataStateVersion {
 		return codedDirectLANError(directLANMetadataUnavailable())
 	}
+
 	active := c.nodeCopy()
 	b, ok := active.(*directLANBackend)
 	if active != nil && !ok {
@@ -543,8 +549,15 @@ func (c *Core) revokeDirectLANPeer(id string) error {
 func (c *Core) reconcileDirectLANTrust() error {
 	paired := map[string]bool{}
 	if s := c.directLANStoreCopy(); s != nil {
-		for _, peer := range s.copy().Peers {
-			paired[peer.Key] = true
+		state := s.copy()
+		terminal := map[string]bool{}
+		for _, id := range terminalDirectLANPeers(state) {
+			terminal[id] = true
+		}
+		for _, peer := range state.Peers {
+			if !terminal[peer.Key] {
+				paired[peer.Key] = true
+			}
 		}
 	}
 	p := c.profileCopy()

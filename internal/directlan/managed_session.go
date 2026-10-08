@@ -180,7 +180,11 @@ func (n *Node) handleManagedSession(ctx context.Context, c *tls.Conn, w *wire) {
 		return
 	}
 	bound, ok := request.(*endpointmeta.BoundRequest)
-	if !ok || bound.Operation != "session" || bound.PairBinding != captured.binding || !captured.current() || ctx.Err() != nil {
+	if !ok || bound.PairBinding != captured.binding || !captured.current() || ctx.Err() != nil {
+		return
+	}
+	if bound.Operation != "session" {
+		n.handleManagedCompletion(ctx, c, w, captured, *bound)
 		return
 	}
 	reply, err := endpointmeta.Encode(endpointmeta.SessionReply{Version: 2, Operation: "session", OK: true, PairBinding: captured.binding})

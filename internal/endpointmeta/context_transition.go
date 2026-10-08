@@ -34,7 +34,7 @@ type ContextResumeReview struct {
 }
 
 func contextRecord(s Snapshot, peerKey string, now time.Time) (int, error) {
-	if s.Version != SnapshotVersionV3 {
+	if !activeSnapshotVersion(s.Version) {
 		return -1, ErrReview
 	}
 	if s.PendingChange != nil {
@@ -43,7 +43,7 @@ func contextRecord(s Snapshot, peerKey string, now time.Time) (int, error) {
 	if err := s.ValidateAt(now); err != nil {
 		return -1, err
 	}
-	return recordForKey(s, peerKey)
+	return activeRecordForKey(s, peerKey)
 }
 
 func contextPhase(r PeerRecord) string {
@@ -390,7 +390,7 @@ func ResumePreparedContext(s Snapshot, review ContextResumeReview, now time.Time
 	if review != expected {
 		return ContextTransition{}, ErrReview
 	}
-	i, _ := recordForKey(s, review.PeerKey)
+	i, _ := activeRecordForKey(s, review.PeerKey)
 	r := s.Peers[i]
 	if review.NewDeadline == review.OldDeadline {
 		return contextUnchanged(s, r, budget)

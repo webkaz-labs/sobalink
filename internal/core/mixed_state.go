@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/connectionroute"
 )
@@ -147,6 +148,16 @@ func (c *Core) newMixedBackendUsing(makeWorker func(context.Context, string, str
 	if e != nil {
 		return nil, e
 	}
+	for _, binding := range s.Bindings {
+		if c.managedPeerDenied(binding.PeerID) {
+			return nil, connectionroute.ErrBinding
+		}
+		for _, claim := range binding.Identities {
+			if claim.Backend == "direct-lan" && c.managedPeerDenied(claim.ID) {
+				return nil, connectionroute.ErrBinding
+			}
+		}
+	}
 	seed, _ := hex.DecodeString(s.Seed)
 	private := ed25519.NewKeyFromSeed(seed)
 	id, _ := connectionroute.StablePeerID(private.Public().(ed25519.PublicKey))
@@ -170,7 +181,10 @@ func (c *Core) newMixedBackendUsing(makeWorker func(context.Context, string, str
 			if store == nil || store.needsRecovery() {
 				return nil, errors.New("direct LAN requires reviewed durable state")
 			}
-			if _, e := store.runtimeConfig(); e != nil {
+			store.mu.Lock()
+			_, e := store.managedFixedEndpointProjectionLocked(time.Now())
+			store.mu.Unlock()
+			if e != nil {
 				return nil, e
 			}
 		}
@@ -194,10 +208,15 @@ func (c *Core) newMixedBackendUsing(makeWorker func(context.Context, string, str
 				_ = n.Close()
 				return nil, errors.New("direct LAN setup required")
 			}
-			node, e = c.newDirectLANBackend(store)
+			node, e = c.newAdmittedDirectLANBackendLocked(c.ctx, store)
 		}
 		if e != nil {
-			_ = n.Close()
+			if node != nil {
+				n.nodes[name] = node
+			}
+			if closeErr := n.Close(); closeErr != nil {
+				return n, errors.Join(e, closeErr)
+			}
 			return nil, e
 		}
 		n.nodes[name] = node

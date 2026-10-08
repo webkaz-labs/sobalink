@@ -114,7 +114,7 @@ type PreparedTransport struct {
 // Once registered, a non-nil candidate is returned even on construction failure
 // so callers can join cleanup. Node retains the owner if that handle is dropped.
 func (n *Node) PrepareTransport(ctx context.Context, retired *TransportRetirement, endpoints TransportEndpoints) (*PreparedTransport, error) {
-	if n.contextControl || ctx == nil || len(n.cfg.PairContexts) != 0 {
+	if n.contextControl || ctx == nil || n.cfg.protectedPairs() {
 		return nil, ErrUnavailable
 	}
 	if err := ctx.Err(); err != nil {
@@ -194,7 +194,7 @@ func (p *PreparedTransport) construct(cfg Config) {
 }
 
 func (n *Node) candidateConfigLocked(retired *TransportRetirement, endpoints TransportEndpoints) (Config, error) {
-	if len(n.cfg.PairContexts) != 0 {
+	if n.cfg.protectedPairs() {
 		return Config{}, ErrUnavailable
 	}
 	if !endpoints.Listen.IsValid() || endpoints.Listen.Addr().Is4() != retired.g.cfg.Listen.Addr().Is4() {

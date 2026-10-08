@@ -1,6 +1,7 @@
 package directlan
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -84,6 +85,9 @@ type Peer struct {
 }
 
 type Config struct {
+	// AuthorityCurrent is a constructor-only signal read. It must never lock,
+	// call back into transport/Core, or perform I/O. Nil preserves legacy ownership.
+	AuthorityCurrent func() bool
 	// PeerLimit is an optional additional logical admission limit. Zero imposes
 	// none; the caller's protected-store/trusted-peer policy still applies.
 	PeerLimit int
@@ -106,6 +110,13 @@ type Config struct {
 	// PairContexts is constructor-only binding input. It conveys no durable
 	// publication authority and is never persisted through the legacy callback.
 	PairContexts map[string]endpointmeta.PairContext
+	// CompletionAdmission is constructor-only and nil by default. It observes
+	// an already confirmed binding; it cannot authorize a session or publication.
+	// Core must supply its store-owned gate, never a DTO/confirmed-flag adapter.
+	CompletionAdmission func(context.Context, *ManagedCompletionRequest) (ContextResponse, error)
+	// DeniedPeerKeys is constructor-only terminal denial, disjoint from Peers.
+	// These keys never acquire transport state or legacy pairing authority.
+	DeniedPeerKeys []string
 	// Persist must atomically save the entire peer snapshot and return nil only
 	// after durable success. It must not re-enter Node. Any error fails closed;
 	// reopen from saved state to reconcile a possibly published replacement.
@@ -145,6 +156,12 @@ func (c Config) Validate() error {
 		}
 		seen[p.Key] = true
 		tunnels[p.TunnelKey] = true
+	}
+	for _, key := range c.DeniedPeerKeys {
+		if !validKey(key) || seen[key] {
+			return ErrIdentity
+		}
+		seen[key] = true
 	}
 	return c.validatePairContexts()
 }
@@ -251,3 +268,20 @@ func (n *Node) peerCapacityLocked() bool {
 	}
 	return limit < 0 || len(n.peers) >= MaxEnginePeers || (limit > 0 && len(n.peers) >= limit)
 }
+
+// Denial and managed classification are immutable constructor policy, not live
+// peer membership. An absent terminal peer must never become unknown legacy.
+func (c Config) deniedKey(key string) bool {
+	for _, denied := range c.DeniedPeerKeys {
+		if denied == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) protectedPairs() bool {
+	return len(c.PairContexts) != 0 || len(c.DeniedPeerKeys) != 0
+}
+
+func (n *Node) deniedKey(key string) bool { return n.cfg.deniedKey(key) }

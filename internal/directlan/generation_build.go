@@ -59,6 +59,7 @@ func cloneGenerationConfig(cfg Config) Config {
 	cfg.AllowedPrefixes = append([]netip.Prefix(nil), cfg.AllowedPrefixes...)
 	cfg.Peers = append([]Peer(nil), cfg.Peers...)
 	cfg.PairContexts = clonePairContexts(cfg.PairContexts)
+	cfg.DeniedPeerKeys = append([]string(nil), cfg.DeniedPeerKeys...)
 	return cfg
 }
 

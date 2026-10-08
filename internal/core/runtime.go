@@ -82,17 +82,30 @@ func (c *Core) stopApplication() map[string]string {
 
 func (c *Core) startNetwork(ctx context.Context) error {
 	c.mu.RLock()
-	control := c.contextControl
+	removal, cleanupPending := c.managedRemoval, c.managedCleanupPending
 	c.mu.RUnlock()
-	// A waiting owner, unfinished construction, or retained failed cleanup
-	// excludes ordinary application activation until a complete successful join.
-	if control != nil {
-		return directLANMetadataUnavailable()
+	if removal != nil && !removal.joined || cleanupPending {
+		return &localCommandError{"direct_lan_reconnect_required", "direct LAN removal requires the managed reconnect lifecycle after cleanup"}
 	}
-	if c.nodeCopy() != nil {
+	if existing := c.nodeCopy(); existing != nil {
+		if o := managedActivationChild(existing); o != nil && !o.activationCurrent() {
+			return directLANMetadataUnavailable()
+		}
+		c.mu.RLock()
+		blocked := c.networkState == "error"
+		c.mu.RUnlock()
+		if blocked {
+			return errors.New("previous network owner remains blocked; restart after successful shutdown")
+		}
 		return nil
 	}
 	p := c.profileCopy()
+	c.mu.RLock()
+	control := c.contextControl
+	c.mu.RUnlock()
+	if control != nil && p.Settings.Network != "direct-lan" && p.Settings.Network != "mixed" {
+		return directLANMetadataUnavailable()
+	}
 	if p.Settings.Network != "tailnet" && p.Settings.Network != "lan" && p.Settings.Network != "direct-lan" && p.Settings.Network != "mixed" {
 		return errors.New("choose a network before connecting")
 	}
@@ -118,42 +131,60 @@ func (c *Core) startNetwork(ctx context.Context) error {
 		if store == nil {
 			return &lanCommandError{"direct_lan_setup_required", "configure an exact direct LAN endpoint and prefixes first"}
 		}
-		n, e = c.newDirectLANBackend(store)
+		n, e = c.newAdmittedDirectLANBackendLocked(ctx, store)
 	} else if p.Settings.Network == "mixed" {
 		n, e = c.newMixedBackend()
 	} else {
 		n, e = c.factory(c.dir, p.Settings.Hostname)
 	}
 	if e != nil {
-		return codedLANError(e)
+		if n != nil {
+			c.mu.Lock()
+			c.node = n
+			c.networkState = "error"
+			c.mu.Unlock()
+		}
+		return c.safeNetworkStartupError(p.Settings.Network, e)
 	}
-	// Both engines can change process-global netstack settings during Start,
-	// including a Start that later fails. A failed attempt must not permit a
-	// different engine or node identity to initialize in this process.
+	bindManagedActivationRoot(n)
+	// Install exact candidate ownership before Start, but never mark readiness.
+	c.mu.Lock()
+	c.node = n
+	c.networkState = "starting"
+	c.mu.Unlock()
+	fail := func(cause error) error { return c.closeFailedNetworkCandidateLocked(n, cause) }
+	owner := managedActivationChild(n)
+	if ctx.Err() != nil {
+		return fail(ctx.Err())
+	}
+	if owner != nil && !owner.activationCurrent() {
+		return fail(directLANMetadataUnavailable())
+	}
+	// A failed Start still consumes this process's engine/hostname selection.
 	c.mu.Lock()
 	c.attemptedNetwork, c.attemptedHostname = p.Settings.Network, p.Settings.Hostname
 	c.mu.Unlock()
 	if e = n.Start(); e != nil {
-		_ = n.Close()
-		if p.Settings.Network == "direct-lan" {
-			return e
-		}
-		if p.Settings.Network == "lan" {
-			var safe *lanCommandError
-			if errors.As(codedLANError(e), &safe) {
-				return safe
-			}
-		}
 		if p.Settings.Network == "mixed" {
-			return c.codedMixedError(e)
+			e = c.codedMixedError(e)
 		}
-		return errors.New("could not start network; private identity state was retained")
+		return fail(e)
+	}
+	if ctx.Err() != nil {
+		return fail(ctx.Err())
+	}
+	if c.ctx.Err() != nil {
+		return fail(c.ctx.Err())
+	}
+	if owner != nil && !owner.activationCurrent() {
+		return fail(directLANMetadataUnavailable())
 	}
 	c.mu.Lock()
-	c.node = n
 	c.networkState = "starting"
-	c.networkError = ""
-	c.networkErrorCode = ""
+	c.networkError, c.networkErrorCode = "", ""
+	if owner != nil && c.managedRemoval == owner.activation.removal {
+		c.managedRemoval = nil
+	}
 	c.mu.Unlock()
 	return nil
 }
@@ -328,6 +359,10 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	switch cmd.Name {
+	case "direct-lan.upgrade.review", "direct-lan.upgrade.run", "direct-lan.upgrade.status", "direct-lan.upgrade.cancel":
+		return c.upgradeCommand(ctx, cmd.Name, cmd.Payload)
+	}
 	// These explicit reads are never retained in request history. A device
 	// card must reflect the current component identity/configuration on retry.
 	// Port availability is an observation, not a reservation; never retain large
@@ -415,6 +450,9 @@ func (ctx receiveRecoveryContext) Err() error {
 }
 
 func (c *Core) executeCommand(ctx context.Context, cmd webui.Command) (any, error) {
+	if cmd.Name == "direct-lan.join" {
+		return c.executeDirectLANJoin(ctx, cmd.Payload)
+	}
 	switch cmd.Name {
 	case "transfer.send", "services.renew", "application.stop":
 		// These operations provide their own atomic admission under c.mu and
@@ -490,7 +528,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.lanRoutesCommand(ctx, cmd.Name, cmd.Payload)
 	case "mixed.status", "mixed.bind", "mixed.unbind":
 		return c.mixedCommand(ctx, cmd.Name, cmd.Payload)
-	case "direct-lan.status", "direct-lan.identity", "direct-lan.invite", "direct-lan.inspect", "direct-lan.join", "direct-lan.cancel", "direct-lan.revoke", "direct-lan.migration.review", "direct-lan.migration.apply",
+	case "direct-lan.status", "direct-lan.identity", "direct-lan.invite", "direct-lan.inspect", "direct-lan.join", "direct-lan.cancel", "direct-lan.revoke", "direct-lan.revoke.retry", "direct-lan.migration.review", "direct-lan.migration.apply",
 		"direct-lan.endpoint.status", "direct-lan.endpoint.inspect", "direct-lan.endpoint.accept", "direct-lan.endpoint.reapprove-current", "direct-lan.endpoint.revoke", "direct-lan.endpoint.expire", "direct-lan.endpoint.follow.preview", "direct-lan.endpoint.follow.apply", "direct-lan.endpoint.recovery.inspect", "direct-lan.endpoint.recovery.apply":
 		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
 	case "direct-lan.endpoint.export.preview", "direct-lan.endpoint.export", "direct-lan.endpoint.reexport.preview", "direct-lan.endpoint.reexport":
@@ -829,6 +867,13 @@ func (c *Core) revokePeer(id string) {
 }
 
 func (c *Core) revokePeerWithFailure(id string, failure *peerScopeFailure) error {
+	return c.reducePeerWorkWithFailure(id, failure, false)
+}
+
+// Before a terminal marker is durable, close app admission without publishing
+// receive-policy/profile cleanup. The coordinator performs full revocation only
+// after the sole evidence writer confirms durability.
+func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, pauseOnly bool) error {
 	c.mu.RLock()
 	retries := c.peerRefreshRetries
 	c.mu.RUnlock()
@@ -836,7 +881,15 @@ func (c *Core) revokePeerWithFailure(id string, failure *peerScopeFailure) error
 		retries.forget(id)
 	}
 	c.stopPeerProxies(id)
-	transferErr := c.transfers.RevokePeer(id)
+	var transferErr error
+	if pauseOnly {
+		transferErr = c.transfers.PausePeer(id, true)
+		if errors.Is(transferErr, transfer.ErrPeerChanged) {
+			transferErr = nil
+		} // already revoked
+	} else {
+		transferErr = c.transfers.RevokePeer(id)
+	}
 	if errors.Is(transferErr, transfer.ErrUnknownPeer) {
 		transferErr = nil // there was no application approval to revoke
 	}

@@ -107,9 +107,15 @@ func decodeDirectLANEndpointInput(raw json.RawMessage) (directLANEndpointInput, 
 }
 
 func endpointRecord(m endpointmeta.Snapshot, key string) (*endpointmeta.PeerRecord, error) {
+	if m.Version != endpointmeta.SnapshotVersionV3 && m.Version != endpointmeta.SnapshotVersionV4 {
+		return nil, endpointmeta.ErrReview
+	}
 	for i := range m.Peers {
 		if m.Peers[i].Peer.Key == key {
 			r := &m.Peers[i]
+			if r.PairRevocation != nil {
+				return nil, endpointmeta.ErrReview
+			}
 			if r.PairContext == nil || r.EndpointState == nil || !r.ContextConfirmed {
 				return nil, directLANEndpointContextRequired()
 			}
@@ -231,6 +237,9 @@ func endpointPeerViews(m endpointmeta.Snapshot) []map[string]any {
 				view["proofDigest"], _ = e.ReceivedProof.Digest()
 				view["operation"], view["issued"], view["lifetime"], view["expires"] = e.ReceivedProof.Update.Operation, e.ReceivedProof.Update.Issued, e.ReceivedProof.Update.Lifetime, e.ReceivedProof.Update.Expires
 			}
+		}
+		if r.PairRevocation != nil {
+			view["state"] = "pair_revoked"
 		}
 		peers = append(peers, view)
 	}

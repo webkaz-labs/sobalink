@@ -140,7 +140,7 @@ export function receivingBlocked(state: Pick<State, 'receiveRecovery'>) {
   // look ready or turn an unknown retained byte count into an empty inventory.
   return state.receiveRecovery !== undefined && readReceiveRecovery(state.receiveRecovery)?.state !== 'ready'
 }
-export interface DirectLanStatus { configured: boolean; listenerReady: boolean; publicKey?: string; endpoint?: string; prefixes?: string[]; recoveryRequired?: boolean; resourceRestartRequired?: boolean }
+export interface DirectLanStatus { peers?: { key: string; name?: string; endpoint: string }[]; configured: boolean; listenerReady: boolean; publicKey?: string; endpoint?: string; prefixes?: string[]; recoveryRequired?: boolean; resourceRestartRequired?: boolean }
 export interface DirectLanInvitationPreview { hostPublicKey: string; hostName: string; endpoint: string; recipientPublicKey: string; recipientMatches: true; expires: string }
 export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string; availability?: "ready" | "confirmed-unavailable" | "authorization-required" | "readiness-unconfirmed"; restartRequired?: boolean }[] }
 export interface State {
@@ -297,6 +297,10 @@ export interface CommandPayloads {
   'mixed.unbind': { peerId: string }
   'wan.candidates.get': Record<string, never>
   'wan.candidates.set': { enabled: true; stunEndpoints: string[]; advertiseIPv6: boolean; probeBudget?: number } | { enabled: false }
+  'direct-lan.upgrade.review': { peerId: string; deadline: string }
+  'direct-lan.upgrade.run': { peerId: string; deadline: string; expectedRevision: string }
+  'direct-lan.upgrade.status': Record<string, never>
+  'direct-lan.upgrade.cancel': Record<string, never>
   'direct-lan.status': Record<string, never>
   'direct-lan.identity': Record<string, never>
   'direct-lan.invite': { recipientPublicKey: string; name: string; ttlSeconds: number; qr?: boolean }

@@ -79,7 +79,7 @@ func (g *runtimeGeneration) admit(f func() bool) bool {
 	run := func() bool {
 		g.mu.Lock()
 		defer g.mu.Unlock()
-		return !g.sealed && f()
+		return !g.sealed && (g.cfg.AuthorityCurrent == nil || g.cfg.AuthorityCurrent()) && f()
 	}
 	if engine := g.engine.Load(); engine != nil {
 		return engine.Admit(run)

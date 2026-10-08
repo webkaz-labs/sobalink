@@ -12,20 +12,21 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
 )
 
-// This owner is deliberately separate from Core.node. No command, startup,
-// application backend or endpoint publication path constructs or exposes it.
+// This owner is deliberately separate from Core.node. The reviewed upgrade
+// controller constructs it; application backends never expose its authority.
 // Entry requires a fresh offline process; attemptedNetwork is never reset.
 type contextControlOwner struct {
-	node          *directlan.Node
-	store         *directLANStore
-	process       string
-	configuration string
-	ctx           context.Context
-	cancel        context.CancelFunc
-	started       chan struct{}
-	stopping      atomic.Bool
-	closeOnce     sync.Once
-	closeErr      error
+	node               *directlan.Node
+	store              *directLANStore
+	process            string
+	configuration      string
+	ctx                context.Context
+	cancel             context.CancelFunc
+	started            chan struct{}
+	stopping           atomic.Bool
+	responseContention atomic.Uint64 // diagnostic only; never admission authority
+	closeOnce          sync.Once
+	closeErr           error
 	// Core.op owns associations. Pointer identity, not serialized inputs or a
 	// caller-provided token, joins the admission to its transport attempt.
 	operations map[*directlan.ContextAttempt]*contextExchangeOperation
@@ -36,8 +37,11 @@ type contextExchangeOperation struct {
 	attempt   *directlan.ContextAttempt
 	admission contextAdmission
 	epoch     *directlan.ContextEpoch
-	direction directlan.ContextDirection
-	operation directlan.ContextOperation
+	// Set only by a successful inbound completion for its exact response.
+	// This preserves ownership after self-publication invalidates the arm epoch.
+	responseEpoch *directlan.ContextEpoch
+	direction     directlan.ContextDirection
+	operation     directlan.ContextOperation
 }
 
 type contextResponseSlot struct {
@@ -99,21 +103,70 @@ func (s *directLANStore) contextConfigLocked(now time.Time, limit int) (directla
 	if limit <= 0 {
 		return directlan.ContextControlConfig{}, "", directlan.ErrCapacity
 	}
-	projection := directlan.ContextControlConfig{Identity: cfg.Identity, Listen: cfg.Listen, AllowedPrefixes: cfg.AllowedPrefixes, Peers: cfg.Peers, ControlLimit: limit}
+	peers, _, err := projectActiveDirectLANPeers(s.state)
+	if err != nil {
+		return directlan.ContextControlConfig{}, "", err
+	}
+	projection := directlan.ContextControlConfig{Identity: cfg.Identity, Listen: cfg.Listen, AllowedPrefixes: cfg.AllowedPrefixes, Peers: peers, ControlLimit: limit}
 	return projection, contextConfigurationDigest(s.state), nil
 }
 
 func contextConfigurationDigest(s directLANState) string {
-	// Config itself has function fields and is not JSON-encodable. Hash only
-	// the complete immutable identity, selection and exact saved peer projection.
+	// Include the complete retained metadata, including marker-only changes.
+	return privateRevision(s)
+}
+
+func contextTransportConfigurationDigest(s directLANState) (string, error) {
+	peers, denied, err := projectActiveDirectLANPeers(s)
+	if err != nil {
+		return "", err
+	}
 	return privateRevision(struct {
 		Identity  directlan.Identity
 		Selection DirectLANSelection
 		Peers     []directlan.Peer
-	}{s.Identity, s.Selection, s.Peers})
+		Denied    []string
+	}{s.Identity, s.Selection, peers, denied}), nil
 }
 
-// startContextControl has no production caller in this source slice. The Core
+// Core.op and store.mu exclude owner replacement and concurrent publication.
+// Only a current, live owner may follow its own durable context-only transition.
+// Changed transport membership/denials require teardown, never digest relabeling.
+func (c *Core) refreshContextConfigurationLocked(owner *contextControlOwner, before directLANState, in contextInputs, result contextSaveResult, live *contextSaveLiveness) error {
+	if owner == nil {
+		return nil
+	}
+	if live == nil || live.owner != owner || c.currentContextOwnerLocked(owner) != nil || live.err() != nil ||
+		owner.configuration != contextConfigurationDigest(before) {
+		return endpointmeta.ErrReview
+	}
+	s := owner.store
+	if !directLANActiveMetadataSchema(before) || !directLANActiveMetadataSchema(s.state) {
+		return endpointmeta.ErrReview
+	}
+	if !result.durable || !result.published || !s.contextPublicationCurrentLocked(owner.process) {
+		return endpointmeta.ErrReview
+	}
+	now, err := time.Parse(time.RFC3339Nano, s.state.Metadata.ObservedAt)
+	if err != nil {
+		return endpointmeta.ErrReview
+	}
+	if err := validateContextProjection(*before.Metadata, endpointmeta.ContextTransition{Snapshot: *s.state.Metadata, Changed: result.changed}, in, now); err != nil {
+		return err
+	}
+	oldTransport, err := contextTransportConfigurationDigest(before)
+	if err != nil {
+		return err
+	}
+	newTransport, err := contextTransportConfigurationDigest(s.state)
+	if err != nil || oldTransport != newTransport {
+		return endpointmeta.ErrReview
+	}
+	owner.configuration = contextConfigurationDigest(s.state)
+	return nil
+}
+
+// startContextControl is called by the bounded reviewed upgrade job. The Core
 // pointer is installed before Start and remains present throughout construction,
 // cleanup and any failed Close. No Core.op lock spans Start's socket work.
 func (c *Core) startContextControl(ctx context.Context) error {
@@ -141,7 +194,11 @@ func (c *Core) startContextControl(ctx context.Context) error {
 		c.op.Unlock()
 		return err
 	}
-	lifetime, cancel := context.WithCancel(c.ctx)
+	// Unlike the ordinary backend, this owner is bounded by the explicit
+	// upgrade workflow. Parent cancellation propagates synchronously through
+	// owner.ctx to inbound attempts and final publication/response gates; an
+	// asynchronous requestClose watcher is not the cancellation authority.
+	lifetime, cancel := context.WithCancel(ctx)
 	o := &contextControlOwner{store: s, process: process, configuration: configuration, ctx: lifetime, cancel: cancel, started: make(chan struct{}), operations: make(map[*directlan.ContextAttempt]*contextExchangeOperation)}
 	cfg.Completion = func(ctx context.Context, attempt *directlan.ContextAttempt, verified directlan.VerifiedContextExchange) (directlan.ContextResponse, error) {
 		return c.completeContextExchange(ctx, o, attempt, verified)
@@ -227,13 +284,17 @@ func (c *Core) stopContextControlLocked() error {
 }
 
 func contextPrepareRequest(m endpointmeta.Snapshot, r endpointmeta.PeerRecord) (endpointmeta.PrepareRequest, error) {
+	i, err := contextPeer(m, r.Peer.Key)
+	if err != nil || !reflect.DeepEqual(m.Peers[i], r) {
+		return endpointmeta.PrepareRequest{}, endpointmeta.ErrReview
+	}
 	if r.UpgradePending == nil {
 		return endpointmeta.PrepareRequest{}, endpointmeta.ErrReview
 	}
 	request := endpointmeta.PrepareRequest{Version: 2, Operation: "pair-context-prepare", Sender: m.LocalPeer.Key, Recipient: r.Peer.Key,
 		SenderTunnelKey: m.LocalPeer.TunnelKey, RecipientTunnelKey: r.Peer.TunnelKey, SenderNonce: r.UpgradePending.OwnNonce,
 		SenderEndpoint: m.LocalPeer.Endpoint, RecipientEndpoint: r.Peer.Endpoint, SenderScope: m.LocalScope}
-	_, err := endpointmeta.Encode(request)
+	_, err = endpointmeta.Encode(request)
 	return request, err
 }
 
@@ -242,12 +303,15 @@ func contextPrepareRequest(m endpointmeta.Snapshot, r endpointmeta.PeerRecord) (
 // bytes, nonce, revision or deadline and restores no first-commit permission.
 func (s *directLANStore) publishContextBeforeArmLocked(ctx context.Context, owner *contextControlOwner, key string, now time.Time) error {
 	process := owner.process
-	if s.contextPublicationCurrentLocked(process) {
-		return nil
+	if !directLANActiveMetadataSchema(s.state) {
+		return endpointmeta.ErrReview
 	}
 	i, err := contextPeer(*s.state.Metadata, key)
 	if err != nil {
 		return err
+	}
+	if s.contextPublicationCurrentLocked(process) {
+		return nil
 	}
 	r := s.state.Metadata.Peers[i]
 	if contextSavedPair(r) == nil {
@@ -277,13 +341,13 @@ func (c *Core) captureContextExchangeLocked(ctx context.Context, o *contextContr
 	}
 	s := o.store
 	s.mu.Lock()
-	a, request, epoch, err := s.contextExchangeAdmissionLocked(ctx, o, key, operation, direction, time.Now())
+	a, request, epoch, err := c.contextExchangeAdmissionLocked(ctx, o, key, operation, direction, time.Now())
 	s.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
 	for attempt, old := range o.operations {
-		if !old.epoch.Valid() || old.admission.inputs.PeerKey == key && old.operation == operation {
+		if !old.epoch.Valid() && !old.responseEpoch.Valid() || old.admission.inputs.PeerKey == key && old.operation == operation {
 			attempt.Cancel()
 			delete(o.operations, attempt)
 		}
@@ -310,7 +374,8 @@ func (c *Core) prepareContextOutboundLocked(ctx context.Context, o *contextContr
 	return c.captureContextExchangeLocked(ctx, o, key, operation, directlan.ContextOutbound)
 }
 
-func (s *directLANStore) contextExchangeAdmissionLocked(ctx context.Context, o *contextControlOwner, key string, operation directlan.ContextOperation, direction directlan.ContextDirection, now time.Time) (contextAdmission, endpointmeta.Request, *directlan.ContextEpoch, error) {
+func (c *Core) contextExchangeAdmissionLocked(ctx context.Context, o *contextControlOwner, key string, operation directlan.ContextOperation, direction directlan.ContextDirection, now time.Time) (contextAdmission, endpointmeta.Request, *directlan.ContextEpoch, error) {
+	s := o.store
 	fail := func(err error) (contextAdmission, endpointmeta.Request, *directlan.ContextEpoch, error) {
 		return contextAdmission{}, nil, nil, err
 	}
@@ -368,7 +433,16 @@ func (s *directLANStore) contextExchangeAdmissionLocked(ctx context.Context, o *
 				if err != nil {
 					return fail(err)
 				}
-				if _, err := s.saveContextTransitionWithLivenessLocked(ctx, o.process, local, contextTranscript{Bound: bound}, now, &contextSaveLiveness{ctx: ctx, owner: o}); err != nil {
+				before := cloneDirectLANState(s.state)
+				live := &contextSaveLiveness{ctx: ctx, owner: o}
+				result, err := s.saveContextTransitionWithLivenessLocked(ctx, o.process, local, contextTranscript{Bound: bound}, now, live)
+				if err == nil && result.durable {
+					err = c.refreshContextConfigurationLocked(o, before, local.inputs, result, live)
+				}
+				if err != nil {
+					if s.recovery || result.published {
+						o.requestClose()
+					}
 					return fail(err)
 				}
 				in.Operation = contextConfirmCommit
@@ -505,7 +579,21 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 		attempt.Cancel()
 		return directlan.ContextResponse{}, endpointmeta.ErrReview
 	}
-	delete(owner.operations, attempt)
+	if operation.responseEpoch != nil {
+		// A retained response owner is lifecycle bookkeeping, not a second claim.
+		delete(owner.operations, attempt)
+		attempt.Cancel()
+		return directlan.ContextResponse{}, endpointmeta.ErrReview
+	}
+	retainResponse := false
+	defer func() {
+		if !retainResponse {
+			delete(owner.operations, attempt)
+		}
+	}()
+	// Retain inbound ownership until transport finish cancels the exact attempt.
+	// The cancelled map entry is removed lazily by a later capture or owner close.
+	// Removing it here would let polling replace/cancel its still-unsent reply.
 	// Claim before store.mu. The transport's Node/generation locks have been
 	// released when this returns, including rejection on TryLock contention.
 	evidence, err := verified.TryClaimFor(attempt)
@@ -532,10 +620,20 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 		return directlan.ContextResponse{}, endpointmeta.ErrReview
 	}
 	live := &contextSaveLiveness{ctx: ctx, owner: owner, attempt: attempt}
+	before := cloneDirectLANState(s.state)
+	if owner.configuration != contextConfigurationDigest(before) {
+		return directlan.ContextResponse{}, endpointmeta.ErrReview
+	}
 	result, err := s.saveContextTransitionWithLivenessLocked(ctx, owner.process, operation.admission, transcript, time.Now(), live)
 	if err != nil {
 		closeOwner = s.recovery || result.published
 		return directlan.ContextResponse{}, err
+	}
+	if result.durable {
+		if err := c.refreshContextConfigurationLocked(owner, before, operation.admission.inputs, result, live); err != nil {
+			closeOwner = true
+			return directlan.ContextResponse{}, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return directlan.ContextResponse{}, err
@@ -552,6 +650,8 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 		return directlan.ContextResponse{}, directlan.ErrUnavailable
 	}
 	epoch := s.contextEpochLocked()
+	operation.responseEpoch = epoch
+	retainResponse = true
 	slot := &contextResponseSlot{owner: owner, attempt: attempt, store: s, process: owner.process, receipt: s.contextPublication,
 		epoch: epoch, writeRevision: s.reviewRevision, replyDigest: privateRevision(reply), deadline: deadline}
 	return directlan.ContextResponse{Reply: reply, Epoch: epoch, Admit: func() bool { return c.admitContextResponse(ctx, slot, attempt, reply) }}, nil
@@ -561,7 +661,13 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 // not hold Core.op/store.mu during TLS I/O; DirectLAN repeats its current
 // Node/generation/registration/cancellation checks after this function returns.
 func (c *Core) admitContextResponse(ctx context.Context, slot *contextResponseSlot, attempt *directlan.ContextAttempt, reply endpointmeta.Reply) bool {
-	if slot == nil || !slot.used.CompareAndSwap(false, true) || !c.op.TryLock() {
+	if slot == nil || !slot.used.CompareAndSwap(false, true) {
+		return false
+	}
+	if !c.op.TryLock() {
+		if slot.owner != nil {
+			slot.owner.responseContention.Add(1)
+		}
 		return false
 	}
 	defer c.op.Unlock()
@@ -573,6 +679,9 @@ func (c *Core) admitContextResponse(ctx context.Context, slot *contextResponseSl
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.contextEpoch != slot.epoch || !slot.epoch.Valid() || s.contextPublication != slot.receipt || s.reviewRevision != slot.writeRevision || !s.contextPublicationCurrentLocked(slot.process) {
+		return false
+	}
+	if contextConfigurationDigest(s.state) != slot.owner.configuration {
 		return false
 	}
 	if _, err := s.endpointModelLocked(time.Now(), false); err != nil {

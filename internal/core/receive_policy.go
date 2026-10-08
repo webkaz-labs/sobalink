@@ -13,7 +13,7 @@ func (s receiveStore) LoadPolicies() ([]transfer.ReceivePolicy, error) {
 	var out []transfer.ReceivePolicy
 	profile := s.core.profileCopy()
 	for _, p := range profile.Peers {
-		if p.Network == profile.Settings.Network && p.Autosave {
+		if p.Network == profile.Settings.Network && p.Autosave && !s.core.managedPeerDenied(p.ID) {
 			out = append(out, transfer.ReceivePolicy{Peer: transfer.Peer{ID: p.ID, Generation: p.Generation}, Destination: p.Directory, AutoAccept: true})
 		}
 	}
@@ -27,6 +27,9 @@ func (s receiveStore) SavePolicies(policies []transfer.ReceivePolicy) error {
 // lock. Manager holds its own lock until this one durable save and the combined
 // policy/pause publication complete; the callback never reenters Manager.
 func (s receiveStore) savePolicies(policies []transfer.ReceivePolicy, updated *Trust) error {
+	if updated != nil && s.core.managedPeerDenied(updated.ID) {
+		return errors.New("receive policy peer was terminally removed")
+	}
 	p := s.core.profileCopy()
 	before := privateRevision(p)
 	for i := range p.Peers {
@@ -51,6 +54,9 @@ func (s receiveStore) savePolicies(policies []transfer.ReceivePolicy, updated *T
 		}
 	}
 	for _, policy := range policies {
+		if s.core.managedPeerDenied(policy.Peer.ID) {
+			continue // full-store revocation may still contain other denied peers
+		}
 		found := false
 		for i := range p.Peers {
 			if p.Peers[i].Network == p.Settings.Network && p.Peers[i].ID == policy.Peer.ID && p.Peers[i].Generation == policy.Peer.Generation {
@@ -91,7 +97,7 @@ func (c *Core) resetTransferNetwork(profile Profile) error {
 	var policies []transfer.ReceivePolicy
 	var paused []string
 	for _, p := range profile.Peers {
-		if p.Network != profile.Settings.Network {
+		if p.Network != profile.Settings.Network || c.managedPeerDenied(p.ID) {
 			continue
 		}
 		peer := transfer.Peer{ID: p.ID, Generation: p.Generation}

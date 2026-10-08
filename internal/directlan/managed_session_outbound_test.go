@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,25 @@ import (
 // case because requestManagedSession owns its real net.Dialer. It creates no
 // WG/UDP owner, Core store, endpoint movement, restart, or durable authority.
 func TestManagedOutboundBoundReplyComposition(t *testing.T) {
+	// Winsock reset is a distinct errno from syscall.ECONNRESET. Match its
+	// typed value only on Windows, including when net.OpError wraps it.
+	for _, check := range []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{syscall.ECONNRESET, true},
+		{syscall.EPIPE, true},
+		{syscall.Errno(10054), runtime.GOOS == "windows"},
+		{&net.OpError{Op: "write", Net: "tcp", Err: syscall.Errno(10054)}, runtime.GOOS == "windows"},
+		{syscall.Errno(10053), false},
+		{context.DeadlineExceeded, false},
+		{errors.New("An existing connection was forcibly closed by the remote host."), false},
+	} {
+		if got := managedExpectedPeerClose(check.err); got != check.want {
+			t.Fatalf("peer-close classification: got %v, want %v for %T", got, check.want, check.err)
+		}
+	}
 	for _, kind := range []string{"exact", "wrong-binding", "wrong-operation", "v1", "noncanonical", "oversize", "truncated", "lost-reply", "wrong-pin", "cancelled", "stale-registration", "stale-peer", "stopped-owner"} {
 		t.Run(kind, func(t *testing.T) {
 			listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
@@ -220,5 +240,6 @@ func TestManagedOutboundBoundReplyComposition(t *testing.T) {
 }
 
 func managedExpectedPeerClose(err error) bool {
-	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
+		(runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10054))) // WSAECONNRESET
 }

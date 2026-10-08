@@ -18,6 +18,8 @@ import (
 // a stop that already completed invisible to publication admission.
 type contextSaveLiveness struct {
 	ctx                  context.Context
+	core                 context.Context
+	ordinary             *managedCompletionOwner
 	owner                *contextControlOwner
 	attempt              *directlan.ContextAttempt
 	cancelledBeforeWrite bool
@@ -26,6 +28,12 @@ type contextSaveLiveness struct {
 func (l *contextSaveLiveness) err() error {
 	if l == nil {
 		return nil
+	}
+	if l.core != nil && l.core.Err() != nil {
+		return l.core.Err()
+	}
+	if l.ordinary != nil && l.ordinary.stopped.Load() {
+		return context.Canceled
 	}
 	if err := l.ctx.Err(); err != nil {
 		return err
@@ -236,7 +244,7 @@ func (s *directLANStore) reserveContextWindowLocked(in contextInputs, next endpo
 // Then independently constrain its projection to that operation's field set.
 func (s *directLANStore) stateWithContextMetadataLocked(in contextInputs, transcript contextTranscript, now time.Time) (directLANState, endpointmeta.ContextTransition, error) {
 	before := s.state.Metadata
-	if s.state.Version != directLANMetadataStateVersion || before == nil {
+	if !directLANActiveMetadataSchema(s.state) || before == nil {
 		return directLANState{}, endpointmeta.ContextTransition{}, directLANEndpointContextRequired()
 	}
 	budget, err := s.endpointBudgetLocked()
@@ -274,6 +282,12 @@ func (s *directLANStore) stateWithContextMetadataLocked(in contextInputs, transc
 
 func validateContextProjection(before endpointmeta.Snapshot, transition endpointmeta.ContextTransition, in contextInputs, now time.Time) error {
 	next := transition.Snapshot
+	if (before.Version != endpointmeta.SnapshotVersionV3 && before.Version != endpointmeta.SnapshotVersionV4) || next.Version != before.Version {
+		return endpointmeta.ErrIdentity
+	}
+	if _, err := contextPeer(before, in.PeerKey); err != nil {
+		return err
+	}
 	if !transition.Changed {
 		if !reflect.DeepEqual(before, next) {
 			return endpointmeta.ErrIdentity
@@ -448,7 +462,7 @@ func (s *directLANStore) saveContextTransitionWithLivenessLocked(ctx context.Con
 	}
 	before := *cloneDirectLANMetadata(s.state.Metadata)
 	s.contextPublication = nil
-	err = s.writeContextStateLocked(next, live)
+	err = s.writeContextPublicationLocked(process, next, live)
 	if live.cancelledBeforeWrite {
 		// Publication admission was rejected before invoking the writer.
 		// The epoch/revision remains invalidated, but no save uncertainty was
@@ -468,10 +482,22 @@ func (s *directLANStore) saveContextTransitionWithLivenessLocked(ctx context.Con
 		}
 		return contextSaveResult{published: resolution.Published}, err
 	}
-	s.contextPublication = &contextPublicationReceipt{store: s, process: process, path: s.path, file: s.fileDigest,
-		state: privateRevision(s.state), writeRevision: s.reviewRevision}
 	if err := live.err(); err != nil {
 		return contextSaveResult{published: true}, err
 	}
 	return contextSaveResult{changed: transition.Changed, published: true, durable: true, phase: transition.Phase}, nil
+}
+
+// All context and activation receipts are assigned at this sole successful
+// publication boundary. Callers must validate a closed transition or exact
+// no-delta admission before entering; reads never reconstruct this receipt.
+func (s *directLANStore) writeContextPublicationLocked(process string, next directLANState, live *contextSaveLiveness) error {
+	if process == "" {
+		return endpointmeta.ErrReview
+	}
+	if err := s.writeContextStateLocked(next, live); err != nil {
+		return err
+	}
+	s.contextPublication = &contextPublicationReceipt{store: s, process: process, path: s.path, file: s.fileDigest, state: privateRevision(s.state), writeRevision: s.reviewRevision}
+	return nil
 }
