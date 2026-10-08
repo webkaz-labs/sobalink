@@ -67,11 +67,17 @@ func readResourceEnvelope(path string) (resourceEnvelope, error) {
 // successfully before using it; a read alone cannot certify prior durability.
 func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 	c.resourceIdentity, c.resourceNonce, c.resourceLock = "", "", nil
-	err := owner.WithOwnership(c.dir, func() error {
+	c.resourceDirectoryIdentity = nil
+	err := owner.WithOwnershipInfo(c.dir, func(directory, lock os.FileInfo) error {
 		path := resourceStatePath(c.dir)
-		if err := config.SecureChildDirectory(c.dir, "resource-state"); err != nil {
+		if err := config.SecureChildDirectoryBound(c.dir, "resource-state", directory); err != nil {
 			return err
 		}
+		binding, err := openResourcePathBinding(c.dir, directory, lock)
+		if err != nil {
+			return err
+		}
+		defer binding.close()
 		state, err := readResourceEnvelope(path)
 		if errors.Is(err, os.ErrNotExist) {
 			id, idErr := newResourceID()
@@ -96,14 +102,11 @@ func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 		}
 		// Separate parent means resource evidence never holds the canonical settings
 		// writer lease. This write deliberately does not advance authority revision.
-		write := c.atomicWrite
-		if write == nil {
-			write = config.AtomicWrite
-		}
-		if err := write(path, encoded); err != nil {
+		if err := binding.write(path, encoded, c.atomicWrite); err != nil {
 			return err
 		}
 		c.resourceIdentity, c.resourceNonce, c.resourceLock = state.ResourceID, nonce, owner
+		c.resourceDirectoryIdentity = binding.journalInfo
 		return nil
 	})
 	if err != nil {

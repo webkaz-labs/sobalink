@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/resource"
@@ -61,9 +62,17 @@ func (c *Core) resourceCommand(name string, raw json.RawMessage) (any, error) {
 	}
 	var result any
 	var commandErr error
-	err := c.resourceLock.WithOwnership(c.dir, func() error {
+	err := c.resourceLock.WithOwnershipInfo(c.dir, func(directory, lock os.FileInfo) error {
+		binding, err := openResourcePathBinding(c.dir, directory, lock)
+		if err != nil {
+			return err
+		}
+		defer binding.close()
+		if c.resourceDirectoryIdentity == nil || !os.SameFile(c.resourceDirectoryIdentity, binding.journalInfo) {
+			return errResourceBinding
+		}
 		result, commandErr = c.resourceCommandOwned(name, raw)
-		return nil
+		return binding.check()
 	})
 	if err != nil {
 		return nil, resourceUnavailable()

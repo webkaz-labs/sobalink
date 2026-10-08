@@ -99,6 +99,7 @@ type Core struct {
 	resourceIdentity           string // protected by op, empty when startup certification failed
 	resourceLock               *config.Lock
 	resourceNonce              string
+	resourceDirectoryIdentity  os.FileInfo
 	endpointJob                *endpointFollowingJob // mu: bounded coordinator, joined before op on Close
 	managedCleanupPending      bool                  // protected by mu; ancillary durability only
 	managedCleanupError        error                 // protected by mu; retained reopen/repair failures

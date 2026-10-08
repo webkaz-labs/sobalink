@@ -19,7 +19,7 @@ Replace `RESOURCE_ID` with the exact opaque ID returned by `list`. Both preview 
 
 All three commands return language-independent JSON; `--json` is accepted explicitly. Human help and input errors follow `--locale auto|ja|en`. `requested` retains the requested choices and `effective` shows their resolved values. Global `--dry-run` only validates local input and prints the request without contacting the agent; it does not inspect current state or issue an authoritative review. Global `--offline` definition editing does not support these commands. A running agent started with `start --offline` can inspect settings without starting its saved network.
 
-Only `list`, `inspect` and `preview` are advertised as supported operations. There is no usable apply or operation-status command. The interface uses existing authenticated local control; it creates no peer endpoint, remote management grant or discovery advertisement.
+Only `list`, `inspect` and `preview` are advertised as supported operations. There is no usable apply or operation-status command. The commands use the existing authenticated local IPC and local Web `/api/command` dispatcher. This adds no Web UI controls, peer-management endpoint, remote management grant or discovery advertisement. The fixed `local-control` actor denotes this local authority scope; it does not identify an individual user.
 
 ## Identity, review and compatibility contract
 

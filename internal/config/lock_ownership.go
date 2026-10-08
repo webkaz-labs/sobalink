@@ -10,6 +10,17 @@ import (
 // exactly dir. It cannot mint ownership from a path or a caller-supplied flag.
 // Close waits for the operation; callers must not call Close from the callback.
 func (l *Lock) WithOwnership(dir string, operation func() error) error {
+	if operation == nil {
+		return errors.New("profile lifecycle ownership required")
+	}
+	return l.WithOwnershipInfo(dir, func(os.FileInfo, os.FileInfo) error { return operation() })
+}
+
+// WithOwnershipInfo supplies the actual held directory and process-lock
+// identities to a bounded publication callback, under the same lifecycle mutex.
+// The immutable metadata is not a stand-alone ownership capability; the callback
+// must finish before Close can release ownership.
+func (l *Lock) WithOwnershipInfo(dir string, operation func(directory, lock os.FileInfo) error) error {
 	if l == nil || operation == nil {
 		return errors.New("profile lifecycle ownership required")
 	}
@@ -30,5 +41,5 @@ func (l *Lock) WithOwnership(dir string, operation func() error) error {
 	if err != nil || !current.Mode().IsRegular() || !os.SameFile(opened, current) {
 		return errors.New("profile lifecycle ownership changed")
 	}
-	return operation()
+	return operation(l.directory, opened)
 }

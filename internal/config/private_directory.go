@@ -15,7 +15,19 @@ func SecureChildDirectory(parentPath, name string) error {
 	return secureChildDirectory(parentPath, name, atomicSyncBoundDirectory)
 }
 
-func secureChildDirectory(parentPath, name string, syncDirectory func(string, *os.File) error) (err error) {
+// SecureChildDirectoryBound additionally binds startup creation to the actual
+// lifecycle owner's parent identity before any child entry is created.
+func SecureChildDirectoryBound(parentPath, name string, expected os.FileInfo) error {
+	if expected == nil {
+		return errors.New("private parent identity required")
+	}
+	return secureChildDirectoryBound(parentPath, name, atomicSyncBoundDirectory, expected)
+}
+
+func secureChildDirectory(parentPath, name string, syncDirectory func(string, *os.File) error) error {
+	return secureChildDirectoryBound(parentPath, name, syncDirectory, nil)
+}
+func secureChildDirectoryBound(parentPath, name string, syncDirectory func(string, *os.File) error, expected os.FileInfo) (err error) {
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
 		return errors.New("invalid private directory name")
 	}
@@ -24,6 +36,12 @@ func secureChildDirectory(parentPath, name string, syncDirectory func(string, *o
 		return err
 	}
 	defer func() { err = errors.Join(err, parent.Close()) }()
+	if expected != nil {
+		opened, statErr := parent.Stat()
+		if statErr != nil || !os.SameFile(expected, opened) {
+			return errors.New("private parent identity changed")
+		}
+	}
 	before, err := atomicFileMetadata(parent)
 	if err != nil {
 		return err
