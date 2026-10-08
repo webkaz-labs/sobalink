@@ -78,3 +78,39 @@ func tlsConfigProtocol(cert tls.Certificate, pin string, server bool, protocol s
 	}
 	return cfg
 }
+
+// Server ALPN advertisement is not downgrade authorization. Classification is
+// checked only after authenticating the certificate and stays constructor-owned.
+func (n *Node) ordinaryServerTLS(g *runtimeGeneration) *tls.Config {
+	cfg := tlsConfig(n.cert, "", true)
+	cfg.NextProtos = []string{contextProtocolName, protocolName}
+	cfg.VerifyConnection = func(s tls.ConnectionState) error {
+		raw := make([][]byte, len(s.PeerCertificates))
+		for i, cert := range s.PeerCertificates {
+			raw[i] = cert.Raw
+		}
+		key, err := certificateKey(raw, time.Now())
+		if err != nil || key == n.PublicKey() {
+			return ErrIdentity
+		}
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		if n.readyLocked() != nil || n.generation.Load() != g {
+			return ErrUntrusted
+		}
+		expected := protocolName
+		if n.managedKey(key) {
+			expected = contextProtocolName
+			if n.peers[key] == nil || n.peers[key].g != g {
+				return ErrUntrusted
+			}
+		} else if n.peers[key] == nil && n.cfg.Persist == nil {
+			return ErrUntrusted
+		}
+		if s.NegotiatedProtocol != expected {
+			return ErrIdentity
+		}
+		return nil
+	}
+	return cfg
+}

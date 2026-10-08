@@ -146,7 +146,7 @@ func (s *directLANStore) publishStateLocked(next directLANState) error {
 	return s.publishStateWithContextLivenessLocked(next, nil)
 }
 
-// Only the closed context reducer supplies this concrete liveness guard. The
+// Closed context and private pair-record reducers supply this guard. The
 // recovery, projection, file and capacity checks remain the same publisher.
 func (s *directLANStore) writeContextStateLocked(next directLANState, live *contextSaveLiveness) error {
 	if s.recovery {
@@ -477,7 +477,8 @@ func (c *Core) revokeDirectLANPeer(id string) error {
 	if s == nil {
 		return &lanCommandError{"direct_lan_setup_required", "there is no saved direct LAN identity to revoke"}
 	}
-	if directLANMetadataManaged(s.copy().Metadata) {
+	saved := s.copy()
+	if (saved.Version != directLANStateVersion && saved.Version != directLANMetadataStateVersion) || directLANMetadataManaged(saved.Metadata) {
 		// Managed pair removal needs a durable pair-revoke/tombstone contract.
 		// Reject before changing application, startup or mixed grants; deleting
 		// only its legacy DTO would silently discard replay evidence.

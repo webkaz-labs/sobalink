@@ -17,10 +17,12 @@ import (
 const handshakeTimeout = 10 * time.Second
 
 type peerState struct {
-	peer       Peer
-	session    *peerSession
-	enginePeer *device.OwnedPeer
-	g          *runtimeGeneration
+	peer          Peer
+	session       *peerSession
+	enginePeer    *device.OwnedPeer
+	g             *runtimeGeneration
+	binding       string                                // immutable; derived from the constructor context
+	authenticated atomic.Pointer[managedAuthentication] // initially closed
 }
 type service struct {
 	network string
@@ -37,6 +39,8 @@ type wire struct {
 	key              string
 	peer             *peerState
 	cancel           context.CancelFunc
+	stopWatch        func()
+	controlContext   context.Context
 }
 
 type pendingDial struct {
@@ -83,8 +87,7 @@ type Node struct {
 // NewNode validates all policy and saved state before doing any network I/O.
 func NewNode(cfg Config) (*Node, error) {
 	cfg = cfg.withDefaults()
-	cfg.AllowedPrefixes = append([]netip.Prefix(nil), cfg.AllowedPrefixes...)
-	cfg.Peers = append([]Peer(nil), cfg.Peers...)
+	cfg = cloneGenerationConfig(cfg)
 	if e := cfg.Validate(); e != nil {
 		return nil, e
 	}
@@ -290,10 +293,18 @@ func (n *Node) handle(w *wire) {
 			n.removeWire(w)
 		}
 	}()
-	c := tls.Server(w.raw, tlsConfig(n.cert, "", true))
-	c.SetDeadline(time.Now().Add(handshakeTimeout))
-	ctx, cancel := context.WithTimeout(n.ctx, handshakeTimeout)
+	deadline := w.contextDeadline
+	if deadline.IsZero() {
+		deadline = time.Now().Add(handshakeTimeout)
+	}
+	c := tls.Server(w.raw, n.ordinaryServerTLS(w.g))
+	if c.SetDeadline(deadline) != nil {
+		return
+	}
+	ctx, cancel := context.WithDeadline(n.ctx, deadline)
 	defer cancel()
+	stop := watchConnection(ctx, w.raw)
+	defer stop()
 	if c.HandshakeContext(ctx) != nil {
 		return
 	}
@@ -308,7 +319,16 @@ func (n *Node) handle(w *wire) {
 	}
 	w.key = key
 	w.peer = n.peers[key]
+	managed := n.managedKey(key)
+	if managed && (w.peer == nil || c.ConnectionState().NegotiatedProtocol != contextProtocolName) || !managed && c.ConnectionState().NegotiatedProtocol != protocolName {
+		n.mu.Unlock()
+		return
+	}
 	n.mu.Unlock()
+	if managed {
+		n.handleManagedSession(ctx, c, w)
+		return
+	}
 	var req request
 	if readJSON(c, &req) != nil || req.Version != 1 {
 		return
@@ -344,8 +364,11 @@ func validService(network string, port uint16) bool {
 	return (network == "tcp" || network == "udp") && port != 0 && port != 54545
 }
 
-func (n *Node) removeWire(w *wire) {
-	w.raw.Close()
+func (n *Node) removeWire(w *wire) error {
+	closeErr := w.raw.Close()
+	if w.stopWatch != nil {
+		w.stopWatch()
+	}
 	if w.cancel != nil {
 		w.cancel()
 	}
@@ -353,6 +376,7 @@ func (n *Node) removeWire(w *wire) {
 	delete(n.wires, w)
 	n.mu.Unlock()
 	w.work.finish()
+	return closeErr
 }
 func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.Conn, *wire, error) {
 	bounded, cancel := context.WithTimeout(ctx, handshakeTimeout)
@@ -362,7 +386,7 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 		cancel()
 		return nil, nil, e
 	}
-	if expected != nil && n.peers[p.Key] != expected {
+	if expected != nil && n.peers[p.Key] != expected || n.managedKey(p.Key) && (expected == nil || expected.binding == "") {
 		n.mu.Unlock()
 		cancel()
 		return nil, nil, ErrUntrusted
@@ -405,37 +429,42 @@ func (n *Node) connect(ctx context.Context, p Peer, expected *peerState) (*tls.C
 	}
 	raw, e := d.DialContext(bounded, network, p.Endpoint.String())
 	if e != nil {
-		if raw != nil {
-			raw.Close()
-		}
+		e = closeUnadmittedControl(g, raw, e)
 		cancel()
 		return nil, nil, e
 	}
 	owned := newControlStream(g, raw)
-	w := &wire{raw: owned, key: p.Key, peer: expected, cancel: cancel, control: true, g: g, work: work}
+	w := &wire{raw: owned, key: p.Key, peer: expected, cancel: cancel, control: true, g: g, work: work, controlContext: bounded}
 	n.mu.Lock()
 	delete(n.dials, pending)
 	if n.readyLocked() != nil || n.generation.Load() != g || bounded.Err() != nil || (expected != nil && n.peers[p.Key] != expected) || n.controlUsageLocked() >= n.cfg.ControlLimit {
 		n.mu.Unlock()
-		raw.Close()
+		closeErr := closeUnadmittedControl(g, owned, ErrUntrusted)
 		cancel()
-		return nil, nil, ErrUntrusted
+		return nil, nil, closeErr
 	}
 	n.wires[w] = struct{}{}
 	transferred = true
 	delete(n.dials, pending)
 	n.mu.Unlock()
 	stop := watchConnection(bounded, owned)
-	c := tls.Client(owned, tlsConfig(n.cert, p.Key, false))
-	c.SetDeadline(time.Now().Add(handshakeTimeout))
-	if e = c.HandshakeContext(bounded); e != nil {
-		stop()
-		n.removeWire(w)
-		return nil, nil, e
+	protocol := protocolName
+	if n.managedKey(p.Key) {
+		protocol = contextProtocolName
 	}
-	// The request/reply deadline remains active until the caller finishes opening.
-	// Caller cancellation is also watched by the opening operation itself.
-	stop()
+	c := tls.Client(owned, tlsConfigProtocol(n.cert, p.Key, false, protocol))
+	deadline, _ := bounded.Deadline()
+	w.contextDeadline = deadline
+	if e = c.SetDeadline(deadline); e == nil {
+		e = c.HandshakeContext(bounded)
+	}
+	if e != nil {
+		stop()
+		closeErr := n.removeWire(w)
+		return nil, nil, errors.Join(e, closeErr)
+	}
+	// One bounded cancellation owner covers dial, TLS and the complete frame exchange.
+	w.stopWatch = stop
 	return c, w, nil
 }
 

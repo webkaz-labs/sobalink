@@ -51,6 +51,9 @@ func recordForKey(s Snapshot, key string) (int, error) {
 // input; nil means only existing follow consent can admit a new set. Duplicate
 // proofs are classified before current-time freshness and never refresh state.
 func ProposeReceive(s Snapshot, remoteKey string, e Envelope, exact *Approval, now time.Time) (Mutation, string, error) {
+	if s.Version != SnapshotVersionV3 {
+		return Mutation{}, "", ErrReview
+	}
 	if err := s.ValidateAt(now); err != nil {
 		return Mutation{}, "", err
 	}
@@ -126,6 +129,9 @@ func ProposeReceive(s Snapshot, remoteKey string, e Envelope, exact *Approval, n
 // It cannot account for runtime generations, workers, monotonic process clocks,
 // local address ownership, or current application permissions.
 func SavedEligibility(s Snapshot, binding string, now time.Time) bool {
+	if s.Version != SnapshotVersionV3 {
+		return false
+	}
 	if s.ValidateAt(now) != nil {
 		return false
 	}
@@ -156,6 +162,9 @@ func SavedEligibility(s Snapshot, binding string, now time.Time) bool {
 // ProposeReapproval is the local-only equal-sequence operation. It cannot select
 // an older proof or a withdrawal and does not change the remote issue/deadline.
 func ProposeReapproval(s Snapshot, binding string, approval Approval, now time.Time) (Mutation, error) {
+	if s.Version != SnapshotVersionV3 {
+		return Mutation{}, ErrReview
+	}
 	if err := s.ValidateAt(now); err != nil {
 		return Mutation{}, err
 	}
@@ -193,6 +202,9 @@ type ReductionResult struct {
 }
 
 func ProposeReduction(s Snapshot, binding, kind string, now time.Time) (ReductionResult, error) {
+	if s.Version != SnapshotVersionV3 {
+		return ReductionResult{}, ErrReview
+	}
 	if err := s.ValidateAt(now); err != nil {
 		return ReductionResult{}, err
 	}
@@ -253,6 +265,9 @@ func ProposeReduction(s Snapshot, binding, kind string, now time.Time) (Reductio
 // ProposeFollow records an explicitly chosen local lifetime. It does not change
 // the current endpoint approval or revive a stopped managed endpoint.
 func ProposeFollow(s Snapshot, binding string, follow FollowApproval, now time.Time) (Mutation, error) {
+	if s.Version != SnapshotVersionV3 {
+		return Mutation{}, ErrReview
+	}
 	if err := s.ValidateAt(now); err != nil {
 		return Mutation{}, err
 	}
@@ -283,6 +298,9 @@ func ProposeFollow(s Snapshot, binding string, follow FollowApproval, now time.T
 }
 
 func PreviewMutation(s Snapshot, m Mutation) (string, error) {
+	if s.Version != SnapshotVersionV3 {
+		return "", ErrReview
+	}
 	if err := s.Validate(); err != nil {
 		return "", err
 	}
@@ -446,6 +464,9 @@ func validateMutationAt(s Snapshot, m Mutation, now time.Time) error {
 // Fence returns an in-memory candidate for the first durable save. Its presence
 // represents blocked activation, not confirmation that a write succeeded.
 func Fence(s Snapshot, m Mutation, reviewDigest, transactionID string, now time.Time, budget int) (Snapshot, error) {
+	if s.Version != SnapshotVersionV3 {
+		return Snapshot{}, ErrReview
+	}
 	if s.PendingChange != nil {
 		return Snapshot{}, ErrRecovery
 	}
@@ -543,6 +564,9 @@ func (s Snapshot) validatePending() error {
 // Cancellation is only valid for a new set and retains its received evidence.
 // This returns no runtime activation result and executes no worker barrier.
 func FinishPending(s Snapshot, cancel bool, now time.Time, budget int) (Snapshot, error) {
+	if s.Version != SnapshotVersionV3 {
+		return Snapshot{}, ErrReview
+	}
 	if s.PendingChange == nil {
 		return Snapshot{}, ErrReview
 	}

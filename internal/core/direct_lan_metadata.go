@@ -22,6 +22,9 @@ import (
 
 const directLANMetadataStateVersion = 3
 
+// Private terminal-record schema. It grants no runtime or public migration support.
+const directLANPairRecordStateVersion = 4
+
 // The v3 representation has one copy of every peer. Identity and Selection
 // retain their existing owner; all endpoint replay/context records are inside
 // this same file. The local public key/scope are derived from that owner.
@@ -41,7 +44,7 @@ func (s directLANState) MarshalJSON() ([]byte, error) {
 		type legacy directLANState
 		return json.Marshal(legacy(s))
 	}
-	if s.Version != directLANMetadataStateVersion || s.Metadata == nil {
+	if (s.Version != directLANMetadataStateVersion && s.Version != directLANPairRecordStateVersion) || s.Metadata == nil || s.Metadata.Version != s.Version {
 		return nil, endpointmeta.ErrInvalid
 	}
 	m := s.Metadata
@@ -63,7 +66,7 @@ func (s *directLANState) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		*s = directLANState(old)
-	case directLANMetadataStateVersion:
+	case directLANMetadataStateVersion, directLANPairRecordStateVersion:
 		var saved directLANMetadataFile
 		if err := decodeDirectLANPrivateJSON(data, &saved); err != nil {
 			return err
@@ -90,7 +93,7 @@ func (s *directLANState) UnmarshalJSON(data []byte) error {
 			}
 			next.Peers = append(next.Peers, peer)
 		}
-		next.Metadata = &endpointmeta.Snapshot{Version: 3, Revision: saved.Revision, LocalPeer: local, LocalScope: scope, PreviousLocalEndpoint: saved.PreviousLocalEndpoint, ObservedAt: saved.ObservedAt, Peers: saved.Peers, PendingChange: saved.PendingChange}
+		next.Metadata = &endpointmeta.Snapshot{Version: saved.Version, Revision: saved.Revision, LocalPeer: local, LocalScope: scope, PreviousLocalEndpoint: saved.PreviousLocalEndpoint, ObservedAt: saved.ObservedAt, Peers: saved.Peers, PendingChange: saved.PendingChange}
 		if err := validateDirectLANState(next); err != nil {
 			return err
 		}
@@ -162,7 +165,7 @@ func validateDirectLANState(s directLANState) error {
 	if s.Version == directLANStateVersion && s.Metadata == nil {
 		return nil
 	}
-	if s.Version != directLANMetadataStateVersion || s.Metadata == nil {
+	if (s.Version != directLANMetadataStateVersion && s.Version != directLANPairRecordStateVersion) || s.Metadata == nil || s.Metadata.Version != s.Version {
 		return endpointmeta.ErrInvalid
 	}
 	m := s.Metadata
@@ -230,11 +233,13 @@ func readDirectLANFile(path string, budget int64) (directLANState, string, error
 	return state, directLANFileDigest(data), nil
 }
 
+// Unsupported metadata is conservatively unavailable, even without managed peers.
 func directLANMetadataManaged(m *endpointmeta.Snapshot) bool {
 	if m == nil {
 		return false
 	}
-	if m.PendingChange != nil {
+	// Every unsupported metadata version is unavailable even with no records.
+	if m.Version != directLANMetadataStateVersion || m.PendingChange != nil {
 		return true
 	}
 	for _, peer := range m.Peers {
@@ -255,6 +260,9 @@ func directLANMetadataUnavailable() error {
 func (s *directLANStore) runtimeConfig() (directlan.Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.state.Version != directLANStateVersion && s.state.Version != directLANMetadataStateVersion {
+		return directlan.Config{}, directLANMetadataUnavailable()
+	}
 	if s.recovery {
 		return directlan.Config{}, directlan.ErrRecovery
 	}
@@ -274,6 +282,9 @@ func (s *directLANStore) runtimeConfig() (directlan.Config, error) {
 // reviewed transition before managed records can be mutated or activated.
 func (s *directLANStore) prepareLegacyEditLocked(next directLANState, now time.Time) (directLANState, error) {
 	before := s.state
+	if before.Version != directLANStateVersion && before.Version != directLANMetadataStateVersion {
+		return directLANState{}, directLANMetadataUnavailable()
+	}
 	if before.Metadata == nil {
 		if next.Version != directLANStateVersion || next.Metadata != nil {
 			return directLANState{}, endpointmeta.ErrInvalid
@@ -349,6 +360,9 @@ type DirectLANMigrationReview struct {
 }
 
 func (s *directLANStore) migrationReviewLocked(process string) (DirectLANMigrationReview, error) {
+	if s.state.Version != directLANStateVersion && s.state.Version != directLANMetadataStateVersion {
+		return DirectLANMigrationReview{}, directLANMetadataUnavailable()
+	}
 	if s.recovery {
 		return DirectLANMigrationReview{}, directlan.ErrRecovery
 	}
@@ -396,6 +410,10 @@ func (s *directLANStore) migrationCandidateLocked(now time.Time) (directLANState
 			return directLANState{}, directlan.ErrRecovery
 		}
 		return cloneDirectLANState(state), nil
+	}
+	// Never reinterpret a newer private schema as legacy v2.
+	if state.Version != directLANStateVersion || state.Metadata != nil {
+		return directLANState{}, directLANMetadataUnavailable()
 	}
 	next := cloneDirectLANState(state)
 	local, scope, err := directLANLocalMetadata(next)

@@ -19,7 +19,8 @@ func TestQueuedAdmissionCannotAdoptRepairedGeneration(t *testing.T) {
 	t.Cleanup(func() { n.generation.CompareAndSwap(generation, nil) })
 	key := testIdentity(81).PublicKey()
 	old := &peerState{peer: Peer{Key: key}}
-	replacement := &peerState{peer: old.peer}
+	replacement := newPeerStateForGeneration(generation, n.PublicKey(), old.peer)
+	replacement.session.registration.Store(1)
 	source, _ := OverlayAddress(key)
 	id := stack.TransportEndpointID{LocalAddress: tcpip.AddrFromSlice(n.OverlayAddr().AsSlice()), LocalPort: 42000, RemoteAddress: tcpip.AddrFromSlice(source.AsSlice()), RemotePort: 41000}
 	q := newTCPAdmissions(1)

@@ -24,7 +24,7 @@ type flow struct {
 }
 
 func (n *Node) trackFlowLocked(g *runtimeGeneration, c *liveEndpoint, p *peerState, network string, inbound bool) (*flow, error) {
-	if n.readyLocked() != nil || n.generation.Load() != g || !g.open() || p == nil || p.g != g || n.peers[p.peer.Key] != p {
+	if n.readyLocked() != nil || n.generation.Load() != g || !g.open() || p == nil || p.g != g || n.peers[p.peer.Key] != p || !g.applicationPeer(p) {
 		return nil, ErrUntrusted
 	}
 	if n.flowUsageLocked() >= n.cfg.FlowLimit {
@@ -59,7 +59,7 @@ func (n *Node) validFlowLocked(f *flow) bool {
 	if !f.c.valid() {
 		return false
 	}
-	return !n.closed && !n.recovery && f.g == n.generation.Load() && f.g.open() && present && n.peers[f.w.key] == f.w.peer && (!f.inbound || flowPresent(n.flows[f.remote], f))
+	return !n.closed && !n.recovery && f.g == n.generation.Load() && f.g.open() && f.g.applicationPeer(f.w.peer) && present && n.peers[f.w.key] == f.w.peer && (!f.inbound || flowPresent(n.flows[f.remote], f))
 }
 func (f *flow) Valid() bool {
 	work, e := f.g.acquireWork(nil, false)

@@ -42,7 +42,13 @@ func (n *Node) newPeerState(p Peer) *peerState {
 	return newPeerStateForGeneration(n.generation.Load(), n.PublicKey(), p)
 }
 func newPeerStateForGeneration(g *runtimeGeneration, localKey string, p Peer) *peerState {
-	return &peerState{peer: p, g: g, session: newPeerSession(localKey < p.Key)}
+	state := &peerState{peer: p, g: g, session: newPeerSession(localKey < p.Key)}
+	if g != nil {
+		if context, ok := g.cfg.PairContexts[p.Key]; ok {
+			state.binding, _ = context.Binding()
+		}
+	}
+	return state
 }
 func (n *Node) currentSessionPeer(p *peerState) bool {
 	n.mu.Lock()
@@ -55,6 +61,9 @@ func (n *Node) initiateSession(p *peerState) error {
 	if n.readyLocked() != nil || p == nil || p.g != n.generation.Load() || !p.g.open() || n.peers[p.peer.Key] != p || p.session == nil || !p.session.initiator {
 		return ErrUntrusted
 	}
+	if p.binding != "" && !p.g.applicationPeer(p) {
+		return ErrUntrusted
+	}
 	if p.enginePeer == nil {
 		return ErrUnavailable
 	}
@@ -65,6 +74,9 @@ func (n *Node) initiateSession(p *peerState) error {
 	return p.enginePeer.SendHandshakeInitiation(false)
 }
 func (n *Node) requestSession(ctx context.Context, p *peerState) error {
+	if p.binding != "" {
+		return n.requestManagedSession(ctx, p)
+	}
 	c, w, e := n.connect(ctx, p.peer, p)
 	if e != nil {
 		return e
@@ -95,7 +107,7 @@ func (n *Node) ensureSession(ctx context.Context, p *peerState) error {
 	if !n.currentSessionPeer(p) {
 		return ErrUntrusted
 	}
-	if s.ready() {
+	if s.ready() && (p.binding == "" || p.g.applicationPeer(p)) {
 		return nil
 	}
 	// Concurrent calls share the same bounded activation; a caller timeout does
@@ -112,11 +124,16 @@ func (n *Node) ensureSession(ctx context.Context, p *peerState) error {
 	if !n.currentSessionPeer(p) {
 		return ErrUntrusted
 	}
-	if s.ready() {
+	if s.ready() && (p.binding == "" || p.g.applicationPeer(p)) {
 		return nil
 	}
 	var e error
-	if s.initiator {
+	if p.binding != "" {
+		e = n.requestManagedSession(ctx, p)
+		if e == nil && s.initiator {
+			e = n.initiateSession(p)
+		}
+	} else if s.initiator {
 		e = n.initiateSession(p)
 	} else {
 		e = n.requestSession(ctx, p)
@@ -137,7 +154,7 @@ func (n *Node) ensureSession(ctx context.Context, p *peerState) error {
 		if !n.currentSessionPeer(p) {
 			return ErrUntrusted
 		}
-		if s.ready() {
+		if s.ready() && (p.binding == "" || p.g.applicationPeer(p)) {
 			return nil
 		}
 		select {

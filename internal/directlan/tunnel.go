@@ -117,7 +117,7 @@ func (n *Node) incoming(g *runtimeGeneration, id stack.TransportEndpointID, netw
 	src := addrPort(id.RemoteAddress, id.RemotePort)
 	for _, p := range n.peers {
 		a, _ := OverlayAddress(p.peer.Key)
-		if a == src.Addr() && p == expected {
+		if a == src.Addr() && p == expected && g.applicationPeer(p) {
 			return p, n.listeners[service{network, id.LocalPort}], n.fallback
 		}
 	}
@@ -289,5 +289,9 @@ func (g *runtimeGeneration) packetPeer(id stack.TransportEndpointID) *peerState 
 	if p == nil || addrPort(id.LocalAddress, id.LocalPort).Addr() != g.n.OverlayAddr() {
 		return nil
 	}
-	return p.generations[addrPort(id.RemoteAddress, id.RemotePort).Addr()]
+	peer := p.generations[addrPort(id.RemoteAddress, id.RemotePort).Addr()]
+	if !g.applicationPeer(peer) {
+		return nil
+	}
+	return peer
 }

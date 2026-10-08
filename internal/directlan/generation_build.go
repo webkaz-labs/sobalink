@@ -58,6 +58,7 @@ func (b *generationBuild) wait(ctx context.Context) error {
 func cloneGenerationConfig(cfg Config) Config {
 	cfg.AllowedPrefixes = append([]netip.Prefix(nil), cfg.AllowedPrefixes...)
 	cfg.Peers = append([]Peer(nil), cfg.Peers...)
+	cfg.PairContexts = clonePairContexts(cfg.PairContexts)
 	return cfg
 }
 
@@ -84,7 +85,7 @@ func (n *Node) buildTransportGeneration(b *generationBuild, cfg Config) (*runtim
 	local := n.OverlayAddr()
 	tunnel, err := newUserspaceTunnel(local, func(src, dst netip.Addr) bool {
 		policy := bind.policy.Load()
-		return bind.owner != nil && bind.owner.trafficOpen() && policy != nil && dst == local && policy.sources[src]
+		return bind.owner != nil && bind.owner.trafficOpen() && policy != nil && dst == local && bind.owner.applicationPeer(policy.generations[src])
 	})
 	if err != nil {
 		underlay.RequestClose()
