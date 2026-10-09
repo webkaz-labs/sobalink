@@ -88,12 +88,27 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("check_locales(binary)", offline)
         self.assertIn("native locale fallback mismatch", offline)
 
+    def test_node_setup_uses_node24_action_without_automatic_package_cache(self):
+        workflows = pathlib.Path(__file__).parents[1] / "workflows"
+        found = 0
+        for path in sorted(workflows.glob("*.yml")):
+            text = path.read_text(encoding="utf-8")
+            blocks = re.findall(r"^      - uses: actions/setup-node@.*?(?=^      - |\Z)", text, re.MULTILINE | re.DOTALL)
+            for block in blocks:
+                with self.subTest(workflow=path.name, occurrence=found):
+                    self.assertTrue(block.startswith("      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n"))
+                    self.assertIn("          node-version: '24.19.0'\n", block)
+                    self.assertIn("          check-latest: false\n", block)
+                    self.assertIn("          package-manager-cache: false\n", block)
+                found += 1
+        self.assertGreater(found, 0)
+
     def test_ci_frontend_and_packaged_product_are_verified(self):
         for workflow in ("ci", "prerelease"):
             with self.subTest(workflow=workflow):
                 native = self.job(workflow, "native")
                 self.assertIn("node-version: '24.19.0'", native)
-                self.assertIn("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", native)
+                self.assertIn("actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1", native)
                 self.assertLess(native.index("python .github/scripts/check-frontend.py"), native.index("go test -race"))
                 self.assertIn("dist/sobalink-$", native)
                 self.assertIn("GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy", self.workflow(workflow))

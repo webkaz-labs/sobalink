@@ -102,10 +102,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Test and reproduce locked frontend assets
         run: |
           npm install --global npm@11.9.0 --no-audit --no-fund
@@ -654,10 +655,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Prepare locked dependencies and official Chromium
         timeout-minutes: 10
         run: |
@@ -709,10 +711,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Prepare locked dependencies and official Chromium
         timeout-minutes: 10
         run: |
@@ -761,10 +764,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Test and reproduce locked frontend assets
         run: |
           set -euo pipefail
