@@ -275,7 +275,7 @@ soba revoke PEER_ID
 soba stop
 ```
 
-Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
+Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust and any inspection permission; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
 Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the alpha.5 release's signed assets and successful verification before using this pin; do not assume prerelease state is compatible with every upgrade or downgrade:
 

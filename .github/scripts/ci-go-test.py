@@ -4,6 +4,8 @@
 Usage: ci-go-test.py --expect example.org/project/pkg:TestRequired -- go test ...
 Repeat --expect for additional tests, including exact TestName/subtest names.
 Each required test and its package must report a pass; a skip never counts.
+Optional --exact requires only the expected tests, each run/passed once, and
+only their packages, each started/passed once, with no skips anywhere.
 Only Go's Output fields are forwarded to stdout; stderr is inherited. No
 command arguments, environment values, paths, or raw JSON are recorded.
 """
@@ -90,7 +92,7 @@ def stop_process(process):
             process.wait()
 
 
-def run_tests(expected, command):
+def run_tests(expected, command, *, exact=False):
     if not expected or len(command) < 2 or Path(command[0]).name not in {"go", "go.exe"} \
             or command[1] != "test":
         print("error: Expected a go test command and at least one required test.", file=sys.stderr)
@@ -98,7 +100,11 @@ def run_tests(expected, command):
     # A later -json=false can disable this flag, but cannot produce a green
     # result: every output line and every required pass is still checked.
     argv = command[:2] + ["-json"] + command[2:]
-    expected = set(expected)
+    expectations = list(expected)
+    expected = set(expectations)
+    if exact and len(expected) != len(expectations):
+        print("error: Exact Go test expectations must be unique.", file=sys.stderr)
+        return 2
     expected_packages = {package for package, _ in expected}
     passed = set()
     rejected = set()
@@ -106,6 +112,8 @@ def run_tests(expected, command):
     rejected_packages = set()
     malformed = False
     failed = False
+    exact_invalid = False
+    ran, started_packages = set(), set()
     process = None
     try:
         process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=None, shell=False)
@@ -123,6 +131,31 @@ def run_tests(expected, command):
                     continue
                 key = event.get("Package"), event.get("Test")
                 action = event["Action"]
+                if exact:
+                    package = event.get("Package", event.get("ImportPath"))
+                    # Build dependencies may emit build metadata, but must not
+                    # introduce another executed test package or test/subtest.
+                    if action not in BUILD_ACTIONS and (package not in expected_packages
+                                                        or (key[1] is not None and key not in expected)):
+                        exact_invalid = True
+                    if action == "skip":
+                        exact_invalid = True
+                    if key in expected:
+                        if action == "run":
+                            exact_invalid |= (key in ran or key in passed or key[0] not in started_packages
+                                              or key[0] in passed_packages)
+                            ran.add(key)
+                        elif action == "pass":
+                            exact_invalid |= key not in ran or key in passed
+                        elif action == "start":
+                            exact_invalid = True
+                    elif key[0] in expected_packages and key[1] is None:
+                        if action == "start":
+                            exact_invalid |= key[0] in started_packages or key[0] in passed_packages
+                            started_packages.add(key[0])
+                        elif action == "pass":
+                            exact_invalid |= key[0] not in started_packages or key[0] in passed_packages
+                            exact_invalid |= any(test not in passed for test in expected if test[0] == key[0])
                 if key in expected:
                     if action == "pass":
                         passed.add(key)
@@ -153,6 +186,8 @@ def run_tests(expected, command):
     if malformed:
         print("error: Go test JSON output was malformed.", file=sys.stderr)
     incomplete = passed != expected or passed_packages != expected_packages
+    if exact and (exact_invalid or ran != expected or started_packages != expected_packages):
+        incomplete = True
     if failed or rejected or rejected_packages or incomplete:
         print("error: Required Go tests did not all pass without skips or failures.", file=sys.stderr)
     if returncode != 0:
@@ -164,11 +199,15 @@ def main(argv=None):
     parser = SafeArgumentParser(description=__doc__)
     parser.add_argument("--expect", action="append", type=expectation, required=True,
                         help="exact PACKAGE:TEST identifier; repeat for multiple tests")
+    parser.add_argument("--exact", action="store_true",
+                        help="require one run/pass per expected test, no extras or skips")
     parser.add_argument("command", nargs=argparse.REMAINDER,
                         help="-- go test [arguments]")
     args = parser.parse_args(argv)
     if not args.command or args.command[0] != "--":
         parser.error("Missing command separator.")
+    if args.exact:
+        return run_tests(args.expect, args.command[1:], exact=True)
     return run_tests(args.expect, args.command[1:])
 
 

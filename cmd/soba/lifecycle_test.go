@@ -226,3 +226,14 @@ func TestAutostartRequiresExactReviewAndShowsSavedAutosave(t *testing.T) {
 		t.Fatal("reviewed plan not applied", err)
 	}
 }
+
+// Pure option construction: no lock acquisition, Core.Open, backend or process.
+func TestForegroundOptionsEnableInspectionWithoutChangingOwnership(t *testing.T) {
+	owner := &config.Lock{}
+	for _, offline := range []bool{false, true} {
+		options := foregroundCoreOptions("synthetic-state", offline, owner)
+		if options.Directory != "synthetic-state" || options.Version != version || options.SkipNetworkStart != offline || options.LifecycleLock != owner || !options.EnableResourceInspection || options.NodeFactory != nil {
+			t.Fatal("foreground startup lost explicit ownership or inspection implementation")
+		}
+	}
+}

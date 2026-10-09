@@ -13,6 +13,9 @@ import (
 // to that profile, process lock and private journal directory. This is not a
 // transaction or protection against arbitrary same-user filesystem rollback.
 type resourcePathBinding struct {
+	grant     *os.File
+	grantInfo os.FileInfo
+
 	dir                                string
 	profile, journal                   *os.File
 	profileInfo, journalInfo, lockInfo os.FileInfo
@@ -52,6 +55,9 @@ func openResourcePathBinding(dir string, expectedProfile, expectedLock os.FileIn
 	return b, nil
 }
 func (b *resourcePathBinding) close() {
+	if b.grant != nil {
+		_ = b.grant.Close()
+	}
 	if b.journal != nil {
 		_ = b.journal.Close()
 	}
@@ -60,6 +66,22 @@ func (b *resourcePathBinding) close() {
 	}
 }
 func (b *resourcePathBinding) check() error {
+	if b.grant != nil {
+		certified, privateErr := config.OpenPrivateChildDirectoryBound(b.dir, "resource-grants", b.profileInfo)
+		if privateErr != nil {
+			return errResourceBinding
+		}
+		certifiedInfo, statErr := certified.Stat()
+		closeErr := certified.Close()
+		if statErr != nil || closeErr != nil || b.grantInfo == nil || !os.SameFile(certifiedInfo, b.grantInfo) {
+			return errResourceBinding
+		}
+		current, err := os.Lstat(filepath.Dir(resourceGrantStatePath(b.dir)))
+		opened, statErr := b.grant.Stat()
+		if err != nil || statErr != nil || b.grantInfo == nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(current, b.grantInfo) || !os.SameFile(opened, b.grantInfo) {
+			return errResourceBinding
+		}
+	}
 	for _, entry := range []struct {
 		path      string
 		expected  os.FileInfo
@@ -84,6 +106,11 @@ func (b *resourcePathBinding) write(path string, data []byte, injected func(stri
 	switch path {
 	case resourceStatePath(b.dir):
 		parent = b.journal
+	case resourceGrantStatePath(b.dir):
+		if b.grant == nil {
+			return errResourceBinding
+		}
+		parent = b.grant
 	case filepath.Join(b.dir, capacityPolicyFile):
 		parent = b.profile
 	default:

@@ -27,15 +27,18 @@ import (
 // pair, resumes old consent, or mints authenticated evidence in test code.
 // These sources are staged for independent review; their existence is not a run.
 type activationNativePair struct {
-	t            *testing.T
-	ctx          context.Context
-	cancel       context.CancelFunc
-	cores        [2]*Core
-	endpoints    [2]netip.AddrPort
-	reservations [2]*testfixture.PortReservation
-	once         sync.Once
-	observations [2]activationNativeObservation
-	responseGate [2]func()
+	t             *testing.T
+	ctx           context.Context
+	cancel        context.CancelFunc
+	cores         [2]*Core
+	endpoints     [2]netip.AddrPort
+	reservations  [2]*testfixture.PortReservation
+	once          sync.Once
+	cleanupJoined atomic.Bool
+	cleanupFailed atomic.Bool
+	constructed   atomic.Bool
+	observations  [2]activationNativeObservation
+	responseGate  [2]func()
 }
 
 // Test-only, fixed numeric stages; never retain raw errors, peer data or proof.
@@ -76,6 +79,13 @@ func activationNativeErrorClass(err error) int32 {
 
 func newActivationNativePair(t *testing.T) *activationNativePair {
 	t.Helper()
+	return newActivationNativePairDirectories(t, false)
+}
+
+// The retained-directory variant is only for separately reviewed native tests
+// that must preserve owned state if a bounded shutdown fails to join.
+func newActivationNativePairDirectories(t *testing.T, retainOnFailure bool) *activationNativePair {
+	t.Helper()
 	if os.Getenv("SOBALINK_RUN_ACTIVATION_NATIVE") != "1" {
 		t.Skip("requires explicit isolated native activation execution")
 	}
@@ -99,7 +109,26 @@ func newActivationNativePair(t *testing.T) *activationNativePair {
 		f.reservations[i], f.endpoints[i] = r, r.Endpoint()
 	}
 	for i := range f.cores {
-		dir := t.TempDir()
+		var dir string
+		if retainOnFailure {
+			var err error
+			dir, err = os.MkdirTemp("", "sobalink-inspection-native-")
+			if err != nil {
+				t.Fatal("synthetic retained directory creation failed")
+			}
+			t.Cleanup(func() {
+				f.close()
+				if !f.cleanupJoined.Load() {
+					t.Logf("retained synthetic state after incomplete cleanup: %s", dir)
+					return
+				}
+				if err := os.RemoveAll(dir); err != nil {
+					t.Errorf("synthetic directory cleanup failed: %v", err)
+				}
+			})
+		} else {
+			dir = t.TempDir()
+		}
 		t.Cleanup(f.close) // Join before TempDir removal, even on early failure.
 		c, err := Open(ctx, Options{Directory: dir, Version: "synthetic-activation", SkipNetworkStart: true})
 		if err != nil {
@@ -133,6 +162,7 @@ func newActivationNativePair(t *testing.T) *activationNativePair {
 		// Leave store.write nil: all subsequent transitions use the real sole
 		// AtomicWrite publisher, including its receipt and file digest boundaries.
 	}
+	f.constructed.Store(true)
 	return f
 }
 func (f *activationNativePair) close() {
@@ -156,9 +186,13 @@ func (f *activationNativePair) close() {
 		select {
 		case err := <-done:
 			if err != nil {
+				f.cleanupFailed.Store(true)
 				f.t.Error("native activation cleanup failed")
+			} else {
+				f.cleanupJoined.Store(f.constructed.Load() && !f.cleanupFailed.Load())
 			}
 		case <-time.After(10 * time.Second):
+			f.cleanupFailed.Store(true)
 			f.t.Error("native activation cleanup did not join")
 		}
 	})

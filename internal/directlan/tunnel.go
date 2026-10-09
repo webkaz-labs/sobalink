@@ -243,11 +243,14 @@ func (n *Node) dialCapturedPeer(ctx context.Context, expected *runtimeGeneration
 	if e := localAddressReady(expected.bind.cfg.Listen.Addr()); e != nil {
 		return nil, e
 	}
+	markInspectionDial(ctx, "ensure_enter", p.session.ready(), p.g.applicationPeer(p))
 	if e := n.ensureSession(creator.ctx, p); e != nil {
 		return nil, e
 	}
+	markInspectionDial(ctx, "ensure_done", false, false)
 	target, _ := OverlayAddress(key)
 	ap := netip.AddrPortFrom(target, port)
+	markInspectionDial(ctx, "tunnel_dial", false, false)
 	raw, ep, e := g.tunnel.dialOwned(creator, network, netip.AddrPortFrom(n.OverlayAddr(), 0), ap)
 	if e != nil {
 		cleanupCreated(ep)

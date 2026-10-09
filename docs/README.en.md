@@ -22,6 +22,7 @@ For outside-LAN connections, use Tailscale. Relay hosting and upcoming placement
 | Relayless LAN | [Direct LAN](DIRECT_LAN.en.md) |
 | Mixed connections and new-flow routing | [Mixed connections](MIXED_CONNECTIONS.en.md) |
 | Prepared-route implementation and gates | [Route recovery](ROUTE_RECOVERY_DESIGN.en.md) |
+| Inspect one managed peer (source development) | [Inspection permissions](RESOURCE_INSPECTION.en.md) |
 | Capacity, budgets and history | [CAPACITY.en.md](CAPACITY.en.md) |
 | Development and usability principles | [DEVELOPMENT_PRINCIPLES.en.md](DEVELOPMENT_PRINCIPLES.en.md) |
 | Feature parity and acceptance | [FEATURE_PARITY.en.md](FEATURE_PARITY.en.md) |

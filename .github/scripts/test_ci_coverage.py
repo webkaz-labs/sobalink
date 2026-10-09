@@ -29,13 +29,13 @@ def jobs(scope="full"):
     result = [job("impact", (coverage.SCOPE_STEP,))]
     if scope in ("native-short", "full"):
         for target, name in coverage.TARGETS.items():
-            steps = coverage.FAST_STEPS + coverage.LONG_STEPS
+            steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             result.append(job(name, steps))
             if scope == "native-short":
                 for item in result[-1]["steps"]:
-                    if item["name"] in coverage.LONG_STEPS:
+                    if item["name"] in coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS:
                         item["conclusion"] = "skipped"
         result.append(job("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",)))
     else:
@@ -54,10 +54,34 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_native_inspection_gate_is_full_only_and_unambiguous_on_every_target(self):
+        gate = "Verify native remote resource inspection"
+        self.assertEqual(coverage.FULL_ONLY_STEPS, (gate,))
+        self.assertEqual(len(coverage.LONG_STEPS), 3)
+        self.assertNotIn(gate, coverage.FAST_STEPS + coverage.LONG_STEPS)
+        for scope in ("full", "native-short"):
+            for name in coverage.TARGETS.values():
+                for mode in ("missing", "duplicate", "pending", "failed", "wrong-result"):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j["name"] == name)
+                    record = next(s for s in selected["steps"] if s["name"] == gate)
+                    if mode == "missing":
+                        selected["steps"].remove(record)
+                    elif mode == "duplicate":
+                        selected["steps"].append(copy.deepcopy(record))
+                    elif mode == "pending":
+                        record["status"] = "in_progress"
+                    elif mode == "failed":
+                        record["conclusion"] = "failure"
+                    else:
+                        record["conclusion"] = "skipped" if scope == "full" else "success"
+                    with self.subTest(scope=scope, target=name, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
     def test_full_requires_all_four_targets_and_real_time_steps(self):
         self.assertTrue(coverage.evaluate_jobs(jobs(), "full"))
         for target, name in coverage.TARGETS.items():
-            for required in coverage.FAST_STEPS + coverage.LONG_STEPS:
+            for required in coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS:
                 for bad in ("skipped", "failure", "cancelled", None):
                     data = jobs()
                     target_job = next(j for j in data if j["name"] == name)
@@ -128,7 +152,7 @@ class ActualCoverageTests(unittest.TestCase):
             self.assertEqual(enabled(name, {"github.event_name": "workflow_dispatch", "inputs.force_full": True}), name != "nightly-full-check")
             if name == "nightly-full-check":
                 self.assertFalse(enabled(name, {"github.event_name": "pull_request"}))
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 3)
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 4)
         self.assertIn("  manifest-smoke:\n    needs: native\n", workflow)
         self.assertEqual(set(coverage.TARGETS), {"linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"})
 
@@ -218,7 +242,7 @@ class ActualCoverageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             coverage.evaluate_jobs(jobs("native-short"), "full")
         for target in coverage.TARGETS.values():
-            for name in coverage.LONG_STEPS:
+            for name in coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS:
                 for bad in ("success", "failure", "cancelled", None):
                     data = jobs("native-short")
                     selected = next(j for j in data if j["name"] == target)
@@ -226,7 +250,7 @@ class ActualCoverageTests(unittest.TestCase):
                     with self.subTest(target=target, step=name, bad=bad), self.assertRaises(ValueError):
                         coverage.evaluate_jobs(data, "native-short")
 
-    def test_native_short_plan_disables_only_real_time_steps(self):
+    def test_native_short_plan_disables_real_time_and_full_only_steps(self):
         with tempfile.TemporaryDirectory() as directory:
             output = pathlib.Path(directory) / "outputs"
             env = {"GITHUB_OUTPUT": str(output)}
@@ -234,7 +258,7 @@ class ActualCoverageTests(unittest.TestCase):
                 coverage.write_plan(plan("native-short"), pathlib.Path(directory) / "plan.json")
             self.assertEqual(output.read_text(encoding="utf-8"), "scope=native-short\nlong_required=false\n")
         workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 3)
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 4)
         self.assertIn("scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'", workflow)
         self.assertIn("success() && steps.ci-plan.outputs.long_required != 'false'", workflow)
         for name in ("Verify Core context control over pinned TLS", "Verify context control over fixed loopback TCP"):
@@ -246,7 +270,7 @@ class ActualCoverageTests(unittest.TestCase):
             self.assertEqual(kwargs.get("encoding"), "utf-8")
             return original(path, *args, **kwargs)
         with patch.object(pathlib.Path, "read_text", autospec=True, side_effect=explicit_utf8):
-            self.test_native_short_plan_disables_only_real_time_steps()
+            self.test_native_short_plan_disables_real_time_and_full_only_steps()
 
     def test_timings_only_record_fixed_names(self):
         data = jobs()
@@ -255,6 +279,9 @@ class ActualCoverageTests(unittest.TestCase):
         result = coverage.job_timings(data)
         self.assertEqual(result[0]["elapsed_seconds"], 10)
         self.assertNotIn("private-", json.dumps(result))
+        for name in coverage.TARGETS.values():
+            row = next(item for item in result if item["job"] == name)
+            self.assertEqual(sum(s["step"] == coverage.FULL_ONLY_STEPS[0] for s in row["steps"]), 1)
 
     def test_native_port_helper_remains_test_only(self):
         root = pathlib.Path(__file__).parents[2]

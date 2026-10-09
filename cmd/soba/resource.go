@@ -15,6 +15,8 @@ import (
 
 const resourceHelpEN = `Local transfer settings resource (source build)
 
+  soba resource grant --help
+  soba resource remote --help
   soba resource list [--json]
   soba resource inspect --id RESOURCE_ID [--json]
   soba resource preview --id RESOURCE_ID --concurrent-files default|N --concurrent-per-peer default|N [--json]
@@ -28,12 +30,15 @@ Apply requires the exact operationId, baseRevision, revision and both choices re
 It never creates a new preview. Status reports historical evidence and current settings separately.
 Unknown outcomes are not replayed; this is not an exactly-once guarantee.
 Commands use existing authenticated local control (IPC or the local Web command dispatcher).
-No new Web UI controls, peer-management endpoint or grant are added. --offline is unsupported.
+Local settings commands do not themselves start a peer-management listener. --offline is unsupported.
+Creating a grant requires explicit local confirmation; see resource grant --help.
 Global --dry-run validates inputs and prints the request without contacting the agent;
 it does not validate the current resource or produce an authoritative review.`
 
 const resourceHelpJA = `ローカル転送設定リソース（ソースビルド）
 
+  soba resource grant --help
+  soba resource remote --help
   soba resource list [--json]
   soba resource inspect --id RESOURCE_ID [--json]
   soba resource preview --id RESOURCE_ID --concurrent-files default|N --concurrent-per-peer default|N [--json]
@@ -47,7 +52,8 @@ apply には preview で確認した正確な operationId・baseRevision・revis
 apply は変更案を作り直しません。status は過去の操作結果と現在の設定を別々に返します。
 結果不明の操作は再実行しません。厳密に1回の実行を保証するものではありません。
 既存の認証付きローカル操作（IPC またはローカル Web のコマンド接続口）を使います。
-新しい Web UI の操作部品・相手向け管理接続口・許可は追加しません。--offline は使えません。
+設定の参照・変更操作自体は相手向け管理接続口を起動しません。--offline は使えません。
+grant の作成には明示的なローカル確認が必要です。resource grant --help を参照してください。
 共通オプション --dry-run は本体に接続せず、入力検査と要求の表示だけを行います。
 現在のリソースを検査したり、正式な変更確認を作成したりはしません。`
 
@@ -55,6 +61,12 @@ func resourceCLI(ctx context.Context, args []string, dir string, ja, dryRun bool
 	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		_, err := fmt.Fprintln(out, text(ja, resourceHelpEN, resourceHelpJA))
 		return err
+	}
+	if args[0] == "remote" {
+		return resourceRemoteCLI(ctx, args[1:], dir, ja, dryRun, out, client)
+	}
+	if args[0] == "grant" {
+		return resourceGrantCLI(ctx, args[1:], dir, ja, dryRun, out, client)
 	}
 	action := args[0]
 	if action != "list" && action != "inspect" && action != "preview" && action != "apply" && action != "status" {
@@ -165,6 +177,14 @@ func localizeResourceError(ja bool, err error) error {
 		return err
 	}
 	messages := map[string]string{
+		"resource_remote_unavailable":     "遠隔参照を完了できません。相手・正確な保存済み許可・接続口の準備状態を確認してください",
+		"resource_remote_unsupported":     "認証済みの相手が、この参照用通信方式の版に対応していないと応答しました",
+		"resource_grant_revoke_uncertain": "このプロセスでは参照を拒否していますが、失効の保存は確認できません。再起動前に非公開の保存状態を確認してください",
+		"resource_grant_unavailable":      "参照許可を利用できません。本体の所有状態と非公開の保存状態を確認してください",
+		"resource_grant_invalid":          "相手1台への参照範囲、有効期限、確認済みの内容と明示的な承認を指定してください",
+		"resource_grant_stale":            "参照許可の確認内容が現在の状態と一致しません。保存状態を確認して preview をやり直してください",
+		"resource_grant_conflict":         "既存の許可を先に失効してください。記録数または変更番号の上限に達した場合は明示的な復旧が必要です",
+
 		"resource_journal_full":           "ローカルの操作記録が上限に達しました。未解決の操作は削除できません",
 		"resource_journal_write_failed":   "操作予定を保存できませんでした。設定変更は試みていません",
 		"resource_journal_uncertain":      "操作記録の確実性を確認できません。新しい適用の前に本体を再起動してください",
@@ -207,6 +227,21 @@ func resourceControlError(err error) error {
 	var coded interface{ ErrorCode() string }
 	if errors.As(err, &coded) {
 		switch coded.ErrorCode() {
+		case "resource_remote_unavailable":
+			code, message = coded.ErrorCode(), "remote inspection could not be completed; verify the peer, exact saved grant and listener readiness"
+		case "resource_remote_unsupported":
+			code, message = coded.ErrorCode(), "the authenticated peer reported an unsupported inspection protocol version"
+		case "resource_grant_revoke_uncertain":
+			code, message = coded.ErrorCode(), "inspection is denied locally; saved inspection revocation could not be confirmed; check private state before restarting"
+		case "resource_grant_unavailable":
+			code, message = coded.ErrorCode(), "resource inspection grants are unavailable; check the owning agent and private state"
+		case "resource_grant_invalid":
+			code, message = coded.ErrorCode(), "provide the exact one-peer inspection scope, finite expiry and explicit reviewed confirmation"
+		case "resource_grant_stale":
+			code, message = coded.ErrorCode(), "the grant review is no longer current; inspect the grant and review again"
+		case "resource_grant_conflict":
+			code, message = coded.ErrorCode(), "revoke the existing grant first; retained grant capacity or revision exhaustion requires explicit recovery"
+
 		case "resource_journal_full":
 			code, message = coded.ErrorCode(), "local resource evidence is full; unresolved operations cannot be evicted"
 		case "resource_journal_write_failed":

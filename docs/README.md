@@ -22,6 +22,7 @@ LAN外の接続にはTailscaleを使います。中継の起動と今後の配�
 | 中継なしLAN | [Direct LAN](DIRECT_LAN.ja.md) |
 | 方式の併用・新しい接続の切替 | [接続方式の併用](MIXED_CONNECTIONS.ja.md) |
 | 準備した経路の実装と条件 | [経路復旧](ROUTE_RECOVERY_DESIGN.ja.md) |
+| 管理対象の相手1台を参照（ソース開発版） | [参照許可](RESOURCE_INSPECTION.ja.md) |
 | 容量・予算・履歴 | [CAPACITY.ja.md](CAPACITY.ja.md) |
 | 開発・使いやすさの基本方針 | [DEVELOPMENT_PRINCIPLES.ja.md](DEVELOPMENT_PRINCIPLES.ja.md) |
 | 機能対応と受入 | [FEATURE_PARITY.ja.md](FEATURE_PARITY.ja.md) |

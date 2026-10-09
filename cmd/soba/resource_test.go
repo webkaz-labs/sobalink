@@ -111,6 +111,9 @@ func TestResourceCLIHelpDryRunAndError(t *testing.T) {
 			if !strings.Contains(out.String(), "resource preview") {
 				t.Fatal(out.String())
 			}
+			if strings.Contains(out.String(), "disabled by default") || strings.Contains(out.String(), "既定では無効") || !strings.Contains(out.String(), "resource grant --help") {
+				t.Fatal("parent help misstates normal grant availability")
+			}
 		}
 		var out bytes.Buffer
 		args := []string{"--locale", locale, "--state-dir", t.TempDir(), "--dry-run", "resource", "preview", "--id", resourceTestID, "--concurrent-files", "3", "--concurrent-per-peer", "default"}
