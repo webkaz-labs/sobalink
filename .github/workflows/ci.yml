@@ -320,12 +320,6 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite synthetic-expiry-rekey -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionSyntheticExpiryRekey -- go test -race -count=1 -timeout=2m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionSyntheticExpiryRekey$' ./internal/directlan
-      - name: Verify direct LAN session natural rekey and idle lifecycle
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
       - name: Verify explicit WAN discovery with isolated native STUN
         timeout-minutes: 5
         run: |
@@ -435,7 +429,19 @@ jobs:
               "-timeout=5m", "./internal/routecat", "./internal/core",
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
+      # Run only the isolated, wait-heavy gates together after serial native tests
+      # have populated their exact tagged build caches. Keep evidence names stable.
+      - name: Verify direct LAN session natural rekey and idle lifecycle
+        id: natural-lifecycle
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
       - name: Verify guarded relay real-time lease continuity
+        id: guarded-lease
+        background: true
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 9
         run: |
@@ -459,6 +465,8 @@ jobs:
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
       - name: Verify relay-only real-time lease and idle continuity
+        id: relay-only-lease
+        background: true
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 10
         run: |
@@ -484,6 +492,8 @@ jobs:
               "-timeout=5m", "./internal/lanlink", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PYTHON
+      - name: Wait for real-time lifecycle and lease checks
+        wait: [natural-lifecycle, guarded-lease, relay-only-lease]
       - name: Build native package and smoke archive contents
         run: |
           set -euo pipefail

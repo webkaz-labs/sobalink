@@ -140,8 +140,98 @@ def source_bytes(api, commit, local_root=None):
     return sources
 
 
+def workflow_metadata(workflow):
+    """Accept only the workflow's canonical block-mapping YAML surface.
+
+    Literal/folded scalar contents are commands/data, not YAML keys. Reject
+    other mapping syntax rather than partially interpreting quoted/escaped keys,
+    flow mappings, aliases or anchors as if they were ordinary scalar values.
+    """
+    result, scalar_indent, offset, mappings = [], None, 0, {}
+    for line in workflow.splitlines(keepends=True):
+        start, offset = offset, offset + len(line)
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip(' '))
+        if scalar_indent is not None and indent > scalar_indent:
+            continue
+        scalar_indent = None
+        require('\t' not in line[:indent + 1], 'unsupported workflow indentation')
+        match = re.fullmatch(r' *(?:- )?([A-Za-z_][A-Za-z0-9_.-]*):(?: +(.*))?\n?', line)
+        require(match is not None, 'unsupported workflow mapping syntax')
+        key, value = match.group(1), match.group(2) or ''
+        item = line[indent:].startswith('- ')
+        mapping_indent = indent + (2 if item else 0)
+        for depth in list(mappings):
+            if depth > mapping_indent or (item and depth == mapping_indent):
+                del mappings[depth]
+        seen = mappings.setdefault(mapping_indent, set())
+        require(key not in seen, 'duplicate workflow mapping key')
+        seen.add(key)
+        # Expressions are scalar values even when they contain format braces.
+        plain = re.sub(r'\$\{\{.*?\}\}', 'EXPRESSION', value)
+        require(not any(c in plain for c in '{}')
+                and not re.search(r'(?:^|[ ,\[])[&*][A-Za-z_]', plain)
+                and not plain.startswith('!'), 'unsupported workflow mapping value')
+        result.append((start, indent, key, value))
+        if value.startswith(('|', '>')):
+            require(re.fullmatch(r'[|>][-+]?', value) is not None,
+                    'unsupported workflow block scalar')
+            scalar_indent = mapping_indent
+    return result
+
+
+def validate_parallel_workflow(data):
+    """Fail closed on changes to the deliberately narrow native async region.
+
+    This is a source-policy check, not a general YAML parser. The approved
+    spelling/layout is intentionally literal so unexpected syntax needs review.
+    Runtime proof still requires every individual gate and the wait to succeed.
+    """
+    workflow = data.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    groups = (
+        ('Verify direct LAN session natural rekey and idle lifecycle', 'natural-lifecycle', 9),
+        ('Verify guarded relay real-time lease continuity', 'guarded-lease', 9),
+        ('Verify relay-only real-time lease and idle continuity', 'relay-only-lease', 10),
+    )
+    marker = '      - name: '
+    starts = []
+    for name, identifier, timeout in groups:
+        header = (marker + name + '\n        id: ' + identifier
+                  + "\n        background: true\n        if: steps.ci-plan.outputs.long_required != 'false'"
+                  + '\n        timeout-minutes: ' + str(timeout) + '\n        run: |\n')
+        require(workflow.count(header) == 1, 'invalid real-time background step policy')
+        starts.append(workflow.index(header))
+    fence = (marker + 'Wait for real-time lifecycle and lease checks\n'
+             '        wait: [natural-lifecycle, guarded-lease, relay-only-lease]\n')
+    package = marker + 'Build native package and smoke archive contents\n'
+    require(workflow.count(fence + package) == 1, 'missing real-time wait before packaging')
+    end = workflow.index(fence)
+    require(starts == sorted(starts) and starts[-1] < end, 'invalid real-time step order')
+    region = workflow[starts[0]:end]
+    require(len(re.findall(r'^      - ', region, re.M)) == 3,
+            'unexpected work inside real-time parallel region')
+    # Only these three steps may run asynchronously. No cancel, relaxed failure,
+    # nested parallel group, or alternate join may weaken the evidence boundary.
+    controls = [key for _, _, key, _ in metadata
+                if key in {'background', 'parallel', 'wait', 'wait-all', 'cancel'}]
+    require(controls == ['background', 'background', 'background', 'wait'],
+            'unexpected workflow concurrency or failure policy')
+    require(not any(key == 'continue-on-error' and starts[0] <= pos < end + len(fence)
+                    for pos, _, key, _ in metadata), 'real-time failures cannot be ignored')
+    require(workflow.index(marker + 'Verify recovery with the ordinary direct-enabled transport\n') < starts[0],
+            'real-time checks must follow serial native checks')
+    # No shared timing writer is added: only natural-lifecycle records a metric
+    # in this region, and all serial metric writers have already completed.
+    require(region.count('.github/scripts/ci-metrics.py run') == 1
+            and region.count('--suite natural-lifecycle --') == 1,
+            'parallel timing writers require isolated storage')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
+    validate_parallel_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'FAST_STEPS', 'LONG_STEPS', 'BROWSER_STEPS'}
     values = {}

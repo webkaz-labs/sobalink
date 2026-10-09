@@ -49,6 +49,7 @@ FAST_STEPS = (
     "Verify guarded production direct and relay underlays",
     "Verify paired transport and Core applications over an isolated relay",
     "Verify recovery with the ordinary direct-enabled transport",
+    "Wait for real-time lifecycle and lease checks",
     "Build native package and smoke archive contents",
 )
 SHA = re.compile(r"[0-9a-f]{40}\Z")
