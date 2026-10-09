@@ -248,26 +248,12 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 	if err := decodePayload(raw, &in); err != nil {
 		return nil, err
 	}
-	if err := validateSupportedCapacity(in.Policy); err != nil {
+	checked, err := c.validateCapacityPolicy(in.Policy)
+	if err != nil {
 		return nil, err
 	}
-	current := c.capacityPolicy()
-	if c.nodeCopy() != nil && relayResourcesChanged(current, in.Policy) {
-		return nil, relayResourceRestartError()
-	}
-	profile := c.profileCopy()
-	if err := validateCapacityBackend(profile.Settings.Network, in.Policy); err != nil {
-		return nil, err
-	}
+	current, profile, resolved := checked.current, checked.profile, checked.resolved
 	revision := capacityReviewRevision(current, profile, in.Policy)
-	resolved, _ := in.Policy.Resolve()
-	if err := c.validatePrivateSettingsCapacity(resolved.Number("resources", "profileBytes")); err != nil {
-		return nil, err
-	}
-	nextTransferLimits := receiveTransferLimits(in.Policy)
-	if err := transfer.ValidateLimits(nextTransferLimits); err != nil {
-		return nil, err
-	}
 	view := map[string]any{"version": capacity.Version, "requested": in.Policy, "effective": resolved, "usage": c.capacityUsage(), "revision": revision, "destructive": false, "restartRequired": relayResourcesChanged(current, in.Policy)}
 	if name == "policy.preview" {
 		return view, nil
@@ -275,48 +261,150 @@ func (c *Core) capacityCommand(name string, raw json.RawMessage) (any, error) {
 	if in.ExpectedRevision == "" || in.ExpectedRevision != revision {
 		return nil, &localCommandError{"policy_revision_conflict", "capacity policy or profile changed; preview the current choices before applying"}
 	}
+	outcome := c.applyCapacityPolicy(in.Policy)
+	if err := outcome.legacyError(); outcome.Err != nil || !outcome.Published || outcome.AccountingErr != nil || outcome.TransferErr != nil {
+		return nil, err
+	}
+	return c.capacityView(), outcome.SaveErr
+}
+
+// capacityApplyOutcome distinguishes publication from durability and subsequent
+// admission updates. Err is a rejection before publication was attempted;
+// SaveErr is retained even when a later admission update also fails.
+type capacityApplyOutcome struct {
+	SaveAttempted       bool
+	SaveErr             error
+	Published           bool
+	AccountingAttempted bool
+	AccountingErr       error
+	TransferAttempted   bool
+	TransferErr         error
+	Err                 error
+}
+
+// legacyError preserves the policy.apply error precedence, including its
+// historical accounting-error-only response after an uncertain publication.
+func (o capacityApplyOutcome) legacyError() error {
+	if o.Err != nil {
+		return o.Err
+	}
+	if !o.Published {
+		return o.SaveErr
+	}
+	if o.AccountingErr != nil {
+		return o.AccountingErr
+	}
+	if o.TransferErr != nil {
+		return errors.Join(o.SaveErr, o.TransferErr)
+	}
+	return o.SaveErr
+}
+
+type checkedCapacityPolicy struct {
+	current, resolved capacity.Policy
+	profile           Profile
+	transferLimits    transfer.Limits
+}
+
+// Both preview and apply validate the full proposal. Direct internal applies
+// therefore cannot bypass validation by omitting the legacy preview command.
+func (c *Core) validateCapacityPolicy(proposed capacity.Policy) (checkedCapacityPolicy, error) {
+	var checked checkedCapacityPolicy
+	if err := validateSupportedCapacity(proposed); err != nil {
+		return checked, err
+	}
+	checked.current = c.capacityPolicy()
+	if c.nodeCopy() != nil && relayResourcesChanged(checked.current, proposed) {
+		return checked, relayResourceRestartError()
+	}
+	checked.profile = c.profileCopy()
+	if err := validateCapacityBackend(checked.profile.Settings.Network, proposed); err != nil {
+		return checked, err
+	}
+	checked.resolved, _ = proposed.Resolve()
+	if err := c.validatePrivateSettingsCapacity(checked.resolved.Number("resources", "profileBytes")); err != nil {
+		return checked, err
+	}
+	checked.transferLimits = receiveTransferLimits(proposed)
+	if err := transfer.ValidateLimits(checked.transferLimits); err != nil {
+		return checked, err
+	}
+	return checked, nil
+}
+
+// applyCapacityPolicy requires the same command/Close serialization as
+// capacityCommand. It does not record operations or change request identity.
+func (c *Core) applyCapacityPolicy(proposed capacity.Policy) capacityApplyOutcome {
+	return c.applyCapacityPolicyBound(proposed, nil)
+}
+
+func (c *Core) applyCapacityPolicyBound(proposed capacity.Policy, binding *resourcePathBinding) capacityApplyOutcome {
+	var outcome capacityApplyOutcome
+	checked, err := c.validateCapacityPolicy(proposed)
+	if err != nil {
+		outcome.Err = err
+		return outcome
+	}
 	// Lower choices govern future admission. They neither evict records nor
 	// cancel active work. A profile budget must still hold already saved data.
-	encoded, _ := json.MarshalIndent(profile, "", "  ")
-	if int64(len(encoded))+1 > resolved.Number("resources", "profileBytes") {
-		return nil, &localCommandError{"policy_in_use", "profile storage budget cannot be below the current saved profile size"}
+	encoded, _ := json.MarshalIndent(checked.profile, "", "  ")
+	if int64(len(encoded))+1 > checked.resolved.Number("resources", "profileBytes") {
+		outcome.Err = &localCommandError{"policy_in_use", "profile storage budget cannot be below the current saved profile size"}
+		return outcome
 	}
 	// Incoming message append uses c.mu rather than the command lock. Hold it
 	// across the storage check and durable policy publication, so an append
 	// cannot become unreadable under a concurrently lowered storage budget.
-	saveErr := func() error {
+	err = func() error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.closing || c.ctx != nil && c.ctx.Err() != nil {
 			return errors.New("application is stopping")
 		}
-		if info, err := os.Lstat(filepath.Join(c.dir, "messages.json")); err == nil && info.Size() > resolved.Number("resources", "messageStorageBytes") {
+		if info, err := os.Lstat(filepath.Join(c.dir, "messages.json")); err == nil && info.Size() > checked.resolved.Number("resources", "messageStorageBytes") {
 			return &localCommandError{"policy_in_use", "message storage budget cannot be below saved history; review an explicit history cleanup first"}
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return c.applyLANCapacityLocked(in.Policy, func() error {
-			err := config.WriteJSONWith(c.writeAtomic, filepath.Join(c.dir, capacityPolicyFile), in.Policy)
-			if atomicPublished(err) {
-				c.capacity = in.Policy.Clone()
+		return c.applyLANCapacityLocked(proposed, func() error {
+			if binding != nil {
+				if err := binding.check(); err != nil {
+					return err
+				}
 			}
-			return err
+			outcome.SaveAttempted = true
+			write := c.writeAtomic
+			if binding != nil {
+				write = func(path string, data []byte) error {
+					return c.writeAtomicUsing(path, data, func(path string, data []byte) error { return binding.write(path, data, c.atomicWrite) })
+				}
+			}
+			outcome.SaveErr = config.WriteJSONWith(write, filepath.Join(c.dir, capacityPolicyFile), proposed)
+			outcome.Published = atomicPublished(outcome.SaveErr)
+			if outcome.Published {
+				c.capacity = proposed.Clone()
+			}
+			return outcome.SaveErr
 		})
 	}()
-	if !atomicPublished(saveErr) {
-		return nil, saveErr
+	if !outcome.SaveAttempted {
+		outcome.Err = err
+	}
+	if !outcome.Published {
+		return outcome
 	}
 	// Core command/Close serialization keeps the manager alive here. This
 	// changes admission only; occupied reservations remain accounted for.
 	if c.transfers != nil {
-		if err := c.transfers.UpdateAccountingLimits(receiveAccountingLimits(in.Policy)); err != nil {
-			return nil, err
+		outcome.AccountingAttempted = true
+		outcome.AccountingErr = c.transfers.UpdateAccountingLimits(receiveAccountingLimits(proposed))
+		if outcome.AccountingErr != nil {
+			return outcome
 		}
-		if err := c.transfers.UpdateLimits(nextTransferLimits); err != nil {
-			return nil, errors.Join(saveErr, err)
-		}
+		outcome.TransferAttempted = true
+		outcome.TransferErr = c.transfers.UpdateLimits(checked.transferLimits)
 	}
-	return c.capacityView(), saveErr
+	return outcome
 }
 
 func capacityJSONEqual(a, b capacity.Policy) bool {

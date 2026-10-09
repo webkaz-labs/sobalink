@@ -26,6 +26,17 @@ func privateAtomicError(outcome error, cause error) error {
 }
 
 func (c *Core) writeAtomic(path string, data []byte) error {
+	write := c.atomicWrite
+	if write == nil {
+		write = config.AtomicWrite
+	}
+	return c.writeAtomicUsing(path, data, write)
+}
+
+// All authority write paths retain the same attempt counter and uncertain-save
+// latch. A resource operation can supply a bound writer without changing the
+// shared injected writer or holding a journal lease across canonical writes.
+func (c *Core) writeAtomicUsing(path string, data []byte, write func(string, []byte) error) error {
 	// A saved-host review cannot survive an authority write and later revert.
 	// This process-local counter changes no persisted format or grant lifetime.
 	authority := false
@@ -33,10 +44,6 @@ func (c *Core) writeAtomic(path string, data []byte) error {
 	case "sobalink.json", "capacity.json", "startup.json", "startup-revocations.json", "saved-proxies.json":
 		authority = true
 		c.lanStartWriteRevision.Add(1)
-	}
-	write := c.atomicWrite
-	if write == nil {
-		write = config.AtomicWrite
 	}
 	err := write(path, data)
 	if authority && errors.Is(err, config.ErrAtomicCommitted) {

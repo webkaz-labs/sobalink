@@ -165,7 +165,7 @@ func TestResourcePreviewReadOnlyProjectionAndPrivacy(t *testing.T) {
 	writes := 0
 	c.atomicWrite = func(string, []byte) error { writes++; return errors.New("unexpected write") }
 	list := resourceCall(t, c, "resource.list", struct{}{}).(resource.Catalog)
-	if len(list.Resources) != 1 || strings.Join(list.Resources[0].Operations, ",") != "list,inspect,preview" {
+	if len(list.Resources) != 1 || strings.Join(list.Resources[0].Operations, ",") != "list,inspect,preview,apply,operation.status" {
 		t.Fatal("unsupported operations advertised")
 	}
 	req := resource.PreviewRequest{Target: resourceTarget(c), Settings: resource.Settings{TransferConcurrentFiles: capacity.Limited(4), TransferConcurrentPerPeer: capacity.Default()}}

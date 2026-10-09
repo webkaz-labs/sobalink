@@ -546,8 +546,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.selectionCommand(ctx, cmd.Name, cmd.Payload)
 	case "service.stop-shares":
 		return c.stopSharesCommand(cmd.Payload)
-	case "resource.list", "resource.inspect", "resource.preview":
-		return c.resourceCommand(cmd.Name, cmd.Payload)
+	case "resource.list", "resource.inspect", "resource.preview", "resource.apply", "resource.operation.status":
+		return c.resourceCommandContext(ctx, cmd.Name, cmd.Payload)
 	case "policy.config", "policy.preview", "policy.apply":
 		return c.capacityCommand(cmd.Name, cmd.Payload)
 	case "service.list":
