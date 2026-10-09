@@ -68,7 +68,7 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 			err = errors.Join(err, acknowledgeUpgradeShutdown(*handoff, errors.Join(err, closeErr), lockErr))
 		}
 	}()
-	app, err = core.Open(ctx, core.Options{Directory: dir, Version: version, SkipNetworkStart: offline})
+	app, err = core.Open(ctx, core.Options{Directory: dir, Version: version, SkipNetworkStart: offline, LifecycleLock: lock})
 	if err != nil {
 		return err
 	}

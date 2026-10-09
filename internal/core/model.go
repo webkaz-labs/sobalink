@@ -91,9 +91,15 @@ type Options struct {
 	Directory, Version string
 	NodeFactory        NodeFactory
 	SkipNetworkStart   bool
+	// LifecycleLock enables resource identity only while the matching process owns this profile.
+	LifecycleLock *config.Lock
 }
 
 type Core struct {
+	resourceIdentity           string // protected by op, empty when startup certification failed
+	resourceLock               *config.Lock
+	resourceNonce              string
+	resourceDirectoryIdentity  os.FileInfo
 	endpointJob                *endpointFollowingJob // mu: bounded coordinator, joined before op on Close
 	managedCleanupPending      bool                  // protected by mu; ancillary durability only
 	managedCleanupError        error                 // protected by mu; retained reopen/repair failures
@@ -218,6 +224,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	ctx, cancel := context.WithCancel(parent)
 	c := &Core{lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
 	c.capacity = limits
+	c.initializeResourceIdentity(opts.LifecycleLock)
 	for _, peer := range p.Peers {
 		if peer.Generation > c.trustGeneration {
 			c.trustGeneration = peer.Generation

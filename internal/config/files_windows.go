@@ -5,6 +5,7 @@ import (
 	"golang.org/x/sys/windows"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 func UserSID() (string, error) {
@@ -71,8 +72,10 @@ func replace(from, to string) error {
 }
 
 type Lock struct {
-	f  *os.File
-	ov windows.Overlapped
+	mu        sync.Mutex
+	directory os.FileInfo
+	f         *os.File
+	ov        windows.Overlapped
 }
 
 func AcquireLock(dir string) (*Lock, error) {
@@ -91,7 +94,12 @@ func AcquireLock(dir string) (*Lock, error) {
 		f.Close()
 		return nil, e
 	}
-	l := &Lock{f: f}
+	directory, err := os.Stat(dir)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	l := &Lock{f: f, directory: directory}
 	if e = windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &l.ov); e != nil {
 		f.Close()
 		return nil, errors.New("another sobalink process owns this profile")
@@ -99,6 +107,13 @@ func AcquireLock(dir string) (*Lock, error) {
 	return l, nil
 }
 func (l *Lock) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil {
+		return nil
+	}
 	_ = windows.UnlockFileEx(windows.Handle(l.f.Fd()), 0, 1, 0, &l.ov)
-	return l.f.Close()
+	err := l.f.Close()
+	l.f = nil
+	return err
 }

@@ -88,7 +88,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		} else if err != nil && jsonErrors {
 			err = &jsonCommandError{err}
 		} else if err != nil {
-			err = localizeListenerError(japanese(locale), localizeFavoritesError(japanese(locale), err))
+			err = localizeResourceError(japanese(locale), localizeListenerError(japanese(locale), localizeFavoritesError(japanese(locale), err)))
 			err = localizeLANSetupError(japanese(locale), localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err)))
 		}
 	}()
@@ -141,7 +141,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
@@ -170,6 +170,9 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 	}
 	if handled, err := clientHelperCLI(ctx, command, args, dir, ja, *dryRun, out, client); handled {
 		return err
+	}
+	if command == "resource" {
+		return resourceCLI(ctx, args, dir, ja, *dryRun, out, client)
 	}
 	if command == "favorites" {
 		return favoritesCLI(ctx, args, dir, ja, *dryRun, out, client)
@@ -549,6 +552,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba profile --help           Export/import stopped service definitions
   soba rustdesk --help          Review and save RustDesk client settings
   soba group --help             Save and start service groups
+  soba resource --help          Inspect and preview local transfer settings
   soba favorites --help         Mark inert service and group favorites
   soba task --help              Run a command with owned temporary services
   soba stop-shares              Stop every share; keep the node running
@@ -605,6 +609,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba profile --help           停止状態のサービス設定を書き出し・読込み
   soba rustdesk --help          RustDeskの接続設定を確認・保存
   soba group --help             サービスをまとめて保存・開始
+  soba resource --help          ローカル転送設定の内容・変更案を確認
   soba favorites --help         サービスとグループにお気に入りの目印を付ける
   soba task --help              所有する一時サービスでコマンドを実行
   soba stop-shares              本体を維持してすべての共有を停止

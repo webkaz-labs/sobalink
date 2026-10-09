@@ -10,7 +10,11 @@ import (
 
 // Lease admission requires a real namespace durability acknowledgement. A
 // Windows cross-build does not establish native filesystem support for it.
-func atomicSyncLeaseNamespace(parentPath string, owned *os.File) (err error) {
+func atomicSyncLeaseNamespace(parentPath string, owned *os.File) error {
+	return atomicSyncBoundDirectory(filepath.Join(parentPath, atomicNamespace), owned)
+}
+
+func atomicSyncBoundDirectory(directoryPath string, owned *os.File) (err error) {
 	if owned == nil {
 		return ErrAtomicRecovery
 	}
@@ -21,7 +25,7 @@ func atomicSyncLeaseNamespace(parentPath string, owned *os.File) (err error) {
 	if !retained.directory || !retained.private {
 		return ErrAtomicRecovery
 	}
-	path, err := filepath.Abs(filepath.Join(parentPath, atomicNamespace))
+	path, err := filepath.Abs(directoryPath)
 	if err != nil {
 		return err
 	}
