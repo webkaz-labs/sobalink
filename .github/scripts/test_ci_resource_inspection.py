@@ -80,10 +80,17 @@ class ResourceInspectionWorkflowTests(unittest.TestCase):
 
     def test_empty_proxy_variables_are_preserved_not_stripped(self):
         environment = dict.fromkeys(PROXIES, '')
-        _, launch, error = self.invoke(environment=environment)
+        # Windows canonicalizes environment keys to uppercase. Compare every
+        # actual key/value, rather than requiring the input mapping's spelling.
+        with patch.dict(os.environ, environment, clear=True):
+            expected = dict(os.environ)
+            _, launch, error = self.invoke(environment=expected)
         self.assertIsNone(error)
-        for name in PROXIES:
-            self.assertEqual(launch.call_args.kwargs['env'][name], '')
+        expected.update({
+            'SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE': 'reviewed-production-loopback-v1',
+            'SOBALINK_RUN_ACTIVATION_NATIVE': '1',
+        })
+        self.assertEqual(launch.call_args.kwargs['env'], expected)
 
     def test_toolchain_or_target_mismatch_never_invokes_tests(self):
         for actual in ('', 'go1.27.0\nlinux\namd64\n', 'go1.27.1\ndarwin\namd64\n',
