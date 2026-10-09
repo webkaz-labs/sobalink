@@ -151,9 +151,16 @@ func (n *Node) commitManagedSession(ctx context.Context, captured *managedAuthen
 // decoded reply alone cannot mutate per-generation application authority.
 func (n *Node) requestManagedSession(ctx context.Context, p *peerState) (result error) {
 	captured := n.captureManagedSession(p)
-	if captured == nil {
+	return n.requestCapturedManagedSession(ctx, captured)
+}
+
+// The captured variant preserves the caller's exact generation/registration/
+// policy binding across control I/O; it never substitutes newly selected authority.
+func (n *Node) requestCapturedManagedSession(ctx context.Context, captured *managedAuthentication) (result error) {
+	if captured == nil || !captured.current() {
 		return ErrUntrusted
 	}
+	p := captured.peer
 	c, w, err := n.connect(ctx, p.peer, p)
 	if err != nil {
 		return err

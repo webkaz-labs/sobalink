@@ -10,7 +10,8 @@ import re
 REPOSITORY = 'webkaz-labs/sobalink'
 WORKFLOW = '.github/workflows/ci.yml'
 SOURCES = (WORKFLOW, '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
-           '.github/scripts/ci_full_validation.py', '.github/scripts/release-validation.py')
+           '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
+           '.github/scripts/release-validation.py')
 TARGETS = {
     'linux-amd64': ('native (ubuntu-24.04, linux, amd64)', 'ubuntu-24.04'),
     'linux-arm64': ('native (ubuntu-24.04-arm, linux, arm64)', 'ubuntu-24.04-arm'),
@@ -229,11 +230,78 @@ def validate_parallel_workflow(data):
             'parallel timing writers require isolated storage')
 
 
+def validate_resource_inspection_workflow(data):
+    """Require the reviewed serial five-case invocation, including its preflight.
+
+    Compare source text rather than execute workflow commands. Any command,
+    opt-in, preflight, selector, timeout or failure-policy change needs review.
+    """
+    workflow = data.decode('utf-8')
+    workflow_metadata(workflow)
+    expected = """      - name: Verify native remote resource inspection
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          # Fail closed without removing or printing proxy overrides.
+          proxies = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "TS_PROXY")
+          if any(os.environ.get(name) for name in proxies):
+              raise SystemExit("Native inspection requires an isolated environment without proxy overrides")
+          actual = subprocess.check_output(["go", "env", "GOVERSION", "GOOS", "GOARCH"], text=True, timeout=30).splitlines()
+          if actual != ["go1.27.1", "${{ matrix.goos }}", "${{ matrix.goarch }}"]:
+              raise SystemExit("Native inspection requires the exact Go toolchain and matrix target")
+          env = os.environ.copy()
+          env["SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE"] = "reviewed-production-loopback-v1"
+          env["SOBALINK_RUN_ACTIVATION_NATIVE"] = "1"
+          # One exact execution; fixture-owned numeric loopback and synthetic profiles.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py", "--exact",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceInspectionNativeFirstRemoteInspect",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceInspectionNativeRestartPreservesOriginalExpiry",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceInspectionNativeReverseRestartPreservesOriginalExpiry",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceInspectionNativeRevokeDeniesNewInspection",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceInspectionNativePortCollisionPreservesOwner",
+              "--",
+              "go", "test", "-race", "-count=1", "-v", "-timeout=8m",
+              "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,directlan_activation_native,resource_inspection_native",
+              "-run=^TestResourceInspectionNative(FirstRemoteInspect|RestartPreservesOriginalExpiry|ReverseRestartPreservesOriginalExpiry|RevokeDeniesNewInspection|PortCollisionPreservesOwner)$",
+              "./internal/core",
+          ], env=env, check=True, timeout=10 * 60)
+          PYTHON
+"""
+    marker = '      - name: Verify native remote resource inspection\n'
+    require(workflow.count(marker) == 1, 'missing or duplicate native inspection gate')
+    start = workflow.index(marker)
+    following = re.search(r'^      - ', workflow[start + len(marker):], re.M)
+    require(following is not None, 'missing serial native inspection boundary')
+    end = start + len(marker) + following.start()
+    # Trailing YAML comments are not executable policy. Anything else appended
+    # to the step (including another command after the heredoc) fails closed.
+    block = re.sub(r'(?:^ *#[^\n]*\n|^ *\n)+\Z', '', workflow[start:end], flags=re.M)
+    require(block == expected, 'invalid native inspection execution policy')
+    recovery = '      - name: Verify recovery with the ordinary direct-enabled transport\n'
+    parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
+    require(workflow.count(recovery) == 1 and workflow.count(parallel) == 1
+            and workflow.index(recovery) < start < workflow.index(parallel)
+            and end == workflow.index(parallel), 'native inspection must precede the async region')
+    # Opt-ins belong only to this child invocation, never the workflow/job env.
+    outside = workflow[:start] + workflow[end:]
+    require('SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE' not in outside
+            and 'SOBALINK_RUN_ACTIVATION_NATIVE' not in outside,
+            'native inspection opt-ins escaped their step')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_parallel_workflow(sources[WORKFLOW])
+    validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
-    names = {'FAST_STEPS', 'LONG_STEPS', 'BROWSER_STEPS'}
+    names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS'}
     values = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -242,11 +310,19 @@ def required_jobs(sources):
                 require(name not in values, 'duplicate required-step policy')
                 values[name] = ast.literal_eval(node.value)
     require(set(values) == names, 'missing required-step policy')
+    bindings = [node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Store) and node.id in names]
+    require(len(bindings) == len(names) and set(bindings) == names,
+            'required-step policy must have one literal assignment')
     for value in values.values():
         require(isinstance(value, tuple) and value and all(isinstance(v, str) and v for v in value)
                 and len(set(value)) == len(value), 'invalid required-step policy')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
-    result = {name: values['FAST_STEPS'] + values['LONG_STEPS'] for name, _ in TARGETS.values()}
+    require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',),
+            'unexpected full-only gate policy')
+    native_steps = values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
+    require(len(set(native_steps)) == len(native_steps), 'overlapping required native gates')
+    result = {name: native_steps for name, _ in TARGETS.values()}
     result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
     result.update({
         'impact': ('Select minimum CI scope',),

@@ -29,6 +29,9 @@ LONG_STEPS = (
     "Verify guarded relay real-time lease continuity",
     "Verify relay-only real-time lease and idle continuity",
 )
+FULL_ONLY_STEPS = (
+    "Verify native remote resource inspection",
+)
 FAST_STEPS = (
     "Test and reproduce locked frontend assets",
     "Check exact toolchain and native target",
@@ -170,16 +173,16 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
         required.add("go-unit")
     if scope in ("native-short", "full"):
         for target, name in TARGETS.items():
-            steps = FAST_STEPS + (LONG_STEPS if scope == "full" else ())
+            steps = FAST_STEPS + (LONG_STEPS + FULL_ONLY_STEPS if scope == "full" else ())
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             passed(name, steps)
             if scope == "native-short":
-                for long_step in LONG_STEPS:
-                    matches = [s for s in index[name].get("steps", []) if s.get("name") == long_step]
+                for full_step in LONG_STEPS + FULL_ONLY_STEPS:
+                    matches = [s for s in index[name].get("steps", []) if s.get("name") == full_step]
                     require(len(matches) == 1 and matches[0].get("status") == "completed"
                             and matches[0].get("conclusion") == "skipped",
-                            "native-short must record the unexecuted real-time gate: " + name + ": " + long_step)
+                            "native-short must record the unexecuted full-only gate: " + name + ": " + full_step)
             required.add(name)
         passed("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",))
         required.add("manifest-smoke")
@@ -232,7 +235,7 @@ def job_timings(jobs):
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
     names = {*TARGETS.values(), "impact", "browser", "go-unit", "manifest-smoke"}
-    steps = {*FAST_STEPS, *LONG_STEPS, *BROWSER_STEPS, *GO_STEPS,
+    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}
@@ -267,7 +270,7 @@ def finalize(input_path, output, *, scheduled=False):
         "docs": "Documentation only; application tests, builds and packages NOT RUN",
         "frontend": "Frontend checks passed; four-target native and package checks NOT RUN",
         "go": "Affected Go packages and reverse dependencies passed on Linux; full native, browser and package checks NOT RUN",
-        "native-short": "Four-target short native, browser and package checks passed; real-time lifecycle and lease checks NOT RUN",
+        "native-short": "Four-target short native, browser and package checks passed; real-time lifecycle, lease and native remote resource inspection checks NOT RUN",
         "full": "Full native, browser and package coverage passed",
     }
     summary = descriptions[scope]

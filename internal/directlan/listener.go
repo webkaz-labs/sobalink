@@ -22,6 +22,10 @@ type listener struct {
 }
 
 func (n *Node) ListenPeer(ctx context.Context, network string, port uint16) (net.Listener, error) {
+	return n.listenPeer(ctx, network, port, ErrUnavailable)
+}
+
+func (n *Node) listenPeer(ctx context.Context, network string, port uint16, conflict error) (net.Listener, error) {
 	if !validService(network, port) {
 		return nil, ErrUnavailable
 	}
@@ -35,7 +39,7 @@ func (n *Node) ListenPeer(ctx context.Context, network string, port uint16) (net
 	}
 	s := service{network, port}
 	if n.listeners[s] != nil {
-		return nil, ErrUnavailable
+		return nil, conflict
 	}
 	if len(n.listeners) >= n.cfg.ListenerLimit {
 		return nil, ErrCapacity

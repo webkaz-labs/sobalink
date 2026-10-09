@@ -263,7 +263,7 @@ pause/resume PEER_ID affect messages and transfers; stop-service stops a share.
 Recovery
   soba reconnect peer-123 refreshes reachability without renewing grants.
   soba retry TRANSFER_ID retries unfinished files; cancel TRANSFER_ID stops.
-  soba revoke peer-123 removes application trust; lan revoke unpairs LAN.
+  soba revoke peer-123 removes application trust and any inspection permission; lan revoke unpairs LAN.
   Stop soba, then soba start --offline to repair network settings locally.
 
 --dry-run before an action previews JSON without applying it. Saved settings
@@ -303,7 +303,7 @@ pause/resume PEER_ID はメッセージ・転送を停止／再開し、stop-ser
 復旧
   soba reconnect peer-123 は許可を更新せず、到達状態を再確認します。
   soba retry TRANSFER_ID は未完了ファイルを再試行し、cancel TRANSFER_ID は停止します。
-  soba revoke peer-123 はアプリの信頼を解除し、lan revoke はLANペアを解除します。
+  soba revoke peer-123 はアプリの信頼と参照許可を解除し、lan revoke はLANペアを解除します。
   ネットワークの修復時は本体を停止して soba start --offline で起動します。
 
 操作の前に --dry-run を付けると変更せずJSONを確認できます。名前の選択や設定の

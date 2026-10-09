@@ -27,7 +27,7 @@ def event(action, test=TEST, package=PACKAGE, **fields):
 
 
 class CIGoTestTests(unittest.TestCase):
-    def invoke(self, events, expected=(EXPECTED,), code=0, command=None):
+    def invoke(self, events, expected=(EXPECTED,), code=0, command=None, *, exact=False):
         raw = b"".join(item if isinstance(item, bytes) else
                        (json.dumps(item) + "\n").encode() for item in events)
         process = mock.Mock(stdout=io.BytesIO(raw))
@@ -36,7 +36,7 @@ class CIGoTestTests(unittest.TestCase):
         with mock.patch.object(ci_go_test.subprocess, "Popen", return_value=process) as launch, \
                 mock.patch.object(ci_go_test.sys, "stdout", stdout), \
                 mock.patch.object(ci_go_test.sys, "stderr", stderr):
-            result = ci_go_test.run_tests(expected, command or ["go", "test", "-race", "-count=1", "./pkg"])
+            result = ci_go_test.run_tests(expected, command or ["go", "test", "-race", "-count=1", "./pkg"], exact=exact)
         return result, stdout.getvalue(), stderr.getvalue(), launch
 
     def test_pass_streams_only_output_and_inherits_stderr(self):
@@ -97,6 +97,49 @@ class CIGoTestTests(unittest.TestCase):
     def test_repeated_pass_events_and_duplicate_expectations_are_allowed(self):
         events = [event("run"), event("pass"), event("run"), event("pass"), event("pass", None)]
         self.assertEqual(self.invoke(events, (EXPECTED, EXPECTED))[0], 0)
+
+    def test_exact_requires_one_complete_execution_without_extras(self):
+        expected = (EXPECTED, (PACKAGE, "TestSecond"))
+        events = [event("start", None), event("run"), event("pass"),
+                  event("run", "TestSecond"), event("pass", "TestSecond"), event("pass", None)]
+        self.assertEqual(self.invoke(events, expected, exact=True)[0], 0)
+        for missing in range(len(events)):
+            with self.subTest(missing=missing):
+                self.assertEqual(self.invoke(events[:missing] + events[missing + 1:], expected, exact=True)[0], 1)
+        for duplicate in range(len(events)):
+            repeated = events[:duplicate] + [events[duplicate]] + events[duplicate:]
+            with self.subTest(duplicate=duplicate):
+                self.assertEqual(self.invoke(repeated, expected, exact=True)[0], 1)
+
+    def test_exact_rejects_any_extra_test_package_subtest_or_skip(self):
+        good = [event("start", None), event("run"), event("pass"), event("pass", None)]
+        for action in ("run", "pass", "skip", "output"):
+            for test, package in (("TestOther", PACKAGE), (TEST + "/extra", PACKAGE),
+                                  (TEST, "example.org/other/pkg"), (None, "example.org/other/pkg")):
+                extra = event(action, test, package, **({"Output": "fixture\n"} if action == "output" else {}))
+                with self.subTest(action=action, test=test, package=package):
+                    self.assertEqual(self.invoke(good[:-1] + [extra] + good[-1:], exact=True)[0], 1)
+        for test in (TEST, None):
+            self.assertEqual(self.invoke(good[:-1] + [event("skip", test)] + good[-1:], exact=True)[0], 1)
+
+    def test_exact_rejects_duplicate_expectations_without_launching(self):
+        result, _, _, launch = self.invoke([], (EXPECTED, EXPECTED), exact=True)
+        self.assertEqual(result, 2)
+        launch.assert_not_called()
+
+    def test_exact_rejects_terminal_events_before_their_execution(self):
+        for events in ([event("start", None), event("pass"), event("run"), event("pass", None)],
+                       [event("run"), event("start", None), event("pass"), event("pass", None)],
+                       [event("start", None), event("pass", None), event("run"), event("pass")]):
+            with self.subTest(events=events):
+                self.assertEqual(self.invoke(events, exact=True)[0], 1)
+
+    def test_exact_preserves_interleaved_runs_and_build_metadata(self):
+        expected = (EXPECTED, (PACKAGE, "TestSecond"))
+        events = [{"Action": "build-output", "ImportPath": "example.org/dependency", "Output": "build\n"},
+                  event("start", None), event("run"), event("pause"), event("run", "TestSecond"),
+                  event("cont"), event("pass", "TestSecond"), event("pass"), event("pass", None)]
+        self.assertEqual(self.invoke(events, expected, exact=True)[0], 0)
 
     def test_required_packages_must_finish_with_a_pass(self):
         for events in ([event("pass")], [event("pass"), event("skip", None)],
@@ -189,6 +232,12 @@ class CIGoTestTests(unittest.TestCase):
                 "--", "go", "test", "-count=1", "./pkg"]), 0)
         run.assert_called_once_with([EXPECTED, (PACKAGE, TEST + "/subtest")],
                                     ["go", "test", "-count=1", "./pkg"])
+
+    def test_cli_exact_selects_strict_mode(self):
+        with mock.patch.object(ci_go_test, "run_tests", return_value=0) as run:
+            self.assertEqual(ci_go_test.main(["--exact", "--expect", PACKAGE + ":" + TEST,
+                                              "--", "go", "test", "-count=1", "./pkg"]), 0)
+        run.assert_called_once_with([EXPECTED], ["go", "test", "-count=1", "./pkg"], exact=True)
 
     def test_invalid_cli_does_not_launch_or_disclose_input(self):
         for args in ([], ["--expect", "secret-fixture", "--", "go", "test"],

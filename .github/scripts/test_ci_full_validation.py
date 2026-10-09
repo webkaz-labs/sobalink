@@ -76,6 +76,51 @@ class FullProofTests(unittest.TestCase):
         self.assertEqual({j['name'] for j in proof['jobs']}, set(self.required))
         self.assertEqual(proof['full_validation']['id'], 10)
         self.assertNotIn('runner_name', str(proof))
+        self.assertIn('.github/scripts/ci-go-test.py', proof['source_sha256'])
+        for name, _ in full.TARGETS.values():
+            result = next(j for j in proof['jobs'] if j['name'] == name)
+            self.assertEqual(result['required_steps_passed'].count('Verify native remote resource inspection'), 1)
+
+    def test_native_inspection_missing_duplicate_or_non_success_blocks_release(self):
+        gate = 'Verify native remote resource inspection'
+        original = copy.deepcopy(self.jobs)
+        for name, _ in full.TARGETS.values():
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                self.jobs = copy.deepcopy(original)
+                job = next(j for j in self.jobs if j['name'] == name)
+                step = next(s for s in job['steps'] if s['name'] == gate)
+                if mode == 'missing':
+                    job['steps'].remove(step)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(step))
+                elif mode == 'pending':
+                    step['status'] = 'in_progress'
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(target=name, mode=mode), self.assertRaises(ValueError):
+                    self.audit()
+
+    def test_full_only_literal_policy_cannot_omit_or_reclassify_native_inspection(self):
+        path = '.github/scripts/ci-coverage.py'
+        original = self.sources[path]
+        declaration = b'FULL_ONLY_STEPS = (\n    "Verify native remote resource inspection",\n)'
+        self.assertEqual(original.count(declaration), 1)
+        mutations = [
+            original.replace(declaration, b''),
+            original.replace(declaration, b'FULL_ONLY_STEPS = ()'),
+            original.replace(declaration, b'FULL_ONLY_STEPS = ("Other gate",)'),
+            original.replace(declaration, b'FULL_ONLY_STEPS = ["Verify native remote resource inspection"]'),
+            original.replace(declaration, b'FULL_ONLY_STEPS = tuple(["Verify native remote resource inspection"])'),
+            original.replace(declaration, declaration + b'\n' + declaration),
+            original.replace(declaration, b'FULL_ONLY_STEPS = ("Verify native remote resource inspection", "Extra gate")'),
+            original.replace(b'FAST_STEPS = (', b'FAST_STEPS = ("Verify native remote resource inspection",'),
+            original + b'\nFULL_ONLY_STEPS += ("Extra gate",)\n',
+            original + b'\nif True:\n    FULL_ONLY_STEPS = ()\n',
+        ]
+        for index, source in enumerate(mutations):
+            self.sources[path] = source
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
 
     def test_effective_attempt_accepts_github_inherited_success_without_rerun(self):
         self.previous['actions/runs/10/attempts/1'] = run()

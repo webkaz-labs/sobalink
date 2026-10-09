@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,8 +19,12 @@ import (
 // unexpected backend construction. Close joins owners before releasing lock.
 func openResourceApplication(t *testing.T, dir string, owner *config.Lock) (*Core, func()) {
 	t.Helper()
+	return openResourceApplicationWithInspection(t, dir, owner, false)
+}
+func openResourceApplicationWithInspection(t *testing.T, dir string, owner *config.Lock, enabled bool) (*Core, func()) {
+	t.Helper()
 	var backendCalls atomic.Int64
-	app, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true, LifecycleLock: owner, NodeFactory: func(string, string) (NetworkBackend, error) {
+	app, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true, LifecycleLock: owner, EnableResourceInspection: enabled, NodeFactory: func(string, string) (NetworkBackend, error) {
 		backendCalls.Add(1)
 		return nil, errors.New("unexpected synthetic backend construction")
 	}})
@@ -100,5 +105,28 @@ func TestResourceUnownedOpenPreservesLegacy(t *testing.T) {
 			t.Fatal("unowned resource sidecar created", err)
 		}
 		closeApp()
+	}
+}
+
+func TestResourceInspectionEnabledOpenWithoutGrantDoesNotListen(t *testing.T) {
+	dir, owner := resourceOperationLifecycleOwner(t)
+	for i := 0; i < 2; i++ {
+		app, closeApp := openResourceApplicationWithInspection(t, dir, owner, true)
+		assertResourceOperationOffline(t, app)
+		app.op.Lock()
+		g := app.resourceGrants
+		valid := g != nil && !g.frozen && g.firstUse && g.fence == nil && g.runtime == nil && g.retiring == nil && len(g.state.Records) == 0
+		app.op.Unlock()
+		if !valid {
+			t.Fatal("enabled startup created or activated unconfirmed permission")
+		}
+		catalog := resourceCall(t, app, "resource.list", struct{}{}).(resource.Catalog)
+		if len(catalog.Resources) != 1 {
+			t.Fatal("inspection implementation disabled existing local resource")
+		}
+		closeApp()
+		if _, err := os.Lstat(filepath.Dir(resourceGrantStatePath(dir))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("enabled startup initialized saved grant state", err)
+		}
 	}
 }

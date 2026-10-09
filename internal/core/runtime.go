@@ -249,6 +249,7 @@ func (c *Core) maintain() {
 				c.stopAllProxies()
 			}
 		}
+		c.reconcileResourceInspection()
 		c.expireServices()
 		c.expireProxies()
 		c.op.Unlock()
@@ -364,6 +365,8 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 		return nil, err
 	}
 	switch cmd.Name {
+	case "resource.remote.inspect":
+		return c.resourceRemoteInspectCommand(ctx, cmd.Payload)
 	case "direct-lan.endpoint.status":
 		c.mu.RLock()
 		live := c.node != nil
@@ -546,6 +549,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.selectionCommand(ctx, cmd.Name, cmd.Payload)
 	case "service.stop-shares":
 		return c.stopSharesCommand(cmd.Payload)
+	case "resource.grant.preview", "resource.grant.confirm", "resource.grant.inspect", "resource.grant.revoke":
+		return c.resourceGrantCommand(ctx, cmd.Name, cmd.Payload)
 	case "resource.list", "resource.inspect", "resource.preview", "resource.apply", "resource.operation.status":
 		return c.resourceCommandContext(ctx, cmd.Name, cmd.Payload)
 	case "policy.config", "policy.preview", "policy.apply":
@@ -681,82 +686,44 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		if e := decodePayload(cmd.Payload, &v); e != nil {
 			return nil, e
 		}
+		if !v.Trusted {
+			return nil, c.revokePeerPermission(ctx, v.PeerID)
+		}
 		p := c.profileCopy()
-		peer, e := c.currentPeer(ctx, v.PeerID)
-		if v.Trusted && e != nil {
-			return nil, e
+		peer, err := c.currentPeer(ctx, v.PeerID)
+		if err != nil {
+			return nil, err
 		}
-		var revocationErr error
-		if !v.Trusted {
-			revocationErr = c.revokeStartupPeer(v.PeerID)
-			if revocationErr != nil && !errors.Is(revocationErr, config.ErrAtomicCommitted) {
-				return nil, revocationErr
-			}
+		if _, had := c.trust(v.PeerID); had {
+			return nil, nil
 		}
-		_, had := c.trust(v.PeerID)
-		if had == v.Trusted {
-			if !v.Trusted {
-				c.revokePeer(v.PeerID)
-			}
-			return nil, revocationErr
-		}
-		if v.Trusted {
-			for _, existing := range p.Peers {
-				if existing.ID == v.PeerID && existing.Network != p.Settings.Network {
-					return nil, errors.New("this peer ID belongs to an approval in another network; switch to that network to review it first")
-				}
-			}
-			if int64(len(p.Peers)) >= c.limit("logical", "trustedPeers") {
-				return nil, &localCommandError{"peer_capacity", "trusted peer limit reached; raise trustedPeers in capacity settings"}
-			}
-			if c.trustGeneration == ^uint64(0) {
-				return nil, errors.New("peer approval generation is exhausted")
-			}
-			c.trustGeneration++
-			g := c.trustGeneration
-			p.Peers = append(p.Peers, Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: g, RevocationEpoch: c.reviewPeerEpochs([]string{peer.ID})[peer.ID]})
-		} else {
-			filtered := p.Peers[:0]
-			for _, t := range p.Peers {
-				if t.ID != v.PeerID || t.Network != p.Settings.Network {
-					filtered = append(filtered, t)
-				}
-			}
-			p.Peers = filtered
-		}
-		if v.Trusted {
-			// Preflight is read-only: no receiver binding exists until the
-			// profile is durable. All binding mutations and Close share c.op.
-			t := p.Peers[len(p.Peers)-1]
-			if e := c.transfers.ValidatePeerBinding(transfer.Peer{ID: t.ID, Generation: t.Generation}); e != nil {
-				return nil, e
+		for _, existing := range p.Peers {
+			if existing.ID == v.PeerID && existing.Network != p.Settings.Network {
+				return nil, errors.New("this peer ID belongs to an approval in another network; switch to that network to review it first")
 			}
 		}
-		if !v.Trusted {
-			// Journal publication closes authority before any fallible profile save.
-			c.mu.Lock()
-			c.profile = p
-			c.mu.Unlock()
-			c.revokePeer(v.PeerID)
+		if int64(len(p.Peers)) >= c.limit("logical", "trustedPeers") {
+			return nil, &localCommandError{"peer_capacity", "trusted peer limit reached; raise trustedPeers in capacity settings"}
+		}
+		if c.trustGeneration == ^uint64(0) {
+			return nil, errors.New("peer approval generation is exhausted")
+		}
+		c.trustGeneration++
+		p.Peers = append(p.Peers, Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: c.trustGeneration, RevocationEpoch: c.reviewPeerEpochs([]string{peer.ID})[peer.ID]})
+		// General trust does not create, restore, or expand a separate inspect grant.
+		trust := p.Peers[len(p.Peers)-1]
+		if err := c.transfers.ValidatePeerBinding(transfer.Peer{ID: trust.ID, Generation: trust.Generation}); err != nil {
+			return nil, err
 		}
 		saveErr := c.saveProfile(p)
 		if !atomicPublished(saveErr) {
-			if revocationErr != nil {
-				return nil, privateAtomicError(revocationErr, saveErr)
-			}
-			return nil, errors.Join(revocationErr, saveErr)
+			return nil, saveErr
 		}
 		c.mu.Lock()
 		c.profile = p
 		c.mu.Unlock()
-		if v.Trusted {
-			t, _ := c.trust(v.PeerID)
-			return nil, errors.Join(saveErr, c.bindTransferPeer(t))
-		}
-		if revocationErr != nil {
-			return nil, privateAtomicError(revocationErr, saveErr)
-		}
-		return nil, saveErr
+		trust, _ = c.trust(v.PeerID)
+		return nil, errors.Join(saveErr, c.bindTransferPeer(trust))
 	case "peer.autosave":
 		var v struct {
 			PeerID    string  `json:"peerId"`

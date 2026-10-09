@@ -93,9 +93,14 @@ type Options struct {
 	SkipNetworkStart   bool
 	// LifecycleLock enables resource identity only while the matching process owns this profile.
 	LifecycleLock *config.Lock
+	// EnableResourceInspection enables the scoped inspection implementation.
+	// When false, grant storage is not opened and no inspection listener starts.
+	EnableResourceInspection bool
 }
 
 type Core struct {
+	resourceGrants *resourceGrantCoordinator // op; nil unless explicitly enabled
+
 	resourceIdentity           string // protected by op, empty when startup certification failed
 	resourceLock               *config.Lock
 	resourceNonce              string
@@ -227,6 +232,9 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	c := &Core{lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
 	c.capacity = limits
 	c.initializeResourceIdentity(opts.LifecycleLock)
+	if opts.EnableResourceInspection {
+		c.initializeResourceGrants()
+	}
 	for _, peer := range p.Peers {
 		if peer.Generation > c.trustGeneration {
 			c.trustGeneration = peer.Generation
@@ -454,7 +462,11 @@ func (c *Core) close() error {
 		<-endpoint.done
 	}
 	c.op.Lock()
-	defer c.op.Unlock()
+	var inspection *resourceInspectionRuntime
+	if c.resourceGrants != nil {
+		c.resourceGrants.freeze()
+		inspection = c.resourceGrants.retiring
+	}
 	c.stopAllServices()
 	c.stopAllProxies()
 	c.mu.Lock()
@@ -478,6 +490,12 @@ func (c *Core) close() error {
 	errs = append(errs, c.transfers.Close())
 	if node != nil {
 		errs = append(errs, node.Close())
+	}
+	// Inspection can be queued on op for its owned disclosure snapshot.
+	// Its canceled owner is joined only after releasing this mutation lock.
+	c.op.Unlock()
+	if inspection != nil {
+		<-inspection.done
 	}
 	c.wg.Wait()
 	return errors.Join(errs...)

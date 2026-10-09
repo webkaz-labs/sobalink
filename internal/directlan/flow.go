@@ -21,6 +21,8 @@ type flow struct {
 	mu            sync.Mutex
 	closed        bool
 	once          sync.Once
+
+	resourceInspectionCaptured bool // Node.mu; one inspection capability per flow
 }
 
 func (n *Node) trackFlowLocked(g *runtimeGeneration, c *liveEndpoint, p *peerState, network string, inbound bool) (*flow, error) {

@@ -12,9 +12,9 @@ Run the checks affected by the complete change. Ordinary documentation does not 
 | `web/src` TypeScript/TSX/CSS or existing `web/browser/*.mjs` acceptance code, optionally with ordinary prose | Linux frontend unit tests, two matching exact-lock builds, fixture safety tests and real browser acceptance |
 | Accompanying generated `web/dist` changes | Included in frontend scope only with a frontend source change; regeneration must match |
 | Reviewed Go-only changes in `internal/servicepresets` or `internal/boundedlog`, optionally with ordinary prose | Changed packages and transitive reverse dependencies, including test imports, tested with race detection and vet on Linux |
-| Reviewed CLI presentation changes on PRs or main, optionally with ordinary prose | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates are not run |
+| Reviewed CLI presentation changes on PRs or main, optionally with ordinary prose | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates and native remote resource inspection are not run |
 | Transport, authentication, Core, configuration, timers, shared helpers, dependencies, lockfiles, build configuration, CI policy/workflows, or any unknown path | Full native Linux amd64/arm64, macOS arm64, Windows amd64, browser and package/manifest validation |
-| Combinations of the reviewed CLI presentation, frontend and scoped-Go domains | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates are not run |
+| Combinations of the reviewed CLI presentation, frontend and scoped-Go domains | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates and native remote resource inspection are not run |
 | Platform-specific Go, cgo, unreviewed imports, policy/provenance Markdown, unsafe modes/types or unverifiable input | Full |
 | Daily scheduled validation, manual full validation or any prerelease | Full |
 
@@ -22,7 +22,7 @@ Run the checks affected by the complete change. Ordinary documentation does not 
 
 The `native-short` allowlist contains exactly `cmd/soba/help.go`, `cmd/soba/errors.go`, `cmd/soba/errors_test.go`, `cmd/soba/human_output.go` and `cmd/soba/human_output_test.go`. New paths, new imports, build directives and mixtures with unreviewed categories remain full. Combinations with the existing frontend and scoped-Go domains use all four native-short targets. Pure docs/frontend/scoped-Go changes retain their narrower existing scopes. Both old and new changed blobs are checked, including complete affected scoped-Go packages even in mixed plans. The complete authenticated PR merge or main-push diff must qualify; a later presentation-only commit cannot hide an earlier runtime change. Generated assets still require a corresponding frontend source change.
 
-This scope omits only natural direct-LAN rekey/idle lifecycle, guarded relay real-time lease continuity, and relay-only real-time lease/idle continuity. Four-target race/vet, repeated IPC, Windows directory barriers, context TCP/TLS control, managed activation/restart, functional direct/relay recovery, synthetic expiry/rekey, browser, packages and manifest validation remain. The independent seven-case Web and two-case product jobs retain their PR/manual entry conditions and failure behavior; scheduled full runs require both. Test repetition counts and production timers are unchanged.
+This scope omits natural direct-LAN rekey/idle lifecycle, guarded relay real-time lease continuity, relay-only real-time lease/idle continuity, and the separate full-only native remote resource inspection gate. Four-target race/vet, repeated IPC, Windows directory barriers, context TCP/TLS control, managed activation/restart, functional direct/relay recovery, synthetic expiry/rekey, browser, packages and manifest validation remain. The independent seven-case Web and two-case product jobs retain their PR/manual entry conditions and failure behavior; scheduled full runs require both. Test repetition counts and production timers are unchanged.
 
 Authenticated main pushes can use the same closed native-short selection as PRs. Created/deleted/forced main pushes and unsupported events still require full validation. Keep the exact-source full validation gate below in place before deploying this main-shortening policy; a short green workflow cannot establish release eligibility. Related transport/lifecycle changes remain full; no new file allowlist, per-family long-test routing or test-count reduction is introduced. Daily full runs are described below.
 
@@ -40,7 +40,7 @@ For PRs, the tested source is the Actions `GITHUB_SHA` and exact `refs/pull/<num
 
 The classifier checks full Git tree inventories, both rename endpoints, file modes and repository/event identity. Missing history, incomplete or malformed diffs and unknown changes choose full validation. The aggregate repeats the scope proof; an artifact cannot grant itself a smaller scope. A classifier failure does not silently skip application validation.
 
-`ci-required` remains the required status. It runs even when application jobs are skipped and verifies the actual required jobs and named steps for the current attempt. Documentation results say **“Documentation only; application tests, builds and packages NOT RUN”**. Frontend and Go results identify their limited coverage. Only complete native, browser and package execution can produce `full_native=true`. Schema-3 `native-short` receipts identify each target as `short_checks_passed`, each target’s `long_checks` as `not_run`, and `full_native=false`; browser and manifest checks are recorded as successful only after they pass. Other unexecuted domains remain `not_run`. Short coverage is never a reusable full baseline. The aggregate also requires the three omitted real-time steps to be explicitly skipped, not failed, missing or silently treated as passed.
+`ci-required` remains the required status. It runs even when application jobs are skipped and verifies the actual required jobs and named steps for the current attempt. Documentation results say **“Documentation only; application tests, builds and packages NOT RUN”**. Frontend and Go results identify their limited coverage. Only complete native, browser and package execution can produce `full_native=true`. Schema-3 `native-short` receipts identify each target as `short_checks_passed`, each target’s `long_checks` as `not_run`, and `full_native=false`; browser and manifest checks are recorded as successful only after they pass. Other unexecuted domains remain `not_run`. Short coverage is never a reusable full baseline. The aggregate requires each of the three omitted real-time steps and the separate native remote resource inspection step to have exactly one completed/skipped record, not a failure, missing record or executed result. The existing `long_checks` field still describes only the three real-time gates; native inspection is tracked separately by the literal `FULL_ONLY_STEPS` policy and its named step timing.
 
 Repository protection settings need no change when this workflow is adopted: keep requiring `ci-required`. Main runs have separate concurrency identities, so a later documentation push cannot cancel an earlier code-validation run. Updated commits to the same PR may still cancel superseded PR runs.
 
@@ -54,7 +54,7 @@ The release gate audits the latest manual attempt by attempt-start time, not mer
 
 GitHub's effective current-attempt jobs can include carried-forward successful work when only failed jobs are rerun. Those current-attempt records are accepted, including original timestamps. The verifier never assembles successes across different runs or manually fills missing jobs from old attempts. Past failures remain in GitHub's history.
 
-The proof binds exact commit/tree, workflow and policy source hashes, current effective attempt, all four native runner targets and every required named step, including real-time gates, browser, manifest, ci-required, Web7 and product2. Both the entry gate and publication-time check independently query read-only GitHub APIs. A saved JSON receipt cannot authorize a pass by itself. Publication can use a newer successful full attempt for the same source, but cannot ignore a newer failure. Proof artifacts are retained for 90 days; they are audit evidence, not additional signed release assets. Distribution signing and installed-package checks remain independent and unchanged.
+The proof binds exact commit/tree, workflow and policy source hashes, current effective attempt, all four native runner targets and every required named step, including real-time gates, the native remote resource inspection gate on every target, browser, manifest, ci-required, Web7 and product2. The exact Go event helper source is also hash-bound. The proof statically requires the literal full-only singleton and its reviewed serial workflow invocation; missing, duplicated, skipped or non-successful inspection steps cannot qualify. Both the entry gate and publication-time check independently query read-only GitHub APIs. A saved JSON receipt cannot authorize a pass by itself. Publication can use a newer successful full attempt for the same source, but cannot ignore a newer failure. Proof artifacts are retained for 90 days; they are audit evidence, not additional signed release assets. Distribution signing and installed-package checks remain independent and unchanged.
 
 Docs/frontend/scoped-Go/native-short successes all fail full-release eligibility until a complete explicit full run is established. Scheduled runs add coverage but do not replace this manual release proof.
 
@@ -62,7 +62,7 @@ Docs/frontend/scoped-Go/native-short successes all fail full-release eligibility
 
 The reviewed workflow schedules one full run per day at **18:00 UTC, or 03:00 JST (UTC+09:00) the following day**, using `0 18 * * *` in `.github/workflows/ci.yml`. It becomes active only after that workflow is merged into the default branch (`main`). GitHub uses the latest default-branch commit, including when no source changed. The classifier explicitly selects `full`; it cannot select `native-short` from an empty or documentation-only delta.
 
-Each scheduled run requires all four native targets and all real-time gates, browser, package/manifest, seven-case Web acceptance and two-case product acceptance. `nightly-full-check` waits for `ci-required` and both acceptance jobs, and checks their actual required steps; skipped, missing, cancelled or failed gates cannot produce a successful receipt. Existing PR/manual acceptance entry conditions and ordinary `ci-required` dependencies remain intact; short PR feedback does not wait for this schedule-only aggregate. Separate run concurrency identities prevent a schedule from cancelling a push or explicit manual release audit. Existing cache trust rules and read-only repository permissions remain unchanged.
+Each scheduled run requires all four native targets, all real-time gates, the separate native remote resource inspection gate, browser, package/manifest, seven-case Web acceptance and two-case product acceptance. `nightly-full-check` waits for `ci-required` and both acceptance jobs, and checks their actual required steps; skipped, missing, cancelled or failed gates cannot produce a successful receipt. Existing PR/manual acceptance entry conditions and ordinary `ci-required` dependencies remain intact; short PR feedback does not wait for this schedule-only aggregate. Separate run concurrency identities prevent a schedule from cancelling a push or explicit manual release audit. Existing cache trust rules and read-only repository permissions remain unchanged.
 
 This consumes one additional complete CI run per day, including the longer native and acceptance jobs. Review observed stability, runner time and cost before reducing frequency; change the single cron entry through review, never automatically taper it. A scheduled success is **not** the manual release proof required above. A newer scheduled failure or pending run blocks release until resolved or superseded by a later successful manual full validation of the same source.
 
@@ -91,6 +91,38 @@ Full native validation retains race detection, vet, Windows retirement barriers,
 Fixtures requiring TCP and UDP on one endpoint reserve both protocols on the exact loopback address, with bounded real-bind attempts and cleanup. The helper is imported only by tests. Browser teardown drains pending intercepted requests before stopping the fixture and still propagates failures. A failed required target or step fails `ci-required`.
 
 Automated CI evidence remains separate from physical-device enrollment, network, OS-login and suspend acceptance.
+
+## Full-only native remote resource inspection
+
+`Verify native remote resource inspection` is one serial step after ordinary
+direct-enabled recovery and before the three asynchronous real-time gates. It
+uses the same full-tier condition, without joining or enlarging `LONG_STEPS`.
+The classifier's allowlists, three-member background region, required wait,
+Node 24 pins and `setup-go` `cache: false` policy are unchanged.
+
+The step checks exact Go `go1.27.1` and the matrix GOOS/GOARCH before one
+`ci-go-test.py --exact` invocation. Five exact `internal/core` cases cover the
+first remote inspection, both Core restart directions preserving original
+expiry, revoke denying a new inspection, and a port collision preserving the
+existing owner. The anchored five-case selector, race detector, `-count=1`,
+`-timeout=8m`, and the five reviewed build tags are fixed in the source policy.
+The helper requires one run/pass for every expected case and one start/pass for
+its package; extras, skips, duplicates and missing events fail. No warmup or
+retry is added. The child is bounded to ten minutes and the outer step to twelve.
+
+All seven proxy override variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+`http_proxy`, `https_proxy`, `all_proxy`, `TS_PROXY`) must be empty or unset;
+nonempty values fail before the toolchain probe and are never silently removed
+or printed. Both explicit fixture opt-ins are set only in the child environment.
+Fixtures own numeric `127.0.0.1` peers and synthetic temporary profiles. They do
+not activate real-user grants or change OS security, routes or firewall policy.
+
+Source review and offline policy tests establish wiring only. A local Linux
+fixture result does not establish Linux ARM64, macOS or Windows acceptance, nor
+exact-source four-target CI. Automated Core close/open checks are not OS-process
+restart, physical-device, enrollment, sign-in, suspend or application acceptance.
+Only results actually obtained on the exact source and target support those
+specific native claims; distribution and installed-binary gates remain separate.
 
 ## Isolated real-time step concurrency
 
