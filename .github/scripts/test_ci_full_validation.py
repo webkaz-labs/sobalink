@@ -77,43 +77,51 @@ class FullProofTests(unittest.TestCase):
         self.assertEqual(proof['full_validation']['id'], 10)
         self.assertNotIn('runner_name', str(proof))
         self.assertIn('.github/scripts/ci-go-test.py', proof['source_sha256'])
+        self.assertIn('.github/scripts/ci_full_validation.py', proof['source_sha256'])
         for name, _ in full.TARGETS.values():
             result = next(j for j in proof['jobs'] if j['name'] == name)
             self.assertEqual(result['required_steps_passed'].count('Verify native remote resource inspection'), 1)
+            self.assertEqual(result['required_steps_passed'].count('Verify native remote resource management'), 1)
 
-    def test_native_inspection_missing_duplicate_or_non_success_blocks_release(self):
-        gate = 'Verify native remote resource inspection'
+    def test_native_resource_missing_duplicate_or_non_success_blocks_release(self):
         original = copy.deepcopy(self.jobs)
         for name, _ in full.TARGETS.values():
-            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
-                self.jobs = copy.deepcopy(original)
-                job = next(j for j in self.jobs if j['name'] == name)
-                step = next(s for s in job['steps'] if s['name'] == gate)
-                if mode == 'missing':
-                    job['steps'].remove(step)
-                elif mode == 'duplicate':
-                    job['steps'].append(copy.deepcopy(step))
-                elif mode == 'pending':
-                    step['status'] = 'in_progress'
-                else:
-                    step['conclusion'] = mode
-                with self.subTest(target=name, mode=mode), self.assertRaises(ValueError):
-                    self.audit()
+            for gate in ('Verify native remote resource inspection', 'Verify native remote resource management'):
+                for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                    self.jobs = copy.deepcopy(original)
+                    job = next(j for j in self.jobs if j['name'] == name)
+                    step = next(s for s in job['steps'] if s['name'] == gate)
+                    if mode == 'missing':
+                        job['steps'].remove(step)
+                    elif mode == 'duplicate':
+                        job['steps'].append(copy.deepcopy(step))
+                    elif mode == 'pending':
+                        step['status'] = 'in_progress'
+                    else:
+                        step['conclusion'] = mode
+                    with self.subTest(target=name, gate=gate, mode=mode), self.assertRaises(ValueError):
+                        self.audit()
 
-    def test_full_only_literal_policy_cannot_omit_or_reclassify_native_inspection(self):
+    def test_full_only_literal_policy_cannot_omit_or_reclassify_native_resource_gates(self):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
-        declaration = b'FULL_ONLY_STEPS = (\n    "Verify native remote resource inspection",\n)'
+        declaration = (b'FULL_ONLY_STEPS = (\n    "Verify native remote resource inspection",\n'
+                       b'    "Verify native remote resource management",\n)')
         self.assertEqual(original.count(declaration), 1)
         mutations = [
             original.replace(declaration, b''),
             original.replace(declaration, b'FULL_ONLY_STEPS = ()'),
             original.replace(declaration, b'FULL_ONLY_STEPS = ("Other gate",)'),
+            original.replace(declaration, b'FULL_ONLY_STEPS = ("Verify native remote resource inspection",)'),
+            original.replace(declaration, b'FULL_ONLY_STEPS = ("Verify native remote resource management",)'),
+            original.replace(declaration, b'FULL_ONLY_STEPS = ("Verify native remote resource management", "Verify native remote resource inspection")'),
             original.replace(declaration, b'FULL_ONLY_STEPS = ["Verify native remote resource inspection"]'),
             original.replace(declaration, b'FULL_ONLY_STEPS = tuple(["Verify native remote resource inspection"])'),
             original.replace(declaration, declaration + b'\n' + declaration),
             original.replace(declaration, b'FULL_ONLY_STEPS = ("Verify native remote resource inspection", "Extra gate")'),
             original.replace(b'FAST_STEPS = (', b'FAST_STEPS = ("Verify native remote resource inspection",'),
+            original.replace(b'FAST_STEPS = (', b'FAST_STEPS = ("Verify native remote resource management",'),
+            original.replace(b'LONG_STEPS = (', b'LONG_STEPS = ("Verify native remote resource management",'),
             original + b'\nFULL_ONLY_STEPS += ("Extra gate",)\n',
             original + b'\nif True:\n    FULL_ONLY_STEPS = ()\n',
         ]
@@ -121,6 +129,25 @@ class FullProofTests(unittest.TestCase):
             self.sources[path] = source
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
+
+    def test_management_command_and_exact_event_wrapper_are_bound_to_release_source(self):
+        proof = self.audit()
+        paths = (full.WORKFLOW, '.github/scripts/ci_full_validation.py', '.github/scripts/ci-go-test.py')
+        for path in paths:
+            self.assertEqual(proof['source_sha256'][path], hashlib.sha256(self.sources[path]).hexdigest())
+        workflow = self.sources[full.WORKFLOW]
+        marker = b'      - name: Verify native remote resource management\n'
+        before, after = workflow.split(marker)
+        self.sources[full.WORKFLOW] = before + marker + after.replace(b'"--exact",', b'', 1)
+        with self.assertRaisesRegex(ValueError, 'native management execution policy'):
+            self.audit()
+        self.sources[full.WORKFLOW] = workflow
+        for path in paths:
+            original = self.sources[path]
+            self.sources[path] = original + b'\n# synthetic changed protected source\n'
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.audit(previous_proof=proof)
+            self.sources[path] = original
 
     def test_effective_attempt_accepts_github_inherited_success_without_rerun(self):
         self.previous['actions/runs/10/attempts/1'] = run()

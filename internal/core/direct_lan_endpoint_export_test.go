@@ -390,8 +390,13 @@ func TestLocalEndpointExportWholeFileAndCounterLimits(t *testing.T) {
 		}
 		indented, _ := json.MarshalIndent(whole, "", "  ")
 		current, _ := os.ReadFile(store.path)
-		store.bytes = int64(max(len(current), len(compact)+64))
-		if int64(len(indented)+1) <= store.bytes {
+		limits := *store.currentCapacity()
+		limits.bytes = int64(max(len(current), len(compact)+64))
+		store.limits.Store(&limits)
+		if store.currentCapacity().bytes != limits.bytes {
+			t.Fatal("fixture did not select the whole-file byte budget")
+		}
+		if int64(len(indented)+1) <= store.currentCapacity().bytes {
 			t.Fatal("fixture does not distinguish model and complete-file budgets")
 		}
 		writes := 0

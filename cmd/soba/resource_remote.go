@@ -16,6 +16,7 @@ import (
 const resourceRemoteHelpEN = `Inspect one explicitly permitted managed peer resource
 
   soba resource remote inspect --peer PEER_KEY --id RESOURCE_ID --grant-id GRANT_ID --grant-revision N [--json]
+  soba resource remote manage --help
 
 The target must explicitly confirm an inspect-only grant for this device first.
 Use the exact resource ID, grant ID and current revision from the target's grant inspect output.
@@ -29,6 +30,7 @@ Output is stable JSON. --offline is unsupported. --dry-run only validates and pr
 const resourceRemoteHelpJA = `明示的に許可された管理対象の相手1台のリソースを参照
 
   soba resource remote inspect --peer PEER_KEY --id RESOURCE_ID --grant-id GRANT_ID --grant-revision N [--json]
+  soba resource remote manage --help
 
 先に対象の端末で、この端末への参照のみの許可を明示的に確定してください。
 対象端末の grant inspect が返した正確なリソース ID・許可 ID・現在の変更番号を指定します。
@@ -40,6 +42,9 @@ const resourceRemoteHelpJA = `明示的に許可された管理対象の相手1�
 出力は安定した JSON です。--offline は使えません。--dry-run は入力検査とローカル表示だけを行います。`
 
 func resourceRemoteCLI(ctx context.Context, args []string, dir string, ja, dryRun bool, out io.Writer, client controlCaller) error {
+	if len(args) > 0 && args[0] == "manage" {
+		return resourceRemoteManagementCLI(ctx, args[1:], dir, ja, dryRun, out, client)
+	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") || len(args) == 2 && args[0] == "inspect" && (args[1] == "--help" || args[1] == "-h") {
 		_, err := fmt.Fprintln(out, text(ja, resourceRemoteHelpEN, resourceRemoteHelpJA))
 		return err

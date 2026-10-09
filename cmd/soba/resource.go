@@ -177,13 +177,15 @@ func localizeResourceError(ja bool, err error) error {
 		return err
 	}
 	messages := map[string]string{
-		"resource_remote_unavailable":     "遠隔参照を完了できません。相手・正確な保存済み許可・接続口の準備状態を確認してください",
-		"resource_remote_unsupported":     "認証済みの相手が、この参照用通信方式の版に対応していないと応答しました",
-		"resource_grant_revoke_uncertain": "このプロセスでは参照を拒否していますが、失効の保存は確認できません。再起動前に非公開の保存状態を確認してください",
-		"resource_grant_unavailable":      "参照許可を利用できません。本体の所有状態と非公開の保存状態を確認してください",
-		"resource_grant_invalid":          "相手1台への参照範囲、有効期限、確認済みの内容と明示的な承認を指定してください",
-		"resource_grant_stale":            "参照許可の確認内容が現在の状態と一致しません。保存状態を確認して preview をやり直してください",
-		"resource_grant_conflict":         "既存の許可を先に失効してください。記録数または変更番号の上限に達した場合は明示的な復旧が必要です",
+		"resource_management_remote_unavailable": "遠隔管理の要求を完了できません。相手・正確な管理許可・接続口を確認してください。apply の応答が不明な場合は同じ操作 ID で status を確認してください",
+		"resource_management_remote_unsupported": "認証済みの相手は管理用通信方式 v2 に対応していません。管理対応版と明示的な管理許可が必要です",
+		"resource_remote_unavailable":            "遠隔参照を完了できません。相手・正確な保存済み許可・接続口の準備状態を確認してください",
+		"resource_remote_unsupported":            "認証済みの相手が、この参照用通信方式の版に対応していないと応答しました",
+		"resource_grant_revoke_uncertain":        "このプロセスではリソースへのアクセスを拒否していますが、失効の保存は確認できません。再起動前に非公開の保存状態を確認してください",
+		"resource_grant_unavailable":             "リソースの許可を利用できません。本体の所有状態と非公開の保存状態を確認してください",
+		"resource_grant_invalid":                 "相手1台への許可範囲、有効期限、確認済みの内容と明示的な承認を指定してください",
+		"resource_grant_stale":                   "リソース許可の確認内容が現在の状態と一致しません。保存状態を確認して preview をやり直してください",
+		"resource_grant_conflict":                "既存の許可を先に失効してください。記録数または変更番号の上限に達した場合は明示的な復旧が必要です",
 
 		"resource_journal_full":           "ローカルの操作記録が上限に達しました。未解決の操作は削除できません",
 		"resource_journal_write_failed":   "操作予定を保存できませんでした。設定変更は試みていません",
@@ -227,16 +229,20 @@ func resourceControlError(err error) error {
 	var coded interface{ ErrorCode() string }
 	if errors.As(err, &coded) {
 		switch coded.ErrorCode() {
+		case "resource_management_remote_unavailable":
+			code, message = coded.ErrorCode(), "remote management could not be completed; verify the peer, exact management grant and listener; if an apply reply is uncertain, query status with the same operation ID"
+		case "resource_management_remote_unsupported":
+			code, message = coded.ErrorCode(), "the authenticated peer does not support management protocol v2; use a management-capable build and an explicit management grant"
 		case "resource_remote_unavailable":
 			code, message = coded.ErrorCode(), "remote inspection could not be completed; verify the peer, exact saved grant and listener readiness"
 		case "resource_remote_unsupported":
 			code, message = coded.ErrorCode(), "the authenticated peer reported an unsupported inspection protocol version"
 		case "resource_grant_revoke_uncertain":
-			code, message = coded.ErrorCode(), "inspection is denied locally; saved inspection revocation could not be confirmed; check private state before restarting"
+			code, message = coded.ErrorCode(), "resource access is denied locally; saved grant revocation could not be confirmed; check private state before restarting"
 		case "resource_grant_unavailable":
-			code, message = coded.ErrorCode(), "resource inspection grants are unavailable; check the owning agent and private state"
+			code, message = coded.ErrorCode(), "resource grants are unavailable; check the owning agent and private state"
 		case "resource_grant_invalid":
-			code, message = coded.ErrorCode(), "provide the exact one-peer inspection scope, finite expiry and explicit reviewed confirmation"
+			code, message = coded.ErrorCode(), "provide the exact one-peer grant scope, finite expiry and explicit reviewed confirmation"
 		case "resource_grant_stale":
 			code, message = coded.ErrorCode(), "the grant review is no longer current; inspect the grant and review again"
 		case "resource_grant_conflict":

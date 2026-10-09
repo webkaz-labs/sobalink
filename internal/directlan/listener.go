@@ -69,6 +69,7 @@ func (l *listener) deliver(f *flow) bool {
 		return false
 	}
 	f.listener = l
+	f.listenerIdentity.Store(l)
 	l.flows[f] = struct{}{}
 	l.pending = append(l.pending, f)
 	l.notifyLocked()

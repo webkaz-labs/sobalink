@@ -109,6 +109,7 @@ func readDirectLANStore(path string, bytes, peers int64) (*directLANStore, error
 		return nil, &lanCommandError{"direct_lan_state_invalid", "invalid private direct LAN state; inspect protected state before restarting"}
 	}
 	store := &directLANStore{path: path, state: state, bytes: bytes, peers: peers, fileDigest: digest}
+	store.limits.Store(&lanStoreLimits{peers: peers, bytes: bytes})
 	// Reading is evidence, not reconciliation. A persisted fence or detected
 	// clock regression stays blocked; neither is cleared by a successful read.
 	if state.Metadata != nil {
@@ -270,6 +271,7 @@ func (c *Core) configureDirectLAN(selection *DirectLANSelection) error {
 			return err
 		}
 		saved = &directLANStore{path: filepath.Join(c.dir, "direct-lan.json"), write: c.writeAtomic, bytes: c.limit("resources", "lanStateBytes"), peers: c.limit("logical", "trustedPeers"), state: directLANState{Version: directLANStateVersion, Identity: id, Peers: []directlan.Peer{}}}
+		saved.limits.Store(&lanStoreLimits{peers: saved.peers, bytes: saved.bytes})
 	}
 	next := saved.copy()
 	if len(next.Peers) != 0 {

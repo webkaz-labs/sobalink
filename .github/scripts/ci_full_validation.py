@@ -238,6 +238,7 @@ def validate_resource_inspection_workflow(data):
     """
     workflow = data.decode('utf-8')
     workflow_metadata(workflow)
+    management_start, management_end = validate_resource_management_workflow(data)
     expected = """      - name: Verify native remote resource inspection
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 12
@@ -288,12 +289,69 @@ def validate_resource_inspection_workflow(data):
     parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
     require(workflow.count(recovery) == 1 and workflow.count(parallel) == 1
             and workflow.index(recovery) < start < workflow.index(parallel)
-            and end == workflow.index(parallel), 'native inspection must precede the async region')
+            and end == management_start, 'native inspection must immediately precede management')
     # Opt-ins belong only to this child invocation, never the workflow/job env.
-    outside = workflow[:start] + workflow[end:]
+    # The following management child has its own separately validated opt-ins.
+    outside = workflow[:start] + workflow[management_end:]
     require('SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE' not in outside
             and 'SOBALINK_RUN_ACTIVATION_NATIVE' not in outside,
             'native inspection opt-ins escaped their step')
+
+
+def validate_resource_management_workflow(data):
+    """Require the reviewed serial three-case management invocation verbatim."""
+    workflow = data.decode('utf-8')
+    workflow_metadata(workflow)
+    expected = """      - name: Verify native remote resource management
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          actual = subprocess.check_output(["go", "env", "GOVERSION", "GOOS", "GOARCH"], text=True, timeout=30).splitlines()
+          if actual != ["go1.27.1", "${{ matrix.goos }}", "${{ matrix.goarch }}"]:
+              raise SystemExit("Native management requires the exact Go toolchain and matrix target")
+          # Only the child receives these opt-ins and an isolated proxy environment.
+          proxies = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "TS_PROXY")
+          env = {name: value for name, value in os.environ.items()
+                 if name not in proxies and name != "SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE"}
+          env["SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE"] = "reviewed-production-loopback-v2"
+          env["SOBALINK_RUN_ACTIVATION_NATIVE"] = "1"
+          # One exact two-Core loopback execution, including in-process Core restart.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py", "--exact",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceManagementNativePreviewApplyReplayAndMigration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceManagementNativeRevokeReplacementAndProtocolSeparation",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceManagementNativeRestartPreservesOriginalExpiryAndHistory",
+              "--",
+              "go", "test", "-race", "-count=1", "-v", "-timeout=8m",
+              "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,resource_management_native,resource_inspection_native,directlan_activation_native",
+              "-run=^TestResourceManagementNative(PreviewApplyReplayAndMigration|RevokeReplacementAndProtocolSeparation|RestartPreservesOriginalExpiryAndHistory)$",
+              "./internal/core",
+          ], env=env, check=True, timeout=10 * 60)
+          PYTHON
+"""
+    marker = '      - name: Verify native remote resource management\n'
+    require(workflow.count(marker) == 1, 'missing or duplicate native management gate')
+    start = workflow.index(marker)
+    following = re.search(r'^      - ', workflow[start + len(marker):], re.M)
+    require(following is not None, 'missing serial native management boundary')
+    end = start + len(marker) + following.start()
+    block = re.sub(r'(?:^ *#[^\n]*\n|^ *\n)+\Z', '', workflow[start:end], flags=re.M)
+    require(block == expected, 'invalid native management execution policy')
+    inspection = '      - name: Verify native remote resource inspection\n'
+    parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
+    require(workflow.count(inspection) == 1 and workflow.count(parallel) == 1
+            and workflow.index(inspection) < start < workflow.index(parallel)
+            and end == workflow.index(parallel), 'native management must precede the async region')
+    outside = workflow[:start] + workflow[end:]
+    require('SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE' not in outside,
+            'native management opt-in escaped its step')
+    return start, end
 
 
 def required_jobs(sources):
@@ -318,7 +376,8 @@ def required_jobs(sources):
         require(isinstance(value, tuple) and value and all(isinstance(v, str) and v for v in value)
                 and len(set(value)) == len(value), 'invalid required-step policy')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
-    require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',),
+    require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',
+                                         'Verify native remote resource management'),
             'unexpected full-only gate policy')
     native_steps = values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
     require(len(set(native_steps)) == len(native_steps), 'overlapping required native gates')

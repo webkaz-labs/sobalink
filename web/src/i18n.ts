@@ -1,6 +1,6 @@
 import type { Locale } from './api'
 export const en = {
-  resource_grant_revoke_uncertain: 'Inspection is denied here, but saved revocation could not be confirmed. Check private state before restarting.',
+  resource_grant_revoke_uncertain: 'Resource access is denied here, but saved revocation could not be confirmed. Check private state before restarting.',
   lan_saved_start_changed: 'Saved host settings or permissions changed. Refresh the status and review the saved host again.',
   lan_listener_conflict: 'A local relay port is already in use. Stop the conflicting listener separately, then retry the saved endpoint.',
   lan_listener_permission_denied: 'The operating system denied a local relay listener. Review local permissions before retrying.',
@@ -168,7 +168,7 @@ export const en = {
 } as const
 export type TextKey = keyof typeof en
 export const ja: Record<TextKey, string> = {
-  resource_grant_revoke_uncertain: 'このプロセスでは参照を拒否していますが、失効の保存は確認できません。再起動前に非公開の保存状態を確認してください。',
+  resource_grant_revoke_uncertain: 'このプロセスではリソースへのアクセスを拒否していますが、失効の保存は確認できません。再起動前に非公開の保存状態を確認してください。',
   lan_saved_start_changed: '保存済みホストの設定または許可が変更されました。状態を更新し、保存済みホストをもう一度確認してください。',
   lan_listener_conflict: 'ローカルリレーのポートが使用中です。競合する待受を別途停止し、保存済みの端点で再試行してください。',
   lan_listener_permission_denied: 'OSがローカルリレーの待受を拒否しました。再試行前にローカルのアクセス権を確認してください。',

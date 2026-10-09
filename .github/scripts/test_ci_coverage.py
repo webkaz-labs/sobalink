@@ -54,29 +54,30 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
-    def test_native_inspection_gate_is_full_only_and_unambiguous_on_every_target(self):
-        gate = "Verify native remote resource inspection"
-        self.assertEqual(coverage.FULL_ONLY_STEPS, (gate,))
+    def test_native_resource_gates_are_full_only_and_unambiguous_on_every_target(self):
+        gates = ("Verify native remote resource inspection", "Verify native remote resource management")
+        self.assertEqual(coverage.FULL_ONLY_STEPS, gates)
         self.assertEqual(len(coverage.LONG_STEPS), 3)
-        self.assertNotIn(gate, coverage.FAST_STEPS + coverage.LONG_STEPS)
+        self.assertFalse(set(gates).intersection(coverage.FAST_STEPS + coverage.LONG_STEPS))
         for scope in ("full", "native-short"):
             for name in coverage.TARGETS.values():
-                for mode in ("missing", "duplicate", "pending", "failed", "wrong-result"):
-                    data = jobs(scope)
-                    selected = next(j for j in data if j["name"] == name)
-                    record = next(s for s in selected["steps"] if s["name"] == gate)
-                    if mode == "missing":
-                        selected["steps"].remove(record)
-                    elif mode == "duplicate":
-                        selected["steps"].append(copy.deepcopy(record))
-                    elif mode == "pending":
-                        record["status"] = "in_progress"
-                    elif mode == "failed":
-                        record["conclusion"] = "failure"
-                    else:
-                        record["conclusion"] = "skipped" if scope == "full" else "success"
-                    with self.subTest(scope=scope, target=name, mode=mode), self.assertRaises(ValueError):
-                        coverage.evaluate_jobs(data, scope)
+                for gate in gates:
+                    for mode in ("missing", "duplicate", "pending", "failure", "cancelled", None, "wrong-result"):
+                        data = jobs(scope)
+                        selected = next(j for j in data if j["name"] == name)
+                        record = next(s for s in selected["steps"] if s["name"] == gate)
+                        if mode == "missing":
+                            selected["steps"].remove(record)
+                        elif mode == "duplicate":
+                            selected["steps"].append(copy.deepcopy(record))
+                        elif mode == "pending":
+                            record["status"] = "in_progress"
+                        elif mode == "wrong-result":
+                            record["conclusion"] = "skipped" if scope == "full" else "success"
+                        else:
+                            record["conclusion"] = mode
+                        with self.subTest(scope=scope, target=name, gate=gate, mode=mode), self.assertRaises(ValueError):
+                            coverage.evaluate_jobs(data, scope)
 
     def test_full_requires_all_four_targets_and_real_time_steps(self):
         self.assertTrue(coverage.evaluate_jobs(jobs(), "full"))
@@ -152,7 +153,7 @@ class ActualCoverageTests(unittest.TestCase):
             self.assertEqual(enabled(name, {"github.event_name": "workflow_dispatch", "inputs.force_full": True}), name != "nightly-full-check")
             if name == "nightly-full-check":
                 self.assertFalse(enabled(name, {"github.event_name": "pull_request"}))
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 4)
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 5)
         self.assertIn("  manifest-smoke:\n    needs: native\n", workflow)
         self.assertEqual(set(coverage.TARGETS), {"linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"})
 
@@ -258,7 +259,7 @@ class ActualCoverageTests(unittest.TestCase):
                 coverage.write_plan(plan("native-short"), pathlib.Path(directory) / "plan.json")
             self.assertEqual(output.read_text(encoding="utf-8"), "scope=native-short\nlong_required=false\n")
         workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 4)
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 5)
         self.assertIn("scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'", workflow)
         self.assertIn("success() && steps.ci-plan.outputs.long_required != 'false'", workflow)
         for name in ("Verify Core context control over pinned TLS", "Verify context control over fixed loopback TCP"):
@@ -281,7 +282,8 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertNotIn("private-", json.dumps(result))
         for name in coverage.TARGETS.values():
             row = next(item for item in result if item["job"] == name)
-            self.assertEqual(sum(s["step"] == coverage.FULL_ONLY_STEPS[0] for s in row["steps"]), 1)
+            for gate in coverage.FULL_ONLY_STEPS:
+                self.assertEqual(sum(s["step"] == gate for s in row["steps"]), 1)
 
     def test_native_port_helper_remains_test_only(self):
         root = pathlib.Path(__file__).parents[2]

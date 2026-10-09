@@ -171,7 +171,12 @@ func TestContextAdmissionRejectsStaleOwnershipAndInputs(t *testing.T) {
 			case "operation":
 				a.inputs.Operation = contextRepublish
 			case "budget":
-				f.store.bytes--
+				limits := *f.store.currentCapacity()
+				limits.bytes--
+				f.store.limits.Store(&limits)
+				if f.store.currentCapacity().bytes != a.budget-1 {
+					t.Fatal("fixture did not change the admitted byte budget")
+				}
 			case "peer proposal":
 				a.proposal = strings.Repeat("0", 64)
 			}
@@ -394,8 +399,13 @@ func TestContextPreflightUsesWholeIndentedFileAndFiniteCounters(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.store.bytes = int64(max(len(current), len(compact)+1))
-		if int64(len(whole)+1) <= f.store.bytes {
+		limits := *f.store.currentCapacity()
+		limits.bytes = int64(max(len(current), len(compact)+1))
+		f.store.limits.Store(&limits)
+		if f.store.currentCapacity().bytes != limits.bytes {
+			t.Fatal("fixture did not select the whole-file byte budget")
+		}
+		if int64(len(whole)+1) <= f.store.currentCapacity().bytes {
 			t.Fatal("fixture does not distinguish compact metadata and whole-file limits")
 		}
 		if _, err := f.capture(a.inputs); !errors.Is(err, endpointmeta.ErrCapacity) || f.writes != 0 || len(f.store.contextWindows) != 0 {

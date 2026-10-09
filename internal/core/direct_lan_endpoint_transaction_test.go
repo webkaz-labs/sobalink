@@ -138,7 +138,12 @@ func TestEndpointTransactionRejectsBeforeOldOwner(t *testing.T) {
 			case "receipt":
 				s.contextPublication = nil
 			case "capacity":
-				s.bytes = 1
+				limits := *s.currentCapacity()
+				limits.bytes = 1
+				s.limits.Store(&limits)
+				if s.currentCapacity().bytes != 1 {
+					t.Fatal("fixture did not select the one-byte budget")
+				}
 			case "cancel":
 				cancel()
 			}

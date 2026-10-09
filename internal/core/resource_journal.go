@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/operationjournal"
 	"github.com/webkaz-labs/sobalink/internal/resource"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
@@ -24,6 +25,7 @@ type resourceEnvelope struct {
 	ResourceID    string            `json:"resourceId"`
 	HighWater     *uint64           `json:"highWater"`
 	Records       []resource.Record `json:"records"`
+	scoped        *operationjournal.EnvelopeV2
 }
 
 func resourceStatePath(dir string) string { return filepath.Join(dir, "resource-state", "state.json") }
@@ -52,8 +54,15 @@ func readResourceEnvelope(path string) (resourceEnvelope, error) {
 	if err != nil {
 		return state, err
 	}
-	if err := resource.Decode(data, resourceStateMaxBytes, &state); err != nil {
+	decoded, err := operationjournal.Decode(data)
+	if err != nil {
 		return state, err
+	}
+	if decoded.Legacy != nil {
+		old := decoded.Legacy
+		state = resourceEnvelope{SchemaVersion: old.SchemaVersion, ResourceID: old.ResourceID, HighWater: old.HighWater, Records: old.Records}
+	} else {
+		state = scopedResourceEnvelope(*decoded.Journal)
 	}
 	if err := state.validate(); err != nil {
 		return state, err
@@ -67,6 +76,8 @@ func readResourceEnvelope(path string) (resourceEnvelope, error) {
 func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 	c.resourceIdentity, c.resourceNonce, c.resourceLock = "", "", nil
 	c.resourceState, c.resourceFrozen = resourceEnvelope{}, false
+	c.resourceRemoteEvidenceDenied = false
+	c.resourceUncertainWrite = nil
 	c.resourceDirectoryIdentity = nil
 	err := owner.WithOwnershipInfo(c.dir, func(directory, lock os.FileInfo) error {
 		path := resourceStatePath(c.dir)
@@ -85,15 +96,13 @@ func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 				return idErr
 			}
 			zero := uint64(0)
-			state = resourceEnvelope{resource.SchemaVersion, id, &zero, []resource.Record{}}
+			state = resourceEnvelope{SchemaVersion: resource.SchemaVersion, ResourceID: id, HighWater: &zero, Records: []resource.Record{}}
 		} else if err != nil {
 			return err
 		}
-		for i := range state.Records {
-			if state.Records[i].Phase == "intent" {
-				state.Records[i].Phase = "result"
-				state.Records[i].Outcome = resource.UnknownOutcome()
-			}
+		state, err = state.normalizeIntents()
+		if err != nil {
+			return err
 		}
 		nonce, err := newResourceID()
 		if err != nil {
@@ -127,6 +136,12 @@ func (c *Core) initializeResourceIdentity(owner *config.Lock) {
 const resourceRecordMaxBytes = 2048
 
 func (s resourceEnvelope) validate() error {
+	if s.scoped != nil {
+		if s.SchemaVersion != operationjournal.FormatVersion || s.Records != nil || s.HighWater == nil || s.ResourceID != s.scoped.ResourceID || s.scoped.HighWater == nil || *s.HighWater != *s.scoped.HighWater {
+			return operationjournal.ErrInvalid
+		}
+		return s.scoped.Validate()
+	}
 	if s.SchemaVersion != resource.SchemaVersion || !resource.ValidID(s.ResourceID) || s.HighWater == nil || s.Records == nil || len(s.Records) > resourceStateMaxRecords {
 		return errors.New("unsupported resource state")
 	}
@@ -153,6 +168,9 @@ func (s resourceEnvelope) validate() error {
 	return nil
 }
 func (s resourceEnvelope) clone() resourceEnvelope {
+	if s.scoped != nil {
+		return scopedResourceEnvelope(*s.scoped)
+	}
 	next := s
 	high := *s.HighWater
 	next.HighWater = &high
@@ -160,6 +178,14 @@ func (s resourceEnvelope) clone() resourceEnvelope {
 	return next
 }
 func (s resourceEnvelope) find(id string) (resource.Record, bool) {
+	if s.scoped != nil {
+		for _, record := range s.scoped.Records {
+			if record.Kind == operationjournal.LocalKind && record.Local != nil && record.Local.Request.OperationID == id {
+				return cloneResourceRecord(*record.Local), true
+			}
+		}
+		return resource.Record{}, false
+	}
 	for _, record := range s.Records {
 		if record.Request.OperationID == id {
 			return record, true
@@ -167,6 +193,14 @@ func (s resourceEnvelope) find(id string) (resource.Record, bool) {
 	}
 	return resource.Record{}, false
 }
+
+// An uncertain publication has at most two exact possible journal states. These
+// process-local digests never confer durability and are discarded on owned
+// reopen. In particular a decoded disk result cannot replace a pinned UNKNOWN.
+type resourceJournalWriteCandidates struct {
+	before, attempted string
+}
+
 func (c *Core) writeResourceEnvelopeBound(state resourceEnvelope, binding *resourcePathBinding) error {
 	if err := state.validate(); err != nil {
 		return err
@@ -183,9 +217,30 @@ func (c *Core) writeResourceEnvelopeBound(state resourceEnvelope, binding *resou
 	if binding == nil {
 		return errResourceBinding
 	}
-	return binding.write(resourceStatePath(c.dir), encoded, c.atomicWrite)
+	before := ""
+	if c.resourceState.validate() == nil {
+		before = resourceDigest(c.resourceState)
+	}
+	attempted := resourceDigest(state)
+	err = binding.write(resourceStatePath(c.dir), encoded, c.atomicWrite)
+	if err != nil && atomicPublished(err) {
+		// Capture centrally for both local and remote journal writers only when
+		// replacement occurred but durability is uncertain. Known nonpublication
+		// never makes an attempted terminal result an allowed disk candidate.
+		c.resourceUncertainWrite = &resourceJournalWriteCandidates{before: before, attempted: attempted}
+	} else {
+		c.resourceUncertainWrite = nil
+	}
+	return err
 }
 func (s resourceEnvelope) withIntent(record resource.Record) (resourceEnvelope, error) {
+	if s.scoped != nil {
+		next, err := operationjournal.WithIntent(*s.scoped, operationjournal.TaggedRecord{Kind: operationjournal.LocalKind, Local: &record})
+		if err != nil {
+			return resourceEnvelope{}, resourceJournalError(err)
+		}
+		return scopedResourceEnvelope(next), nil
+	}
 	next := s.clone()
 	_, _, sequence, _ := resource.ParseOperationID(record.Request.OperationID)
 	*next.HighWater = sequence
@@ -212,5 +267,9 @@ func (s resourceEnvelope) withIntent(record resource.Record) (resourceEnvelope, 
 }
 func (c *Core) resourceJournalUsage() resource.JournalUsage {
 	encoded, _ := json.Marshal(c.resourceState)
-	return resource.JournalUsage{Records: len(c.resourceState.Records), Bytes: len(encoded), MaxRecords: resourceStateMaxRecords, MaxBytes: resourceStateMaxBytes, Writable: !c.resourceFrozen}
+	count := len(c.resourceState.Records)
+	if c.resourceState.scoped != nil {
+		count = len(c.resourceState.scoped.Records)
+	}
+	return resource.JournalUsage{Records: count, Bytes: len(encoded), MaxRecords: resourceStateMaxRecords, MaxBytes: resourceStateMaxBytes, Writable: !c.resourceFrozen}
 }

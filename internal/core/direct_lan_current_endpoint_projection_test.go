@@ -112,7 +112,12 @@ func TestManagedCurrentEndpointProjectionKeepsStoreAndMonotonicGuards(t *testing
 				if err != nil {
 					t.Fatal(err)
 				}
-				s.bytes = info.Size() - 1
+				limits := *s.currentCapacity()
+				limits.bytes = info.Size() - 1
+				s.limits.Store(&limits)
+				if s.currentCapacity().bytes != info.Size()-1 {
+					t.Fatal("fixture did not select the below-file byte budget")
+				}
 			default:
 				if _, err := observeCurrentCoreProjection(t, c, s, now); err != nil {
 					t.Fatal(err)

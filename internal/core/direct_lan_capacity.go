@@ -47,9 +47,20 @@ func (c *Core) applyDirectLANCapacityLocked(policy capacity.Policy, publish func
 	if s == nil {
 		return publish()
 	}
+	// Freeze the full policy comparison before publish can replace c.capacity.
+	// Only the two managed transfer choices may retain a transport admission's
+	// limits identity; every other policy edit keeps its invalidation behavior.
+	currentPolicy, proposedPolicy := c.capacity.Clone(), policy.Clone()
+	for _, key := range []string{"transferConcurrentFiles", "transferConcurrentPerPeer"} {
+		delete(currentPolicy.Resources, key)
+		delete(proposedPolicy.Resources, key)
+	}
+	transferOnly := capacityJSONEqual(currentPolicy, proposedPolicy)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	limits := selectedLANLimits(policy)
+	current := s.limits.Load()
+	preserveIdentity := transferOnly && current != nil && *current == *limits
 	data, e := json.MarshalIndent(s.state, "", "  ")
 	if e != nil {
 		return e
@@ -64,7 +75,7 @@ func (c *Core) applyDirectLANCapacityLocked(policy capacity.Policy, publish func
 		return &localCommandError{"policy_in_use", fmt.Sprintf("lanStateBytes must hold the current %d-byte private direct LAN state", bytes)}
 	}
 	e = publish()
-	if atomicPublished(e) {
+	if atomicPublished(e) && !preserveIdentity {
 		s.limits.Store(limits)
 	}
 	return e

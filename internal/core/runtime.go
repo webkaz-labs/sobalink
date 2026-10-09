@@ -367,6 +367,8 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	switch cmd.Name {
 	case "resource.remote.inspect":
 		return c.resourceRemoteInspectCommand(ctx, cmd.Payload)
+	case "resource.remote.management.inspect", "resource.remote.management.preview", "resource.remote.management.apply", "resource.remote.management.operation.status":
+		return c.resourceRemoteManagementCommand(ctx, cmd.Name, cmd.Payload)
 	case "direct-lan.endpoint.status":
 		c.mu.RLock()
 		live := c.node != nil
@@ -549,7 +551,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.selectionCommand(ctx, cmd.Name, cmd.Payload)
 	case "service.stop-shares":
 		return c.stopSharesCommand(cmd.Payload)
-	case "resource.grant.preview", "resource.grant.confirm", "resource.grant.inspect", "resource.grant.revoke":
+	case "resource.grant.preview", "resource.grant.confirm", "resource.grant.inspect", "resource.grant.revoke", "resource.grant.management.preview", "resource.grant.management.confirm":
 		return c.resourceGrantCommand(ctx, cmd.Name, cmd.Payload)
 	case "resource.list", "resource.inspect", "resource.preview", "resource.apply", "resource.operation.status":
 		return c.resourceCommandContext(ctx, cmd.Name, cmd.Payload)

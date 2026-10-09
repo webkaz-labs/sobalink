@@ -127,7 +127,7 @@ func TestResourceGrantCLIHelpDryRunAndAutomaticLocale(t *testing.T) {
 				t.Fatal(err)
 			}
 			japanese := locale == "ja" || locale == "auto" && strings.HasPrefix(environment, "ja")
-			if strings.Contains(out.String(), "管理対象の相手1台への参照のみの許可") != japanese || !strings.Contains(out.String(), "listenerReady") {
+			if strings.Contains(out.String(), "管理対象の相手1台への範囲を限定した許可") != japanese || !strings.Contains(out.String(), "listenerReady") {
 				t.Fatal("locale or listener status missing")
 			}
 		}

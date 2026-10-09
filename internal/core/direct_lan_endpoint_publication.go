@@ -70,7 +70,7 @@ func (c *Core) publishEndpointTransaction(ctx context.Context, t *EndpointTransa
 	// Retain the original immutable deadline bounds, never projection's newly
 	// derived wall-time cutoffs. The proposal freshness bound applies at commit;
 	// ongoing authority uses the retained active-record bounds only.
-	o := &managedCompletionOwner{core: c, backend: b, root: t.root, node: b.Node, store: s, process: t.process,
+	o := &managedCompletionOwner{core: c, coreDone: c.ctx.Done(), backend: b, root: t.root, node: b.Node, store: s, process: t.process,
 		configuration: contextConfigurationDigest(s.state), receipt: t.receipt, revision: s.reviewRevision,
 		limits: t.limits, limitsSource: t.limitsSource, currentEndpoints: true, epoch: directlan.NewContextEpoch()}
 	for _, bound := range t.deadlines {

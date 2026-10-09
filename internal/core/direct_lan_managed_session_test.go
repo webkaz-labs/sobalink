@@ -354,7 +354,12 @@ func TestManagedFixedEndpointProjectionKeepsStoreGuards(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					s.bytes = info.Size() - 1
+					limits := *s.currentCapacity()
+					limits.bytes = info.Size() - 1
+					s.limits.Store(&limits)
+					if s.currentCapacity().bytes != info.Size()-1 {
+						t.Fatal("fixture did not select the below-file byte budget")
+					}
 				}
 				got, err := observeManagedProjection(t, c, s, now)
 				if err == nil || got != nil || !s.recovery {

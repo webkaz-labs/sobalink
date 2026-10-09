@@ -161,7 +161,7 @@ func TestActivationFactoryCannotBypassAdmission(t *testing.T) {
 func TestActivationExactMixedRootAndChild(t *testing.T) {
 	c, s := activationFixture(t, "active")
 	b := &directLANBackend{store: s}
-	o := &managedCompletionOwner{core: c, store: s, backend: b, process: c.lanStartNonce}
+	o := &managedCompletionOwner{core: c, coreDone: c.ctx.Done(), store: s, backend: b, process: c.lanStartNonce}
 	b.completion = o
 	root := &mixedBackend{nodes: map[string]NetworkBackend{"direct-lan": b}}
 	bindManagedActivationRoot(root)

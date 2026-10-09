@@ -56,9 +56,9 @@ func (c *Core) resourceDescriptor(current capacity.Policy, profile Profile) reso
 	return resource.Descriptor{Target: resource.Target{SchemaVersion: resource.SchemaVersion, ResourceID: c.resourceIdentity}, Type: resource.Type, Authority: "local", Provider: "local", Operations: []string{"list", "inspect", "preview", "apply", "operation.status"}, Revision: c.resourceRevision(current, profile), Requested: resourceSettings(current), Effective: resourceEffective(current)}
 }
 
-// Called only under c.op through existing authenticated local control (IPC or
-// the existing local Web command dispatcher). No peer management handler,
-// discovery capability or management grant is added.
+// Called only under c.op through authenticated local control (IPC or the local
+// Web dispatcher). The separate typed peer-management handler never calls this
+// command dispatcher or exposes these local descriptor and history shapes.
 func (c *Core) resourceCommand(name string, raw json.RawMessage) (any, error) {
 	return c.resourceCommandContext(context.Background(), name, raw)
 }
