@@ -91,3 +91,31 @@ Full native validation retains race detection, vet, Windows retirement barriers,
 Fixtures requiring TCP and UDP on one endpoint reserve both protocols on the exact loopback address, with bounded real-bind attempts and cleanup. The helper is imported only by tests. Browser teardown drains pending intercepted requests before stopping the fixture and still propagates failures. A failed required target or step fails `ci-required`.
 
 Automated CI evidence remains separate from physical-device enrollment, network, OS-login and suspend acceptance.
+
+## Isolated real-time step concurrency
+
+The three existing natural-lifecycle, guarded-lease and relay-only lease gates use
+GitHub Actions `background` steps with a named, required `wait` immediately before
+packaging. Their names, exact expected Go pass events, timeouts, race flags and
+native-short skip rules are unchanged. The four native targets remain required.
+The wait and each individual gate must succeed for full-CI or nightly evidence;
+failed, cancelled, skipped or missing gates never receive full-coverage credit.
+
+Only these wait-heavy groups overlap. They start after the serial native tests
+have built the same tagged package variants; build caches may still need work
+if entries are evicted. Package creation, uploads, cache saves and timing summaries
+follow the wait. Only natural-lifecycle writes the existing timing JSONL in this
+region, so there are no concurrent timing writers. Adding another requires
+separate storage and a validated post-wait merge, rather than shared appends.
+
+These are synthetic, separate-process fixtures: application ports belong to
+separate userspace network stacks; host sockets request ephemeral ports; state is
+in memory or test-local. The guarded engine retains its normal UDP socket behavior
+and loopback-only destination policy. This does not establish real-device or
+physical-network acceptance. Host resource contention and existing ephemeral-port
+reservation/rebind races still require four-target CI verification.
+
+No speedup is claimed from source review or offline tests. Compare successful
+full runs on the same targets and cache conditions, using job wall time and the
+individual named step times. Verify native-short skipped-step joins separately.
+See [GitHub's background and wait syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsbackground).

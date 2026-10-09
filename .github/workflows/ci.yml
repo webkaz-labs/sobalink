@@ -102,10 +102,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Test and reproduce locked frontend assets
         run: |
           npm install --global npm@11.9.0 --no-audit --no-fund
@@ -320,12 +321,6 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite synthetic-expiry-rekey -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionSyntheticExpiryRekey -- go test -race -count=1 -timeout=2m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionSyntheticExpiryRekey$' ./internal/directlan
-      - name: Verify direct LAN session natural rekey and idle lifecycle
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
       - name: Verify explicit WAN discovery with isolated native STUN
         timeout-minutes: 5
         run: |
@@ -435,7 +430,19 @@ jobs:
               "-timeout=5m", "./internal/routecat", "./internal/core",
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
+      # Run only the isolated, wait-heavy gates together after serial native tests
+      # have populated their exact tagged build caches. Keep evidence names stable.
+      - name: Verify direct LAN session natural rekey and idle lifecycle
+        id: natural-lifecycle
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
       - name: Verify guarded relay real-time lease continuity
+        id: guarded-lease
+        background: true
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 9
         run: |
@@ -459,6 +466,8 @@ jobs:
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
       - name: Verify relay-only real-time lease and idle continuity
+        id: relay-only-lease
+        background: true
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 10
         run: |
@@ -484,6 +493,8 @@ jobs:
               "-timeout=5m", "./internal/lanlink", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PYTHON
+      - name: Wait for real-time lifecycle and lease checks
+        wait: [natural-lifecycle, guarded-lease, relay-only-lease]
       - name: Build native package and smoke archive contents
         run: |
           set -euo pipefail
@@ -644,10 +655,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Prepare locked dependencies and official Chromium
         timeout-minutes: 10
         run: |
@@ -699,10 +711,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Prepare locked dependencies and official Chromium
         timeout-minutes: 10
         run: |
@@ -751,10 +764,11 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           check-latest: false
+          package-manager-cache: false
       - name: Test and reproduce locked frontend assets
         run: |
           set -euo pipefail

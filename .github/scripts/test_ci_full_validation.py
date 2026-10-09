@@ -278,5 +278,76 @@ class FullProofTests(unittest.TestCase):
             self.audit()
 
 
+class ParallelWorkflowPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.sources = {p: (ROOT / p).read_bytes() for p in full.SOURCES}
+        self.workflow = self.sources[full.WORKFLOW].decode('utf-8')
+
+    def test_literal_gate_names_and_join_remain_required(self):
+        required = full.required_jobs(self.sources)
+        gates = (
+            'Verify direct LAN session natural rekey and idle lifecycle',
+            'Verify guarded relay real-time lease continuity',
+            'Verify relay-only real-time lease and idle continuity',
+            'Wait for real-time lifecycle and lease checks',
+        )
+        for name, _ in full.TARGETS.values():
+            for gate in gates:
+                self.assertEqual(required[name].count(gate), 1)
+
+    def test_source_preflight_rejects_missing_or_weakened_join(self):
+        fence = ('      - name: Wait for real-time lifecycle and lease checks\n'
+                 '        wait: [natural-lifecycle, guarded-lease, relay-only-lease]\n')
+        mutations = [
+            self.workflow.replace(fence, ''),
+            self.workflow.replace('wait: [natural-lifecycle, guarded-lease, relay-only-lease]',
+                                  'run: echo done'),
+            self.workflow.replace('wait: [natural-lifecycle, guarded-lease, relay-only-lease]',
+                                  'wait: [natural-lifecycle, guarded-lease]'),
+            self.workflow.replace(fence, fence + '        continue-on-error: true\n'),
+            self.workflow.replace(fence, fence + '        if: always()\n'),
+            self.workflow.replace(fence, '      - name: Cancel lease\n        cancel: guarded-lease\n' + fence),
+            self.workflow.replace('        background: true\n', '', 1),
+            self.workflow.replace('        background: true\n', '        background: true\n        continue-on-error: true\n', 1),
+            self.workflow.replace('id: guarded-lease', 'id: natural-lifecycle'),
+            self.workflow.replace('      - name: Verify guarded relay real-time lease continuity\n',
+                                  '      - name: Shared writer\n        run: echo unsafe\n      - name: Verify guarded relay real-time lease continuity\n'),
+            self.workflow.replace('--suite natural-lifecycle --', '--suite other-suite --'),
+        ]
+        for i, workflow in enumerate(mutations):
+            with self.subTest(mutation=i), self.assertRaises(ValueError):
+                full.validate_parallel_workflow(workflow.encode('utf-8'))
+
+    def test_source_preflight_rejects_alternate_yaml_and_duplicate_keys(self):
+        first = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
+        mutations = [
+            self.workflow + "\n  extra:\n    steps:\n      - name: Extra\n        'background': true\n        run: echo extra\n",
+            self.workflow + "\n  extra:\n    steps:\n      - {name: Extra, background: true, run: echo extra}\n",
+            self.workflow.replace('        id: natural-lifecycle\n',
+                                  '        id: natural-lifecycle\n        id: replacement\n'),
+            self.workflow.replace('      - name: Verify guarded relay real-time lease continuity\n',
+                                  "        'continue-on-error': true\n      - name: Verify guarded relay real-time lease continuity\n"),
+            self.workflow.replace('      - name: Verify guarded relay real-time lease continuity\n',
+                                  '        run: echo override\n      - name: Verify guarded relay real-time lease continuity\n'),
+            self.workflow.replace(first, first + '        ? background\n        : true\n'),
+            self.workflow.replace(first, first + '        "backgrou\\u006ed": true\n'),
+            self.workflow.replace(first, first + '        <<: *unsafe\n'),
+            self.workflow.replace(first, first + '        env: &unsafe {}\n'),
+            self.workflow.replace(first, first + '        env: {IGNORED: value}\n'),
+        ]
+        for i, workflow in enumerate(mutations):
+            with self.subTest(mutation=i), self.assertRaises(ValueError):
+                full.validate_parallel_workflow(workflow.encode('utf-8'))
+
+    def test_packaging_and_cache_writes_follow_the_join(self):
+        boundary = self.workflow.index('      - name: Wait for real-time lifecycle and lease checks\n')
+        for name in ('Build native package and smoke archive contents',
+                     'Save Go caches after all native checks pass on main',
+                     'Save development Go caches after all native checks pass',
+                     'Summarize measured native suites', 'Preserve native suite timings'):
+            self.assertGreater(self.workflow.index('      - name: ' + name + '\n'), boundary)
+        self.assertGreater(self.workflow.index('          name: package-${{ matrix.goos }}-${{ matrix.goarch }}'), boundary)
+
+
 if __name__ == '__main__':
     unittest.main()
