@@ -1,9 +1,10 @@
-// Package resourcegrant defines private, inspect-only resource grant data.
+// Package resourcegrant defines private inspection and inactive management grant data.
 // Valid data is not authentication or authority: callers must independently
 // prove the current managed transport relationship and local ownership.
 package resourcegrant
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
@@ -11,17 +12,18 @@ import (
 )
 
 const (
-	Version      = 2
-	MaxRecords   = 16
-	MaxBytes     = 32 * 1024
-	Backend      = "directlan-managed"
-	Inspect      = "inspect"
-	Active       = "active"
-	Revoked      = "revoked"
-	Expired      = "expired"
-	FilesField   = "transferConcurrentFiles"
-	PerPeerField = "transferConcurrentPerPeer"
-	maxTimestamp = int64(253402300799)
+	Version           = 2
+	ManagementVersion = 3
+	MaxRecords        = 16
+	MaxBytes          = 32 * 1024
+	Backend           = "directlan-managed"
+	Inspect           = "inspect"
+	Active            = "active"
+	Revoked           = "revoked"
+	Expired           = "expired"
+	FilesField        = "transferConcurrentFiles"
+	PerPeerField      = "transferConcurrentPerPeer"
+	maxTimestamp      = int64(253402300799)
 )
 
 var ErrInvalid = errors.New("invalid resource grant state")
@@ -70,33 +72,56 @@ func (r Record) Validate() error {
 
 // Envelope is bounded private eligibility state. Runtime activation and restart
 // policy are intentionally separate; decoding this does not start a listener.
-// Records are ordered by their last authority revision. Revisions never wrap.
+// Each arm is ordered by its last authority revision; IDs and revisions are unique
+// across both arms. There is one global active grant and revisions never wrap.
 type Envelope struct {
-	Version   int             `json:"version"`
-	Target    resource.Target `json:"target"`
-	HighWater *uint64         `json:"highWater"`
-	Records   []Record        `json:"records"`
-	Clock     *WallCheckpoint `json:"clock"`
+	Version           int                `json:"version"`
+	Target            resource.Target    `json:"target"`
+	HighWater         *uint64            `json:"highWater"`
+	Records           []Record           `json:"records"`
+	Clock             *WallCheckpoint    `json:"clock"`
+	ManagementRecords []ManagementRecord `json:"managementRecords,omitempty"`
 }
 
 func (e Envelope) Validate() error {
-	if e.Clock == nil || e.Clock.Validate() != nil || e.Version != Version || e.Target.Validate() != nil || e.HighWater == nil || *e.HighWater > uint64(capacity.MaxJSONInteger) || e.Records == nil || len(e.Records) > MaxRecords {
+	if e.Clock == nil || e.Clock.Validate() != nil || (e.Version != Version && e.Version != ManagementVersion) || e.Target.Validate() != nil || e.HighWater == nil || *e.HighWater > uint64(capacity.MaxJSONInteger) || e.Records == nil || len(e.Records)+len(e.ManagementRecords) > MaxRecords {
 		return ErrInvalid
 	}
-	var previous uint64
+	if e.Version == Version && e.ManagementRecords != nil || e.Version == ManagementVersion && len(e.ManagementRecords) == 0 {
+		return ErrInvalid
+	}
+	var maximum uint64
 	active := 0
-	seen := make(map[string]bool, len(e.Records))
-	for _, r := range e.Records {
-		if r.Validate() != nil || r.Target != e.Target || seen[r.ID] || r.Revision <= previous || r.Revision > *e.HighWater {
+	seen := make(map[string]bool)
+	revisions := make(map[uint64]bool)
+	check := func(r Record, previous uint64) error {
+		if r.Target != e.Target || seen[r.ID] || revisions[r.Revision] || r.Revision <= previous || r.Revision > *e.HighWater {
 			return ErrInvalid
 		}
-		seen[r.ID] = true
-		previous = r.Revision
+		seen[r.ID], revisions[r.Revision] = true, true
+		if r.Revision > maximum {
+			maximum = r.Revision
+		}
 		if r.State == Active {
 			active++
 		}
+		return nil
 	}
-	if active > 1 || previous != *e.HighWater {
+	var previous uint64
+	for _, r := range e.Records {
+		if r.Validate() != nil || check(r, previous) != nil {
+			return ErrInvalid
+		}
+		previous = r.Revision
+	}
+	previous = 0
+	for _, r := range e.ManagementRecords {
+		if r.Validate() != nil || check(r.Record, previous) != nil {
+			return ErrInvalid
+		}
+		previous = r.Record.Revision
+	}
+	if active > 1 || maximum != *e.HighWater {
 		return ErrInvalid
 	}
 	return nil
@@ -104,8 +129,39 @@ func (e Envelope) Validate() error {
 
 // Decode leaves the destination untouched on any malformed or ambiguous input.
 func Decode(data []byte) (Envelope, error) {
+	if len(data) == 0 || len(data) > MaxBytes {
+		return Envelope{}, ErrInvalid
+	}
+	// Decode the complete selected wire shape. Legacy version 2 has no new arm,
+	// even when an input supplies an empty or null managementRecords member.
+	var header struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(data, &header) != nil {
+		return Envelope{}, ErrInvalid
+	}
 	var e Envelope
-	if resource.Decode(data, MaxBytes, &e) != nil || e.Validate() != nil {
+	switch header.Version {
+	case Version:
+		var legacy struct {
+			Version   int             `json:"version"`
+			Target    resource.Target `json:"target"`
+			HighWater *uint64         `json:"highWater"`
+			Records   []Record        `json:"records"`
+			Clock     *WallCheckpoint `json:"clock"`
+		}
+		if resource.Decode(data, MaxBytes, &legacy) != nil {
+			return Envelope{}, ErrInvalid
+		}
+		e = Envelope{Version: legacy.Version, Target: legacy.Target, HighWater: legacy.HighWater, Records: legacy.Records, Clock: legacy.Clock}
+	case ManagementVersion:
+		if resource.Decode(data, MaxBytes, &e) != nil {
+			return Envelope{}, ErrInvalid
+		}
+	default:
+		return Envelope{}, ErrInvalid
+	}
+	if e.Validate() != nil {
 		return Envelope{}, ErrInvalid
 	}
 	return e, nil

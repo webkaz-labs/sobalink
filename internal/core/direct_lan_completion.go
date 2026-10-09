@@ -15,6 +15,7 @@ import (
 type managedCompletionOwner struct {
 	mu                     sync.RWMutex
 	core                   *Core
+	coreDone               <-chan struct{}
 	backend                *directLANBackend
 	root                   NetworkBackend
 	activation             *managedActivationAdmission
@@ -82,7 +83,7 @@ func (c *Core) newManagedCompletionBackendLocked(s *directLANStore, a *managedAc
 	// Membership additions use an exact evidence-preserving pairing delta.
 	b := &directLANBackend{ctx: c.ctx, store: s, resources: resources, replacementOwner: directlan.NewManagedTransportOwner()}
 	cfg.ReplacementOwner = b.replacementOwner
-	o := &managedCompletionOwner{core: c, backend: b, store: s, activation: a, process: c.lanStartNonce,
+	o := &managedCompletionOwner{core: c, coreDone: c.ctx.Done(), backend: b, store: s, activation: a, process: c.lanStartNonce,
 		configuration: contextConfigurationDigest(s.state), receipt: s.contextPublication,
 		revision: s.reviewRevision, limits: *s.currentCapacity(), limitsSource: s.limits.Load(),
 		currentEndpoints: a.currentEndpoints, deadline: earliestEndpointDeadline(a.deadlines)}
@@ -245,7 +246,15 @@ func (s *managedCompletionSlot) admit(ctx context.Context) bool {
 // Signal-only, safe under Node/WG/generation locks. Every attempted publication
 // invalidates the referenced epoch synchronously before the writer is invoked.
 func (o *managedCompletionOwner) authorityCurrent() bool {
-	return o != nil && !o.stopped.Load() && o.authority.Load().Valid() && o.core != nil && o.core.ctx != nil && o.core.ctx.Err() == nil && (o.deadline.IsZero() || time.Now().Before(o.deadline)) && (o.backend == nil || !o.backend.endpointStopped.Load())
+	if o == nil || o.stopped.Load() || !o.authority.Load().Valid() || o.core == nil || o.core.ctx == nil || !o.deadline.IsZero() && !time.Now().Before(o.deadline) || o.backend != nil && o.backend.endpointStopped.Load() {
+		return false
+	}
+	select {
+	case <-o.coreDone:
+		return false
+	default:
+		return true
+	}
 }
 
 // Core.op held; never invoke with Node.mu or backend.mu held.

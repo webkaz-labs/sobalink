@@ -93,7 +93,7 @@ func captureManagedInspection(connection net.Conn, owner *listener) (*ManagedIns
 	}
 	f.n.mu.Lock()
 	defer f.n.mu.Unlock()
-	if f.resourceInspectionCaptured || f.n.listeners[owner.service] != owner || inspectionListenerClosed(owner) || !f.n.validFlowLocked(f) || f.w.peer.binding == "" {
+	if f.resourceInspectionCaptured || f.resourceManagementCaptured || f.n.listeners[owner.service] != owner || inspectionListenerClosed(owner) || !f.n.validFlowLocked(f) || f.w.peer.binding == "" {
 		return nil, false
 	}
 	captured := f.g.sessionIdentity(f.w.peer)

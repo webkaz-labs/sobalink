@@ -41,6 +41,10 @@ func (r *resourceInspectionRuntime) stop() {
 	})
 }
 func (g *resourceGrantCoordinator) retireRuntime() {
+	g.retireInspectionRuntime()
+	g.retireManagementRuntime()
+}
+func (g *resourceGrantCoordinator) retireInspectionRuntime() {
 	if g == nil || g.runtime == nil {
 		return
 	}
@@ -60,7 +64,7 @@ func inspectionRuntimeDone(r *resourceInspectionRuntime) bool {
 	}
 }
 func (c *Core) withResourceInspectionState(fn func(*resourcePathBinding) error) error {
-	if c.resourceLock == nil {
+	if c.resourceLock == nil || c.resourceGrants == nil {
 		return resourcegrant.ErrInvalid
 	}
 	var callbackErr error
@@ -105,6 +109,17 @@ func (c *Core) reconcileResourceInspection() {
 	if g == nil {
 		return
 	}
+	if managementRuntimeDone(g.managementRetiring) {
+		g.managementRetiring = nil
+	}
+	if _, management := g.state.ActiveRecord(); management {
+		g.fence.Close()
+		g.retireInspectionRuntime()
+		c.reconcileResourceManagement()
+		return
+	}
+	g.managementFence.Close()
+	g.retireManagementRuntime()
 	inactive := func(reason string) { g.activation = reason; g.retireRuntime() }
 	if g.frozen {
 		inactive("storage_uncertain")
@@ -145,7 +160,14 @@ func (c *Core) reconcileResourceInspection() {
 		return
 	}
 	if record.ID == "" {
-		if len(g.state.Records) > 0 && g.state.Records[len(g.state.Records)-1].State == resourcegrant.Expired {
+		latestState := ""
+		var latestRevision uint64
+		for _, retained := range grantRecordData(g.state) {
+			if retained.Revision > latestRevision {
+				latestRevision, latestState = retained.Revision, retained.State
+			}
+		}
+		if latestState == resourcegrant.Expired {
 			inactive("expired")
 			return
 		}
@@ -200,7 +222,7 @@ func (c *Core) reconcileResourceInspection() {
 		}
 		return
 	}
-	if g.retiring != nil {
+	if g.retiring != nil || g.managementRetiring != nil {
 		g.activation = "stopping_previous_listener"
 		return
 	}

@@ -2,7 +2,7 @@
 
 [日本語](RESOURCE_INSPECTION.ja.md)
 
-This source version permits one managed DirectLAN peer to read exactly two transfer settings and their effective values. It does not expose a catalog, operation history, arbitrary commands, or remote changes. Normal agent startup enables the implementation, but creates no permission or inspection listener without an eligible confirmed grant. This guide describes source development after the published alpha.5 baseline.
+This source version permits one managed DirectLAN peer to read exactly two transfer settings and their effective values. This inspect-only scope does not expose a catalog, operation history, arbitrary commands, or remote changes. Separately confirmed [management](RESOURCE_MANAGEMENT.en.md) is a distinct source-development scope; it never upgrades an inspection grant implicitly. Normal agent startup enables the implementation, but creates no permission or inspection listener without an eligible confirmed grant. This guide describes source development after the published alpha.5 baseline.
 
 ## Review and grant on the target
 

@@ -24,7 +24,7 @@ func localManagedCompletionOwner(t *testing.T) (*localContextFixture, *managedCo
 	f.step(t, contextInputs{Operation: contextConfirmStatus, PeerKey: f.peer, Bound: request}, contextTranscript{
 		Committed: endpointmeta.ContextReply{Version: 2, Operation: request.Operation, PairBinding: request.PairBinding, OK: true, State: "committed"}})
 	f.store.contextEpoch = directlan.NewContextEpoch()
-	o := &managedCompletionOwner{core: f.core, store: f.store, process: f.core.lanStartNonce, configuration: contextConfigurationDigest(f.store.state),
+	o := &managedCompletionOwner{core: f.core, coreDone: f.core.ctx.Done(), store: f.store, process: f.core.lanStartNonce, configuration: contextConfigurationDigest(f.store.state),
 		receipt: f.store.contextPublication, epoch: f.store.contextEpoch, revision: f.store.reviewRevision, limits: *f.store.currentCapacity(), limitsSource: f.store.limits.Load()}
 	f.store.write = func(string, []byte) error {
 		t.Error("read-only completion attempted publication")

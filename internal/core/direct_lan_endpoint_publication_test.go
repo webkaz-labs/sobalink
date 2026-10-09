@@ -32,7 +32,7 @@ func TestEndpointPublicationCurrentCompletionAndDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := &managedCompletionOwner{core: c, backend: b, root: b, store: s, process: tx.process, receipt: tx.receipt, revision: s.reviewRevision, limits: tx.limits, limitsSource: tx.limitsSource, configuration: contextConfigurationDigest(s.state), currentEndpoints: true, epoch: directlan.NewContextEpoch(), deadline: now.Add(time.Hour)}
+	o := &managedCompletionOwner{core: c, coreDone: c.ctx.Done(), backend: b, root: b, store: s, process: tx.process, receipt: tx.receipt, revision: s.reviewRevision, limits: tx.limits, limitsSource: tx.limitsSource, configuration: contextConfigurationDigest(s.state), currentEndpoints: true, epoch: directlan.NewContextEpoch(), deadline: now.Add(time.Hour)}
 	o.authority.Store(o.epoch)
 	s.mu.Lock()
 	s.contextEpoch = o.epoch

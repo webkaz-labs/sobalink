@@ -12,7 +12,7 @@ import (
 type resourceGrantRevokeUncertain struct{ cause error }
 
 func (*resourceGrantRevokeUncertain) Error() string {
-	return "inspection is denied locally; saved inspection revocation could not be confirmed; check private state before restarting"
+	return "resource access is denied locally; saved grant revocation could not be confirmed; check private state before restarting"
 }
 func (*resourceGrantRevokeUncertain) ErrorCode() string { return "resource_grant_revoke_uncertain" }
 func (e *resourceGrantRevokeUncertain) Unwrap() error   { return e.cause }
@@ -25,9 +25,9 @@ func (c *Core) revokeInspectionPeerPermission(ctx context.Context, peer string) 
 		return nil
 	}
 	// Close the matching runtime before ownership checks or any fallible I/O.
-	for _, record := range g.state.Records {
+	for _, record := range grantRecordData(g.state) {
 		if record.State == resourcegrant.Active && record.Relationship.PeerKey == peer {
-			g.fence.Close()
+			g.closeFences()
 			g.retireRuntime()
 		}
 	}
@@ -35,8 +35,8 @@ func (c *Core) revokeInspectionPeerPermission(ctx context.Context, peer string) 
 		return &resourceGrantRevokeUncertain{resourcegrant.ErrInvalid}
 	}
 	err := c.withResourceInspectionState(func(b *resourcePathBinding) error {
-		record, ok := activeResourceGrant(g)
-		if !ok || record.Relationship.PeerKey != peer {
+		record, _ := g.state.ActiveRecord()
+		if record.ID == "" || record.Relationship.PeerKey != peer {
 			return nil
 		}
 		raw, err := json.Marshal(resourceGrantRevoke{Target: record.Target, GrantID: record.ID, GrantRevision: record.Revision, Confirm: true})

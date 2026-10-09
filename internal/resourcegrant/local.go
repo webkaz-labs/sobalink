@@ -31,12 +31,13 @@ type GrantRevoke struct {
 	Confirm       bool            `json:"confirm"`
 }
 type LocalGrantView struct {
-	Target           resource.Target `json:"target"`
-	Records          []Record        `json:"records"`
-	InitializesState bool            `json:"initializesState"`
-	ListenerReady    bool            `json:"listenerReady"`
-	Activation       string          `json:"activation"`
-	TimeUncertain    bool            `json:"timeUncertain"`
+	Target            resource.Target    `json:"target"`
+	Records           []Record           `json:"records"`
+	ManagementRecords []ManagementRecord `json:"managementRecords,omitempty"`
+	InitializesState  bool               `json:"initializesState"`
+	ListenerReady     bool               `json:"listenerReady"`
+	Activation        string             `json:"activation"`
+	TimeUncertain     bool               `json:"timeUncertain"`
 }
 
 // UnmarshalJSON preserves an explicit false initialization decision. The zero

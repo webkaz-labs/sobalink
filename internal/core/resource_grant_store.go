@@ -16,34 +16,41 @@ import (
 // Saved state becomes eligible only after owned durable startup recertification.
 // These fields are Core.op-owned. The default-false option causes no grant I/O.
 type resourceGrantCoordinator struct {
-	state                           resourcegrant.Envelope
-	directory, file                 os.FileInfo
-	firstUse, frozen, timeUncertain bool
-	observedAt                      time.Time
-	fence                           *resourcegrant.DisclosureFence
-	bootDeadline                    time.Time
-	bootGrantID                     string
-	bootRevision                    uint64
-	relationshipDenied              bool
-	activation                      string
-	runtime, retiring               *resourceInspectionRuntime
+	state                                 resourcegrant.Envelope
+	directory, file                       os.FileInfo
+	firstUse, frozen, timeUncertain       bool
+	observedAt                            time.Time
+	fence                                 *resourcegrant.DisclosureFence
+	managementFence                       *resourcegrant.ManagementFence
+	bootDeadline                          time.Time
+	bootGrantID                           string
+	bootRevision                          uint64
+	relationshipDenied                    bool
+	activation                            string
+	runtime, retiring                     *resourceInspectionRuntime
+	managementRuntime, managementRetiring *resourceManagementRuntime
 }
 
 func resourceGrantStatePath(dir string) string {
 	return filepath.Join(dir, "resource-grants", "state.json")
 }
-func (g *resourceGrantCoordinator) freeze() { g.frozen = true; g.fence.Close(); g.retireRuntime() }
+func (g *resourceGrantCoordinator) closeFences() {
+	g.fence.Close()
+	g.managementFence.Close()
+}
+func (g *resourceGrantCoordinator) freeze() { g.frozen = true; g.closeFences(); g.retireRuntime() }
 func (g *resourceGrantCoordinator) observe(now time.Time) error {
 	if g.frozen || g.timeUncertain || g.state.Clock != nil && (g.state.Clock.Uncertain || now.Before(time.Unix(g.state.Clock.Seconds, int64(g.state.Clock.Nanoseconds)))) || !g.observedAt.IsZero() && now.Round(0).Before(g.observedAt.Round(0)) {
 		g.timeUncertain = true
-		g.fence.Close()
+		g.closeFences()
 		g.retireRuntime()
 		return resourcegrant.ErrInvalid
 	}
 	g.observedAt = now
-	for _, record := range g.state.Records {
-		if record.State == resourcegrant.Active && (now.Unix() >= record.ExpiresAt || !g.bootDeadline.IsZero() && !now.Before(g.bootDeadline)) {
-			g.fence.Close()
+	record, _ := g.state.ActiveRecord()
+	if record.ID != "" {
+		if now.Unix() >= record.ExpiresAt || !g.bootDeadline.IsZero() && !now.Before(g.bootDeadline) {
+			g.closeFences()
 			g.retireRuntime()
 		}
 	}
@@ -51,6 +58,14 @@ func (g *resourceGrantCoordinator) observe(now time.Time) error {
 }
 
 func (b *resourcePathBinding) openGrant(expected os.FileInfo) error {
+	// A request recertifies the same held grant directory repeatedly. Keep its
+	// owned handle rather than leaking a replacement on each recertification.
+	if b.grant != nil {
+		if expected != nil && (b.grantInfo == nil || !os.SameFile(expected, b.grantInfo)) {
+			return errResourceBinding
+		}
+		return b.check()
+	}
 	path := filepath.Dir(resourceGrantStatePath(b.dir))
 	before, err := os.Lstat(path)
 	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 || expected != nil && !os.SameFile(expected, before) {
@@ -214,7 +229,7 @@ func (c *Core) currentResourceGrantsBound(b *resourcePathBinding) error {
 
 func (c *Core) writeResourceGrantsBound(state resourcegrant.Envelope, b *resourcePathBinding) error {
 	g := c.resourceGrants
-	if g == nil || g.frozen || state.Validate() != nil || state.Target != g.state.Target || g.state.HighWater == nil || *state.HighWater < *g.state.HighWater || b.grant == nil {
+	if g == nil || g.frozen || state.Validate() != nil || state.Target != g.state.Target || state.Version < g.state.Version || g.state.HighWater == nil || *state.HighWater < *g.state.HighWater || b.grant == nil {
 		return resourcegrant.ErrInvalid
 	}
 	// Every authority publication checkpoints the greatest observed wall time.
@@ -236,7 +251,7 @@ func (c *Core) writeResourceGrantsBound(state resourcegrant.Envelope, b *resourc
 	checkpoint.Uncertain = checkpoint.Uncertain || g.timeUncertain
 	g.timeUncertain = checkpoint.Uncertain
 	if g.timeUncertain {
-		g.fence.Close()
+		g.closeFences()
 	}
 	state.Clock = &checkpoint
 	data, err := json.Marshal(state)
@@ -302,6 +317,15 @@ func (c *Core) observeResourceGrantsBound(b *resourcePathBinding, now time.Time)
 		timingExpired = expired
 		g.timeUncertain = g.timeUncertain || uncertain
 	}
+	for _, managed := range g.state.ManagementRecords {
+		record := managed.Record
+		if record.State != resourcegrant.Active {
+			continue
+		}
+		expired, uncertain := g.managementFence.TimingObservation(managementSelector(record))
+		timingExpired = timingExpired || expired
+		g.timeUncertain = g.timeUncertain || uncertain
+	}
 	next, err := resourcegrant.ObserveEnvelope(g.state, now)
 	if err != nil {
 		g.freeze()
@@ -317,12 +341,12 @@ func (c *Core) observeResourceGrantsBound(b *resourcePathBinding, now time.Time)
 	next.Clock.Uncertain = next.Clock.Uncertain || g.timeUncertain
 	if next.Clock.Uncertain {
 		g.timeUncertain = true
-		g.fence.Close()
+		g.closeFences()
 		g.retireRuntime()
 	}
 	reduced := *next.HighWater != *g.state.HighWater
 	if reduced {
-		g.fence.Close()
+		g.closeFences()
 		g.retireRuntime()
 	}
 	if reduced || next.Clock.Uncertain && !g.state.Clock.Uncertain {
@@ -334,18 +358,17 @@ func (c *Core) observeResourceGrantsBound(b *resourcePathBinding, now time.Time)
 // Called once after owned publication using its pre-publication observation.
 // The cutoff has no authority itself and is never recalculated on reconnect.
 func (g *resourceGrantCoordinator) anchorBootDeadline(observed time.Time) {
-	for _, record := range g.state.Records {
-		if record.State != resourcegrant.Active {
-			continue
-		}
-		if g.bootGrantID == record.ID && g.bootRevision == record.Revision {
-			return
-		}
-		g.fence.Close()
-		g.fence = nil
-		g.bootGrantID, g.bootRevision = record.ID, record.Revision
-		g.bootDeadline = observed.Add(time.Unix(record.ExpiresAt, 0).Sub(observed))
-		g.relationshipDenied = false
+	record, _ := g.state.ActiveRecord()
+	if record.ID == "" {
 		return
 	}
+	if g.bootGrantID == record.ID && g.bootRevision == record.Revision {
+		return
+	}
+	g.closeFences()
+	g.fence = nil
+	g.managementFence = nil
+	g.bootGrantID, g.bootRevision = record.ID, record.Revision
+	g.bootDeadline = observed.Add(time.Unix(record.ExpiresAt, 0).Sub(observed))
+	g.relationshipDenied = false
 }

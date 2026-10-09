@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,7 +23,9 @@ type flow struct {
 	closed        bool
 	once          sync.Once
 
-	resourceInspectionCaptured bool // Node.mu; one inspection capability per flow
+	resourceInspectionCaptured bool                     // Node.mu; one inspection capability per flow
+	resourceManagementCaptured bool                     // Node.mu; one management capability per flow
+	listenerIdentity           atomic.Pointer[listener] // published by deliver, cleared before close
 }
 
 func (n *Node) trackFlowLocked(g *runtimeGeneration, c *liveEndpoint, p *peerState, network string, inbound bool) (*flow, error) {
@@ -119,6 +122,7 @@ func (f *flow) Close() error {
 		defer f.work.finish()
 		f.mu.Lock()
 		f.closed = true
+		f.listenerIdentity.Store(nil)
 		listener := f.listener
 		f.mu.Unlock()
 		e = f.c.Close()

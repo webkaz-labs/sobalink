@@ -18,10 +18,10 @@ type resourceGrantRevoke = resourcegrant.GrantRevoke
 type resourceGrantLocalView = resourcegrant.LocalGrantView
 
 func resourceGrantUnavailable() error {
-	return &localCommandError{"resource_grant_unavailable", "resource inspection grants are unavailable; check the owning agent and private state"}
+	return &localCommandError{"resource_grant_unavailable", "resource grants are unavailable; check the owning agent and private state"}
 }
 func resourceGrantInvalid() error {
-	return &localCommandError{"resource_grant_invalid", "provide the exact one-peer inspection scope, finite expiry and explicit reviewed confirmation"}
+	return &localCommandError{"resource_grant_invalid", "provide the exact one-peer grant scope, finite expiry and explicit reviewed confirmation"}
 }
 func resourceGrantStale() error {
 	return &localCommandError{"resource_grant_stale", "the grant review is no longer current; inspect the grant and review again"}
@@ -48,7 +48,7 @@ func (c *Core) resourceGrantCommand(ctx context.Context, name string, raw json.R
 		if err := c.currentResourceGrantsBound(b); err != nil {
 			return err
 		}
-		if name == "resource.grant.preview" {
+		if isResourceGrantPreview(name) {
 			_ = g.observe(time.Now()) // safety denial only; preview never writes saved state
 		} else if err := c.observeResourceGrantsBound(b, time.Now()); err != nil {
 			return err
@@ -73,6 +73,10 @@ func (c *Core) resourceGrantCommand(ctx context.Context, name string, raw json.R
 					break
 				}
 				result = c.resourceGrantView()
+			case "resource.grant.management.preview":
+				result, commandErr = c.previewManagementGrant(raw, now)
+			case "resource.grant.management.confirm":
+				result, commandErr = c.confirmManagementGrant(ctx, raw, b, now)
 			case "resource.grant.preview":
 				result, commandErr = c.previewResourceGrant(raw, now)
 			case "resource.grant.confirm":
@@ -87,7 +91,7 @@ func (c *Core) resourceGrantCommand(ctx context.Context, name string, raw json.R
 		g.freeze()
 		return nil, resourceGrantUnavailable()
 	}
-	if commandErr == nil && name != "resource.grant.preview" {
+	if commandErr == nil && !isResourceGrantPreview(name) {
 		c.reconcileResourceInspection()
 		result = c.resourceGrantView()
 	}
@@ -107,8 +111,14 @@ func (c *Core) resourceGrantView() resourceGrantLocalView {
 	if activation == "" {
 		activation = "not_started"
 	}
-	ready := g.runtime != nil && !inspectionRuntimeDone(g.runtime) && g.runtime.ctx.Err() == nil
-	return resourceGrantLocalView{Target: g.state.Target, Records: records, InitializesState: g.firstUse, ListenerReady: ready, Activation: activation, TimeUncertain: g.timeUncertain}
+	ready := g.runtime != nil && !inspectionRuntimeDone(g.runtime) && g.runtime.ctx.Err() == nil || g.managementRuntime != nil && !managementRuntimeDone(g.managementRuntime) && g.managementRuntime.ctx.Err() == nil
+	management := make([]resourcegrant.ManagementRecord, len(g.state.ManagementRecords))
+	for i, m := range g.state.ManagementRecords {
+		m.Record.Actions = append([]string(nil), m.Record.Actions...)
+		m.Record.Fields = append([]string(nil), m.Record.Fields...)
+		management[i] = m
+	}
+	return resourceGrantLocalView{Target: g.state.Target, Records: records, ManagementRecords: management, InitializesState: g.firstUse, ListenerReady: ready, Activation: activation, TimeUncertain: g.timeUncertain}
 }
 
 // The protected saved projection is eligibility only. Remote authentication
@@ -152,13 +162,11 @@ func (c *Core) resourceGrantReviewHash(review resourceGrantReview) string {
 }
 func (c *Core) canCreateResourceGrant() bool {
 	g := c.resourceGrants
-	if g.state.HighWater == nil || *g.state.HighWater >= uint64(capacity.MaxJSONInteger)-1 || len(g.state.Records) >= resourcegrant.MaxRecords {
+	if g.state.HighWater == nil || *g.state.HighWater >= uint64(capacity.MaxJSONInteger)-1 || len(g.state.Records)+len(g.state.ManagementRecords) >= resourcegrant.MaxRecords {
 		return false
 	}
-	for _, record := range g.state.Records {
-		if record.State == resourcegrant.Active {
-			return false
-		}
+	if record, _ := g.state.ActiveRecord(); record.ID != "" {
+		return false
 	}
 	return true
 }
@@ -198,7 +206,7 @@ func (c *Core) confirmResourceGrant(ctx context.Context, raw json.RawMessage, b 
 	if !c.canCreateResourceGrant() || review.InitializesState != g.firstUse || record.Target != g.state.Target || record.State != resourcegrant.Active || record.Revision != *g.state.HighWater+1 || record.IssuedAt > now.Unix() || record.ExpiresAt <= now.Unix() || review.BaseRevision != resourceDigest(g.state) || review.ReviewRevision != c.resourceGrantReviewHash(review) {
 		return nil, resourceGrantStale()
 	}
-	for _, retained := range g.state.Records {
+	for _, retained := range grantRecordData(g.state) {
 		if retained.ID == record.ID {
 			return nil, resourceGrantStale()
 		}
@@ -250,7 +258,10 @@ func (c *Core) revokeResourceGrant(ctx context.Context, raw json.RawMessage, b *
 			break
 		}
 	}
-	if index < 0 || g.state.Records[index].Revision != in.GrantRevision {
+	if index < 0 {
+		return c.revokeManagementGrant(ctx, in, b)
+	}
+	if g.state.Records[index].Revision != in.GrantRevision {
 		return nil, resourceGrantStale()
 	}
 	record := g.state.Records[index]
@@ -259,7 +270,7 @@ func (c *Core) revokeResourceGrant(ctx context.Context, raw json.RawMessage, b *
 	}
 	// Reduction never depends on peer connectivity, eligibility or grant time.
 	// The runtime denial happens before every possible persistence failure.
-	g.fence.Close()
+	g.closeFences()
 	g.retireRuntime()
 	if *g.state.HighWater >= uint64(capacity.MaxJSONInteger) || ctx.Err() != nil || c.ctx.Err() != nil {
 		return nil, resourceGrantUnavailable()

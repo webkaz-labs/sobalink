@@ -59,10 +59,10 @@ func ObserveEnvelope(e Envelope, now time.Time) (Envelope, error) {
 	next := e
 	next.Clock = &clock
 	next.Records = append([]Record{}, e.Records...)
-	for _, record := range next.Records {
-		if record.State == Active && now.Unix() >= record.ExpiresAt {
-			return ExpireEnvelope(next)
-		}
+	next.ManagementRecords = append([]ManagementRecord(nil), e.ManagementRecords...)
+	record, _ := next.ActiveRecord()
+	if record.ID != "" && now.Unix() >= record.ExpiresAt {
+		return ExpireEnvelope(next)
 	}
 	if next.Validate() != nil {
 		return Envelope{}, ErrInvalid
@@ -103,18 +103,32 @@ func ExpireEnvelope(e Envelope) (Envelope, error) {
 	}
 	next := e
 	next.Records = append([]Record{}, e.Records...)
-	for i, record := range next.Records {
-		if record.State != Active {
-			continue
+	next.ManagementRecords = append([]ManagementRecord(nil), e.ManagementRecords...)
+	record, management := next.ActiveRecord()
+	if record.ID == "" {
+		return next, next.Validate()
+	}
+	if *e.HighWater >= uint64(capacity.MaxJSONInteger) {
+		return Envelope{}, ErrInvalid
+	}
+	high := *e.HighWater + 1
+	next.HighWater = &high
+	record.State, record.Revision = Expired, high
+	if management {
+		for i, m := range next.ManagementRecords {
+			if m.Record.ID == record.ID {
+				m.Record = record
+				next.ManagementRecords = append(append(next.ManagementRecords[:i:i], next.ManagementRecords[i+1:]...), m)
+				break
+			}
 		}
-		if *e.HighWater >= uint64(capacity.MaxJSONInteger) {
-			return Envelope{}, ErrInvalid
+	} else {
+		for i, r := range next.Records {
+			if r.ID == record.ID {
+				next.Records = append(append(next.Records[:i:i], next.Records[i+1:]...), record)
+				break
+			}
 		}
-		high := *e.HighWater + 1
-		next.HighWater = &high
-		record.State, record.Revision = Expired, high
-		next.Records = append(append(next.Records[:i:i], next.Records[i+1:]...), record)
-		break
 	}
 	return next, next.Validate()
 }

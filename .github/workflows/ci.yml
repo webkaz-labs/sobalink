@@ -465,6 +465,38 @@ jobs:
               "./internal/core",
           ], env=env, check=True, timeout=10 * 60)
           PYTHON
+      - name: Verify native remote resource management
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          actual = subprocess.check_output(["go", "env", "GOVERSION", "GOOS", "GOARCH"], text=True, timeout=30).splitlines()
+          if actual != ["go1.27.1", "${{ matrix.goos }}", "${{ matrix.goarch }}"]:
+              raise SystemExit("Native management requires the exact Go toolchain and matrix target")
+          # Only the child receives these opt-ins and an isolated proxy environment.
+          proxies = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "TS_PROXY")
+          env = {name: value for name, value in os.environ.items()
+                 if name not in proxies and name != "SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE"}
+          env["SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE"] = "reviewed-production-loopback-v2"
+          env["SOBALINK_RUN_ACTIVATION_NATIVE"] = "1"
+          # One exact two-Core loopback execution, including in-process Core restart.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py", "--exact",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceManagementNativePreviewApplyReplayAndMigration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceManagementNativeRevokeReplacementAndProtocolSeparation",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceManagementNativeRestartPreservesOriginalExpiryAndHistory",
+              "--",
+              "go", "test", "-race", "-count=1", "-v", "-timeout=8m",
+              "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,resource_management_native,resource_inspection_native,directlan_activation_native",
+              "-run=^TestResourceManagementNative(PreviewApplyReplayAndMigration|RevokeReplacementAndProtocolSeparation|RestartPreservesOriginalExpiryAndHistory)$",
+              "./internal/core",
+          ], env=env, check=True, timeout=10 * 60)
+          PYTHON
       # Run only the isolated, wait-heavy gates together after serial native tests
       # have populated their exact tagged build caches. Keep evidence names stable.
       - name: Verify direct LAN session natural rekey and idle lifecycle

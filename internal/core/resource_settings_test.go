@@ -92,7 +92,7 @@ func TestResourceIdentityRestartRenameAndOwnership(t *testing.T) {
 }
 func TestResourceStartupFailsClosedWithoutRegeneration(t *testing.T) {
 	for _, data := range []string{
-		`null`, `{}`, `{"schemaVersion":2,"resourceId":"0123456789abcdef0123456789abcdef","highWater":0,"records":[]}`,
+		`null`, `{}`, `{"schemaVersion":3,"resourceId":"0123456789abcdef0123456789abcdef","highWater":0,"records":[]}`,
 		`{"schemaVersion":1,"resourceId":"bad","highWater":0,"records":[]}`,
 		`{"schemaVersion":1,"resourceId":"0123456789abcdef0123456789abcdef","highWater":0,"highWater":0,"records":[]}`,
 		`{"schemaVersion":1,"resourceId":"0123456789abcdef0123456789abcdef","highWater":null,"records":[]}`,

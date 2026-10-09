@@ -34,7 +34,7 @@ func TestDirectLANJoinAdmittedRunnerAllowsManagedPersistence(t *testing.T) {
 	c, s := pairRecordStoreFixture(t, state)
 	node := &directlan.Node{}
 	b := &directLANBackend{Node: node, ctx: c.ctx, store: s, ready: true}
-	o := &managedCompletionOwner{core: c, backend: b, root: b, node: node, store: s, process: c.lanStartNonce,
+	o := &managedCompletionOwner{core: c, coreDone: c.ctx.Done(), backend: b, root: b, node: node, store: s, process: c.lanStartNonce,
 		configuration: contextConfigurationDigest(s.state), revision: s.reviewRevision, limits: *s.currentCapacity(), limitsSource: s.limits.Load()}
 	s.contextPublication = &contextPublicationReceipt{store: s, process: o.process, path: s.path, file: s.fileDigest, state: privateRevision(s.state), writeRevision: s.reviewRevision}
 	o.receipt = s.contextPublication
@@ -74,7 +74,7 @@ func TestLegacyAdditionCannotReviveFrozenCompletionSlot(t *testing.T) {
 	c, s := pairRecordStoreFixture(t, state)
 	node := &directlan.Node{}
 	b := &directLANBackend{Node: node, ctx: c.ctx, store: s, ready: true}
-	o := &managedCompletionOwner{core: c, backend: b, root: b, node: node, store: s, process: c.lanStartNonce, configuration: contextConfigurationDigest(s.state), revision: s.reviewRevision, limits: *s.currentCapacity(), limitsSource: s.limits.Load()}
+	o := &managedCompletionOwner{core: c, coreDone: c.ctx.Done(), backend: b, root: b, node: node, store: s, process: c.lanStartNonce, configuration: contextConfigurationDigest(s.state), revision: s.reviewRevision, limits: *s.currentCapacity(), limitsSource: s.limits.Load()}
 	s.contextPublication = &contextPublicationReceipt{store: s, process: o.process, path: s.path, file: s.fileDigest, state: privateRevision(s.state), writeRevision: s.reviewRevision}
 	o.receipt = s.contextPublication
 	o.epoch = directlan.NewContextEpoch()

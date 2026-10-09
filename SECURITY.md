@@ -18,7 +18,7 @@ Administrator rights and LAN-router changes are outside the product requirements
 - Local session and command JSON request bodies have a five-second native socket read deadline. Native browser upload bodies have a rolling 30-second no-progress read deadline, refreshed only when bytes arrive. The existing total staging deadline still begins after reservation and is not extended by progress; explicitly unlimited staging removes that total deadline but not the idle deadline
 - Local IPC is restricted to the owning OS user and dispatches to the same application core. A process already running as that user can still access their files and authority; these controls do not isolate a compromised local account
 
-The peer API is a different handler. A peer cannot use it to change networks, trust, receive paths, service grants, sessions, settings or arbitrary local files.
+The ordinary peer API is a different handler. A peer cannot use it to change networks, trust, receive paths, service grants, sessions, settings or arbitrary local files. The separate source-development [resource management](docs/RESOURCE_MANAGEMENT.en.md) protocol requires explicit, finite, one-pair management consent for exactly two transfer settings. It never forwards arbitrary local commands or exposes the local management API. Its integration and acceptance gates remain separate.
 
 ## Explicit network and identity
 

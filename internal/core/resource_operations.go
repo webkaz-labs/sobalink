@@ -108,8 +108,11 @@ func (c *Core) resourceApply(ctx context.Context, raw json.RawMessage, binding *
 	}
 	// Synchronous, bounded completion is attempted even after caller/lifetime
 	// cancellation. Close waits on c.op; there is no detached evidence goroutine.
-	completed := c.resourceState.clone()
-	completed.Records[len(completed.Records)-1] = result
+	completed, err := c.resourceState.withLocalResult(intent, result.Outcome)
+	if err != nil {
+		c.resourceFrozen = true
+		return c.resourceOperationView(intent, false), nil
+	}
 	if err := c.writeResourceEnvelopeBound(completed, binding); err != nil {
 		c.resourceFrozen = true
 		// Keep only intent in memory even when result publication was observed.

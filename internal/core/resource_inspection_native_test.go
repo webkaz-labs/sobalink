@@ -83,6 +83,20 @@ func newResourceInspectionNativePair(t *testing.T) *resourceInspectionNativePair
 			t.Fatal("native fixture requires an isolated environment without proxy overrides")
 		}
 	}
+	return newResourceNativeOwnedPair(t)
+}
+
+// Private setup body shared only after each native suite's independent guard.
+// Keep the inspection entry guard above unchanged when adding another suite.
+func newResourceNativeOwnedPair(t *testing.T) *resourceInspectionNativePair {
+	t.Helper()
+	return newResourceNativeOwnedPairWithPolicy(t, false)
+}
+
+// Only the separately guarded management suite aligns this synthetic fixture
+// with Core's actual policy before activation. Inspection keeps its old setup.
+func newResourceNativeOwnedPairWithPolicy(t *testing.T, alignPolicy bool) *resourceInspectionNativePair {
+	t.Helper()
 	base := newActivationNativePairDirectories(t, true) // 90-second total pair context; no address reselection after this allocation.
 	f := &resourceInspectionNativePair{activationNativePair: base}
 	for i, c := range base.cores {
@@ -102,6 +116,27 @@ func newResourceInspectionNativePair(t *testing.T) *resourceInspectionNativePair
 		}
 		f.owners[i].lock = owner
 		c.op.Lock()
+		if alignPolicy {
+			// Reload the SAME fixture file through the normal loader with the
+			// policy that the real provider will later use. No authority exists
+			// yet, and this never sets a limits pointer, epoch or receipt itself.
+			limits := selectedLANLimits(c.capacityPolicy())
+			store, err := readDirectLANStore(filepath.Join(c.dir, "direct-lan.json"), limits.bytes, limits.peers)
+			if err != nil || store == nil || store.limits.Load() == nil || *store.limits.Load() != *limits {
+				c.op.Unlock()
+				t.Fatal("synthetic policy-aligned production store load failed")
+			}
+			c.mu.Lock()
+			offline := c.node == nil && c.contextControl == nil && c.contextUpgrade == nil
+			if offline {
+				c.directLAN = store
+			}
+			c.mu.Unlock()
+			if !offline {
+				c.op.Unlock()
+				t.Fatal("synthetic policy alignment attempted after activation")
+			}
+		}
 		c.initializeResourceIdentity(owner)
 		c.initializeResourceGrants()
 		valid := c.resourceIdentity != "" && c.resourceLock == owner && c.resourceGrants != nil && !c.resourceGrants.frozen && c.resourceGrants.firstUse

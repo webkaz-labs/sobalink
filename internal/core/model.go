@@ -93,13 +93,16 @@ type Options struct {
 	SkipNetworkStart   bool
 	// LifecycleLock enables resource identity only while the matching process owns this profile.
 	LifecycleLock *config.Lock
-	// EnableResourceInspection enables the scoped inspection implementation.
-	// When false, grant storage is not opened and no inspection listener starts.
+	// EnableResourceInspection enables explicit scoped resource grants.
+	// Legacy grants select inspection v1; management grants select management v2.
+	// When false, grant storage is not opened and no resource listener starts.
 	EnableResourceInspection bool
 }
 
 type Core struct {
-	resourceGrants *resourceGrantCoordinator // op; nil unless explicitly enabled
+	resourceGrants               *resourceGrantCoordinator       // op; nil unless explicitly enabled
+	resourceRemoteEvidenceDenied bool                            // op; owned journal read failed until owned reopen
+	resourceUncertainWrite       *resourceJournalWriteCandidates // op; bounded exact self-write candidates
 
 	resourceIdentity           string // protected by op, empty when startup certification failed
 	resourceLock               *config.Lock
@@ -463,9 +466,11 @@ func (c *Core) close() error {
 	}
 	c.op.Lock()
 	var inspection *resourceInspectionRuntime
+	var management *resourceManagementRuntime
 	if c.resourceGrants != nil {
 		c.resourceGrants.freeze()
 		inspection = c.resourceGrants.retiring
+		management = c.resourceGrants.managementRetiring
 	}
 	c.stopAllServices()
 	c.stopAllProxies()
@@ -496,6 +501,9 @@ func (c *Core) close() error {
 	c.op.Unlock()
 	if inspection != nil {
 		<-inspection.done
+	}
+	if management != nil {
+		<-management.done
 	}
 	c.wg.Wait()
 	return errors.Join(errs...)
