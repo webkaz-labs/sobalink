@@ -1,0 +1,82 @@
+name: One focused browser diagnostic
+
+on:
+  create:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resource-browser-prewrite-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly
+
+jobs:
+  linux-b1-once:
+    if: >-
+      github.repository == 'webkaz-labs/sobalink' &&
+      github.event.repository.private == false &&
+      github.event.repository.default_branch == 'main' &&
+      github.event_name == 'create' &&
+      github.event.ref_type == 'branch' &&
+      github.event.ref == 'diagnostic-resource/browser-prewrite-743a1eb7-v3' &&
+      github.ref == 'refs/heads/diagnostic-resource/browser-prewrite-743a1eb7-v3' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Admit exact diagnostic event and checkout
+        timeout-minutes: 1
+        run: python -I -S -B .github/scripts/ci-resource-browser-prewrite.py admit
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Prepare locked dependencies and official managed Chromium
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go list -mod=readonly -deps -test -tags=resource_browser_native,resource_group_catalog_native,resource_management_native,resource_inspection_native,directlan_activation_native,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify closed diagnostic contracts
+        timeout-minutes: 1
+        run: python -I -S -B -m unittest discover -s .github/scripts -p test_ci_resource_browser_prewrite.py -v
+      - name: Build once and attempt focused safe and B1 cohorts
+        id: diagnostic
+        timeout-minutes: 20
+        run: python -I -S -B .github/scripts/ci-resource-browser-prewrite.py run
+      # The finite hosted job contains failed/unjoined descendants. It never
+      # supplies the test-owned cleanup evidence required for acceptance.
+      - name: Preserve only reconstructed closed diagnostic evidence
+        if: ${{ always() && steps.diagnostic.outputs.sanitized_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        timeout-minutes: 2
+        with:
+          name: diagnostic-resource-browser-prewrite-sanitized
+          path: |
+            ${{ runner.temp }}/resource-browser-prewrite-sanitized/result.json
+            ${{ runner.temp }}/resource-browser-prewrite-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
+          overwrite: false

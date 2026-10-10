@@ -116,7 +116,7 @@ func ServeWithLimits(parent context.Context, dir string, h Handler, limits Limit
 	if e != nil {
 		return nil, e
 	}
-	return serveListenerWithLimits(parent, ln, h, limits), nil
+	return serveListenerForDirectory(parent, dir, ln, h, limits), nil
 }
 
 // serveListener keeps shutdown policy testable with in-memory I/O while Serve
@@ -126,6 +126,12 @@ func serveListener(parent context.Context, ln net.Listener, h Handler) *Server {
 }
 
 func serveListenerWithLimits(parent context.Context, ln net.Listener, h Handler, limits LimitsProvider) *Server {
+	return serveListenerForDirectory(parent, "", ln, h, limits)
+}
+
+// The production directory is captured before any request goroutine can run.
+// The unscoped wrapper above remains available for in-memory protocol tests.
+func serveListenerForDirectory(parent context.Context, dir string, ln net.Listener, h Handler, limits LimitsProvider) *Server {
 	ctx, cancel := context.WithCancel(parent)
 	s := &Server{ln: ln, cancel: cancel, conns: make(map[net.Conn]bool)}
 	s.wg.Add(1)
@@ -204,6 +210,7 @@ func serveListenerWithLimits(parent context.Context, ln net.Listener, h Handler,
 				}()
 				var v any
 				var e error
+				observeResourceProcessDispatch(dir, r.Command)
 				if r.Command == "control.limits" {
 					v = budget
 				} else {
@@ -362,10 +369,12 @@ func CallWithLimits(ctx context.Context, dir, command string, v any, limits Limi
 	if int64(len(command)) > limits.CommandBytes || int64(len(encoded))+1 > limits.RequestBytes {
 		return &RemoteError{Code: "request_too_large", Message: requestTooLargeMessage}
 	}
+	observeResourceProcessDialAttempt(dir)
 	c, err := dial(ctx, dir)
 	if err != nil {
 		return err
 	}
+	observeResourceProcessDialCompleted(dir)
 	defer c.Close()
 	return callConn(ctx, c, encoded, v, limits.ResponseBytes)
 }

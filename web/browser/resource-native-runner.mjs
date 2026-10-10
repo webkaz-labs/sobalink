@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict'
+import { lstat, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// Raw errors, request bodies, call logs, paths and attachments remain private.
+// Only bounded first-message signatures and exact owned source units are labeled.
+const selected = 'resource-native-local-catalog-en-settings'
+const unavailable = Object.freeze({ status: 'unavailable', unit: 'unavailable', line: 0, column: 0, category: 'unavailable' })
+const noFailure = Object.freeze({ status: 'none', unit: 'none', line: 0, column: 0, category: 'none' })
+const statuses = new Set(['failed', 'timedOut', 'skipped', 'interrupted'])
+const units = new Map([
+  [fileURLToPath(new URL('./resource-native-local-catalog.acceptance.mjs', import.meta.url)), 'case'],
+  [fileURLToPath(new URL('./resource-native-fixtures.mjs', import.meta.url)), 'fixture'],
+  [fileURLToPath(new URL('../playwright.resource-native.config.mjs', import.meta.url)), 'config'],
+  [fileURLToPath(import.meta.url), 'reporter'],
+])
+function errorCategory(error) {
+  const message = error?.message
+  if (typeof message !== 'string' || message.length < 1 || message.length > 65_536) return 'unavailable'
+  if (message === 'Error: Private fixture descriptor was invalid; contents withheld') return 'fixture_descriptor'
+  if (message === 'Error: Real local browser authentication failed; private details withheld') return 'fixture_authentication'
+  let firstLine = message.split('\n', 1)[0]
+  for (const prefix of ['AssertionError: ', 'AssertionError [ERR_ASSERTION]: ']) {
+    if (firstLine.startsWith(prefix)) { firstLine = firstLine.slice(prefix.length); break }
+  }
+  if (['Owned private fixture root required', 'Automatic capture forbidden', 'Service workers forbidden'].includes(firstLine)) return 'fixture_guard'
+  let sdk = message
+  for (const prefix of ['Error: ', 'TimeoutError: ']) {
+    if (sdk.startsWith(prefix)) { sdk = sdk.slice(prefix.length); break }
+  }
+  if (sdk.startsWith('browserType.launch:')) {
+    // This is the pinned SDK's signature, not an inferred host-policy cause.
+    return sdk.includes('Chromium sandboxing failed!') ? 'browser_launch_sandbox' : 'browser_launch'
+  }
+  if (sdk.startsWith('browser.newContext:')) return 'browser_context'
+  if (sdk.startsWith('browserContext.newPage:')) return 'browser_page'
+  return 'unclassified'
+}
+export function diagnostic(error, status) {
+  if (!statuses.has(status)) return unavailable
+  const value = { status, unit: 'unavailable', line: 0, column: 0, category: errorCategory(error) }
+  const location = error?.location
+  if (!location || typeof location.file !== 'string' || !units.has(location.file)
+    || !Number.isSafeInteger(location.line) || location.line < 1 || location.line > 100_000
+    || !Number.isSafeInteger(location.column) || location.column < 1 || location.column > 10_000) return value
+  return { ...value, unit: units.get(location.file), line: location.line, column: location.column }
+}
+export default class ResourceNativeReporter {
+  constructor() { this.started = false; this.observed = 0; this.passed = 0; this.errors = 0; this.selectionValid = false; this.unexpected = false; this.firstFailure = null }
+  onBegin(_config, suite) {
+    const tests = suite.allTests()
+    this.selectionValid = tests.length === 1 && tests[0].title === selected && tests[0].expectedStatus === 'passed'
+  }
+  onTestBegin(test) {
+    if (this.started || test.title !== selected) this.unexpected = true
+    this.started = true
+  }
+  onError(error) { this.errors++; this.firstFailure ??= diagnostic(error, 'failed') }
+  onTestEnd(test, result) {
+    this.observed++
+    if (test.title !== selected || !this.started || this.observed !== 1 || result.retry !== 0 || test.expectedStatus !== 'passed' || !Array.isArray(result.attachments) || result.attachments.length !== 0) this.unexpected = true
+    if (result.status === 'passed') this.passed++
+    else this.firstFailure ??= diagnostic(Array.isArray(result.errors) ? result.errors[0] : undefined, result.status)
+  }
+  async onEnd(result) {
+    const root = process.env.SOBA_RESOURCE_BROWSER_PRIVATE_ROOT
+    if (!root) return { status: 'failed' }
+    const info = await lstat(root)
+    assert.ok(info.isDirectory() && !info.isSymbolicLink() && info.uid === process.getuid() && (info.mode & 0o077) === 0, 'Protected result root required')
+    const accepted = this.selectionValid && this.started && !this.unexpected && this.observed === 1 && this.passed === 1 && this.errors === 0 && result.status === 'passed'
+    const value = { schema: 3, expected: 1, observed: this.observed, passed: this.passed, errors: this.errors, selectionValid: this.selectionValid, unexpected: this.unexpected, accepted, diagnostic: accepted ? noFailure : this.firstFailure ?? unavailable }
+    await writeFile(join(root, 'browser-summary.json'), JSON.stringify(value), { flag: 'wx', mode: 0o600 })
+    return accepted ? undefined : { status: 'failed' }
+  }
+}
