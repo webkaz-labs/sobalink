@@ -1,0 +1,26 @@
+.resource-settings { display: grid; gap: 1rem; min-width: 0; }
+.resource-settings > *, .resource-settings section, .resource-settings form, .resource-settings fieldset { min-width: 0; }
+.resource-settings p, .resource-settings label, .resource-settings h3, .resource-settings h4 { overflow-wrap: anywhere; }
+.resource-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.resource-selector, .resource-editor { display: grid; gap: .65rem; }
+.resource-selector input, .resource-selector select, .resource-editor input, .resource-editor select { display: block; width: 100%; min-width: 0; max-width: 100%; }
+.resource-editor { border: 1px solid var(--border); border-radius: .75rem; padding: 1rem; margin: 1rem 0; }
+.resource-choice { display: grid; gap: .4rem; }
+.resource-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.resource-values dl, .resource-identities { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: .4rem .75rem; margin: .6rem 0; }
+.resource-settings dd { margin: 0; overflow-wrap: anywhere; white-space: normal; }
+.resource-identities dd, .resource-local > span { font-family: ui-monospace, monospace; font-size: .85em; overflow-wrap: anywhere; }
+.resource-local { display: grid; gap: .5rem; margin-top: .75rem; }
+.resource-review, .resource-attempt { padding: 1rem; border: 1px solid var(--border); border-radius: .75rem; }
+.resource-review { display: grid; gap: .75rem; }
+.resource-review h3:focus { outline: 2px solid currentColor; outline-offset: .25rem; }
+.resource-warning { border-inline-start: .25rem solid currentColor; padding-inline-start: .75rem; }
+.resource-confirm { display: flex; align-items: flex-start; gap: .6rem; }
+.resource-confirm input { flex: 0 0 auto; margin-top: .25rem; }
+.resource-attempt + .resource-attempt { margin-top: .75rem; }
+.resource-wait { display: grid; gap: .5rem; }
+@media (max-width: 480px) {
+  .resource-values { grid-template-columns: minmax(0, 1fr); }
+  .resource-identities { grid-template-columns: minmax(0, 1fr); }
+  .resource-actions > button { max-width: 100%; white-space: normal; }
+}

@@ -497,6 +497,37 @@ jobs:
               "./internal/core",
           ], env=env, check=True, timeout=10 * 60)
           PYTHON
+      - name: Verify native fixed-group resource catalog
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          actual = subprocess.check_output(["go", "env", "GOVERSION", "GOOS", "GOARCH"], text=True, timeout=30).splitlines()
+          if actual != ["go1.27.1", "${{ matrix.goos }}", "${{ matrix.goarch }}"]:
+              raise SystemExit("Native fixed-group catalog requires the exact Go toolchain and matrix target")
+          # Only this child receives the reviewed group opt-in and proxy isolation.
+          proxies = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "TS_PROXY")
+          unrelated = ("SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE", "SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE")
+          env = {name: value for name, value in os.environ.items()
+                 if name not in proxies and name not in unrelated}
+          env["SOBALINK_RUN_RESOURCE_GROUP_CATALOG_NATIVE"] = "reviewed-three-core-loopback-v1"
+          env["SOBALINK_RUN_ACTIVATION_NATIVE"] = "1"
+          # One fixed two-target run on three owned in-process loopback Cores.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py", "--exact",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceGroupCatalogNativeFixedTwoTargetOneShot",
+              "--",
+              "go", "test", "-race", "-count=1", "-v", "-timeout=4m",
+              "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,directlan_activation_native,resource_inspection_native,resource_management_native,resource_group_catalog_native",
+              "-run=^TestResourceGroupCatalogNativeFixedTwoTargetOneShot$",
+              "./internal/core",
+          ], env=env, check=True, timeout=6 * 60)
+          PYTHON
       # Run only the isolated, wait-heavy gates together after serial native tests
       # have populated their exact tagged build caches. Keep evidence names stable.
       - name: Verify direct LAN session natural rekey and idle lifecycle

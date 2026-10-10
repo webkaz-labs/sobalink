@@ -55,7 +55,8 @@ def plan(scope="full"):
 
 class ActualCoverageTests(unittest.TestCase):
     def test_native_resource_gates_are_full_only_and_unambiguous_on_every_target(self):
-        gates = ("Verify native remote resource inspection", "Verify native remote resource management")
+        gates = ("Verify native remote resource inspection", "Verify native remote resource management",
+                 "Verify native fixed-group resource catalog")
         self.assertEqual(coverage.FULL_ONLY_STEPS, gates)
         self.assertEqual(len(coverage.LONG_STEPS), 3)
         self.assertFalse(set(gates).intersection(coverage.FAST_STEPS + coverage.LONG_STEPS))
@@ -153,7 +154,7 @@ class ActualCoverageTests(unittest.TestCase):
             self.assertEqual(enabled(name, {"github.event_name": "workflow_dispatch", "inputs.force_full": True}), name != "nightly-full-check")
             if name == "nightly-full-check":
                 self.assertFalse(enabled(name, {"github.event_name": "pull_request"}))
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 5)
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 6)
         self.assertIn("  manifest-smoke:\n    needs: native\n", workflow)
         self.assertEqual(set(coverage.TARGETS), {"linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"})
 
@@ -259,7 +260,7 @@ class ActualCoverageTests(unittest.TestCase):
                 coverage.write_plan(plan("native-short"), pathlib.Path(directory) / "plan.json")
             self.assertEqual(output.read_text(encoding="utf-8"), "scope=native-short\nlong_required=false\n")
         workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 5)
+        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 6)
         self.assertIn("scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'", workflow)
         self.assertIn("success() && steps.ci-plan.outputs.long_required != 'false'", workflow)
         for name in ("Verify Core context control over pinned TLS", "Verify context control over fixed loopback TCP"):

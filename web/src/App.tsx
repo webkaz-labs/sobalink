@@ -1,3 +1,13 @@
+import { ResourceAttemptRegistry } from './resource/attempt-registry'
+import { ResourceGroupController } from './group/controller'
+import { ResourceGroupDialog } from './group/ResourceGroupDialog'
+import { groupText } from './group/i18n'
+import type { RemoteSelection } from './resource/types'
+import { ResourceCatalogController } from './catalog/controller'
+import { ResourceCatalogDialog } from './catalog/ResourceCatalogDialog'
+import { catalogText } from './catalog/i18n'
+import { currentTransfer } from './catalog/workflow'
+import type { TransferFocus, Workflow } from './catalog/types'
 import { NetworkDiagnosticNotice } from './components/NetworkDiagnosticNotice'
 import { PeerLanRoutes } from './components/LanRoutes'
 import { peerPresenceKey, peerPermissionKey, peerCommunicationAllowed, peerPath } from './peer-status'
@@ -28,6 +38,9 @@ import { AdvancedConnectionsDialog } from './components/AdvancedConnectionsDialo
 import { ServiceDiagnostics } from './components/ServiceDiagnostics'
 import { ReceiveRecoveryDialog, ReceiveRecoveryNotice } from './components/ReceiveRecovery'
 import { recoveryText } from './receive-recovery-i18n'
+import { ResourceSettingsController } from './resource/controller'
+import { ResourceSettingsDialog } from './resource/ResourceSettingsDialog'
+import { resourceText } from './resource/i18n'
 
 function preference<T extends string>(key: string, choices: readonly T[], fallback: T): T {
   try { const value = localStorage.getItem(`sobalink.${key}`); return choices.includes(value as T) ? value as T : fallback } catch { return fallback }
@@ -108,9 +121,42 @@ function Details({ peer, state, t, server, locale, now, close, autosave, editAut
     <section className="details-section"><h3>{t('services')}</h3><div className="service-buttons"><Button disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => service('connect')}><Icon name="link" size={15} />{t('connectService')}</Button><Button disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => service('share')}><Icon name="upload" size={15} />{t('shareService')}</Button></div><ServiceRows peer={peer} state={state} t={t} locale={locale} server={server} savedService={savedService} removeService={removeService} /></section>
   </aside>
 }
-type Dialog = 'receive-recovery' | 'startup' | 'advanced-connections' | 'saved-services' | 'remove-service' | 'stop-shares' | 'policy' | 'preferences' | 'network' | 'autosave' | 'autosave-folder' | 'pause-peer' | 'revoke-pairing' | 'connect' | 'share' | null
+type Dialog = 'resource-group' | 'resource-catalog' | 'resource-settings' | 'receive-recovery' | 'startup' | 'advanced-connections' | 'saved-services' | 'remove-service' | 'stop-shares' | 'policy' | 'preferences' | 'network' | 'autosave' | 'autosave-folder' | 'pause-peer' | 'revoke-pairing' | 'connect' | 'share' | null
 export function App() {
-  const server = useServer()
+  // Own operation evidence above login and modal lifetimes. Changing a handler
+  // identity must not replace the controller or lose its no-replay barriers.
+  const resourceErrorHandler = useRef<(error: unknown) => void>(() => {})
+  const sharedAttempts = useRef<ResourceAttemptRegistry | null>(null)
+  if (sharedAttempts.current === null) sharedAttempts.current = new ResourceAttemptRegistry()
+  const resourceOwner = useRef<ResourceSettingsController | null>(null)
+  if (resourceOwner.current === null) {
+    resourceOwner.current = new ResourceSettingsController(
+      async (name, payload, signal) => (await api.command(name, payload, api.requestID(), signal)).result,
+      error => resourceErrorHandler.current(error), Date.now, sharedAttempts.current,
+    )
+  }
+  const resourceController = resourceOwner.current
+  const groupOwner = useRef<ResourceGroupController | null>(null)
+  if (groupOwner.current === null) groupOwner.current = new ResourceGroupController(
+    async (name, payload, signal) => (await api.command(name, payload, api.requestID(), signal)).result,
+    error => resourceErrorHandler.current(error), sharedAttempts.current,
+  )
+  const groupController = groupOwner.current
+  const [resourceInitialPeerKey, setResourceInitialPeerKey] = useState<string | undefined>()
+  const catalogOwner = useRef<ResourceCatalogController | null>(null)
+  if (catalogOwner.current === null) catalogOwner.current = new ResourceCatalogController({
+    list: async signal => (await api.command('resource.list', {}, api.requestID(), signal)).result,
+    snapshot: async (request, signal) => (await api.command('resource.catalog.snapshot', request, api.requestID(), signal)).result,
+  }, error => resourceErrorHandler.current(error))
+  const catalogController = catalogOwner.current
+  const catalogNavigationGeneration = useRef(0)
+  const catalogNavigationBusy = useRef(false)
+  const [catalogNavigating, setCatalogNavigating] = useState(false)
+  const [catalogSavedSelection, setCatalogSavedSelection] = useState<string | null>(null)
+  const [transferFocus, setTransferFocus] = useState<TransferFocus | null>(null)
+  const [catalogNavigationMissing, setCatalogNavigationMissing] = useState(false)
+  const server = useServer(resourceController, catalogController, groupController)
+  resourceErrorHandler.current = server.handleError
   const [localePreference, setLocalePreference] = useState<'auto' | api.Locale>(() => preference('locale', ['auto', 'en', 'ja'], 'auto'))
   const [theme, setTheme] = useState<api.Theme>(() => preference('theme', ['system', 'light', 'dark'], 'system'))
   const backendPreferencesLoaded = useRef(false)
@@ -138,6 +184,8 @@ export function App() {
   const [networkView, setNetworkView] = useState<'diagram' | 'list'>(history.state?.sobalinkNetworkView === 'list' ? 'list' : 'diagram')
   const [details, setDetails] = useState(Boolean(history.state?.sobalinkDetails))
   const navigatePeer = (id: string | null, view: 'chat' | 'map' = 'chat', nextDetails = false, nextNetworkView = networkView) => {
+    ++catalogNavigationGeneration.current; catalogNavigationBusy.current = false; catalogController.close(); setCatalogNavigating(false); setTransferFocus(null); setCatalogNavigationMissing(false)
+    resourceController.close(); groupController.close()
     setDialog(null)
     if (id !== selectedId || mapVisible !== (view === 'map') || details !== nextDetails || networkView !== nextNetworkView) history.pushState({ ...history.state, sobalinkPeer: id, sobalinkView: view, sobalinkDetails: nextDetails, sobalinkNetworkView: nextNetworkView, sobalinkSection: deviceSection }, '')
     setSelectedId(id); setMapVisible(view === 'map'); setDetails(nextDetails); setNetworkView(nextNetworkView)
@@ -145,6 +193,8 @@ export function App() {
   const closeDetails = () => { setDetails(false); history.replaceState({ ...history.state, sobalinkDetails: false }, '') }
   useEffect(() => {
     const back = () => {
+      ++catalogNavigationGeneration.current; catalogNavigationBusy.current = false; catalogController.close(); setCatalogNavigating(false); setTransferFocus(null); setCatalogNavigationMissing(false)
+      resourceController.close(); groupController.close()
       setSelectedId(typeof history.state?.sobalinkPeer === 'string' ? history.state.sobalinkPeer : null)
       setMapVisible(history.state?.sobalinkView === 'map')
       setDeviceSection(history.state?.sobalinkSection === 'exchange' ? 'exchange' : 'services')
@@ -188,7 +238,107 @@ export function App() {
   useEffect(() => { const change = () => setSystemLocale(detectLocale()); window.addEventListener('languagechange', change); return () => window.removeEventListener('languagechange', change) }, [])
   useEffect(() => { if (server.auth === 'locked') { setSelectedId(null); setDialog(null); setMapVisible(false); setDeviceSection('services'); setNetworkView('diagram'); setDetails(false); setDrafts({}); setBatches({}); setDirectoryDrafts({}); setReceiveDestinations({}); setServiceDrafts({}); setServiceSource(undefined); setAdvertisedServiceId(undefined); setLanDraft(emptyLanDraft()); setDirectLanDraft(emptyDirectLanDraft()); lastConversationId.current = null; setUploadActivity(null) } }, [server.auth])
   useEffect(() => { document.title = server.auth === 'ready' ? `${mapVisible ? t(networkView === 'diagram' ? 'networkView' : 'deviceListView') : peer?.name || t('devices')} · sobalink` : 'sobalink' }, [server.auth, mapVisible, networkView, peer?.name, t])
-  const openDialog = (value: Dialog) => { server.setError(null); setServiceSource(undefined); setAdvertisedServiceId(undefined); setDialog(value) }
+  const openDialog = (value: Dialog) => {
+    const generation = ++catalogNavigationGeneration.current, groupContext = groupController.getSnapshot().context.revision
+    const current = () => generation === catalogNavigationGeneration.current && (value !== 'resource-group'
+      || groupController.getSnapshot().context.revision === groupContext && resourceController.getSnapshot().authenticated)
+    catalogNavigationBusy.current = false; catalogController.close(); if (!current()) return
+    resourceController.close(); if (!current()) return
+    groupController.close(); if (!current()) return
+    setCatalogNavigating(false); setCatalogSavedSelection(null); setTransferFocus(null); setCatalogNavigationMissing(false)
+    setResourceInitialPeerKey(undefined); server.setError(null); setServiceSource(undefined); setAdvertisedServiceId(undefined); setDialog(value)
+  }
+  const addSelectedToGroup = (selection: RemoteSelection) => {
+    const context = groupController.getSnapshot().context, generation = ++catalogNavigationGeneration.current
+    const current = () => generation === catalogNavigationGeneration.current && context.revision === groupController.getSnapshot().context.revision
+      && groupController.getSnapshot().context.remoteAvailable && resourceController.getSnapshot().authenticated
+    if (!current() || selection.selector.protocolVersion !== 2) return
+    groupController.open(); if (!current()) return
+    if (!groupController.addSelection(selection) || !current()) return
+    catalogController.close(); if (!current()) return
+    resourceController.close(); if (!current()) return
+    setDialog('resource-group')
+  }
+  const openGroupSingle = (peerKey: string) => {
+    const context = groupController.getSnapshot().context, generation = ++catalogNavigationGeneration.current
+    const current = () => generation === catalogNavigationGeneration.current && context.revision === groupController.getSnapshot().context.revision
+      && groupController.getSnapshot().context.remoteAvailable && groupController.getSnapshot().context.peers.some(peer => peer.key === peerKey)
+      && resourceController.getSnapshot().authenticated
+    if (!current()) return
+    groupController.close(); if (!current()) return
+    catalogController.close(); if (!current()) return
+    resourceController.clearSelection(); if (!current()) return
+    resourceController.open(); if (!current()) return
+    setResourceInitialPeerKey(peerKey); setDialog('resource-settings')
+  }
+  const openCatalogServiceConnections = (peerId: string, contextRevision: string) => {
+    const origin = catalogController.getSnapshot()
+    const selectedPeer = server.state?.peers.find(item => item.id === peerId)
+    if (!origin.opened || !origin.context.available || origin.context.revision !== contextRevision
+      || catalogNavigationBusy.current || server.auth !== 'ready' || server.stale || !server.state || !selectedPeer
+      || !origin.context.peers.some(item => item.id === peerId) || !api.canUseServices(selectedPeer, server.state)) {
+      if (origin.opened) catalogController.unavailable()
+      return
+    }
+    const generation = ++catalogNavigationGeneration.current
+    const current = () => generation === catalogNavigationGeneration.current
+      && catalogController.getSnapshot().context.revision === contextRevision
+      && catalogController.getSnapshot().context.available
+      && catalogController.getSnapshot().context.peers.some(item => item.id === peerId)
+      && resourceController.getSnapshot().authenticated && resourceController.getSnapshot().available
+    // Ordinary manual defaults only. This initializer does not consult any
+    // advertisement; no catalog row, revision, ports or lifetime is carried.
+    const draft = newServiceDraft(selectedPeer, 'connect', server.state)
+    if (!current()) return
+    catalogController.close(); if (!current()) return
+    resourceController.close(); if (!current()) return
+    setCatalogSavedSelection(null); setTransferFocus(null); setCatalogNavigationMissing(false)
+    setServiceSource(undefined); setAdvertisedServiceId(undefined); server.setError(null)
+    setServiceDrafts(previous => ({ ...previous, [`${peerId}:connect:new`]: draft }))
+    // Keep this generic navigation in memory, just like catalog transfer focus.
+    setSelectedId(peerId); setMapVisible(false); setDetails(false); setDeviceSection('services'); setDialog('connect')
+  }
+  const closeCatalog = () => { ++catalogNavigationGeneration.current; catalogNavigationBusy.current = false; catalogController.close(); resourceController.close(); setCatalogNavigating(false); setDialog(null) }
+  const navigateCatalog = async (workflow: Workflow) => {
+    const origin = catalogController.getSnapshot(), destination = catalogController.resolve(workflow)
+    if (!destination || catalogNavigationBusy.current) return
+    const generation = ++catalogNavigationGeneration.current
+    const current = () => generation === catalogNavigationGeneration.current
+      && catalogController.getSnapshot().candidate === origin.candidate
+      && catalogController.getSnapshot().context.revision === origin.context.revision
+      && catalogController.resolve(workflow) !== null
+    const destinationCurrent = () => generation === catalogNavigationGeneration.current
+      && catalogController.getSnapshot().context.revision === origin.context.revision
+      && catalogController.getSnapshot().context.available
+      && resourceController.getSnapshot().authenticated && resourceController.getSnapshot().available
+    if (destination.kind === 'settings') {
+      catalogNavigationBusy.current = true; setCatalogNavigating(true); resourceController.open()
+      if (destination.selection.kind === 'local') await resourceController.listLocal()
+      if (!current()) { if (generation === catalogNavigationGeneration.current) { resourceController.close(); catalogNavigationBusy.current = false; setCatalogNavigating(false) }; return }
+      if (!resourceController.select(destination.selection) || !current()) { if (generation === catalogNavigationGeneration.current) { resourceController.close(); catalogNavigationBusy.current = false; setCatalogNavigating(false); catalogController.unavailable() }; return }
+      // Close only the source owner. Closing the destination here would erase
+      // its fresh exact selection or obscure retained unresolved operations.
+      catalogController.close()
+      if (!destinationCurrent()) { if (generation === catalogNavigationGeneration.current) { resourceController.close(); catalogNavigationBusy.current = false; setCatalogNavigating(false) }; return }
+      catalogNavigationBusy.current = false; setCatalogNavigating(false); setDialog('resource-settings'); return
+    }
+    if (!current()) return
+    if (destination.kind === 'saved_service') {
+      catalogController.close(); if (!destinationCurrent()) return
+      setCatalogSavedSelection(destination.id); setDialog('saved-services'); return
+    }
+    if (!currentTransfer(server.state, server.stale, destination.focus)) { catalogController.unavailable(); return }
+    catalogController.close(); if (!destinationCurrent()) return
+    resourceController.close(); if (!destinationCurrent()) return
+    setDialog(null)
+    // Catalog navigation stays in memory; no IDs enter URL/history/storage.
+    setSelectedId(destination.focus.peerId); setMapVisible(false); setDetails(false); setDeviceSection('exchange'); setTransferFocus(destination.focus)
+  }
+  useEffect(() => {
+    if (transferFocus && (server.auth !== 'ready' || !currentTransfer(state, server.stale, transferFocus))) {
+      setTransferFocus(null); setCatalogNavigationMissing(server.auth === 'ready')
+    }
+  }, [transferFocus, state, server.stale, server.auth])
   const removeService = (id: string, mode: ServiceMode) => { setRemoval({ id, mode }); openDialog('remove-service') }
   const openSavedService = (mode: ServiceMode, action: SavedServiceAction) => { server.setError(null); setServiceSource(action); setAdvertisedServiceId(undefined); setDialog(mode) }
   const openAdvertisedService = (id: string) => {
@@ -204,20 +354,23 @@ export function App() {
     server.setError(null); setServiceSource(undefined); setAdvertisedServiceId(id); setDialog('connect')
   }
   const serviceDraftKey = `${peer?.id}:${dialog}:${serviceSource ? `${serviceSource.id}:${serviceSource.intent}` : advertisedServiceId ? `advertised:${advertisedServiceId}` : 'new'}`
-  return <div className="app-shell"><header className={`app-header ${server.auth === 'ready' ? 'has-navigation' : ''}`}><Logo /><span className="header-tagline">{t('appTagline')}</span>{server.auth === 'ready' && <nav className="primary-nav" aria-label={t('workspaceViews')}><Button variant="ghost" className="devices-view-button" aria-current={!mapVisible || networkView === 'list' ? 'page' : undefined} onClick={() => navigatePeer(null, 'map', false, 'list')}><Icon name="monitor" size={15} />{t('deviceListView')}</Button><Button variant="ghost" className="network-map-button" aria-current={mapVisible && networkView === 'diagram' ? 'page' : undefined} onClick={() => navigatePeer(null, 'map', false, 'diagram')}><Icon name="globe" size={15} />{t('networkView')}</Button><Button variant="ghost" aria-haspopup="dialog" aria-label={definitionText(locale, 'title')} onClick={() => openDialog('saved-services')}><Icon name="link" size={15} />{definitionText(locale, 'navTitle')}</Button></nav>}<div className="header-actions">{state && <div className="self-status" title={server.stale ? t('responseUnconfirmed') : networkLabel(state.self.status, t)}><span className={`status-dot ${!server.stale && networkReady ? 'is-online' : ''}`} /><span>{state.self.name}</span></div>}<button className="locale-toggle" type="button" onClick={() => setLocalePreference(locale === 'ja' ? 'en' : 'ja')} aria-label={t(locale === 'ja' ? 'switchToEnglish' : 'switchToJapanese')}>{locale === 'ja' ? 'EN' : '日本語'}</button><IconButton icon="settings" label={t('settings')} onClick={() => openDialog('preferences')} /></div></header>
+  return <div className="app-shell"><header className={`app-header ${server.auth === 'ready' ? 'has-navigation' : ''}`}><Logo /><span className="header-tagline">{t('appTagline')}</span>{server.auth === 'ready' && <nav className="primary-nav" aria-label={t('workspaceViews')}><Button variant="ghost" className="devices-view-button" aria-current={!mapVisible || networkView === 'list' ? 'page' : undefined} onClick={() => navigatePeer(null, 'map', false, 'list')}><Icon name="monitor" size={15} />{t('deviceListView')}</Button><Button variant="ghost" className="network-map-button" aria-current={mapVisible && networkView === 'diagram' ? 'page' : undefined} onClick={() => navigatePeer(null, 'map', false, 'diagram')}><Icon name="globe" size={15} />{t('networkView')}</Button><Button variant="ghost" aria-haspopup="dialog" onClick={() => openDialog('resource-catalog')}>{catalogText(locale, 'title')}</Button><Button variant="ghost" aria-haspopup="dialog" onClick={() => openDialog('resource-group')}>{groupText(locale, 'title')}</Button><Button variant="ghost" aria-haspopup="dialog" aria-label={definitionText(locale, 'title')} onClick={() => openDialog('saved-services')}><Icon name="link" size={15} />{definitionText(locale, 'navTitle')}</Button></nav>}<div className="header-actions">{state && <div className="self-status" title={server.stale ? t('responseUnconfirmed') : networkLabel(state.self.status, t)}><span className={`status-dot ${!server.stale && networkReady ? 'is-online' : ''}`} /><span>{state.self.name}</span></div>}<button className="locale-toggle" type="button" onClick={() => setLocalePreference(locale === 'ja' ? 'en' : 'ja')} aria-label={t(locale === 'ja' ? 'switchToEnglish' : 'switchToJapanese')}>{locale === 'ja' ? 'EN' : '日本語'}</button><IconButton icon="settings" label={t('settings')} onClick={() => openDialog('preferences')} /></div></header>
     {server.auth === 'checking' && <main className="loading-screen"><span className="spinner" /><p>{t('checking')}</p>{server.error != null && <><ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} /><Button onClick={() => server.refresh(true)}><Icon name="refresh" />{t('retry')}</Button></>}</main>}
     {server.auth === 'locked' && <Login t={t} server={server} />}
     {server.auth === 'ready' && state && <main className={`workspace ${selectedId || mapVisible ? 'device-selected' : ''} ${details && peer ? 'has-details' : ''}`}><nav className="device-sidebar" aria-label={t('devices')}><div className="sidebar-top"><div className="sidebar-title"><h1>{t('devices')}</h1><span className="count-pill">{query || filter !== 'all' ? `${visiblePeers.length} / ${state.peers.length}` : state.peers.length}</span><IconButton icon="plus" label={t('addDevice')} onClick={() => openDialog('network')} /></div><label className="device-search"><span className="control-label">{t('searchDevices')}</span><span className="search-field"><Icon name="search" size={16} /><input type="search" placeholder={t('searchDevices')} aria-label={t('searchDevices')} value={query} onChange={event => setQuery(event.target.value)} /></span></label><div className="segmented network-filter" role="group" aria-label={t('networks')}>{(['all', 'direct-lan', 'lan', 'tailnet'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(value === 'lan' ? 'nearby' : value)}</button>)}</div>{(query || filter !== 'all') && <Button variant="ghost" className="clear-filters" onClick={clearFilters}>{t('clearFilters')}</Button>}</div>
       <div className="device-list">{visiblePeers.length ? visiblePeers.map(item => <button type="button" key={item.id} className={`device-row ${item.id === selectedId ? 'selected' : ''}`} aria-current={item.id === selectedId ? 'true' : undefined} onClick={() => { navigatePeer(item.id); server.setError(null) }}><Avatar peer={item} stale={server.stale} /><span className="device-copy"><strong>{item.name}</strong><small><span>{item.networks.map(network => t(network)).join(' · ')}</span><span>·</span><span>{t(server.stale || !item.online ? peerPresenceKey(item, server.stale) : peerPath(item, now))}</span></small><span className={`device-permission ${peerCommunicationAllowed(item) ? 'is-trusted' : ''}`}><Icon name={item.autosave?.paused ? 'stop' : 'shield'} size={11} />{t(peerPermissionKey(item))}{!item.bridge && <span> · {t('serviceUnconfirmed')}</span>}</span></span><Icon name="chevron" size={14} /></button>) : <div className="sidebar-empty"><Icon name="monitor" size={28} /><strong>{t(state.peers.length ? 'noMatches' : 'noDevices')}</strong><p>{t(state.peers.length ? 'noMatchesHint' : 'noDevicesHint')}</p>{state.peers.length ? <Button onClick={clearFilters}>{t('clearFilters')}</Button> : <Button onClick={() => openDialog('network')}>{t('addDevice')}</Button>}</div>}</div><div className="sidebar-footer"><button type="button" onClick={() => openDialog('network')}><Icon name="globe" size={15} /><span>{activeNetworks.length ? activeNetworks.map(network => t(network)).join(' · ') : t('disabledNetwork')}</span><Icon name="chevron" size={13} /></button><span>{server.updatedAt && `${t('lastUpdated')} ${timestamp(server.updatedAt.toISOString(), locale)}`}</span></div>
-    </nav><section className="main-panel"><div className="main-alerts">{api.receivingBlocked(state) && !peer && <ReceiveRecoveryNotice state={state} locale={locale} onReview={() => openDialog('receive-recovery')} />}{uploadActivity && (mapVisible || deviceSection !== 'exchange' || uploadActivity.peerId !== peer?.id) && <div className="background-upload" role="status"><Icon name="upload" /><div><strong>{t('staging')}</strong><p>{t('to')}: {state.peers.find(item => item.id === uploadActivity.peerId)?.name || t('unavailable')}</p><progress {...(uploadActivity.total ? { value: uploadActivity.loaded, max: uploadActivity.total } : {})} aria-label={t('staging')} /></div><Button variant="ghost" onClick={uploadActivity.cancel}>{t('cancel')}</Button></div>}<NetworkDiagnosticNotice self={state.self} locale={locale} t={t} stale={server.stale} reviewNetwork={() => openDialog('network')} reviewCapacity={() => openDialog('policy')} refresh={() => { void server.refresh(true) }} />{server.stale && <div className="stale-banner" role="status"><Icon name="alert" /><span>{t('stale')}</span><Button onClick={() => server.refresh(true)}>{t('refresh')}</Button></div>}{server.error != null && !dialog && <ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} onDismiss={() => server.setError(null)} t={t} />}</div>{mapVisible ? <><div className="map-mobile-nav"><Button variant="ghost" onClick={() => { navigatePeer(null); setDetails(false) }}><Icon name="back" size={16} />{t('back')}</Button>{(query || filter !== 'all') && <Button variant="ghost" className="clear-filters" onClick={clearFilters}>{t('clearFilters')}</Button>}</div><NetworkGraph state={state} stale={server.stale} now={now} visiblePeers={visiblePeers} onClearFilters={clearFilters} locale={locale} view={networkView} onViewChange={value => navigatePeer(selectedId, 'map', details, value)} selectedPeerId={selectedId} onSelectPeer={id => navigatePeer(id, 'map', true)} onSelectSelf={() => openDialog('network')} /></> : peer ? <><header className="conversation-header"><IconButton className="mobile-back" icon="back" label={t('back')} onClick={() => { navigatePeer(null); setDetails(false) }} /><Avatar peer={peer} stale={server.stale} /><div className="grow"><h2>{peer.name}</h2><p><span className={`status-dot ${!server.stale && peer.online ? 'is-online' : ''}`} />{t(peerPresenceKey(peer, server.stale))}<span>·</span>{t(peerPath(peer, now, server.stale))}{peer.trusted && peer.verified && <Icon name="shield" size={13} />}</p></div>{deviceSection === 'exchange' && <Button className="connect-header" disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => openDialog('connect')}><Icon name="link" size={15} />{t('connectService')}</Button>}<IconButton icon="info" label={t(details ? 'closeDetails' : 'openDetails')} aria-expanded={details} onClick={() => details ? closeDetails() : navigatePeer(peer.id, 'chat', true)} /></header><nav className="device-sections segmented" aria-label={t('deviceActions')}><button type="button" aria-pressed={deviceSection === 'services'} onClick={() => changeSection('services')}><Icon name="link" size={16} />{t('services')}</button><button type="button" aria-pressed={deviceSection === 'exchange'} onClick={() => changeSection('exchange')}><Icon name="folder" size={16} />{t('filesAndMessages')}</button></nav>{deviceSection === 'services' && <section className="device-overview" aria-label={t('deviceOverview')}><details className="overview-guide"><summary><Icon name="info" size={15} />{t('connectionGuide')}</summary><p className="muted">{t('deviceOverviewHint')}</p></details><div className="overview-toolbar"><div className="overview-action-group" role="group" aria-label={t('services')}><div className="overview-actions"><Button variant="primary" disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => openDialog('connect')}><Icon name="link" />{t('connectService')}</Button><Button disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => openDialog('share')}><Icon name="upload" />{t('shareService')}</Button></div></div><div className="overview-action-group overview-exchange-group" role="group" aria-label={t('filesAndMessages')}><div className="overview-actions"><Button variant="ghost" onClick={() => { changeSection('exchange'); document.querySelector<HTMLInputElement>('.conversation-slot input[type=file]')?.click() }} disabled={!api.canExchange(peer) || server.stale}><Icon name="folder" />{t('sendFiles')}</Button><Button variant="ghost" onClick={() => { changeSection('exchange'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()) }}><Icon name="message" />{t('openMessages')}</Button></div></div></div>{exchangeReason && <p className="scope-note">{t(exchangeReason)}</p>}{!api.canUseServices(peer, state) && <p className="scope-note">{t('serviceNetworkNeeded')}</p>}<section aria-label={t('services')}><ServiceRows peer={peer} state={state} t={t} locale={locale} server={server} savedService={openSavedService} removeService={removeService} /></section>{Boolean(state.availableServices?.some(item => item.peerId === peer.id)) && <section><h3>{t('availableServices')}</h3><p className="small muted">{t('discoveredServicesHint')}</p><ul className="available-services">{state.availableServices!.filter(item => item.peerId === peer.id).map(item => <li key={item.id}><div className="available-service-copy"><strong>{item.name}</strong><span className="code-value">{item.network.toUpperCase()} {item.ports || item.remotePort}</span></div><Button disabled={server.stale || !api.canUseServices(peer, state)} aria-label={`${serviceText(locale, 'reviewConnection')}: ${item.name}`} onClick={() => openAdvertisedService(item.id)}>{serviceText(locale, 'reviewConnection')}<Icon name="arrow" size={14} /></Button></li>)}</ul></section>}</section>}</> : <div className="main-empty"><div className="empty-network" aria-hidden="true"><span><Icon name="monitor" size={36} /></span><i /><span><Icon name="link" size={31} /></span></div><span className="eyebrow">sobalink</span><h2>{t('selectDevice')}</h2><p>{t('selectDeviceHint')}</p><div className="overview-summary"><span><strong>{state.peers.filter(item => item.online).length}</strong>{t('onlineDevices')}</span><span><strong>{state.services.filter(item => item.status === 'active').length}</strong>{t('readyConnections')}</span><span><strong>{state.shares.filter(item => item.status === 'active').length}</strong>{t('activeShares')}</span></div><Button onClick={() => openDialog('network')}><Icon name="plus" size={16} />{t('addDevice')}</Button></div>}{conversationPeer && <div className="conversation-slot" hidden={mapVisible || !peer || deviceSection !== 'exchange'}><Conversation onReviewReceiving={() => openDialog('receive-recovery')} receiveDestinations={receiveDestinations} setReceiveDestinations={setReceiveDestinations} drafts={drafts} setDrafts={setDrafts} batches={batches} setBatches={setBatches} onUploadChange={setUploadActivity} peer={conversationPeer} state={state} t={t} locale={locale} server={server} onTrust={() => void server.run('peer.trust', { peerId: conversationPeer.id, trusted: true }, `trust:${conversationPeer.id}`)} /></div>}</section>{details && peer && <Details peer={peer} now={now} state={state} t={t} locale={locale} server={server} close={closeDetails} reviewReceiving={() => openDialog('receive-recovery')} autosave={() => openDialog('autosave')} editAutosave={() => openDialog('autosave-folder')} savedService={openSavedService} removeService={removeService} pause={() => openDialog('pause-peer')} revokePairing={() => openDialog('revoke-pairing')} service={openDialog} conversation={mapVisible ? () => { navigatePeer(peer.id); changeSection('services'); setDetails(false) } : undefined} />}</main>}
-    {dialog === 'saved-services' && <SavedServicesDialog server={server} locale={locale} t={t} onClose={() => setDialog(null)} />}
+    </nav><section className="main-panel"><div className="main-alerts">{catalogNavigationMissing && <p role="status">{catalogText(locale, 'missingSelection')}</p>}{api.receivingBlocked(state) && !peer && <ReceiveRecoveryNotice state={state} locale={locale} onReview={() => openDialog('receive-recovery')} />}{uploadActivity && (mapVisible || deviceSection !== 'exchange' || uploadActivity.peerId !== peer?.id) && <div className="background-upload" role="status"><Icon name="upload" /><div><strong>{t('staging')}</strong><p>{t('to')}: {state.peers.find(item => item.id === uploadActivity.peerId)?.name || t('unavailable')}</p><progress {...(uploadActivity.total ? { value: uploadActivity.loaded, max: uploadActivity.total } : {})} aria-label={t('staging')} /></div><Button variant="ghost" onClick={uploadActivity.cancel}>{t('cancel')}</Button></div>}<NetworkDiagnosticNotice self={state.self} locale={locale} t={t} stale={server.stale} reviewNetwork={() => openDialog('network')} reviewCapacity={() => openDialog('policy')} refresh={() => { void server.refresh(true) }} />{server.stale && <div className="stale-banner" role="status"><Icon name="alert" /><span>{t('stale')}</span><Button onClick={() => server.refresh(true)}>{t('refresh')}</Button></div>}{server.error != null && !dialog && <ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} onDismiss={() => server.setError(null)} t={t} />}</div>{mapVisible ? <><div className="map-mobile-nav"><Button variant="ghost" onClick={() => { navigatePeer(null); setDetails(false) }}><Icon name="back" size={16} />{t('back')}</Button>{(query || filter !== 'all') && <Button variant="ghost" className="clear-filters" onClick={clearFilters}>{t('clearFilters')}</Button>}</div><NetworkGraph state={state} stale={server.stale} now={now} visiblePeers={visiblePeers} onClearFilters={clearFilters} locale={locale} view={networkView} onViewChange={value => navigatePeer(selectedId, 'map', details, value)} selectedPeerId={selectedId} onSelectPeer={id => navigatePeer(id, 'map', true)} onSelectSelf={() => openDialog('network')} /></> : peer ? <><header className="conversation-header"><IconButton className="mobile-back" icon="back" label={t('back')} onClick={() => { navigatePeer(null); setDetails(false) }} /><Avatar peer={peer} stale={server.stale} /><div className="grow"><h2>{peer.name}</h2><p><span className={`status-dot ${!server.stale && peer.online ? 'is-online' : ''}`} />{t(peerPresenceKey(peer, server.stale))}<span>·</span>{t(peerPath(peer, now, server.stale))}{peer.trusted && peer.verified && <Icon name="shield" size={13} />}</p></div>{deviceSection === 'exchange' && <Button className="connect-header" disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => openDialog('connect')}><Icon name="link" size={15} />{t('connectService')}</Button>}<IconButton icon="info" label={t(details ? 'closeDetails' : 'openDetails')} aria-expanded={details} onClick={() => details ? closeDetails() : navigatePeer(peer.id, 'chat', true)} /></header><nav className="device-sections segmented" aria-label={t('deviceActions')}><button type="button" aria-pressed={deviceSection === 'services'} onClick={() => changeSection('services')}><Icon name="link" size={16} />{t('services')}</button><button type="button" aria-pressed={deviceSection === 'exchange'} onClick={() => changeSection('exchange')}><Icon name="folder" size={16} />{t('filesAndMessages')}</button></nav>{deviceSection === 'services' && <section className="device-overview" aria-label={t('deviceOverview')}><details className="overview-guide"><summary><Icon name="info" size={15} />{t('connectionGuide')}</summary><p className="muted">{t('deviceOverviewHint')}</p></details><div className="overview-toolbar"><div className="overview-action-group" role="group" aria-label={t('services')}><div className="overview-actions"><Button variant="primary" disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => openDialog('connect')}><Icon name="link" />{t('connectService')}</Button><Button disabled={!api.canUseServices(peer, state) || server.stale} onClick={() => openDialog('share')}><Icon name="upload" />{t('shareService')}</Button></div></div><div className="overview-action-group overview-exchange-group" role="group" aria-label={t('filesAndMessages')}><div className="overview-actions"><Button variant="ghost" onClick={() => { changeSection('exchange'); document.querySelector<HTMLInputElement>('.conversation-slot input[type=file]')?.click() }} disabled={!api.canExchange(peer) || server.stale}><Icon name="folder" />{t('sendFiles')}</Button><Button variant="ghost" onClick={() => { changeSection('exchange'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus()) }}><Icon name="message" />{t('openMessages')}</Button></div></div></div>{exchangeReason && <p className="scope-note">{t(exchangeReason)}</p>}{!api.canUseServices(peer, state) && <p className="scope-note">{t('serviceNetworkNeeded')}</p>}<section aria-label={t('services')}><ServiceRows peer={peer} state={state} t={t} locale={locale} server={server} savedService={openSavedService} removeService={removeService} /></section>{Boolean(state.availableServices?.some(item => item.peerId === peer.id)) && <section><h3>{t('availableServices')}</h3><p className="small muted">{t('discoveredServicesHint')}</p><ul className="available-services">{state.availableServices!.filter(item => item.peerId === peer.id).map(item => <li key={item.id}><div className="available-service-copy"><strong>{item.name}</strong><span className="code-value">{item.network.toUpperCase()} {item.ports || item.remotePort}</span></div><Button disabled={server.stale || !api.canUseServices(peer, state)} aria-label={`${serviceText(locale, 'reviewConnection')}: ${item.name}`} onClick={() => openAdvertisedService(item.id)}>{serviceText(locale, 'reviewConnection')}<Icon name="arrow" size={14} /></Button></li>)}</ul></section>}</section>}</> : <div className="main-empty"><div className="empty-network" aria-hidden="true"><span><Icon name="monitor" size={36} /></span><i /><span><Icon name="link" size={31} /></span></div><span className="eyebrow">sobalink</span><h2>{t('selectDevice')}</h2><p>{t('selectDeviceHint')}</p><div className="overview-summary"><span><strong>{state.peers.filter(item => item.online).length}</strong>{t('onlineDevices')}</span><span><strong>{state.services.filter(item => item.status === 'active').length}</strong>{t('readyConnections')}</span><span><strong>{state.shares.filter(item => item.status === 'active').length}</strong>{t('activeShares')}</span></div><Button onClick={() => openDialog('network')}><Icon name="plus" size={16} />{t('addDevice')}</Button></div>}{conversationPeer && <div className="conversation-slot" hidden={mapVisible || !peer || deviceSection !== 'exchange'}><Conversation focusTarget={transferFocus} onReviewReceiving={() => openDialog('receive-recovery')} receiveDestinations={receiveDestinations} setReceiveDestinations={setReceiveDestinations} drafts={drafts} setDrafts={setDrafts} batches={batches} setBatches={setBatches} onUploadChange={setUploadActivity} peer={conversationPeer} state={state} t={t} locale={locale} server={server} onTrust={() => void server.run('peer.trust', { peerId: conversationPeer.id, trusted: true }, `trust:${conversationPeer.id}`)} /></div>}</section>{details && peer && <Details peer={peer} now={now} state={state} t={t} locale={locale} server={server} close={closeDetails} reviewReceiving={() => openDialog('receive-recovery')} autosave={() => openDialog('autosave')} editAutosave={() => openDialog('autosave-folder')} savedService={openSavedService} removeService={removeService} pause={() => openDialog('pause-peer')} revokePairing={() => openDialog('revoke-pairing')} service={openDialog} conversation={mapVisible ? () => { navigatePeer(peer.id); changeSection('services'); setDetails(false) } : undefined} />}</main>}
+    {dialog === 'resource-group' && <ResourceGroupDialog controller={groupController} locale={locale} t={t} onClose={() => setDialog(null)} onSelectSingle={openGroupSingle} />}
+    {dialog === 'resource-catalog' && <ResourceCatalogDialog controller={catalogController} locale={locale} t={t} onClose={closeCatalog} onNavigate={workflow => void navigateCatalog(workflow)} onOpenServiceConnections={openCatalogServiceConnections} navigating={catalogNavigating} />}
+    {dialog === 'saved-services' && <SavedServicesDialog initialSelection={catalogSavedSelection ? [catalogSavedSelection] : undefined} server={server} locale={locale} t={t} onClose={() => setDialog(null)} />}
     {dialog === 'remove-service' && removal && <RemoveDefinitionDialog key={removal.id} {...removal} server={server} locale={locale} t={t} onClose={() => setDialog(null)} />}
     {dialog === 'stop-shares' && <StopSharesDialog server={server} locale={locale} t={t} onClose={() => setDialog(null)} />}
     {dialog === 'startup' && <StartupGuide locale={locale} t={t} onClose={() => setDialog(null)} />}
     {dialog === 'advanced-connections' && state && <AdvancedConnectionsDialog server={server} locale={locale} t={t} onClose={() => setDialog(null)} />}
     {dialog === 'policy' && <PolicyDialog server={server} locale={locale} t={t} onClose={() => setDialog(null)} />}
+    {dialog === 'resource-settings' && <ResourceSettingsDialog controller={resourceController} initialPeerKey={resourceInitialPeerKey} onAddToGroup={addSelectedToGroup} addToGroupLabel={groupText(locale, 'addSelected')} locale={locale} t={t} onClose={() => setDialog(null)} />}
     {dialog === 'receive-recovery' && <ReceiveRecoveryDialog server={server} locale={locale} t={t} onClose={() => setDialog(null)} onBack={() => openDialog('preferences')} />}
-    {dialog === 'preferences' && <Preferences recoveryLocale={locale} onReviewReceiving={() => openDialog('receive-recovery')} onStartup={() => openDialog('startup')} startupLabel={lifecycleText(locale, 'startup')} onAdvancedConnections={() => openDialog('advanced-connections')} advancedConnectionsLabel={advancedText(locale, 'title')} onStopSharing={() => openDialog('stop-shares')} stopSharingLabel={serviceText(locale, 'stopShares')} onPolicy={() => openDialog('policy')} policyLabel={policyText(locale, 'title')} directoryDraft={directoryDrafts.preferences} onDirectoryDraft={value => setDirectoryDrafts(current => ({ ...current, preferences: value }))} server={server} t={t} onClose={() => setDialog(null)} locale={localePreference} theme={theme} setLocale={setLocalePreference} setTheme={setTheme} />}
+    {dialog === 'preferences' && <Preferences onResourceSettings={() => openDialog('resource-settings')} resourceSettingsLabel={resourceText(locale, 'title')} recoveryLocale={locale} onReviewReceiving={() => openDialog('receive-recovery')} onStartup={() => openDialog('startup')} startupLabel={lifecycleText(locale, 'startup')} onAdvancedConnections={() => openDialog('advanced-connections')} advancedConnectionsLabel={advancedText(locale, 'title')} onStopSharing={() => openDialog('stop-shares')} stopSharingLabel={serviceText(locale, 'stopShares')} onPolicy={() => openDialog('policy')} policyLabel={policyText(locale, 'title')} directoryDraft={directoryDrafts.preferences} onDirectoryDraft={value => setDirectoryDrafts(current => ({ ...current, preferences: value }))} server={server} t={t} onClose={() => setDialog(null)} locale={localePreference} theme={theme} setLocale={setLocalePreference} setTheme={setTheme} />}
     {dialog === 'network' && <NetworkDialog locale={locale} directLanDraft={directLanDraft} setDirectLanDraft={setDirectLanDraft} lanDraft={lanDraft} setLanDraft={setLanDraft} onViewPeer={id => { navigatePeer(id, 'chat', true); setDialog(null) }} t={t} onClose={() => setDialog(null)} server={server} />}
     {(dialog === 'autosave' || dialog === 'autosave-folder') && peer && <AutosaveDialog directoryDraft={directoryDrafts[`autosave:${peer.id}`]} onDirectoryDraft={value => setDirectoryDrafts(current => ({ ...current, [`autosave:${peer.id}`]: value }))} locale={locale} edit={dialog === 'autosave-folder'} t={t} onClose={() => setDialog(null)} server={server} peer={peer} />}
     {dialog === 'pause-peer' && peer && <PausePeerDialog t={t} onClose={() => setDialog(null)} server={server} peer={peer} />}

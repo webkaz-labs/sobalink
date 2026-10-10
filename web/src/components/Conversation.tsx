@@ -1,3 +1,5 @@
+import type { TransferFocus } from '../catalog/types'
+import { currentTransfer } from '../catalog/workflow'
 import { ReceiveRecoveryNotice } from './ReceiveRecovery'
 import { peerPresenceKey } from '../peer-status'
 import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction, type DragEvent, type KeyboardEvent } from 'react'
@@ -43,7 +45,7 @@ function TransferCard({ transfer, peer, t, locale, server, destination, setDesti
 
 export interface DraftBatch { selection: api.UploadSelection; requestId: string }
 export interface UploadActivity { peerId: string; loaded: number; total: number; cancel: () => void }
-export function Conversation({ peer, state, t, locale, server, onTrust, drafts, setDrafts, batches, setBatches, receiveDestinations, setReceiveDestinations, onUploadChange, onReviewReceiving }: { onReviewReceiving?: () => void; peer: api.Peer; state: api.State; t: Translate; locale: api.Locale; server: Server; onTrust: () => void; drafts: Record<string, string>; setDrafts: Dispatch<SetStateAction<Record<string, string>>>; batches: Record<string, DraftBatch | undefined>; setBatches: Dispatch<SetStateAction<Record<string, DraftBatch | undefined>>>; receiveDestinations: Record<string, string | undefined>; setReceiveDestinations: Dispatch<SetStateAction<Record<string, string | undefined>>>; onUploadChange?: (activity: UploadActivity | null) => void }) {
+export function Conversation({ peer, state, t, locale, server, onTrust, drafts, setDrafts, batches, setBatches, receiveDestinations, setReceiveDestinations, onUploadChange, onReviewReceiving, focusTarget }: { focusTarget?: TransferFocus | null; onReviewReceiving?: () => void; peer: api.Peer; state: api.State; t: Translate; locale: api.Locale; server: Server; onTrust: () => void; drafts: Record<string, string>; setDrafts: Dispatch<SetStateAction<Record<string, string>>>; batches: Record<string, DraftBatch | undefined>; setBatches: Dispatch<SetStateAction<Record<string, DraftBatch | undefined>>>; receiveDestinations: Record<string, string | undefined>; setReceiveDestinations: Dispatch<SetStateAction<Record<string, string | undefined>>>; onUploadChange?: (activity: UploadActivity | null) => void }) {
   const ft = transferTranslator(locale)
   const [collecting, setCollecting] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -65,6 +67,14 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
   batchesRef.current = batches
   const stateRef = useRef(state)
   stateRef.current = state
+  const focusedCatalogTarget = useRef<TransferFocus | null>(null)
+  useEffect(() => {
+    if (focusedCatalogTarget.current === focusTarget) return
+    if (!focusTarget || focusTarget.peerId !== peer.id || !currentTransfer(state, server.stale, focusTarget)) return
+    const card = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-transfer-id]') || [])
+      .find(node => node.dataset.transferId === focusTarget.id && node.dataset.transferDirection === focusTarget.direction)
+    if (card) { card.focus(); focusedCatalogTarget.current = focusTarget }
+  }, [focusTarget, peer.id, state, server.stale])
   const message = drafts[peer.id] || ''
   const batch = batches[peer.id]
   const budgets = api.exchangeBudgets(state)
@@ -184,7 +194,7 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
     {onReviewReceiving && <ReceiveRecoveryNotice state={state} locale={locale} onReview={onReviewReceiving} />}
     <div className="timeline" ref={listRef} role="log" aria-label={peer.name} aria-live="polite" aria-relevant="additions text" onScroll={() => { const el = listRef.current!; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100 }}>
       {timeline.length === 0 && <div className="conversation-empty"><div className="empty-illustration"><div className="hello-bubble"><Icon name={peer.bridge ? 'message' : 'link'} size={32} /></div><span className="tiny-spark">✦</span></div><h2>{t(peer.bridge ? 'noConversation' : 'connectService')}</h2><p>{t(peer.bridge ? 'noConversationHint' : 'appNotConfirmed')}</p></div>}
-      {timeline.map(item => <div key={`${item.type}:${item.value.id}`} className={`timeline-item ${item.value.direction}`}>
+      {timeline.map(item => <div key={`${item.type}:${item.value.direction}:${item.value.id}`} className={`timeline-item ${item.value.direction}`} tabIndex={item.type === 'transfer' ? -1 : undefined} data-transfer-id={item.type === 'transfer' ? item.value.id : undefined} data-transfer-direction={item.type === 'transfer' ? item.value.direction : undefined}>
         {item.type === 'message' ? <div className="message-bubble"><p>{item.value.text}</p>{item.value.error && <small className="field-error">{item.value.error}</small>}</div> : <TransferCard transfer={item.value} peer={peer} locale={locale} t={t} server={server} destination={receiveDestinations[item.value.id]} setDestination={value => setReceiveDestinations(current => ({ ...current, [item.value.id]: value }))} />}
         <div className="message-meta"><time dateTime={item.value.createdAt}>{timestamp(item.value.createdAt, locale)}</time>{item.type === 'message' && <><span>·</span><span className={item.value.status === 'failed' ? 'field-error' : ''}>{t(item.value.status)}</span></>}</div>
       </div>)}

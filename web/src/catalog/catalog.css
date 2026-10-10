@@ -1,0 +1,10 @@
+.resource-catalog { display: grid; gap: 1rem; min-width: 0; }
+.resource-catalog fieldset { display: grid; gap: .75rem; min-width: 0; }
+.resource-catalog label { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.resource-catalog select, .resource-catalog input { max-width: 100%; min-width: 0; }
+.resource-catalog section { border-top: 1px solid var(--border); padding-top: 1rem; }
+.resource-catalog article { border: 1px solid var(--border); border-radius: .5rem; padding: .75rem; margin-top: .75rem; overflow-wrap: anywhere; }
+.catalog-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.catalog-identity { overflow-wrap: anywhere; font-family: monospace; }
+.resource-catalog dd { margin-inline-start: 0; }
+@media (max-width: 540px) { .resource-catalog select, .resource-catalog input:not([type=checkbox]) { width: 100%; } }

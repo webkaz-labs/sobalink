@@ -1,3 +1,4 @@
+import { catalogText } from '../catalog/i18n'
 import './SavedServicesDialog.css'
 import { PortProposalsDialog } from './PortProposalsDialog'
 import { portProposalText } from '../port-proposals-i18n'
@@ -39,7 +40,7 @@ function readExport(value: unknown): DefinitionExport {
   if (!data || data.disabled !== true || !/^[0-9a-f]{64}$/.test(data.revision)) throw new Error('invalid_response')
   return { ...data, profile: readDefinitionBundle(data.profile) }
 }
-export function SavedServicesDialog({ server, locale, t, onClose }: { server: Server; locale: Locale; t: Translate; onClose: () => void }) {
+export function SavedServicesDialog({ server, locale, t, onClose, initialSelection }: { initialSelection?: readonly [string]; server: Server; locale: Locale; t: Translate; onClose: () => void }) {
   const d = (key: string) => definitionText(locale, key)
   const e = (key: string) => savedEditorText(locale, key)
   const c = (key: string) => clientText(locale, key)
@@ -53,9 +54,11 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
   const [removing, setRemoving] = useState<{ id: string; mode: ServiceMode }>()
   const alive = useAlive()
   const [bundle, setBundle] = useState<DefinitionExport>()
-  const [selected, setSelected] = useState<string[]>([])
+  const [selected, setSelected] = useState<string[]>(() => initialSelection?.length === 1 ? [initialSelection[0]] : [])
+  const initialTarget = useRef(initialSelection?.length === 1 ? initialSelection[0] : null)
+  const [missingInitial, setMissingInitial] = useState(false)
   const [query, setQuery] = useState('')
-  const [selectedOnly, setSelectedOnly] = useState(false)
+  const [selectedOnly, setSelectedOnly] = useState(Boolean(initialSelection?.length === 1))
   const [favoritesOpen, setFavoritesOpen] = useState(false)
   const [favoriteIds, setFavoriteIds] = useState<string[]>()
   const [group, setGroup] = useState('')
@@ -92,6 +95,7 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
         // A group is an exact Core selection, including membership changes on reload.
         // If it was removed, retain only still-saved individual selections.
         const nextGroup = next.profile.groups?.find(item => item.name === (pendingGroup || group))
+        if (initialTarget.current) { setMissingInitial(!next.profile.services.some(service => service.id === initialTarget.current)); initialTarget.current = null }
         setBundle(next)
         setSelected(current => nextGroup ? [...nextGroup.serviceIds] : current.filter(id => next.profile.services.some(service => service.id === id)))
         setGroup(nextGroup?.name || '')
@@ -233,7 +237,7 @@ export function SavedServicesDialog({ server, locale, t, onClose }: { server: Se
   if (editor) return <SavedDefinitionEditor {...editor} services={services} server={server} locale={locale} t={t} onClose={() => setEditor(undefined)} onSaved={() => { setEditor(undefined); setStatus('savedDefinition'); setReload(value => value + 1) }} />
   if (removing) return <RemoveDefinitionDialog {...removing} server={server} locale={locale} t={t} onClose={() => { setRemoving(undefined); setReload(value => value + 1) }} />
   const code = (server.error as { code?: string })?.code || ''
-  return <Modal title={d('title')} onClose={close} t={t} wide><p className="muted">{d('intro')}</p>{server.error != null && <ErrorBanner message={d(code) || serviceText(locale, code) || c(code) || errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}{validation && <ErrorBanner message={d(validation)} t={t} />}{status && <p role="status" className="scope-note">{d(status)}</p>}
+  return <Modal title={d('title')} onClose={close} t={t} wide><p className="muted">{d('intro')}</p>{missingInitial && <p role="status">{catalogText(locale, 'missingSelection')}</p>}{server.error != null && <ErrorBanner message={d(code) || serviceText(locale, code) || c(code) || errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}{validation && <ErrorBanner message={d(validation)} t={t} />}{status && <p role="status" className="scope-note">{d(status)}</p>}
     {attempt && <SelectionAttemptStatus attempt={attempt} locale={locale} t={t} onRefresh={() => void refreshMemberStates()} onDismiss={invalidateReview} />}
     {!bundle ? <p role="status">{working ? t('loading') : t('unavailable')}</p> : <><div className="definition-toolbar"><Button type="button" disabled={blocked} onClick={() => openEditor('connect')}>{e('createForward')}</Button><Button type="button" disabled={blocked} onClick={() => openEditor('share')}>{e('createShare')}</Button></div>
       <section className="definition-navigation" aria-label={d('browseSaved')}>

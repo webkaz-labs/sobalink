@@ -238,7 +238,8 @@ def validate_resource_inspection_workflow(data):
     """
     workflow = data.decode('utf-8')
     workflow_metadata(workflow)
-    management_start, management_end = validate_resource_management_workflow(data)
+    management_start, _ = validate_resource_management_workflow(data)
+    _, group_end = validate_resource_group_catalog_workflow(data)
     expected = """      - name: Verify native remote resource inspection
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 12
@@ -291,8 +292,8 @@ def validate_resource_inspection_workflow(data):
             and workflow.index(recovery) < start < workflow.index(parallel)
             and end == management_start, 'native inspection must immediately precede management')
     # Opt-ins belong only to this child invocation, never the workflow/job env.
-    # The following management child has its own separately validated opt-ins.
-    outside = workflow[:start] + workflow[management_end:]
+    # Following management/group children have separately validated opt-ins.
+    outside = workflow[:start] + workflow[group_end:]
     require('SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE' not in outside
             and 'SOBALINK_RUN_ACTIVATION_NATIVE' not in outside,
             'native inspection opt-ins escaped their step')
@@ -300,6 +301,7 @@ def validate_resource_inspection_workflow(data):
 
 def validate_resource_management_workflow(data):
     """Require the reviewed serial three-case management invocation verbatim."""
+    group_start, group_end = validate_resource_group_catalog_workflow(data)
     workflow = data.decode('utf-8')
     workflow_metadata(workflow)
     expected = """      - name: Verify native remote resource management
@@ -347,10 +349,66 @@ def validate_resource_management_workflow(data):
     parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
     require(workflow.count(inspection) == 1 and workflow.count(parallel) == 1
             and workflow.index(inspection) < start < workflow.index(parallel)
-            and end == workflow.index(parallel), 'native management must precede the async region')
-    outside = workflow[:start] + workflow[end:]
+            and end == group_start, 'native management must immediately precede fixed-group catalog')
+    # The group child removes inherited management opt-in without enabling it.
+    outside = workflow[:start] + workflow[group_end:]
     require('SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE' not in outside,
             'native management opt-in escaped its step')
+    return start, end
+
+
+def validate_resource_group_catalog_workflow(data):
+    """Require the reviewed serial single-case fixed-group invocation verbatim."""
+    workflow = data.decode('utf-8')
+    workflow_metadata(workflow)
+    expected = """      - name: Verify native fixed-group resource catalog
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          actual = subprocess.check_output(["go", "env", "GOVERSION", "GOOS", "GOARCH"], text=True, timeout=30).splitlines()
+          if actual != ["go1.27.1", "${{ matrix.goos }}", "${{ matrix.goarch }}"]:
+              raise SystemExit("Native fixed-group catalog requires the exact Go toolchain and matrix target")
+          # Only this child receives the reviewed group opt-in and proxy isolation.
+          proxies = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "TS_PROXY")
+          unrelated = ("SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE", "SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE")
+          env = {name: value for name, value in os.environ.items()
+                 if name not in proxies and name not in unrelated}
+          env["SOBALINK_RUN_RESOURCE_GROUP_CATALOG_NATIVE"] = "reviewed-three-core-loopback-v1"
+          env["SOBALINK_RUN_ACTIVATION_NATIVE"] = "1"
+          # One fixed two-target run on three owned in-process loopback Cores.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py", "--exact",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestResourceGroupCatalogNativeFixedTwoTargetOneShot",
+              "--",
+              "go", "test", "-race", "-count=1", "-v", "-timeout=4m",
+              "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,directlan_activation_native,resource_inspection_native,resource_management_native,resource_group_catalog_native",
+              "-run=^TestResourceGroupCatalogNativeFixedTwoTargetOneShot$",
+              "./internal/core",
+          ], env=env, check=True, timeout=6 * 60)
+          PYTHON
+"""
+    marker = '      - name: Verify native fixed-group resource catalog\n'
+    require(workflow.count(marker) == 1, 'missing or duplicate native fixed-group catalog gate')
+    start = workflow.index(marker)
+    following = re.search(r'^      - ', workflow[start + len(marker):], re.M)
+    require(following is not None, 'missing serial native fixed-group catalog boundary')
+    end = start + len(marker) + following.start()
+    block = re.sub(r'(?:^ *#[^\n]*\n|^ *\n)+\Z', '', workflow[start:end], flags=re.M)
+    require(block == expected, 'invalid native fixed-group catalog execution policy')
+    management = '      - name: Verify native remote resource management\n'
+    parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
+    require(workflow.count(management) == 1 and workflow.count(parallel) == 1
+            and workflow.index(management) < start < workflow.index(parallel)
+            and end == workflow.index(parallel), 'native fixed-group catalog must precede the async region')
+    outside = workflow[:start] + workflow[end:]
+    require('SOBALINK_RUN_RESOURCE_GROUP_CATALOG_NATIVE' not in outside,
+            'native fixed-group catalog opt-in escaped its step')
     return start, end
 
 
@@ -377,7 +435,8 @@ def required_jobs(sources):
                 and len(set(value)) == len(value), 'invalid required-step policy')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
     require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',
-                                         'Verify native remote resource management'),
+                                         'Verify native remote resource management',
+                                         'Verify native fixed-group resource catalog'),
             'unexpected full-only gate policy')
     native_steps = values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
     require(len(set(native_steps)) == len(native_steps), 'overlapping required native gates')

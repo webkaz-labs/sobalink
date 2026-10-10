@@ -15,6 +15,8 @@ import (
 
 const resourceHelpEN = `Local transfer settings resource (source build)
 
+  soba resource catalog --help
+  soba resource group --help
   soba resource grant --help
   soba resource remote --help
   soba resource list [--json]
@@ -37,6 +39,8 @@ it does not validate the current resource or produce an authoritative review.`
 
 const resourceHelpJA = `ローカル転送設定リソース（ソースビルド）
 
+  soba resource catalog --help
+  soba resource group --help
   soba resource grant --help
   soba resource remote --help
   soba resource list [--json]
@@ -61,6 +65,12 @@ func resourceCLI(ctx context.Context, args []string, dir string, ja, dryRun bool
 	if len(args) == 0 || len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		_, err := fmt.Fprintln(out, text(ja, resourceHelpEN, resourceHelpJA))
 		return err
+	}
+	if args[0] == "catalog" {
+		return resourceCatalogCLI(ctx, args[1:], dir, ja, dryRun, out, client)
+	}
+	if args[0] == "group" {
+		return resourceGroupCLI(ctx, args[1:], dir, ja, dryRun, out, client)
 	}
 	if args[0] == "remote" {
 		return resourceRemoteCLI(ctx, args[1:], dir, ja, dryRun, out, client)
@@ -169,6 +179,7 @@ func resourceCLIChoice(value string, ja bool) (capacity.Choice, error) {
 
 // Preserve the server error code through Unwrap; machine errors remain unchanged.
 func localizeResourceError(ja bool, err error) error {
+	err = localizeResourceCollectionError(ja, err)
 	if !ja {
 		return err
 	}

@@ -17,13 +17,14 @@ import (
 const handshakeTimeout = 10 * time.Second
 
 type peerState struct {
-	peer            Peer
-	session         *peerSession
-	enginePeer      *device.OwnedPeer
-	g               *runtimeGeneration
-	binding         string                                // immutable; derived from the constructor context
-	authenticated   atomic.Pointer[managedAuthentication] // initially closed
-	managementEpoch managementEpochSlot                   // Node.mu; one current slot, never history
+	peer                Peer
+	session             *peerSession
+	enginePeer          *device.OwnedPeer
+	g                   *runtimeGeneration
+	binding             string                                // immutable; derived from the constructor context
+	authenticated       atomic.Pointer[managedAuthentication] // initially closed
+	managementEpoch     managementEpochSlot                   // Node.mu; one current slot, never history
+	resourceClientEpoch managementEpochSlot                   // Node.mu; separate outbound capture correlation
 }
 type service struct {
 	network string

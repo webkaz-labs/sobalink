@@ -1,4 +1,7 @@
+import type { GroupCommandName, GroupCommandPayloads } from './group/types'
 import type { EndpointCommand, EndpointPayload } from './direct-lan-endpoint'
+import type { ResourceCommandName, ResourceCommandPayloads } from './resource/types'
+import type { ResourceCatalogCommandPayloads } from './catalog/types'
 export type TransportBackend = 'lan' | 'tailnet' | 'direct-lan'
 export type Network = TransportBackend | 'mixed'
 export type Locale = 'en' | 'ja'
@@ -146,6 +149,8 @@ export interface DirectLanInvitationPreview { hostPublicKey: string; hostName: s
 export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string; availability?: "ready" | "confirmed-unavailable" | "authorization-required" | "readiness-unconfirmed"; restartRequired?: boolean }[] }
 export interface State {
   csrfToken: string
+  processId?: number
+  resourceCatalogProcessId?: string
   self: { name: string; status: string; error?: string; errorCode?: string; guidance?: DiagnosticGuidance | null; receiveDirectory?: string; networks?: Network[] }
   peers: Peer[]
   messages: Message[]
@@ -227,7 +232,7 @@ export interface GroupList { groups: ServiceGroup[] | null; revision: string }
 export type FavoriteReference = { kind: 'service'; serviceId: string } | { kind: 'group'; groupName: string }
 export type FavoriteEntry = FavoriteReference & { available: boolean }
 export interface FavoritesView { version: 1; revision: string; entries: FavoriteEntry[]; durabilityUncertain: boolean }
-export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload> {
+export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload>, ResourceCommandPayloads, ResourceCatalogCommandPayloads, GroupCommandPayloads {
   'device-card.export': { mode: 'lan' | 'direct-lan'; name: string; includeEndpointHint?: boolean; qr?: boolean }
   'device-card.inspect': { card: string; expectedMode: 'lan' | 'direct-lan' }
   'favorites.list': Record<string, never>
@@ -402,7 +407,10 @@ export async function login(code: string, signal?: AbortSignal) {
   const result = await jsonRequest<{ csrfToken?: string }>('/api/session', { code }, signal)
   return result
 }
-export async function command<N extends CommandName>(name: N, payload: CommandPayloads[N], id: string = requestID(), signal?: AbortSignal) {
+export function command<N extends GroupCommandName>(name: N, payload: GroupCommandPayloads[N], id?: string, signal?: AbortSignal): Promise<CommandResult>
+export function command<N extends ResourceCommandName>(name: N, payload: ResourceCommandPayloads[N], id?: string, signal?: AbortSignal): Promise<CommandResult>
+export function command<N extends CommandName>(name: N, payload: CommandPayloads[N], id?: string, signal?: AbortSignal): Promise<CommandResult>
+export async function command(name: CommandName, payload: CommandPayloads[CommandName], id: string = requestID(), signal?: AbortSignal) {
   const result = await jsonRequest<CommandResult>('/api/command', { requestId: id, name, payload }, signal)
   if (!result.ok) throw new ApiError('request_failed', '')
   return result

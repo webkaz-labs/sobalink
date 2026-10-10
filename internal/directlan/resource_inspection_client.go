@@ -14,6 +14,19 @@ import (
 // is local. It only narrows authenticated transport authority. No selector is
 // sent until the fixed supported hello has completed; there is no fallback.
 func (n *Node) InspectRemote(ctx context.Context, expected resourcegrant.Relationship, request resourcegrant.InspectRequest) (resourcegrant.Inspection, error) {
+	return n.inspectRemote(ctx, expected, request, nil)
+}
+
+// InspectRemoteCaptured shares the legacy one-shot body but cannot recapture a
+// replacement origin when its caller's original selection has become stale.
+func (n *Node) InspectRemoteCaptured(ctx context.Context, captured *ResourcePeerCapture, expected resourcegrant.Relationship, request resourcegrant.InspectRequest) (resourcegrant.Inspection, error) {
+	if captured == nil || captured.relationship != expected {
+		return resourcegrant.Inspection{}, ErrUntrusted
+	}
+	return n.inspectRemote(ctx, expected, request, captured)
+}
+
+func (n *Node) inspectRemote(ctx context.Context, expected resourcegrant.Relationship, request resourcegrant.InspectRequest, captured *ResourcePeerCapture) (resourcegrant.Inspection, error) {
 	observation := beginInspectionObservation(ctx)
 	phase := "validate"
 	run := ctx
@@ -37,8 +50,14 @@ func (n *Node) InspectRemote(ctx context.Context, expected resourcegrant.Relatio
 	run, cancel = context.WithTimeout(ctx, handshakeTimeout+inspectionIOTimeout)
 	defer cancel()
 	phase = "capture_peer"
-	selected, err := n.CapturePeer(expected.TargetKey)
-	if err != nil {
+	var selected *PeerCapability
+	var err error
+	if captured != nil {
+		selected = captured.peer
+	} else {
+		selected, err = n.CapturePeer(expected.TargetKey)
+	}
+	if err != nil || selected == nil || selected.origin == nil {
 		return finish(empty, ErrUntrusted)
 	}
 	phase = "capture_origin"
@@ -47,6 +66,9 @@ func (n *Node) InspectRemote(ctx context.Context, expected resourcegrant.Relatio
 		return finish(empty, ErrUntrusted)
 	}
 	defer selected.origin.callDone()
+	if g.n != n {
+		return finish(empty, ErrUntrusted)
+	}
 	phase = "acquire_work"
 	work, err := g.acquireWork(cancel, false)
 	if err != nil {
@@ -58,7 +80,7 @@ func (n *Node) InspectRemote(ctx context.Context, expected resourcegrant.Relatio
 	g.mu.Unlock()
 	phase = "capture_authentication"
 	authentication := n.captureManagedSession(peer)
-	if authentication == nil || authentication.registration != uint64(selected.registration) || authentication.generation != g || authentication.peer != peer || expected != (resourcegrant.Relationship{Backend: resourcegrant.Backend, TargetKey: peer.peer.Key, PeerKey: g.cfg.Identity.PublicKey(), PairBinding: authentication.binding}) {
+	if authentication == nil || authentication.registration != uint64(selected.registration) || authentication.generation != g || authentication.peer != peer || expected != (resourcegrant.Relationship{Backend: resourcegrant.Backend, TargetKey: peer.peer.Key, PeerKey: g.cfg.Identity.PublicKey(), PairBinding: authentication.binding}) || !n.resourcePeerCaptureCurrent(captured, g, peer, authentication) {
 		return finish(empty, ErrUntrusted)
 	}
 	// The exact captured dial refreshes managed control and bounds one session
@@ -72,7 +94,7 @@ func (n *Node) InspectRemote(ctx context.Context, expected resourcegrant.Relatio
 	stop := watchConnection(run, connection)
 	defer stop()
 	phase = "capture_client"
-	client, ok := captureInspectionClient(run, connection, authentication)
+	client, ok := captureResourceInspectionClient(run, connection, authentication, captured)
 	if !ok {
 		return finish(empty, ErrUntrusted)
 	}
@@ -119,17 +141,22 @@ func (n *Node) InspectRemote(ctx context.Context, expected resourcegrant.Relatio
 // I/O admission pins the captured registration/policy, rather than allowing a
 // later reauthentication to substitute the current flow authentication.
 type inspectionClient struct {
-	ctx            context.Context
-	flow           *flow
-	authentication *managedAuthentication
+	ctx             context.Context
+	flow            *flow
+	authentication  *managedAuthentication
+	resourceCapture *ResourcePeerCapture
 }
 
 func captureInspectionClient(ctx context.Context, connection net.Conn, authentication *managedAuthentication) (*inspectionClient, bool) {
+	return captureResourceInspectionClient(ctx, connection, authentication, nil)
+}
+
+func captureResourceInspectionClient(ctx context.Context, connection net.Conn, authentication *managedAuthentication, captured *ResourcePeerCapture) (*inspectionClient, bool) {
 	f, ok := connection.(*flow)
 	if ctx == nil || ctx.Err() != nil || !ok || f == nil || f.n == nil || f.g == nil || f.c == nil || f.w == nil || f.w.peer == nil || authentication == nil || f.inbound || f.network != "tcp" || f.remote.Port() != ResourceInspectPort || authentication.generation != f.g || authentication.peer != f.w.peer || authentication.binding == "" {
 		return nil, false
 	}
-	client := &inspectionClient{ctx: ctx, flow: f, authentication: authentication}
+	client := &inspectionClient{ctx: ctx, flow: f, authentication: authentication, resourceCapture: captured}
 	f.n.mu.Lock()
 	defer f.n.mu.Unlock()
 	if f.resourceInspectionCaptured || !client.currentLocked() {
@@ -139,7 +166,7 @@ func captureInspectionClient(ctx context.Context, connection net.Conn, authentic
 	return client, true
 }
 func (c *inspectionClient) currentLocked() bool {
-	if c.ctx.Err() != nil || !c.flow.n.validFlowLocked(c.flow) || !c.authentication.current() {
+	if c.ctx.Err() != nil || !c.flow.n.validFlowLocked(c.flow) || !c.authentication.current() || c.resourceCapture != nil && !c.flow.n.resourcePeerCaptureCurrentLocked(c.resourceCapture, c.flow.g, c.flow.w.peer, c.authentication) {
 		return false
 	}
 	current := c.flow.w.peer.authenticated.Load()

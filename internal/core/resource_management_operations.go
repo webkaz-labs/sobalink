@@ -8,6 +8,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/operationjournal"
 	"github.com/webkaz-labs/sobalink/internal/resource"
+	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 	"github.com/webkaz-labs/sobalink/internal/resourcegrant"
 )
 
@@ -246,6 +247,8 @@ func (c *Core) finishManagementIntentBound(runtime *resourceManagementRuntime, c
 	// No write lease or transport borrow remains here. The concrete transport
 	// consumes its exact request's provider bit. It never invokes a callback.
 	if _, err := c.authorizeManagementBound(runtime, capability, request, b); err == nil && capability.AdmitProvider(c.resourceGrants.managementFence) {
+		// AdmitProvider has returned and released every transport lock/borrow.
+		resourceacceptance.Record(c, resourceacceptance.ProviderAdmitted, request.Action, "", request.Apply.OperationID)
 		outcome = resourceProviderOutcome(c.applyCapacityPolicyBound(proposed, b))
 	}
 	// Revocation/disconnect after intent cannot skip synchronous completion.

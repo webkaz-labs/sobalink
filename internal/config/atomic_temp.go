@@ -212,26 +212,38 @@ func (l *AtomicWriteLease) CheckParent(parent *os.File) error {
 }
 
 func (l *AtomicWriteLease) Write(path string, b []byte) error {
+	_, err := l.writeWithIdentity(path, b, false)
+	return err
+}
+
+// WriteWithIdentity returns the retained snapshot's identity only if replacement
+// committed. The identity alone does not certify durability or the current path;
+// callers must check the error and compare it with their owned readback.
+func (l *AtomicWriteLease) WriteWithIdentity(path string, b []byte) (os.FileInfo, error) {
+	return l.writeWithIdentity(path, b, true)
+}
+
+func (l *AtomicWriteLease) writeWithIdentity(path string, b []byte, capture bool) (os.FileInfo, error) {
 	if l == nil {
-		return ErrAtomicRecovery
+		return nil, ErrAtomicRecovery
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	abs, err := atomicDestination(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if l.writer == nil || abs != l.target {
-		return ErrAtomicRecovery
+		return nil, ErrAtomicRecovery
 	}
 	w := l.writer
 	if err := w.verify(); err != nil {
-		return recovery(err)
+		return nil, recovery(err)
 	}
 	if err := w.inventoryLegacy(filepath.Base(abs), l.reserved...); err != nil {
-		return recovery(err)
+		return nil, recovery(err)
 	}
-	return w.write(filepath.Base(abs), b)
+	return w.writeWithIdentity(filepath.Base(abs), b, capture)
 }
 
 func (l *AtomicWriteLease) Close() error {
@@ -259,16 +271,21 @@ func atomicWriteOwned(path string, b []byte, hooks *atomicHooks) error {
 	return l.writer.write(filepath.Base(l.target), b)
 }
 
-func (w *atomicWriter) write(name string, b []byte) (result error) {
+func (w *atomicWriter) write(name string, b []byte) error {
+	_, err := w.writeWithIdentity(name, b, false)
+	return err
+}
+
+func (w *atomicWriter) writeWithIdentity(name string, b []byte, capture bool) (identity os.FileInfo, result error) {
 	hooks := w.hooks
 	f, err := atomicOpenChild(w.owned, atomicSnapshot, true, false, true)
 	if err != nil {
-		return recovery(err)
+		return nil, recovery(err)
 	}
 	defer f.Close()
 	meta, err := atomicFileMetadata(f)
 	if err != nil || !meta.regular || !meta.singleLink || !meta.private {
-		return recovery(errors.New("unsafe new snapshot"))
+		return nil, recovery(errors.New("unsafe new snapshot"))
 	}
 	committed := false
 	defer func() {
@@ -280,29 +297,37 @@ func (w *atomicWriter) write(name string, b []byte) (result error) {
 	}()
 	hooks.at("afterCreateTemp")
 	if _, err = f.Write(b); err != nil {
-		return err
+		return nil, err
 	}
 	if err = f.Sync(); err != nil {
-		return err
+		return nil, err
 	}
 	if err = atomicSyncDirectory(w.owned); err != nil {
-		return err
+		return nil, err
 	}
 	hooks.at("afterSync")
 	hooks.at("beforeReplace")
 	if err = w.verify(); err != nil {
-		return recovery(err)
+		return nil, recovery(err)
 	}
 	if err = w.checkSnapshot(f, meta); err != nil {
-		return recovery(err)
+		return nil, recovery(err)
 	}
 	if err = w.checkDestination(name); err != nil {
-		return err
+		return nil, err
+	}
+	var published os.FileInfo
+	if capture {
+		published, err = f.Stat()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err = atomicReplace(w.owned, atomicSnapshot, f, w.parent, name); err != nil {
-		return err
+		return nil, err
 	}
 	committed = true
+	identity = published
 	// Rename consumes the only snapshot. No fallible temp deletion runs after
 	// commit, so a cleanup problem cannot masquerade as a failed save.
 	syncReplacement := atomicSyncReplacement
@@ -310,9 +335,9 @@ func (w *atomicWriter) write(name string, b []byte) (result error) {
 		syncReplacement = hooks.syncReplacement
 	}
 	if err = syncReplacement(f, w.parent, w.owned); err != nil {
-		return fmt.Errorf("%w: %w", ErrAtomicCommitted, err)
+		return identity, fmt.Errorf("%w: %w", ErrAtomicCommitted, err)
 	}
-	return nil
+	return identity, nil
 }
 
 func (w *atomicWriter) close() {
