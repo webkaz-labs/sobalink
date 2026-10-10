@@ -9,10 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/webkaz-labs/sobalink/internal/core"
 	"github.com/webkaz-labs/sobalink/internal/messageframe"
@@ -22,31 +20,6 @@ import (
 
 var version = "0.0.0-dev"
 
-func main() {
-	os.Exit(mainExitCode())
-}
-
-func mainExitCode() int {
-	if code, ok := runUpgradeHandoffProcess(); ok {
-		return code
-	}
-	if code, ok := runBackendWorkerProcess(); ok {
-		return code
-	}
-	out, errorOut, closeOutput, err := backgroundCommandOutput(os.Args[1:], os.Stdout, os.Stderr)
-	if err != nil {
-		writeCommandError(os.Stderr, err)
-		return 1
-	}
-	defer closeOutput()
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	if e := run(ctx, os.Args[1:], out); e != nil {
-		writeCommandError(errorOut, e)
-		return 1
-	}
-	return 0
-}
 func japanese(locale string) bool {
 	if locale == "ja" {
 		return true

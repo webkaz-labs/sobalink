@@ -78,6 +78,12 @@ func newResourceGroupCatalogNative(t *testing.T) *resourceGroupCatalogNative {
 			t.Fatal("native group/catalog requires an isolated proxy-free environment")
 		}
 	}
+	return newResourceGroupCatalogNativeAfterGuard(t)
+}
+
+// Called only after the separate exact N1 or N4 native guard has passed.
+func newResourceGroupCatalogNativeAfterGuard(t *testing.T) *resourceGroupCatalogNative {
+	t.Helper()
 	entry := time.Now()
 	ctx, cancel := context.WithDeadline(context.Background(), entry.Add(180*time.Second))
 	setupUntil := entry.Add(40 * time.Second)
