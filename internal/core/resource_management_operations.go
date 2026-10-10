@@ -8,6 +8,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/operationjournal"
 	"github.com/webkaz-labs/sobalink/internal/resource"
+	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 	"github.com/webkaz-labs/sobalink/internal/resourcegrant"
 )
 
@@ -35,7 +36,7 @@ func (c *Core) authorizeManagementBound(runtime *resourceManagementRuntime, capa
 	if !ok || managed.Validate() != nil || g.timeUncertain || managementSelector(record) != request.ManagementSelector || record.Relationship != relationship || g.bootGrantID != record.ID || g.bootRevision != record.Revision || g.bootDeadline.IsZero() {
 		return empty, resourcegrant.ErrInvalid
 	}
-	current, err := c.resourceGrantRelationship(record.Relationship.PeerKey, time.Now())
+	current, err := c.resourceGrantRelationship(record.Relationship.PeerKey)
 	if err != nil {
 		return empty, resourcegrant.ErrInvalid
 	}
@@ -246,6 +247,8 @@ func (c *Core) finishManagementIntentBound(runtime *resourceManagementRuntime, c
 	// No write lease or transport borrow remains here. The concrete transport
 	// consumes its exact request's provider bit. It never invokes a callback.
 	if _, err := c.authorizeManagementBound(runtime, capability, request, b); err == nil && capability.AdmitProvider(c.resourceGrants.managementFence) {
+		// AdmitProvider has returned and released every transport lock/borrow.
+		resourceacceptance.Record(c, resourceacceptance.ProviderAdmitted, request.Action, "", request.Apply.OperationID)
 		outcome = resourceProviderOutcome(c.applyCapacityPolicyBound(proposed, b))
 	}
 	// Revocation/disconnect after intent cannot skip synchronous completion.

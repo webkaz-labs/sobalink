@@ -1,0 +1,14 @@
+.resource-group { display: grid; gap: 1rem; min-width: 0; }
+.resource-group section, .resource-group fieldset { min-width: 0; }
+.resource-group label:not(.group-confirm) { display: grid; gap: .35rem; }
+.resource-group input, .resource-group select { max-width: 100%; min-width: 0; }
+.resource-group input[readonly], .resource-group dd, .resource-group .code-value { overflow-wrap: anywhere; }
+.group-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.group-members, .group-review-rows, .group-evidence { display: grid; gap: 1rem; list-style: none; padding: 0; }
+.group-members > li, .group-review-rows > li, .group-evidence > li { border: 1px solid var(--border); border-radius: .65rem; padding: 1rem; display: grid; gap: .75rem; min-width: 0; }
+.group-choice { display: grid; gap: .45rem; padding-block: .45rem; }
+.group-confirm { display: flex; gap: .65rem; align-items: flex-start; margin-block: 1rem; }
+.resource-group dl { margin-block: .5rem; }
+.resource-group dd { margin-inline-start: 0; margin-bottom: .5rem; }
+.resource-group details > summary { cursor: pointer; }
+@media (max-width: 560px) { .group-actions { align-items: stretch; flex-direction: column; } .group-members > li, .group-review-rows > li, .group-evidence > li { padding: .65rem; } }

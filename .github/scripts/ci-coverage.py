@@ -32,6 +32,7 @@ LONG_STEPS = (
 FULL_ONLY_STEPS = (
     "Verify native remote resource inspection",
     "Verify native remote resource management",
+    "Verify native fixed-group resource catalog",
 )
 FAST_STEPS = (
     "Test and reproduce locked frontend assets",
@@ -271,7 +272,7 @@ def finalize(input_path, output, *, scheduled=False):
         "docs": "Documentation only; application tests, builds and packages NOT RUN",
         "frontend": "Frontend checks passed; four-target native and package checks NOT RUN",
         "go": "Affected Go packages and reverse dependencies passed on Linux; full native, browser and package checks NOT RUN",
-        "native-short": "Four-target short native, browser and package checks passed; real-time lifecycle, lease and native remote resource inspection/management checks NOT RUN",
+        "native-short": "Four-target short native, browser and package checks passed; real-time lifecycle, lease and native remote resource inspection/management and fixed-group catalog checks NOT RUN",
         "full": "Full native, browser and package coverage passed",
     }
     summary = descriptions[scope]

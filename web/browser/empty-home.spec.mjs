@@ -55,6 +55,8 @@ for (const locale of ['en', 'ja']) {
     const ja = locale === 'ja'
     await app.appearance(locale, ja ? 'dark' : 'light')
     const saved = page.getByRole('button', { name: ja ? '保存済みサービス' : 'Saved services', exact: true })
+    const catalog = page.getByRole('button', { name: ja ? 'リソース' : 'Resources', exact: true })
+    const group = page.getByRole('button', { name: ja ? 'グループの転送設定' : 'Group transfer settings', exact: true })
     const sidebar = page.locator('.device-sidebar')
     const home = page.locator('.main-empty')
     for (const viewport of viewports) {
@@ -98,8 +100,13 @@ for (const locale of ['en', 'ja']) {
         await app.capture(`empty-home-actions-${locale}-${viewport.width}x${viewport.height}`)
       }
       await page.locator('.network-map-button').focus()
-      await page.keyboard.press('Tab')
-      await expect(saved).toBeFocused()
+      // Traverse each intervening header action with native Tab before opening
+      // Saved services, checking both keyboard order and the full hit target.
+      for (const control of [catalog, group, saved]) {
+        await page.keyboard.press('Tab')
+        await expect(control).toBeFocused()
+        await expectUncovered(control)
+      }
       await page.keyboard.press('Enter')
       await expect(page.locator('dialog .definition-toolbar')).toBeVisible()
       await page.keyboard.press('Escape')

@@ -17,6 +17,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
+	"github.com/webkaz-labs/sobalink/internal/resourcegroup"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
@@ -352,7 +353,12 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			services = append(services, v)
 		}
 	}
-	return map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "guidance": networkDiagnosticGuidance(state, reasonCode, reason != "", p.Settings.Network), "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus(), "directLAN": c.directLANStatus(), "mixed": c.mixedStatus()}, nil
+	result := map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "guidance": networkDiagnosticGuidance(state, reasonCode, reason != "", p.Settings.Network), "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus(), "directLAN": c.directLANStatus(), "mixed": c.mixedStatus()}
+	// The catalog token helper takes op; all State observation locks are released.
+	if processID := c.resourceCatalogProcessID(); processID != "" {
+		result["resourceCatalogProcessId"] = processID
+	}
+	return result, nil
 }
 
 // Command deduplicates requests independently of the mutation lock. Slow file
@@ -365,6 +371,10 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 		return nil, err
 	}
 	switch cmd.Name {
+	case resourcegroup.LocalCurrentReviewCommand, resourcegroup.LocalPreviewCommand, resourcegroup.LocalSelectCommand, resourcegroup.LocalApplyCommand, resourcegroup.LocalStatusCommand, resourcegroup.LocalRefreshCommand, resourcegroup.LocalCancelCommand:
+		return c.resourceGroupCommand(ctx, cmd.Name, cmd.Payload)
+	case "resource.catalog.snapshot":
+		return c.resourceCatalogCommand(ctx, cmd.Payload)
 	case "resource.remote.inspect":
 		return c.resourceRemoteInspectCommand(ctx, cmd.Payload)
 	case "resource.remote.management.inspect", "resource.remote.management.preview", "resource.remote.management.apply", "resource.remote.management.operation.status":

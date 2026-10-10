@@ -100,7 +100,7 @@ func (c *Core) reconcileResourceManagement() {
 	err := c.withResourceInspectionState(func(*resourcePathBinding) error {
 		managed, _ = activeManagementGrant(g)
 		if managed.Record.ID != "" {
-			relationship, relationshipErr = c.resourceGrantRelationship(managed.Record.Relationship.PeerKey, time.Now())
+			relationship, relationshipErr = c.resourceGrantRelationship(managed.Record.Relationship.PeerKey)
 		}
 		return nil
 	})

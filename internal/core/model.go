@@ -104,7 +104,8 @@ type Core struct {
 	resourceRemoteEvidenceDenied bool                            // op; owned journal read failed until owned reopen
 	resourceUncertainWrite       *resourceJournalWriteCandidates // op; bounded exact self-write candidates
 
-	resourceIdentity           string // protected by op, empty when startup certification failed
+	resourceGroups             *resourceGroupCoordinator // immutable pointer after Open; state under op, active handle under mu
+	resourceIdentity           string                    // protected by op, empty when startup certification failed
 	resourceLock               *config.Lock
 	resourceNonce              string
 	resourceState              resourceEnvelope
@@ -237,6 +238,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	c.initializeResourceIdentity(opts.LifecycleLock)
 	if opts.EnableResourceInspection {
 		c.initializeResourceGrants()
+		c.initializeResourceGroups()
 	}
 	for _, peer := range p.Peers {
 		if peer.Generation > c.trustGeneration {
@@ -455,6 +457,7 @@ func (c *Core) close() error {
 		peerHTTP.close()
 	}
 	c.cancel()
+	groupCloseErr := c.stopResourceGroups()
 	// Join the bounded controller before taking its mutation lock.
 	if upgrade != nil {
 		upgrade.cancel()
@@ -483,6 +486,7 @@ func (c *Core) close() error {
 	c.web = nil
 	c.mu.Unlock()
 	var errs []error
+	errs = append(errs, groupCloseErr)
 	errs = append(errs, c.stopContextControlLocked())
 	if ps != nil {
 		errs = append(errs, ps.Close())

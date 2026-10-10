@@ -44,7 +44,7 @@ class ResourceManagementWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / full.WORKFLOW).read_text(encoding='utf-8')
         marker = '      - name: ' + GATE + '\n'
-        self.step = marker + self.workflow.split(marker)[1].split('      # Run only the isolated')[0]
+        self.step = marker + self.workflow.split(marker)[1].split('      - name: Verify native fixed-group resource catalog\n')[0]
         self.script = textwrap.dedent(self.step.split("          python - <<'PYTHON'\n")[1]
                                      .split('          PYTHON\n')[0])
 

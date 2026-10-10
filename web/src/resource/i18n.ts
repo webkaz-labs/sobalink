@@ -1,0 +1,78 @@
+import type { Locale } from '../api'
+import { detectLocale } from '../i18n'
+
+export const resourceEnglish = {
+  title: 'Transfer settings', scopeHint: 'Inspect and review this device or one explicitly selected remote device. Services, transfer activity, and the unified resource catalog are separate work.',
+  local: 'This device', remote: 'One remote device', loadLocal: 'List local settings', selectLocal: 'Inspect these settings', empty: 'No local settings were returned.',
+  peer: 'Saved DirectLAN device', choosePeer: 'Choose an exact saved device', protocol: 'Permission protocol', chooseProtocol: 'Choose the supplied permission type',
+  inspection: 'Inspection v1 (read only)', management: 'Management v2', resourceId: 'Resource ID', grantId: 'Grant ID', grantRevision: 'Current grant revision',
+  selectorHint: 'Enter the exact resource and grant selector supplied by the target. Pairing, trust, service access, and permission granted on this device do not authorize managing the other device.',
+  noPeers: 'No saved managed DirectLAN device is available in this view. Check the selected network and saved device identity.',
+  selectRemote: 'Select and inspect', invalidSelector: 'Use an exact saved key, 32-character lowercase resource and grant IDs, and a positive safe-integer revision.',
+  refresh: 'Refresh current settings', lastObserved: 'Last observed', notChecked: 'Current settings not rechecked', unconfirmed: 'The current read could not be confirmed. Any values below are the last observation.',
+  requested: 'Requested', effective: 'Effective', files: 'Concurrent files', perPeer: 'Concurrent files per device', default: 'Default', limited: 'Finite limit', limitValue: 'Limit',
+  admission: 'Applies to new transfer admission. Lower limits do not cancel active transfers.', readOnly: 'This selected inspection protocol is read only.',
+  edit: 'Requested changes', validNumbers: 'Choose default or a positive finite safe integer for both fields. Unlimited is not supported.',
+  preview: 'Review changes', review: 'Review exact settings', before: 'Previously observed values', proposed: 'Reviewed requested and effective values', oldHint: 'Previously observed values may have changed. Only this exact provider review binds the apply request.',
+  operationId: 'Operation ID', baseRevision: 'Base revision', reviewRevision: 'Review revision', target: 'Selected target',
+  managementScope: 'Management scope: inspect, preview, apply, and operation.status for both transfer fields, including defaults.',
+  migration: 'The first accepted fresh remote apply may upgrade the operation journal to v2. Older v1-only agents cannot read that journal afterward. Conversion alone does not prove settings changed.',
+  confirmation: 'I reviewed this exact target, both settings, and the operation above.', apply: 'Apply reviewed settings once', back: 'Back to edit', cancelReview: 'Cancel review',
+  stopWaiting: 'Stop waiting', stopHint: 'Stops this browser wait only. Already admitted work may finish. This does not recall provider work or roll back settings.',
+  history: 'Historical operation evidence', originalTarget: 'Original apply target and selector', unknown: 'Outcome unknown. Check this operation’s status.', applied: 'Historically applied', failed: 'Historically failed', canceled: 'Provider reported canceled before application', saved_not_applied: 'Saved, not fully applied',
+  rejected: 'The local review was rejected before admission. Refresh and explicitly review again.', durable: 'Terminal evidence is durable', notDurable: 'Terminal evidence is not confirmed durable',
+  configuration: 'Configuration stage', accounting: 'Accounting stage', transfer: 'Transfer stage', checkStatus: 'Check this operation’s status',
+  statusUnavailable: 'Operation evidence unavailable. This does not establish whether it ran or permit replay.', statusUnconfirmed: 'The latest operation check is unconfirmed. Previous evidence is retained.',
+  currentSeparate: 'Historical outcome does not establish current settings. A matching current read does not prove this operation made the change.',
+  memory: 'Pending identities are retained only in this page’s memory. Closing and reopening keeps them; a full reload does not provide operation history. After authentication or identity changes, explicitly reselect the same scope before checking status.',
+  blocked: 'Resolve the retained operation through status before creating another review for this scope. Apply is never retried automatically.',
+  unavailable: 'The request or result could not be confirmed. Check the exact device, grant, and listener. After an uncertain apply, check its operation status.',
+  unsupported: 'The authenticated peer explicitly reported that this selected protocol is unsupported. No fallback was attempted.',
+  conflict: 'The local settings review changed. Refresh and explicitly review again.',
+  invalid: 'The selected inputs could not be validated. Review them before continuing.',
+  evidenceUnavailable: 'Operation evidence is unavailable for this permitted scope. The retained identity and uncertainty are unchanged.',
+  limit: 'This page’s operation evidence budget is full. No new apply was sent. Check retained operations; do not blindly repeat them after reloading.',
+  contextChanged: 'Authentication, process, or selected-device context changed. Select the exact target again; earlier reviews cannot be applied.',
+  contextUnavailable: 'Authenticated current process information is required before inspecting or applying settings.',
+} as const
+export type ResourceTextKey = keyof typeof resourceEnglish
+export const resourceJapanese: Record<ResourceTextKey, string> = {
+  title: '転送の設定', scopeHint: 'このデバイス、または明示的に選んだ1台の相手の設定を確認します。サービス、転送の履歴、統合リソース一覧は別の実装範囲です。',
+  local: 'このデバイス', remote: '相手のデバイス1台', loadLocal: 'ローカルの設定一覧を取得', selectLocal: 'この設定を確認', empty: 'ローカルの設定は返されませんでした。',
+  peer: '保存済みのDirectLANデバイス', choosePeer: '正確な保存済みデバイスを選択', protocol: '許可のプロトコル', chooseProtocol: '相手から受け取った許可の種類を選択',
+  inspection: '参照v1（読み取り専用）', management: '管理v2', resourceId: 'リソースID', grantId: '許可ID', grantRevision: '現在の許可リビジョン',
+  selectorHint: '相手から受け取った正確なリソースと許可の情報を入力してください。ペアリング、信頼、サービスの利用許可、このデバイスで相手に与えた許可は、相手の設定を管理する権限にはなりません。',
+  noPeers: 'この画面で選べる保存済みの管理対象DirectLANデバイスはありません。選択中のネットワークと保存済みの識別情報を確認してください。',
+  selectRemote: '選択して確認', invalidSelector: '正確な保存済みの鍵、32文字の小文字16進数のリソースIDと許可ID、正の安全な整数のリビジョンを指定してください。',
+  refresh: '現在の設定を再確認', lastObserved: '最後に確認した状態', notChecked: '現在の設定は未確認です', unconfirmed: '現在の設定を確認できませんでした。以下の値は最後に確認した状態です。',
+  requested: '指定値', effective: '実効値', files: '同時に転送するファイル数', perPeer: 'デバイスごとの同時ファイル数', default: '既定値', limited: '有限の上限', limitValue: '上限',
+  admission: '新しい転送の受付に適用されます。上限を下げても、実行中の転送は中止されません。', readOnly: '選択した参照プロトコルでは読み取りのみ可能です。',
+  edit: '変更する指定値', validNumbers: '両方の項目で既定値、または有限で正の安全な整数を選んでください。無制限は指定できません。',
+  preview: '変更内容を確認', review: '正確な設定を確認', before: '以前に確認した値', proposed: '今回確認した指定値と実効値', oldHint: '以前に確認した値は変わっている可能性があります。適用する内容は、このプロバイダーの正確な確認結果に結び付けられます。',
+  operationId: '操作ID', baseRevision: '基準リビジョン', reviewRevision: '確認リビジョン', target: '選択した対象',
+  managementScope: '管理の範囲: 既定値を含む両方の転送設定について inspect、preview、apply、operation.status を利用します。',
+  migration: '新しいリモート適用が初めて受理されると、操作記録がv2に更新される場合があります。その後はv1専用の古いエージェントで記録を読めません。形式の更新だけでは、設定が変わった証拠になりません。',
+  confirmation: 'この正確な対象、両方の設定、上記の操作を確認しました。', apply: '確認した設定を1回適用', back: '編集に戻る', cancelReview: '確認を取り消す',
+  stopWaiting: '待機をやめる', stopHint: 'このブラウザーでの待機だけを止めます。受理済みの処理は完了する場合があります。プロバイダーの処理の撤回や設定の巻き戻しは行いません。',
+  history: '過去の操作結果', originalTarget: '元の適用対象と許可の選択', unknown: '結果は不明です。この操作の状態を確認してください。', applied: '過去に適用済み', failed: '過去の適用は失敗', canceled: 'プロバイダーは適用前の中止を報告', saved_not_applied: '保存済み・適用未完了',
+  rejected: 'ローカルの確認結果は処理の受理前に拒否されました。現在の設定を再確認して、改めて内容を確認してください。', durable: '最終結果の記録は永続化済み', notDurable: '最終結果の記録の永続化は未確認',
+  configuration: '設定の保存段階', accounting: '使用量管理の段階', transfer: '転送設定の段階', checkStatus: 'この操作の状態を確認',
+  statusUnavailable: 'この操作の結果記録を取得できません。実行されたかどうかは分からず、再実行の根拠にもなりません。', statusUnconfirmed: '最新の操作状態を確認できませんでした。以前の結果記録は保持されています。',
+  currentSeparate: '過去の結果は現在の設定を示すものではありません。現在の値が一致していても、この操作で変更された証拠にはなりません。',
+  memory: '保留中の操作の識別情報は、このページのメモリーにのみ保持します。閉じて開き直しても残りますが、ページ全体の再読み込み後の操作履歴は提供しません。認証や識別情報が変わった後は、同じ範囲を明示的に選び直してから状態を確認してください。',
+  blocked: 'この範囲で新しい確認結果を作る前に、保持している操作の状態を確認してください。適用を自動再試行することはありません。',
+  unavailable: '要求または結果を確認できませんでした。正確なデバイス、許可、待受状態を確認してください。適用結果が不明な場合は、その操作の状態を確認してください。',
+  unsupported: '認証済みの相手が、選択したプロトコルは未対応と明示的に返しました。別方式への切り替えは行っていません。',
+  conflict: 'ローカル設定の確認結果が変わりました。現在の設定を再確認して、改めて内容を確認してください。',
+  invalid: '入力した内容を検証できませんでした。続行する前に確認してください。',
+  evidenceUnavailable: 'この許可範囲では操作の結果記録を取得できません。保持している識別情報と結果不明の状態は変わりません。',
+  limit: 'このページの操作記録の保持上限に達しました。新しい適用は送信していません。保持している操作を確認し、再読み込み後にむやみに繰り返さないでください。',
+  contextChanged: '認証、プロセス、または選択したデバイスの情報が変わりました。正確な対象を選び直してください。以前の確認結果は適用できません。',
+  contextUnavailable: '設定の参照と適用には、認証済みの現在のプロセス情報が必要です。',
+}
+export function resourceText(locale: Locale, key: ResourceTextKey): string { return (locale === 'ja' ? resourceJapanese : resourceEnglish)[key] }
+// Use the app's existing automatic locale policy. No resource-specific saved
+// preference, URL parameter, or storage of selector/review data is introduced.
+export function resourceLocale(preference: 'auto' | Locale, languages: readonly string[]): Locale {
+  return preference === 'auto' ? detectLocale(languages) : preference
+}

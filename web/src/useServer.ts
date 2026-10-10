@@ -1,5 +1,11 @@
+import type { ResourceGroupController } from './group/controller'
+import { groupContextFromSession } from './group/context'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from './api'
+import { resourceContextFromSession } from './resource/app-context'
+import type { ResourceSettingsController } from './resource/controller'
+import type { ResourceCatalogController } from './catalog/controller'
+import { catalogContextFromSession } from './catalog/context'
 
 // Never evict a delivery guard to make room: Core's request cache is finite
 // too. Only this page lifetime is protected; nothing here claims durable dedupe.
@@ -10,7 +16,7 @@ async function messageFingerprint(peerId: string, text: string) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-export function useServer() {
+export function useServer(resourceObserver?: ResourceSettingsController, catalogObserver?: ResourceCatalogController, groupObserver?: ResourceGroupController) {
   const [state, setState] = useState<api.State | null>(null)
   const [auth, setAuth] = useState<'checking' | 'locked' | 'ready'>('checking')
   const [stale, setStale] = useState(false)
@@ -27,13 +33,38 @@ export function useServer() {
   const authEpoch = useRef(0)
   const live = useRef(true)
   const knownState = useRef<api.State | null>(null)
+  const knownStale = useRef(false)
+  const resourceObserverRef = useRef(resourceObserver)
+  resourceObserverRef.current = resourceObserver
+  const catalogObserverRef = useRef(catalogObserver)
+  catalogObserverRef.current = catalogObserver
+  const groupObserverRef = useRef(groupObserver)
+  groupObserverRef.current = groupObserver
+  // One fixed internal observation bridge. It cannot request transport or
+  // change authentication/retry policy, and never recreates polling effects.
+  const observeResourceContext = useCallback(() => {
+    const observedGeneration = generation.current, observedLive = live.current
+    const observation = { state: knownState.current, authenticated: observedLive && knownState.current !== null,
+      stale: knownStale.current, authEpoch: authEpoch.current }
+    const unchanged = () => generation.current === observedGeneration && live.current === observedLive
+      && authEpoch.current === observation.authEpoch && knownState.current === observation.state && knownStale.current === observation.stale
+    resourceObserverRef.current?.updateContext(resourceContextFromSession(observation))
+    // A subscriber can recursively clear auth. Never deliver the older context
+    // to the next owner after that newer invalidation has already reached it.
+    if (!unchanged()) return
+    catalogObserverRef.current?.updateContext(catalogContextFromSession(observation))
+    if (!unchanged()) return
+    groupObserverRef.current?.updateContext(groupContextFromSession(observation))
+    if (!unchanged()) return
+  }, [])
   const handleError = useCallback((value: unknown) => {
     if (value instanceof api.ApiError && value.code === 'unauthenticated') {
       ++generation.current; ++authEpoch.current; controller.current?.abort(); controller.current = null
       uncertain.current.clear()
-      setAuth('locked'); setState(null); knownState.current = null; api.setCSRFToken('')
+      knownState.current = null; api.setCSRFToken(''); observeResourceContext()
+      setAuth('locked'); setState(null)
     } else setError(value)
-  }, [])
+  }, [observeResourceContext])
   const refresh = useCallback(async (report = false) => {
     controller.current?.abort()
     const request = new AbortController()
@@ -43,21 +74,29 @@ export function useServer() {
       const next = await api.getState(request.signal)
       if (!live.current || current !== generation.current) return null
       api.setCSRFToken(next.csrfToken)
-      knownState.current = next
+      knownState.current = next; knownStale.current = false; observeResourceContext()
+      // Observation notifies synchronous controller subscribers. They may
+      // invalidate this request (including auth loss) before UI publication.
+      if (!live.current || current !== generation.current) return null
       setState(next); setAuth('ready'); setStale(false); setUpdatedAt(new Date())
       return next
     } catch (value) {
       if (!live.current || request.signal.aborted || current !== generation.current) return null
       if (value instanceof api.ApiError && value.code === 'unauthenticated') handleError(value)
-      else { setStale(true); if (report || !knownState.current) setError(value) }
+      else {
+        knownStale.current = true; observeResourceContext()
+        if (!live.current || current !== generation.current) return null
+        setStale(true); if (report || !knownState.current) setError(value)
+      }
       return null
     }
-  }, [handleError])
+  }, [handleError, observeResourceContext])
   useEffect(() => {
     live.current = true
+    observeResourceContext()
     void refresh()
-    return () => { live.current = false; ++generation.current; controller.current?.abort() }
-  }, [refresh])
+    return () => { live.current = false; ++generation.current; controller.current?.abort(); observeResourceContext() }
+  }, [refresh, observeResourceContext])
   useEffect(() => {
     if (auth !== 'ready') return
     let timer: ReturnType<typeof setTimeout>
