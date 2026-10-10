@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/resource"
 	"github.com/webkaz-labs/sobalink/internal/resourcegrant"
@@ -59,7 +58,7 @@ func (c *Core) resourceRemoteInspectionExchange(ctx context.Context, input resou
 	} else {
 		err = c.withResourceInspectionState(func(*resourcePathBinding) error {
 			var projectionErr error
-			relationship, projectionErr = c.resourceGrantRelationship(input.PeerKey, time.Now())
+			relationship, projectionErr = c.resourceGrantRelationship(input.PeerKey)
 			return projectionErr
 		})
 	}
@@ -96,7 +95,7 @@ func (c *Core) resourceRemoteInspectionExchange(ctx context.Context, input resou
 	var current resourcegrant.Relationship
 	err = c.withResourceInspectionState(func(*resourcePathBinding) error {
 		var projectionErr error
-		current, projectionErr = c.resourceGrantRelationship(input.PeerKey, time.Now())
+		current, projectionErr = c.resourceGrantRelationship(input.PeerKey)
 		return projectionErr
 	})
 	if err != nil || current != relationship || c.nodeCopy() != backend || run.Err() != nil || c.ctx.Err() != nil {

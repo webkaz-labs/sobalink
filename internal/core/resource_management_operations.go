@@ -36,7 +36,7 @@ func (c *Core) authorizeManagementBound(runtime *resourceManagementRuntime, capa
 	if !ok || managed.Validate() != nil || g.timeUncertain || managementSelector(record) != request.ManagementSelector || record.Relationship != relationship || g.bootGrantID != record.ID || g.bootRevision != record.Revision || g.bootDeadline.IsZero() {
 		return empty, resourcegrant.ErrInvalid
 	}
-	current, err := c.resourceGrantRelationship(record.Relationship.PeerKey, time.Now())
+	current, err := c.resourceGrantRelationship(record.Relationship.PeerKey)
 	if err != nil {
 		return empty, resourcegrant.ErrInvalid
 	}

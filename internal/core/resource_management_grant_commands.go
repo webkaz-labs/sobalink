@@ -45,7 +45,7 @@ func (c *Core) previewManagementGrant(raw json.RawMessage, now time.Time) (any, 
 	if !c.canCreateResourceGrant() {
 		return nil, &localCommandError{"resource_grant_conflict", "revoke the existing grant first; retained grant capacity or revision exhaustion requires explicit recovery"}
 	}
-	relationship, err := c.resourceGrantRelationship(in.PeerKey, now)
+	relationship, err := c.resourceGrantRelationship(in.PeerKey)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (c *Core) confirmManagementGrant(ctx context.Context, raw json.RawMessage, 
 			return nil, resourceGrantStale()
 		}
 	}
-	relationship, err := c.resourceGrantRelationship(record.Relationship.PeerKey, now)
+	relationship, err := c.resourceGrantRelationship(record.Relationship.PeerKey)
 	if err != nil {
 		return nil, err
 	}

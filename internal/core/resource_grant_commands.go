@@ -123,7 +123,7 @@ func (c *Core) resourceGrantView() resourceGrantLocalView {
 
 // The protected saved projection is eligibility only. Remote authentication
 // still requires an accepted concrete managed application capability.
-func (c *Core) resourceGrantRelationship(peer string, now time.Time) (resourcegrant.Relationship, error) {
+func (c *Core) resourceGrantRelationship(peer string) (resourcegrant.Relationship, error) {
 	c.mu.RLock()
 	s := c.directLAN
 	mode := c.profile.Settings.Network
@@ -134,7 +134,9 @@ func (c *Core) resourceGrantRelationship(peer string, now time.Time) (resourcegr
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cfg, err := s.managedCurrentEndpointProjectionLocked(now)
+	// Sample under the observation owner: a timestamp captured before this
+	// lock can arrive after a newer State observation and mimic wall rollback.
+	cfg, err := s.managedCurrentEndpointProjectionLocked(time.Now())
 	if err != nil {
 		return resourcegrant.Relationship{}, resourceGrantUnavailable()
 	}
@@ -179,7 +181,7 @@ func (c *Core) previewResourceGrant(raw json.RawMessage, now time.Time) (any, er
 	if !c.canCreateResourceGrant() {
 		return nil, &localCommandError{"resource_grant_conflict", "revoke the existing grant first; retained grant capacity or revision exhaustion requires explicit recovery"}
 	}
-	relationship, err := c.resourceGrantRelationship(in.PeerKey, now)
+	relationship, err := c.resourceGrantRelationship(in.PeerKey)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +213,7 @@ func (c *Core) confirmResourceGrant(ctx context.Context, raw json.RawMessage, b 
 			return nil, resourceGrantStale()
 		}
 	}
-	relationship, err := c.resourceGrantRelationship(record.Relationship.PeerKey, now)
+	relationship, err := c.resourceGrantRelationship(record.Relationship.PeerKey)
 	if err != nil {
 		return nil, err
 	}

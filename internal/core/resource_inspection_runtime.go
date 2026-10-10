@@ -146,7 +146,7 @@ func (c *Core) reconcileResourceInspection() {
 	err := c.withResourceInspectionState(func(*resourcePathBinding) error {
 		record, _ = activeResourceGrant(g)
 		if record.ID != "" {
-			relationship, relationshipErr = c.resourceGrantRelationship(record.Relationship.PeerKey, time.Now())
+			relationship, relationshipErr = c.resourceGrantRelationship(record.Relationship.PeerKey)
 		}
 		return nil
 	})
@@ -321,7 +321,7 @@ func (c *Core) serveResourceInspection(runtime *resourceInspectionRuntime, capab
 		if !ok || g.timeUncertain || g.relationshipDenied || request.Target != record.Target || request.GrantID != record.ID || request.GrantRevision != record.Revision || runtime.relationship != record.Relationship {
 			return resourcegrant.ErrInvalid
 		}
-		relationship, err := c.resourceGrantRelationship(record.Relationship.PeerKey, time.Now())
+		relationship, err := c.resourceGrantRelationship(record.Relationship.PeerKey)
 		if err != nil || relationship != record.Relationship {
 			return resourcegrant.ErrInvalid
 		}

@@ -1,8 +1,6 @@
 package core
 
 import (
-	"time"
-
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/resource"
@@ -46,7 +44,7 @@ func (c *Core) captureResourceManagementOriginLocked(peerKey string) (resourceMa
 	var relationship resourcegrant.Relationship
 	err := c.withResourceInspectionState(func(*resourcePathBinding) error {
 		var err error
-		relationship, err = c.resourceGrantRelationship(peerKey, time.Now())
+		relationship, err = c.resourceGrantRelationship(peerKey)
 		return err
 	})
 	if err != nil {
@@ -80,7 +78,7 @@ func (c *Core) resourceManagementOriginCurrentLocked(original resourceManagement
 	var current resourcegrant.Relationship
 	err := c.withResourceInspectionState(func(*resourcePathBinding) error {
 		var err error
-		current, err = c.resourceGrantRelationship(original.relationship.PeerKey, time.Now())
+		current, err = c.resourceGrantRelationship(original.relationship.PeerKey)
 		return err
 	})
 	if err != nil || current != original.relationship || !original.completion.activationCurrent() || !original.completion.coreCurrent(original.relationship.PeerKey) || !original.epochCurrent(c) || !original.backend.Node.ResourcePeerCurrent(original.peer, remoteResourceRelationship(original.relationship)) {
