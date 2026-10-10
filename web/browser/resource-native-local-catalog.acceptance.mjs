@@ -1,0 +1,95 @@
+import assert from 'node:assert/strict'
+import { test, expect } from './resource-native-fixtures.mjs'
+
+// Genuine offline Core replies only. HTTP observations do not independently
+// instrument Core admissions. This one-refresh case navigates settings only.
+test('resource-native-local-catalog-en-settings', async ({ page, app }) => {
+  const open = page.getByRole('button', { name: 'Resources', exact: true })
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  await open.click()
+  let dialog = page.getByRole('dialog', { name: 'Resources', exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('No catalog observation yet.')
+  const beforePoll = app.stateReady()
+  await expect.poll(() => app.stateReady()).toBeGreaterThan(beforePoll)
+  expect(app.count('resource.list')).toBe(0)
+  expect(app.count('resource.catalog.snapshot')).toBe(0)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(open).toBeFocused()
+  await page.keyboard.press('Enter')
+  dialog = page.getByRole('dialog', { name: 'Resources', exact: true })
+  await expect(dialog).toBeVisible()
+  expect(app.count('resource.list')).toBe(0)
+  expect(app.count('resource.catalog.snapshot')).toBe(0)
+  await dialog.getByRole('button', { name: 'Load local settings selection', exact: true }).click()
+  const target = dialog.getByRole('combobox', { name: 'Choose a local resource', exact: true })
+  await expect(target.locator('option')).toHaveCount(2)
+  await target.selectOption({ index: 1 })
+  for (const name of ['Local settings', 'Saved services', 'Transfer activity']) await expect(dialog.getByRole('checkbox', { name, exact: true })).toBeChecked()
+  await dialog.getByRole('button', { name: 'Refresh selected sources', exact: true }).click()
+  await expect(dialog).toContainText('All selected sources were fully observed.')
+  const result = await app.catalog()
+  assert.equal(result.schemaVersion, 1)
+  assert.equal(result.snapshot.complete, true)
+  assert.equal(result.snapshot.sources.length, 3)
+  const expected = new Map([['local_settings', 1], ['local_service', 1], ['transfer_activity', 0]])
+  for (const source of result.snapshot.sources) {
+    assert.ok(expected.has(source.selection.kind))
+    assert.equal(source.state, 'current'); assert.equal(source.complete, true)
+    assert.equal(source.total, expected.get(source.selection.kind)); assert.equal(source.rows.length, source.total)
+    expected.delete(source.selection.kind)
+  }
+  assert.equal(expected.size, 0)
+  const settings = dialog.getByRole('region', { name: 'Local settings', exact: true })
+  const service = dialog.getByRole('region', { name: 'Saved services', exact: true })
+  const transfers = dialog.getByRole('region', { name: 'Transfer activity', exact: true })
+  await expect(service).toContainText('Synthetic service')
+  await expect(service).toContainText('synthetic-service')
+  await expect(transfers).toContainText('Confirmed empty at the observed time.')
+  await expect(transfers.getByRole('article')).toHaveCount(0)
+  await expect(transfers.getByRole('button', { name: 'Open transfer details', exact: true })).toHaveCount(0)
+  for (const [label, width, height] of [['desktop', 1440, 960], ['narrow', 390, 844]]) {
+    await page.setViewportSize({ width, height })
+    await transfers.scrollIntoViewIfNeeded()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
+    await expect(dialog.locator('.modal-actions').getByRole('button', { name: 'Close', exact: true })).toBeVisible()
+    // Authentic pixels of an empty-source region contain no private selectors.
+    await app.captureRegion(`catalog-empty-${label}`, transfers)
+  }
+  await page.setViewportSize({ width: 1440, height: 960 })
+  const inspect = settings.getByRole('button', { name: 'Open settings inspection', exact: true })
+  await inspect.scrollIntoViewIfNeeded()
+  // Reach and activate the native control by keyboard, without direct focus().
+  await dialog.getByRole('button', { name: 'Refresh selected sources', exact: true }).click({ trial: true })
+  await page.keyboard.press('Shift+Tab')
+  let reached = false
+  for (let step = 0; step < 40; step++) {
+    if (await inspect.evaluate(element => element === document.activeElement)) { reached = true; break }
+    await page.keyboard.press('Tab')
+  }
+  assert.ok(reached, 'Settings navigation must be keyboard reachable')
+  await page.keyboard.press('Enter')
+  const destination = page.getByRole('dialog', { name: 'Transfer settings', exact: true })
+  await expect(destination).toBeVisible()
+  await expect(destination.locator('.resource-identities')).toContainText(app.localID())
+  await expect(destination).toContainText('Current settings not rechecked')
+  expect(app.count('resource.list')).toBe(2)
+  expect(app.count('resource.catalog.snapshot')).toBe(1)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await open.click()
+  await expect(page.getByRole('dialog')).toContainText('No catalog observation yet.')
+  await expect(page.getByRole('combobox', { name: 'Choose a local resource', exact: true })).toHaveValue('')
+  await page.getByRole('dialog', { name: 'Resources', exact: true }).locator('.modal-actions').getByRole('button', { name: 'Close', exact: true }).click()
+  // Create ordinary app history through its real navigation buttons, then use
+  // browser Back/Forward. No resource IDs or code enter URL/history fixtures.
+  await page.locator('.network-map-button').click()
+  await page.locator('.devices-view-button').click()
+  await page.goBack()
+  await page.goForward()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(app.count('resource.list')).toBe(2)
+  expect(app.count('resource.catalog.snapshot')).toBe(1)
+  app.complete()
+})
