@@ -4,6 +4,7 @@ package routecat
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -84,20 +85,47 @@ func TestGuardedDirectEncryptedTCPUDPIntegration(t *testing.T) {
 			}
 			deadline := time.Now().Add(20 * time.Second)
 			direct := false
+			var attempts, probeErrors, deadlineErrors, canceledErrors uint64
+			var nilProofs, relayProofs, emptyProofs uint64
+			var malformedEndpoints, wrongFamily, wrongAddress uint64
 			for time.Now().Before(deadline) {
 				bounded, stop := context.WithTimeout(ctx, 2*time.Second)
 				proof, err := client.DiscoPing(bounded)
 				stop()
+				attempts++
 				if err == nil && proof != nil && proof.Endpoint != "" {
 					endpoint, err := netip.ParseAddrPort(proof.Endpoint)
 					if err == nil && endpoint.Addr() == loopback {
 						direct = true
 						break
 					}
+					if err != nil {
+						malformedEndpoints++
+					} else if endpoint.Addr().Is4() != loopback.Is4() {
+						wrongFamily++
+					} else {
+						wrongAddress++
+					}
+				} else if err != nil {
+					probeErrors++
+					if errors.Is(err, context.DeadlineExceeded) {
+						deadlineErrors++
+					}
+					if errors.Is(err, context.Canceled) {
+						canceledErrors++
+					}
+				} else if proof == nil {
+					nilProofs++
+				} else if proof.DERPRegionID != 0 {
+					relayProofs++
+				} else {
+					emptyProofs++
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
 			if !direct {
+				t.Logf("guarded direct probe diagnostics: attempts=%d probe_errors=%d deadline_errors=%d canceled_errors=%d nil_proofs=%d relay_proofs=%d empty_proofs=%d malformed_endpoints=%d wrong_family=%d wrong_address=%d parent_done=%t",
+					attempts, probeErrors, deadlineErrors, canceledErrors, nilProofs, relayProofs, emptyProofs, malformedEndpoints, wrongFamily, wrongAddress, ctx.Err() != nil)
 				t.Fatal("selected family did not establish direct encrypted path")
 			}
 			// Removing the relay after path establishment ensures subsequent application
