@@ -302,6 +302,17 @@ func TestBackgroundPeerRefreshLateProbeCannotRestoreCaches(t *testing.T) {
 		for _, invalidate := range []string{"revoke", "remove"} {
 			t.Run(fmt.Sprintf("success=%t/%s", success, invalidate), func(t *testing.T) {
 				p := newCorePair(t)
+				// Own this synthetic-clock pass before installing the response barrier.
+				// A completed real-clock maintenance pass may have populated these caches.
+				p.a.op.Lock()
+				t.Cleanup(p.a.op.Unlock)
+				s := p.a.peerRefreshRetries
+				s.forget("peer-b")
+				p.a.mu.Lock()
+				delete(p.a.confirmed, "peer-b")
+				delete(p.a.discovered, "peer-b")
+				delete(p.a.discoveryObservations, "peer-b")
+				p.a.mu.Unlock()
 				started, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 				var releaseOnce sync.Once
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -317,19 +328,24 @@ func TestBackgroundPeerRefreshLateProbeCannotRestoreCaches(t *testing.T) {
 						http.NotFound(w, r)
 					}
 				}))
+				t.Cleanup(server.Close)
 				injectBackendDialIP(p.a, func(ctx context.Context, _ string, _ netip.AddrPort) (net.Conn, error) {
 					return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
 				})
-				s := p.a.peerRefreshRetries
 				now := time.Unix(6_000, 0)
-				s.complete(s.admit("peer-b", now), now, false)
+				seed := s.admit("peer-b", now)
+				if seed == nil {
+					t.Fatal("synthetic peer refresh seed was not admitted")
+				}
+				s.complete(seed, now, false)
 				now = now.Add(2 * time.Second)
 				state, err := p.na.State(context.Background())
 				if err != nil {
 					t.Fatal(err)
 				}
 				ctx, cancel := context.WithCancel(context.Background())
-				t.Cleanup(func() { cancel(); releaseOnce.Do(func() { close(release) }); <-done; server.Close() })
+				// Cleanup joins the probe before server close, op unlock and Core close.
+				t.Cleanup(func() { cancel(); releaseOnce.Do(func() { close(release) }); <-done })
 				go func() {
 					defer close(done)
 					p.a.refreshPeerBatchWithBackoff(ctx, state, p.a.probePeer, now)

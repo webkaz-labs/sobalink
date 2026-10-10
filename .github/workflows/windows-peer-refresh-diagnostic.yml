@@ -1,0 +1,169 @@
+name: Windows peer-refresh diagnostic (not release validation)
+
+# A single reviewed branch creation starts this diagnostic; no default-branch
+# workflow registration, push trigger, dispatch, schedule, or automatic retry.
+# Keep this branch outside diagnostic/ so activation diagnostics stay skipped.
+on:
+  create:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-peer-refresh-diagnostic-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  GOENV: 'off'
+  GOWORK: 'off'
+  GOTELEMETRY: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+  CGO_ENABLED: '1'
+  GOPROXY: https://proxy.golang.org
+  GOSUMDB: sum.golang.org
+  GOVCS: '*:off'
+
+jobs:
+  windows-peer-refresh-diagnostic:
+    if: >-
+      github.event_name == 'create' && github.run_attempt == 1 &&
+      github.repository == 'webkaz-labs/sobalink' &&
+      github.event.repository.full_name == 'webkaz-labs/sobalink' &&
+      github.event.repository.private == false &&
+      github.event.repository.default_branch == 'main' &&
+      github.event.ref_type == 'branch' &&
+      github.event.ref == 'diagnostic-windows/peer-refresh-5c5318dc-once' &&
+      github.ref == 'refs/heads/diagnostic-windows/peer-refresh-5c5318dc-once'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify reviewed diagnostic source and public ancestry
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+
+          sha = os.environ['GITHUB_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', sha) or git('rev-parse', 'HEAD') != sha:
+              raise SystemExit('Diagnostic checkout does not match the event SHA')
+          parent = 'ecbc363337d65f9bdaa07dc9258292e93edd0396'
+          if git('show', '-s', '--format=%P', 'HEAD') != parent:
+              raise SystemExit('Diagnostic commit must have exactly the reviewed public parent')
+          if git('rev-parse', parent + '^{tree}') != 'd0cdb3c41383e53834ba174201168baf2c86d6e1':
+              raise SystemExit('Diagnostic parent tree differs from the reviewed baseline')
+          expected = [
+              'A\t.github/workflows/windows-peer-refresh-diagnostic.yml',
+              'M\tinternal/core/peer_refresh_test.go',
+          ]
+          if git('diff', '--name-status', '--no-renames', 'HEAD^', 'HEAD').splitlines() != expected:
+              raise SystemExit('Diagnostic commit changes files outside the reviewed two-file scope')
+          source = Path('internal/core/peer_refresh_test.go').read_bytes()
+          if hashlib.sha256(source).hexdigest() != '371d824b583d65e5435910dcbbdf0f40715e1f0a174fedf91f870df24f5c3644':
+              raise SystemExit('Diagnostic test source differs from the reviewed candidate')
+          if git('status', '--porcelain'):
+              raise SystemExit('Diagnostic checkout is not clean')
+          print('Exact diagnostic source: ' + sha)
+          print('Diagnostic feedback only; no full-CI, package, or release acceptance.')
+          PYTHON
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          check-latest: false
+          cache: false
+      - name: Prepare and verify existing locked Go dependencies
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = windows
+          test "$(go env GOARCH)" = amd64
+          test "$(go env CGO_ENABLED)" = 1
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          # Use the existing locked-module recipe, never download the all graph.
+          go mod download
+          go list -race -mod=readonly -deps -test ./internal/core >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Run three planned repetitions of the exact existing test
+        timeout-minutes: 20
+        env:
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          from collections import Counter
+          import json
+          from pathlib import Path
+          import os
+          import subprocess
+
+          package = 'github.com/webkaz-labs/sobalink/internal/core'
+          test = 'TestBackgroundPeerRefreshLateProbeCannotRestoreCaches'
+          expected = {
+              test,
+              test + '/success=false/revoke',
+              test + '/success=false/remove',
+              test + '/success=true/revoke',
+              test + '/success=true/remove',
+          }
+          command = [
+              'go', 'test', '-race', '-count=3', '-json', '-v', '-timeout=2m',
+              '-run', '^TestBackgroundPeerRefreshLateProbeCannotRestoreCaches$',
+              './internal/core',
+          ]
+          counts = Counter()
+          rejected = False
+          log = Path(os.environ['RUNNER_TEMP']) / 'windows-peer-refresh-diagnostic.jsonl'
+          with log.open('w', encoding='utf-8') as output:
+              process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, text=True,
+                                         encoding='utf-8', errors='replace')
+              for line in process.stdout:
+                  print(line, end='', flush=True)
+                  output.write(line)
+                  output.flush()
+                  try:
+                      event = json.loads(line)
+                  except json.JSONDecodeError:
+                      rejected = True
+                      continue
+                  name, action = event.get('Test', ''), event.get('Action', '')
+                  if event.get('Package') != package or (name and name not in expected):
+                      rejected = True
+                  if action in ('fail', 'skip', 'bench'):
+                      rejected = True
+                  if action in ('run', 'pass', 'fail', 'skip'):
+                      counts[(name, action)] += 1
+              status = process.wait()
+          for name in sorted(expected):
+              if counts[(name, 'run')] != 3 or counts[(name, 'pass')] != 3:
+                  rejected = True
+              print(f'{name}: runs={counts[(name, "run")]} passes={counts[(name, "pass")]}')
+          if counts[('', 'pass')] != 1:
+              rejected = True
+          if status != 0 or rejected:
+              raise SystemExit('Diagnostic failed or exact repetition/no-skip evidence was incomplete')
+          print('All three planned repetitions passed, including all four existing subcases.')
+          print('This diagnostic does not establish a cause, fix, full CI, or release readiness.')
+          PYTHON
