@@ -17,6 +17,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
+	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 	"github.com/webkaz-labs/sobalink/internal/resourcegroup"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 	"github.com/webkaz-labs/sobalink/internal/webui"
@@ -54,12 +55,15 @@ func (c *Core) UICode() (any, error) {
 }
 func (c *Core) IPC(ctx context.Context, raw string) (any, error) {
 	if raw == "status" {
+		resourceacceptance.ProcessLocalLiteral(c, raw)
 		return c.Snapshot(ctx)
 	}
 	if raw == "ui" {
+		resourceacceptance.ProcessLocalLiteral(c, raw)
 		return c.UICode()
 	}
 	if raw == "stop" {
+		resourceacceptance.ProcessLocalLiteral(c, raw)
 		return c.stopApplication(), nil
 	}
 	var cmd webui.Command
@@ -254,6 +258,7 @@ func (c *Core) maintain() {
 		c.expireServices()
 		c.expireProxies()
 		c.op.Unlock()
+		resourceacceptance.MaintenancePassed(c)
 	}
 }
 
@@ -370,6 +375,7 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	resourceacceptance.ProcessLocalCommand(c, cmd.Name, cmd.RequestID)
 	switch cmd.Name {
 	case resourcegroup.LocalCurrentReviewCommand, resourcegroup.LocalPreviewCommand, resourcegroup.LocalSelectCommand, resourcegroup.LocalApplyCommand, resourcegroup.LocalStatusCommand, resourcegroup.LocalRefreshCommand, resourcegroup.LocalCancelCommand:
 		return c.resourceGroupCommand(ctx, cmd.Name, cmd.Payload)

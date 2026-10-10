@@ -10,6 +10,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
+	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 )
 
 // This owner is deliberately separate from Core.node. The reviewed upgrade
@@ -203,12 +204,14 @@ func (c *Core) startContextControl(ctx context.Context) error {
 	cfg.Completion = func(ctx context.Context, attempt *directlan.ContextAttempt, verified directlan.VerifiedContextExchange) (directlan.ContextResponse, error) {
 		return c.completeContextExchange(ctx, o, attempt, verified)
 	}
+	resourceacceptance.ProcessNodeConstructorAttempt(c, resourceacceptance.ProcessControlNode)
 	o.node, err = directlan.NewContextControl(cfg)
 	if err != nil {
 		cancel()
 		c.op.Unlock()
 		return err
 	}
+	resourceacceptance.ProcessControlNodeConstructed(c, o.node)
 	c.mu.Lock()
 	c.contextControl = o
 	stopping := c.closing || c.ctx.Err() != nil || ctx.Err() != nil
@@ -238,6 +241,7 @@ func (c *Core) startContextControl(ctx context.Context) error {
 		// Start has returned and callbacks never wait for Core.op. Joining is
 		// safe outside Core.op even when Core.Close is joining the same owner.
 		closeErr := o.close()
+		resourceacceptance.ProcessControlNodeJoined(c, o.node, closeErr == nil)
 		c.op.Lock()
 		if closeErr == nil {
 			c.mu.Lock()
@@ -273,6 +277,7 @@ func (c *Core) stopContextControlLocked() error {
 	}
 	o.store.mu.Unlock()
 	err := o.close()
+	resourceacceptance.ProcessControlNodeJoined(c, o.node, err == nil)
 	if err == nil {
 		c.mu.Lock()
 		if c.contextControl == o {
