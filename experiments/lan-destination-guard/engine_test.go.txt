@@ -1,0 +1,254 @@
+// This fixture is copied into the full pinned magicsock package, never extracted.
+package magicsock
+
+import (
+	"errors"
+	"net"
+	"net/netip"
+	"os"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"tailscale.com/net/batching"
+	"tailscale.com/net/packet"
+	"tailscale.com/types/logger"
+	"tailscale.com/types/nettype"
+	"tailscale.com/util/usermetric"
+)
+
+var lanDenied = errors.New("LAN experiment: denied")
+
+type lanPolicy struct{ prefix netip.Prefix; port uint16 }
+type lanGate struct{ policy atomic.Pointer[lanPolicy] }
+
+func (g *lanGate) check(ap netip.AddrPort) error {
+	p := g.policy.Load()
+	if p == nil || !p.prefix.IsValid() || p.prefix != p.prefix.Masked() || !ap.IsValid() || ap.Port() == 0 || ap.Addr().Zone() != "" || ap.Addr().Is4In6() || !p.prefix.Contains(ap.Addr()) || (p.port != 0 && p.port != ap.Port()) {
+		return lanDenied
+	}
+	return nil
+}
+func (g *lanGate) set(p string) { g.policy.Store(&lanPolicy{prefix: netip.MustParsePrefix(p)}) }
+
+type lanFake struct {
+	blockForeverConn
+	writes  int
+	onWrite func() error
+}
+
+func (f *lanFake) WriteToUDPAddrPort(b []byte, _ netip.AddrPort) (int, error) {
+	f.writes++
+	if f.onWrite != nil {
+		return 0, f.onWrite()
+	}
+	return len(b), nil
+}
+
+type lanBatchFake struct {
+	lanFake
+	batches int
+	onBatch func() error
+}
+
+func (f *lanBatchFake) ReadBatch([]byte, []batching.ReceivedPacket) (int, error) {
+	return 0, net.ErrClosed
+}
+func (f *lanBatchFake) WriteBatchTo(_ [][]byte, _ netip.AddrPort, _ packet.GeneveHeader, _ int) error {
+	f.batches++
+	if f.onBatch != nil {
+		return f.onBatch()
+	}
+	return nil
+}
+
+var _ batching.Conn = (*lanBatchFake)(nil)
+
+func lanSet(c *RebindingUDPConn, p nettype.PacketConn) { c.pconn = p; c.pconnAtomic.Store(&p) }
+func lanBuffers() [][]byte {
+	return [][]byte{append(make([]byte, packet.GeneveFixedHeaderLength), []byte("synthetic-one")...), append(make([]byte, packet.GeneveFixedHeaderLength), []byte("synthetic-two")...)}
+}
+func lanConn(p nettype.PacketConn, g *lanGate) *Conn {
+	c := newConn(logger.Discard)
+	c.metrics = registerMetrics(new(usermetric.Registry))
+	c.pconn4.lanDestinationCheck = g.check
+	c.pconn6.lanDestinationCheck = g.check
+	lanSet(&c.pconn4, p)
+	lanSet(&c.pconn6, p)
+	return c
+}
+func lanCalls(c *Conn, ap netip.AddrPort) []func() error {
+	return []func() error{
+		func() error { _, e := c.sendUDPStd(ap, []byte("synthetic")); return e },
+		func() error { _, e := c.sendUDP(ap, []byte("synthetic-disco-path"), true, false); return e },
+		func() error { _, e := c.sendUDPNetcheck([]byte("synthetic-netcheck"), ap); return e },
+		func() error {
+			_, e := c.sendUDPBatch(epAddr{ap: ap}, lanBuffers(), packet.GeneveFixedHeaderLength)
+			return e
+		},
+		func() error {
+			return c.Send(lanBuffers(), &lazyEndpoint{c: c, src: epAddr{ap: ap}}, packet.GeneveFixedHeaderLength)
+		},
+	}
+}
+func TestLANExperimentFakeEntryPoints(t *testing.T) {
+	for _, fast := range []bool{false, true} {
+		for _, address := range []string{"192.168.40.3:3000", "192.168.41.3:3000", "203.0.113.3:3000", "[fd00:41::3]:3000", "[::ffff:192.168.40.3]:3000"} {
+			g := &lanGate{}
+			g.set("192.168.40.0/24")
+			single := &lanFake{}
+			batch := &lanBatchFake{}
+			var p nettype.PacketConn = single
+			if fast {
+				p = batch
+			}
+			c := lanConn(p, g)
+			ap := netip.MustParseAddrPort(address)
+			for _, call := range lanCalls(c, ap) {
+				e := call()
+				if g.check(ap) == nil {
+					if e != nil {
+						t.Fatal("allowed path failed")
+					}
+				} else if !errors.Is(e, lanDenied) {
+					t.Fatal("denied path did not return policy error")
+				}
+			}
+			if g.check(ap) != nil && (single.writes != 0 || batch.writes != 0 || batch.batches != 0) {
+				t.Fatal("denied destination reached writer")
+			}
+		}
+	}
+}
+func TestLANExperimentFakeRetryRevocation(t *testing.T) {
+	for _, fast := range []bool{false, true} {
+		g := &lanGate{}
+		g.set("192.168.40.0/24")
+		first := &lanBatchFake{}
+		next := &lanBatchFake{}
+		c := lanConn(first, g)
+		revoke := func() error {
+			lanSet(&c.pconn4, next)
+			g.policy.Store(nil)
+			return errors.New("synthetic old socket failure")
+		}
+		first.onWrite = revoke
+		first.onBatch = revoke
+		ap := netip.MustParseAddrPort("192.168.40.3:3000")
+		var e error
+		if fast {
+			e = c.pconn4.WriteWireGuardBatchTo(lanBuffers(), epAddr{ap: ap}, packet.GeneveFixedHeaderLength)
+		} else {
+			_, e = c.pconn4.WriteToUDPAddrPort(nil, ap)
+		}
+		if !errors.Is(e, lanDenied) || next.writes != 0 || next.batches != 0 {
+			t.Fatal("retry bypassed revocation")
+		}
+	}
+}
+func TestLANExperimentFakeNilPolicy(t *testing.T) {
+	p := &lanBatchFake{}
+	c := &RebindingUDPConn{}
+	lanSet(c, p)
+	if _, e := c.WriteToUDPAddrPort(nil, netip.MustParseAddrPort("192.168.40.3:3000")); e == nil {
+		t.Fatal("missing guard allowed write")
+	}
+	if e := c.WriteWireGuardBatchTo(lanBuffers(), epAddr{ap: netip.MustParseAddrPort("192.168.40.3:3000")}, packet.GeneveFixedHeaderLength); e == nil {
+		t.Fatal("missing guard allowed batch")
+	}
+	if p.writes != 0 || p.batches != 0 {
+		t.Fatal("missing guard reached writer")
+	}
+}
+
+// Native test is opt-in and runs only on the authorized CI runner. All destinations
+// are loopback. It proves these entrypoints against real sockets, not LAN/no-egress.
+func TestLANExperimentNativeLoopback(t *testing.T) {
+	if os.Getenv("LAN_GUARD_REAL_SOCKETS") != "1" {
+		t.Skip("native socket fixture requires explicit opt-in")
+	}
+	allowed, e := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if e != nil {
+		t.Fatal("allowed listener setup failed")
+	}
+	defer allowed.Close()
+	denied, e := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if e != nil {
+		t.Fatal("denied listener setup failed")
+	}
+	defer denied.Close()
+	sender, e := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if e != nil {
+		t.Fatal("sender setup failed")
+	}
+	defer sender.Close()
+	g := &lanGate{}
+	g.policy.Store(&lanPolicy{prefix:netip.MustParsePrefix("127.0.0.1/32"),port:allowed.LocalAddr().(*net.UDPAddr).AddrPort().Port()})
+	c := lanConn(sender, g)
+	// Use upstream's real batching upgrade; supported kernels exercise its fast path.
+	c.pconn4.mu.Lock()
+	c.pconn4.setConnLocked(sender, "udp4", nil)
+	c.pconn4.mu.Unlock()
+	_, fast := (*c.pconn4.pconnAtomic.Load()).(batching.Conn)
+	t.Logf("native_batching=%t", fast)
+	for i, call := range lanCalls(c, allowed.LocalAddr().(*net.UDPAddr).AddrPort()) {
+		if e := call(); e != nil {
+			t.Fatalf("allowed entrypoint %d failed", i)
+		}
+		expected := 1
+		if i >= 3 {
+			expected = 2
+		}
+		for j := 0; j < expected; j++ {
+			allowed.SetReadDeadline(time.Now().Add(2 * time.Second))
+			buf := make([]byte, 256)
+			n, _, e := allowed.ReadFromUDPAddrPort(buf)
+			if e != nil || n == 0 {
+				t.Fatalf("allowed entrypoint %d missing datagram", i)
+			}
+		}
+	}
+	for i, call := range lanCalls(c, denied.LocalAddr().(*net.UDPAddr).AddrPort()) {
+		if !errors.Is(call(), lanDenied) {
+			t.Fatalf("denied entrypoint %d did not fail closed", i)
+		}
+	}
+	denied.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	if _, _, e := denied.ReadFromUDPAddrPort(make([]byte, 256)); e == nil {
+		t.Fatal("denied listener received a packet")
+	} else if ne, ok := e.(net.Error); !ok || !ne.Timeout() {
+		t.Fatal("denied receive did not reach bounded timeout")
+	}
+	g.policy.Store(nil)
+	if _, e := c.sendUDPNetcheck([]byte("revoked"), allowed.LocalAddr().(*net.UDPAddr).AddrPort()); !errors.Is(e, lanDenied) {
+		t.Fatal("native policy revocation failed")
+	}
+	t.Log("native_allowed_datagrams=7 native_denied_entrypoints=5 native_policy_revocations=1")
+}
+
+func TestLANExperimentFakeIPv6EntryPoints(t *testing.T) {
+ for _, fast:=range []bool{false,true}{
+  for _,address:=range []string{"[fd00:40::3]:3000","[fd00:41::3]:3000","[2001:db8::3]:3000","[fe80::3%fixture0]:3000","[::ffff:192.168.40.3]:3000"}{
+   g:=&lanGate{};g.set("fd00:40::/64");single:=&lanFake{};batch:=&lanBatchFake{};var p nettype.PacketConn=single;if fast{p=batch};c:=lanConn(p,g)
+   ap:=netip.MustParseAddrPort(address)
+   for _,call:=range lanCalls(c,ap){err:=call();if g.check(ap)==nil{if err!=nil{t.Fatal("allowed IPv6 entrypoint failed")}}else if !errors.Is(err,lanDenied){t.Fatal("denied IPv6 entrypoint failed open")}}
+   if g.check(ap)!=nil&&(single.writes!=0||batch.writes!=0||batch.batches!=0){t.Fatal("denied IPv6 reached writer")}
+  }
+ }
+}
+func TestLANExperimentNativeIPv6Loopback(t *testing.T){
+ if os.Getenv("LAN_GUARD_REAL_SOCKETS")!="1"{t.Skip("native socket fixture requires explicit opt-in")}
+ listen:=func()*net.UDPConn{n,e:=net.ListenUDP("udp6",&net.UDPAddr{IP:net.IPv6loopback});if e!=nil{t.Fatal("IPv6 listener setup failed")};t.Cleanup(func(){n.Close()});return n}
+ allowed,denied,sender:=listen(),listen(),listen()
+ g:=&lanGate{};g.policy.Store(&lanPolicy{prefix:netip.MustParsePrefix("::1/128"),port:allowed.LocalAddr().(*net.UDPAddr).AddrPort().Port()})
+ c:=lanConn(sender,g)
+ c.pconn6.mu.Lock();c.pconn6.setConnLocked(sender,"udp6",nil);c.pconn6.mu.Unlock()
+ for i,call:=range lanCalls(c,allowed.LocalAddr().(*net.UDPAddr).AddrPort()){
+  if call()!=nil{t.Fatal("allowed IPv6 send failed")};count:=1;if i>=3{count=2}
+  for j:=0;j<count;j++{allowed.SetReadDeadline(time.Now().Add(time.Second));if n,_,e:=allowed.ReadFromUDPAddrPort(make([]byte,256));e!=nil||n==0{t.Fatal("allowed IPv6 datagram missing")}}
+ }
+ for _,call:=range lanCalls(c,denied.LocalAddr().(*net.UDPAddr).AddrPort()){if !errors.Is(call(),lanDenied){t.Fatal("denied IPv6 entrypoint escaped")}}
+ denied.SetReadDeadline(time.Now().Add(200*time.Millisecond));if _,_,e:=denied.ReadFromUDPAddrPort(make([]byte,256));e==nil{t.Fatal("denied IPv6 receiver got datagram")}else if ne,ok:=e.(net.Error);!ok||!ne.Timeout(){t.Fatal("denied IPv6 receive did not timeout")}
+ g.policy.Store(nil);if _,e:=c.sendUDPNetcheck([]byte("revoked"),allowed.LocalAddr().(*net.UDPAddr).AddrPort());!errors.Is(e,lanDenied){t.Fatal("IPv6 revocation failed")}
+ t.Log("native_ipv6_allowed_datagrams=7 native_ipv6_denied_entrypoints=5 native_ipv6_policy_revocations=1")
+}

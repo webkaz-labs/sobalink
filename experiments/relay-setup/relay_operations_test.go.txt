@@ -1,0 +1,137 @@
+//go:build relay_setup_experiment
+
+package lanlink
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"testing"
+	"time"
+)
+
+// Real sockets remain loopback-only. This test does not create a Node or permit
+// public destinations, enumerate interfaces, or alter host configuration.
+func TestRelaySetupExperimentLifecycle(t *testing.T) {
+	if os.Getenv("SOBALINK_RUN_RELAY_SETUP_EXPERIMENT") != "1" {
+		t.Fatal("explicit isolated test opt-in required")
+	}
+	ip := netip.MustParseAddr("127.0.0.1")
+	id, err := GenerateRelayIdentity(ip)
+	if err != nil {
+		t.Fatal("identity setup failed")
+	}
+	_, originalPin, err := id.Certificate(ip)
+	if err != nil {
+		t.Fatal("certificate setup failed")
+	}
+	occupied, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("loopback setup failed")
+	}
+	endpoint := occupied.Addr().(*net.TCPAddr).AddrPort()
+	defer occupied.Close()
+	reject := func([]byte) error { return errors.New("synthetic unapproved invitation") }
+	allow := func(string) bool { return false }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if r, err := StartLocalRelay(ctx, endpoint, id, allow, reject); err == nil {
+		r.Close()
+		t.Fatal("occupied port accepted")
+	}
+	occupied.Close()
+	if r, err := StartLocalRelay(ctx, endpoint, id, allow); !errors.Is(err, ErrEmbeddedBootstrap) {
+		if r != nil {
+			r.Close()
+		}
+		t.Fatal("missing authenticated bootstrap accepted")
+	}
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	if r, err := StartLocalRelay(stopped, endpoint, id, allow, reject); err == nil {
+		r.Close()
+		t.Fatal("cancelled startup accepted")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(id.CertificatePEM) {
+		t.Fatal("certificate setup failed")
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}, Proxy: nil, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	probe := func(want int, path string) {
+		t.Helper()
+		response, err := client.Get("https://" + endpoint.String() + path)
+		if err != nil {
+			t.Fatal("pinned loopback probe failed")
+		}
+		io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if response.StatusCode != want {
+			t.Fatal("unexpected relay response")
+		}
+	}
+	relay, err := StartLocalRelay(ctx, endpoint, id, allow, reject)
+	if err != nil {
+		t.Fatal("relay startup failed")
+	}
+	defer relay.Close()
+	if len(relay.ReservedPorts()) != 2 {
+		t.Fatal("relay admission port missing from reservations")
+	}
+	probe(http.StatusNoContent, "/derp/latency-check")
+	probe(http.StatusMethodNotAllowed, "/sobalink/pair/bootstrap")
+	cancel()
+	select {
+	case <-relay.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancel did not stop relay")
+	}
+	if err := relay.Close(); err != nil {
+		t.Fatal("idempotent close failed")
+	}
+	if conn, err := net.DialTimeout("tcp", endpoint.String(), time.Second); err == nil {
+		conn.Close()
+		t.Fatal("stopped listener remained reachable")
+	}
+	restarted, err := StartLocalRelay(context.Background(), endpoint, id, allow, reject)
+	if err != nil {
+		t.Fatal("same endpoint restart failed")
+	}
+	defer restarted.Close()
+	probe(http.StatusNoContent, "/derp/latency-check")
+	_, restartedPin, err := id.Certificate(ip)
+	if err != nil || restartedPin != originalPin {
+		t.Fatal("restart changed saved identity")
+	}
+	if _, _, err := id.Certificate(netip.MustParseAddr("127.0.0.2")); err == nil {
+		t.Fatal("address migration reused mismatched certificate")
+	}
+	replacement, err := GenerateRelayIdentity(ip)
+	if err != nil {
+		t.Fatal("replacement identity setup failed")
+	}
+	_, replacementPin, err := replacement.Certificate(ip)
+	if err != nil || replacementPin == originalPin {
+		t.Fatal("explicit rotation did not change pin")
+	}
+	t.Log("loopback_lifecycle=passed port_conflict=passed bootstrap_required=passed cancellation=passed restart_same_pin=passed changed_ip_rejected=passed rotation_changes_pin=passed")
+}
+
+// These production-path in-memory TLS/admission tests are distinct from the
+// native listener test. An unusable synthetic proxy must not affect bootstrap.
+func TestRelaySetupExperimentBootstrap(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("ALL_PROXY", "http://127.0.0.1:1")
+	t.Run("exact_numeric_pin_redirect_proxy", TestBootstrapPinnedTLSWithoutOSSockets)
+	t.Run("invitation_authentication_and_cancellation", TestRelayBootstrapRequiresAuthenticatedInvitation)
+	t.Run("admission_is_not_application_trust", TestBootstrapHTTPIsBoundedAndDoesNotGrantApplicationTrust)
+	t.Run("lease_slot_cleanup_simulated", TestRelayLeaseClosesTransportAndReleasesSlot)
+}

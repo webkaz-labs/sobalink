@@ -1,0 +1,13 @@
+package magicsock
+
+import (
+ "errors"
+ "testing"
+)
+func TestLANRemainingRawDiscoDisabled(t *testing.T){
+ var c *Conn
+ for _,family:=range []string{"ip4","ip6"}{
+  closer,err:=c.listenRawDisco(family)
+  if closer!=nil||!errors.Is(err,errors.ErrUnsupported){t.Fatal("raw discovery did not fail before socket setup")}
+ }
+}

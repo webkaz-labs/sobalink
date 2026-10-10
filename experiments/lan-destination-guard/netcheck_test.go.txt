@@ -1,0 +1,37 @@
+package netcheck
+
+import (
+ "context"
+ "errors"
+ "net"
+ "sync/atomic"
+ "testing"
+ "tailscale.com/tailcfg"
+)
+
+func TestLANRemainingDiagnosticsDisabled(t *testing.T) {
+ c:=&Client{};ctx:=context.Background()
+ if !errors.Is(c.Standalone(ctx,""),errLANExperimentDisabled){t.Fatal("standalone UDP setup not disabled")}
+ // Nil dependencies deliberately verify denial precedes client, resolver, pinger
+ // and socket construction, including both top-level and direct ICMP entrypoints.
+ if !errors.Is(c.runHTTPOnlyChecks(ctx,nil,nil,nil),errLANExperimentDisabled){t.Fatal("HTTP-only probe not disabled")}
+ if _,_,err:=c.measureHTTPSLatency(ctx,nil);!errors.Is(err,errLANExperimentDisabled){t.Fatal("HTTPS fallback not disabled")}
+ if !errors.Is(c.measureAllICMPLatency(ctx,nil,[]*tailcfg.DERPRegion{nil}),errLANExperimentDisabled){t.Fatal("ICMP setup not disabled")}
+ if _,_,err:=c.measureICMPLatency(ctx,nil,nil);!errors.Is(err,errLANExperimentDisabled){t.Fatal("ICMP direct entrypoint not disabled")}
+}
+func TestLANRemainingDNSFallbackDenied(t *testing.T) {
+ var calls atomic.Int32
+ old:=net.DefaultResolver
+ net.DefaultResolver=&net.Resolver{PreferGo:true,Dial:func(context.Context,string,string)(net.Conn,error){calls.Add(1);return nil,errors.New("synthetic resolver denied")}}
+ defer func(){net.DefaultResolver=old}()
+ for _,cache:=range []bool{false,true}{
+  c:=&Client{UseDNSCache:cache}
+  for _,proto:=range []probeProto{probeIPv4,probeIPv6}{
+   if _,ok:=c.nodeAddrPort(context.Background(),&tailcfg.DERPNode{HostName:"synthetic.invalid"},3478,proto);ok{t.Fatal("hostname fallback unexpectedly admitted")}
+  }
+  for _,tc:=range []struct{n *tailcfg.DERPNode;p probeProto}{{&tailcfg.DERPNode{IPv4:"192.168.40.2"},probeIPv4},{&tailcfg.DERPNode{IPv6:"fd00:40::2"},probeIPv6}}{
+   if _,ok:=c.nodeAddrPort(context.Background(),tc.n,3478,tc.p);!ok{t.Fatal("literal node disappeared")}
+  }
+ }
+ if calls.Load()!=0{t.Fatal("DNS boundary reached resolver")}
+}

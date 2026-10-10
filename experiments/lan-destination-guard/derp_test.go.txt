@@ -1,0 +1,88 @@
+package derphttp
+
+import (
+ "context"
+ "errors"
+ "net"
+ "net/netip"
+ "net/url"
+ "os"
+ "sync/atomic"
+ "testing"
+ "time"
+
+ "tailscale.com/tailcfg"
+ "tailscale.com/tstime"
+ "tailscale.com/types/logger"
+)
+
+func lanClient(relay string) *Client {
+ return &Client{lanExperimentRelay: netip.MustParseAddrPort(relay), logf: logger.Discard, clock: tstime.StdClock{}}
+}
+func TestLANRemainingTCPFakeBoundaries(t *testing.T) {
+ ctx:=context.Background()
+ for _, relay:=range []string{"192.168.40.2:4443","[fd00:40::2]:4443"} {
+  c:=lanClient(relay)
+  var calls atomic.Int32
+  reached:=errors.New("synthetic lower dial")
+  c.lanExperimentDial=func(context.Context,string,string)(net.Conn,error){calls.Add(1);return nil,reached}
+  // The caller-supplied URL dialer must not bypass the exact-address policy.
+  c.SetURLDialer(func(context.Context,string,string)(net.Conn,error){t.Fatal("unguarded custom dialer used");return nil,nil})
+  for _, address:=range []string{relay,"203.0.113.3:4443","192.168.40.3:4443","192.168.40.2:443","[2001:db8::3]:4443","synthetic.invalid:4443","[fe80::1%fixture0]:4443","[::ffff:192.168.40.2]:4443"} {
+   c.url=&url.URL{Scheme:"https",Host:address}
+   before:=calls.Load()
+   _,err:=c.dialURL(ctx)
+   if address==relay { if !errors.Is(err,reached)||calls.Load()!=before+1 {t.Fatal("selected URL relay did not reach writer")} } else if !errors.Is(err,errLANExperimentDenied)||calls.Load()!=before {t.Fatal("URL denied destination reached writer")}
+  }
+  for _, network:=range []string{"tcp","tcp4","tcp6","udp"} {
+   before:=calls.Load();_,err:=c.dialContext(ctx,network,relay)
+   allowed:=network=="tcp" || network=="tcp4"&&c.lanExperimentRelay.Addr().Is4() || network=="tcp6"&&c.lanExperimentRelay.Addr().Is6()
+   if allowed {if !errors.Is(err,reached)||calls.Load()!=before+1{t.Fatal("selected region dial did not reach writer")}} else if !errors.Is(err,errLANExperimentDenied)||calls.Load()!=before{t.Fatal("wrong family or network reached writer")}
+  }
+  n:=&tailcfg.DERPNode{HostName:"synthetic.invalid",IPv4:"none",IPv6:"none",DERPPort:4443}
+  if c.lanExperimentRelay.Addr().Is4(){n.IPv4=c.lanExperimentRelay.Addr().String()}else{n.IPv6=c.lanExperimentRelay.Addr().String()}
+  before:=calls.Load();_,_,err:=c.dialRegion(ctx,&tailcfg.DERPRegion{Nodes:[]*tailcfg.DERPNode{n}})
+  if !errors.Is(err,reached)||calls.Load()!=before+1{t.Fatal("numeric region relay not tested")}
+  for _,n:=range []*tailcfg.DERPNode{
+   {HostName:"synthetic.invalid",DERPPort:4443},
+   {HostName:"synthetic.invalid",IPv4:"203.0.113.3",IPv6:"2001:db8::3",DERPPort:4443},
+  } {
+   before:=calls.Load();_,_,err:=c.dialRegion(ctx,&tailcfg.DERPRegion{Nodes:[]*tailcfg.DERPNode{n}})
+   if !errors.Is(err,errLANExperimentDenied)||calls.Load()!=before{t.Fatal("region fallback escaped numeric policy")}
+  }
+  for _,scheme:=range []string{"http","https"} {
+   before:=calls.Load();_,err:=c.dialNodeUsingProxy(ctx,n,&url.URL{Scheme:scheme,Host:"synthetic.invalid:8888"})
+   if !errors.Is(err,errLANExperimentDenied)||calls.Load()!=before{t.Fatal("proxy path not blocked")}
+  }
+  c.lanExperimentRelay=netip.AddrPort{}
+  before=calls.Load();_,err=c.dialContext(ctx,"tcp",relay)
+  if !errors.Is(err,errLANExperimentDenied)||calls.Load()!=before{t.Fatal("revoked relay reached writer")}
+ }
+}
+
+// Only host-local ephemeral listeners. This does not establish TLS, encrypted
+// peer transfer, NIC binding, VPN containment or whole-process absence of egress.
+func TestLANRemainingTCPNativeLoopback(t *testing.T) {
+ if os.Getenv("LAN_GUARD_REAL_SOCKETS")!="1"{t.Skip("native socket fixture requires explicit opt-in")}
+ for _,family:=range []struct{network,address string}{{"tcp4","127.0.0.1:0"},{"tcp6","[::1]:0"}} {
+  t.Run(family.network,func(t *testing.T){
+   allowed,err:=net.ListenTCP(family.network,net.TCPAddrFromAddrPort(netip.MustParseAddrPort(family.address)));if err!=nil{t.Fatal("allowed TCP listener setup failed")};defer allowed.Close()
+   denied,err:=net.ListenTCP(family.network,net.TCPAddrFromAddrPort(netip.MustParseAddrPort(family.address)));if err!=nil{t.Fatal("denied TCP listener setup failed")};defer denied.Close()
+   c:=lanClient(allowed.Addr().String());c.lanExperimentDial=(&net.Dialer{Timeout:time.Second}).DialContext
+   for _,path:=range []string{"url","region"}{
+    dial:=func(address string)(net.Conn,error){
+     if path=="url"{c.url=&url.URL{Scheme:"https",Host:address};return c.dialURL(context.Background())}
+     ap:=netip.MustParseAddrPort(address);n:=&tailcfg.DERPNode{HostName:"synthetic.invalid",IPv4:"none",IPv6:"none",DERPPort:int(ap.Port())}
+     if ap.Addr().Is4(){n.IPv4=ap.Addr().String()}else{n.IPv6=ap.Addr().String()}
+     nc,_,e:=c.dialRegion(context.Background(),&tailcfg.DERPRegion{Nodes:[]*tailcfg.DERPNode{n}});return nc,e
+    }
+    nc,e:=dial(allowed.Addr().String());if e!=nil{t.Fatal("selected TCP relay failed")}
+    allowed.SetDeadline(time.Now().Add(time.Second));received,e:=allowed.AcceptTCP();if e!=nil{nc.Close();t.Fatal("allowed TCP listener missed connection")};received.Close();nc.Close()
+    if nc,e:=dial(denied.Addr().String());!errors.Is(e,errLANExperimentDenied){if nc!=nil{nc.Close()};t.Fatal("denied TCP destination accepted")}
+   }
+   denied.SetDeadline(time.Now().Add(200*time.Millisecond));nc,e:=denied.AcceptTCP();if e==nil{nc.Close();t.Fatal("denied TCP listener received connection")}else if ne,ok:=e.(net.Error);!ok||!ne.Timeout(){t.Fatal("denied TCP receiver did not reach timeout")}
+   c.lanExperimentRelay=netip.AddrPort{};if nc,e:=c.dialContext(context.Background(),family.network,allowed.Addr().String());!errors.Is(e,errLANExperimentDenied){if nc!=nil{nc.Close()};t.Fatal("TCP revocation failed")}
+  })
+ }
+ t.Log("native_tcp_allowed_connections=4 native_tcp_denied_entrypoints=4 native_tcp_revocations=2 native_tcp_ipv6=true")
+}
