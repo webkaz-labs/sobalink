@@ -15,6 +15,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/control"
 	"github.com/webkaz-labs/sobalink/internal/core"
+	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 	assets "github.com/webkaz-labs/sobalink/web"
 	"golang.org/x/term"
 )
@@ -56,6 +57,7 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	if err != nil {
 		return err
 	}
+	resourceacceptance.ProcessOwnerLock(lock)
 	var app *core.Core
 	var ipc *control.Server
 	var handoff *upgradeStop
@@ -69,6 +71,7 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 			controlOwner = ipc
 		}
 		closeErr, lockErr := shutdownManagedOwners(controlOwner, application, lock)
+		resourceacceptance.ProcessOwnersClosed(app, closeErr == nil, lockErr == nil)
 		err = errors.Join(err, closeErr, lockErr)
 		if handoff != nil {
 			err = errors.Join(err, acknowledgeUpgradeShutdown(*handoff, errors.Join(err, closeErr), lockErr))
@@ -86,11 +89,13 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	if err != nil {
 		return err
 	}
+	resourceacceptance.ProcessWebOpened(app, url)
 	observeForegroundWeb(url)
 	ipc, err = control.ServeWithLimits(ctx, dir, lifecycle.handler(app), app.LocalControlLimits)
 	if err != nil {
 		return err
 	}
+	resourceacceptance.ProcessIPCReady(app)
 	fmt.Fprintln(out, text(ja, "Local UI:", "ローカル画面:"), url)
 	if file, ok := out.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
 		fmt.Fprintln(out, text(ja, "One-time code (5 minutes):", "一回用コード（5分）:"), code)
