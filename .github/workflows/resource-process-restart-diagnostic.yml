@@ -1,0 +1,74 @@
+name: One Linux resource process restart diagnostic
+
+on:
+  create:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p1-process-restart-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  linux-p1-once:
+    if: >-
+      github.repository == 'webkaz-labs/sobalink' &&
+      github.event.repository.private == false &&
+      github.event.repository.default_branch == 'main' &&
+      github.event_name == 'create' &&
+      github.event.ref_type == 'branch' &&
+      github.event.ref == 'diagnostic-p1/process-restart-86bbb925-leaf4' &&
+      github.ref == 'refs/heads/diagnostic-p1/process-restart-86bbb925-leaf4' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # Pinned action/runner Node runtime and ordinary public checkout logs are
+      # accepted platform effects. No fixture state exists at this point.
+      - name: Check out exact event source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          fetch-tags: false
+          persist-credentials: false
+          set-safe-directory: false
+          clean: false
+          lfs: false
+          submodules: false
+          show-progress: false
+      - name: Admit exact public source and hosted image
+        id: admission
+        timeout-minutes: 2
+        run: /usr/bin/python3 -I -S -B .github/scripts/ci-resource-process-restart.py admit
+      - name: Acquire authenticated official Go archive
+        timeout-minutes: 8
+        run: /usr/bin/python3 -I -S -B .github/scripts/ci-resource-process-restart.py acquire
+      - name: Build, require all 83 prerequisites, and attempt P1 once
+        timeout-minutes: 52
+        run: /usr/bin/python3 -I -S -B .github/scripts/ci-resource-process-restart.py run
+      - name: Reconstruct closed public evidence
+        id: evidence
+        if: ${{ always() && steps.admission.outputs.admitted == 'true' }}
+        timeout-minutes: 2
+        run: /usr/bin/python3 -I -S -B .github/scripts/ci-resource-process-restart.py export
+      - name: Upload only verified sanitized evidence
+        if: ${{ always() && steps.evidence.outputs.export_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        timeout-minutes: 3
+        with:
+          name: diagnostic-resource-process-restart-sanitized
+          path: |
+            /tmp/sbp1-ci/public/result.json
+            /tmp/sbp1-ci/public/run-pass-summary.txt
+            /tmp/sbp1-ci/public/provenance.json
+            /tmp/sbp1-ci/public/build-info.json
+            /tmp/sbp1-ci/public/input-hashes.json
+            /tmp/sbp1-ci/public/child-error-category.json
+          retention-days: 14
+          if-no-files-found: error
+          include-hidden-files: false
+          compression-level: 0
+          overwrite: false
