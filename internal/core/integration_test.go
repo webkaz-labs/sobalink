@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -740,6 +741,8 @@ func TestMultipartStagingIsSafeDuringSnapshotsAndShutdown(t *testing.T) {
 				t.Fatal("upload body was consumed before reserving staging")
 			}
 			snapshotStop, snapshotDone := make(chan struct{}), make(chan struct{})
+			// One writer brackets each Snapshot: odd means a call has not returned.
+			var snapshotSteps atomic.Uint64
 			go func() {
 				defer close(snapshotDone)
 				for {
@@ -748,10 +751,21 @@ func TestMultipartStagingIsSafeDuringSnapshotsAndShutdown(t *testing.T) {
 						return
 					default:
 					}
+					snapshotSteps.Add(1)
 					_, _ = p.a.Snapshot(context.Background())
+					snapshotSteps.Add(1)
 				}
 			}()
-			defer func() { close(snapshotStop); <-snapshotDone }()
+			defer func() {
+				close(snapshotStop)
+				if t.Failed() {
+					t.Logf("staged upload diagnostic: snapshot_stop_requested=true snapshot_done=%t", channelClosed(snapshotDone))
+				}
+				<-snapshotDone
+				if t.Failed() {
+					t.Log("staged upload diagnostic: snapshot_cleanup_complete=true")
+				}
+			}()
 			closeDone := make(chan error, 1)
 			if shutdown {
 				go func() { closeDone <- p.a.Close() }()
@@ -777,14 +791,19 @@ func TestMultipartStagingIsSafeDuringSnapshotsAndShutdown(t *testing.T) {
 					t.Fatalf("upload = %d %s", w.Code, w.Body.String())
 				}
 				deadline := time.Now().Add(5 * time.Second)
+				snapshotsBeforeWait := snapshotSteps.Load() / 2
 				for {
 					batch.mu.Lock()
 					state, running, detail := batch.State, batch.running, batch.Error
+					staging, completed, reserved := batch.staging, batch.Completed, batch.reserved
+					spoolPresent, runDone := batch.Spool != "", batch.runDone
 					batch.mu.Unlock()
 					if state == "completed" && !running {
 						break
 					}
 					if state == "failed" || time.Now().After(deadline) {
+						steps := snapshotSteps.Load()
+						t.Logf("staged upload diagnostic: running=%t staging=%t completed_bytes=%d reserved_bytes=%d spool_present=%t error_present=%t run_done_created=%t run_done_closed=%t request_done=%t snapshot_done=%t sender_done=%t snapshots_before_wait=%d snapshots_completed=%d snapshot_call_pending=%t", running, staging, completed, reserved, spoolPresent, detail != "", runDone != nil, channelClosed(runDone), channelClosed(requestDone), channelClosed(snapshotDone), channelClosed(p.a.Done()), snapshotsBeforeWait, steps/2, steps%2 != 0)
 						t.Fatalf("staged upload = %s: %s", state, detail)
 					}
 					time.Sleep(time.Millisecond)
