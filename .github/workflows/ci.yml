@@ -890,6 +890,14 @@ jobs:
           screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
           mkdir -m 700 "$screenshots"
           SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
+      - name: Verify catalog view with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+          SOBALINK_RUN_CATALOG_BROWSER_NATIVE: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestCatalogViewThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestCatalogViewThreeProcessBrowser$' -count=1 -timeout=4m
       - name: Preserve sanitized UI screenshots and typography measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
