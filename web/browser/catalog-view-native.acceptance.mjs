@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { test, expect } from './catalog-native-fixtures.mjs'
 
 function commandResponse(name, origin) {
+  const expectedOrigin = new URL(origin).origin
   return response => {
-    if (new URL(response.url()).origin !== origin || new URL(response.url()).pathname !== '/api/command') return false
+    if (new URL(response.url()).origin !== expectedOrigin || new URL(response.url()).pathname !== '/api/command') return false
     try { return JSON.parse(response.request().postData()).name === name } catch { return false }
   }
 }

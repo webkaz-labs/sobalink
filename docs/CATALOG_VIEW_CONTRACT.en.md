@@ -5,8 +5,9 @@
 This implementation adds eligibility data, owned private storage, explicit local
 approval/revocation and a bounded peer list exchange. It retains original transport
 attribution and implements Web/CLI review flows. Native DirectLAN tests exercise
-list/connect over genuine transports within one test process; separate-process
-and browser workflow acceptance remain pending. Historical catalog rows remain
+list/connect over genuine transports within one test process and independent child
+processes. Linux CI verifies the actual browser workflow against those child
+processes; use the exact commit's CI result as acceptance evidence. Historical catalog rows remain
 stale and viewing does not authorize a connection.
 No release version is assigned.
 
