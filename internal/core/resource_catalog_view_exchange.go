@@ -39,6 +39,7 @@ type catalogViewReceipt struct {
 	original     transportorigin.Origin
 	relationship resourcegrant.Relationship
 	process      string
+	consumed     bool
 }
 
 // Core.op is held. This builds only the granted, still-active generations.
