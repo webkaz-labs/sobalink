@@ -84,3 +84,11 @@ Small platform-specific helpers classify only reviewed socket-closure errno
 values; they do not add probes, permissions, network settings or dependencies.
 The additional local helpers and parser tests carry project MIT notices, while
 upstream DERP source retains its original BSD-3-Clause notice.
+
+Static endpoint discovery now snapshots the immutable configured endpoint view
+under the same mutex used by SetStaticEndpoints before iterating it. This closes
+an upstream v1.104.0 reader/publication race without holding the mutex across
+network discovery, changing endpoint priorities, or changing the module graph.
+The concurrent regression uses the actual endpoint reader with fresh immutable
+IPv4/IPv6 views and synthetic, non-network socket state; the existing native
+race suite also retains its live guarded direct TCP/UDP and relay-removal checks.
