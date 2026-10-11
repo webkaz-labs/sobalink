@@ -9,9 +9,10 @@ import (
 
 var recorder struct {
 	sync.Mutex
-	active  bool
-	aliases [6]any
-	view    View
+	active   bool
+	aliases  [6]any
+	view     View
+	rollover controllerRollover
 }
 
 // Start accepts exactly three roles with two distinct, nonnil pointer aliases
@@ -39,6 +40,7 @@ func Start(owners [3]Owner) bool {
 		return false
 	}
 	recorder.aliases, recorder.view, recorder.active = aliases, View{}, true
+	recorder.rollover = controllerRollover{}
 	return true
 }
 
@@ -53,6 +55,7 @@ func Stop() {
 	recorder.Lock()
 	defer recorder.Unlock()
 	recorder.aliases, recorder.view, recorder.active = [6]any{}, View{}, false
+	recorder.rollover = controllerRollover{}
 }
 
 func hexID(value string, size int) bool {
@@ -112,12 +115,16 @@ func Record(owner any, kind Kind, action, runID, operationID string) {
 	if !recorder.active {
 		return
 	}
+	if recorder.rollover.view.Stage != RolloverIdle && (owner == recorder.rollover.retired[0] || owner == recorder.rollover.retired[1]) {
+		invalidateRollover()
+		return
+	}
 	role := Role(0)
 	for i, alias := range recorder.aliases {
 		// Interface equality is safe even for an unexpected noncomparable owner:
 		// each registered dynamic type is a pointer and different dynamic types
 		// compare false without comparing their underlying values.
-		if owner == alias {
+		if alias != nil && owner == alias {
 			role = Role(i/2 + 1)
 			break
 		}

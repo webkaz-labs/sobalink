@@ -9,6 +9,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/endpointmeta"
+	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 )
 
 // managedCompletionOwner binds ordinary authority to one admitted root/child.
@@ -104,13 +105,16 @@ func (c *Core) newManagedCompletionBackendLocked(s *directLANStore, a *managedAc
 				s.contextPublication == a.receipt && s.contextPublicationCurrentLocked(a.process) &&
 				s.matchActivationLocked(a, time.Now()) == nil
 		})
+		resourceacceptance.ProcessNodeConstructorAttempt(c, resourceacceptance.ProcessManagedStartupNode)
 		n, err = directlan.NewManagedStartupNode(startup)
 	} else {
+		resourceacceptance.ProcessNodeConstructorAttempt(c, resourceacceptance.ProcessManagedNode)
 		n, err = directlan.NewNode(cfg)
 	}
 	if err != nil {
 		return nil, err
 	}
+	resourceacceptance.NodeConstructed(c, n)
 	// This is a NEW volatile response epoch after successful context-owner join.
 	// It is not the old context arm and does not manufacture a durable receipt.
 	a.consumed = true

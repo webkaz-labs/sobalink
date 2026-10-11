@@ -11,6 +11,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
@@ -56,10 +57,12 @@ func (c *Core) newDirectLANBackend(s *directLANStore) (NetworkBackend, error) {
 	cfg.InvitationLimit = resources.Invitations
 	cfg.PacketQueueLimit = resources.PacketQueue
 	cfg.PeerLimitCurrent = s.transportPeerLimit
+	resourceacceptance.ProcessNodeConstructorAttempt(c, resourceacceptance.ProcessLegacyNode)
 	n, err := directlan.NewNode(cfg)
 	if err != nil {
 		return nil, codedDirectLANError(err)
 	}
+	resourceacceptance.NodeConstructed(c, n)
 	return &directLANBackend{Node: n, ctx: c.ctx, store: s, resources: resources}, nil
 }
 func (b *directLANBackend) Start() error {
