@@ -42,6 +42,15 @@ type catalogViewReceipt struct {
 	consumed     bool
 }
 
+// Prepared under Core.op; no source reads or encoding remain at admission.
+type catalogViewDisclosure struct {
+	payload      []byte
+	fence        *resourcegrant.CatalogViewFence
+	selector     resourcegrant.CatalogViewSelector
+	relationship resourcegrant.Relationship
+	serviceIDs   []string
+}
+
 // Core.op is held. This builds only the granted, still-active generations.
 // Connection membership is shown separately and never created by viewing.
 func (c *Core) catalogViewServices(record resourcegrant.CatalogViewRecord) ([]catalogViewService, error) {
@@ -160,10 +169,7 @@ func (c *Core) serveCatalogView(w http.ResponseWriter, r *http.Request, peer str
 	// Decode exact keys, duplicate/null keys included, before any source read.
 	// readJSON's bounded shape supplies only the selector; no peer self-claim.
 	c.op.Lock()
-	var payload []byte
-	var fence *resourcegrant.CatalogViewFence
-	var relationship resourcegrant.Relationship
-	var serviceIDs []string
+	disclosure := catalogViewDisclosure{selector: selector}
 	err := c.withCatalogViewState(false, func(*resourcePathBinding) error {
 		if !c.catalogViewTransportCurrent(r.Context(), peer, original) {
 			return catalogViewUnavailable()
@@ -172,14 +178,14 @@ func (c *Core) serveCatalogView(w http.ResponseWriter, r *http.Request, peer str
 		if err != nil {
 			return err
 		}
-		payload, err = json.Marshal(prepared)
-		if err != nil || int64(len(payload)) > min(c.limit("resources", "discoveryBytes"), c.limit("resources", "pageBytes")) {
+		disclosure.payload, err = json.Marshal(prepared)
+		if err != nil || int64(len(disclosure.payload)) > min(c.limit("resources", "discoveryBytes"), c.limit("resources", "pageBytes")) {
 			return &localCommandError{"catalog_view_limited", "catalog view exceeds the configured response budget"}
 		}
-		fence = f
-		relationship = c.catalogViews.state.ActiveRecord().Relationship
+		disclosure.fence = f
+		disclosure.relationship = c.catalogViews.state.ActiveRecord().Relationship
 		for _, row := range prepared.Services {
-			serviceIDs = append(serviceIDs, row.Service.ID)
+			disclosure.serviceIDs = append(disclosure.serviceIDs, row.Service.ID)
 		}
 		return nil
 	})
@@ -188,25 +194,40 @@ func (c *Core) serveCatalogView(w http.ResponseWriter, r *http.Request, peer str
 		peerFailure(w, http.StatusForbidden)
 		return
 	}
+	current := r.Context().Err() == nil && c.catalogViewTransportCurrent(r.Context(), peer, original) && c.catalogViewSelectionCurrent(c.catalogViews.state.ActiveRecord())
+	c.finishCatalogViewDisclosure(response, r.Context(), original, disclosure, current)
+}
+
+// The caller holds Core.op and has just checked current transport and selection.
+// Release both the original publication permit and Core.op before network I/O.
+func (c *Core) finishCatalogViewDisclosure(response *peerIncomingResponse, ctx context.Context, original transportorigin.Origin, disclosure catalogViewDisclosure, current bool) {
 	response.Header().Set("Content-Type", "application/json")
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	raw, borrowErr := response.borrow(true)
 	// All source reads and encoding precede this final admission. Revoke closes
 	// the same fence under op before any fallible save. The single bounded write
-	// admitted here may finish; no network I/O holds op or an origin mutex.
-	admitted := borrowErr == nil && r.Context().Err() == nil && c.catalogViewTransportCurrent(r.Context(), peer, original) && c.catalogViewSelectionCurrent(c.catalogViews.state.ActiveRecord()) && fence.Admit(selector, relationship, serviceIDs)
+	// admitted here may finish. An ordinary request lease or a sampled stop
+	// channel cannot order this admission against transport retirement.
+	admitted := false
+	if borrowErr == nil && current && ctx.Err() == nil && original != nil {
+		permit, err := original.AcquirePublication(ctx)
+		if err == nil {
+			admitted = ctx.Err() == nil && disclosure.fence.Admit(disclosure.selector, disclosure.relationship, disclosure.serviceIDs)
+			permit.Release()
+		}
+	}
 	c.op.Unlock()
 	if borrowErr != nil {
 		return
 	}
 	if !admitted {
 		response.returned()
-		peerFailure(w, http.StatusForbidden)
+		peerFailure(response, http.StatusForbidden)
 		return
 	}
 	raw.WriteHeader(http.StatusOK)
-	_, _ = raw.Write(payload)
+	_, _ = raw.Write(disclosure.payload)
 	response.returned()
 }
 
@@ -261,9 +282,27 @@ func (c *Core) remoteCatalogViewCommand(ctx context.Context, raw json.RawMessage
 	observation := catalogViewObservation{catalogViewReply: result, PeerKey: input.PeerKey, CheckedAt: time.Now(), ReviewRevision: revision}
 	retained := observation
 	retained.Services = append([]catalogViewService{}, result.Services...)
-	c.catalogViewReceived = &catalogViewReceipt{observation: retained, original: original, relationship: relationship, process: c.resourceNonce}
+	receipt := &catalogViewReceipt{observation: retained, original: original, relationship: relationship, process: c.resourceNonce}
+	if err := c.publishCatalogViewReceipt(call, receipt); err != nil {
+		return nil, err
+	}
 	// This result and its original attribution are separate from historical
 	// discovery cache. They do not relabel legacy catalog rows current or grant
 	// service.connect permission. A connection must re-fetch this exact grant.
 	return observation, nil
+}
+
+// Core.op is held after the original transport/current-selection checks. The
+// HTTP result's earlier private copy does not admit this separate publication.
+func (c *Core) publishCatalogViewReceipt(ctx context.Context, receipt *catalogViewReceipt) error {
+	permit, err := receipt.original.AcquirePublication(ctx)
+	if err != nil {
+		return catalogViewStale()
+	}
+	defer permit.Release()
+	if ctx.Err() != nil {
+		return catalogViewStale()
+	}
+	c.catalogViewReceived = receipt
+	return nil
 }
