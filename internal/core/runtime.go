@@ -381,6 +381,8 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.resourceGroupCommand(ctx, cmd.Name, cmd.Payload)
 	case "resource.catalog.snapshot":
 		return c.resourceCatalogCommand(ctx, cmd.Payload)
+	case "resource.catalog.view.list":
+		return c.remoteCatalogViewCommand(ctx, cmd.Payload)
 	case "resource.remote.inspect":
 		return c.resourceRemoteInspectCommand(ctx, cmd.Payload)
 	case "resource.remote.management.inspect", "resource.remote.management.preview", "resource.remote.management.apply", "resource.remote.management.operation.status":
@@ -569,6 +571,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.stopSharesCommand(cmd.Payload)
 	case "resource.grant.preview", "resource.grant.confirm", "resource.grant.inspect", "resource.grant.revoke", "resource.grant.management.preview", "resource.grant.management.confirm":
 		return c.resourceGrantCommand(ctx, cmd.Name, cmd.Payload)
+	case "resource.catalog.view.preview", "resource.catalog.view.confirm", "resource.catalog.view.inspect", "resource.catalog.view.revoke":
+		return c.catalogViewCommand(ctx, cmd.Name, cmd.Payload)
 	case "resource.list", "resource.inspect", "resource.preview", "resource.apply", "resource.operation.status":
 		return c.resourceCommandContext(ctx, cmd.Name, cmd.Payload)
 	case "policy.config", "policy.preview", "policy.apply":
@@ -918,6 +922,7 @@ func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, p
 	ps := c.peerServer
 	delete(c.confirmed, id)
 	delete(c.discovered, id)
+	delete(c.discoveredOrigins, id)
 	delete(c.discoveryObservations, id)
 	for _, b := range c.outgoing {
 		if b.PeerID == id {

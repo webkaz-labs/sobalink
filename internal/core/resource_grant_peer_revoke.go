@@ -59,6 +59,7 @@ func (c *Core) revokePeerPermission(ctx context.Context, peer string) error {
 	if !config.ValidPeerID(peer) {
 		return errors.New("select an exact peer identity to revoke")
 	}
+	catalogErr := c.revokeCatalogViewPeerPermission(ctx, peer)
 	inspectionErr := c.revokeInspectionPeerPermission(ctx, peer)
 	startupErr := c.revokeStartupPeer(peer)
 	profile := c.profileCopy()
@@ -84,8 +85,8 @@ func (c *Core) revokePeerPermission(ctx context.Context, peer string) error {
 	if startupErr != nil {
 		other = privateAtomicError(startupErr, other)
 	}
-	if inspectionErr != nil {
-		return &resourceGrantRevokeUncertain{errors.Join(inspectionErr, other)}
+	if inspectionErr != nil || catalogErr != nil {
+		return &resourceGrantRevokeUncertain{errors.Join(inspectionErr, catalogErr, other)}
 	}
 	return other
 }

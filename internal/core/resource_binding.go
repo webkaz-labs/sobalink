@@ -13,8 +13,10 @@ import (
 // to that profile, process lock and private journal directory. This is not a
 // transaction or protection against arbitrary same-user filesystem rollback.
 type resourcePathBinding struct {
-	grant     *os.File
-	grantInfo os.FileInfo
+	grant       *os.File
+	grantInfo   os.FileInfo
+	catalog     *os.File
+	catalogInfo os.FileInfo
 
 	dir                                string
 	profile, journal                   *os.File
@@ -55,6 +57,9 @@ func openResourcePathBinding(dir string, expectedProfile, expectedLock os.FileIn
 	return b, nil
 }
 func (b *resourcePathBinding) close() {
+	if b.catalog != nil {
+		_ = b.catalog.Close()
+	}
 	if b.grant != nil {
 		_ = b.grant.Close()
 	}
@@ -66,6 +71,22 @@ func (b *resourcePathBinding) close() {
 	}
 }
 func (b *resourcePathBinding) check() error {
+	if b.catalog != nil {
+		certified, privateErr := config.OpenPrivateChildDirectoryBound(b.dir, "resource-catalog-views", b.profileInfo)
+		if privateErr != nil {
+			return errResourceBinding
+		}
+		certifiedInfo, statErr := certified.Stat()
+		closeErr := certified.Close()
+		if statErr != nil || closeErr != nil || b.catalogInfo == nil || !os.SameFile(certifiedInfo, b.catalogInfo) {
+			return errResourceBinding
+		}
+		current, err := os.Lstat(filepath.Dir(resourceCatalogViewStatePath(b.dir)))
+		opened, statErr := b.catalog.Stat()
+		if err != nil || statErr != nil || b.catalogInfo == nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(current, b.catalogInfo) || !os.SameFile(opened, b.catalogInfo) {
+			return errResourceBinding
+		}
+	}
 	if b.grant != nil {
 		certified, privateErr := config.OpenPrivateChildDirectoryBound(b.dir, "resource-grants", b.profileInfo)
 		if privateErr != nil {
@@ -111,6 +132,11 @@ func (b *resourcePathBinding) write(path string, data []byte, injected func(stri
 			return errResourceBinding
 		}
 		parent = b.grant
+	case resourceCatalogViewStatePath(b.dir):
+		if b.catalog == nil {
+			return errResourceBinding
+		}
+		parent = b.catalog
 	case filepath.Join(b.dir, capacityPolicyFile):
 		parent = b.profile
 	default:

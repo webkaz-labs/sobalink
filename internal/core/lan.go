@@ -974,6 +974,7 @@ func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
 	c.profile = p
 	delete(c.confirmed, id)
 	delete(c.discovered, id)
+	delete(c.discoveredOrigins, id)
 	c.mu.Unlock()
 	if removedAppTrust || revocationErr != nil {
 		c.revokePeer(id)
