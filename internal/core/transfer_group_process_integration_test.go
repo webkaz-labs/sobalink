@@ -275,6 +275,20 @@ func runTransferGroupTwoProcess(t *testing.T, browser bool) {
 	for _, p := range peers {
 		p.stop(t)
 	}
+	if browser {
+		if path := os.Getenv("SOBA_TRANSFER_BROWSER_SUMMARY"); path != "" {
+			// Fixed fields only: private selectors, identities and paths never leave the fixture.
+			file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err != nil {
+				t.Fatal("sanitized transfer acceptance summary unavailable")
+			}
+			_, writeErr := file.WriteString("{\"schema\":1,\"accepted\":true,\"observed\":1,\"passed\":1,\"errors\":0,\"browserCommandExited\":true,\"coreChildrenJoined\":true}\n")
+			closeErr := file.Close()
+			if writeErr != nil || closeErr != nil {
+				t.Fatal("sanitized transfer acceptance summary save failed")
+			}
+		}
+	}
 }
 
 func runTransferGroupProcessBrowser(t *testing.T, ctx context.Context, sender *routeCoreProcess, peerID, processID, selectedID, selectedName, untouchedID, untouchedName string) {
