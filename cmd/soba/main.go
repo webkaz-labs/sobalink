@@ -235,6 +235,8 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		return proxyCommand(ctx, args, dir, ja, out, stdin, request)
 	case "doctor":
 		return doctorCommand(args, ja, out, request)
+	case "transfers":
+		return transferActivityCommand(args, dir, ja, out, query)
 	case "receive-dir", "autosave", "pause", "resume", "reconnect":
 		return preferenceCommand(command, args, ja, out, query, request)
 	case "service":
@@ -308,7 +310,13 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			return e
 		}
 		return request("transfer.accept", map[string]string{"transferId": args[0], "destination": destination})
-	case "cancel", "retry", "forget":
+	case "retry":
+		payload, err := transferRetryPayload(args, ja, out)
+		if err != nil {
+			return err
+		}
+		return request("transfer.retry", payload)
+	case "cancel", "forget":
 		if len(args) != 1 {
 			return usageError(ja, "cancel|retry|forget TRANSFER_ID")
 		}
@@ -366,8 +374,9 @@ var commandUsage = map[string]string{
 	"login": "login [--qr|--link|--browser] [--wait] [--refresh] [--timeout 5m]", "logout": "logout", "trust": "trust PEER_ID", "revoke": "revoke PEER_ID",
 	"message": "message PEER_ID TEXT", "send": "send PEER_ID PATH...",
 	"accept": "accept TRANSFER_ID DIRECTORY", "cancel": "cancel TRANSFER_ID",
-	"retry": "retry TRANSFER_ID", "forget": "forget TRANSFER_ID",
-	"rules": "rules [--json]", "settings": "settings [SERVICE_ID... | --service ID[,ID] | --group NAME] [--json]",
+	"retry": "retry TRANSFER_ID [--peer PEER_ID --process PROCESS_ID --direction incoming|outgoing]", "forget": "forget TRANSFER_ID",
+	"transfers": "transfers [--peer PEER_ID] [--json]",
+	"rules":     "rules [--json]", "settings": "settings [SERVICE_ID... | --service ID[,ID] | --group NAME] [--json]",
 	"stop-service": "stop-service SERVICE_ID", "command": "command NAME JSON_PAYLOAD | command NAME --json-file PATH | command NAME --stdin",
 }
 
@@ -549,6 +558,7 @@ Configuration actions and --dry-run previews keep their existing JSON output.
 Optional tools: soba proxy --help (scoped TCP proxy), soba doctor --help (transport checks)
 Advanced: command NAME JSON_PAYLOAD, revoke PEER_ID, stop-service ID,
 cancel ID, retry ID (whole unfinished files), forget ID (history and retained sending copies)
+transfers [--peer ID] [--json]: activity grouped by peer; retry ID with --peer/--process/--direction checks that selection
 For private invitations: command NAME --json-file PATH or --stdin (pipe only)
 
 The Web UI and CLI use the same permission checks. The target application
@@ -606,6 +616,7 @@ status・peers・サービス/グループの操作は人向け表示が基本�
 任意の詳細機能: soba proxy --help（範囲を限定したTCPプロキシ）、soba doctor --help（通信の確認）
 詳細操作: command NAME JSON_PAYLOAD、revoke PEER_ID、stop-service ID、
 cancel ID、retry ID（未完了ファイルを先頭から）、forget ID（履歴と送信用の一時コピー）
+transfers [--peer ID] [--json]: 相手別の転送一覧。retry ID の --peer/--process/--direction で選択を照合
 機密の招待入力: command NAME --json-file PATH または --stdin（パイプ入力）
 
 画面とCLIは同じ許可判定を使います。接続先では対象アプリの起動が必要です。

@@ -226,6 +226,18 @@ The CLI resolves relative paths from its working directory. Choose an appropriat
 
 Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Once the sender confirms receiver rejection or cancellation, the batch is terminal: its sending copies are removed and staging capacity is released. It cannot be retried; choose the files again to offer a new batch. A temporary communication failure remains retryable and retains its sending copies. If cleanup fails, the capacity stays reserved until cleanup succeeds. Canceling or revoking does not delete already saved files or retrieve data already sent.
 
+### Retry selected failed transfers (source build)
+
+Open a peer's conversation to see completed, failed and ongoing transfers. Select only the failed transfers you want to retry. The existing retry operation preserves successful files and retries failed files. A retry acknowledgement means the request was accepted; wait for the transfer's completed state to confirm delivery.
+
+```sh
+soba transfers --peer PEER_ID
+soba transfers --peer PEER_ID --json
+soba retry TRANSFER_ID --peer PEER_ID --process PROCESS_ID --direction outgoing
+```
+
+Use the process identifier, peer and direction from the current activity output. Supply all three selection options together. Completed, cancelled, busy or unavailable transfers and selections from an earlier agent start are rejected. The existing `soba retry TRANSFER_ID` command remains available.
+
 ### Opt into autosave for one peer
 
 Choose a destination in the UI, or set the CLI default receive folder and enable autosave for an already trusted peer:

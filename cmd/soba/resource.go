@@ -190,6 +190,8 @@ func localizeResourceError(ja bool, err error) error {
 		return err
 	}
 	messages := map[string]string{
+		"transfer_retry_stale":                   "選択した転送の起動世代・相手・方向が変わりました。transfers で再確認し、失敗対象を選び直してください",
+		"transfer_retry_unavailable":             "現在の失敗した非実行中の転送だけ再試行できます。転送状態と相手の許可を確認してください",
 		"catalog_view_invalid":                   "相手・共有世代・有限の期限・確認内容を正確に指定してください",
 		"catalog_view_unavailable":               "共有一覧の許可または接続を確認できません。本体・管理対象の相手・許可情報を確認し、一覧を取得し直してください",
 		"catalog_view_stale":                     "提供元・共有世代・許可または確認内容が変わりました。一覧を取得し直して再確認してください",

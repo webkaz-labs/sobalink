@@ -792,9 +792,50 @@ func (m *Manager) cancelPeerLocked(id string) {
 
 // RetryFile restarts a failed item from byte zero. Successful items retain their
 // acknowledgement, and another batch acceptance is not required.
+// RetryEligibility is a current projection only; execution rechecks the same
+// conditions under the manager lock.
+func (m *Manager) RetryEligibility(id string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.batches[id]
+	if !ok || m.closed || m.recoveryCode != "" {
+		return "unavailable"
+	}
+	if b.value.State != Partial {
+		return "not-failed"
+	}
+	if b.active != 0 {
+		return "busy"
+	}
+	if _, err := m.checkPeerLocked(b.value.Peer); err != nil {
+		return "peer-unavailable"
+	}
+	for _, f := range b.value.Files {
+		if f.State == FileFailed {
+			return ""
+		}
+	}
+	return "not-failed"
+}
+
+// RetryFileInactive narrows selected batch retry to an inactive batch while
+// retaining RetryFile's successful-file acknowledgements and cleanup behavior.
+func (m *Manager) RetryFileInactive(id, fileID string) (Batch, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b, ok := m.batches[id]; ok && b.active != 0 {
+		return snapshot(b), ErrBusy
+	}
+	return m.retryFileLocked(id, fileID)
+}
+
 func (m *Manager) RetryFile(id, fileID string) (Batch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.retryFileLocked(id, fileID)
+}
+
+func (m *Manager) retryFileLocked(id, fileID string) (Batch, error) {
 	b, ok := m.batches[id]
 	if !ok {
 		return Batch{}, ErrNotFound
