@@ -11,7 +11,7 @@ ADAPTED_MODULES = {
     "tailscale.com": {
         "name": "tailscale", "source_path": "internal/engineadaptation",
         "manifest_path": "internal/engineadaptation/manifest.json",
-        "manifest_sha256": "8f8c9e1590045a303708d991eab6b972811df50ea78ec686f614b430f1e1f8e9",
+        "manifest_sha256": "e9554c46a24480e22e50e55b2c2474736284505b03f60120496ddb9ad63f2aa2",
         "version": "v1.104.0", "license": "BSD-3-Clause",
         "module_sum": "h1:7LgglawekeutAexqXUzSxP/Kqo3HHwF/SkcbX5HpiU4=",
         "go_mod_sum": "h1:Cb1XjScRgSOeRD7NW6uCEznme782WiOU9IxqyTWoRf0=",
