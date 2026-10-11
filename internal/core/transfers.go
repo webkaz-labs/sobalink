@@ -19,6 +19,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/capacity"
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/diskspace"
+	"github.com/webkaz-labs/sobalink/internal/resource"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
@@ -730,13 +731,50 @@ func (c *Core) outgoingRequestFailure(ctx context.Context, b *outgoingBatch, cau
 	return cause
 }
 
+type transferRetryExpectation struct {
+	ProcessID string `json:"processId"`
+	PeerID    string `json:"peerId"`
+	Direction string `json:"direction"`
+}
+
+// Called by the serialized command dispatcher with Core.op held.
+func (c *Core) checkTransferRetryExpectation(expected *transferRetryExpectation, peer, direction string) error {
+	if expected == nil {
+		return nil
+	}
+	if c.resourceLock == nil || !resource.ValidID(c.resourceIdentity) || c.ctx == nil || c.ctx.Err() != nil || expected.ProcessID == "" || expected.ProcessID != resourceCatalogProcessToken(c.resourceNonce) || expected.PeerID != peer || expected.Direction != direction {
+		return &localCommandError{"transfer_retry_stale", "the selected transfer changed; refresh transfer activity and select the failed transfer again"}
+	}
+	return nil
+}
+
+func (c *Core) outgoingRetryBlocked(b *outgoingBatch, peer Trust, ok bool) string {
+	if b.State != "failed" {
+		return "not-failed"
+	}
+	if b.running || b.staging {
+		return "busy"
+	}
+	if c.ctx == nil || c.ctx.Err() != nil || b.Spool == "" {
+		return "unavailable"
+	}
+	if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused {
+		return "peer-unavailable"
+	}
+	return ""
+}
+
 func (c *Core) transferCommand(ctx context.Context, name string, raw json.RawMessage) (any, error) {
 	var v struct {
-		TransferID  string `json:"transferId"`
-		Destination string `json:"destination"`
+		TransferID  string                    `json:"transferId"`
+		Destination string                    `json:"destination"`
+		Expected    *transferRetryExpectation `json:"expected,omitempty"`
 	}
 	if e := decodePayload(raw, &v); e != nil {
 		return nil, e
+	}
+	if v.Expected != nil && name != "transfer.retry" {
+		return nil, &localCommandError{"transfer_retry_stale", "a retry selection is valid only for retry"}
 	}
 	c.mu.RLock()
 	out := c.outgoing[v.TransferID]
@@ -750,10 +788,23 @@ func (c *Core) transferCommand(ctx context.Context, name string, raw json.RawMes
 			_ = c.peerJSON(call, out.PeerID, "POST", "/v1/batches/"+out.ID+"/cancel", nil, nil)
 			return nil, nil
 		case "transfer.retry":
+			if e := c.checkTransferRetryExpectation(v.Expected, out.PeerID, "outgoing"); e != nil {
+				return nil, e
+			}
+			peer, approved := c.trust(out.PeerID)
 			out.mu.Lock()
-			if out.running || out.State != "failed" {
+			if out.running || out.staging || out.State != "failed" {
 				out.mu.Unlock()
+				if v.Expected != nil {
+					return nil, &localCommandError{"transfer_retry_unavailable", "only a failed inactive current transfer can be retried"}
+				}
 				return nil, errors.New("only a failed inactive transfer can be retried")
+			}
+			if v.Expected != nil {
+				if reason := c.outgoingRetryBlocked(out, peer, approved); reason != "" {
+					out.mu.Unlock()
+					return nil, &localCommandError{"transfer_retry_unavailable", "the selected transfer cannot currently be retried"}
+				}
 			}
 			ctx, cancel := context.WithCancel(c.ctx)
 			out.cancel = cancel
@@ -796,11 +847,25 @@ func (c *Core) transferCommand(ctx context.Context, name string, raw json.RawMes
 	case "transfer.retry":
 		batch, e := c.transfers.Get(v.TransferID)
 		if e != nil {
+			if v.Expected != nil {
+				return nil, &localCommandError{"transfer_retry_stale", "the selected transfer is no longer present; refresh transfer activity"}
+			}
 			return nil, e
+		}
+		if e := c.checkTransferRetryExpectation(v.Expected, batch.Peer.ID, "incoming"); e != nil {
+			return nil, e
+		}
+		if v.Expected != nil && c.transfers.RetryEligibility(batch.ID) != "" {
+			return nil, &localCommandError{"transfer_retry_unavailable", "only a failed inactive current transfer can be retried"}
 		}
 		for _, file := range batch.Files {
 			if file.State == transfer.FileFailed {
-				if _, e = c.transfers.RetryFile(batch.ID, file.ID); e != nil {
+				if v.Expected != nil {
+					_, e = c.transfers.RetryFileInactive(batch.ID, file.ID)
+				} else {
+					_, e = c.transfers.RetryFile(batch.ID, file.ID)
+				}
+				if e != nil {
 					return nil, e
 				}
 			}
@@ -814,11 +879,12 @@ func (c *Core) transferViews() []map[string]any {
 	out := []map[string]any{}
 	for _, b := range c.transfers.List() {
 		status := map[transfer.BatchState]string{transfer.Pending: "awaiting-acceptance", transfer.Accepted: "queued", transfer.Receiving: "transferring", transfer.Partial: "failed", transfer.Completed: "completed", transfer.Cancelled: "cancelled", transfer.Rejected: "declined"}[b.State]
+		blocked := c.transfers.RetryEligibility(b.ID)
 		entries := []map[string]any{}
 		for _, f := range b.Files {
 			entries = append(entries, map[string]any{"id": f.ID, "path": f.Path, "size": f.Size, "kind": f.Kind, "status": f.State, "error": f.Error, "storedPath": f.StoredName})
 		}
-		out = append(out, map[string]any{"id": b.ID, "peerId": b.Peer.ID, "direction": "incoming", "name": "Batch " + b.ID[:min(8, len(b.ID))], "entries": entries, "totalBytes": b.TotalBytes, "completedBytes": b.CompletedBytes, "status": status, "createdAt": b.CreatedAt})
+		out = append(out, map[string]any{"id": b.ID, "peerId": b.Peer.ID, "direction": "incoming", "retryable": blocked == "", "retryBlockedReason": blocked, "name": "Batch " + b.ID[:min(8, len(b.ID))], "entries": entries, "totalBytes": b.TotalBytes, "completedBytes": b.CompletedBytes, "status": status, "createdAt": b.CreatedAt})
 	}
 	c.mu.RLock()
 	batches := make([]*outgoingBatch, 0, len(c.outgoing))
@@ -827,14 +893,16 @@ func (c *Core) transferViews() []map[string]any {
 	}
 	c.mu.RUnlock()
 	for _, b := range batches {
+		peer, approved := c.trust(b.PeerID)
 		b.mu.Lock()
+		blocked := c.outgoingRetryBlocked(b, peer, approved)
 		entries := []map[string]any{}
 		var total int64
 		for _, entry := range b.Manifest.Entries {
 			total += entry.Size
 			entries = append(entries, map[string]any{"id": entry.ID, "path": entry.Path, "size": entry.Size, "kind": entry.Kind})
 		}
-		out = append(out, map[string]any{"id": b.ID, "peerId": b.PeerID, "direction": "outgoing", "name": "Batch " + b.ID[:min(8, len(b.ID))], "entries": entries, "totalBytes": total, "completedBytes": b.Completed, "status": b.State, "createdAt": b.Created, "error": b.Error})
+		out = append(out, map[string]any{"id": b.ID, "peerId": b.PeerID, "direction": "outgoing", "retryable": blocked == "", "retryBlockedReason": blocked, "name": "Batch " + b.ID[:min(8, len(b.ID))], "entries": entries, "totalBytes": total, "completedBytes": b.Completed, "status": b.State, "createdAt": b.Created, "error": b.Error})
 		b.mu.Unlock()
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["createdAt"].(time.Time).Before(out[j]["createdAt"].(time.Time)) })
