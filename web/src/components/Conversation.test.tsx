@@ -6,7 +6,7 @@ import * as api from '../api'
 import { transferEnglish, transferJapanese } from '../transfer-i18n'
 
 const initialState: api.State = {
-  csrfToken: 'test-csrf', self: { name: 'This device', status: 'online', receiveDirectory: '/receiving', networks: ['tailnet'] },
+  resourceCatalogProcessId: 'a'.repeat(64), csrfToken: 'test-csrf', self: { name: 'This device', status: 'online', receiveDirectory: '/receiving', networks: ['tailnet'] },
   peers: [
     { id: 'peer-a', name: 'Studio', networks: ['tailnet'], online: true, verified: true, trusted: true, bridge: true, path: 'direct' },
     { id: 'peer-b', name: 'Notebook', networks: ['tailnet'], online: true, verified: true, trusted: true, bridge: true, path: 'direct' },
@@ -390,7 +390,7 @@ describe.each(['en', 'ja'] as const)('reviewed outgoing discard (%s)', locale =>
     const status = 'failed' as const
     localStorage.setItem('sobalink.locale', locale)
     const state = withOffer()
-    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status }
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status, retryable: true }
     const { requests } = setup(state)
     render(<App />); await openPeer()
     const card = screen.getByRole('article', { name: /Notes/ })
@@ -444,7 +444,7 @@ describe.each(['en', 'ja'] as const)('declined outgoing history (%s)', locale =>
 describe('discard review lifetime', () => {
   it('keeps a failed discard visible and lets the user cancel without repeating the command', async () => {
     const state = withOffer()
-    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'failed' }
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'failed', retryable: true }
     const { requests, fetch } = setup(state)
     render(<App />); await openPeer()
     await userEvent.click(screen.getByRole('button', { name: 'Discard batch…' }))
@@ -463,7 +463,7 @@ describe('discard review lifetime', () => {
 
   it('dismisses an outdated discard review when the transfer state changes', async () => {
     const state = withOffer()
-    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'failed' }
+    state.transfers[0] = { ...state.transfers[0], direction: 'outgoing', status: 'failed', retryable: true }
     const { requests, setState } = setup(state)
     render(<App />); await openPeer()
     await userEvent.click(screen.getByRole('button', { name: 'Discard batch…' }))
@@ -511,7 +511,7 @@ describe('disk-space transfer failures', () => {
   for (const locale of ['en', 'ja'] as const) {
     it(`shows recoverable receiving and sender space guidance in ${locale}`, async () => {
       localStorage.setItem('sobalink.locale', locale)
-      setup({ ...initialState, transfers: [{ id: 'space-failure', peerId: 'peer-a', direction: 'incoming', name: 'Space test', status: 'failed', totalBytes: 10, completedBytes: 0, createdAt: '2026-01-01T00:00:00Z', error: 'peer_disk_space_unknown', entries: [{ id: 'file', path: 'payload', kind: 'file', size: 10, status: 'failed', error: 'disk_space_low' }] }] })
+      setup({ ...initialState, transfers: [{ id: 'space-failure', peerId: 'peer-a', direction: 'incoming', name: 'Space test', status: 'failed', retryable: true, totalBytes: 10, completedBytes: 0, createdAt: '2026-01-01T00:00:00Z', error: 'peer_disk_space_unknown', entries: [{ id: 'file', path: 'payload', kind: 'file', size: 10, status: 'failed', error: 'disk_space_low' }] }] })
       render(<App />); await openPeer()
       expect(screen.queryByText('disk_space_low')).not.toBeInTheDocument()
       expect(screen.queryByText('peer_disk_space_unknown')).not.toBeInTheDocument()

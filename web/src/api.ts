@@ -39,6 +39,7 @@ export interface TransferEntry {
   error?: string
   storedPath?: string
 }
+export interface TransferRetryExpected { processId: string; peerId: string; direction: 'incoming' | 'outgoing' }
 export interface Transfer {
   id: string
   peerId: string
@@ -47,6 +48,8 @@ export interface Transfer {
   entries: TransferEntry[]
   totalBytes: number
   completedBytes: number
+  retryable?: boolean
+  retryBlockedReason?: '' | 'not-failed' | 'busy' | 'peer-unavailable' | 'unavailable'
   status: 'offered' | 'awaiting-acceptance' | 'queued' | 'transferring' | 'saving' | 'completed' | 'cancelled' | 'failed' | 'declined'
   createdAt: string
   error?: string
@@ -282,7 +285,7 @@ export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload
   'receive.recovery.confirm': { reviewed: boolean }
   'transfer.decline': { transferId: string }
   'transfer.cancel': { transferId: string }
-  'transfer.retry': { transferId: string }
+  'transfer.retry': { transferId: string; expected?: TransferRetryExpected }
   'transfer.forget': { transferId: string }
   'peer.trust': { peerId: string; trusted: boolean }
   'discovery.refresh': { peerId?: string }

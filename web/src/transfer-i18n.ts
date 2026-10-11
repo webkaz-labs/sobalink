@@ -1,6 +1,19 @@
 import type { Locale } from './api'
 
 export const transferEnglish = {
+  peerTransfers: 'Transfers with this device',
+  succeededCount: 'Succeeded',
+  failedCount: 'Failed',
+  progressCount: 'In progress',
+  cancelledCount: 'Cancelled',
+  declinedCount: 'Declined',
+  selectRetry: 'Select for retry',
+  retrySelected: 'Retry selected failed transfers',
+  retryHint: 'Only failed files in selected transfers are retried. Already saved files stay in place.',
+  retryAcknowledged: 'Retry requested. Follow the transfer status for completion.',
+  retryUnconfirmed: 'Retry was not confirmed. Refresh and review this transfer before trying again.',
+  retrySkipped: 'Transfer changed or is unavailable. Review it again.',
+  retryUnavailable: 'Retry unavailable; check the device and refresh the transfer status.',
   removeEntry: 'Remove from batch',
   changeFolder: 'Change folder',
   batchDestinationHint: 'This folder is used for this batch only. The default folder and automatic receiving settings stay the same.',
@@ -14,6 +27,19 @@ export const transferEnglish = {
 } as const
 export type TransferTextKey = keyof typeof transferEnglish
 export const transferJapanese: Record<TransferTextKey, string> = {
+  peerTransfers: 'この相手との転送',
+  succeededCount: '成功',
+  failedCount: '失敗',
+  progressCount: '進行中',
+  cancelledCount: '取消済み',
+  declinedCount: '辞退済み',
+  selectRetry: '再試行対象に選択',
+  retrySelected: '選択した失敗転送を再試行',
+  retryHint: '選択した転送の失敗ファイルだけを再試行します。保存済みのファイルは残ります。',
+  retryAcknowledged: '再試行を要求しました。完了は転送状況で確認してください。',
+  retryUnconfirmed: '再試行を確認できませんでした。更新して対象を確認してから再試行してください。',
+  retrySkipped: '対象が変わったか利用できません。確認し直してください。',
+  retryUnavailable: '再試行できません。相手の状態を確認して転送状況を更新してください。',
   removeEntry: 'バッチから削除',
   changeFolder: '保存先を変更',
   batchDestinationHint: 'このバッチだけに使う保存先です。既定の保存先や自動受信の設定は変わりません。',
