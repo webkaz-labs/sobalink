@@ -569,6 +569,10 @@ jobs:
       TESTED_COMMIT: ${{ needs.gate.outputs.commit }}
       RELEASE_TAG: ${{ needs.gate.outputs.tag }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: prerelease-distribution-inputs
@@ -581,7 +585,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python tools/release-validation.py gate
+          python .github/scripts/release-validation.py gate --proof "$RUNNER_TEMP/stage-ci-full-proof.json"
           python tools/release-validation.py assets
           python - <<'PY'
           import importlib.util, json, os, subprocess

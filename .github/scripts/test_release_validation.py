@@ -88,6 +88,37 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("check_locales(binary)", offline)
         self.assertIn("native locale fallback mismatch", offline)
 
+    def test_release_gates_use_exact_checkouts_and_explicit_proof_paths(self):
+        cases = (
+            ("gate", "${{ github.sha }}", "ci-full-proof.json"),
+            ("stage", "${{ needs.gate.outputs.commit }}", "stage-ci-full-proof.json"),
+        )
+        for job, ref, proof in cases:
+            with self.subTest(job=job):
+                checkout = self.step("prerelease", job, "uses: actions/checkout@")
+                self.assertIn("uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", checkout)
+                self.assertIn("          ref: " + ref + "\n", checkout)
+                self.assertIn("          persist-credentials: false\n", checkout)
+                command = 'python .github/scripts/release-validation.py gate --proof "$RUNNER_TEMP/' + proof + '"'
+                gate = self.step("prerelease", job, command)
+                source = self.job("prerelease", job)
+                self.assertEqual(source.count(command), 1)
+                self.assertLess(source.index(checkout), source.index(gate))
+                if job == "stage":
+                    for artifact in ("prerelease-distribution-inputs", "release-validation-tools"):
+                        download = self.step("prerelease", job, "name: " + artifact)
+                        self.assertLess(source.index(checkout), source.index(download))
+                self.assertNotIn("python tools/release-validation.py gate", source)
+
+    def test_stage_revalidates_before_any_tag_or_draft_mutation(self):
+        stage = self.step("prerelease", "stage", "name: Recheck source and CI,")
+        command = 'python .github/scripts/release-validation.py gate --proof "$RUNNER_TEMP/stage-ci-full-proof.json"'
+        self.assertIn("set -euo pipefail", stage)
+        self.assertLess(stage.index(command), stage.index("python tools/release-validation.py assets"))
+        self.assertLess(stage.index(command), stage.index('post("git/refs"'))
+        self.assertLess(stage.index(command), stage.index('post("releases"'))
+        self.assertNotIn("continue-on-error:", stage)
+
     def test_node_setup_uses_node24_action_without_automatic_package_cache(self):
         workflows = pathlib.Path(__file__).parents[1] / "workflows"
         found = 0
