@@ -99,9 +99,13 @@ type Options struct {
 	// Legacy grants select inspection v1; management grants select management v2.
 	// When false, grant storage is not opened and no resource listener starts.
 	EnableResourceInspection bool
+	// EnableCatalogView enables separate, explicitly approved service-list grants.
+	// It does not enable inspection/management grants or create catalog authority.
+	EnableCatalogView bool
 }
 
 type Core struct {
+	catalogViews                 *resourceCatalogViewCoordinator // op; nil unless explicitly enabled
 	resourceGrants               *resourceGrantCoordinator       // op; nil unless explicitly enabled
 	resourceRemoteEvidenceDenied bool                            // op; owned journal read failed until owned reopen
 	resourceUncertainWrite       *resourceJournalWriteCandidates // op; bounded exact self-write candidates
@@ -243,6 +247,9 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if opts.EnableResourceInspection {
 		c.initializeResourceGrants()
 		c.initializeResourceGroups()
+	}
+	if opts.EnableCatalogView {
+		c.initializeCatalogViews()
 	}
 	for _, peer := range p.Peers {
 		if peer.Generation > c.trustGeneration {
@@ -474,6 +481,9 @@ func (c *Core) close() error {
 	c.op.Lock()
 	var inspection *resourceInspectionRuntime
 	var management *resourceManagementRuntime
+	if c.catalogViews != nil {
+		c.catalogViews.freeze()
+	}
 	if c.resourceGrants != nil {
 		c.resourceGrants.freeze()
 		inspection = c.resourceGrants.retiring
