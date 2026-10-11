@@ -69,6 +69,15 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		var value any
 		var callErr error
 		switch request.Name {
+		case "fixture.send-paths":
+			var in struct {
+				PeerID string   `json:"peerId"`
+				Paths  []string `json:"paths"`
+			}
+			callErr = json.Unmarshal(request.Payload, &in)
+			if callErr == nil {
+				value, callErr = c.SendPaths(ctx, in.PeerID, in.Paths)
+			}
 		case "fixture.snapshot":
 			value, callErr = c.Snapshot(ctx)
 		case "fixture.catalog-local":
