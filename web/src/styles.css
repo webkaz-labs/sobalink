@@ -208,7 +208,7 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .forget-transfer { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--border); }
 .forget-transfer small { color: var(--muted); font-size: 14px; }
 .forget-transfer .button { font-size: 14px; }
-.batch-preview { border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); background: var(--surface); border-radius: 11px; margin-bottom: 13px; }
+.batch-preview, .peer-transfer-summary { border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); background: var(--surface); border-radius: 11px; margin-bottom: 13px; }
 .batch-heading { display: flex; justify-content: space-between; align-items: center; padding: 13px 14px 5px; }
 .batch-heading h3 { font-size: 14px; margin-top: 4px; }
 .preview-files { padding: 5px 15px; list-style: none; margin: 0; max-height: 135px; overflow-y: auto; }

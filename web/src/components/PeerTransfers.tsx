@@ -39,7 +39,7 @@ export function PeerTransfers({ peer, state, server, locale, resetToken }: { pee
     } finally { pending.current = false; if (alive.current) setRunning(false) }
   }
   if (!transfers.length) return null
-  return <section className="batch-preview" aria-label={ft('peerTransfers')}>
+  return <section className="peer-transfer-summary" aria-label={ft('peerTransfers')}>
     <h3>{ft('peerTransfers')}: {peer.name}</h3>
     <p className="small">{ft('succeededCount')}: {counts.succeeded} · {ft('failedCount')}: {counts.failed} · {ft('progressCount')}: {counts.inProgress} · {ft('cancelledCount')}: {counts.cancelled} · {ft('declinedCount')}: {counts.declined}</p>
     {transfers.some(item => item.status === 'failed') && <><p className="small muted">{ft('retryHint')}</p><ul className="preview-files" style={{ maxHeight: '10rem', overflowY: 'auto' }}>{transfers.filter(item => item.status === 'failed').map(item => <li key={transferKey(item)}><label><input type="checkbox" checked={selected.includes(transferKey(item)) && eligible(item)} disabled={running || !eligible(item)} onChange={event => setSelected(current => event.target.checked ? [...current, transferKey(item)] : current.filter(key => key !== transferKey(item)))} /> {ft('selectRetry')}: {item.name} ({item.direction === 'incoming' ? '↓' : '↑'})</label>{!eligible(item) && <small>{ft('retryUnavailable')}</small>}</li>)}</ul><Button onClick={() => void retry()} disabled={!chosen.length || running} busy={running}>{ft('retrySelected')} ({chosen.length})</Button></>}
