@@ -62,6 +62,12 @@ func (c *Core) resourceCatalogDiscoveryScalarsCurrent(o *resourceCatalogDiscover
 	if c.closing || c.node != o.node || c.profile.Settings.Network != o.network || c.trustGeneration != o.trust || c.lanStartWriteRevision.Load() != o.writeRevision || c.startup.Revocations[o.peer] != o.revocation || c.managedDenied[o.peer] || c.managedDenied[mixedID("direct-lan", o.peer)] || c.confirmed[o.peer] != o.confirmed || c.discoveryObservations[o.peer] != o.observation {
 		return false
 	}
+	if o.transport != nil {
+		cached := c.discoveredOrigins[o.peer]
+		if cached == nil || cached.Identity() != o.transport.Identity() {
+			return false
+		}
+	}
 	services := c.discovered[o.peer]
 	if len(services) != len(o.services) {
 		return false
@@ -86,20 +92,12 @@ func (c *Core) resourceCatalogDiscoveredServices(ctx context.Context, s resource
 	if denied || !resourceCatalogDiscoveryPeerCurrent(ctx, o.node, s.PeerKey) {
 		return resourceCatalogFailure(s, "unavailable"), nil
 	}
-	if direct, ok := o.node.(*directLANBackend); ok {
-		// CapturePeer is local-only and does not dial. Keep this original
-		// generation's stop fence; never replace it after another source read.
-		peer, err := direct.Node.CapturePeer(s.PeerKey)
-		if err != nil || peer.Origin() == nil || peer.Origin().Identity() == nil {
-			return resourceCatalogFailure(s, "unavailable"), nil
-		}
-		o.transport = peer.Origin()
-	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.node != o.node || c.profile.Settings.Network != o.network || c.closing || c.trustGeneration != o.trust || c.lanStartWriteRevision.Load() != o.writeRevision || c.startup.Revocations[s.PeerKey] != o.revocation || c.managedDenied[s.PeerKey] || c.managedDenied[mixedID("direct-lan", s.PeerKey)] {
 		return resourceCatalogFailure(s, "unavailable"), nil
 	}
+	o.transport = c.discoveredOrigins[s.PeerKey]
 	o.observation = c.discoveryObservations[s.PeerKey]
 	o.confirmed = c.confirmed[s.PeerKey]
 	observation := o.observation
@@ -116,6 +114,9 @@ func (c *Core) resourceCatalogDiscoveredServices(ctx context.Context, s resource
 		// empty-cache scalar fence through final disclosure, even without rows.
 		o.services = []RemoteService{}
 		return capture, o
+	}
+	if _, direct := o.node.(*directLANBackend); direct && (o.transport == nil || o.transport.Identity() == nil || channelClosed(o.transport.StopRequested())) {
+		return resourceCatalogFailure(s, "unavailable"), nil
 	}
 	if observation.State != "confirmed" || o.confirmed.IsZero() || observation.CheckedAt.Before(o.confirmed) || observation.Services != len(c.discovered[s.PeerKey]) {
 		return resourceCatalogFailure(s, "unavailable"), nil
@@ -163,9 +164,8 @@ func resourceCatalogProjectDiscovered(ctx context.Context, s resourcecatalog.Sel
 		rows = append(rows, row)
 	}
 	capture := resourceCatalogComplete(s, checked.UnixMilli(), rows)
-	// The existing cache publishes under the original transport permit but does
-	// not retain its identity. A newly captured origin cannot certify the old
-	// publication. Preserve authorized historical observation only, even when
+	// Retained publication attribution does not itself authorize disclosure or
+	// connection. Preserve authorized historical observation only, even when
 	// its timestamp is within 15 seconds or its result was empty. Current/actionable
 	// discovery remains gated on a separately reviewed provenance association.
 	capture.State = "stale"

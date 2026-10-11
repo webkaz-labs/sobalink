@@ -257,3 +257,14 @@ func (a *peerHTTPApplication) finishWithTerminal(terminal func()) {
 		release()
 	}
 }
+
+// discoveryOrigin retains the actual publication attribution, never a newly
+// captured generation. Multiple routes remain unsupported.
+func (a *peerHTTPApplication) discoveryOrigin() transportorigin.Origin {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.origins) != 1 {
+		return nil
+	}
+	return a.origins[0].origin
+}

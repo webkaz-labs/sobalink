@@ -57,6 +57,7 @@ func (c *Core) logoutTailnet(ctx context.Context) (LogoutResult, error) {
 	}
 	clear(c.confirmed)
 	clear(c.discovered)
+	clear(c.discoveredOrigins)
 	c.mu.Unlock()
 	defer c.cancel()
 	// Cancel every traffic source before waiting for any one of them. Cleanup

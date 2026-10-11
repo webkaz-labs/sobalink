@@ -25,6 +25,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 	"github.com/webkaz-labs/sobalink/internal/transport"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
@@ -163,6 +164,7 @@ type Core struct {
 	refreshAdmissionCursor     string
 	peerRefreshRetries         *peerRefreshScheduler
 	discovered                 map[string][]RemoteService
+	discoveredOrigins          map[string]transportorigin.Origin
 	discoveryObservations      map[string]DiscoveryObservation
 	active                     map[string]*activeService
 	serviceStates              map[string]string
@@ -234,7 +236,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	}
 	loadedProfileRevision := privateRevision(p)
 	ctx, cancel := context.WithCancel(parent)
-	c := &Core{lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
+	c := &Core{lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, discoveredOrigins: map[string]transportorigin.Origin{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
 	resourceacceptance.CoreConstructed(c, opts.LifecycleLock)
 	c.capacity = limits
 	c.initializeResourceIdentity(opts.LifecycleLock)

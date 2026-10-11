@@ -918,6 +918,7 @@ func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, p
 	ps := c.peerServer
 	delete(c.confirmed, id)
 	delete(c.discovered, id)
+	delete(c.discoveredOrigins, id)
 	delete(c.discoveryObservations, id)
 	for _, b := range c.outgoing {
 		if b.PeerID == id {

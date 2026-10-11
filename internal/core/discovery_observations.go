@@ -39,6 +39,7 @@ func (c *Core) recordDiscoveryObservationLocked(id string, err error) {
 	if err != nil {
 		delete(c.confirmed, id)
 		delete(c.discovered, id)
+		delete(c.discoveredOrigins, id)
 	} else {
 		observation.Services = len(c.discovered[id])
 	}

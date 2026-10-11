@@ -24,6 +24,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 type peerServer struct {
@@ -477,6 +478,10 @@ func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
 				if probeErr == nil {
 					c.confirmed[id] = time.Now()
 					c.discovered[id] = discovered
+					if c.discoveredOrigins == nil {
+						c.discoveredOrigins = make(map[string]transportorigin.Origin)
+					}
+					c.discoveredOrigins[id] = application.discoveryOrigin()
 				}
 				c.recordDiscoveryObservationLocked(id, probeErr)
 			}
@@ -595,6 +600,7 @@ func (c *Core) refreshPeerBatchClock(ctx context.Context, st identity.State, pro
 	for id := range c.discovered {
 		if !isPresent(id) {
 			delete(c.discovered, id)
+			delete(c.discoveredOrigins, id)
 		}
 	}
 	c.mu.Unlock()
