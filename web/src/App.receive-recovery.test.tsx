@@ -7,12 +7,12 @@ import { recoveryText } from './receive-recovery-i18n'
 
 const recovery: api.ReceiveRecovery = { state: 'blocked', code: 'legacy_review_required', reservedBytes: null, applied: false, review: [...api.RECEIVE_RECOVERY_REVIEW] }
 const initial: api.State = {
-  csrfToken: 'fixture-csrf', self: { name: 'Notebook', status: 'online' }, settings: { network: 'tailnet', receiveDirectory: '/fixture/received' },
+  resourceCatalogProcessId: 'a'.repeat(64), csrfToken: 'fixture-csrf', self: { name: 'Notebook', status: 'online' }, settings: { network: 'tailnet', receiveDirectory: '/fixture/received' },
   peers: [{ id: 'fixture-studio', name: 'Studio', networks: ['tailnet'], online: true, verified: true, trusted: true, bridge: true, path: 'direct', autosave: { enabled: true, paused: false } }],
   receiveRecovery: recovery, messages: [], services: [], shares: [], transfers: [
     { id: 'offer', peerId: 'fixture-studio', direction: 'incoming', name: 'Fixture notes', entries: [{ path: 'notes.txt', kind: 'file', size: 5 }], totalBytes: 5, completedBytes: 0, status: 'offered', createdAt: '2026-10-02T10:00:00Z' },
-    { id: 'retry', peerId: 'fixture-studio', direction: 'incoming', name: 'Failed receive', entries: [], totalBytes: 5, completedBytes: 0, status: 'failed', error: 'receive_recovery_required', createdAt: '2026-10-02T10:01:00Z' },
-    { id: 'outgoing', peerId: 'fixture-studio', direction: 'outgoing', name: 'Failed outgoing', entries: [], totalBytes: 5, completedBytes: 0, status: 'failed', createdAt: '2026-10-02T10:02:00Z' },
+    { id: 'retry', peerId: 'fixture-studio', direction: 'incoming', name: 'Failed receive', retryable: true, entries: [], totalBytes: 5, completedBytes: 0, status: 'failed', error: 'receive_recovery_required', createdAt: '2026-10-02T10:01:00Z' },
+    { id: 'outgoing', peerId: 'fixture-studio', direction: 'outgoing', name: 'Failed outgoing', retryable: true, entries: [], totalBytes: 5, completedBytes: 0, status: 'failed', createdAt: '2026-10-02T10:02:00Z' },
   ],
 }
 function setup() {
