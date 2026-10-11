@@ -52,7 +52,7 @@ The authenticated local Web catalog offers explicit source selection and refresh
 
 Settings navigation opens the existing settings review. Saved-service navigation selects an existing saved definition for its normal workflow. Transfer navigation focuses the original current-process batch and direction without accepting, retrying or sending anything. **Open service connections** opens a blank manual form for the explicitly selected peer; it carries no stale advertisement ID, ports, revision or lifetime and never connects automatically. Fresh selection, review and authorization belong to that existing workflow. Cached discovery rows remain stale and have no connection action.
 
-Mounted synthetic Web tests and the bounded three-Core native local-catalog scenario have passed for this source milestone. The native scenario does not establish nonempty real-transfer activity, an actual browser session or a remote catalog capability.
+Earlier mounted synthetic Web tests and the bounded three-Core native local-catalog scenario passed on their reviewed sources. The later [B1 run 38069582712](https://github.com/webkaz-labs/sobalink/actions/runs/38069582712) passed with a real authenticated browser and one offline Core: local settings, an inert saved service, an empty transfer catalog, settings navigation, keyboard/focus and narrow layout. This does not establish nonempty real-transfer or saved-service navigation, remote catalog capability or a two-provider group apply. B2's separate two-provider workflow is documented in the [group results](RESOURCE_GROUP.en.md#verified-scope-and-remaining-acceptance).
 
 ## Dry run and stable JSON
 
@@ -60,4 +60,4 @@ Global `--dry-run` makes zero agent calls and writes no profile. If the local se
 
 `--json` validates the closed envelope, finite limits, exact source correspondence and the catalog aggregate digest before printing. The envelope contains `schemaVersion`, lower-camel-case `limits`, and `snapshot`. Fields and user-supplied values are not translated. Human output does not include raw provider errors, provider-private paths or arbitrary shell commands assembled from labels.
 
-A distinct remote catalog capability/schema, richer durable file sharing, browser/native integration, full regression checks and signed distribution remain separate gates.
+A distinct remote catalog capability/schema, current advertised-service provenance and durable file-sharing semantics remain unresolved scope/design decisions. Nonempty real-transfer and saved-service browser navigation remain unproved; final-candidate full regression checks and signed distribution retain their own gates. The bounded results above do not settle a release version, defer the unresolved features or complete the original broader proposal.

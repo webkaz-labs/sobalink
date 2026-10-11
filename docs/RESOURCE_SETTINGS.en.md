@@ -2,7 +2,7 @@
 
 [日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md)
 
-This checkout provides local resource inspection, preview, explicitly bound apply and durable operation evidence for two transfer-admission settings. This is source-build functionality, not a new published release or a release commitment. Remote management and Web UI resource controls are not added.
+This guide covers the local resource foundation: inspection, preview, explicitly bound apply and durable operation evidence for two transfer-admission settings. This is source-build functionality, not a new published release or a release commitment. Later source work adds separately authorized [remote management](RESOURCE_MANAGEMENT.en.md) and [group/Web workflows](RESOURCE_GROUP.en.md); those guides describe their own scope and evidence.
 
 ## Review, apply and check
 
@@ -49,6 +49,6 @@ This provides bounded evidence and no-replay behavior, not an exactly-once guara
 - The one resource has type `transfer-admission-settings`, local authority/provider scope and an opaque persistent ID. It is not a device name, path, address or peer identity. Copying the complete private state directory copies the identity; no remote clone-resolution behavior is claimed.
 - Only `transferConcurrentFiles` and `transferConcurrentPerPeer` are represented. Their canonical owner remains the existing capacity policy. Unrelated settings and legacy profile/capacity file formats are preserved.
 - Owned startup validates and republishes the bounded private resource envelope. Invalid, unsupported or uncertain state disables the resource feature rather than silently replacing its identity; legacy settings remain available. Downgrading to the earlier PR1 read-only implementation makes the resource interface unavailable with a populated operation journal, while legacy settings continue.
-- Responses expose no private paths, peer lists, transport identities or full profiles. The fixed local actor is not an individual user's identity. Existing authenticated local control is required: the CLI uses local IPC, and the existing local Web `/api/command` dispatcher can reach the same commands. Its authentication and Fetch Metadata protections are unchanged. The fixed `local-control` actor covers both front doors without individual attribution. No new Web UI controls, peer-management endpoint, management grant or discovery advertisement is added. Pairing grants no management permission.
+- Responses expose no private paths, peer lists, transport identities or full profiles. The fixed local actor is not an individual user's identity. Existing authenticated local control is required: the CLI uses local IPC, and the existing local Web `/api/command` dispatcher can reach the same commands. Its authentication and Fetch Metadata protections are unchanged. The fixed `local-control` actor covers both front doors without individual attribution. The original local-only slice added no Web UI controls, peer-management endpoint, management grant or discovery advertisement; the later workflows are linked above. Pairing grants no management permission.
 
 Mock tests establish bounded logic behavior only. Physical-device acceptance, actual power-loss durability and published distribution acceptance remain separate. See the [development principles](DEVELOPMENT_PRINCIPLES.en.md) and [security boundary](../SECURITY.md).

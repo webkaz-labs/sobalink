@@ -1,4 +1,4 @@
-//go:build !resource_group_catalog_native
+//go:build !resource_group_catalog_native && !resource_process_native
 
 package resourceacceptance
 
