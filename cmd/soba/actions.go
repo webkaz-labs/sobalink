@@ -16,6 +16,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/ranges"
+	"github.com/webkaz-labs/sobalink/internal/resource"
 	"github.com/webkaz-labs/sobalink/internal/servicepresets"
 )
 
@@ -119,7 +120,7 @@ func servicePayload(command string, args []string, ja bool, out io.Writer) (map[
 	network := f.String("network", "tcp", text(ja, "tcp or udp", "tcp または udp"))
 	ports := f.String("ports", "", text(ja, "port list or ranges; overrides a preset's target ports", "ポート一覧・範囲（プリセットより優先）"))
 	exclude := f.String("exclude", "", text(ja, "excluded ports", "除外するポート"))
-	var peer, peers, peerName, peerNames, serviceID, serviceRevision string
+	var peer, peers, peerName, peerNames, serviceID, serviceRevision, catalogReview, catalogService string
 	local := f.Int("local-port", 0, text(ja, "local listener for connect; application target for a single-port share", "接続の入口、または単一ポート共有のアプリ側ポート"))
 	loopback := f.String("loopback-host", "127.0.0.1", text(ja, "numeric loopback only: 127.0.0.1 or ::1", "数値のループバックのみ: 127.0.0.1 または ::1"))
 	lifetime := f.String("lifetime", "", text(ja, "finite, until-stopped (connect), or until-revoked (share)", "finite、until-stopped（接続）、until-revoked（共有）"))
@@ -133,6 +134,8 @@ func servicePayload(command string, args []string, ja bool, out io.Writer) (map[
 		f.StringVar(&peerName, "peer-name", "", text(ja, "exact current peer name; ambiguous names are rejected", "現在の相手の正確な名前（一意でない名前は拒否）"))
 		f.StringVar(&serviceID, "service-id", "", text(ja, "bind to this advertised service grant", "この共有サービスに接続を固定する"))
 		f.StringVar(&serviceRevision, "service-revision", "", text(ja, "exact reviewed revision from availableServices", "availableServices で確認した正確な更新情報"))
+		f.StringVar(&catalogReview, "catalog-review", "", text(ja, "exact reviewRevision from resource catalog view list", "resource catalog view list の正確な reviewRevision"))
+		f.StringVar(&catalogService, "catalog-service", "", text(ja, "exact shared activation ID from that catalog review", "その一覧で確認した正確な共有世代 ID"))
 	}
 	ttl := f.Duration("ttl", time.Hour, text(ja, "finite duration in whole seconds, for example 30m or 72h; implies finite", "有限の有効期間（整数秒、例: 30m、72h）。finite を指定"))
 	if err := parseFlags(f, args, ja); err != nil {
@@ -140,6 +143,11 @@ func servicePayload(command string, args []string, ja bool, out io.Writer) (map[
 	}
 	explicit := map[string]bool{}
 	f.Visit(func(flag *flag.Flag) { explicit[flag.Name] = true })
+	if explicit["catalog-review"] || explicit["catalog-service"] {
+		if !resource.ValidID(catalogReview) || !resource.ValidID(catalogService) || serviceID != "" || serviceRevision != "" || peer == "" || peerName != "" {
+			return nil, errors.New(text(ja, "Use --catalog-review and --catalog-service together with the exact --peer; do not combine with discovery review flags", "--catalog-review と --catalog-service を正確な --peer と一緒に指定してください。サービス発見の確認フラグとは併用できません"))
+		}
+	}
 	if explicit["name"] && *name == "" {
 		return nil, errors.New(text(ja, "--name cannot be empty; omit it to choose an unused name", "--name は空にできません。省略すると未使用の名前を選びます"))
 	}
@@ -257,6 +265,9 @@ func servicePayload(command string, args []string, ja bool, out io.Writer) (map[
 		payload["peerId"] = peer
 		if serviceID != "" {
 			payload["serviceId"], payload["serviceRevision"] = serviceID, serviceRevision
+		}
+		if catalogReview != "" {
+			payload["catalogView"] = map[string]string{"reviewRevision": catalogReview, "serviceId": catalogService}
 		}
 	}
 	if *name == "" {
