@@ -42,7 +42,7 @@ func startCommand(ctx context.Context, command, dir, locale string, args []strin
 // Enabling the implementation does not create a grant or listener. Only a
 // locally confirmed or owned-restored eligible grant can authorize inspection.
 func foregroundCoreOptions(dir string, offline bool, lock *config.Lock) core.Options {
-	return core.Options{Directory: dir, Version: version, SkipNetworkStart: offline, LifecycleLock: lock, EnableResourceInspection: true}
+	return core.Options{Directory: dir, Version: version, SkipNetworkStart: offline, LifecycleLock: lock, EnableResourceInspection: true, EnableCatalogView: true}
 }
 
 func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Writer) (err error) {

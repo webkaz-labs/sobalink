@@ -106,6 +106,7 @@ type Options struct {
 
 type Core struct {
 	catalogViews                 *resourceCatalogViewCoordinator // op; nil unless explicitly enabled
+	catalogViewReceived          *catalogViewReceipt             // op; one explicitly selected remote view
 	resourceGrants               *resourceGrantCoordinator       // op; nil unless explicitly enabled
 	resourceRemoteEvidenceDenied bool                            // op; owned journal read failed until owned reopen
 	resourceUncertainWrite       *resourceJournalWriteCandidates // op; bounded exact self-write candidates
@@ -481,6 +482,7 @@ func (c *Core) close() error {
 	c.op.Lock()
 	var inspection *resourceInspectionRuntime
 	var management *resourceManagementRuntime
+	c.catalogViewReceived = nil
 	if c.catalogViews != nil {
 		c.catalogViews.freeze()
 	}
