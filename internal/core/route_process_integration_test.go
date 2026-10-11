@@ -23,6 +23,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/webui"
+	webembed "github.com/webkaz-labs/sobalink/web"
 	"tailscale.com/feature/buildfeatures"
 )
 
@@ -36,7 +37,16 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 	dir := os.Getenv("SOBALINK_ROUTE_PROCESS_DIR")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := Open(ctx, Options{Directory: dir, Version: "process-fixture", SkipNetworkStart: os.Getenv("SOBALINK_ROUTE_PROCESS_OFFLINE") == "1"})
+	opts := Options{Directory: dir, Version: "process-fixture", SkipNetworkStart: os.Getenv("SOBALINK_ROUTE_PROCESS_OFFLINE") == "1"}
+	if os.Getenv("SOBALINK_ROUTE_PROCESS_CATALOG") == "1" {
+		lock, err := config.AcquireLock(dir)
+		if err != nil {
+			t.Fatal("open owned catalog process lock")
+		}
+		defer lock.Close()
+		opts.LifecycleLock, opts.EnableResourceInspection, opts.EnableCatalogView = lock, true, true
+	}
+	c, err := Open(ctx, opts)
 	if err != nil {
 		t.Fatal("open isolated subprocess Core")
 	}
@@ -59,6 +69,26 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		var value any
 		var callErr error
 		switch request.Name {
+		case "fixture.snapshot":
+			value, callErr = c.Snapshot(ctx)
+		case "fixture.catalog-local":
+			c.mu.RLock()
+			services := []map[string]string{}
+			for id, active := range c.active {
+				if active.spec.Direction == "share" && active.spec.Discoverable {
+					services = append(services, map[string]string{"id": id, "serviceId": active.discoveryID})
+				}
+			}
+			c.mu.RUnlock()
+			value = map[string]any{"target": resourceTarget(c), "services": services}
+		case "fixture.web":
+			assets, err := webembed.Assets()
+			callErr = err
+			if err == nil {
+				var address, code string
+				address, code, callErr = c.StartWeb(assets)
+				value = map[string]any{"schema": 1, "url": address, "code": code}
+			}
 		case "fixture.exit":
 			encoder.Encode(processReply{Value: json.RawMessage(`true`)})
 			return
@@ -231,6 +261,10 @@ type routeCoreProcess struct {
 }
 
 func startRouteCoreProcess(t *testing.T, ctx context.Context, dir string, offline bool) *routeCoreProcess {
+	return startRouteCoreProcessWithEnvironment(t, ctx, dir, offline, nil)
+}
+
+func startRouteCoreProcessWithEnvironment(t *testing.T, ctx context.Context, dir string, offline bool, extra []string) *routeCoreProcess {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -242,6 +276,7 @@ func startRouteCoreProcess(t *testing.T, ctx context.Context, dir string, offlin
 		mode = "1"
 	}
 	cmd.Env = append(os.Environ(), "SOBALINK_ROUTE_PROCESS_HELPER=1", "SOBALINK_ROUTE_PROCESS_DIR="+dir, "SOBALINK_ROUTE_PROCESS_OFFLINE="+mode)
+	cmd.Env = append(cmd.Env, extra...)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal("open fixture input")
@@ -276,6 +311,15 @@ func startRouteCoreProcess(t *testing.T, ctx context.Context, dir string, offlin
 }
 func (p *routeCoreProcess) invoke(t *testing.T, name string, payload any) json.RawMessage {
 	t.Helper()
+	reply := p.invokeResult(t, name, payload)
+	if reply.Error != "" {
+		t.Fatalf("subprocess command %s: %s; %s; runtime diagnostics:\n%s", name, reply.Error, p.exitSummary(), p.diagnostics.safeSummary())
+	}
+	return reply.Value
+}
+
+func (p *routeCoreProcess) invokeResult(t *testing.T, name string, payload any) processReply {
+	t.Helper()
 	raw, _ := json.Marshal(payload)
 	if json.NewEncoder(p.input).Encode(struct {
 		Name    string
@@ -293,15 +337,12 @@ func (p *routeCoreProcess) invoke(t *testing.T, name string, payload any) json.R
 	}()
 	select {
 	case reply := <-ch:
-		if reply.Error != "" {
-			t.Fatalf("subprocess command %s: %s; %s; runtime diagnostics:\n%s", name, reply.Error, p.exitSummary(), p.diagnostics.safeSummary())
-		}
-		return reply.Value
+		return reply
 	case <-time.After(40 * time.Second):
 		p.cmd.Process.Kill()
 		t.Fatalf("subprocess command timed out: %s", name)
 	}
-	return nil
+	return processReply{}
 }
 func (p *routeCoreProcess) stop(t *testing.T) {
 	t.Helper()
