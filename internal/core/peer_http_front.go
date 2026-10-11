@@ -245,7 +245,7 @@ func validatePeerHTTPRequest(method, path string, proof bool) (*url.URL, bool, e
 		switch u.Path {
 		case "/v1/hello", "/.well-known/sobalink/services/v2", discoveryV3Path:
 			allowed = method == "GET"
-		case "/v1/messages", "/v1/offers":
+		case "/v1/messages", "/v1/offers", catalogViewPath:
 			allowed = method == "POST"
 		default:
 			parts := strings.Split(strings.TrimPrefix(u.Path, "/v1/batches/"), "/")
