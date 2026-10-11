@@ -84,6 +84,9 @@ type resourceCatalogCLIRequest struct {
 }
 
 func resourceCatalogCLI(ctx context.Context, args []string, dir string, ja, dryRun bool, out io.Writer, client controlCaller) error {
+	if len(args) > 0 && args[0] == "view" {
+		return resourceCatalogViewCLI(ctx, args[1:], dir, ja, dryRun, out, client)
+	}
 	if len(args) == 1 && resourceCollectionHelp(args[0]) {
 		_, err := fmt.Fprintln(out, text(ja, resourceCatalogHelpEN, resourceCatalogHelpJA))
 		return err

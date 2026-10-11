@@ -21,9 +21,12 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/policy"
 	"github.com/webkaz-labs/sobalink/internal/ranges"
 	"github.com/webkaz-labs/sobalink/internal/transport"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 type activeService struct {
+	catalogOrigin   transportorigin.Origin
+	catalogExpires  time.Time
 	discoveryID     string
 	savedRevision   string
 	activation      *atomic.Bool
@@ -183,6 +186,9 @@ func (a *activeService) guardAt(now time.Time) error {
 // explicitly started with until-stopped. Other grants keep deadline.Active's
 // fail-closed semantics.
 func (a *activeService) permissionActiveAt(now time.Time) bool {
+	if a.catalogOrigin != nil && (channelClosed(a.catalogOrigin.StopRequested()) || !a.catalogExpires.IsZero() && !now.Before(a.catalogExpires)) {
+		return false
+	}
 	if a.ctx == nil || a.ctx.Err() != nil || !a.leaseActiveAt(now) {
 		return false
 	}
@@ -231,31 +237,42 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		return nil, err
 	}
 	var in struct {
-		Name              string   `json:"name"`
-		PeerID            string   `json:"peerId"`
-		PeerIDs           []string `json:"peerIds"`
-		Network           string   `json:"network"`
-		Ports             string   `json:"ports"`
-		ExcludePorts      string   `json:"excludePorts"`
-		LocalPort         int      `json:"localPort"`
-		LoopbackHost      string   `json:"loopbackHost"`
-		Lifetime          string   `json:"lifetime"`
-		RemotePort        int      `json:"remotePort"`
-		TTLSeconds        int      `json:"ttlSeconds"`
-		Purpose           string   `json:"purpose"`
-		Discoverable      bool     `json:"discoverable"`
-		ServiceID         string   `json:"serviceId"`
-		ServiceRevision   string   `json:"serviceRevision"`
-		Backend           string   `json:"backend"`
-		ReplaceID         string   `json:"replaceId"`
-		Revision          string   `json:"expectedRevision"`
-		Owner             string   `json:"owner"`
-		LeaseSeconds      int      `json:"leaseSeconds"`
-		RuntimeLifetime   string   `json:"runtimeLifetime"`
-		RuntimeTTLSeconds *int     `json:"runtimeTTLSeconds"`
+		CatalogView       *catalogViewConnection `json:"catalogView"`
+		Name              string                 `json:"name"`
+		PeerID            string                 `json:"peerId"`
+		PeerIDs           []string               `json:"peerIds"`
+		Network           string                 `json:"network"`
+		Ports             string                 `json:"ports"`
+		ExcludePorts      string                 `json:"excludePorts"`
+		LocalPort         int                    `json:"localPort"`
+		LoopbackHost      string                 `json:"loopbackHost"`
+		Lifetime          string                 `json:"lifetime"`
+		RemotePort        int                    `json:"remotePort"`
+		TTLSeconds        int                    `json:"ttlSeconds"`
+		Purpose           string                 `json:"purpose"`
+		Discoverable      bool                   `json:"discoverable"`
+		ServiceID         string                 `json:"serviceId"`
+		ServiceRevision   string                 `json:"serviceRevision"`
+		Backend           string                 `json:"backend"`
+		ReplaceID         string                 `json:"replaceId"`
+		Revision          string                 `json:"expectedRevision"`
+		Owner             string                 `json:"owner"`
+		LeaseSeconds      int                    `json:"leaseSeconds"`
+		RuntimeLifetime   string                 `json:"runtimeLifetime"`
+		RuntimeTTLSeconds *int                   `json:"runtimeTTLSeconds"`
 	}
 	if e := decodePayload(raw, &in); e != nil {
 		return nil, e
+	}
+	proof, hasProof := ctx.Value(catalogViewConnectKey{}).(*catalogViewConnectProof)
+	if in.CatalogView != nil {
+		if name != "service.connect" || !hasProof || !proof.matchesInput(in.PeerID, in.Network, in.Ports, in.Purpose, in.ServiceID, in.ServiceRevision, in.RemotePort) || in.CatalogView.ReviewRevision != proof.receipt.observation.ReviewRevision || in.CatalogView.ServiceID != proof.row.Service.ID || in.ExcludePorts != "" {
+			return nil, catalogViewStale()
+		}
+		in.ServiceID = proof.row.Service.ID
+		in.ServiceRevision = encodeDiscoveryReview(in.PeerID, proof.row.Service, proof.receipt.observation.CheckedAt)
+	} else if hasProof {
+		return nil, catalogViewStale()
 	}
 	if in.Purpose == "" {
 		in.Purpose = "generic"
@@ -431,7 +448,7 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 		if _, e := c.currentPeer(ctx, in.PeerID); e != nil {
 			return nil, e
 		}
-		if in.ServiceID != "" {
+		if in.ServiceID != "" && !hasProof {
 			review, err := decodeDiscoveryReview(in.ServiceRevision)
 			if err != nil || !review.matchesRequest(spec, effective.String()) {
 				return nil, discoveryReviewError()
@@ -494,6 +511,18 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	}
 	lifetime, cancel := context.WithCancel(c.ctx)
 	active := &activeService{discoveryID: randomID(), savedRevision: serviceRevision(spec), owner: in.Owner, leaseSeconds: in.LeaseSeconds, spec: runtimeSpec, ctx: lifetime, cancel: cancel, address: self, effective: effective, online: &c.networkReady, reserved: backendReserved}
+	if hasProof {
+		if !proof.current() {
+			cancel()
+			return nil, catalogViewStale()
+		}
+		active.catalogOrigin = proof.receipt.original
+		active.catalogExpires = proof.row.Service.ExpiresAt
+		if err := c.watchCatalogConnection(active); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	if len(activation) > 0 {
 		active.activation = activation[0]
 	}
@@ -520,6 +549,10 @@ func (c *Core) startServiceCommand(ctx context.Context, name string, raw json.Ra
 	}
 	if !replaced {
 		p.Services = append(p.Services, spec)
+	}
+	if hasProof && !proof.current() {
+		cancel()
+		return nil, catalogViewStale()
 	}
 	saveErr := c.saveProfile(p)
 	if !atomicPublished(saveErr) {
@@ -1068,6 +1101,11 @@ func (c *Core) serviceView(a *activeService) map[string]any {
 		leaseExpiresAt = *expires
 	}
 	view := map[string]any{"owner": a.owner, "leaseSeconds": a.leaseSeconds, "leaseExpiresAt": leaseExpiresAt, "id": a.spec.ID, "name": a.spec.Name, "peerId": a.spec.PeerID, "peerIds": a.spec.PeerIDs, "network": a.spec.Network, "ports": a.effective.String(), "localPort": a.spec.LocalPort, "loopbackHost": a.spec.LoopbackHost, "lifetime": a.spec.Lifetime, "ttlSeconds": a.spec.TTLSeconds, "error": a.error, "endpoint": endpoint, "expiresAt": expiresAt, "status": state, "application": "unverified", "direction": a.spec.Direction}
+	// Activation IDs identify current advertised shares in local approval
+	// controls; they are separate from the saved service definition ID.
+	if a.spec.Direction == "share" && a.spec.Discoverable && a.guard() == nil {
+		view["activationId"] = a.discoveryID
+	}
 	c.addServiceDiagnosticsLocked(a.spec.ID, view)
 	return view
 }

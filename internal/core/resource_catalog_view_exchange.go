@@ -39,6 +39,7 @@ type catalogViewReceipt struct {
 	original     transportorigin.Origin
 	relationship resourcegrant.Relationship
 	process      string
+	consumed     bool
 }
 
 // Prepared under Core.op; no source reads or encoding remain at admission.

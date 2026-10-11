@@ -16,6 +16,7 @@ import (
 const resourceHelpEN = `Local transfer settings resource (source build)
 
   soba resource catalog --help
+  soba resource catalog view --help
   soba resource group --help
   soba resource grant --help
   soba resource remote --help
@@ -40,6 +41,7 @@ it does not validate the current resource or produce an authoritative review.`
 const resourceHelpJA = `ローカル転送設定リソース（ソースビルド）
 
   soba resource catalog --help
+  soba resource catalog view --help
   soba resource group --help
   soba resource grant --help
   soba resource remote --help
@@ -188,6 +190,13 @@ func localizeResourceError(ja bool, err error) error {
 		return err
 	}
 	messages := map[string]string{
+		"catalog_view_invalid":                   "相手・共有世代・有限の期限・確認内容を正確に指定してください",
+		"catalog_view_unavailable":               "共有一覧の許可または接続を確認できません。本体・管理対象の相手・許可情報を確認し、一覧を取得し直してください",
+		"catalog_view_stale":                     "提供元・共有世代・許可または確認内容が変わりました。一覧を取得し直して再確認してください",
+		"catalog_view_conflict":                  "既存の共有一覧の許可を先に失効してください",
+		"catalog_view_revoked":                   "共有一覧の閲覧許可が取り消されました。提供側で新たな明示承認が必要です",
+		"catalog_view_expired":                   "共有一覧の閲覧許可の期限が切れました。提供側で新たな明示承認が必要です",
+		"catalog_view_limited":                   "共有一覧が取得上限を超えました。選択範囲を小さくしてください",
 		"resource_management_remote_unavailable": "遠隔管理の要求を完了できません。相手・正確な管理許可・接続口を確認してください。apply の応答が不明な場合は同じ操作 ID で status を確認してください",
 		"resource_management_remote_unsupported": "認証済みの相手は管理用通信方式 v2 に対応していません。管理対応版と明示的な管理許可が必要です",
 		"resource_remote_unavailable":            "遠隔参照を完了できません。相手・正確な保存済み許可・接続口の準備状態を確認してください",
@@ -240,6 +249,20 @@ func resourceControlError(err error) error {
 	var coded interface{ ErrorCode() string }
 	if errors.As(err, &coded) {
 		switch coded.ErrorCode() {
+		case "catalog_view_invalid":
+			code, message = coded.ErrorCode(), "choose the exact peer, share generations, finite expiry and review"
+		case "catalog_view_unavailable":
+			code, message = coded.ErrorCode(), "catalog view permission or connection could not be confirmed; check the agent, managed peer and selector, then fetch a new list"
+		case "catalog_view_stale":
+			code, message = coded.ErrorCode(), "provider, share generation, permission or review changed; fetch a new list and review again"
+		case "catalog_view_conflict":
+			code, message = coded.ErrorCode(), "revoke the existing catalog view permission first"
+		case "catalog_view_revoked":
+			code, message = coded.ErrorCode(), "catalog view permission was revoked; request explicit approval again"
+		case "catalog_view_expired":
+			code, message = coded.ErrorCode(), "catalog view permission expired; request explicit approval again"
+		case "catalog_view_limited":
+			code, message = coded.ErrorCode(), "catalog view exceeds the response budget; select fewer shares"
 		case "resource_management_remote_unavailable":
 			code, message = coded.ErrorCode(), "remote management could not be completed; verify the peer, exact management grant and listener; if an apply reply is uncertain, query status with the same operation ID"
 		case "resource_management_remote_unsupported":

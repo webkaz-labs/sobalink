@@ -4,8 +4,10 @@
 
 This implementation adds eligibility data, owned private storage, explicit local
 approval/revocation and a bounded peer list exchange. It retains original transport
-attribution. Web/CLI review workflows and real-backend acceptance are still pending;
-historical catalog rows remain stale and viewing does not authorize a connection.
+attribution and implements Web/CLI review flows. Native DirectLAN tests exercise
+list/connect over genuine transports within one test process; separate-process
+and browser workflow acceptance remain pending. Historical catalog rows remain
+stale and viewing does not authorize a connection.
 No release version is assigned.
 
 ## Exact selection and coexistence
@@ -68,18 +70,45 @@ The receiver retains one explicitly selected view and original attribution in
 private memory. Its public review revision is only a local reference. It cannot
 promote historical catalog rows or replace remote grant revalidation before connect.
 
-## Next acceptance steps
+## Connection review and local entry points
+
+The local CLI now exposes `resource catalog view preview|confirm|inspect|revoke|list`.
+Providers choose current `shares[].activationId` values from local status, which
+are distinct from saved definition IDs. The receiver chooses one DirectLAN peer
+and an exact target/grant/revision. The Web services view passes an allowed row
+to the existing ServiceDialog; CLI connect accepts `--catalog-review` and
+`--catalog-service` alongside the exact peer and ordinary connection conditions.
+
+`service.connect` re-fetches the exact selector before starting. It checks the
+retained receipt/process, original authenticated transport generation, managed
+relationship, selected share generation, all returned conditions and current
+connection membership. It consumes that receipt before saving or starting, then
+uses the existing service transport. A failed or unknown start requires a new
+list/review. Original transport stop or advertised share expiry cancels the
+connection lifetime, including established streams. Remote revocation after an
+already-admitted list response is not an atomic transaction with a local start;
+the existing provider-side service membership still controls actual traffic.
+
+The UI discards old selections after input/context changes or navigation away,
+prevents concurrent repeated submissions and ignores late canceled results.
+Save-only stores ordinary connection configuration, without catalog authority
+or a durable share-generation review; it explains that another list is required.
+
+## Remaining acceptance steps
 
 1. Exercise the implemented approval, independent persistence and list exchange
    through real managed DirectLAN processes, including startup and revoke races.
-2. Integrate the permitted list with the catalog and connection review. Recheck
-   publication origin, activation IDs, conditions, expiry and current grant at
-   final disclosure and before handing a reviewed service to `service.connect`.
-3. Align Japanese/English Web and CLI review, empty/error states and refresh.
+2. Exercise the implemented connection review and Japanese/English Web/CLI
+   flows with real processes, including saved-but-start-failed recovery.
+3. Verify browser cancellation, back/forward navigation, empty/error states and refresh.
 4. Verify cancellation, expiry, re-pair and stale-selection races with real
    processes and browser tests, then verify actual service use and regressions.
 
 The current tests cover the data contract, owned storage, local consent/revoke,
 failed save, prepared disclosure versus revocation, legacy grant preservation and
-retained-origin rejection. They are not real-device or completed workflow acceptance. Existing
+retained-origin rejection. Native integration additionally covers real managed
+pairing, view-only denial, revoke, saved-but-start-failed recovery, fresh review,
+actual HTTP forwarding and review reuse rejection within one test process.
+Web component/navigation tests use fixtures. These do not establish separate-process,
+browser or real-device workflow acceptance. Existing
 browser sandbox behavior and CI conditions are unchanged.

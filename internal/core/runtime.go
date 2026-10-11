@@ -503,6 +503,15 @@ func (ctx receiveRecoveryContext) Err() error {
 }
 
 func (c *Core) executeCommand(ctx context.Context, cmd webui.Command) (any, error) {
+	if cmd.Name == "service.connect" {
+		selection, err := catalogViewConnectInput(cmd.Payload)
+		if err != nil {
+			return nil, err
+		}
+		if selection != nil {
+			return c.connectCatalogViewCommand(ctx, cmd.Payload, selection)
+		}
+	}
 	if cmd.Name == "direct-lan.join" {
 		return c.executeDirectLANJoin(ctx, cmd.Payload)
 	}
