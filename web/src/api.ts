@@ -288,7 +288,8 @@ export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload
   'discovery.refresh': { peerId?: string }
   'peer.reconnect': { peerId: string }
   'peer.autosave': { peerId: string; enabled?: boolean; paused?: boolean; directory?: string }
-  'service.connect': ServicePayload
+  'resource.catalog.view.list': { peerKey: string; request: { protocolVersion: 1; target: { schemaVersion: 1; resourceId: string }; grantId: string; grantRevision: number } }
+  'service.connect': ServicePayload & { catalogView?: { reviewRevision: string; serviceId: string } }
   'service.share': ServicePayload
   'service.stop': { id: string }
   'service.config': { id: string }
