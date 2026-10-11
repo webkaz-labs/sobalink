@@ -143,18 +143,77 @@ class ResourceGroupCatalogWorkflowTests(unittest.TestCase):
         self.assertIn('func ' + TESTS[0] + '(t *testing.T) {\n\tf := newResourceGroupCatalogNative(t)', fixture)
         self.assertNotIn('t.Run(', fixture)
         self.assertIn('resourceGroupCatalogNativeSelector = "' + SELECTOR + '"', fixture)
-        guard = fixture.split('func newResourceGroupCatalogNative(t *testing.T)')[1].split('\nfunc ')[0]
+        self.assert_fixture_guard_before_shared_setup(fixture)
+        self.assertNotIn('SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE', fixture)
+        self.assertNotIn('SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE', fixture)
+
+    def assert_fixture_guard_before_shared_setup(self, fixture):
+        guard_marker = 'func newResourceGroupCatalogNative(t *testing.T) *resourceGroupCatalogNative {\n'
+        setup_marker = 'func newResourceGroupCatalogNativeAfterGuard(t *testing.T) *resourceGroupCatalogNative {\n'
+        self.assertEqual(fixture.count(guard_marker), 1)
+        self.assertEqual(fixture.count(setup_marker), 1)
+        guard = fixture.split(guard_marker, 1)[1].split('\n}\n', 1)[0]
+        setup = fixture.split(setup_marker, 1)[1].split('\n}\n', 1)[0]
+        # Pin this small guard's complete executable body. Presence/order alone
+        # could accept an early helper call or a check whose failure is ignored.
+        expected = '''t.Helper()
+if os.Getenv("SOBALINK_RUN_RESOURCE_GROUP_CATALOG_NATIVE") != "reviewed-three-core-loopback-v1" {
+t.Skip("requires separately reviewed three-Core group/catalog execution")
+}
+if os.Getenv("SOBALINK_RUN_ACTIVATION_NATIVE") != "1" || !directLANNetstackReady {
+t.Fatal("explicit native activation prerequisite is missing")
+}
+run := flag.Lookup("test.run")
+if run == nil || run.Value.String() != resourceGroupCatalogNativeSelector {
+t.Fatal("exact single native group/catalog selector is required")
+}
+deadline, ok := t.Deadline()
+if !ok || time.Until(deadline) > 4*time.Minute || time.Until(deadline) < 200*time.Second {
+t.Fatal("native group/catalog requires the reviewed four-minute test budget")
+}
+for _, name := range []string{PROXY_NAMES} {
+if os.Getenv(name) != "" {
+t.Fatal("native group/catalog requires an isolated proxy-free environment")
+}
+}
+return newResourceGroupCatalogNativeAfterGuard(t)'''
+        expected = expected.replace('PROXY_NAMES', ', '.join('"' + name + '"' for name in PROXIES))
+        lines = [line.strip() for line in guard.splitlines()
+                 if line.strip() and not line.lstrip().startswith('//')]
+        self.assertEqual(lines, expected.splitlines())
+        for effect in ('context.WithDeadline(', 'os.MkdirTemp(', 'testfixture.ReserveLoopbackTCPUDP('):
+            self.assertNotIn(effect, guard)
+            self.assertIn(effect, setup)
+
+    def test_fixture_guard_rejects_premature_setup_and_missing_requirements(self):
+        fixture = (ROOT / 'internal/core/resource_group_catalog_native_test.go').read_text(encoding='utf-8')
+        self.assert_fixture_guard_before_shared_setup(fixture)
+        call = 'return newResourceGroupCatalogNativeAfterGuard(t)'
+        setup = fixture.split('func newResourceGroupCatalogNativeAfterGuard(', 1)[1].split('\n}\n', 1)[0]
+        changes = [(call, ''), (call, 'return nil'),
+                   ('\tt.Helper()\n', '\tt.Helper()\n\tnewResourceGroupCatalogNativeAfterGuard(t)\n'),
+                   ('\tfor _, name := range []string{', '\t' + call + '\n\tfor _, name := range []string{'),
+                   (' || !directLANNetstackReady', ''), ('if run == nil || ', 'if '),
+                   ('if !ok || ', 'if '), ('if os.Getenv(name) != "" {', 'if false {'),
+                   ('t.Skip(', 't.Log('), ('t.Fatal(', 't.Log('),
+                   ('func newResourceGroupCatalogNativeAfterGuard(', 'func missingSharedSetup(')]
         for required in ('os.Getenv("SOBALINK_RUN_RESOURCE_GROUP_CATALOG_NATIVE") != "reviewed-three-core-loopback-v1"',
                          'os.Getenv("SOBALINK_RUN_ACTIVATION_NATIVE") != "1"',
                          'run.Value.String() != resourceGroupCatalogNativeSelector',
-                         'time.Until(deadline) > 4*time.Minute', 'time.Until(deadline) < 200*time.Second',
-                         'for _, name := range []string{'):
-            for first_effect in ('context.WithDeadline(', 'os.MkdirTemp(', 'testfixture.ReserveLoopbackTCPUDP('):
-                self.assertLess(guard.index(required), guard.index(first_effect))
-        self.assertNotIn('SOBALINK_RUN_RESOURCE_INSPECTION_NATIVE', fixture)
-        self.assertNotIn('SOBALINK_RUN_RESOURCE_MANAGEMENT_NATIVE', fixture)
-        for name in PROXIES:
-            self.assertIn('"' + name + '"', guard)
+                         'time.Until(deadline) > 4*time.Minute', 'time.Until(deadline) < 200*time.Second'):
+            changes.append((required, 'false'))
+        changes.extend(('"' + name + '"', '"MISSING_PROXY"') for name in PROXIES)
+        for effect, statement in (
+                ('context.WithDeadline(', '_, _ = context.WithDeadline(context.Background(), time.Now())'),
+                ('os.MkdirTemp(', '_, _ = os.MkdirTemp("", "synthetic")'),
+                ('testfixture.ReserveLoopbackTCPUDP(',
+                 '_, _ = testfixture.ReserveLoopbackTCPUDP(netip.MustParseAddr("127.0.0.1"), 54543)')):
+            changes.append(('\tt.Helper()\n', '\tt.Helper()\n\t' + statement + '\n'))
+            changes.append((setup, setup.replace(effect, 'missingSetupEffect(')))
+        for index, (old, new) in enumerate(changes):
+            self.assertIn(old, fixture)
+            with self.subTest(mutation=index), self.assertRaises(AssertionError):
+                self.assert_fixture_guard_before_shared_setup(fixture.replace(old, new, 1))
 
     def test_source_policy_rejects_any_weakened_or_expanded_gate(self):
         mutations = [self.workflow.replace(self.step, ''), self.workflow.replace(self.step, self.step + self.step)]
