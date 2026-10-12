@@ -94,6 +94,8 @@ func TestOutboxProcessRestart(t *testing.T) {
 				break
 			}
 			if time.Now().After(until) || ctx.Err() != nil {
+				logOutboxResumeDiagnostics(t, peers[0], keys[1], review.RequestID, review.Children[0].DeliveryID, "sender")
+				logOutboxResumeDiagnostics(t, peers[1], keys[0], review.RequestID, review.Children[0].DeliveryID, "receiver")
 				t.Fatal("durable offer did not resume after sender restart")
 			}
 			time.Sleep(20 * time.Millisecond)
