@@ -106,7 +106,7 @@ type Options struct {
 }
 
 type Core struct {
-	durableProfileError          string                          // mu; uncertain or incomplete explicit migration blocks durable work
+	durableProfileError          string                          // mu; uncertain or incomplete profile initialization blocks durable work
 	catalogViews                 *resourceCatalogViewCoordinator // op; nil unless explicitly enabled
 	catalogViewReceived          *catalogViewReceipt             // op; one explicitly selected remote view
 	resourceGrants               *resourceGrantCoordinator       // op; nil unless explicitly enabled

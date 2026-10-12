@@ -23,7 +23,7 @@ func (m *Manager) DurableAvailable() bool {
 }
 
 // EnableDurableReceiver is local initialization under the caller's separately
-// persisted opt-in/downgrade guard. A remote offer must never call this method.
+// persisted initializing/ready profile guard. A remote offer must never call this method.
 func (m *Manager) EnableDurableReceiver(options DurableOptions) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
