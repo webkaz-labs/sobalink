@@ -49,6 +49,9 @@ func batchWire(b transfer.Batch) wireBatch {
 
 type outgoingBatch struct {
 	mu           sync.Mutex
+	payload      *outgoingPayload
+	backend      NetworkBackend
+	dispatchID   string
 	ID, PeerID   string
 	Network      string
 	Generation   uint64
@@ -84,14 +87,28 @@ func (b *outgoingBatch) stop() {
 // Keep the reservation until removal succeeds. Failed retryable batches retain
 // their spool and reservation; terminal history with a released spool does not.
 func (b *outgoingBatch) releaseSpoolLocked() error {
-	if b.Spool != "" {
+	if b.payload != nil {
+		if err := b.payload.release(); err != nil {
+			return err
+		}
+		b.payload = nil
+	} else if b.Spool != "" {
 		if err := os.RemoveAll(b.Spool); err != nil {
 			return err
 		}
-		b.Spool = ""
 	}
+	b.Spool = ""
 	b.reserved = 0
 	return nil
+}
+
+func (b *outgoingBatch) setSpoolLocked(spool string) {
+	b.Spool = spool
+	if b.payload != nil {
+		b.payload.mu.Lock()
+		b.payload.spool = spool
+		b.payload.mu.Unlock()
+	}
 }
 
 var (
@@ -135,36 +152,18 @@ func (c *Core) reserveOutgoing(ctx context.Context, b *outgoingBatch, lim transf
 		lim.MaxReservedBytes = min(lim.MaxReservedBytes, current.MaxReservedBytes)
 		lim.MaxMetadataBytes = min(lim.MaxMetadataBytes, current.MaxMetadataBytes)
 	}
-	if len(c.outgoing) >= lim.MaxBatches {
-		return nil, errOutgoingHistory
+	c.reapDispatchReceiptsLocked()
+	if err := c.checkOutgoingCapacityLocked(lim, b.Manifest, 1, nil); err != nil {
+		return nil, err
 	}
 	var total int64
-	reserved := c.orphanSpoolBytes
-	if c.orphanSpoolError != "" {
-		return nil, errors.New("retained staging could not be inventoried; inspect private staging before sending")
-	}
-	metadata := transfer.ManifestMetadataBytes(b.Manifest)
 	for _, entry := range b.Manifest.Entries {
 		total += entry.Size
 	}
-	for _, other := range c.outgoing {
-		other.mu.Lock()
-		if other.reserved > lim.MaxReservedBytes-reserved {
-			other.mu.Unlock()
-			return nil, errOutgoingStaging
-		}
-		reserved += other.reserved
-		metadata += transfer.ManifestMetadataBytes(other.Manifest)
-		other.mu.Unlock()
-	}
-	if metadata > lim.MaxMetadataBytes {
-		return nil, errOutgoingHistory
-	}
-	if total > lim.MaxReservedBytes || reserved > lim.MaxReservedBytes-total {
-		return nil, errOutgoingStaging
-	}
 	b.reserved = total
+	b.payload = &outgoingPayload{spool: b.Spool, reserved: total, refs: 1}
 	b.staging = true
+	b.backend = c.node
 	c.outgoing[b.ID] = b
 	return nil, nil
 }
@@ -201,8 +200,17 @@ func (c *Core) upload(w http.ResponseWriter, r *http.Request, lim transfer.Limit
 }
 
 func (c *Core) uploadWithIdle(w http.ResponseWriter, r *http.Request, lim transfer.Limits, idle time.Duration) {
+	c.uploadWithMode(w, r, lim, idle, false)
+}
+
+// UploadDispatch prepares one immutable payload, without offering it remotely.
+func (c *Core) UploadDispatch(w http.ResponseWriter, r *http.Request) {
+	c.uploadWithMode(w, r, c.transferLimits(), 30*time.Second, true)
+}
+
+func (c *Core) uploadWithMode(w http.ResponseWriter, r *http.Request, lim transfer.Limits, idle time.Duration, dispatch bool) {
 	// The selection JSON and each multipart file header both repeat paths.
-	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxBatchBytes+2*transferJSONBytes(lim.MaxManifestBytes)+(256<<10))
+	r.Body = http.MaxBytesReader(w, r.Body, lim.MaxBatchBytes+2*transferJSONBytes(lim.MaxManifestBytes)+transferJSONBytes(lim.MaxMetadataBytes)+(256<<10))
 	body, e := webui.BoundBody(w, r, idle, true)
 	if e != nil {
 		reply(w, 503, map[string]string{"error": "upload read deadline unavailable"})
@@ -239,24 +247,43 @@ func (c *Core) uploadWithIdle(w http.ResponseWriter, r *http.Request, lim transf
 		}
 		return string(b), nil
 	}
-	peerID, e := readField("peerId", 128)
-	if e != nil {
-		reply(w, 400, map[string]string{"error": e.Error()})
-		return
+	var peerID, process string
+	var peerIDs []string
+	var trust Trust
+	if dispatch {
+		peersJSON, err := readField("peerIds", transferJSONBytes(lim.MaxMetadataBytes))
+		if err != nil || json.Unmarshal([]byte(peersJSON), &peerIDs) != nil {
+			reply(w, 400, map[string]string{"error": "invalid recipient selection"})
+			return
+		}
+		process, e = readField("processId", 128)
+		if e != nil {
+			reply(w, 400, map[string]string{"error": e.Error()})
+			return
+		}
+	} else {
+		peerID, e = readField("peerId", 128)
+		if e != nil {
+			reply(w, 400, map[string]string{"error": e.Error()})
+			return
+		}
 	}
 	id, e := readField("requestId", 128)
 	if e != nil || !config.ValidPeerID(id) {
 		reply(w, 400, map[string]string{"error": "invalid upload request ID"})
 		return
 	}
-	trust, ok := c.trust(peerID)
-	if !ok || trust.Paused {
-		reply(w, 403, map[string]string{"error": "approve this exact peer and resume reception first"})
-		return
-	}
-	if _, e := c.currentPeer(r.Context(), peerID); e != nil {
-		reply(w, 409, map[string]string{"error": e.Error()})
-		return
+	if !dispatch {
+		var ok bool
+		trust, ok = c.trust(peerID)
+		if !ok || trust.Paused {
+			reply(w, 403, map[string]string{"error": "approve this exact peer and resume reception first"})
+			return
+		}
+		if _, e := c.currentPeer(r.Context(), peerID); e != nil {
+			reply(w, 409, map[string]string{"error": e.Error()})
+			return
+		}
 	}
 	manifestJSON, e := readField("manifest", transferJSONBytes(lim.MaxManifestBytes))
 	if e != nil {
@@ -300,33 +327,55 @@ func (c *Core) uploadWithIdle(w http.ResponseWriter, r *http.Request, lim transf
 	// represented by the entry even while HTTP staging is still in progress.
 	life, cancel := context.WithCancel(c.ctx)
 	b := &outgoingBatch{ID: id, PeerID: peerID, Network: trust.Network, Generation: trust.Generation, Manifest: manifest, Files: map[string]string{}, State: "queued", Created: time.Now().UTC(), cancel: cancel}
-	existing, e := c.reserveOutgoing(r.Context(), b, lim)
-	if e != nil {
+	var preparation *transferPreparation
+	if dispatch {
+		var existing bool
+		preparation, existing, e = c.reservePreparation(r.Context(), id, process, peerIDs, manifest, lim)
 		cancel()
-		reply(w, 409, map[string]string{"error": e.Error()})
-		return
-	}
-	if existing != nil {
-		cancel()
-		existing.mu.Lock()
-		same := existing.PeerID == peerID && existing.Generation == trust.Generation && len(existing.Manifest.Entries) == len(manifest.Entries)
-		for i, entry := range manifest.Entries {
-			if !same {
-				break
-			}
-			old := existing.Manifest.Entries[i]
-			same = old.Path == entry.Path && old.Size == entry.Size && old.Kind == entry.Kind
-		}
-		state := existing.State
-		existing.mu.Unlock()
-		if !same {
-			reply(w, 409, map[string]string{"error": "upload request ID belongs to a different selection"})
+		if e != nil {
+			reply(w, 409, map[string]string{"code": networkErrorCode(e), "error": e.Error()})
 			return
 		}
-		// A retry acknowledges the original staged operation. It never reads new
-		// bytes under an already committed idempotency key or silently resends.
-		reply(w, 200, map[string]any{"ok": true, "result": map[string]string{"id": id, "status": state}})
-		return
+		if existing {
+			result, err := c.preparationResult(process, id)
+			if err != nil {
+				reply(w, 409, map[string]string{"code": networkErrorCode(err), "error": err.Error()})
+				return
+			}
+			reply(w, 200, map[string]any{"ok": true, "result": result})
+			return
+		}
+		b = preparation.batch
+		life = preparation.life
+	} else {
+		existing, e := c.reserveOutgoing(r.Context(), b, lim)
+		if e != nil {
+			cancel()
+			reply(w, 409, map[string]string{"error": e.Error()})
+			return
+		}
+		if existing != nil {
+			cancel()
+			existing.mu.Lock()
+			same := existing.PeerID == peerID && existing.Generation == trust.Generation && len(existing.Manifest.Entries) == len(manifest.Entries)
+			for i, entry := range manifest.Entries {
+				if !same {
+					break
+				}
+				old := existing.Manifest.Entries[i]
+				same = old.Path == entry.Path && old.Size == entry.Size && old.Kind == entry.Kind
+			}
+			state := existing.State
+			existing.mu.Unlock()
+			if !same {
+				reply(w, 409, map[string]string{"error": "upload request ID belongs to a different selection"})
+				return
+			}
+			// A retry acknowledges the original staged operation. It never reads new
+			// bytes under an already committed idempotency key or silently resends.
+			reply(w, 200, map[string]any{"ok": true, "result": map[string]string{"id": id, "status": state}})
+			return
+		}
 	}
 	ctx, finishStaging := c.operationContext(r.Context(), "stagingSeconds")
 	defer finishStaging()
@@ -344,7 +393,11 @@ func (c *Core) uploadWithIdle(w http.ResponseWriter, r *http.Request, lim transf
 	stagedOK := false
 	defer func() {
 		if !stagedOK {
-			c.discardOutgoing(b)
+			if preparation != nil {
+				_ = c.discardPreparationOwner(process, id, true, preparation)
+			} else {
+				c.discardOutgoing(b)
+			}
 		}
 	}()
 	// Both sources expire the socket directly, bypassing the HTTP body mutex.
@@ -374,7 +427,7 @@ func (c *Core) uploadWithIdle(w http.ResponseWriter, r *http.Request, lim transf
 	}
 	spool, e := os.MkdirTemp(spoolRoot, "batch-")
 	b.mu.Lock()
-	b.Spool = spool
+	b.setSpoolLocked(spool)
 	b.mu.Unlock()
 	if e != nil {
 		if normalized := diskspace.NormalizeError(e); diskspace.IsCapacityError(normalized) {
@@ -471,6 +524,16 @@ func (c *Core) uploadWithIdle(w http.ResponseWriter, r *http.Request, lim transf
 		reply(w, 400, map[string]string{"error": "upload was interrupted"})
 		return
 	}
+	if preparation != nil {
+		result, err := c.finishPreparation(ctx, preparation)
+		if err != nil {
+			reply(w, 409, map[string]string{"code": networkErrorCode(err), "error": err.Error()})
+			return
+		}
+		stagedOK = true
+		reply(w, 200, map[string]any{"ok": true, "result": result})
+		return
+	}
 	if err := c.runStagedOutgoing(life, ctx, b); err != nil {
 		reply(w, 503, map[string]string{"error": err.Error()})
 		return
@@ -497,94 +560,37 @@ func (c *Core) runStagedOutgoing(ctx, staging context.Context, b *outgoingBatch)
 		return err
 	}
 	b.mu.Lock()
-	alreadyRunning := b.running
-	b.mu.Unlock()
-	if alreadyRunning {
-		done()
-		return nil
-	}
-	runCtx, application, err := c.peerHTTPApplication(ctx)
-	if err != nil {
-		done()
-		return err
-	}
-	b.mu.Lock()
-	if err := staging.Err(); err != nil {
-		b.mu.Unlock()
-		application.finish()
-		done()
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		b.mu.Unlock()
-		application.finish()
-		done()
-		return err
-	}
 	if b.running {
 		b.mu.Unlock()
-		application.finish()
 		done()
 		return nil
 	}
-	b.running = true
-	b.runDone = make(chan struct{})
-	runDone := b.runDone
-	b.staging = false
-	b.State = "awaiting-acceptance"
-	b.Error = ""
-	b.mu.Unlock()
-	go func() {
-		defer done()
-		// An application lease spans all HTTP requests, progress, terminal
-		// history and spool cleanup. A request deadline may return before its
-		// source owner; the run cannot publish completion or free staged bytes
-		// until the independently owned request cleanups have really joined.
-		err := c.deliver(runCtx, b)
-		application.waitRequests()
-		b.mu.Lock()
-		if err != nil {
-			if ctx.Err() != nil {
-				b.State = "cancelled"
-				b.Error = "Transfer cancelled. Already saved files remain on the receiver."
-			} else if errors.Is(err, errReceiverDeclined) {
-				b.State = "declined"
-				b.Error = err.Error()
-			} else {
-				b.State = "failed"
-				b.Error = err.Error()
-				if code := networkErrorCode(err); code == "peer_disk_space_low" || code == "peer_disk_space_unknown" || code == "peer_storage_unavailable" {
-					b.Error = code
-				}
-			}
-		} else {
-			b.State = "completed"
-		}
-		finished := b.State == "completed" || b.State == "cancelled" || b.State == "declined"
-		if finished {
-			if cleanupErr := b.releaseSpoolLocked(); cleanupErr != nil {
-				b.Error = "could not remove staged files; clear this transfer to retry cleanup"
-			}
-		}
+	if err := staging.Err(); err != nil {
 		b.mu.Unlock()
-		application.finishWithTerminal(func() {
-			// Sources and cancellation callbacks have joined. Keep the old
-			// origin accounted until this last bounded run publication.
-			b.mu.Lock()
-			b.running = false
-			close(runDone)
-			b.mu.Unlock()
-		})
-	}()
+		done()
+		return err
+	}
+	b.running, b.staging = true, false
+	b.runDone = make(chan struct{})
+	b.State, b.Error = "queued", ""
+	b.mu.Unlock()
+	c.enqueueOutgoing(&outgoingRun{ctx: ctx, batch: b, done: done})
 	return nil
 }
+
 func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	peer, ok := c.trust(b.PeerID)
-	if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused {
+	if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused || !c.outgoingBackendCurrent(b) {
 		return errors.New("peer permission changed")
+	}
+	if b.dispatchID != "" {
+		peer, err := c.currentPeer(ctx, b.PeerID)
+		if err != nil || !c.dispatchPeerAvailable(b.backend, Trust{ID: b.PeerID, Network: b.Network, Generation: b.Generation}, peer, time.Now()) {
+			return dispatchStale()
+		}
 	}
 	var remote wireBatch
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -653,7 +659,7 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 			}
 		}
 		peer, ok := c.trust(b.PeerID)
-		if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused {
+		if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused || !c.outgoingBackendCurrent(b) {
 			return errors.New("peer permission changed")
 		}
 		f, e := os.Open(b.Files[entry.ID])
@@ -722,7 +728,7 @@ func (c *Core) outgoingRequestFailure(ctx context.Context, b *outgoingBatch, cau
 		return cause
 	}
 	peer, ok := c.trust(b.PeerID)
-	if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused {
+	if !ok || peer.Network != b.Network || peer.Generation != b.Generation || peer.Paused || !c.outgoingBackendCurrent(b) {
 		return cause
 	}
 	if remote.ID == b.ID && (remote.State == transfer.Cancelled || remote.State == transfer.Rejected) {
@@ -792,6 +798,9 @@ func (c *Core) transferCommand(ctx context.Context, name string, raw json.RawMes
 				return nil, e
 			}
 			peer, approved := c.trust(out.PeerID)
+			if !c.outgoingBackendCurrent(out) {
+				return nil, &localCommandError{"transfer_retry_unavailable", "the selected transfer cannot currently be retried"}
+			}
 			out.mu.Lock()
 			if out.running || out.staging || out.State != "failed" {
 				out.mu.Unlock()
@@ -894,15 +903,19 @@ func (c *Core) transferViews() []map[string]any {
 	c.mu.RUnlock()
 	for _, b := range batches {
 		peer, approved := c.trust(b.PeerID)
+		backendCurrent := c.outgoingBackendCurrent(b)
 		b.mu.Lock()
 		blocked := c.outgoingRetryBlocked(b, peer, approved)
+		if blocked == "" && !backendCurrent {
+			blocked = "peer-unavailable"
+		}
 		entries := []map[string]any{}
 		var total int64
 		for _, entry := range b.Manifest.Entries {
 			total += entry.Size
 			entries = append(entries, map[string]any{"id": entry.ID, "path": entry.Path, "size": entry.Size, "kind": entry.Kind})
 		}
-		out = append(out, map[string]any{"id": b.ID, "peerId": b.PeerID, "direction": "outgoing", "retryable": blocked == "", "retryBlockedReason": blocked, "name": "Batch " + b.ID[:min(8, len(b.ID))], "entries": entries, "totalBytes": total, "completedBytes": b.Completed, "status": b.State, "createdAt": b.Created, "error": b.Error})
+		out = append(out, map[string]any{"id": b.ID, "peerId": b.PeerID, "direction": "outgoing", "dispatchId": b.dispatchID, "retryable": blocked == "", "retryBlockedReason": blocked, "name": "Batch " + b.ID[:min(8, len(b.ID))], "entries": entries, "totalBytes": total, "completedBytes": b.Completed, "status": b.State, "createdAt": b.Created, "error": b.Error})
 		b.mu.Unlock()
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["createdAt"].(time.Time).Before(out[j]["createdAt"].(time.Time)) })
@@ -972,54 +985,65 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 			c.discardOutgoing(b)
 		}
 	}()
-	if e := c.checkStagingSpace(stageCtx); e != nil {
+	if err := c.stageOutgoingPlan(ctx, stageCtx, b, plan); err != nil {
+		return nil, err
+	}
+	if e := c.runStagedOutgoing(life, stageCtx, b); e != nil {
 		return nil, e
+	}
+	stagedOK = true
+	return map[string]string{"id": b.ID}, nil
+}
+
+func (c *Core) stageOutgoingPlan(ctx, stageCtx context.Context, b *outgoingBatch, plan sourcePlan) error {
+	if e := c.checkStagingSpace(stageCtx); e != nil {
+		return e
 	}
 	manifest, sources, e := plan.Hash(stageCtx)
 	if e != nil {
-		return nil, e
+		return e
 	}
 	b.mu.Lock()
 	b.Manifest = manifest
 	b.mu.Unlock()
 	if e := c.checkStagingSpace(stageCtx); e != nil {
-		return nil, e
+		return e
 	}
 	spoolRoot := filepath.Join(c.dir, "outgoing")
 	if e := config.SecureDir(spoolRoot); e != nil {
-		return nil, e
+		return e
 	}
 	if e := c.checkStagingDirectory(stageCtx, spoolRoot); e != nil {
-		return nil, e
+		return e
 	}
 	spool, e := os.MkdirTemp(spoolRoot, "batch-")
 	if e != nil {
-		return nil, e
+		return e
 	}
 	b.mu.Lock()
-	b.Spool = spool
+	b.setSpoolLocked(spool)
 	b.mu.Unlock()
 	if e := config.Protect(spool, true); e != nil {
-		return nil, e
+		return e
 	}
 	files := map[string]string{}
 	for _, source := range sources {
 		if err := stageCtx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		from, e := source.Open()
 		if e != nil {
-			return nil, e
+			return e
 		}
 		if e := c.checkStagingDirectory(stageCtx, spool); e != nil {
 			from.Close()
-			return nil, e
+			return e
 		}
 		target := filepath.Join(spool, source.EntryID)
 		to, e := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if e != nil {
 			from.Close()
-			return nil, e
+			return e
 		}
 		var entry transfer.Entry
 		for _, item := range manifest.Entries {
@@ -1033,16 +1057,16 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 		from.Close()
 		closeErr := diskspace.NormalizeError(to.Close())
 		if err := stageCtx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		if diskspace.IsCapacityError(closeErr) {
-			return nil, closeErr
+			return closeErr
 		}
 		if diskspace.IsCapacityError(e) {
-			return nil, e
+			return e
 		}
 		if e != nil || closeErr != nil || n != entry.Size || hex.EncodeToString(hash.Sum(nil)) != entry.SHA256 {
-			return nil, errors.New("selected file changed while staging")
+			return errors.New("selected file changed while staging")
 		}
 		files[source.EntryID] = target
 	}
@@ -1050,16 +1074,12 @@ func (c *Core) sendPaths(ctx context.Context, peerID string, paths []string, lim
 	b.Files = files
 	b.mu.Unlock()
 	if err := stageCtx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
-	if e := c.runStagedOutgoing(life, stageCtx, b); e != nil {
-		return nil, e
-	}
-	stagedOK = true
-	return map[string]string{"id": b.ID}, nil
+	return nil
 }
 
 type stagingContextReader struct {

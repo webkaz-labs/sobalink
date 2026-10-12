@@ -357,7 +357,7 @@ func TestOutgoingDeclinedCleanupFailureRetainsReservation(t *testing.T) {
 	b.mu.Lock()
 	spool := b.Spool
 	// RemoveAll refuses a final dot component on every supported platform.
-	b.Spool += string(os.PathSeparator) + "."
+	b.setSpoolLocked(b.Spool + string(os.PathSeparator) + ".")
 	b.mu.Unlock()
 	mustCommand(t, p.b, "transfer.decline", map[string]string{"transferId": id})
 	waitOutgoingIdle(t, p.a, id)
@@ -374,7 +374,7 @@ func TestOutgoingDeclinedCleanupFailureRetainsReservation(t *testing.T) {
 		t.Fatal("cleanup failure made declined transfer retryable")
 	}
 	b.mu.Lock()
-	b.Spool = spool
+	b.setSpoolLocked(spool)
 	b.mu.Unlock()
 	mustCommand(t, p.a, "transfer.forget", map[string]string{"transferId": id})
 	if b.reserved != 0 {

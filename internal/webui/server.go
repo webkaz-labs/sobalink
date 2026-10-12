@@ -330,6 +330,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			jsonReply(w, 200, map[string]any{"ok": true, "result": result})
+		case r.URL.Path == "/api/upload-dispatch" && r.Method == "POST":
+			if backend, ok := s.backend.(interface {
+				UploadDispatch(http.ResponseWriter, *http.Request)
+			}); ok {
+				backend.UploadDispatch(w, r)
+			} else {
+				fail(w, 404, "not_found", "Unknown local API route")
+			}
 		case r.URL.Path == "/api/upload" && r.Method == "POST":
 			s.backend.Upload(w, r)
 		case r.URL.Path == "/api/session" && r.Method == "DELETE":

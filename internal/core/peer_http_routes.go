@@ -90,6 +90,19 @@ func capturePeerHTTPBackend(ctx context.Context, backend string, node NetworkBac
 func (c *Core) capturePeerHTTPRoute(ctx context.Context, id string, attempted map[string]bool) (*peerHTTPRoute, error) {
 	c.mu.RLock()
 	node, network, closing := c.node, c.profile.Settings.Network, c.closing
+	if selected, ok := ctx.Value(outgoingSelectionKey{}).(*outgoingBatch); ok {
+		approved := false
+		for _, peer := range c.profile.Peers {
+			if peer.ID == selected.PeerID && peer.Network == selected.Network && peer.Generation == selected.Generation && !peer.Paused {
+				approved = true
+				break
+			}
+		}
+		if selected.PeerID != id || selected.Network != network || (selected.backend != nil && selected.backend != node) || !approved {
+			c.mu.RUnlock()
+			return nil, errors.New("peer permission changed")
+		}
+	}
 	c.mu.RUnlock()
 	if closing || node == nil || ctx.Err() != nil || c.ctx.Err() != nil {
 		return nil, net.ErrClosed

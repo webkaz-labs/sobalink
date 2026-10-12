@@ -36,7 +36,7 @@ func TestOutgoingCapacityCountsRetainedSpoolsInsteadOfHistory(t *testing.T) {
 	if _, err := c.reserveOutgoing(context.Background(), b, lim); err != nil {
 		t.Fatal(err)
 	}
-	b.Spool = t.TempDir()
+	b.setSpoolLocked(t.TempDir())
 	if err := os.WriteFile(filepath.Join(b.Spool, "1"), []byte("data"), 0600); err != nil {
 		t.Fatal(err)
 	}
