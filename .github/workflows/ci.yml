@@ -316,6 +316,13 @@ jobs:
           python .github/scripts/ci-metrics.py run --suite directlan-repeat-race -- go test -race -count=2 -v -timeout=3m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
           python .github/scripts/ci-metrics.py run --suite directlan-vet -- go vet -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
           python .github/scripts/ci-metrics.py run --suite directlan-core-repeat-race -- go test -race -count=5 -timeout=5m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestDirectLAN' ./internal/core
+      - name: Verify explicit dispatch with three separate Core processes
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite dispatch-three-process -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferDispatchThreeProcessPartialRetry -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestTransferDispatchThreeProcessPartialRetry$'
       - name: Verify direct LAN synthetic expiry and rekey
         timeout-minutes: 3
         run: |
@@ -907,6 +914,15 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferGroupTwoProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestTransferGroupTwoProcessBrowser$' -count=1 -timeout=4m
+      - name: Verify multi-recipient send recovery with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+          SOBALINK_RUN_TRANSFER_BROWSER_NATIVE: '1'
+          SOBA_DISPATCH_BROWSER_SUMMARY: ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferDispatchThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestTransferDispatchThreeProcessBrowser$' -count=1 -timeout=4m
       - name: Preserve sanitized UI screenshots and typography measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -917,6 +933,7 @@ jobs:
             ${{ runner.temp }}/soba-playwright-screenshots/typography-*.json
             ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
             ${{ runner.temp }}/soba-playwright-screenshots/transfer-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
           if-no-files-found: warn
           retention-days: 14
 

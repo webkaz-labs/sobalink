@@ -8,9 +8,9 @@ import { policyEnglish, policyJapanese } from '../policy-i18n'
 const state: State = { csrfToken: 'fixture-token', self: { name: 'This device', status: 'online' }, peers: [], messages: [], transfers: [], services: [], shares: [] }
 const config: PolicyConfig = {
   version: 1, revision: 'saved-revision', requested: { version: 1, logical: {}, resources: {} },
-  effective: { version: 1, logical: { messageBytes: { mode: 'limited', value: 16384 }, batchEntries: { mode: 'limited', value: 256 }, messageHistoryEntries: { mode: 'limited', value: 128 } }, resources: { messageTextBytes: { mode: 'limited', value: 16384 } } },
-  catalog: { logical: { messageBytes: { default: 16384, unit: 'bytes' }, batchEntries: { default: 256, unit: 'entries' }, messageHistoryEntries: { default: 128, unit: 'entries' }, groups: { default: 32, unit: 'entries' } }, resources: { messageTextBytes: { default: 16384, unit: 'bytes' } } },
-  adjustable: { logical: { messageBytes: true, batchEntries: true, messageHistoryEntries: true }, resources: { messageTextBytes: true } }, usage: {},
+  effective: { version: 1, logical: { messageBytes: { mode: 'limited', value: 16384 }, batchEntries: { mode: 'limited', value: 256 }, messageHistoryEntries: { mode: 'limited', value: 128 } }, resources: { messageTextBytes: { mode: 'limited', value: 16384 }, transferConcurrentRecipients: { mode: 'limited', value: 4 } } },
+  catalog: { logical: { messageBytes: { default: 16384, unit: 'bytes' }, batchEntries: { default: 256, unit: 'entries' }, messageHistoryEntries: { default: 128, unit: 'entries' }, groups: { default: 32, unit: 'entries' } }, resources: { messageTextBytes: { default: 16384, unit: 'bytes' }, transferConcurrentRecipients: { default: 4, unit: 'streams' } } },
+  adjustable: { logical: { messageBytes: true, batchEntries: true, messageHistoryEntries: true }, resources: { messageTextBytes: true, transferConcurrentRecipients: true } }, usage: {},
 }
 function setup(failure?: 'apply' | 'cleanup') {
   const requests: { name: string; payload: { policy?: CapacityPolicy; expectedRevision?: string } }[] = []
@@ -49,6 +49,8 @@ describe('reviewed policy controls', () => {
     const resource = screen.getByRole('combobox', { name: 'Message text memory' })
     expect(within(resource).queryByRole('option', { name: 'No policy limit' })).not.toBeInTheDocument()
     expect(screen.getByText(/No policy limit still uses finite resource budgets/)).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Concurrent sending recipients' })).toBeEnabled()
+    expect(screen.getByText(policyEnglish.senderConcurrencyHint)).toBeVisible()
   })
   it('reviews a candidate before applying its exact revision and invalidates review after edits', async () => {
     const requests = setup(); await open()

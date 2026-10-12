@@ -48,6 +48,7 @@ export interface Transfer {
   entries: TransferEntry[]
   totalBytes: number
   completedBytes: number
+  dispatchId?: string
   retryable?: boolean
   retryBlockedReason?: '' | 'not-failed' | 'busy' | 'peer-unavailable' | 'unavailable'
   status: 'offered' | 'awaiting-acceptance' | 'queued' | 'transferring' | 'saving' | 'completed' | 'cancelled' | 'failed' | 'declined'
@@ -287,6 +288,9 @@ export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload
   'transfer.cancel': { transferId: string }
   'transfer.retry': { transferId: string; expected?: TransferRetryExpected }
   'transfer.forget': { transferId: string }
+  'transfer.dispatch.commit': { processId: string; preparationId: string; reviewRevision: string; confirm: true }
+  'transfer.dispatch.status': { processId: string; preparationId: string }
+  'transfer.dispatch.discard': { processId: string; preparationId: string }
   'peer.trust': { peerId: string; trusted: boolean }
   'discovery.refresh': { peerId?: string }
   'peer.reconnect': { peerId: string }
@@ -421,15 +425,20 @@ export async function command(name: CommandName, payload: CommandPayloads[Comman
 }
 export interface UploadSelection { entries: TransferEntry[]; files: { path: string; file: File }[] }
 export function upload(peerId: string, selection: UploadSelection, id: string, onProgress: (loaded: number, total: number) => void, signal: AbortSignal): Promise<CommandResult> {
+  return uploadSelection('/api/upload', [['peerId', peerId], ['requestId', id]], selection, onProgress, signal)
+}
+export function uploadDispatch(peerIds: string[], processId: string, selection: UploadSelection, id: string, onProgress: (loaded: number, total: number) => void, signal: AbortSignal): Promise<CommandResult> {
+  return uploadSelection('/api/upload-dispatch', [['peerIds', JSON.stringify(peerIds)], ['processId', processId], ['requestId', id]], selection, onProgress, signal)
+}
+function uploadSelection(path: string, fields: [string, string][], selection: UploadSelection, onProgress: (loaded: number, total: number) => void, signal: AbortSignal): Promise<CommandResult> {
   // XHR reports staging progress only. Peer delivery progress always comes from /api/state.
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     const form = new FormData()
-    form.append('peerId', peerId)
-    form.append('requestId', id)
+    for (const [key, value] of fields) form.append(key, value)
     form.append('manifest', JSON.stringify(selection.entries))
     for (const { file, path } of selection.files) form.append('files', file, path)
-    xhr.open('POST', '/api/upload')
+    xhr.open('POST', path)
     xhr.setRequestHeader('X-CSRF-Token', csrfToken)
     xhr.setRequestHeader('Accept', 'application/json')
     xhr.withCredentials = true

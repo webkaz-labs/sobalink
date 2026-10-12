@@ -15,8 +15,16 @@ export const test = base.extend({
       assert.ok(session.schema === 1 && viewer.schema === 1 && url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.port && url.pathname === '/' && !url.search && !url.hash)
       assert.ok(typeof viewer.code === 'string' && /^[A-Za-z0-9_-]{32}$/.test(viewer.code))
       assert.ok(bounded(session.peerName) && bounded(session.peerId) && /^[a-f0-9]{64}$/.test(session.processId))
-      for (const target of [session.selected, session.untouched]) assert.ok(bounded(target.id) && bounded(target.name) && ['incoming', 'outgoing'].includes(target.direction))
-      assert.notEqual(session.selected.id, session.untouched.id)
+      if (session.dispatch === true) {
+        assert.ok(Array.isArray(session.recipients) && session.recipients.length === 2)
+        for (const peer of session.recipients) assert.ok(bounded(peer.id) && bounded(peer.name))
+        assert.equal(session.recipients[0].id, session.peerId)
+        assert.notEqual(session.recipients[0].id, session.recipients[1].id)
+        assert.notEqual(session.recipients[0].name, session.recipients[1].name)
+      } else {
+        for (const target of [session.selected, session.untouched]) assert.ok(bounded(target.id) && bounded(target.name) && ['incoming', 'outgoing'].includes(target.direction))
+        assert.notEqual(session.selected.id, session.untouched.id)
+      }
     } catch { throw Error('Private transfer browser descriptor invalid; contents withheld') }
     let retries = 0, errors = 0
     page.on('pageerror', () => errors++)

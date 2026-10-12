@@ -1,7 +1,7 @@
 import existing from './playwright.config.mjs'
 export default {
   ...existing,
-  testMatch: '**/transfer-group-native.acceptance.mjs',
+  testMatch: process.env.SOBA_TRANSFER_BROWSER_DISPATCH === '1' ? '**/transfer-dispatch-native.acceptance.mjs' : '**/transfer-group-native.acceptance.mjs',
   globalTimeout: 75_000,
   reporter: './browser/transfer-native-reporter.mjs',
   expect: { timeout: 8_000 },
