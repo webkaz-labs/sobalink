@@ -71,7 +71,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         self.assertIn('timeout-minutes: 6', windows)
         self.assertIn('SOBALINK_RUN_DIRECT_INTEGRATION: \'1\'', windows)
         self.assertIn('go test -c -race', windows)
-        for name in ('TestOutboxDiagnosticTokensExcludeFreeFormValues', 'TestOutboxProcessPhaseDistinguishesOwnershipAndNamespace', 'TestOutboxProcessPhaseDistinguishesGlobalQueueAndRun', 'TestOutboxProcessPhaseReportsBusyLocksWithoutWaiting'):
+        for name in ('TestOutboxDiagnosticTokensExcludeFreeFormValues', 'TestOutboxProcessPhaseDistinguishesOwnershipAndNamespace', 'TestOutboxProcessPhaseDistinguishesGlobalQueueAndRun', 'TestOutboxProcessPhaseReportsBusyLocksWithoutWaiting', 'TestOutboxCompletionBusyRetainsJoinedDisposition', 'TestOutboxCompletionWaitsForApplicationRelease', 'TestOutboxCompletionCurrentFencesDominate', 'TestOutboxCompletionUncertainSaveRetainsFence', 'TestOutboxCompletionRestartKeepsOriginalLease', 'TestOutboxCompletionCloseDoesNotWaitForLifecycle', 'TestOutboxCompletionCodeIsClosed', 'TestOutboxCompletionCurrentFencesDominate/cancel', 'TestOutboxCompletionCurrentFencesDominate/expire', 'TestOutboxCompletionCurrentFencesDominate/revoke', 'TestOutboxCompletionCurrentFencesDominate/pause', 'TestOutboxCompletionCurrentFencesDominate/saved'):
             self.assertIn('--expect github.com/webkaz-labs/sobalink/internal/core:' + name, windows)
         self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'outbox-windows'", diagnostic)
 

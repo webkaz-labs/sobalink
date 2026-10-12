@@ -117,6 +117,7 @@ type outboxCoordinator struct {
 	info              os.FileInfo
 	frozen            string
 	prepared          map[string]*outboxPreparation
+	completions       map[string]outboxCompletion
 	runs              map[string]*outgoingBatch
 	next              map[string]time.Time
 	certified         map[string]OutboxRecord
@@ -350,7 +351,7 @@ func (c *Core) initializeOutbox(initialize bool) error {
 	if c.outboxCopy() != nil {
 		return outboxError("outbox_recovery_required")
 	}
-	o := &outboxCoordinator{core: c, prepared: map[string]*outboxPreparation{}, runs: map[string]*outgoingBatch{}, next: map[string]time.Time{}, certified: map[string]OutboxRecord{}, capabilities: map[string]bool{}, now: time.Now}
+	o := &outboxCoordinator{core: c, prepared: map[string]*outboxPreparation{}, runs: map[string]*outgoingBatch{}, completions: map[string]outboxCompletion{}, next: map[string]time.Time{}, certified: map[string]OutboxRecord{}, capabilities: map[string]bool{}, now: time.Now}
 	defer func() { c.mu.Lock(); c.outbox = o; c.mu.Unlock() }()
 	if c.resourceLock == nil || c.resourceIdentity == "" {
 		o.frozen = "outbox_recovery_required"
