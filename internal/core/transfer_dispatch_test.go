@@ -21,6 +21,7 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
+	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 func dispatchTrio(t *testing.T) (corePair, *Core) {
@@ -665,4 +666,117 @@ func TestOutgoingRetryUsesGlobalDispatchQueue(t *testing.T) {
 	waitIncomingOffer(t, p.b, failed.ID)
 	failed.stop()
 	waitOutgoingIdle(t, p.a, failed.ID)
+}
+
+// Online=false matches DirectLAN's intentionally presence-free State contract.
+// Only an actual authenticated application probe makes these selected peers
+// available, and both commit and queued execution must use that observation.
+func TestDispatchUsesFreshAuthenticatedContactWithoutPresenceBit(t *testing.T) {
+	p, third := dispatchTrio(t)
+	p.na.mu.Lock()
+	for i := range p.na.state.Snapshot.Peers {
+		p.na.state.Snapshot.Peers[i].Online = false
+	}
+	p.na.mu.Unlock()
+	source := dispatchSource(t)
+	review := prepareTestDispatch(t, p.a, "contact-confirmed", []string{"peer-b", "peer-c"}, []string{source})
+	if _, err := p.a.commitDispatch(context.Background(), review.ProcessID, review.PreparationID, review.ReviewRevision, true); networkErrorCode(err) != "transfer_dispatch_stale" {
+		t.Fatalf("configured peers alone accepted: %v", err)
+	}
+	for _, id := range review.PeerIDs {
+		if err := p.a.probePeer(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receipt := commitTestDispatch(t, p.a, review)
+	for i, receiver := range []*Core{p.b, third} {
+		waitIncomingOffer(t, receiver, receipt.Children[i].TransferID)
+		child := dispatchBatch(t, p.a, receipt.Children[i].TransferID)
+		child.stop()
+		waitOutgoingIdle(t, p.a, child.ID)
+	}
+}
+func TestDispatchFreshContactStillChecksCurrentAuthorityAndOrigin(t *testing.T) {
+	for _, change := range []string{"fresh", "expired-contact", "future-contact", "no-contact", "unconfirmed", "old-observation", "stopped-origin", "missing-origin", "generation", "paused", "backend", "expired-peer", "address"} {
+		t.Run(change, func(t *testing.T) {
+			c := outgoingCapacityCore()
+			backend := &directLANBackend{}
+			c.node = backend
+			selected := c.profile.Peers[0]
+			peer := policy.Peer{ID: selected.ID, IPs: []netip.Addr{netip.MustParseAddr("100.64.0.2")}}
+			now := time.Now()
+			c.confirmed = map[string]time.Time{peer.ID: now}
+			c.discoveryObservations = map[string]DiscoveryObservation{peer.ID: {State: "confirmed", CheckedAt: now}}
+			origin := &discoveryCacheTestOrigin{transportorigin.NewToken(), make(chan struct{})}
+			c.discoveredOrigins = map[string]transportorigin.Origin{peer.ID: origin}
+			switch change {
+			case "expired-contact":
+				c.confirmed[peer.ID] = now.Add(-16 * time.Second)
+			case "future-contact":
+				c.confirmed[peer.ID] = now.Add(6 * time.Second)
+			case "no-contact":
+				delete(c.confirmed, peer.ID)
+			case "unconfirmed":
+				c.discoveryObservations[peer.ID] = DiscoveryObservation{State: "unconfirmed", CheckedAt: now}
+			case "old-observation":
+				c.discoveryObservations[peer.ID] = DiscoveryObservation{State: "confirmed", CheckedAt: now.Add(-time.Second)}
+			case "stopped-origin":
+				close(origin.stopped)
+			case "missing-origin":
+				delete(c.discoveredOrigins, peer.ID)
+			case "generation":
+				c.profile.Peers[0].Generation++
+			case "paused":
+				c.profile.Peers[0].Paused = true
+			case "backend":
+				c.node = &directLANBackend{}
+			case "expired-peer":
+				peer.Expired = true
+			case "address":
+				peer.IPs = nil
+			}
+			if got := c.dispatchPeerAvailable(backend, selected, peer, now); got != (change == "fresh") {
+				t.Fatalf("availability=%t", got)
+			}
+		})
+	}
+}
+func TestQueuedDispatchDoesNotWaitForExpiredContactToResume(t *testing.T) {
+	p, _ := dispatchTrio(t)
+	p.a.mu.Lock()
+	p.a.capacity.Resources["transferConcurrentRecipients"] = capacity.Limited(1)
+	p.a.mu.Unlock()
+	p.na.mu.Lock()
+	for i := range p.na.state.Snapshot.Peers {
+		p.na.state.Snapshot.Peers[i].Online = false
+	}
+	p.na.mu.Unlock()
+	for _, id := range []string{"peer-b", "peer-c"} {
+		if err := p.a.probePeer(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	review := prepareTestDispatch(t, p.a, "expire-queued", []string{"peer-b", "peer-c"}, []string{dispatchSource(t)})
+	receipt := commitTestDispatch(t, p.a, review)
+	first := dispatchBatch(t, p.a, receipt.Children[0].TransferID)
+	second := dispatchBatch(t, p.a, receipt.Children[1].TransferID)
+	waitIncomingOffer(t, p.b, first.ID)
+	p.a.mu.Lock()
+	p.a.confirmed[second.PeerID] = time.Now().Add(-time.Minute)
+	p.a.mu.Unlock()
+	first.stop()
+	waitOutgoingIdle(t, p.a, first.ID)
+	waitOutgoingIdle(t, p.a, second.ID)
+	if second.State != "failed" || second.payload == nil {
+		t.Fatalf("expired queued child=%s %s", second.State, second.Error)
+	}
+	if err := p.a.probePeer(context.Background(), second.PeerID); err != nil {
+		t.Fatal(err)
+	}
+	second.mu.Lock()
+	state, running := second.State, second.running
+	second.mu.Unlock()
+	if state != "failed" || running {
+		t.Fatal("fresh contact automatically restarted the failed child")
+	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/diskspace"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
@@ -513,7 +514,7 @@ func (c *Core) dispatchOnline(ctx context.Context, p *transferPreparation) error
 	for _, peer := range p.peers {
 		found := false
 		for _, current := range state.Snapshot.Peers {
-			if current.ID == peer.ID && !current.Expired && current.Online && len(current.IPs) > 0 {
+			if c.dispatchPeerAvailable(p.backend, peer, current, time.Now()) {
 				found = true
 				break
 			}
@@ -564,4 +565,43 @@ func (c *Core) reapDispatchReceiptsLocked() {
 			delete(c.transferPreparations, id)
 		}
 	}
+}
+
+// Direct LAN (and some mixed routes) has no transport presence bit. Use the
+// same fresh authenticated application contact that backs Snapshot's online
+// projection, never a configured peer or a successful raw socket alone. This
+// is a readiness observation, not authority: the exact trust/backend binding
+// is rechecked here and by every outgoing HTTP request.
+func (c *Core) dispatchPeerAvailable(backend NetworkBackend, selected Trust, current policy.Peer, now time.Time) bool {
+	if current.ID != selected.ID || current.Expired || len(current.IPs) == 0 {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closing || c.node != backend || c.profile.Settings.Network != selected.Network {
+		return false
+	}
+	approved := false
+	for _, peer := range c.profile.Peers {
+		if peer.ID == selected.ID && peer.Network == selected.Network && peer.Generation == selected.Generation && !peer.Paused {
+			approved = true
+			break
+		}
+	}
+	if !approved {
+		return false
+	}
+	if current.Online {
+		return true
+	}
+	checked := c.confirmed[current.ID]
+	observation := c.discoveryObservations[current.ID]
+	if !freshDiscoveryCheck(checked, now) || observation.State != "confirmed" || observation.CheckedAt.Before(checked) {
+		return false
+	}
+	origin := c.discoveredOrigins[current.ID]
+	if _, direct := backend.(*directLANBackend); direct && origin == nil {
+		return false
+	}
+	return origin == nil || (origin.Identity() != nil && !channelClosed(origin.StopRequested()))
 }

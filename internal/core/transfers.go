@@ -588,7 +588,7 @@ func (c *Core) deliver(ctx context.Context, b *outgoingBatch) error {
 	}
 	if b.dispatchID != "" {
 		peer, err := c.currentPeer(ctx, b.PeerID)
-		if err != nil || !peer.Online {
+		if err != nil || !c.dispatchPeerAvailable(b.backend, Trust{ID: b.PeerID, Network: b.Network, Generation: b.Generation}, peer, time.Now()) {
 			return dispatchStale()
 		}
 	}
