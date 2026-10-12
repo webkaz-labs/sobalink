@@ -78,6 +78,14 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 			if callErr == nil {
 				value, callErr = c.SendPaths(ctx, in.PeerID, in.Paths)
 			}
+		case "fixture.transfer":
+			var in struct {
+				TransferID string `json:"transferId"`
+			}
+			callErr = json.Unmarshal(request.Payload, &in)
+			if callErr == nil {
+				value, callErr = c.transfers.Get(in.TransferID)
+			}
 		case "fixture.snapshot":
 			value, callErr = c.Snapshot(ctx)
 		case "fixture.catalog-local":
@@ -239,7 +247,11 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 			}
 		default:
 			call, stop := context.WithTimeout(ctx, 30*time.Second)
-			value, callErr = c.Command(call, webui.Command{RequestID: randomID(), Name: request.Name, Payload: request.Payload})
+			requestID := randomID()
+			if request.Name == "outbox.prepare" {
+				requestID = newOutboxRequestID(time.Now())
+			}
+			value, callErr = c.Command(call, webui.Command{RequestID: requestID, Name: request.Name, Payload: request.Payload})
 			stop()
 		}
 		raw, _ := json.Marshal(value)

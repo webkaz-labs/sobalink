@@ -161,14 +161,14 @@ func TestManagementRejectsForeignHostsOriginsAndAddresses(t *testing.T) {
 
 func TestManagementAuthenticationCSRFAndReadOnlyMethods(t *testing.T) {
 	s, b := testServer(t)
-	for _, path := range []string{"/api/state", "/api/command", "/api/upload", "/api/upload-dispatch"} {
+	for _, path := range []string{"/api/state", "/api/command", "/api/upload", "/api/upload-dispatch", "/api/outbox/prepare"} {
 		if w := serve(s, request(s, "GET", path, "", nil, "")); w.Code != http.StatusUnauthorized {
 			t.Fatalf("unauthenticated %s: %d", path, w.Code)
 		}
 	}
 	cookie, csrf := signIn(t, s)
 	for _, token := range []string{"", "wrong-token"} {
-		for _, path := range []string{"/api/command", "/api/upload", "/api/upload-dispatch", "/api/session"} {
+		for _, path := range []string{"/api/command", "/api/upload", "/api/upload-dispatch", "/api/outbox/prepare", "/api/session"} {
 			method := "POST"
 			if path == "/api/session" {
 				method = "DELETE"
@@ -179,7 +179,7 @@ func TestManagementAuthenticationCSRFAndReadOnlyMethods(t *testing.T) {
 		}
 	}
 	for _, method := range []string{"GET", "HEAD"} {
-		for _, path := range []string{"/api/command", "/api/upload", "/api/upload-dispatch", "/api/session"} {
+		for _, path := range []string{"/api/command", "/api/upload", "/api/upload-dispatch", "/api/outbox/prepare", "/api/session"} {
 			if w := serve(s, request(s, method, path, `{}`, cookie, csrf)); w.Code != http.StatusNotFound {
 				t.Fatalf("read method %s %s: %d", method, path, w.Code)
 			}
@@ -411,6 +411,33 @@ type dispatchUploadBackend struct {
 }
 
 func (b *dispatchUploadBackend) UploadDispatch(w http.ResponseWriter, _ *http.Request) {
+	b.prepares.Add(1)
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestOutboxUploadRequiresAuthenticatedMutationRoute(t *testing.T) {
+	s, b := testServer(t)
+	backend := &outboxUploadBackend{testBackend: b}
+	s.backend = backend
+	cookie, csrf := signIn(t, s)
+	if response := serve(s, request(s, "POST", "/api/outbox/prepare", "", cookie, csrf)); response.Code != http.StatusOK || backend.prepares.Load() != 1 {
+		t.Fatal("authenticated outbox route failed")
+	}
+	if response := serve(s, request(s, "POST", "/api/outbox/prepare", "", cookie, "wrong")); response.Code != http.StatusForbidden || backend.prepares.Load() != 1 {
+		t.Fatal("invalid CSRF reached outbox")
+	}
+	s.backend = b
+	if response := serve(s, request(s, "POST", "/api/outbox/prepare", "", cookie, csrf)); response.Code != http.StatusNotFound {
+		t.Fatal("unsupported backend did not fail closed")
+	}
+}
+
+type outboxUploadBackend struct {
+	*testBackend
+	prepares atomic.Int32
+}
+
+func (b *outboxUploadBackend) UploadOutbox(w http.ResponseWriter, _ *http.Request) {
 	b.prepares.Add(1)
 	w.WriteHeader(http.StatusOK)
 }

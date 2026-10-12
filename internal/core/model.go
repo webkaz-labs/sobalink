@@ -50,11 +50,12 @@ type Trust struct {
 	RevocationEpoch string `json:"revocationEpoch,omitempty"`
 }
 type Profile struct {
-	Version  int            `json:"version"`
-	Settings Settings       `json:"settings"`
-	Peers    []Trust        `json:"peers"`
-	Services []ServiceSpec  `json:"services"`
-	Groups   []ServiceGroup `json:"groups,omitempty"`
+	DurableFiles *DurableProfile `json:"durableFiles,omitempty"`
+	Version      int             `json:"version"`
+	Settings     Settings        `json:"settings"`
+	Peers        []Trust         `json:"peers"`
+	Services     []ServiceSpec   `json:"services"`
+	Groups       []ServiceGroup  `json:"groups,omitempty"`
 }
 type ServiceSpec struct {
 	ID              string   `json:"id"`
@@ -105,6 +106,7 @@ type Options struct {
 }
 
 type Core struct {
+	durableProfileError          string                          // mu; uncertain or incomplete explicit migration blocks durable work
 	catalogViews                 *resourceCatalogViewCoordinator // op; nil unless explicitly enabled
 	catalogViewReceived          *catalogViewReceipt             // op; one explicitly selected remote view
 	resourceGrants               *resourceGrantCoordinator       // op; nil unless explicitly enabled
@@ -159,6 +161,10 @@ type Core struct {
 	diskSpace                  *diskspace.Guard
 	messages                   []Message
 	messageHistoryUncertain    bool // protected by mu; cleared only by a successful whole-history save
+	outbox                     *outboxCoordinator
+	outboxReserved             atomic.Int64
+	outboxChildren             atomic.Int64
+	outboxMetadata             atomic.Int64
 	outgoing                   map[string]*outgoingBatch
 	transferPreparations       map[string]*transferPreparation
 	outgoingQueue              []*outgoingRun
@@ -227,7 +233,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if err := config.SecureDir(opts.Directory); err != nil {
 		return nil, err
 	}
-	p := Profile{Version: 1, Settings: Settings{Locale: "auto", Theme: "system", Network: "none", Hostname: "sobalink-" + randomID()[:8]}, Peers: []Trust{}, Services: []ServiceSpec{}}
+	p := Profile{}
 	limits, err := readCapacityPolicy(opts.Directory)
 	if err != nil {
 		return nil, err
@@ -235,6 +241,15 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	profileLoadErr := readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &p)
 	if profileLoadErr != nil && !errors.Is(profileLoadErr, os.ErrNotExist) {
 		return nil, profileLoadErr
+	}
+	if errors.Is(profileLoadErr, os.ErrNotExist) {
+		p = Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Locale: "auto", Theme: "system", Network: "none", Hostname: "sobalink-" + randomID()[:8]}, Peers: []Trust{}, Services: []ServiceSpec{}}
+		if err := checkDurableProfileInventory(opts.Directory, Profile{}); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkDurableProfileInventory(opts.Directory, p); err != nil {
+		return nil, err
 	}
 	if err := validateProfile(p); err != nil {
 		return nil, err
@@ -324,6 +339,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 			return nil, err
 		}
 	}
+	_ = c.restoreDurableProfile()
 	if err := c.loadMessages(); err != nil {
 		m.Close()
 		cancel()
@@ -349,8 +365,8 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 }
 
 func validateProfile(p Profile) error {
-	if p.Version != 1 {
-		return errors.New("unsupported sobalink profile version")
+	if !validDurableProfile(p) {
+		return &localCommandError{"profile_format_unsupported", "this version requires a fresh profile; preserve the existing profile and choose a new directory"}
 	}
 	if p.Settings.Network != "none" && p.Settings.Network != "tailnet" && p.Settings.Network != "lan" && p.Settings.Network != "direct-lan" && p.Settings.Network != "mixed" {
 		return errors.New("network must be none, tailnet, lan, direct-lan or mixed")
@@ -405,6 +421,10 @@ func (c *Core) saveProfile(p Profile) error {
 	return c.writeProfile(p)
 }
 func cloneProfile(p Profile) Profile {
+	if p.DurableFiles != nil {
+		g := *p.DurableFiles
+		p.DurableFiles = &g
+	}
 	p.Groups = cloneGroups(p.Groups)
 	p.Peers = append([]Trust(nil), p.Peers...)
 	p.Services = append([]ServiceSpec(nil), p.Services...)
@@ -439,6 +459,9 @@ func (c *Core) bindTransferPeer(p Trust) error {
 	}
 	peer := transfer.Peer{ID: p.ID, Generation: p.Generation}
 	if err := c.transfers.BindPeer(peer); err != nil {
+		return err
+	}
+	if err := c.transfers.BindDurableRelationship(peer, p.Network, p.RevocationEpoch); err != nil {
 		return err
 	}
 	return c.transfers.PausePeer(p.ID, p.Paused)
@@ -530,6 +553,14 @@ func (c *Core) close() error {
 		<-management.done
 	}
 	c.wg.Wait()
+	if o := c.outboxCopy(); o != nil {
+		o.mu.Lock()
+		if o.root != nil {
+			errs = append(errs, o.root.Close())
+			o.root = nil
+		}
+		o.mu.Unlock()
+	}
 	return errors.Join(errs...)
 }
 

@@ -9,33 +9,35 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/webkaz-labs/sobalink/internal/transportorigin"
 )
 
 type peerHTTPRequest struct {
-	mu            sync.Mutex
-	front         *peerHTTPFront
-	backend       string // immutable actual selected backend, including mixed routes
-	ctx           context.Context
-	cancel        context.CancelFunc
-	token         *peerHTTPToken
-	authority     *peerHTTPAuthority
-	origin        transportorigin.Origin
-	participant   transportorigin.Lease
-	application   *peerHTTPApplication
-	conn          *peerHTTPConn
-	source        *peerHTTPBody
-	response      *peerHTTPBody
-	responseLease func()
-	appRelease    func()
-	workDone      func()
-	stopping      bool
-	appDone       chan struct{}
-	done          chan struct{}
-	finishOnce    sync.Once
-	limits        peerHTTPLimits
+	mu                 sync.Mutex
+	front              *peerHTTPFront
+	backend            string // immutable actual selected backend, including mixed routes
+	ctx                context.Context
+	cancel             context.CancelFunc
+	token              *peerHTTPToken
+	authority          *peerHTTPAuthority
+	origin             transportorigin.Origin
+	participant        transportorigin.Lease
+	application        *peerHTTPApplication
+	conn               *peerHTTPConn
+	source             *peerHTTPBody
+	response           *peerHTTPBody
+	responseLease      func()
+	appRelease         func()
+	workDone           func()
+	stopping           bool
+	appDone            chan struct{}
+	done               chan struct{}
+	finishOnce         sync.Once
+	limits             peerHTTPLimits
+	durableLeaseHeader string // bounded private protocol scalar; never copied into dial context
 }
 
 type peerHTTPLimits struct{ total, perPeer, window int64 }
@@ -73,6 +75,11 @@ func (c *Core) newPeerHTTPRequest(caller context.Context, peer string, route *pe
 		if source != nil {
 			_ = source.Close()
 		}
+	}
+	leaseHeader, _ := caller.Value(outboxLeaseHeaderKey{}).(string)
+	if len(leaseHeader) > 4096 {
+		closeSource()
+		return nil, errors.New("durable lease exceeds bound")
 	}
 	application, _ := caller.Value(peerHTTPApplicationKey{}).(*peerHTTPApplication)
 	if application != nil {
@@ -127,7 +134,7 @@ func (c *Core) newPeerHTTPRequest(caller context.Context, peer string, route *pe
 		cancel()
 		ctx, cancel = context.WithDeadline(context.Background(), deadline)
 	}
-	h := &peerHTTPRequest{front: front, backend: route.backend, ctx: ctx, cancel: cancel, origin: route.origin, application: application, responseLease: responseLease, appRelease: appRelease, workDone: workDone, limits: limits, appDone: make(chan struct{}), done: make(chan struct{})}
+	h := &peerHTTPRequest{durableLeaseHeader: strings.Clone(leaseHeader), front: front, backend: route.backend, ctx: ctx, cancel: cancel, origin: route.origin, application: application, responseLease: responseLease, appRelease: appRelease, workDone: workDone, limits: limits, appDone: make(chan struct{}), done: make(chan struct{})}
 	var originDone <-chan struct{}
 	if route.origin != nil {
 		originDone = route.origin.StopRequested()
@@ -384,6 +391,9 @@ func (h *peerHTTPRequest) request(method string, target string, contentType stri
 		return nil, err
 	}
 	req.GetBody = nil
+	if h.durableLeaseHeader != "" {
+		req.Header.Set("X-Sobalink-Durable-Lease", h.durableLeaseHeader)
+	}
 	if h.source != nil {
 		req.ContentLength = size
 	}

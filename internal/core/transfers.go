@@ -52,6 +52,7 @@ type outgoingBatch struct {
 	payload      *outgoingPayload
 	backend      NetworkBackend
 	dispatchID   string
+	outboxID     string
 	ID, PeerID   string
 	Network      string
 	Generation   uint64

@@ -206,7 +206,11 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/hello" {
-		reply(w, 200, map[string]any{"protocol": 1, "product": "sobalink", "capabilities": []string{"text", "batch", "ranges", "discovery-v3"}})
+		caps := []string{"text", "batch", "ranges", "discovery-v3"}
+		if c.durableProfileReady() && c.transfers.DurableAvailable() {
+			caps = append(caps, transfer.DurableCapability)
+		}
+		reply(w, 200, map[string]any{"protocol": 1, "product": "sobalink", "capabilities": caps})
 		return
 	}
 	if r.Method == "GET" && (r.URL.Path == "/.well-known/sobalink/services/v2" || r.URL.Path == discoveryV3Path) {
@@ -219,6 +223,9 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	peer := transfer.Peer{ID: t.ID, Generation: t.Generation}
+	if c.serveDurableTransfer(w, r, peer) {
+		return
+	}
 	switch {
 	case r.Method == "POST" && r.URL.Path == "/v1/messages":
 		var msg struct {
@@ -376,6 +383,17 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 		return errors.New("peer did not respond; check its network and sobalink permissions")
 	}
 	if resp.StatusCode != 200 {
+		if strings.HasPrefix(path, "/v1/durable-transfers/") {
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&problem) == nil {
+				switch problem.Code {
+				case "busy", "durable_unknown_lease", "durable_conflict", "durable_recovery_required", "durable_expired", "durable_clock", "durable_capacity", "durable_permission", "durable_unsupported_storage":
+					return outboxError(problem.Code)
+				}
+			}
+		}
 		if resp.StatusCode == http.StatusInsufficientStorage && (path == "/v1/offers" || strings.HasPrefix(path, "/v1/batches/")) {
 			return peerDiskSpaceError(resp.Body)
 		}
@@ -403,7 +421,7 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 		return h.publish(commit)
 	}
 	responseLimit := int64(256 << 10)
-	if path == "/v1/offers" || strings.HasPrefix(path, "/v1/batches/") {
+	if path == "/v1/offers" || strings.HasPrefix(path, "/v1/batches/") || strings.HasPrefix(path, "/v1/durable-transfers/") {
 		responseLimit = c.transferResponseJSONBytes()
 	}
 	if strings.HasPrefix(path, discoveryV3Path) {
@@ -512,6 +530,15 @@ func (c *Core) probePeer(ctx context.Context, id string) (probeErr error) {
 	}
 	if hello.Protocol != 1 || hello.Product != "sobalink" {
 		return &localCommandError{"discovery_unsupported", "peer discovery protocol is unsupported; use manual settings for a known service"}
+	}
+	if o := c.outboxCopy(); o != nil {
+		supported := false
+		for _, capability := range hello.Capabilities {
+			supported = supported || capability == transfer.DurableCapability
+		}
+		o.mu.Lock()
+		o.capabilities[id] = supported
+		o.mu.Unlock()
 	}
 	for _, capability := range hello.Capabilities {
 		if capability == "discovery-v3" {

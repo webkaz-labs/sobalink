@@ -79,6 +79,15 @@ func (c *Core) transferResponseJSONBytes() int64 {
 		batch.mu.Unlock()
 	}
 	c.mu.RUnlock()
+	// Durable evidence remains readable after a policy reduction. This is only
+	// a response framing bound; new offers and exposure use the current limits.
+	if o := c.outboxCopy(); o != nil {
+		o.mu.Lock()
+		for _, row := range o.state.Intents {
+			metadata = max(metadata, transfer.ManifestMetadataBytes(transfer.Manifest{Entries: row.View.Entries}))
+		}
+		o.mu.Unlock()
+	}
 	// File status contains both the offered path and saved relative name.
 	return 2 * transferJSONBytes(metadata)
 }

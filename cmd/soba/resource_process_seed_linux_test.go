@@ -358,7 +358,7 @@ func (f *p1Fixture) seed() {
 		cfg := directlan.Config{Identity: saved.Identity, Listen: f.endpoints[i], AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Peers: directPeers}
 		f.require(cfg.Validate() == nil, "seed_direct_config")
 		f.validateLAN(saved, i, false)
-		profile := core.Profile{Version: 1, Settings: core.Settings{Locale: "en", Theme: "system", Network: "direct-lan", Hostname: []string{"synthetic-controller", "synthetic-target-a", "synthetic-target-b"}[i]}, Peers: []core.Trust{}, Services: []core.ServiceSpec{}}
+		profile := core.Profile{Version: 2, DurableFiles: syntheticDurableProfile(), Settings: core.Settings{Locale: "en", Theme: "system", Network: "direct-lan", Hostname: []string{"synthetic-controller", "synthetic-target-a", "synthetic-target-b"}[i]}, Peers: []core.Trust{}, Services: []core.ServiceSpec{}}
 		if i == 0 {
 			profile.Services = []core.ServiceSpec{{ID: "synthetic-service", Name: "Synthetic service", Direction: "forward", Network: "tcp", Ports: "8080", Lifetime: "until-stopped", LoopbackHost: "127.0.0.1", PeerID: f.identities[1].PublicKey()}}
 		}

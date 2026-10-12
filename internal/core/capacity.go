@@ -49,6 +49,11 @@ func ReadProfile(path string) (Profile, error) {
 		return p, err
 	}
 	err = readBoundedPrivateJSON(path, limits.Number("resources", "profileBytes"), &p)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		if guardErr := checkDurableProfileInventory(filepath.Dir(path), p); guardErr != nil {
+			return p, guardErr
+		}
+	}
 	return p, err
 }
 
@@ -84,6 +89,10 @@ func readBoundedPrivateJSON(path string, limit int64, out any) error {
 }
 
 func (c *Core) writeProfile(p Profile) error {
+	return c.writeProfileUsing(p, c.writeAtomic)
+}
+
+func (c *Core) writeProfileUsing(p Profile, write func(string, []byte) error) error {
 	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
@@ -92,7 +101,7 @@ func (c *Core) writeProfile(p Profile) error {
 	if int64(len(b))+1 > limit {
 		return &localCommandError{"profile_capacity", fmt.Sprintf("profile needs %d bytes; raise the %d-byte profile storage budget before saving", len(b)+1, limit)}
 	}
-	return c.writeAtomic(filepath.Join(c.dir, "sobalink.json"), append(b, '\n'))
+	return write(filepath.Join(c.dir, "sobalink.json"), append(b, '\n'))
 }
 
 func capacityRevision(p capacity.Policy, profile Profile) string {

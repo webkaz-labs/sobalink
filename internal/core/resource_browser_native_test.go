@@ -834,7 +834,7 @@ func TestResourceBrowserNativeLocalCatalog(t *testing.T) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal("private product directory unavailable")
 	}
-	profile := Profile{Version: 1, Settings: Settings{Locale: "auto", Theme: "light", Network: "none", Hostname: "synthetic-browser"}, Peers: []Trust{}, Services: []ServiceSpec{{ID: "synthetic-service", Name: "Synthetic service", Direction: "forward", Network: "tcp", Ports: "8080", Lifetime: "until-stopped", LoopbackHost: "127.0.0.1", PeerID: "synthetic-peer"}}}
+	profile := Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Locale: "auto", Theme: "light", Network: "none", Hostname: "synthetic-browser"}, Peers: []Trust{}, Services: []ServiceSpec{{ID: "synthetic-service", Name: "Synthetic service", Direction: "forward", Network: "tcp", Ports: "8080", Lifetime: "until-stopped", LoopbackHost: "127.0.0.1", PeerID: "synthetic-peer"}}}
 	if validateProfile(profile) != nil || resourceBrowserWrite(filepath.Join(dir, "sobalink.json"), profile) != nil {
 		t.Fatal("inert synthetic profile unavailable")
 	}

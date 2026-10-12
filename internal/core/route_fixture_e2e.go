@@ -44,7 +44,7 @@ func PrepareRouteBrowserFixture(directory, updateFile string) (string, error) {
 	if err := config.WriteJSON(filepath.Join(directory, "lan.json"), state); err != nil {
 		return "", err
 	}
-	profile := Profile{Version: 1, Settings: Settings{Locale: "auto", Theme: "system", Network: "lan", Hostname: "route-notebook"}, Peers: []Trust{}, Services: []ServiceSpec{}}
+	profile := Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Locale: "auto", Theme: "system", Network: "lan", Hostname: "route-notebook"}, Peers: []Trust{}, Services: []ServiceSpec{}}
 	if err := config.WriteJSON(filepath.Join(directory, "sobalink.json"), profile); err != nil {
 		return "", err
 	}

@@ -245,6 +245,11 @@ func validatePeerHTTPRequest(method, path string, proof bool) (*url.URL, bool, e
 		switch u.Path {
 		case "/v1/hello", "/.well-known/sobalink/services/v2", discoveryV3Path:
 			allowed = method == "GET"
+		case "/v1/durable-transfers/offer", "/v1/durable-transfers/status", "/v1/durable-transfers/start":
+			allowed = method == "POST"
+		case "/v1/durable-transfers/file":
+			allowed = method == "POST"
+			upload = allowed
 		case "/v1/messages", "/v1/offers", catalogViewPath:
 			allowed = method == "POST"
 		default:
@@ -258,8 +263,15 @@ func validatePeerHTTPRequest(method, path string, proof bool) (*url.URL, bool, e
 			}
 		}
 	}
-	if !allowed || u.RawQuery != "" && u.Path != discoveryV3Path {
+	if !allowed || u.RawQuery != "" && u.Path != discoveryV3Path && u.Path != "/v1/durable-transfers/file" {
 		return nil, false, errors.New("unsupported peer HTTP request")
+	}
+	if u.Path == "/v1/durable-transfers/file" {
+		values, e := url.ParseQuery(u.RawQuery)
+		if e != nil || len(values) != 1 || len(values["fileID"]) != 1 || !config.ValidPeerID(values.Get("fileID")) {
+			return nil, false, errors.New("invalid durable file request")
+		}
+		return u, upload, nil
 	}
 	if u.RawQuery != "" {
 		values, e := url.ParseQuery(u.RawQuery)

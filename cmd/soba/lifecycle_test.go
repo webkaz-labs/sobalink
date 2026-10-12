@@ -169,7 +169,7 @@ func TestBackgroundStartupEarlyExitCancellationAndSymlink(t *testing.T) {
 func TestAutostartRequiresExactReviewAndShowsSavedAutosave(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "state")
-	profile := core.Profile{Version: 1, Settings: core.Settings{Network: "tailnet", Hostname: "example", Locale: "auto", Theme: "system"}, Peers: []core.Trust{{ID: "peer-a", Network: "tailnet", Generation: 1, Autosave: true, Directory: filepath.Join(root, "received")}}}
+	profile := core.Profile{Version: 2, DurableFiles: syntheticDurableProfile(), Settings: core.Settings{Network: "tailnet", Hostname: "example", Locale: "auto", Theme: "system"}, Peers: []core.Trust{{ID: "peer-a", Network: "tailnet", Generation: 1, Autosave: true, Directory: filepath.Join(root, "received")}}}
 	if err := config.WriteJSON(filepath.Join(dir, "sobalink.json"), profile); err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,7 @@ func PrepareSavedHostBrowserFixture(directory string) error {
 	if err != nil || len(entries) != 0 {
 		return errors.New("saved-host fixture requires an empty private directory")
 	}
-	profile := Profile{Version: 1, Settings: Settings{Locale: "auto", Theme: "system", Network: "lan", Hostname: "saved-notebook"}, Peers: []Trust{}, Services: []ServiceSpec{}}
+	profile := Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Locale: "auto", Theme: "system", Network: "lan", Hostname: "saved-notebook"}, Peers: []Trust{}, Services: []ServiceSpec{}}
 	if err := validateProfile(profile); err != nil {
 		return err
 	}

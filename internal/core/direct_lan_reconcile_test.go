@@ -40,7 +40,7 @@ func terminalReconcileFixture(t *testing.T) (*Core, []string) {
 		t.Fatal(err)
 	}
 	ids := []string{raw, implicit, logical}
-	c.profile = Profile{Version: 1, Settings: Settings{Network: "mixed", Locale: "en", Theme: "system", Hostname: "synthetic-node"}, Peers: []Trust{{ID: raw, Generation: 1, Network: "direct-lan"}, {ID: implicit, Generation: 2, Network: "mixed"}, {ID: logical, Generation: 3, Network: "mixed"}, {ID: "unrelated-peer", Generation: 4, Network: "tailnet"}}}
+	c.profile = Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Network: "mixed", Locale: "en", Theme: "system", Hostname: "synthetic-node"}, Peers: []Trust{{ID: raw, Generation: 1, Network: "direct-lan"}, {ID: implicit, Generation: 2, Network: "mixed"}, {ID: logical, Generation: 3, Network: "mixed"}, {ID: "unrelated-peer", Generation: 4, Network: "tailnet"}}}
 	c.startup = startupStore{Version: 1, Revocations: map[string]string{}, Entries: []StartupEntry{}}
 	c.savedProxies = savedProxyStore{Version: 1}
 	c.startupPending, c.savedProxyPending = map[string]string{}, map[string]string{}

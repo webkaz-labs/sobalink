@@ -258,6 +258,10 @@ func (c *Core) maintain() {
 		c.expireServices()
 		c.expireProxies()
 		c.op.Unlock()
+		c.pumpOutbox()
+		if c.durableProfileReady() {
+			_ = c.transfers.MaintainDurable()
+		}
 		resourceacceptance.MaintenancePassed(c)
 	}
 }
@@ -346,6 +350,9 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 			}
 		}
 	}
+	for _, peer := range peers {
+		peer["outboxEligibility"] = c.outboxEligibility(peer["id"].(string))
+	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i]["name"].(string) < peers[j]["name"].(string) })
 	if messages == nil {
 		messages = []Message{}
@@ -359,6 +366,23 @@ func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	result := map[string]any{"version": c.version, "processId": os.Getpid(), "self": map[string]any{"name": p.Settings.Hostname, "status": state, "error": reason, "errorCode": reasonCode, "guidance": networkDiagnosticGuidance(state, reasonCode, reason != "", p.Settings.Network), "receiveDirectory": p.Settings.ReceiveDirectory}, "peers": peers, "messages": messages, "transfers": c.transferViews(), "receiveRecovery": c.transfers.ReceiveRecovery(), "services": services, "shares": shares, "proxies": c.proxyViews(), "startup": c.startupView(), "savedProxies": c.savedProxyView(), "availableServices": c.discoveredViews(), "reservedPorts": reservedPorts, "settings": p.Settings, "servicePresets": servicePresets(), "limits": c.capacityView(), "lan": c.lanStatus(), "directLAN": c.directLANStatus(), "mixed": c.mixedStatus()}
+	result["outboxSupported"] = true
+	result["outboxReady"] = false
+	result["outboxPendingCount"] = 0
+	if o := c.outboxCopy(); o != nil {
+		o.mu.Lock()
+		result["outboxReady"] = o.frozen == "" && c.durableProfileReady()
+		pending := 0
+		for _, row := range o.state.Intents {
+			switch row.View.Status {
+			case "completed", "cancelled", "expired":
+			default:
+				pending++
+			}
+		}
+		result["outboxPendingCount"] = pending
+		o.mu.Unlock()
+	}
 	// The catalog token helper takes op; all State observation locks are released.
 	if processID := c.resourceCatalogProcessID(); processID != "" {
 		result["resourceCatalogProcessId"] = processID
@@ -377,6 +401,8 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	}
 	resourceacceptance.ProcessLocalCommand(c, cmd.Name, cmd.RequestID)
 	switch cmd.Name {
+	case "outbox.prepare", "outbox.commit", "outbox.status", "outbox.list", "outbox.cancel", "outbox.discard":
+		return c.outboxCommand(ctx, cmd.Name, cmd.RequestID, cmd.Payload)
 	case "transfer.dispatch.prepare", "transfer.dispatch.commit", "transfer.dispatch.status", "transfer.dispatch.discard":
 		return c.transferDispatchCommand(ctx, cmd.Name, cmd.RequestID, cmd.Payload)
 	case resourcegroup.LocalCurrentReviewCommand, resourcegroup.LocalPreviewCommand, resourcegroup.LocalSelectCommand, resourcegroup.LocalApplyCommand, resourcegroup.LocalStatusCommand, resourcegroup.LocalRefreshCommand, resourcegroup.LocalCancelCommand:
