@@ -242,6 +242,8 @@ Preparation is local storage. Upload completion and request acceptance are not d
 
 The shared sending copy is charged once; per-recipient records and concurrent sends use separate finite budgets. Completing one recipient does not delete another recipient's retry data. Automatic audience selection, group text messages, synchronization, a durable outbox and delivery resumption after restart are excluded. This describes source behavior, not published-binary or physical-device acceptance.
 
+See [reproducible dispatch checks and acceptance boundaries](BATCH_SEND_ACCEPTANCE.en.md).
+
 ### Retry selected failed transfers (source build)
 
 Open a peer's conversation to see completed, failed and ongoing transfers. Select only the failed transfers you want to retry. The existing retry operation preserves successful files and retries failed files. A retry acknowledgement means the request was accepted; wait for the transfer's completed state to confirm delivery.
