@@ -106,26 +106,27 @@ type outboxPreparation struct {
 	discarded bool
 }
 type outboxCoordinator struct {
-	owned            *outboxOwnedScope
-	firstUse         bool
-	confirmedDisk    []byte
-	snapshotIdentity string
-	mu               sync.Mutex
-	core             *Core
-	state            outboxEnvelope
-	root             *os.Root
-	info             os.FileInfo
-	frozen           string
-	prepared         map[string]*outboxPreparation
-	runs             map[string]*outgoingBatch
-	next             map[string]time.Time
-	certified        map[string]OutboxRecord
-	capabilities     map[string]bool
-	orphanBytes      int64
-	now              func() time.Time
-	write            func(string, []byte) error
-	afterWrite       func() error
-	syncDirectory    func(*os.Root) error
+	owned             *outboxOwnedScope
+	firstUse          bool
+	confirmedDisk     []byte
+	snapshotIdentity  string
+	mu                sync.Mutex
+	core              *Core
+	state             outboxEnvelope
+	root              *os.Root
+	info              os.FileInfo
+	frozen            string
+	prepared          map[string]*outboxPreparation
+	runs              map[string]*outgoingBatch
+	next              map[string]time.Time
+	certified         map[string]OutboxRecord
+	capabilities      map[string]bool
+	orphanBytes       int64
+	now               func() time.Time
+	write             func(string, []byte) error
+	afterWrite        func() error
+	syncDirectory     func(*os.Root) error
+	stagingRootOpened func(*os.Root) // test-only observation of the physical staging owner
 }
 
 func outboxError(code string) error {
@@ -343,6 +344,12 @@ func (o *outboxCoordinator) updateAccountingLocked() {
 	o.core.outboxMetadata.Store(metadata)
 }
 func (c *Core) initializeOutbox(initialize bool) error {
+	// Startup owns exactly one coordinator. Replacing it could lose the retained
+	// root handle (notably preventing Windows cleanup) or abandon live owners.
+	// Recovery requires closing this Core and opening a new one under its lock.
+	if c.outboxCopy() != nil {
+		return outboxError("outbox_recovery_required")
+	}
 	o := &outboxCoordinator{core: c, prepared: map[string]*outboxPreparation{}, runs: map[string]*outgoingBatch{}, next: map[string]time.Time{}, certified: map[string]OutboxRecord{}, capabilities: map[string]bool{}, now: time.Now}
 	defer func() { c.mu.Lock(); c.outbox = o; c.mu.Unlock() }()
 	if c.resourceLock == nil || c.resourceIdentity == "" {

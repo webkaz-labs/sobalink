@@ -8,6 +8,7 @@ var japaneseCatalog = map[string]string{
 	"private child identity changed":            "非公開の子項目が置き換わっています",
 	"private child changed":                     "非公開の子項目が変更されています",
 	"private parent binding changed":            "非公開の親ディレクトリとの関連付けが変更されています",
+	"profile lifecycle operation is busy":       "プロファイルの起動・停止を管理する処理が実行中です",
 	"profile lifecycle ownership required":      "プロファイルの起動・停止を管理する所有権が必要です",
 	"profile lifecycle ownership mismatch":      "プロファイルの起動・停止を管理する所有権が一致しません",
 	"profile lifecycle ownership unavailable":   "プロファイルの起動・停止を管理する所有権を確認できません",

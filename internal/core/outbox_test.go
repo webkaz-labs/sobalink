@@ -66,6 +66,9 @@ func outboxReopenFixture(t *testing.T, c *Core) {
 		p.cancel()
 	}
 	o.root.Close()
+	c.mu.Lock()
+	c.outbox = nil // A simulated new process owns no previous coordinator.
+	c.mu.Unlock()
 	c.resourceNonce = randomID()
 	if err := c.initializeOutbox(false); err != nil {
 		t.Fatal(err)
@@ -167,6 +170,9 @@ func TestOutboxCorruptStoreFailsClosed(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			c := outboxFixture(t)
 			c.outbox.root.Close()
+			c.mu.Lock()
+			c.outbox = nil
+			c.mu.Unlock()
 			if err := os.WriteFile(filepath.Join(c.dir, outboxNamespace, "state.json"), []byte(body), 0600); err != nil {
 				t.Fatal(err)
 			}

@@ -148,12 +148,20 @@ func (c *Core) UploadOutbox(w http.ResponseWriter, r *http.Request) {
 	o.mu.Lock()
 	payload := o.state.Payloads[p.intent.PayloadID]
 	root, err := o.payloadRootLocked(payload)
+	if err == nil && o.stagingRootOpened != nil {
+		o.stagingRootOpened(root)
+	}
 	o.mu.Unlock()
 	if err != nil {
 		fail(err)
 		return
 	}
-	defer root.Close()
+	rootOpen := true
+	defer func() {
+		if rootOpen {
+			_ = root.Close()
+		}
+	}()
 	for i, entry := range manifest.Entries {
 		if entry.Kind != transfer.File {
 			continue
@@ -190,6 +198,13 @@ func (c *Core) UploadOutbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = outboxSyncDirectory(root); err != nil {
+		fail(err)
+		return
+	}
+	// Readiness means the physical staging owner has joined, including this
+	// directory handle. On failure, the earlier defer closes before abort cleanup.
+	rootOpen = false
+	if err = root.Close(); err != nil {
 		fail(err)
 		return
 	}
