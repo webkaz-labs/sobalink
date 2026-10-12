@@ -197,6 +197,7 @@ func TestNativeSessionSyntheticExpiryRekey(t *testing.T) {
 // These minute-scale tests are a separate explicit native gate. Do not include
 // them in the short adapter repeat-count gate or shorten protocol timers.
 func TestNativeSessionLifecycle(t *testing.T) {
+	t.Run("expiry-oracle", testLifecycleExpiryOracle)
 	t.Run("active-through-natural-rekey", func(t *testing.T) {
 		t.Parallel()
 		a, b := lifecyclePair(t, 74)
@@ -221,16 +222,7 @@ func TestNativeSessionLifecycle(t *testing.T) {
 		a, b := lifecyclePair(t, 76)
 		cs := lifecycleDials(t, a, b)
 		lifecycleExchange(t, cs)
-		time.Sleep(device.RejectAfterTime + 5*time.Second)
-		for i, n := range []*Node{a, b} {
-			target := []*Node{b, a}[i]
-			n.mu.Lock()
-			p := n.peers[target.PublicKey()]
-			n.mu.Unlock()
-			if p.session.ready() {
-				t.Fatal("idle expired session remained ready")
-			}
-		}
+		awaitLifecycleExpiry(t, a, b)
 		fresh := lifecycleDials(t, a, b)
 		lifecycleExchange(t, fresh)
 	})
