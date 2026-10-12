@@ -412,9 +412,24 @@ def validate_resource_group_catalog_workflow(data):
     return start, end
 
 
+def validate_outbox_workflow(workflow_bytes):
+    """Require the exact no-skip native and real-browser durable outbox gates."""
+    workflow = workflow_bytes.decode('utf-8')
+    expected = ("      - name: Verify durable outbox restart across Core processes\n        timeout-minutes: 6\n        env:\n          SOBALINK_RUN_DIRECT_INTEGRATION: '1'\n        run: |\n          set -euo pipefail\n          python .github/scripts/ci-metrics.py run --suite outbox-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessRestart -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxProcessRestart$'\n",
+                "      - name: Verify durable outbox recovery with separate agents and actual browser\n        timeout-minutes: 8\n        env:\n          SOBALINK_RUN_DIRECT_INTEGRATION: '1'\n          SOBALINK_RUN_TRANSFER_BROWSER_NATIVE: '1'\n          SOBA_OUTBOX_BROWSER_SUMMARY: ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json\n        run: |\n          set -euo pipefail\n          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxThreeProcessBrowser$' -count=1 -timeout=4m\n")
+    for block in expected:
+        marker = block.splitlines(keepends=True)[0]
+        require(workflow.count(marker) == 1 and workflow.count(block) == 1,
+                'invalid durable outbox execution policy')
+        start = workflow.index(marker)
+        following = workflow[start + len(block):]
+        require(following.startswith('      - '), 'invalid durable outbox step boundary')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_parallel_workflow(sources[WORKFLOW])
+    validate_outbox_workflow(sources[WORKFLOW])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS'}
@@ -434,6 +449,9 @@ def required_jobs(sources):
         require(isinstance(value, tuple) and value and all(isinstance(v, str) and v for v in value)
                 and len(set(value)) == len(value), 'invalid required-step policy')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
+    require(values['FAST_STEPS'].count('Verify durable outbox restart across Core processes') == 1
+            and values['BROWSER_STEPS'].count('Verify durable outbox recovery with separate agents and actual browser') == 1,
+            'missing durable outbox required gates')
     require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',
                                          'Verify native remote resource management',
                                          'Verify native fixed-group resource catalog'),

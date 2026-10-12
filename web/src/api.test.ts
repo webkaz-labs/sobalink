@@ -1,5 +1,6 @@
+import { fixtureOutboxID } from './outbox-fixture'
 import { describe, expect, it, vi } from 'vitest'
-import { ApiError, canExchange, command, getState, safeAuthURL, setCSRFToken, upload, uploadDispatch, type Peer } from './api'
+import { ApiError, canExchange, command, getState, safeAuthURL, setCSRFToken, upload, uploadDispatch, uploadOutbox, canQueue, type Peer } from './api'
 import { detectLocale, en, ja, errorText, errorDetail, translator } from './i18n'
 
 describe('local API boundary', () => {
@@ -25,6 +26,12 @@ describe('local API boundary', () => {
     expect(canExchange(peer)).toBe(true)
     for (const key of ['online', 'verified', 'trusted', 'bridge']) expect(canExchange({ ...peer, [key]: false })).toBe(false)
     expect(canExchange({ ...peer, autosave: { enabled: true, paused: true, directory: '/tmp/received' } })).toBe(false)
+  })
+  it('keeps durable eligibility independent of the ordinary online composer', () => {
+    const peer: Peer = { id: 'a', name: 'A', networks: ['tailnet'], online: false, verified: true, trusted: true, bridge: false, path: 'unknown', outboxEligibility: { allowed: true, reasonCode: 'outbox_capability_unknown' } }
+    expect(canQueue(peer)).toBe(true); expect(canExchange(peer)).toBe(false)
+    expect(canQueue({ ...peer, outboxEligibility: { allowed: false, reasonCode: 'outbox_peer_upgrade_required' } })).toBe(false)
+    expect(canQueue({ ...peer, outboxEligibility: undefined })).toBe(false)
   })
   it('renders only bounded official authorization links', () => {
     expect(safeAuthURL('https://login.tailscale.com/a/test-token_1')).toBe('https://login.tailscale.com/a/test-token_1')
@@ -100,6 +107,15 @@ describe('file preparation transport', () => {
     ;(xhr.onload as () => void)()
     await expect(pending).resolves.toEqual({ ok: true })
     controller.abort(); expect(xhr.abort).not.toHaveBeenCalled()
+  })
+  it('uploads durable review fields including the immutable deadline before content', async () => {
+    const xhr = transport(), controller = new AbortController()
+    const pending = uploadOutbox(['peer-a'], 'a'.repeat(64), '2026-10-13T10:00:00Z', { entries: [], files: [] }, fixtureOutboxID, vi.fn(), controller.signal)
+    expect(xhr.open).toHaveBeenCalledWith('POST', '/api/outbox/prepare')
+    const form = xhr.send.mock.calls[0][0] as FormData
+    expect([...form.keys()]).toEqual(['peerIds', 'processId', 'expiresAt', 'requestId', 'manifest'])
+    expect(form.get('expiresAt')).toBe('2026-10-13T10:00:00Z'); expect(form.get('requestId')).toBe(fixtureOutboxID)
+    ;(xhr.onload as () => void)(); await expect(pending).resolves.toEqual({ ok: true })
   })
   it('retains the existing single-recipient request shape and aborts without retrying', async () => {
     const xhr = transport(), controller = new AbortController()

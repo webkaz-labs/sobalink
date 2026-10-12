@@ -1,3 +1,4 @@
+import { outboxRequestTime } from './outbox-id'
 import type { GroupCommandName, GroupCommandPayloads } from './group/types'
 import type { EndpointCommand, EndpointPayload } from './direct-lan-endpoint'
 import type { ResourceCommandName, ResourceCommandPayloads } from './resource/types'
@@ -14,6 +15,7 @@ export interface Peer {
   verified: boolean
   trusted: boolean
   bridge: boolean
+  outboxEligibility?: { allowed: boolean; reasonCode: string }
   discovery?: { state: 'pending' | 'confirmed' | 'unconfirmed' | 'unsupported' | 'limited' | 'stale'; checkedAt?: string; code?: string; services: number }
   path: 'direct' | 'relay' | 'unknown'
   route?: LanRouteObservation
@@ -153,6 +155,9 @@ export interface DirectLanInvitationPreview { hostPublicKey: string; hostName: s
 export interface MixedStatus { configured: boolean; error?: string; active?: boolean; backendStatusAvailable?: boolean; workerResources?: { frameBytes: number; requests: number; handles: number }; resourceRestartRequired?: boolean; backends?: TransportBackend[]; identity?: string; publicKey?: string; bindings?: { peerId: string; publicKey: string; identities: { backend: TransportBackend; id: string }[] }[]; routes?: { peerId: string; backend: TransportBackend; transportId: string; name: string; backendReady: boolean; expired: boolean }[]; backendStates?: { backend: TransportBackend; state: string; running: boolean; selfId?: string; availability?: "ready" | "confirmed-unavailable" | "authorization-required" | "readiness-unconfirmed"; restartRequired?: boolean }[] }
 export interface State {
   csrfToken: string
+  outboxReady?: boolean
+  outboxSupported?: boolean
+  outboxPendingCount?: number
   processId?: number
   resourceCatalogProcessId?: string
   self: { name: string; status: string; error?: string; errorCode?: string; guidance?: DiagnosticGuidance | null; receiveDirectory?: string; networks?: Network[] }
@@ -237,6 +242,11 @@ export type FavoriteReference = { kind: 'service'; serviceId: string } | { kind:
 export type FavoriteEntry = FavoriteReference & { available: boolean }
 export interface FavoritesView { version: 1; revision: string; entries: FavoriteEntry[]; durabilityUncertain: boolean }
 export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload>, ResourceCommandPayloads, ResourceCatalogCommandPayloads, GroupCommandPayloads {
+  'outbox.list': Record<string, never>
+  'outbox.status': { outboxId?: string; requestId?: string }
+  'outbox.commit': { processId: string; outboxId: string; reviewRevision: string; confirm: true }
+  'outbox.cancel': { outboxId: string; deliveryId?: string }
+  'outbox.discard': { processId: string; outboxId: string }
   'device-card.export': { mode: 'lan' | 'direct-lan'; name: string; includeEndpointHint?: boolean; qr?: boolean }
   'device-card.inspect': { card: string; expectedMode: 'lan' | 'direct-lan' }
   'favorites.list': Record<string, never>
@@ -430,6 +440,10 @@ export function upload(peerId: string, selection: UploadSelection, id: string, o
 export function uploadDispatch(peerIds: string[], processId: string, selection: UploadSelection, id: string, onProgress: (loaded: number, total: number) => void, signal: AbortSignal): Promise<CommandResult> {
   return uploadSelection('/api/upload-dispatch', [['peerIds', JSON.stringify(peerIds)], ['processId', processId], ['requestId', id]], selection, onProgress, signal)
 }
+export function uploadOutbox(peerIds: string[], processId: string, expiresAt: string, selection: UploadSelection, id: string, onProgress: (loaded: number, total: number) => void, signal: AbortSignal): Promise<CommandResult> {
+  if (outboxRequestTime(id) === undefined) return Promise.reject(new ApiError('outbox_invalid', ''))
+  return uploadSelection('/api/outbox/prepare', [['peerIds', JSON.stringify(peerIds)], ['processId', processId], ['expiresAt', expiresAt], ['requestId', id]], selection, onProgress, signal)
+}
 function uploadSelection(path: string, fields: [string, string][], selection: UploadSelection, onProgress: (loaded: number, total: number) => void, signal: AbortSignal): Promise<CommandResult> {
   // XHR reports staging progress only. Peer delivery progress always comes from /api/state.
   return new Promise((resolve, reject) => {
@@ -460,6 +474,7 @@ function uploadSelection(path: string, fields: [string, string][], selection: Up
   })
 }
 
+export function canQueue(peer: Peer) { return peer.outboxEligibility?.allowed === true && peer.verified && peer.trusted && !peer.autosave?.paused }
 export function canExchange(peer: Peer) { return peer.online && peer.verified && peer.trusted && peer.bridge && !peer.autosave?.paused }
 export function canUseServices(peer: Peer, state: State) {
   if (peer.networks.includes('mixed')) return state.settings?.network === 'mixed' && Boolean(state.mixed?.configured)

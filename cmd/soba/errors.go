@@ -86,3 +86,27 @@ func localizeRouteRecoveryError(ja bool, err error) error {
 	}
 	return err
 }
+
+// Keep profile format and stored-state guard failures actionable in ordinary
+// start/init/offline commands. Only these exact codes are translated; callers
+// requesting --json-errors retain the original machine error through runWith.
+func localizeDurableProfileError(ja bool, err error) error {
+	var coded interface{ ErrorCode() string }
+	if !errors.As(err, &coded) {
+		return err
+	}
+	var message string
+	switch coded.ErrorCode() {
+	case "profile_format_unsupported":
+		message = text(ja,
+			"This version requires a fresh profile. Keep the existing profile and its stored data unchanged, and select a different, empty directory with --state-dir.",
+			"このバージョンには新しいプロファイルが必要です。既存のプロファイルと保存済みデータはそのまま保管し、--state-dir で別の空のディレクトリを指定してください。")
+	case "outbox_recovery_required":
+		message = text(ja,
+			"Stored file-transfer state needs review. Keep the existing profile, staged data and delivery records; do not delete or replace them. Inspect that state before restarting or trying to send again.",
+			"保存済みのファイル転送の状態を確認する必要があります。既存のプロファイル・準備済みデータ・到着の記録は、削除や置換をせず保管してください。状態を確認してから再起動や再送を行ってください。")
+	default:
+		return err
+	}
+	return &localizedDiskSpaceError{cause: err, message: message}
+}
