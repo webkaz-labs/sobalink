@@ -834,3 +834,18 @@ textarea.code-value, .client-copy textarea.code-value, .composer textarea { font
 .endpoint-details dt { font-size: .8rem; opacity: .8; }
 .endpoint-details dd { margin: .1rem 0 0; overflow-wrap: anywhere; white-space: normal; }
 .endpoint-controls .code-value { overflow-wrap: anywhere; min-width: 0; }
+
+/* Explicit file recipients stay inside the existing batch review. */
+.dispatch-recipients { border: 0; padding: 10px 0; margin: 0; min-inline-size: 0; }
+.dispatch-recipients legend { font-weight: 650; }
+.dispatch-recipients ul { list-style: none; padding: 0; margin: 8px 0; max-height: 12rem; overflow-y: auto; }
+.dispatch-recipients li { padding: 6px 0; }
+.dispatch-recipients label { display: flex; align-items: flex-start; gap: 8px; }
+.dispatch-recipients label > span { min-width: 0; overflow-wrap: anywhere; }
+.dispatch-recipients input { margin-top: 4px; flex: 0 0 auto; }
+.dispatch-recipients small { display: block; overflow-wrap: anywhere; }
+.dispatch-selected, .dispatch-pending { overflow-wrap: anywhere; }
+.dispatch-pending .transfer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dispatch-summary { padding: 12px 0; border-top: 1px solid var(--border); }
+.dispatch-summary h3 { font-size: 1rem; }
+.dispatch-recipient-result .peer-transfer-summary { border: 0; }

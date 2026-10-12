@@ -309,3 +309,44 @@ or replay `useServer` uncertain-request entries. After an ambiguous response the
 user must reload and review current marks before a new explicit mutation; other
 commands retain their existing uncertainty/deduplication behavior. Favorite
 selection still uses the existing full service-scope review before starting.
+
+## Explicit multiple-recipient file dispatch (source build)
+
+The authenticated, CSRF-protected `POST /api/upload-dispatch` prepares one local
+immutable copy. Multipart fields are ordered: `peerIds` (JSON array), `processId`,
+`requestId`, `manifest`, then `files`. The request ID is also the preparation ID.
+It creates no outgoing child batch and sends no peer offer. Normal `/api/upload`
+keeps its existing single-recipient contract.
+
+A prepared response contains `{version:1,processId,preparationId,status:"prepared",
+reviewRevision,peerIds,entries,totalBytes}`. Entries use the transfer manifest's
+`id,path,kind,size,sha256`. The review binds exact ordered unique peer identities,
+current trust/backend generations, the immutable content and this Core process.
+The Web compares recipients and file metadata against the captured selection.
+
+- `transfer.dispatch.commit {processId,preparationId,reviewRevision,confirm:true}`
+  atomically admits all child records or none, then schedules ordinary transfers.
+- `transfer.dispatch.status {processId,preparationId}` reads the original result.
+- `transfer.dispatch.discard {processId,preparationId}` discards only an
+  uncommitted preparation; it cannot cancel an accepted delivery.
+
+The committed receipt is `{version:1,processId,preparationId,dispatchId,children,
+status:"committed"}`, with `dispatchId` equal to the preparation ID and children
+`{peerId,transferId}`. A committed receipt is acceptance, not delivery. Outgoing
+transfer observations may include `dispatchId`; existing `transfer.retry` remains
+bound to the current process, exact peer and direction. Repeating an accepted
+commit returns its original receipt instead of starting another send.
+
+The existing file review selects recipients and starts prepare/commit from the
+same explicit send action. A changed draft, navigation, authentication or Core
+process prevents a late preparation from committing. A lost prepare or commit
+reply keeps the original reference and blocks resubmission until explicit status
+inspection. A local draft may be closed explicitly; an uncertain committed
+request first requires acknowledgment of possible delivery and duplicate copies.
+Closing a draft does not send, cancel accepted transfers or claim staging cleanup.
+
+Shared payload bytes are charged once. Per-child metadata/history and preparation
+records remain bounded. `resources.transferConcurrentRecipients` is a finite
+sender concurrency budget, separate from receiving concurrency. The last retained
+owner releases the copy only after its active readers have joined; failed cleanup
+remains charged. No persistent outbox or cross-restart delivery is introduced.

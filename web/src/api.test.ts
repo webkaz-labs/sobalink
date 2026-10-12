@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ApiError, canExchange, command, getState, safeAuthURL, setCSRFToken, type Peer } from './api'
+import { ApiError, canExchange, command, getState, safeAuthURL, setCSRFToken, upload, uploadDispatch, type Peer } from './api'
 import { detectLocale, en, ja, errorText, errorDetail, translator } from './i18n'
 
 describe('local API boundary', () => {
@@ -73,4 +73,43 @@ it('derives unlimited path choices from the finite manifest budget', async () =>
   expect(exchangeBudgets(state)).toMatchObject({ pathBytes: 1024, pathDepth: 512 })
   state.limits!.effective.logical!.pathDepth = { mode: 'limited', value: 3 }
   expect(exchangeBudgets(state)).toMatchObject({ pathBytes: 1024, pathDepth: 3 })
+})
+
+
+describe('file preparation transport', () => {
+  function transport() {
+    const xhr = { open: vi.fn(), setRequestHeader: vi.fn(), send: vi.fn(), abort: vi.fn(), upload: { onprogress: null as unknown }, withCredentials: false, status: 200, responseText: '{"ok":true}', onload: null as unknown, onabort: null as unknown }
+    vi.stubGlobal('XMLHttpRequest', vi.fn(function () { return xhr }))
+    setCSRFToken('synthetic-csrf')
+    return xhr
+  }
+  it('sends exact ordered recipients and immutable preparation identity before manifest and files', async () => {
+    const xhr = transport(), controller = new AbortController()
+    const file = new File(['abc'], 'sample.txt'), entries = [{ path: 'sample.txt', kind: 'file' as const, size: 3 }]
+    const pending = uploadDispatch(['peer-a', 'peer-b'], 'a'.repeat(64), { entries, files: [{ path: 'sample.txt', file }] }, 'preparation-one', vi.fn(), controller.signal)
+    expect(xhr.open).toHaveBeenCalledWith('POST', '/api/upload-dispatch')
+    expect(xhr.withCredentials).toBe(true)
+    expect(xhr.setRequestHeader).toHaveBeenCalledWith('X-CSRF-Token', 'synthetic-csrf')
+    const form = xhr.send.mock.calls[0][0] as FormData
+    expect([...form.keys()]).toEqual(['peerIds', 'processId', 'requestId', 'manifest', 'files'])
+    expect(form.get('peerIds')).toBe('["peer-a","peer-b"]')
+    expect(form.get('processId')).toBe('a'.repeat(64))
+    expect(form.get('requestId')).toBe('preparation-one')
+    expect(form.get('manifest')).toBe(JSON.stringify(entries))
+    expect((form.get('files') as File).name).toBe('sample.txt')
+    ;(xhr.onload as () => void)()
+    await expect(pending).resolves.toEqual({ ok: true })
+    controller.abort(); expect(xhr.abort).not.toHaveBeenCalled()
+  })
+  it('retains the existing single-recipient request shape and aborts without retrying', async () => {
+    const xhr = transport(), controller = new AbortController()
+    const pending = upload('peer-a', { entries: [], files: [] }, 'original-one', vi.fn(), controller.signal)
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(xhr.open).toHaveBeenCalledWith('POST', '/api/upload')
+    expect([...((xhr.send.mock.calls[0][0]) as FormData).keys()]).toEqual(['peerId', 'requestId', 'manifest'])
+    controller.abort(); expect(xhr.abort).toHaveBeenCalledTimes(1)
+    ;(xhr.onabort as () => void)()
+    await rejected
+    expect(xhr.send).toHaveBeenCalledTimes(1)
+  })
 })

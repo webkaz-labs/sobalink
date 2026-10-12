@@ -45,6 +45,7 @@ Resource budgets are independently adjustable and always finite. Representative 
 | `transferManifestBytes`, `transferMetadataBytes` | 256 KiB manifest accounting, 1 MiB retained transfer metadata |
 | `transferPending`, `transferPendingPerPeer` | 32 pending transfers, 8 per peer |
 | `transferConcurrentFiles`, `transferConcurrentPerPeer` | 4 active file streams, 2 per peer |
+| `transferConcurrentRecipients` | 4 simultaneously active sending recipients across sends and retries |
 | `stagingInventoryEntries`, `stagingInventoryDepth` | 100,000 inspected staging entries, 64 inventory levels |
 | `discoveryBytes`, `pageBytes`, `pageEntries` | 256 KiB discovery response, 1 MiB / 128 entries per local page |
 
