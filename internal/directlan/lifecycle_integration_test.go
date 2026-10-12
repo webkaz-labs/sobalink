@@ -221,15 +221,27 @@ func TestNativeSessionLifecycle(t *testing.T) {
 		a, b := lifecyclePair(t, 76)
 		cs := lifecycleDials(t, a, b)
 		lifecycleExchange(t, cs)
+		before := [2]time.Time{lastHandshake(t, a), lastHandshake(t, b)}
+		idleStarted := time.Now()
+		for side, handshake := range before {
+			t.Logf("idle expiry start: side=%d handshake_age=%s", side, time.Since(handshake))
+		}
 		time.Sleep(device.RejectAfterTime + 5*time.Second)
+		// Capture both original failure predicates before any end diagnostics.
+		var ready [2]bool
 		for i, n := range []*Node{a, b} {
 			target := []*Node{b, a}[i]
 			n.mu.Lock()
 			p := n.peers[target.PublicKey()]
 			n.mu.Unlock()
-			if p.session.ready() {
-				t.Fatal("idle expired session remained ready")
-			}
+			ready[i] = p.session.ready()
+		}
+		for i, n := range []*Node{a, b} {
+			latest := lastHandshake(t, n)
+			t.Logf("idle expiry end: side=%d elapsed=%s ready=%t handshake_advanced=%t initial_handshake_age=%s latest_handshake_age=%s", i, time.Since(idleStarted), ready[i], latest.After(before[i]), time.Since(before[i]), time.Since(latest))
+		}
+		if ready[0] || ready[1] {
+			t.Fatal("idle expired session remained ready")
 		}
 		fresh := lifecycleDials(t, a, b)
 		lifecycleExchange(t, fresh)

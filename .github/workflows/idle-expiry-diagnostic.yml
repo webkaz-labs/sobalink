@@ -1,0 +1,79 @@
+name: Idle expiry diagnostic (not release validation)
+
+# Create one fresh exact-head branch after reviewing the diagnostic source.
+# No push or dispatch trigger: branch creation must not duplicate the run.
+on:
+  create:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: idle-expiry-diagnostic-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+
+jobs:
+  diagnostic-idle-expiry:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.ref_type == 'branch' && startsWith(github.ref, 'refs/heads/diagnostic-lifecycle/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Verify exact diagnostic source
+        run: |
+          python - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          sha = os.environ['GITHUB_SHA']
+          ref = os.environ['GITHUB_REF']
+          expected = 'refs/heads/diagnostic-lifecycle/' + sha[:12] + '-attempt1'
+          metadata = event.get('repository') or {}
+          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if (os.environ['GITHUB_EVENT_NAME'] != 'create'
+                  or os.environ.get('GITHUB_RUN_ATTEMPT') != '1'
+                  or os.environ['GITHUB_REPOSITORY'] != 'webkaz-labs/sobalink'
+                  or metadata.get('full_name') != 'webkaz-labs/sobalink'
+                  or metadata.get('private') is not False
+                  or event.get('ref_type') != 'branch'
+                  or not re.fullmatch(r'[0-9a-f]{40}', sha)
+                  or ref != expected or actual != sha
+                  or event.get('ref') != expected.removeprefix('refs/heads/')):
+              raise SystemExit('Invalid exact-head idle diagnostic branch')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              print('Exact diagnostic source: ' + sha, file=output)
+              print('Linux-only lifecycle evidence; no full-CI or release credit.', file=output)
+          PYTHON
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Prepare pinned lifecycle dependencies
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = linux
+          test "$(go env GOARCH)" = amd64
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go list -mod=readonly -deps -test -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Observe unchanged natural rekey and idle expiry
+        timeout-minutes: 9
+        run: |
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
+      - name: Vet the tagged lifecycle package
+        run: go vet -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
