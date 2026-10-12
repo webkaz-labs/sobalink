@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,7 +67,15 @@ func TestOutboxProcessRestart(t *testing.T) {
 	stable := func(review browserOutboxRecord) browserOutboxRecord {
 		t.Helper()
 		status := catalogProcessDecode[browserOutboxRecord](t, peers[0].invoke(t, "outbox.status", map[string]string{"requestId": review.RequestID}))
-		repeated := catalogProcessDecode[browserOutboxRecord](t, peers[0].invoke(t, "outbox.commit", map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}))
+		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
+		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
+			reply := peers[0].invokeResult(t, "outbox.commit", payload)
+			return reply.Value, reply.Error
+		})
+		if err != nil || code != "" {
+			t.Fatalf("original outbox commit replay failed: retry=%v command=%q; runtime diagnostics:\n%s", err, code, peers[0].diagnostics.safeSummary())
+		}
+		repeated := catalogProcessDecode[browserOutboxRecord](t, reply)
 		for _, record := range []browserOutboxRecord{status, repeated} {
 			if record.Admission != "enqueued" || record.OutboxID != review.OutboxID || record.RequestID != review.RequestID || record.ReviewRevision != review.ReviewRevision || !record.ExpiresAt.Equal(review.ExpiresAt) || !reflect.DeepEqual(record.PeerIDs, review.PeerIDs) || !reflect.DeepEqual(record.Entries, review.Entries) || len(record.Children) != 1 || record.Children[0].DeliveryID != review.Children[0].DeliveryID {
 				t.Fatal("restart/repeated commands changed original immutable delivery")
