@@ -103,8 +103,10 @@ properties. The joint lifecycle and caller lock graph requires its own review.
 
 The additive `device/owned_lifecycle_testing.go` overlay is compiled only when
 both `directlan_integration` and `directlan_lifecycle` are selected. Its fixture
-stats copy only the existing atomic handshake timestamps; no UAPI serialization,
-peer identity, endpoint or key material is exposed. Three named test operations
+stats copy the existing atomic handshake timestamps and the actual session-expiry
+deadline under its existing mutex, preserving the deadline's monotonic time.
+Completion time is not a proxy for key derivation. No UAPI serialization, peer
+identity, endpoint or key material is exposed. Three named test operations
 invoke the existing expiry, flush and scheduled-on-next-send methods without
 changing their behavior or protocol thresholds. Each takes an API completion
 lease, holds the existing configuration serializer, rejects terminal stop and

@@ -8,7 +8,7 @@
   "revision": "417aef361226c869ab29e15fe3539b01173c4719",
   "license": "MIT",
   "upstream_tree_sha256": "7d4ffb61397e61a621e342fc263d13c8df20e3f61389ee97f9d06338d90333b3",
-  "adapted_tree_sha256": "758e0ae02bc38b282da3a349e4d77a6b659d63a38ac4773e1f5eb6db64b0a8fa",
+  "adapted_tree_sha256": "b7ff470eed8f9d8e6147c4d7e995af533cdea96d67ec2ae920841447b4f2b2a6",
   "notices": [
     {"path": "LICENSE", "sha256": "91276db973f25602d1aa43491f59cbc84cb88e6f151e1d0cc82a755563ce0195"}
   ],
@@ -34,7 +34,7 @@
     {
       "path": "device/owned_lifecycle_testing.go",
       "original_sha256": "",
-      "adapted_sha256": "10865599026b65bb28d82aa318af8a5feffb20cc893a5ac826b73e3788d27af7",
+      "adapted_sha256": "c49b4489a73ed66aae20194d2d3d3a8c8533370638f4c1609bb6d20e35d94b8a",
       "source_path": "sources/wireguard/device/owned_lifecycle_testing.go.txt"
     },
     {
