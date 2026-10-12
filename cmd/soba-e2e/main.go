@@ -8,6 +8,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -297,11 +299,16 @@ func prepareReceiveRecoveryFixture(directory, receiveDirectory, scenario string)
 	if !receiveRecoveryScenario(scenario) {
 		return nil
 	}
+	var epoch [16]byte
+	if _, err := rand.Read(epoch[:]); err != nil {
+		return err
+	}
 	profile := core.Profile{
-		Version:  1,
-		Settings: core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "Notebook", ReceiveDirectory: receiveDirectory},
-		Peers:    []core.Trust{{ID: "fixture-studio", Name: "Studio", Network: "tailnet", Generation: 1, Autosave: true, Directory: receiveDirectory}},
-		Services: []core.ServiceSpec{},
+		Version:      2,
+		DurableFiles: &core.DurableProfile{Version: 1, Epoch: hex.EncodeToString(epoch[:]), Phase: "initializing"},
+		Settings:     core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "Notebook", ReceiveDirectory: receiveDirectory},
+		Peers:        []core.Trust{{ID: "fixture-studio", Name: "Studio", Network: "tailnet", Generation: 1, Autosave: true, Directory: receiveDirectory}},
+		Services:     []core.ServiceSpec{},
 	}
 	if err := config.SecureDir(directory); err != nil {
 		return err

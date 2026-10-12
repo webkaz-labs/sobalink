@@ -236,7 +236,7 @@ func (f *endpointAcceptanceFixture) openSeed(local, remote directlan.Identity, o
 	if validateDirectLANState(state) != nil {
 		f.t.Fatal("synthetic legacy seed invalid")
 	}
-	profile := Profile{Version: 1, Settings: Settings{Locale: "en", Theme: "system", Network: "direct-lan", Hostname: "synthetic-endpoint"}, Peers: []Trust{}, Services: []ServiceSpec{}}
+	profile := Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Locale: "en", Theme: "system", Network: "direct-lan", Hostname: "synthetic-endpoint"}, Peers: []Trust{}, Services: []ServiceSpec{}}
 	for name, value := range map[string]any{"direct-lan.json": state, "sobalink.json": profile} {
 		raw, err := json.MarshalIndent(value, "", "  ")
 		if err != nil || config.AtomicWritePrivate(filepath.Join(dir, name), append(raw, '\n')) != nil {

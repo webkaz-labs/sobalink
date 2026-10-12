@@ -314,7 +314,7 @@ func runTransferGroupProcessBrowser(t *testing.T, ctx context.Context, sender *r
 }
 
 // Both browser cases retain the same private login, output and cleanup contract.
-func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map[string]any, dispatch bool) string {
+func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map[string]any, dispatch bool, whileRunning ...func(string)) string {
 	t.Helper()
 	private := t.TempDir()
 	raw, err := json.Marshal(descriptor)
@@ -342,6 +342,11 @@ func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map
 	command := exec.CommandContext(call, node, filepath.Join(webDir, "node_modules", "@playwright", "test", "cli.js"), "test", "--config", filepath.Join(webDir, "playwright.transfer-native.config.mjs"), "--workers", "1", "--retries", "0")
 	command.Dir = webDir
 	command.Env = append(os.Environ(), "SOBA_TRANSFER_BROWSER_SESSION="+path)
+	if descriptor["outbox"] == true {
+		command.Env = append(command.Env, "SOBA_TRANSFER_BROWSER_OUTBOX=1")
+	} else {
+		command.Env = append(command.Env, "SOBA_TRANSFER_BROWSER_OUTBOX=0")
+	}
 	if dispatch {
 		command.Env = append(command.Env, "SOBA_TRANSFER_BROWSER_DISPATCH=1")
 	} else {
@@ -350,8 +355,30 @@ func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map
 	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
 	command.WaitDelay = 10 * time.Second
 	command.Stdout, command.Stderr = io.Discard, io.Discard
-	if err := command.Run(); err != nil {
-		t.Fatal("real transfer process/browser acceptance failed; private selectors withheld")
+	if len(whileRunning) == 0 {
+		if err := command.Run(); err != nil {
+			t.Fatal("real transfer process/browser acceptance failed; private selectors withheld")
+		}
+	} else {
+		if len(whileRunning) != 1 {
+			t.Fatal("only one bounded native browser bridge is supported")
+		}
+		if err := command.Start(); err != nil {
+			t.Fatal("native browser process did not start")
+		}
+		joined := false
+		defer func() {
+			if !joined {
+				cancel()
+				_ = command.Wait()
+			}
+		}()
+		whileRunning[0](private)
+		err := command.Wait()
+		joined = true
+		if err != nil {
+			t.Fatal("real outbox process/browser acceptance failed; private selectors withheld")
+		}
 	}
 	result, err := os.ReadFile(filepath.Join(private, "transfer-browser-result.json"))
 	if err != nil {

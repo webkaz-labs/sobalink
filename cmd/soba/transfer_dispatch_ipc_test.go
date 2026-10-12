@@ -60,20 +60,27 @@ func (*dispatchIPCBackend) WhoIs(context.Context, netip.AddrPort) (string, error
 
 var _ core.NetworkBackend = (*dispatchIPCBackend)(nil)
 
-func dispatchContractCore(t *testing.T, ctx context.Context) (string, *core.Core) {
+type dispatchIPCFixtureOption func(*core.Profile) core.NetworkBackend
+
+func dispatchContractCore(t *testing.T, ctx context.Context, options ...dispatchIPCFixtureOption) (string, *core.Core) {
 	t.Helper()
 	dir := privateStateDir(t) // Keep Unix socket paths below the native limit.
 	if err := config.SecureDir(dir); err != nil {
 		t.Fatal(err)
 	}
 	profile := core.Profile{
-		Version:  1,
-		Settings: core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "dispatch-fixture"},
+		Version:      2,
+		DurableFiles: syntheticDurableProfile(),
+		Settings:     core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "dispatch-fixture"},
 		Peers: []core.Trust{
 			{ID: "peer-a", Network: "tailnet", Generation: 1},
 			{ID: "peer-b", Network: "tailnet", Generation: 2},
 		},
 		Services: []core.ServiceSpec{},
+	}
+	var backend core.NetworkBackend = &dispatchIPCBackend{}
+	for _, option := range options {
+		backend = option(&profile)
 	}
 	data, err := json.Marshal(profile)
 	if err != nil {
@@ -93,7 +100,7 @@ func dispatchContractCore(t *testing.T, ctx context.Context) (string, *core.Core
 	})
 	app, err := core.Open(ctx, core.Options{
 		Directory: dir, Version: "test", LifecycleLock: lock,
-		NodeFactory: func(string, string) (core.NetworkBackend, error) { return &dispatchIPCBackend{}, nil },
+		NodeFactory: func(string, string) (core.NetworkBackend, error) { return backend, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,9 +113,9 @@ func dispatchContractCore(t *testing.T, ctx context.Context) (string, *core.Core
 	return dir, app
 }
 
-func dispatchIPCServer(t *testing.T, ctx context.Context) string {
+func dispatchIPCServer(t *testing.T, ctx context.Context, options ...dispatchIPCFixtureOption) string {
 	t.Helper()
-	dir, app := dispatchContractCore(t, ctx)
+	dir, app := dispatchContractCore(t, ctx, options...)
 	server, err := control.ServeWithLimits(ctx, dir, app.IPC, app.LocalControlLimits)
 	if err != nil {
 		t.Fatal(err)

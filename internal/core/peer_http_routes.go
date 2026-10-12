@@ -92,6 +92,10 @@ func (c *Core) capturePeerHTTPRoute(ctx context.Context, id string, attempted ma
 	node, network, closing := c.node, c.profile.Settings.Network, c.closing
 	if selected, ok := ctx.Value(outgoingSelectionKey{}).(*outgoingBatch); ok {
 		approved := false
+		if selected.outboxID != "" && (c.profile.DurableFiles == nil || c.profile.DurableFiles.Phase != "ready" || c.durableProfileError != "") {
+			c.mu.RUnlock()
+			return nil, outboxError("outbox_disabled")
+		}
 		for _, peer := range c.profile.Peers {
 			if peer.ID == selected.PeerID && peer.Network == selected.Network && peer.Generation == selected.Generation && !peer.Paused {
 				approved = true

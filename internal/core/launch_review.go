@@ -28,6 +28,9 @@ func ReadLaunchReview(dir string) (LaunchReview, error) {
 	if err := readBoundedPrivateJSON(filepath.Join(dir, "sobalink.json"), limits.Number("resources", "profileBytes"), &profile); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return result, err
 	}
+	if err := checkDurableProfileInventory(dir, profile); err != nil {
+		return result, err
+	}
 	c := &Core{dir: dir, profile: profile, capacity: limits}
 	direct, err := readDirectLANStore(filepath.Join(dir, "direct-lan.json"), limits.Number("resources", "lanStateBytes"), limits.Number("logical", "trustedPeers"))
 	if err != nil {

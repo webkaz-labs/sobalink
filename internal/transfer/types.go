@@ -1,8 +1,8 @@
 // Package transfer receives bounded, explicitly accepted batches from peers whose
 // identity has already been verified by the transport. It never opens received
 // files, preserves executable attributes, or resumes partial bytes. Batch state
-// and acknowledgements are process-local; callers must start a new transfer after
-// a receiver restart.
+// and acknowledgements on the immediate path are process-local. The separate
+// durable protocol uses an owned lease/receipt ledger for supported restarts.
 package transfer
 
 import (
@@ -205,6 +205,7 @@ type AccountingLimits struct {
 }
 
 type Options struct {
+	Durable          *DurableOptions
 	Context          context.Context
 	Limits           Limits
 	PolicyStore      PolicyStore

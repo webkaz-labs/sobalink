@@ -97,7 +97,7 @@ func TestOfflineDefinitionCLIHonorsRunningAgentLock(t *testing.T) {
 
 func TestOfflineReadDoesNotReconcilePrivateIdentityOrTransferState(t *testing.T) {
 	dir := t.TempDir()
-	profile := core.Profile{Version: 1, Settings: core.Settings{Network: "none", Locale: "auto", Theme: "system", Hostname: "offline-example"}, Peers: []core.Trust{{ID: "peer-example", Name: "Example", Network: "lan", Generation: 1}}, Services: []core.ServiceSpec{}}
+	profile := core.Profile{Version: 2, DurableFiles: syntheticDurableProfile(), Settings: core.Settings{Network: "none", Locale: "auto", Theme: "system", Hostname: "offline-example"}, Peers: []core.Trust{{ID: "peer-example", Name: "Example", Network: "lan", Generation: 1}}, Services: []core.ServiceSpec{}}
 	if err := config.WriteJSON(filepath.Join(dir, "sobalink.json"), profile); err != nil {
 		t.Fatal(err)
 	}

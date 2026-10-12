@@ -25,7 +25,7 @@ func resourceFixture(t *testing.T) (*Core, *config.Lock) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = lock.Close() })
-	c := &Core{ctx: context.Background(), dir: dir, capacity: capacity.Defaults(), profile: Profile{Version: 1, Settings: Settings{Network: "none", Locale: "auto", Theme: "system", Hostname: "synthetic-node"}}, requests: map[string]requestResult{}}
+	c := &Core{ctx: context.Background(), dir: dir, capacity: capacity.Defaults(), profile: Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Network: "none", Locale: "auto", Theme: "system", Hostname: "synthetic-node"}}, requests: map[string]requestResult{}}
 	c.initializeResourceIdentity(lock)
 	if c.resourceIdentity == "" {
 		t.Fatal("identity unavailable")

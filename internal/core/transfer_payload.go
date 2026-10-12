@@ -46,7 +46,7 @@ func (c *Core) checkOutgoingCapacityLocked(lim transfer.Limits, manifest transfe
 	if c.orphanSpoolError != "" {
 		return errors.New("retained staging could not be inventoried; inspect private staging before sending")
 	}
-	history, metadata, reserved := count, int64(0), c.orphanSpoolBytes
+	history, metadata, reserved := count+int(c.outboxChildren.Load()), c.outboxMetadata.Load(), c.orphanSpoolBytes+c.outboxReserved.Load()
 	addMetadata := func(n int64) bool {
 		if n < 0 || n > lim.MaxMetadataBytes-metadata {
 			return false
@@ -173,13 +173,21 @@ func (c *Core) executeOutgoingRun(run *outgoingRun) {
 		run.batch.mu.Lock()
 		run.batch.State = "awaiting-acceptance"
 		run.batch.mu.Unlock()
-		err = c.deliver(ctx, run.batch)
+		if run.batch.outboxID != "" {
+			err = c.deliverOutbox(ctx, run.batch)
+		} else {
+			err = c.deliver(ctx, run.batch)
+		}
 		// This joins physical source readers, not merely their request contexts.
 		application.waitRequests()
 	}
 	c.finishOutgoingRun(run, application, err, true)
 }
 func (c *Core) finishOutgoingRun(run *outgoingRun, application *peerHTTPApplication, err error, active bool) {
+	if run.batch.outboxID != "" {
+		c.finishOutboxRun(run, application, err, active)
+		return
+	}
 	run.stop()
 	b := run.batch
 	b.mu.Lock()

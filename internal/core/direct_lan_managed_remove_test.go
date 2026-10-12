@@ -22,7 +22,7 @@ func managedRemovalFixture(t *testing.T) (*Core, *directLANStore, time.Time, str
 	c, s := pairRecordStoreFixture(t, state)
 	c.dir = filepath.Dir(s.path)
 	id := state.Peers[0].Key
-	c.profile = Profile{Version: 1, Settings: Settings{Network: "direct-lan", Locale: "auto", Theme: "system", Hostname: "synthetic-node"}, Peers: []Trust{{ID: id, Network: "direct-lan", Generation: 1}}}
+	c.profile = Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Network: "direct-lan", Locale: "auto", Theme: "system", Hostname: "synthetic-node"}, Peers: []Trust{{ID: id, Network: "direct-lan", Generation: 1}}}
 	c.startup = startupStore{Version: 1, Revocations: map[string]string{}}
 	c.startupPending, c.savedProxyPending = map[string]string{}, map[string]string{}
 	return c, s, now, id

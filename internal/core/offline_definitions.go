@@ -40,10 +40,19 @@ func OfflineDefinitionCommand(ctx context.Context, opts Options, command webui.C
 	if err != nil {
 		return nil, err
 	}
-	p := Profile{Version: 1, Settings: Settings{Locale: "auto", Theme: "system", Network: "none", Hostname: "sobalink-" + randomID()[:8]}, Peers: []Trust{}, Services: []ServiceSpec{}}
+	p := Profile{}
 	loadErr := readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &p)
 	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
 		return nil, loadErr
+	}
+	if errors.Is(loadErr, os.ErrNotExist) {
+		p = Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Locale: "auto", Theme: "system", Network: "none", Hostname: "sobalink-" + randomID()[:8]}, Peers: []Trust{}, Services: []ServiceSpec{}}
+		if err := checkDurableProfileInventory(opts.Directory, Profile{}); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkDurableProfileInventory(opts.Directory, p); err != nil {
+		return nil, err
 	}
 	if err := validateProfile(p); err != nil {
 		return nil, err

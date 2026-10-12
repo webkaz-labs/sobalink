@@ -47,8 +47,8 @@ func TestCapacityPolicyApplyRequiresFreshReviewAndPreservesData(t *testing.T) {
 
 func TestDedicatedProfileStorageExceedsLegacyEnvelope(t *testing.T) {
 	dir := t.TempDir()
-	c := &Core{dir: dir, capacity: capacity.Defaults(), profile: Profile{Version: 1}}
-	p := Profile{Version: 1, Settings: Settings{Network: "none", Locale: "auto", Theme: "system", Hostname: "node"}}
+	c := &Core{dir: dir, capacity: capacity.Defaults(), profile: Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile()}}
+	p := Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Network: "none", Locale: "auto", Theme: "system", Hostname: "node"}}
 	for i := 0; i < 200; i++ {
 		p.Services = append(p.Services, ServiceSpec{Name: strings.Repeat("a", 64), Purpose: strings.Repeat("x", 512)})
 	}

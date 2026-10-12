@@ -39,6 +39,8 @@ type batchState struct {
 // Manager has no listeners or transport credentials. Calls may run concurrently.
 // Keep one Manager per local trust scope, and close it when that scope ends.
 type Manager struct {
+	durable                 *durableReceiver
+	durableEpochs           map[string]durableRelationship
 	mu                      sync.Mutex
 	limits                  Limits
 	diskSpace               *diskspace.Guard
@@ -160,6 +162,12 @@ func NewManager(options Options) (*Manager, error) {
 			}
 		}
 	}
+	if options.Durable != nil {
+		m.durable = openDurable(*options.Durable)
+		if m.durable.verify() == nil {
+			_ = m.inventoryDurableLocked()
+		}
+	}
 	return m, nil
 }
 
@@ -274,6 +282,7 @@ func (m *Manager) ResetBindings(peers []Peer, policies []ReceivePolicy) error {
 		nextPolicies[policy.Peer.ID] = policy
 	}
 	m.peers, m.policies = nextPeers, nextPolicies
+	m.durableEpochs = map[string]durableRelationship{}
 	return nil
 }
 
@@ -332,6 +341,9 @@ func (m *Manager) checkPeerIdentityLocked(peer Peer) (*peerState, error) {
 func (m *Manager) Offer(peer Peer, manifest Manifest) (Batch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.durable.record(manifest.ID) != nil {
+		return Batch{}, ErrConflict
+	}
 	if _, err := m.checkPeerLocked(peer); err != nil {
 		return Batch{}, err
 	}
@@ -351,10 +363,20 @@ func (m *Manager) Offer(peer Peer, manifest Manifest) (Batch, error) {
 		return Batch{}, err
 	}
 	metadata := metadataSize(manifest)
-	if len(m.batches) >= m.limits.MaxBatches || total > m.limits.MaxReservedBytes-m.reserved || metadata > m.limits.MaxMetadataBytes-m.metadata {
+	if len(m.batches)+m.durableCountLocked() >= m.limits.MaxBatches || total > durableCapacityLeft(m.limits.MaxReservedBytes, m.reserved, m.durableReservedLocked()) || metadata > m.limits.MaxMetadataBytes-m.metadata-m.durableMetadataLocked() {
 		return Batch{}, ErrLimit
 	}
 	pending, perPeer := 0, 0
+	if m.durable != nil {
+		for _, r := range m.durable.state.Records {
+			if !terminal(r.State) {
+				pending++
+				if r.Peer.ID == peer.ID {
+					perPeer++
+				}
+			}
+		}
+	}
 	for _, b := range m.batches {
 		if b.value.State == Pending {
 			pending++
@@ -405,6 +427,9 @@ func snapshot(b *batchState) Batch {
 func (m *Manager) Get(id string) (Batch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if r := m.durable.record(id); r != nil {
+		return m.durable.project(r), nil
+	}
 	b, ok := m.batches[id]
 	if !ok {
 		return Batch{}, ErrNotFound
@@ -416,6 +441,11 @@ func (m *Manager) List() []Batch {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Batch, 0, len(m.batches))
+	if m.durable != nil {
+		for _, r := range m.durable.state.Records {
+			out = append(out, m.durable.project(r))
+		}
+	}
 	for _, b := range m.batches {
 		out = append(out, snapshot(b))
 	}
@@ -435,6 +465,10 @@ func validDestination(destination string) bool {
 func (m *Manager) Accept(id, destination string) (Batch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if r := m.durable.record(id); r != nil {
+		err := m.acceptDurableLocked(r, destination)
+		return durableBatch(r), err
+	}
 	b, ok := m.batches[id]
 	if !ok {
 		return Batch{}, ErrNotFound
@@ -623,6 +657,9 @@ func (m *Manager) Cancel(id string) (Batch, error) { return m.stop(id, Cancelled
 func (m *Manager) stop(id string, state BatchState) (Batch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if r := m.durable.record(id); r != nil {
+		return m.stopDurableLocked(r, state)
+	}
 	b, ok := m.batches[id]
 	if !ok {
 		return Batch{}, ErrNotFound
@@ -752,6 +789,7 @@ func (m *Manager) PausePeer(id string, paused bool) error {
 func (m *Manager) pausePeerLocked(id string, p *peerState, paused bool) {
 	p.paused = paused
 	if paused {
+		m.interruptDurablePeerLocked(id)
 		for _, b := range m.batches {
 			if b.value.Peer.ID == id && !terminal(b.value.State) {
 				b.cancel()
@@ -783,6 +821,7 @@ func (m *Manager) RevokePeer(id string) error {
 }
 
 func (m *Manager) cancelPeerLocked(id string) {
+	m.interruptDurablePeerLocked(id)
 	for _, b := range m.batches {
 		if b.value.Peer.ID == id && !terminal(b.value.State) {
 			m.stopLocked(b, Cancelled)
@@ -1036,6 +1075,9 @@ func (m *Manager) savePoliciesLocked(policies map[string]ReceivePolicy) error {
 func (m *Manager) Forget(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.durable.record(id) != nil {
+		return ErrState
+	}
 	b, ok := m.batches[id]
 	if !ok {
 		return ErrNotFound
@@ -1055,6 +1097,10 @@ func (m *Manager) Close() error {
 		return nil
 	}
 	m.closed = true
+	m.interruptDurablePeerLocked("")
+	if m.durable != nil && m.durable.parent != nil {
+		_ = m.durable.parent.Close()
+	}
 	var cleanupErr error
 	if m.pendingPreparation != nil {
 		cleanupErr = m.retryPreparationLocked()

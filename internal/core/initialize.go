@@ -29,7 +29,7 @@ func initializeProfile(ctx context.Context, opts Options, hostname string, write
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	p := Profile{Version: 1, Settings: Settings{Locale: "auto", Theme: "system", Network: "none", Hostname: hostname}, Peers: []Trust{}, Services: []ServiceSpec{}}
+	p := Profile{Version: currentProfileVersion, DurableFiles: newDurableProfile(), Settings: Settings{Locale: "auto", Theme: "system", Network: "none", Hostname: hostname}, Peers: []Trust{}, Services: []ServiceSpec{}}
 	if hostname == "" {
 		p.Settings.Hostname = "sobalink-" + randomID()[:8]
 	}
@@ -48,6 +48,9 @@ func initializeProfile(ctx context.Context, opts Options, hostname string, write
 	var existing Profile
 	err = readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &existing)
 	if err == nil {
+		if err := checkDurableProfileInventory(opts.Directory, existing); err != nil {
+			return result, err
+		}
 		if err := validateProfile(existing); err != nil {
 			return result, err
 		}
@@ -60,6 +63,9 @@ func initializeProfile(ctx context.Context, opts Options, hostname string, write
 		return result, err
 	}
 	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := checkDurableProfileInventory(opts.Directory, Profile{}); err != nil {
 		return result, err
 	}
 	c := &Core{dir: opts.Directory, profile: p, capacity: limits, atomicWrite: write}

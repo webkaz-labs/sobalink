@@ -26,6 +26,29 @@ func (l *Lock) WithOwnershipInfo(dir string, operation func(directory, lock os.F
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.withOwnershipInfoLocked(dir, operation)
+}
+
+// ErrLifecycleBusy is a transient pre-admission refusal. No callback ran and
+// callers may retry later after releasing their own locks.
+var ErrLifecycleBusy = errors.New("profile lifecycle operation is busy")
+
+// TryWithOwnershipInfo retains the same ownership boundary as WithOwnershipInfo
+// without waiting for its mutex. Components already holding a narrower state
+// lock use this form to avoid inverting the lifecycle-first lock order. A busy
+// result does not certify or corrupt state and never permits unowned I/O.
+func (l *Lock) TryWithOwnershipInfo(dir string, operation func(directory, lock os.FileInfo) error) error {
+	if l == nil || operation == nil {
+		return errors.New("profile lifecycle ownership required")
+	}
+	if !l.mu.TryLock() {
+		return ErrLifecycleBusy
+	}
+	defer l.mu.Unlock()
+	return l.withOwnershipInfoLocked(dir, operation)
+}
+
+func (l *Lock) withOwnershipInfoLocked(dir string, operation func(directory, lock os.FileInfo) error) error {
 	if l.f == nil || l.directory == nil {
 		return errors.New("profile lifecycle ownership required")
 	}
