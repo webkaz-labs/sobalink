@@ -216,9 +216,13 @@ func TestDurableProfileFreshRoundTripAndMissingStoreFailClosed(t *testing.T) {
 	if err := os.Rename(filepath.Join(dir, "durable-v1", "receiver.json"), filepath.Join(dir, "durable-v1", "receiver-fixture-evidence.json")); err != nil {
 		t.Fatal(err)
 	}
-	third, _ := openResourceApplication(t, dir, owner)
+	third, closeThird := openResourceApplication(t, dir, owner)
 	if third.durableProfileReady() {
 		t.Fatal("missing receiver ledger granted authority")
+	}
+	original := third.outboxCopy()
+	if original == nil || original.root == nil {
+		t.Fatal("missing receiver ledger did not retain its sender owner")
 	}
 	if err := third.restoreDurableProfile(); err == nil {
 		t.Fatal("ready restore reconstructed lost ledger")
@@ -227,6 +231,13 @@ func TestDurableProfileFreshRoundTripAndMissingStoreFailClosed(t *testing.T) {
 		t.Fatal("missing ledger silently recreated", err)
 	}
 	assertResourceOperationOffline(t, third)
+	if third.outboxCopy() != original {
+		t.Fatal("repeated recovery abandoned the retained sender owner")
+	}
+	closeThird()
+	if original.root != nil {
+		t.Fatal("Core close did not release the original sender root")
+	}
 }
 
 func TestDurableFreshMetadataInitializesOnlyAtOwnedOpen(t *testing.T) {

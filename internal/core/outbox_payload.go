@@ -60,20 +60,30 @@ func (o *outboxCoordinator) createPayloadLocked(p *outboxPayload) error {
 		return err
 	}
 	parent := filepath.Join(o.path(), "payloads")
-	if err := os.Mkdir(filepath.Join(parent, p.ID), 0700); err != nil {
-		return err
-	}
-	if err := config.SecureChildDirectory(parent, p.ID); err != nil {
-		return err
-	}
-	root, err := o.root.OpenRoot(filepath.Join("payloads", p.ID))
+	parentInfo, err := o.root.Lstat("payloads")
 	if err != nil {
+		return err
+	}
+	// Exclusive native creation establishes the protected private DACL on
+	// Windows as well as 0700 on Unix. os.Mkdir followed by validation cannot
+	// do this: an inherited Windows DACL is intentionally not accepted.
+	created, err := config.CreatePrivateChildDirectoryBound(parent, p.ID, parentInfo)
+	if err != nil {
+		return err
+	}
+	createdIdentity, identityErr := outboxNativeIdentity(created)
+	root, openErr := o.root.OpenRoot(filepath.Join("payloads", p.ID))
+	closeErr := created.Close()
+	if err := errors.Join(identityErr, openErr, closeErr); err != nil {
+		if root != nil {
+			_ = root.Close()
+		}
 		return err
 	}
 	defer root.Close()
 	identity, err := outboxIdentity(root, ".", true)
-	if err != nil {
-		return err
+	if err != nil || identity != createdIdentity {
+		return outboxError("outbox_payload_recovery_required")
 	}
 	p.RootIdentity = identity
 	f, err := root.OpenFile("owner", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -162,11 +172,19 @@ func (c *Core) stageOutboxPlan(ctx context.Context, p *outboxPreparation, plan s
 	o.mu.Lock()
 	payload := o.state.Payloads[p.intent.PayloadID]
 	root, err := o.payloadRootLocked(payload)
+	if err == nil && o.stagingRootOpened != nil {
+		o.stagingRootOpened(root)
+	}
 	o.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	defer root.Close()
+	rootOpen := true
+	defer func() {
+		if rootOpen {
+			_ = root.Close()
+		}
+	}()
 	for _, source := range sources {
 		from, err := source.Open()
 		if err != nil {
@@ -186,6 +204,12 @@ func (c *Core) stageOutboxPlan(ctx context.Context, p *outboxPreparation, plan s
 		}
 	}
 	if err = outboxSyncDirectory(root); err != nil {
+		return err
+	}
+	// The prepared state releases the physical staging-owner fence. Join its
+	// directory handle before another local request can discard and retire it.
+	rootOpen = false
+	if err = root.Close(); err != nil {
 		return err
 	}
 	o.mu.Lock()
