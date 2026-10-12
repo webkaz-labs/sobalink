@@ -13,6 +13,14 @@ import (
 // no raw reply, path, name, credential, lease or payload is printed.
 func logOutboxResumeDiagnostics(t *testing.T, p *routeCoreProcess, peerID, requestID, deliveryID, role string) {
 	t.Helper()
+	var phase outboxProcessPhase
+	phaseReply := p.invokeResult(t, "fixture.outbox-phase", map[string]string{"requestId": requestID, "deliveryId": deliveryID})
+	if phaseReply.Error != "" || json.Unmarshal(phaseReply.Value, &phase) != nil {
+		t.Logf("outbox resume %s phase=unavailable", role)
+	} else {
+		t.Logf("outbox resume %s phase op-busy=%t refresh-busy=%t coordinator=%t coordinator-busy=%t selected=%t run=%t run-busy=%t run-state=%q running=%t next-pending=%t", role, phase.OpBusy, phase.RefreshBusy, phase.Coordinator, phase.CoordinatorBusy, phase.Selected, phase.RunPresent, phase.RunBusy, outboxDiagnosticToken(phase.RunState), phase.Running, phase.NextPending)
+		t.Logf("outbox resume %s phase owner-check=%q owner-admitted=%t namespace-check=%q core-busy=%t active=%d queue=%d selected-queued=%t", role, outboxDiagnosticToken(phase.OwnerCheck), phase.OwnerAdmitted, outboxDiagnosticToken(phase.NamespaceCheck), phase.CoreBusy, phase.Active, phase.Queue, phase.SelectedQueued)
+	}
 	var snapshot struct {
 		OutboxReady bool `json:"outboxReady"`
 		Self        struct {
@@ -100,7 +108,7 @@ func outboxDiagnosticToken(value string) string {
 	}
 	// A closed allowlist prevents even a malformed code field from carrying
 	// private identifiers or free-form runtime errors into native CI output.
-	const allowed = `ready online offline starting stopping stopped unavailable error reconnecting
+	const allowed = `ok refused not_checked ready online offline starting stopping stopped unavailable error reconnecting
 Running Starting Stopped NoState NeedsLogin NeedsMachineAuth InUse OtherUser
 pending confirmed unconfirmed unsupported limited stale prepared discarded queued
 waiting_for_peer sending paused awaiting_receipt cancel_requested cancelled expired completed

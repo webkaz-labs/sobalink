@@ -88,6 +88,15 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 			}
 		case "fixture.snapshot":
 			value, callErr = c.Snapshot(ctx)
+		case "fixture.outbox-phase":
+			var in struct {
+				RequestID  string `json:"requestId"`
+				DeliveryID string `json:"deliveryId"`
+			}
+			callErr = json.Unmarshal(request.Payload, &in)
+			if callErr == nil {
+				value = inspectOutboxProcessPhase(c, in.RequestID, in.DeliveryID)
+			}
 		case "fixture.catalog-local":
 			c.mu.RLock()
 			services := []map[string]string{}
