@@ -50,7 +50,7 @@ func requireTrustedRelayIntegration(t *testing.T) {
 		t.Fatal("isolated integration requires ts_omit_udptransport; never create wildcard UDP listeners here")
 	}
 	if e := ValidateBuild(); e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=validate-build")
 	}
 }
 
@@ -107,23 +107,23 @@ func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config, ve
 	t.Cleanup(cleanup)
 	probe, e := net.Listen("tcp4", "127.0.0.1:0")
 	if e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=probe-listen")
 	}
 	endpoint := probe.Addr().(*net.TCPAddr).AddrPort()
 	probe.Close()
 	relayIdentity, e := GenerateRelayIdentity(endpoint.Addr())
 	if e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=generate-relay-identity")
 	}
 	relayConfig, e := relayIdentity.Endpoint(endpoint)
 	if e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=configure-relay-endpoint")
 	}
 	var hostSaves, clientSaves atomic.Int64
 	hostIdentity, clientIdentity := GenerateIdentity(), GenerateIdentity()
 	host, e := NewNode(NodeConfig{DestinationPolicy: policy, Identity: hostIdentity, Relay: relayConfig, Trust: NewBook(), EmbeddedRelay: true, Persist: func(Snapshot, []RemotePeer) error { hostSaves.Add(1); return nil }})
 	if e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=create-host-node")
 	}
 	closers = append(closers, host)
 	var approvals atomic.Int64
@@ -152,23 +152,23 @@ func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config, ve
 	}
 	relay, e := StartLocalRelay(ctx, endpoint, relayIdentity, allow, bootstrap)
 	if e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=start-local-relay")
 	}
 	closers = append(closers, relay)
 	if _, e = host.ServePairing(ctx); e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=serve-host-pairing")
 	}
 	client, e := NewNode(NodeConfig{DestinationPolicy: policy, Identity: clientIdentity, Relay: relayConfig, Trust: NewBook(), Persist: func(Snapshot, []RemotePeer) error { clientSaves.Add(1); return nil }})
 	if e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=create-client-node")
 	}
 	closers = append(closers, client)
 	invitation, e := host.IssueInvitation(ctx, Peer{Key: client.PublicKey(), Name: "client"}, "host", time.Minute)
 	if e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=issue-invitation")
 	}
 	if _, e = client.ServePairing(ctx); e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=serve-client-pairing")
 	}
 	// A wrong token must fail at the real pinned HTTPS bootstrap before trust.
 	bad := invitation
@@ -214,7 +214,7 @@ func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config, ve
 		t.Fatal("uninvited key never reached denying admission controller")
 	}
 	if e = client.PairInvitation(ctx, invitation); e != nil {
-		t.Fatal("integration setup or pairing failed")
+		t.Fatal("integration setup or pairing failed: phase=pair-invitation")
 	}
 	if hostSaves.Load() != 1 || clientSaves.Load() != 1 {
 		t.Fatal("successful pairing did not persist exactly once on both peers")
