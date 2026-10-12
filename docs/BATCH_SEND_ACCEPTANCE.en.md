@@ -54,6 +54,34 @@ Adding the fixture to CI does not mean any particular revision has passed it.
 Keep unavailable native execution recorded as unperformed; do not alter socket,
 browser sandbox, trust or transport protections to make a restricted host pass.
 
+## Actual browser recovery check
+
+The existing transfer browser harness also runs
+`TestTransferDispatchThreeProcessBrowser` on its supported browser host. It uses
+the production UI and authenticated Core Web endpoint: select two recipients,
+upload once, observe the genuine prepared response with no outgoing children,
+let Core commit once, and lose only that successful response. The English UI
+must prevent resending; an explicit status check in Japanese at a narrow width
+must recover the same dispatch and child IDs. Both independent receivers then
+save the original bytes exactly once, and final staging is removed.
+
+With the repository-pinned Node, npm and official Playwright Chromium prepared:
+
+```sh
+SOBALINK_RUN_DIRECT_INTEGRATION=1 SOBALINK_RUN_TRANSFER_BROWSER_NATIVE=1 \
+  python .github/scripts/ci-go-test.py --exact \
+  --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferDispatchThreeProcessBrowser \
+  -- go test -race -count=1 -timeout=4m \
+  -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy \
+  ./internal/core -run '^TestTransferDispatchThreeProcessBrowser$'
+```
+
+The existing private login/CSP, bounded process cleanup and browser settings
+remain in use. Public summaries contain fixed counters and booleans only, never
+login material, recipient identities, paths or receipts. This additional gate
+is authored coverage until the exact revision actually passes; it does not
+replace real-device or installed-package acceptance.
+
 ## Frontend and remaining acceptance
 
 After the source is stable, run `npm --prefix web run build`, then

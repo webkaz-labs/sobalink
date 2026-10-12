@@ -53,6 +53,32 @@ HTTP、架空のファイルを使います。対象試験の明示的な成功�
 記録し、通過させるためにソケット、ブラウザーの sandbox、信頼、転送の保護を
 変更しないでください。
 
+## 実ブラウザーでの復旧確認
+
+既存の転送用ブラウザー試験は、対応するブラウザー環境で
+`TestTransferDispatchThreeProcessBrowser` も実行します。製品 UI と認証済みの
+Core Web 接続を使い、2つの宛先を選択して1回だけアップロードします。実際の
+準備応答と送信子バッチがまだないことを確認した後、Core は1回だけ確定し、その
+成功応答だけを失わせます。英語 UI は再送を防ぎ、狭い画面の日本語 UI から明示的に
+状態を確認すると、同じ送信 ID と子バッチ ID が復元される必要があります。
+独立した両受信側で元の内容が1回ずつ保存され、最後に準備用データが削除されます。
+
+指定の Node・npm と公式 Playwright Chromium を準備して実行します。
+
+```sh
+SOBALINK_RUN_DIRECT_INTEGRATION=1 SOBALINK_RUN_TRANSFER_BROWSER_NATIVE=1 \
+  python .github/scripts/ci-go-test.py --exact \
+  --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferDispatchThreeProcessBrowser \
+  -- go test -race -count=1 -timeout=4m \
+  -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy \
+  ./internal/core -run '^TestTransferDispatchThreeProcessBrowser$'
+```
+
+既存の非公開ログイン・CSP、時間制限付きのプロセス終了処理、ブラウザー設定を
+維持します。公開する要約は固定の件数と真偽値だけで、ログイン情報、宛先の識別情報、
+パス、受付結果は含めません。この追加条件は、対象のリビジョンが実際に通過するまで
+実装済みの検査であり、実機やインストール済み配布物の受入確認には代わりません。
+
 ## フロントエンドと残る受入確認
 
 ソースを確定して `npm --prefix web run build` を実行した後、

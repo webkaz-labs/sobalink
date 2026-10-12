@@ -37,6 +37,7 @@ async function selectBatch(container: HTMLElement, locale: api.Locale = 'en') {
   fireEvent.change(container.querySelector('input[type="file"]:not([webkitdirectory])')!, { target: { files: [file] } })
   const text = locale === 'ja' ? transferJapanese : transferEnglish
   const recipients = await screen.findByRole('group', { name: text.recipients })
+  expect(screen.getByRole('region', { name: locale === 'ja' ? '送信内容を確認' : 'Review your batch' })).toBeVisible()
   expect(within(recipients).getByRole('checkbox', { name: /Device A/ })).toBeChecked()
   expect(within(recipients).getByRole('checkbox', { name: /Device B/ })).not.toBeChecked()
   expect(within(recipients).queryByRole('checkbox', { name: /Device C/ })).not.toBeInTheDocument()
@@ -56,7 +57,7 @@ it.each(['en', 'ja'] as const)('prepares once and commits the exact checked reci
   expect(h.requests.find(request => request.name === 'transfer.dispatch.commit')!.payload).toEqual({ processId, preparationId: h.upload.mock.calls[0][3], reviewRevision: 'b'.repeat(64), confirm: true })
   const text = locale === 'ja' ? transferJapanese : transferEnglish
   await screen.findByRole('region', { name: text.deliverySummary })
-  expect(screen.queryByRole('region', { name: locale === 'ja' ? '確認' : 'Review' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: locale === 'ja' ? '送信内容を確認' : 'Review your batch' })).not.toBeInTheDocument()
 })
 it('retains the original request after a lost commit response and resolves it without preparing or sending again', async () => {
   const h = setup(), real = h.fetch.getMockImplementation()!

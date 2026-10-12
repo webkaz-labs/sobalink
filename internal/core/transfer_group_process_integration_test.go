@@ -309,8 +309,14 @@ func runTransferGroupProcessBrowser(t *testing.T, ctx context.Context, sender *r
 	if peerName == "" {
 		t.Fatal("actual transfer peer name absent")
 	}
-	private := t.TempDir()
 	descriptor := map[string]any{"schema": 1, "viewer": viewer, "peerId": peerID, "peerName": peerName, "processId": processID, "selected": map[string]string{"id": selectedID, "name": selectedName, "direction": "outgoing"}, "untouched": map[string]string{"id": untouchedID, "name": untouchedName, "direction": "outgoing"}}
+	runTransferProcessBrowser(t, ctx, descriptor, false)
+}
+
+// Both browser cases retain the same private login, output and cleanup contract.
+func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map[string]any, dispatch bool) string {
+	t.Helper()
+	private := t.TempDir()
 	raw, err := json.Marshal(descriptor)
 	if err != nil {
 		t.Fatal("private transfer browser descriptor encoding failed")
@@ -336,6 +342,11 @@ func runTransferGroupProcessBrowser(t *testing.T, ctx context.Context, sender *r
 	command := exec.CommandContext(call, node, filepath.Join(webDir, "node_modules", "@playwright", "test", "cli.js"), "test", "--config", filepath.Join(webDir, "playwright.transfer-native.config.mjs"), "--workers", "1", "--retries", "0")
 	command.Dir = webDir
 	command.Env = append(os.Environ(), "SOBA_TRANSFER_BROWSER_SESSION="+path)
+	if dispatch {
+		command.Env = append(command.Env, "SOBA_TRANSFER_BROWSER_DISPATCH=1")
+	} else {
+		command.Env = append(command.Env, "SOBA_TRANSFER_BROWSER_DISPATCH=0")
+	}
 	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
 	command.WaitDelay = 10 * time.Second
 	command.Stdout, command.Stderr = io.Discard, io.Discard
@@ -356,4 +367,5 @@ func runTransferGroupProcessBrowser(t *testing.T, ctx context.Context, sender *r
 	if receipt.Schema != 1 || !receipt.Accepted || receipt.Observed != 1 || receipt.Passed != 1 || receipt.Errors != 0 {
 		t.Fatal("transfer browser receipt did not establish acceptance")
 	}
+	return private
 }

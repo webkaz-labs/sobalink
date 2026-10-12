@@ -47,55 +47,7 @@ func TestTransferDispatchThreeProcessPartialRetry(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	dirs := [3]string{t.TempDir(), t.TempDir(), t.TempDir()}
-	var peers [3]*routeCoreProcess
-	var keys [3]string
-	for i := range peers {
-		peers[i] = startRouteCoreProcessWithEnvironment(t, ctx, dirs[i], true, []string{"SOBALINK_ROUTE_PROCESS_CATALOG=1"})
-		reservation, err := testfixture.ReserveLoopbackTCPUDP(netip.MustParseAddr("127.0.0.1"), 54543, 54544, 54545)
-		if err != nil {
-			t.Fatal("synthetic dispatch endpoint reservation failed")
-		}
-		listen := reservation.Endpoint().String()
-		if err := reservation.Close(); err != nil {
-			t.Fatal("synthetic dispatch endpoint release failed")
-		}
-		peers[i].invoke(t, "network.configure", map[string]any{"mode": "direct-lan", "hostname": "synthetic-dispatch-" + strconv.Itoa(i), "directLAN": DirectLANSelection{Listen: listen, Prefixes: []string{"127.0.0.0/8"}}})
-		keys[i] = catalogProcessDecode[map[string]string](t, peers[i].invoke(t, "direct-lan.identity", struct{}{}))["publicKey"]
-	}
-	for i := 1; i < len(peers); i++ {
-		invite := catalogProcessDecode[map[string]any](t, peers[0].invoke(t, "direct-lan.invite", map[string]any{"recipientPublicKey": keys[i], "name": "synthetic-dispatch-peer", "ttlSeconds": 120}))
-		peers[i].invoke(t, "direct-lan.join", map[string]any{"invitation": invite["invitation"]})
-		peers[0].invoke(t, "peer.trust", map[string]any{"peerId": keys[i], "trusted": true})
-		peers[i].invoke(t, "peer.trust", map[string]any{"peerId": keys[0], "trusted": true})
-	}
-	for i := 1; i < len(peers); i++ {
-		for _, direction := range [][2]int{{0, i}, {i, 0}} {
-			deadline := time.Now().Add(30 * time.Second)
-			for {
-				probe := catalogProcessDecode[map[string]any](t, peers[direction[0]].invoke(t, "fixture.probe", map[string]any{"Peer": keys[direction[1]], "Port": PeerPort}))
-				if probe["connected"] == true && probe["networkReady"] == true {
-					break
-				}
-				if time.Now().After(deadline) || ctx.Err() != nil {
-					t.Fatal("actual dispatch peer transport did not become ready")
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
-		}
-		// A bare TCP connection is transport readiness, not authenticated
-		// application availability. Use the same explicit discovery action
-		// that supplies current recipient availability to the product UI.
-		discovery := catalogProcessDecode[struct {
-			Observations []struct {
-				PeerID string `json:"peerId"`
-				State  string `json:"state"`
-			} `json:"observations"`
-		}](t, peers[0].invoke(t, "discovery.refresh", map[string]string{"peerId": keys[i]}))
-		if len(discovery.Observations) != 1 || discovery.Observations[0].PeerID != keys[i] || discovery.Observations[0].State != "confirmed" {
-			t.Fatal("authenticated recipient availability was not confirmed")
-		}
-	}
+	dirs, peers, keys := startDispatchProcessPeers(t, ctx)
 	snapshot := func(p *routeCoreProcess) dispatchProcessSnapshot {
 		return catalogProcessDecode[dispatchProcessSnapshot](t, p.invoke(t, "fixture.snapshot", struct{}{}))
 	}
@@ -276,4 +228,57 @@ func TestTransferDispatchThreeProcessPartialRetry(t *testing.T) {
 	for _, p := range peers {
 		p.stop(t)
 	}
+}
+
+// Reuse the same real pairing, trust and authenticated discovery for browser acceptance.
+func startDispatchProcessPeers(t *testing.T, ctx context.Context) (dirs [3]string, peers [3]*routeCoreProcess, keys [3]string) {
+	t.Helper()
+	dirs = [3]string{t.TempDir(), t.TempDir(), t.TempDir()}
+	for i := range peers {
+		peers[i] = startRouteCoreProcessWithEnvironment(t, ctx, dirs[i], true, []string{"SOBALINK_ROUTE_PROCESS_CATALOG=1"})
+		reservation, err := testfixture.ReserveLoopbackTCPUDP(netip.MustParseAddr("127.0.0.1"), 54543, 54544, 54545)
+		if err != nil {
+			t.Fatal("synthetic dispatch endpoint reservation failed")
+		}
+		listen := reservation.Endpoint().String()
+		if err := reservation.Close(); err != nil {
+			t.Fatal("synthetic dispatch endpoint release failed")
+		}
+		peers[i].invoke(t, "network.configure", map[string]any{"mode": "direct-lan", "hostname": "synthetic-dispatch-" + strconv.Itoa(i), "directLAN": DirectLANSelection{Listen: listen, Prefixes: []string{"127.0.0.0/8"}}})
+		keys[i] = catalogProcessDecode[map[string]string](t, peers[i].invoke(t, "direct-lan.identity", struct{}{}))["publicKey"]
+	}
+	for i := 1; i < len(peers); i++ {
+		invite := catalogProcessDecode[map[string]any](t, peers[0].invoke(t, "direct-lan.invite", map[string]any{"recipientPublicKey": keys[i], "name": "synthetic-dispatch-peer-" + strconv.Itoa(i), "ttlSeconds": 120}))
+		peers[i].invoke(t, "direct-lan.join", map[string]any{"invitation": invite["invitation"]})
+		peers[0].invoke(t, "peer.trust", map[string]any{"peerId": keys[i], "trusted": true})
+		peers[i].invoke(t, "peer.trust", map[string]any{"peerId": keys[0], "trusted": true})
+	}
+	for i := 1; i < len(peers); i++ {
+		for _, direction := range [][2]int{{0, i}, {i, 0}} {
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				probe := catalogProcessDecode[map[string]any](t, peers[direction[0]].invoke(t, "fixture.probe", map[string]any{"Peer": keys[direction[1]], "Port": PeerPort}))
+				if probe["connected"] == true && probe["networkReady"] == true {
+					break
+				}
+				if time.Now().After(deadline) || ctx.Err() != nil {
+					t.Fatal("actual dispatch peer transport did not become ready")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+		// A bare TCP connection is transport readiness, not authenticated
+		// application availability. Use the same explicit discovery action
+		// that supplies current recipient availability to the product UI.
+		discovery := catalogProcessDecode[struct {
+			Observations []struct {
+				PeerID string `json:"peerId"`
+				State  string `json:"state"`
+			} `json:"observations"`
+		}](t, peers[0].invoke(t, "discovery.refresh", map[string]string{"peerId": keys[i]}))
+		if len(discovery.Observations) != 1 || discovery.Observations[0].PeerID != keys[i] || discovery.Observations[0].State != "confirmed" {
+			t.Fatal("authenticated recipient availability was not confirmed")
+		}
+	}
+	return
 }
