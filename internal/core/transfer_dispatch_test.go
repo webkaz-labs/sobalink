@@ -348,12 +348,23 @@ func TestOutgoingDispatchQueueBoundsAllBatchesAndCancelsWithoutSending(t *testin
 	waitOutgoingIdle(t, p.a, first.ID)
 	waitIncomingOffer(t, p.b, single.ID)
 	single.stop()
-	waitOutgoingIdle(t, p.a, single.ID)
-	p.a.mu.RLock()
-	active, queued = p.a.outgoingActive, len(p.a.outgoingQueue)
-	p.a.mu.RUnlock()
-	if active != 0 || queued != 0 {
-		t.Fatalf("queue retained completed work %d/%d", active, queued)
+	// Batch idleness precedes release of its active slot. Wait for both within
+	// the same bound as waitOutgoingIdle before asserting that the queue drained.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		single.mu.Lock()
+		running, staging := single.running, single.staging
+		single.mu.Unlock()
+		p.a.mu.RLock()
+		active, queued = p.a.outgoingActive, len(p.a.outgoingQueue)
+		p.a.mu.RUnlock()
+		if !running && !staging && active == 0 && queued == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("queue retained completed work %d/%d (running=%t, staging=%t)", active, queued, running, staging)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 func TestUploadDispatchPreparesOnlyAndReturnsRecoverableReceipt(t *testing.T) {
