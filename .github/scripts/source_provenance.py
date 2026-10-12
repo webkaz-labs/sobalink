@@ -19,7 +19,7 @@ ADAPTED_MODULES = {
     "github.com/tailscale/wireguard-go": {
         "name": "wireguard", "source_path": "internal/lifecycleadaptation/wireguard",
         "manifest_path": "internal/lifecycleadaptation/wireguard.json",
-        "manifest_sha256": "5e11fd718d39e3185764a638db0ba8efde031d46e0c6ca0c791453a742521811",
+        "manifest_sha256": "8903049b7e08c55c985faea522b1c042bad5937ba14c8d7be901754401819c9a",
         "version": "v0.0.0-20260928213032-417aef361226", "license": "MIT",
         "module_sum": "h1:v3Lpj2iHPWQDqeCwemQPz4fWweIEMLqBkwJqCjRyJQc=",
         "go_mod_sum": "h1:rUelGmuK4UnSJYM5gl5Mknp6YbwwcL8+VAPMhNYe+jg=",

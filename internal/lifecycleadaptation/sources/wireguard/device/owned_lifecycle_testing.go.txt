@@ -7,13 +7,19 @@
 
 package device
 
+import "time"
+
 // OwnedLifecycleTestPeerStats contains only copied observations for the explicit
 // native lifecycle fixture. It never contains peer identities or key material.
 type OwnedLifecycleTestPeerStats struct {
 	LastHandshakeUnixNano int64
+	// SessionExpires is the actual session-state deadline, including its
+	// monotonic clock reading. It is not the completed-handshake timestamp.
+	SessionExpires time.Time
 }
 
 // LifecycleTestPeerStats snapshots the same handshake timestamp used by UAPI,
+// and the session-state deadline under its mutex, preserving monotonic time,
 // without serializing private keys or exposing an arbitrary output callback.
 // It is available only with both explicit native lifecycle build tags.
 func (owned *OwnedDevice) LifecycleTestPeerStats() ([]OwnedLifecycleTestPeerStats, error) {
@@ -31,7 +37,13 @@ func (owned *OwnedDevice) LifecycleTestPeerStats() ([]OwnedLifecycleTestPeerStat
 	defer o.device.peers.RUnlock()
 	stats := make([]OwnedLifecycleTestPeerStats, 0, len(o.device.peers.keyMap))
 	for _, peer := range o.device.peers.keyMap {
-		stats = append(stats, OwnedLifecycleTestPeerStats{LastHandshakeUnixNano: peer.lastHandshakeNano.Load()})
+		peer.sessionState.Lock()
+		expires := peer.sessionState.sessionExpires
+		peer.sessionState.Unlock()
+		stats = append(stats, OwnedLifecycleTestPeerStats{
+			LastHandshakeUnixNano: peer.lastHandshakeNano.Load(),
+			SessionExpires:        expires,
+		})
 	}
 	return stats, nil
 }
