@@ -91,6 +91,7 @@ type NetworkBackend interface {
 }
 type NodeFactory func(string, string) (NetworkBackend, error)
 type Options struct {
+	outboxObserver     *outboxObserver // private native-fixture diagnostics only
 	Directory, Version string
 	NodeFactory        NodeFactory
 	SkipNetworkStart   bool
@@ -106,6 +107,7 @@ type Options struct {
 }
 
 type Core struct {
+	outboxObserver               *outboxObserver                 // immutable after construction; nil in production
 	durableProfileError          string                          // mu; uncertain or incomplete explicit migration blocks durable work
 	catalogViews                 *resourceCatalogViewCoordinator // op; nil unless explicitly enabled
 	catalogViewReceived          *catalogViewReceipt             // op; one explicitly selected remote view
@@ -259,7 +261,7 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	}
 	loadedProfileRevision := privateRevision(p)
 	ctx, cancel := context.WithCancel(parent)
-	c := &Core{lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, discoveredOrigins: map[string]transportorigin.Origin{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
+	c := &Core{outboxObserver: opts.outboxObserver, lanStartNonce: randomID(), dir: opts.Directory, version: opts.Version, profile: p, ctx: ctx, cancel: cancel, networkState: "idle", outgoing: map[string]*outgoingBatch{}, confirmed: map[string]time.Time{}, peerRefreshRetries: newPeerRefreshScheduler(), discovered: map[string][]RemoteService{}, discoveredOrigins: map[string]transportorigin.Origin{}, active: map[string]*activeService{}, serviceStates: map[string]string{}, requests: map[string]requestResult{}}
 	resourceacceptance.CoreConstructed(c, opts.LifecycleLock)
 	c.capacity = limits
 	c.initializeResourceIdentity(opts.LifecycleLock)

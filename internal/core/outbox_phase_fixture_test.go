@@ -83,3 +83,20 @@ func TestOutboxProcessPhaseReportsBusyLocksWithoutWaiting(t *testing.T) {
 		t.Fatalf("busy Core lock was not identified: %+v", phase)
 	}
 }
+
+func TestOutboxProcessPhaseHistoryCoverageIsExplicit(t *testing.T) {
+	c := outboxFixture(t)
+	r := outboxCommitFixture(t, c, outboxPrepareFixture(t, c, "phase-history"))
+	phase := inspectOutboxProcessPhase(c, r.RequestID, r.Children[0].DeliveryID)
+	if phase.History.Observed || phase.NextKnown || phase.ContextDone {
+		t.Fatal("absent observer or retry history gained coverage")
+	}
+	c.outboxObserver = new(outboxObserver)                // This unit fixture starts no workers.
+	c.outbox.next[r.Children[0].DeliveryID] = r.CreatedAt // Already elapsed, but retained.
+	c.cancel()
+	c.pumpOutbox()
+	phase = inspectOutboxProcessPhase(c, r.RequestID, r.Children[0].DeliveryID)
+	if !phase.History.Observed || phase.History.PumpEntered != 1 || phase.History.LastGate != "context_done" || !phase.NextKnown || phase.NextPending || !phase.ContextDone {
+		t.Fatal("observer coverage, elapsed retry history or context gate was lost")
+	}
+}

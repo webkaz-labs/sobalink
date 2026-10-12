@@ -18,6 +18,10 @@ func logOutboxResumeDiagnostics(t *testing.T, p *routeCoreProcess, peerID, reque
 	if phaseReply.Error != "" || json.Unmarshal(phaseReply.Value, &phase) != nil {
 		t.Logf("outbox resume %s phase=unavailable", role)
 	} else {
+		t.Logf("outbox resume %s phase context-done=%t next-known=%t history-observed=%t", role, phase.ContextDone, phase.NextKnown, phase.History.Observed)
+		h := phase.History
+		t.Logf("outbox resume %s history maintenance-entered=%d busy=%d completed=%d pump-entered=%d owner-admitted=%d busy=%d refused=%d gated=%d last-gate=%q", role, h.MaintenanceEntered, h.MaintenanceBusy, h.MaintenanceCompleted, h.PumpEntered, h.OwnerAdmitted, h.OwnerBusy, h.OwnerRefused, h.Gated, outboxDiagnosticToken(h.LastGate))
+		t.Logf("outbox resume %s history planned=%d run-admission-refused=%d finish-entered=%d owner-admitted=%d busy=%d refused=%d saved=%d save-failed=%d no-row=%d", role, h.Planned, h.RunAdmissionRefused, h.FinishEntered, h.FinishOwnerAdmitted, h.FinishOwnerBusy, h.FinishOwnerRefused, h.FinishSaved, h.FinishSaveFailed, h.FinishNoRow)
 		t.Logf("outbox resume %s phase op-busy=%t refresh-busy=%t coordinator=%t coordinator-busy=%t selected=%t run=%t run-busy=%t run-state=%q running=%t next-pending=%t", role, phase.OpBusy, phase.RefreshBusy, phase.Coordinator, phase.CoordinatorBusy, phase.Selected, phase.RunPresent, phase.RunBusy, outboxDiagnosticToken(phase.RunState), phase.Running, phase.NextPending)
 		t.Logf("outbox resume %s phase owner-check=%q owner-admitted=%t namespace-check=%q core-busy=%t active=%d queue=%d selected-queued=%t", role, outboxDiagnosticToken(phase.OwnerCheck), phase.OwnerAdmitted, outboxDiagnosticToken(phase.NamespaceCheck), phase.CoreBusy, phase.Active, phase.Queue, phase.SelectedQueued)
 	}
@@ -108,7 +112,8 @@ func outboxDiagnosticToken(value string) string {
 	}
 	// A closed allowlist prevents even a malformed code field from carrying
 	// private identifiers or free-form runtime errors into native CI output.
-	const allowed = `ok refused not_checked ready online offline starting stopping stopped unavailable error reconnecting
+	const allowed = `none profile_guard namespace_check clock_guard context_done retirement persist_failed
+ok refused not_checked ready online offline starting stopping stopped unavailable error reconnecting
 Running Starting Stopped NoState NeedsLogin NeedsMachineAuth InUse OtherUser
 pending confirmed unconfirmed unsupported limited stale prepared discarded queued
 waiting_for_peer sending paused awaiting_receipt cancel_requested cancelled expired completed

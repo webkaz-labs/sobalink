@@ -37,7 +37,7 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 	dir := os.Getenv("SOBALINK_ROUTE_PROCESS_DIR")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	opts := Options{Directory: dir, Version: "process-fixture", SkipNetworkStart: os.Getenv("SOBALINK_ROUTE_PROCESS_OFFLINE") == "1"}
+	opts := Options{outboxObserver: new(outboxObserver), Directory: dir, Version: "process-fixture", SkipNetworkStart: os.Getenv("SOBALINK_ROUTE_PROCESS_OFFLINE") == "1"}
 	if os.Getenv("SOBALINK_ROUTE_PROCESS_CATALOG") == "1" {
 		lock, err := config.AcquireLock(dir)
 		if err != nil {
@@ -51,6 +51,9 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		t.Fatal("open isolated subprocess Core")
 	}
 	defer c.Close()
+	if c.outboxObserver != opts.outboxObserver || c.outboxObserver == nil {
+		t.Fatal("native outbox observer was not installed at construction")
+	}
 	var closers []io.Closer
 	defer func() {
 		for _, v := range closers {

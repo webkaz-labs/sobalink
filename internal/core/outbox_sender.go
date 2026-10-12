@@ -16,6 +16,10 @@ import (
 type outboxLeaseHeaderKey struct{}
 
 func (c *Core) pumpOutbox() {
+	observer := c.outboxObserver
+	if observer != nil {
+		observer.pumpEntered.Add(1)
+	}
 	o := c.outboxCopy()
 	if o == nil {
 		return
@@ -23,10 +27,17 @@ func (c *Core) pumpOutbox() {
 	o.mu.Lock()
 	var planned []*outgoingBatch
 	var contexts []context.Context
+	var ownerAdmitted bool
+	var ownerErr error
+	var gate outboxObservedGate
 	defer func() {
 		o.mu.Unlock()
+		observer.pumpFinished(ownerAdmitted, ownerErr, gate, len(planned))
 		for i, b := range planned {
 			if err := c.runOutgoing(contexts[i], b); err != nil {
+				if observer != nil {
+					observer.runAdmissionRefused.Add(1)
+				}
 				o.mu.Lock()
 				delete(o.runs, b.ID)
 				o.mu.Unlock()
@@ -34,9 +45,21 @@ func (c *Core) pumpOutbox() {
 			}
 		}
 	}()
-	_ = o.withOwnedLocked(func() error {
+	ownerErr = o.withOwnedLocked(func() error {
+		ownerAdmitted = true
 		func() {
-			if !c.durableProfileReady() || o.checkLocked() != nil || o.clockLocked() != nil || c.ctx.Err() != nil {
+			// Keep the original short-circuit check order and decisions.
+			switch {
+			case !c.durableProfileReady():
+				gate = outboxGateProfile
+			case o.checkLocked() != nil:
+				gate = outboxGateNamespace
+			case o.clockLocked() != nil:
+				gate = outboxGateClock
+			case c.ctx.Err() != nil:
+				gate = outboxGateContext
+			}
+			if gate != outboxGateNone {
 				for _, b := range o.runs {
 					b.mu.Lock()
 					if b.cancel != nil {
@@ -48,6 +71,7 @@ func (c *Core) pumpOutbox() {
 			}
 			now := o.now().UTC()
 			if o.retireLocked() != nil {
+				gate = outboxGateRetirement
 				return
 			}
 			for id, p := range o.prepared {
@@ -81,6 +105,7 @@ func (c *Core) pumpOutbox() {
 						child.ReasonCode = "outbox_expired"
 						outboxSummarize(row, now)
 						if o.saveLocked() != nil {
+							gate = outboxGatePersist
 							return
 						}
 					}
@@ -92,6 +117,7 @@ func (c *Core) pumpOutbox() {
 						child.Status = "cancelled"
 						outboxSummarize(row, now)
 						if o.saveLocked() != nil {
+							gate = outboxGatePersist
 							return
 						}
 					}
@@ -107,6 +133,7 @@ func (c *Core) pumpOutbox() {
 						child.ReasonCode = "outbox_permission_changed"
 						outboxSummarize(row, now)
 						if o.saveLocked() != nil {
+							gate = outboxGatePersist
 							return
 						}
 						continue
@@ -117,6 +144,7 @@ func (c *Core) pumpOutbox() {
 							child.ReasonCode = "outbox_paused"
 							outboxSummarize(row, now)
 							if o.saveLocked() != nil {
+								gate = outboxGatePersist
 								return
 							}
 						}
@@ -415,11 +443,17 @@ func (c *Core) recordOutboxStatus(id string, index int, status transfer.DurableS
 
 func (c *Core) finishOutboxRun(run *outgoingRun, application *peerHTTPApplication, err error, active bool) {
 	run.stop()
+	observer := c.outboxObserver
+	if observer != nil {
+		observer.finishEntered.Add(1)
+	}
 	b := run.batch
 	o := c.outboxCopy()
 	if o != nil {
 		o.mu.Lock()
-		_ = o.withOwnedLocked(func() error {
+		ownerAdmitted, saveAttempted := false, false
+		finishErr := o.withOwnedLocked(func() error {
+			ownerAdmitted = true
 			if o.frozen != "" {
 				return outboxError(o.frozen)
 			}
@@ -468,11 +502,13 @@ func (c *Core) finishOutboxRun(run *outgoingRun, application *peerHTTPApplicatio
 					}
 				}
 				outboxSummarize(row, o.now())
+				saveAttempted = true
 				return o.saveLocked()
 			}
 			return nil
 		})
 		o.mu.Unlock()
+		observer.runFinished(ownerAdmitted, saveAttempted, finishErr)
 	}
 	terminal := func() {
 		b.mu.Lock()

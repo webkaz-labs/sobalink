@@ -204,7 +204,13 @@ func (c *Core) maintain() {
 			return
 		case <-tick.C:
 		}
+		if c.outboxObserver != nil {
+			c.outboxObserver.maintenanceEntered.Add(1)
+		}
 		if !c.op.TryLock() {
+			if c.outboxObserver != nil {
+				c.outboxObserver.maintenanceBusy.Add(1)
+			}
 			continue
 		}
 		if c.ctx.Err() != nil {
@@ -258,6 +264,9 @@ func (c *Core) maintain() {
 		c.expireServices()
 		c.expireProxies()
 		c.op.Unlock()
+		if c.outboxObserver != nil {
+			c.outboxObserver.maintenanceCompleted.Add(1)
+		}
 		c.pumpOutbox()
 		if c.durableProfileReady() {
 			_ = c.transfers.MaintainDurable()
