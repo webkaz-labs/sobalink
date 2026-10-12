@@ -46,6 +46,9 @@ func (c *Core) pumpOutbox() {
 				}
 				return
 			}
+			if o.drainCompletionsLocked() != nil {
+				return
+			}
 			now := o.now().UTC()
 			if o.retireLocked() != nil {
 				return
@@ -419,59 +422,9 @@ func (c *Core) finishOutboxRun(run *outgoingRun, application *peerHTTPApplicatio
 	o := c.outboxCopy()
 	if o != nil {
 		o.mu.Lock()
-		_ = o.withOwnedLocked(func() error {
-			if o.frozen != "" {
-				return outboxError(o.frozen)
-			}
-			row := o.state.Intents[b.outboxID]
-			if row != nil {
-				for i, d := range row.Deliveries {
-					if d.Offer.DeliveryID != b.ID {
-						continue
-					}
-					child := &row.View.Children[i]
-					if child.DeliveryOutcome == "confirmed" {
-						if d.Cancelled {
-							child.Status = "cancelled"
-						} else if o.now().Before(row.View.ExpiresAt) {
-							child.Status = "completed"
-						} else {
-							child.Status = "expired"
-						}
-					}
-					if child.DeliveryOutcome != "confirmed" {
-						code := networkErrorCode(err)
-						if d.Cancelled {
-							child.Status = "cancelled"
-						} else if !o.now().Before(row.View.ExpiresAt) {
-							child.Status = "expired"
-							child.ReasonCode = "outbox_expired"
-						} else if c.ctx.Err() != nil {
-							child.Status = "queued"
-						} else {
-							child.Status = "waiting_for_peer"
-							child.ReasonCode = code
-							switch code {
-							case "outbox_permission_changed", "outbox_identity_changed":
-								child.Status = "blocked_permission"
-							case "outbox_peer_upgrade_required":
-								child.Status = "blocked_permission"
-							case "durable_unknown_lease", "durable_recovery_required", "durable_conflict", "outbox_receipt_mismatch", "outbox_receipt_regressed", "outbox_payload_corrupt", "outbox_clock_skew":
-								child.Status = "blocked_recovery"
-							case "outbox_receiver_declined":
-								child.Status = "cancelled"
-								row.Deliveries[i].Cancelled = true
-							case "outbox_receiver_approval", "outbox_receipt_pending":
-								child.Status = "awaiting_receipt"
-							}
-						}
-					}
-				}
-				outboxSummarize(row, o.now())
-				return o.saveLocked()
-			}
-			return nil
-		})
+		// Keep the existing run as the bounded cleanup/replanning fence. No
+		// lifecycle wait is allowed here: its owner may be joining this run.
+		o.completions[b.ID] = outboxCompletion{code: outboxCompletionCode(err)}
 		o.mu.Unlock()
 	}
 	terminal := func() {
@@ -495,10 +448,12 @@ func (c *Core) finishOutboxRun(run *outgoingRun, application *peerHTTPApplicatio
 	}
 	if o != nil {
 		o.mu.Lock()
-		delete(o.runs, b.ID)
-		if row := o.state.Intents[b.outboxID]; row != nil {
-			_ = o.cleanupPayloadLocked(o.state.Payloads[row.PayloadID])
-		}
+		completion := o.completions[b.ID]
+		// running=false and runDone precede application origin-lease release.
+		// Only the returned physical join permits persistence to clear the fence.
+		completion.joined = true
+		o.completions[b.ID] = completion
+		_ = o.withOwnedLocked(func() error { return o.drainCompletionLocked(b.ID) })
 		o.mu.Unlock()
 	}
 	run.done()

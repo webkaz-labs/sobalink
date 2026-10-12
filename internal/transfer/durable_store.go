@@ -21,8 +21,8 @@ const durableLedgerRecords = 1024
 const durableStage = ".sobalink-durable-stage-v1"
 
 // DurableOptions enables only the separate durable receiver. The owner must
-// retain its profile singleton lock. Initialize is allowed only on first,
-// explicitly enabled use, never as a missing-ledger recovery operation.
+// retain its profile singleton lock. Initialize is allowed only during
+// same-epoch first initialization, never as a missing-ledger recovery operation.
 type DurableOptions struct {
 	Path           string
 	Initialize     bool

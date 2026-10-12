@@ -258,10 +258,12 @@ func (c *Core) maintain() {
 		c.expireServices()
 		c.expireProxies()
 		c.op.Unlock()
-		c.pumpOutbox()
 		if c.durableProfileReady() {
 			_ = c.transfers.MaintainDurable()
 		}
+		// Complete local lifecycle-owned maintenance before dispatching workers
+		// that need the same owner to admit their first durable network attempt.
+		c.pumpOutbox()
 		resourceacceptance.MaintenancePassed(c)
 	}
 }
