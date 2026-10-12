@@ -377,6 +377,8 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	}
 	resourceacceptance.ProcessLocalCommand(c, cmd.Name, cmd.RequestID)
 	switch cmd.Name {
+	case "transfer.dispatch.prepare", "transfer.dispatch.commit", "transfer.dispatch.status", "transfer.dispatch.discard":
+		return c.transferDispatchCommand(ctx, cmd.Name, cmd.RequestID, cmd.Payload)
 	case resourcegroup.LocalCurrentReviewCommand, resourcegroup.LocalPreviewCommand, resourcegroup.LocalSelectCommand, resourcegroup.LocalApplyCommand, resourcegroup.LocalStatusCommand, resourcegroup.LocalRefreshCommand, resourcegroup.LocalCancelCommand:
 		return c.resourceGroupCommand(ctx, cmd.Name, cmd.Payload)
 	case "resource.catalog.snapshot":
@@ -805,6 +807,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, err
 		}
 		if next.Paused {
+			_ = c.discardPreparedForPeer(t.ID)
 			c.mu.RLock()
 			ps := c.peerServer
 			var outgoing []*outgoingBatch
@@ -942,6 +945,7 @@ func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, p
 	if ps != nil {
 		ps.revoke(id)
 	}
+	_ = c.discardPreparedForPeer(id)
 	if transferErr != nil && !errors.Is(err, transferErr) {
 		err = errors.Join(transferErr, err)
 	}

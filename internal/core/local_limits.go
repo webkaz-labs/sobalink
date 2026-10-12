@@ -96,6 +96,14 @@ func (c *Core) LocalControlLimits() control.Limits {
 		retained += transfer.ManifestMetadataBytes(batch.Manifest)
 		batch.mu.Unlock()
 	}
+	for _, p := range c.transferPreparations {
+		retained += p.metadataBytes()
+		if p.receipt == nil {
+			p.batch.mu.Lock()
+			retained += transfer.ManifestMetadataBytes(p.batch.Manifest)
+			p.batch.mu.Unlock()
+		}
+	}
 	c.mu.RUnlock()
 	limits.ResponseBytes, err = localResponseBytes(p, 2*p.Number("resources", "transferMetadataBytes")+retained)
 	if err != nil {

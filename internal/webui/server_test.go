@@ -161,14 +161,14 @@ func TestManagementRejectsForeignHostsOriginsAndAddresses(t *testing.T) {
 
 func TestManagementAuthenticationCSRFAndReadOnlyMethods(t *testing.T) {
 	s, b := testServer(t)
-	for _, path := range []string{"/api/state", "/api/command", "/api/upload"} {
+	for _, path := range []string{"/api/state", "/api/command", "/api/upload", "/api/upload-dispatch"} {
 		if w := serve(s, request(s, "GET", path, "", nil, "")); w.Code != http.StatusUnauthorized {
 			t.Fatalf("unauthenticated %s: %d", path, w.Code)
 		}
 	}
 	cookie, csrf := signIn(t, s)
 	for _, token := range []string{"", "wrong-token"} {
-		for _, path := range []string{"/api/command", "/api/upload", "/api/session"} {
+		for _, path := range []string{"/api/command", "/api/upload", "/api/upload-dispatch", "/api/session"} {
 			method := "POST"
 			if path == "/api/session" {
 				method = "DELETE"
@@ -179,7 +179,7 @@ func TestManagementAuthenticationCSRFAndReadOnlyMethods(t *testing.T) {
 		}
 	}
 	for _, method := range []string{"GET", "HEAD"} {
-		for _, path := range []string{"/api/command", "/api/upload", "/api/session"} {
+		for _, path := range []string{"/api/command", "/api/upload", "/api/upload-dispatch", "/api/session"} {
 			if w := serve(s, request(s, method, path, `{}`, cookie, csrf)); w.Code != http.StatusNotFound {
 				t.Fatalf("read method %s %s: %d", method, path, w.Code)
 			}
@@ -386,4 +386,31 @@ func TestManagementDynamicCommandBudget(t *testing.T) {
 	if backend.commands.Load() != before {
 		t.Fatal("rejected request reached backend")
 	}
+}
+
+func TestDispatchUploadRequiresAuthenticatedMutationRoute(t *testing.T) {
+	s, b := testServer(t)
+	backend := &dispatchUploadBackend{testBackend: b}
+	s.backend = backend
+	cookie, csrf := signIn(t, s)
+	if response := serve(s, request(s, "POST", "/api/upload-dispatch", "", cookie, csrf)); response.Code != http.StatusOK || backend.prepares.Load() != 1 {
+		t.Fatalf("authenticated prepare route: %d %s", response.Code, response.Body.String())
+	}
+	if response := serve(s, request(s, "POST", "/api/upload-dispatch", "", cookie, "wrong")); response.Code != http.StatusForbidden || backend.prepares.Load() != 1 {
+		t.Fatal("invalid CSRF reached preparation")
+	}
+	s.backend = b
+	if response := serve(s, request(s, "POST", "/api/upload-dispatch", "", cookie, csrf)); response.Code != http.StatusNotFound {
+		t.Fatal("unsupported backend did not fail closed")
+	}
+}
+
+type dispatchUploadBackend struct {
+	*testBackend
+	prepares atomic.Int32
+}
+
+func (b *dispatchUploadBackend) UploadDispatch(w http.ResponseWriter, _ *http.Request) {
+	b.prepares.Add(1)
+	w.WriteHeader(http.StatusOK)
 }

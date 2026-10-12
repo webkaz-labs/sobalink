@@ -62,7 +62,7 @@ func (c *Core) logoutTailnet(ctx context.Context) (LogoutResult, error) {
 	defer c.cancel()
 	// Cancel every traffic source before waiting for any one of them. Cleanup
 	// callbacks may block; no callback may hold the logout response indefinitely.
-	tasks := []func() error{c.transfers.Close}
+	tasks := []func() error{c.transfers.Close, func() error { return c.discardPreparedForPeer("") }}
 	for _, proxy := range proxies {
 		tasks = append(tasks, proxy.Close)
 	}

@@ -160,6 +160,9 @@ type Core struct {
 	messages                   []Message
 	messageHistoryUncertain    bool // protected by mu; cleared only by a successful whole-history save
 	outgoing                   map[string]*outgoingBatch
+	transferPreparations       map[string]*transferPreparation
+	outgoingQueue              []*outgoingRun
+	outgoingActive             int
 	orphanSpoolBytes           int64
 	orphanSpoolEntries         int64
 	orphanSpoolError           string
@@ -469,6 +472,7 @@ func (c *Core) close() error {
 		peerHTTP.close()
 	}
 	c.cancel()
+	preparedCloseErr := c.discardPreparedForPeer("")
 	groupCloseErr := c.stopResourceGroups()
 	// Join the bounded controller before taking its mutation lock.
 	if upgrade != nil {
@@ -502,7 +506,7 @@ func (c *Core) close() error {
 	c.web = nil
 	c.mu.Unlock()
 	var errs []error
-	errs = append(errs, groupCloseErr)
+	errs = append(errs, groupCloseErr, preparedCloseErr)
 	errs = append(errs, c.stopContextControlLocked())
 	if ps != nil {
 		errs = append(errs, ps.Close())

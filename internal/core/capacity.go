@@ -125,7 +125,7 @@ var supportedCapacityResources = map[string]bool{"pngEncodedBytes": true, "pngPi
 	"tcpConnections":   true, "tcpPerPolicy": true, "tcpPerPeer": true, "udpSessions": true, "udpPerPolicy": true, "udpQueuedBytes": true, "udpPolicyQueuedBytes": true, "udpQueuePackets": true}
 
 func init() {
-	for _, key := range []string{"diskReserveBytes", "transferSpoolBytes", "receiveReservedBytes", "transferManifestBytes", "transferMetadataBytes", "transferPending", "transferPendingPerPeer", "transferConcurrentFiles", "transferConcurrentPerPeer", "messageStorageBytes", "stagingInventoryEntries", "stagingInventoryDepth"} {
+	for _, key := range []string{"diskReserveBytes", "transferSpoolBytes", "receiveReservedBytes", "transferManifestBytes", "transferMetadataBytes", "transferPending", "transferPendingPerPeer", "transferConcurrentFiles", "transferConcurrentPerPeer", "transferConcurrentRecipients", "messageStorageBytes", "stagingInventoryEntries", "stagingInventoryDepth"} {
 		supportedCapacityResources[key] = true
 	}
 }
@@ -393,6 +393,7 @@ func (c *Core) applyCapacityPolicyBound(proposed capacity.Policy, binding *resou
 	if !outcome.Published {
 		return outcome
 	}
+	c.pumpOutgoing()
 	// Core command/Close serialization keeps the manager alive here. This
 	// changes admission only; occupied reservations remain accounted for.
 	if c.transfers != nil {
