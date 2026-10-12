@@ -63,6 +63,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		} else if err != nil {
 			err = localizeResourceError(japanese(locale), localizeListenerError(japanese(locale), localizeFavoritesError(japanese(locale), err)))
 			err = localizeLANSetupError(japanese(locale), localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err)))
+			err = localizeDurableProfileError(japanese(locale), err)
 		}
 	}()
 	var dir string
@@ -114,7 +115,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" && command != "outbox" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
@@ -288,7 +289,12 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			return usageError(ja, "message PEER_ID TEXT")
 		}
 		return request("message.send", map[string]string{"peerId": args[0], "text": args[1]})
+	case "outbox":
+		return outboxCommandCLI(ctx, args, dir, ja, *dryRun, out, client)
 	case "send":
+		if outboxCLIWantsQueue(args) {
+			return outboxSendCLI(ctx, args, dir, ja, *dryRun, out, stdin, client)
+		}
 		if len(args) > 0 && strings.HasPrefix(args[0], "-") {
 			return transferDispatchCLI(ctx, args, dir, ja, *dryRun, out, stdin, client)
 		}
@@ -379,6 +385,7 @@ var commandUsage = map[string]string{
 	"accept": "accept TRANSFER_ID DIRECTORY", "cancel": "cancel TRANSFER_ID",
 	"retry": "retry TRANSFER_ID [--peer PEER_ID --process PROCESS_ID --direction incoming|outgoing]", "forget": "forget TRANSFER_ID",
 	"transfers": "transfers [--peer PEER_ID] [--json]",
+	"outbox":    "outbox list|show|cancel|commit|discard [OPTIONS]",
 	"rules":     "rules [--json]", "settings": "settings [SERVICE_ID... | --service ID[,ID] | --group NAME] [--json]",
 	"stop-service": "stop-service SERVICE_ID", "command": "command NAME JSON_PAYLOAD | command NAME --json-file PATH | command NAME --stdin",
 }
@@ -526,6 +533,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba message PEER_ID TEXT     Send text explicitly
   soba send PEER_ID PATH...     Offer files or folders as one batch
   soba send --help             Review explicit multiple-peer sends
+  soba outbox --help           Queue files until a fixed deadline; inspect or stop sends
   soba accept ID DIRECTORY      Accept an incoming batch into this directory
   soba receive recovery confirm [--reviewed]  Review old receive leftovers
   soba receive-dir DIRECTORY   Save the preferred receive folder
@@ -585,6 +593,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba message PEER_ID TEXT     文字を明示的に送信
   soba send PEER_ID PATH...     ファイル・フォルダーを一括で送信
   soba send --help             明示した複数相手への送信を確認
+  soba outbox --help           期限付き送信予約・状態確認・追加送信の停止
   soba accept ID DIRECTORY      指定フォルダーへ一括受信を承認
   soba receive recovery confirm [--reviewed]  旧受信の残骸を確認して再開
   soba receive-dir DIRECTORY   既定の受信フォルダーを保存

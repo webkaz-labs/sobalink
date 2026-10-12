@@ -20,6 +20,8 @@ import (
 
 const transferDispatchHelpEN = `Send files to an explicitly selected set of peers
 
+For opt-in durable queueing, use soba send --queue --peer PEER PATH...; see soba outbox --help.
+
   soba send PEER_ID PATH...                         Existing single-peer send
   soba send --peer PEER_A --peer PEER_B [--confirm] [--json] PATH...
   soba send --status PREPARATION_ID --process PROCESS_ID [--json]
@@ -40,6 +42,8 @@ Preparation and receipts belong to the current process, not a durable outbox or 
 --dry-run performs local input validation only, with zero agent calls and no staging or sending.`
 
 const transferDispatchHelpJA = `明示した複数の相手へファイルを送る
+
+永続的な送信予約は soba send --queue --peer PEER PATH... を使って明示します。soba outbox --help を参照。
 
   soba send PEER_ID PATH...                         従来の単一相手への送信
   soba send --peer PEER_A --peer PEER_B [--confirm] [--json] PATH...

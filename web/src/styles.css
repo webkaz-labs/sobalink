@@ -849,3 +849,23 @@ textarea.code-value, .client-copy textarea.code-value, .composer textarea { font
 .dispatch-summary { padding: 12px 0; border-top: 1px solid var(--border); }
 .dispatch-summary h3 { font-size: 1rem; }
 .dispatch-recipient-result .peer-transfer-summary { border: 0; }
+
+/* Durable outbox shares the file picker but keeps delivery evidence separate. */
+.outbox-mode, .outbox-preparation { margin-block: .75rem; padding: .75rem; border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
+.outbox-mode fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .75rem; }
+.outbox-mode label { display: flex; align-items: center; gap: .4rem; }
+.outbox-mode legend { margin-bottom: .5rem; font-weight: 600; }
+.outbox-view { display: grid; gap: 1rem; min-width: 0; }
+.outbox-card { border: 1px solid var(--border); padding: 1rem; border-radius: 12px; min-width: 0; }
+.outbox-card h3, .outbox-card p, .outbox-card li, .outbox-review, .outbox-preparation, .outbox-mode { overflow-wrap: anywhere; }
+.outbox-card p, .outbox-review p { margin-block: .6rem; }
+.outbox-card small, .outbox-review small { display: block; }
+.outbox-card ul, .outbox-review ul { padding-inline-start: 1.25rem; }
+.outbox-card details, .outbox-review details { margin-block: .75rem; }
+.outbox-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .75rem; }
+.outbox-actions button { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+@media (max-width: 480px) {
+  .outbox-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .outbox-mode fieldset { flex-direction: column; }
+  .outbox-card { padding: .75rem; }
+}

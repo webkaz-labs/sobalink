@@ -55,6 +55,8 @@ for (const locale of ['en', 'ja']) {
     const ja = locale === 'ja'
     await app.appearance(locale, ja ? 'dark' : 'light')
     const saved = page.getByRole('button', { name: ja ? '保存済みサービス' : 'Saved services', exact: true })
+    const outboxName = ja ? '送信待ち' : 'Outbox'
+    const outbox = page.locator('.primary-nav').getByRole('button', { name: outboxName, exact: true })
     const catalog = page.getByRole('button', { name: ja ? 'リソース' : 'Resources', exact: true })
     const group = page.getByRole('button', { name: ja ? 'グループの転送設定' : 'Group transfer settings', exact: true })
     const sidebar = page.locator('.device-sidebar')
@@ -102,10 +104,19 @@ for (const locale of ['en', 'ja']) {
       await page.locator('.network-map-button').focus()
       // Traverse each intervening header action with native Tab before opening
       // Saved services, checking both keyboard order and the full hit target.
-      for (const control of [catalog, group, saved]) {
+      for (const control of [outbox, catalog, group, saved]) {
         await page.keyboard.press('Tab')
         await expect(control).toBeFocused()
         await expectUncovered(control)
+        if (control === outbox) {
+          await page.keyboard.press('Enter')
+          const dialog = page.getByRole('dialog', { name: outboxName, exact: true })
+          await expect(dialog).toBeVisible()
+          await expect(dialog.getByText(ja ? '送信待ちのファイルはありません。' : 'No queued files.', { exact: true })).toBeVisible()
+          await page.keyboard.press('Escape')
+          await expect(page.getByRole('dialog')).toHaveCount(0)
+          await expect(outbox).toBeFocused()
+        }
       }
       await page.keyboard.press('Enter')
       await expect(page.locator('dialog .definition-toolbar')).toBeVisible()
@@ -114,6 +125,7 @@ for (const locale of ['en', 'ja']) {
       await expect(saved).toBeFocused()
       await expectFrame(page)
     }
-    for (const command of ['network.configure', 'service.connect', 'service.share', 'services.start', 'services.stop', 'service.save']) expect(await app.count(command)).toBe(0)
+    for (const command of ['network.configure', 'service.connect', 'service.share', 'services.start', 'services.stop', 'service.save', 'outbox.prepare', 'outbox.commit', 'outbox.cancel', 'outbox.discard']) expect(await app.count(command)).toBe(0)
+    expect(await page.evaluate(() => window.__sobaQA.uploads)).toBe(0)
   })
 }

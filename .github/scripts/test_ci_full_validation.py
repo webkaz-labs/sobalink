@@ -84,6 +84,39 @@ class FullProofTests(unittest.TestCase):
             self.assertEqual(result['required_steps_passed'].count('Verify native remote resource management'), 1)
             self.assertEqual(result['required_steps_passed'].count('Verify native fixed-group resource catalog'), 1)
 
+    def test_durable_outbox_missing_or_skipped_gate_blocks_release(self):
+        original = copy.deepcopy(self.jobs)
+        for name, gate in [(name, 'Verify durable outbox restart across Core processes')
+                           for name, _ in full.TARGETS.values()] + [
+                               ('browser', 'Verify durable outbox recovery with separate agents and actual browser')]:
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', 'pending'):
+                self.jobs = copy.deepcopy(original)
+                job = next(j for j in self.jobs if j['name'] == name)
+                step = next(s for s in job['steps'] if s['name'] == gate)
+                if mode == 'missing':
+                    job['steps'].remove(step)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(step))
+                elif mode == 'pending':
+                    step['status'] = 'in_progress'
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(target=name, mode=mode), self.assertRaises(ValueError):
+                    self.audit()
+
+    def test_durable_outbox_exact_execution_contract_is_required(self):
+        original = self.sources[full.WORKFLOW]
+        for change in (
+            (b'--expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessRestart', b'--expect Other'),
+            (b"./internal/core -run '^TestOutboxProcessRestart$'", b"./internal/core -run '^Other$'"),
+            (b'--expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxThreeProcessBrowser', b'--expect Other'),
+            (b'      - name: Verify durable outbox recovery with separate agents and actual browser\n',
+             b'      - name: Verify durable outbox recovery with separate agents and actual browser\n        if: false\n'),
+        ):
+            self.sources[full.WORKFLOW] = original.replace(*change, 1)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'durable outbox'):
+                full.required_jobs(self.sources)
+
     def test_native_resource_missing_duplicate_or_non_success_blocks_release(self):
         original = copy.deepcopy(self.jobs)
         for name, _ in full.TARGETS.values():

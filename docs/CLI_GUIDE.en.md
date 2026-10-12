@@ -80,7 +80,7 @@ Group lists and share confirmations show service names and scope as readable tex
 
 ## Review startup effects
 
-`soba autostart --json` shows the exact user-level sign-in registration and its public launch effects. Saved mode may reconnect the selected network, approved autosave receivers, valid explicitly enabled outbound startup selections and saved proxies. It lists their scopes and validity without credentials. Changed scope, stored credential revision or revocation requires a new review token. `--startup offline` suppresses those effects. Inbound shares and previous transfers do not resume.
+`soba autostart --json` shows the exact user-level sign-in registration and its public launch effects. Saved mode may reconnect the selected network, approved autosave receivers, valid explicitly enabled outbound startup selections and saved proxies. It lists their scopes and validity without credentials. Changed scope, stored credential revision or revocation requires a new review token. `--startup offline` suppresses those effects. Inbound shares and ordinary immediate transfers do not resume. Explicitly approved durable outbox requests have their own bounded restart authority; see [durable outbox](DURABLE_OUTBOX.en.md).
 
 See the [startup guide](STARTUP.en.md) for reviewing and managing those separate approvals. Registration preview does not change the OS or start the application.
 
@@ -89,3 +89,7 @@ See the [startup guide](STARTUP.en.md) for reviewing and managing those separate
 Port conflicts do not silently choose another port. For a stopped saved outbound connection, `soba service ports NAME_OR_ID` explicitly checks alternatives without changing its fixed port. Review the full definition and lifetime, then separately choose `soba service restart NAME_OR_ID --local-port PORT --expected-revision REVISION`. Proposals are not reservations; actual start rechecks every bind. See [alternate-port checks](PORT_PROPOSALS.en.md). You can also edit the reviewed local port or stop the conflicting listener deliberately. Refresh discovery after a grant or network change and select the current service again. Keep the agent and the provider application running for endpoint use.
 
 Credentials and private invitations do not belong in command arguments, shell history or logs. Use the existing private file/pipe input commands and explicit runtime approvals. No example above contains a credential or configures a real device.
+
+## Opt-in durable file outbox
+
+`soba send --queue --peer PEER_ID --expires-in 24h --json PATH` prepares a queue review without sending. The Web UI has the same explicit mode and deadline review. Queued means local acceptance, not delivered; unknown outcomes must be looked up by their original request ID. See [durable outbox](DURABLE_OUTBOX.en.md) for confirmation, restart, cancellation and the additive API contract.
