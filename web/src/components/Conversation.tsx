@@ -1,3 +1,5 @@
+import { DispatchTransfers } from './DispatchTransfers'
+import { readDispatchResult, samePeers, type DispatchCommitted, type PendingDispatch } from '../dispatch'
 import { PeerTransfers } from './PeerTransfers'
 import { retryExpected } from '../peer-transfers'
 import type { TransferFocus } from '../catalog/types'
@@ -46,13 +48,17 @@ function TransferCard({ transfer, peer, t, locale, server, destination, setDesti
   </article>
 }
 
-export interface DraftBatch { selection: api.UploadSelection; requestId: string }
+export interface DraftBatch { selection: api.UploadSelection; requestId: string; peerIds?: string[]; dispatch?: PendingDispatch }
 export interface UploadActivity { peerId: string; loaded: number; total: number; cancel: () => void }
 export function Conversation({ peer, state, t, locale, server, onTrust, drafts, setDrafts, batches, setBatches, receiveDestinations, setReceiveDestinations, onUploadChange, onReviewReceiving, focusTarget, retryResetToken = '' }: { retryResetToken?: string; focusTarget?: TransferFocus | null; onReviewReceiving?: () => void; peer: api.Peer; state: api.State; t: Translate; locale: api.Locale; server: Server; onTrust: () => void; drafts: Record<string, string>; setDrafts: Dispatch<SetStateAction<Record<string, string>>>; batches: Record<string, DraftBatch | undefined>; setBatches: Dispatch<SetStateAction<Record<string, DraftBatch | undefined>>>; receiveDestinations: Record<string, string | undefined>; setReceiveDestinations: Dispatch<SetStateAction<Record<string, string | undefined>>>; onUploadChange?: (activity: UploadActivity | null) => void }) {
   const ft = transferTranslator(locale)
   const [collecting, setCollecting] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState<{ peerId: string; loaded: number; total: number } | null>(null)
+  const [dispatchBusy, setDispatchBusy] = useState(false)
+  const [abandonConfirmed, setAbandonConfirmed] = useState(false)
+  const [dispatchReceipts, setDispatchReceipts] = useState<Record<string, DispatchCommitted | undefined>>({})
+  const dispatchOperation = useRef<'preparing' | 'committing' | 'checking' | null>(null)
   const [messageBlocked, setMessageBlocked] = useState<MessageBlock | null>(null)
   const uploadController = useRef<AbortController | null>(null)
   const dragDepth = useRef(0)
@@ -85,6 +91,14 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
   const maxBytes = budgets.batchBytes
   const pathLimits = { pathDepth: budgets.pathDepth, pathBytes: budgets.pathBytes }
   const allowed = api.canExchange(peer) && !server.stale
+  const recipientIds = batch?.peerIds || [peer.id]
+  const dispatchMayHaveSent = batch?.dispatch?.phase === 'committing' || batch?.dispatch?.phase === 'commit-unknown'
+  useEffect(() => { setAbandonConfirmed(false) }, [batch?.dispatch?.preparationId, batch?.dispatch?.phase])
+  const recipientsReady = recipientIds.every(id => state.peers.some(value => value.id === id && api.canExchange(value)))
+  const dispatchEpoch = `${peer.id}:${state.resourceCatalogProcessId}:${server.auth}:${server.stale}:${retryResetToken}`
+  const dispatchLatest = useRef({ epoch: dispatchEpoch, recipientIds, state, server })
+  dispatchLatest.current = { epoch: dispatchEpoch, recipientIds, state, server }
+  useEffect(() => () => { if (dispatchOperation.current === 'preparing') uploadController.current?.abort() }, [dispatchEpoch])
   const sending = server.busy.has(`message:${peer.id}`)
   const messages = state.messages.filter(item => item.peerId === peer.id)
   const transfers = state.transfers.filter(item => item.peerId === peer.id)
@@ -138,7 +152,7 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
     setBatches(current => ({ ...current, [target]: next }))
   }
   const select = async (collect: () => Promise<api.UploadSelection> | api.UploadSelection) => {
-    if (collectingRef.current || uploadController.current || !allowed) return
+    if (collectingRef.current || uploadController.current || batchesRef.current[peer.id]?.dispatch || !allowed) return
     const target = peer.id
     const generation = ++collectionGeneration.current
     collectingRef.current = true
@@ -155,25 +169,113 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
       const currentBudgets = api.exchangeBudgets(currentState)
       const selection = appendSelection(previous?.selection, addition, currentBudgets.batchEntries, currentBudgets.batchBytes, currentBudgets)
       validateSelection(selection, currentBudgets.batchEntries, currentBudgets.batchBytes, currentBudgets.fileBytes, currentBudgets)
-      if (selection !== previous?.selection) updateBatch(target, { selection, requestId: api.requestID() })
+      if (selection !== previous?.selection) updateBatch(target, { selection, requestId: api.requestID(), peerIds: previous?.peerIds })
     } catch (error) { if (generation === collectionGeneration.current) server.setError(error) }
     finally { if (generation === collectionGeneration.current) { collectingRef.current = false; setCollecting(false) } }
   }
   const pickFiles = (list: FileList | File[] | null) => { if (!list?.length) return; const files = Array.from(list); void select(() => fromFiles(files, maxFiles, maxBytes, pathLimits)) }
   const removeEntry = (path: string) => {
-    if (uploadController.current || collectingRef.current) return
+    if (uploadController.current || collectingRef.current || batchesRef.current[peer.id]?.dispatch) return
     const previous = batchesRef.current[peer.id]
     if (!previous) return
     const selection = removeSelection(previous.selection, path)
-    if (selection !== previous.selection) updateBatch(peer.id, selection.entries.length ? { selection, requestId: api.requestID() } : undefined)
+    if (selection !== previous.selection) updateBatch(peer.id, selection.entries.length ? { selection, requestId: api.requestID(), peerIds: previous.peerIds } : undefined)
   }
   const drop = (event: DragEvent) => {
     event.preventDefault(); dragDepth.current = 0; setDragging(false)
     if (allowed && !uploadController.current && !collectingRef.current) void select(() => fromDrop(event.dataTransfer, maxFiles, maxBytes, pathLimits))
   }
+  const changeRecipient = (id: string, checked: boolean) => {
+    const previous = batchesRef.current[peer.id]
+    if (!previous || previous.dispatch || uploadController.current || collectingRef.current || id === peer.id) return
+    const current = previous.peerIds || [peer.id]
+    const next = checked ? [...current, id] : current.filter(value => value !== id)
+    if (new Set(next).size !== next.length) return
+    updateBatch(peer.id, { ...previous, peerIds: next, requestId: api.requestID() })
+  }
+  const dispatchContext = (draft: DraftBatch, pending: PendingDispatch) => ({ processId: pending.processId, preparationId: pending.preparationId, peerIds: pending.peerIds, selection: draft.selection })
+  const retainDispatch = (target: string, draft: DraftBatch, pending: PendingDispatch) => {
+    const current = batchesRef.current[target]
+    if (alive.current && current?.requestId === draft.requestId && current.selection === draft.selection) updateBatch(target, { ...current, dispatch: pending })
+  }
+  const receivedDispatch = (target: string, draft: DraftBatch, receipt: DispatchCommitted) => {
+    if (!alive.current) return
+    setDispatchReceipts(current => ({ ...current, [target]: receipt }))
+    if (batchesRef.current[target]?.requestId === draft.requestId) updateBatch(target, undefined)
+  }
+  const inspectDispatch = async (discard = false) => {
+    const draft = batchesRef.current[peer.id], pending = draft?.dispatch
+    if (!draft || !pending || dispatchOperation.current || server.auth !== 'ready' || server.stale || pending.processId !== state.resourceCatalogProcessId) return
+    const target = peer.id
+    dispatchOperation.current = 'checking'; setDispatchBusy(true); server.setError(null)
+    try {
+      const response = await api.command(discard ? 'transfer.dispatch.discard' : 'transfer.dispatch.status', { processId: pending.processId, preparationId: pending.preparationId })
+      const result = readDispatchResult(response.result, dispatchContext(draft, pending))
+      if (result.status === 'committed') receivedDispatch(target, draft, result)
+      else if (result.status === 'prepared') retainDispatch(target, draft, { ...pending, phase: 'prepared', review: result })
+      else if (alive.current && batchesRef.current[target]?.requestId === draft.requestId) updateBatch(target, { selection: draft.selection, peerIds: pending.peerIds, requestId: api.requestID() })
+      await server.refresh(true)
+    } catch (error) { if (alive.current) server.handleError(error) }
+    finally { dispatchOperation.current = null; if (alive.current) setDispatchBusy(false) }
+  }
+  const abandonDispatchDraft = () => {
+    const draft = batchesRef.current[peer.id]
+    if (!draft?.dispatch || dispatchOperation.current || dispatchMayHaveSent && !abandonConfirmed) return
+    // This explicit local action never discards an unknown committed operation
+    // or creates a new send. The user may inspect the retained Core receipt.
+    updateBatch(peer.id, undefined)
+    setAbandonConfirmed(false)
+  }
+  const sendToRecipients = async (draft: DraftBatch) => {
+    const target = peer.id, selected = [...(draft.peerIds || [target])], started = dispatchEpoch
+    const processId = state.resourceCatalogProcessId
+    if (!processId || !/^[a-f0-9]{64}$/.test(processId) || dispatchOperation.current || !recipientsReady || server.auth !== 'ready') return
+    const controller = new AbortController()
+    let pending: PendingDispatch = draft.dispatch || { processId, preparationId: draft.requestId, peerIds: selected, phase: 'preparing' }
+    if (pending.processId !== processId || !samePeers(pending.peerIds, selected) || draft.dispatch && pending.phase !== 'prepared') return
+    uploadController.current = controller; setDispatchBusy(true); server.setError(null)
+    const current = () => {
+      const latest = dispatchLatest.current, saved = batchesRef.current[target]
+      return alive.current && !controller.signal.aborted && latest.epoch === started && latest.server.auth === 'ready' && !latest.server.stale
+        && saved?.requestId === draft.requestId && saved.selection === draft.selection && samePeers(saved.peerIds || [target], selected)
+        && selected.every(id => latest.state.peers.some(value => value.id === id && api.canExchange(value)))
+    }
+    try {
+      if (!pending.review) {
+        dispatchOperation.current = 'preparing'; retainDispatch(target, draft, pending)
+        setUploading({ peerId: target, loaded: 0, total: 0 })
+        const response = await api.uploadDispatch(selected, processId, draft.selection, draft.requestId, (loaded, total) => { if (alive.current) setUploading({ peerId: target, loaded, total }) }, controller.signal)
+        const prepared = readDispatchResult(response.result, dispatchContext(draft, pending))
+        if (prepared.status === 'committed') { receivedDispatch(target, draft, prepared); return }
+        if (prepared.status !== 'prepared') throw new api.ApiError('invalid_response', '')
+        pending = { ...pending, phase: 'prepared', review: prepared }
+        retainDispatch(target, draft, pending)
+      }
+      if (!current()) {
+        // Navigation or changed authentication cannot commit a delayed preparation.
+        try {
+          const discarded = await api.command('transfer.dispatch.discard', { processId, preparationId: pending.preparationId })
+          if (readDispatchResult(discarded.result, dispatchContext(draft, pending)).status === 'discarded' && alive.current && batchesRef.current[target]?.requestId === draft.requestId) updateBatch(target, { selection: draft.selection, peerIds: selected, requestId: api.requestID() })
+        } catch { /* Keep the original reference available for explicit status. */ }
+        return
+      }
+      setUploading(null); dispatchOperation.current = 'committing'
+      pending = { ...pending, phase: 'committing' }; retainDispatch(target, draft, pending)
+      const response = await api.command('transfer.dispatch.commit', { processId, preparationId: pending.preparationId, reviewRevision: pending.review!.reviewRevision, confirm: true })
+      const committed = readDispatchResult(response.result, dispatchContext(draft, pending))
+      if (committed.status !== 'committed') throw new api.ApiError('invalid_response', '')
+      receivedDispatch(target, draft, committed)
+      await server.refresh(true)
+    } catch (error) {
+      retainDispatch(target, draft, { ...pending, phase: dispatchOperation.current === 'committing' ? 'commit-unknown' : pending.review ? 'prepared' : 'prepare-unknown' })
+      if (alive.current && !controller.signal.aborted) server.handleError(error)
+      if (alive.current) await server.refresh()
+    } finally { dispatchOperation.current = null; uploadController.current = null; if (alive.current) { setUploading(null); setDispatchBusy(false) } }
+  }
   const sendBatch = async () => {
-    if (!allowed || !batch || uploadController.current || collectingRef.current) return
+    if (!allowed || !batch || uploadController.current || collectingRef.current || dispatchOperation.current) return
     try { validateSelection(batch.selection, maxFiles, maxBytes, budgets.fileBytes, pathLimits) } catch (error) { server.setError(error); return }
+    if (batch.dispatch || (batch.peerIds?.length || 1) > 1) { await sendToRecipients(batch); return }
     const target = peer.id
     const controller = new AbortController()
     uploadController.current = controller
@@ -206,9 +308,11 @@ export function Conversation({ peer, state, t, locale, server, onTrust, drafts, 
     <div className="composer-area">
       {messageBlocked && <div id={`${composerId}-safety`}><ErrorBanner message={t(messageBlocked)} t={t} /></div>}
       {reason && <div className="peer-notice"><Icon name={reason === 'needsTrust' ? 'shield' : 'info'} /><p>{t(reason)}</p>{reason === 'needsTrust' && <Button variant="primary" onClick={onTrust} busy={server.busy.has(`trust:${peer.id}`)}>{t('trustDevice')}</Button>}{reason === 'peerPaused' && <Button disabled={!peer.verified || !peer.trusted || server.stale} busy={server.busy.has(`autosave:${peer.id}`)} onClick={() => server.run('peer.autosave', { peerId: peer.id, paused: false }, `autosave:${peer.id}`)}>{t('resume')}</Button>}</div>}
-      {batch && <section className="batch-preview" aria-label={t('preview')}><div className="batch-heading"><div><p className="eyebrow">{t('preview')}</p><h3>{t('to')}: {peer.name}</h3></div><IconButton icon="close" label={t('cancel')} disabled={Boolean(uploading) || collecting} onClick={() => updateBatch(peer.id, undefined)} /></div><ul className="preview-files">{batch.selection.entries.map(entry => <li key={entry.path}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} size={15} /><span>{entry.path}</span><small>{entry.kind === 'file' ? bytes(entry.size, locale) : t('folders')}</small><IconButton icon="close" label={`${ft('removeEntry')}: ${entry.path}`} disabled={Boolean(uploading) || collecting} onClick={() => removeEntry(entry.path)} /></li>)}</ul><div className="batch-footer"><span>{batch.selection.entries.length} {t(batch.selection.entries.length === 1 ? 'item' : 'items')} · {bytes(batch.selection.entries.reduce((sum, item) => sum + item.size, 0), locale)}</span><Button variant="primary" onClick={sendBatch} disabled={!allowed || Boolean(uploading) || collecting}><Icon name="send" size={15} />{t('sendBatch')}</Button></div></section>}
+      {batch && <section className="batch-preview" aria-label={t('preview')}><div className="batch-heading"><div><p className="eyebrow">{t('preview')}</p><h3>{t('to')}: {peer.name}</h3></div><IconButton icon="close" label={t('cancel')} disabled={Boolean(uploading) || collecting || !!batch.dispatch} onClick={() => updateBatch(peer.id, undefined)} /></div><fieldset className="dispatch-recipients" disabled={Boolean(uploading) || collecting || dispatchBusy || !!batch.dispatch}><legend>{ft('recipients')}</legend><p className="small muted">{ft('recipientHint')}</p><ul>{[peer, ...state.peers.filter(value => value.id !== peer.id && (api.canExchange(value) || recipientIds.includes(value.id))), ...recipientIds.filter(id => id !== peer.id && !state.peers.some(value => value.id === id)).map(id => ({ id, name: id, online: false, verified: false, trusted: false, bridge: false } as api.Peer))].map(recipient => <li key={recipient.id}><label><input type="checkbox" checked={recipientIds.includes(recipient.id)} disabled={recipient.id === peer.id || !api.canExchange(recipient) && !recipientIds.includes(recipient.id)} onChange={event => changeRecipient(recipient.id, event.target.checked)} /><span>{recipient.name}<small className="muted">{recipient.id}</small>{!api.canExchange(recipient) && <small className="field-error">{ft('recipientUnavailable')}</small>}</span></label></li>)}</ul></fieldset><p className="small dispatch-selected">{ft('selectedRecipients')}: {recipientIds.map(id => state.peers.find(value => value.id === id)?.name || id).join(', ')}</p><ul className="preview-files">{batch.selection.entries.map(entry => <li key={entry.path}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} size={15} /><span>{entry.path}</span><small>{entry.kind === 'file' ? bytes(entry.size, locale) : t('folders')}</small><IconButton icon="close" label={`${ft('removeEntry')}: ${entry.path}`} disabled={Boolean(uploading) || collecting || !!batch.dispatch} onClick={() => removeEntry(entry.path)} /></li>)}</ul><div className="batch-footer"><span>{batch.selection.entries.length} {t(batch.selection.entries.length === 1 ? 'item' : 'items')} · {bytes(batch.selection.entries.reduce((sum, item) => sum + item.size, 0), locale)}</span><Button variant="primary" onClick={sendBatch} busy={dispatchBusy} disabled={!allowed || !recipientsReady || Boolean(uploading) || collecting || dispatchBusy || !!batch.dispatch && batch.dispatch.phase !== 'prepared' || !!batch.dispatch && batch.dispatch.processId !== state.resourceCatalogProcessId}><Icon name="send" size={15} />{batch.dispatch?.phase === 'prepared' ? ft('sendPrepared') : t('sendBatch')}</Button></div></section>}
+      {batch?.dispatch && <section className="dispatch-pending" role="status"><p>{ft(batch.dispatch.processId !== state.resourceCatalogProcessId ? 'dispatchExpired' : batch.dispatch.phase === 'preparing' ? 'preparingRecipients' : batch.dispatch.phase === 'committing' ? 'committingRecipients' : batch.dispatch.phase === 'prepared' ? 'dispatchPrepared' : batch.dispatch.phase === 'prepare-unknown' ? 'prepareUnknown' : 'dispatchUnknown')}</p><div className="transfer-actions"><Button disabled={dispatchBusy || server.auth !== 'ready' || server.stale || batch.dispatch.processId !== state.resourceCatalogProcessId} onClick={() => void inspectDispatch()}>{ft('checkDispatch')}</Button>{batch.dispatch.phase === 'prepared' && <Button disabled={dispatchBusy || server.auth !== 'ready' || server.stale || batch.dispatch.processId !== state.resourceCatalogProcessId} onClick={() => void inspectDispatch(true)}>{ft('discardPrepared')}</Button>}</div>{!dispatchBusy && <><p className="small muted">{ft('requestReference')}: <span className="code-value">{batch.dispatch.preparationId}</span></p><p className="small muted">{ft(dispatchMayHaveSent ? 'abandonUnknownHint' : 'abandonPreparedHint')}</p>{dispatchMayHaveSent && <label className="small"><input type="checkbox" checked={abandonConfirmed} onChange={event => setAbandonConfirmed(event.target.checked)} /> {ft('acknowledgeUnknown')}</label>}<Button variant="ghost" disabled={dispatchMayHaveSent && !abandonConfirmed} onClick={abandonDispatchDraft}>{ft('abandonDraft')}</Button></>}</section>}
+      {dispatchReceipts[peer.id] && <DispatchTransfers receipt={dispatchReceipts[peer.id]!} state={state} server={server} locale={locale} resetToken={retryResetToken} />}
       {uploading?.peerId === peer.id && <section className="upload-progress" aria-live="polite"><div><Icon name="upload" /><strong>{t('staging')}</strong><Button variant="ghost" onClick={() => uploadController.current?.abort()}>{t('cancel')}</Button></div><progress {...(uploading.total ? { value: uploading.loaded, max: uploading.total } : {})} aria-label={t('staging')} /><p className="small muted">{t('stagingHint')}</p></section>}
-      {peer.bridge && <><div className={`composer ${!allowed ? 'composer-disabled' : ''}`}><label className="composer-label" htmlFor={composerId}>{t('composerLabel')}</label><textarea id={composerId} ref={composerRef} value={message} onChange={event => setMessage(event.target.value)} onKeyDown={keyDown} onPaste={event => { const images = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (images.length && allowed && !uploadController.current && !collectingRef.current) { event.preventDefault(); void select(() => fromClipboardImages(images, batchesRef.current[peer.id]?.selection, maxFiles, maxBytes, pathLimits)) } }} placeholder={t('messagePlaceholder')} aria-label={t('messagePlaceholder')} aria-describedby={`composer-hint${messageBlocked ? ` ${composerId}-safety` : ''}`} rows={2} disabled={!allowed}  /><div className="composer-tools"><div className="flex items-center gap-1"><IconButton icon="clip" label={t('attach')} disabled={!allowed || collecting || Boolean(uploading)} onClick={() => filesRef.current?.click()} /><IconButton icon="folder" label={t('attachFolder')} disabled={!allowed || collecting || Boolean(uploading)} onClick={() => folderRef.current?.click()} />{collecting && <span className="small muted">{t('loading')}</span>}</div><Button variant="primary" className="send-button" aria-label={t('sendMessage')} disabled={!allowed || !message.trim() || Boolean(messageBlocked)} busy={sending} onClick={send}>{t('send')}<Icon name="send" size={15} /></Button></div></div><div className="composer-hints"><span id="composer-hint">{t('composerHint')} · {t('effectiveMessageLimit')}: {bytes(budgets.messageBytes, locale)}</span><span title={`${t('batchLimit')}: ${maxFiles} ${t('items')} · ${bytes(maxBytes, locale)}`}>{maxFiles} {t('items')} / {bytes(maxBytes, locale)}</span></div><details className="input-help"><summary><Icon name="info" size={13} />{t('inputTips')}</summary><p>{t('pasteHint')}</p><p>{t('folderLimit')}</p><p>{t('effectiveMessageLimit')}: {bytes(budgets.messageBytes, locale)}</p><p>{t('effectiveFileLimit')}: {bytes(budgets.fileBytes, locale)}</p><p>{t('effectivePathLimit')}: {budgets.pathDepth} {t('pathLevels')} / {bytes(budgets.pathBytes, locale)}</p><p>{t('finiteResourceHint')}</p></details><input hidden ref={filesRef} type="file" multiple aria-label={t('attach')} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /><input hidden ref={folderRef} type="file" multiple aria-label={t('attachFolder')} {...{ webkitdirectory: '', directory: '' }} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /></>}
+      {peer.bridge && <><div className={`composer ${!allowed ? 'composer-disabled' : ''}`}><label className="composer-label" htmlFor={composerId}>{t('composerLabel')}</label><textarea id={composerId} ref={composerRef} value={message} onChange={event => setMessage(event.target.value)} onKeyDown={keyDown} onPaste={event => { const images = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (images.length && allowed && !uploadController.current && !collectingRef.current) { event.preventDefault(); void select(() => fromClipboardImages(images, batchesRef.current[peer.id]?.selection, maxFiles, maxBytes, pathLimits)) } }} placeholder={t('messagePlaceholder')} aria-label={t('messagePlaceholder')} aria-describedby={`composer-hint${messageBlocked ? ` ${composerId}-safety` : ''}`} rows={2} disabled={!allowed}  /><div className="composer-tools"><div className="flex items-center gap-1"><IconButton icon="clip" label={t('attach')} disabled={!allowed || collecting || Boolean(uploading) || !!batch?.dispatch} onClick={() => filesRef.current?.click()} /><IconButton icon="folder" label={t('attachFolder')} disabled={!allowed || collecting || Boolean(uploading) || !!batch?.dispatch} onClick={() => folderRef.current?.click()} />{collecting && <span className="small muted">{t('loading')}</span>}</div><Button variant="primary" className="send-button" aria-label={t('sendMessage')} disabled={!allowed || !message.trim() || Boolean(messageBlocked)} busy={sending} onClick={send}>{t('send')}<Icon name="send" size={15} /></Button></div></div><div className="composer-hints"><span id="composer-hint">{t('composerHint')} · {t('effectiveMessageLimit')}: {bytes(budgets.messageBytes, locale)}</span><span title={`${t('batchLimit')}: ${maxFiles} ${t('items')} · ${bytes(maxBytes, locale)}`}>{maxFiles} {t('items')} / {bytes(maxBytes, locale)}</span></div><details className="input-help"><summary><Icon name="info" size={13} />{t('inputTips')}</summary><p>{t('pasteHint')}</p><p>{t('folderLimit')}</p><p>{t('effectiveMessageLimit')}: {bytes(budgets.messageBytes, locale)}</p><p>{t('effectiveFileLimit')}: {bytes(budgets.fileBytes, locale)}</p><p>{t('effectivePathLimit')}: {budgets.pathDepth} {t('pathLevels')} / {bytes(budgets.pathBytes, locale)}</p><p>{t('finiteResourceHint')}</p></details><input hidden ref={filesRef} type="file" multiple aria-label={t('attach')} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /><input hidden ref={folderRef} type="file" multiple aria-label={t('attachFolder')} {...{ webkitdirectory: '', directory: '' }} onChange={event => { pickFiles(event.target.files); event.target.value = '' }} /></>}
     </div>
   </div>
 }

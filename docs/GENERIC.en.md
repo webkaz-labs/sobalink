@@ -226,6 +226,22 @@ The CLI resolves relative paths from its working directory. Choose an appropriat
 
 Decline a batch in the UI to refuse it. Cancel to stop ongoing work. Once the sender confirms receiver rejection or cancellation, the batch is terminal: its sending copies are removed and staging capacity is released. It cannot be retried; choose the files again to offer a new batch. A temporary communication failure remains retryable and retains its sending copies. If cleanup fails, the capacity stays reserved until cleanup succeeds. Canceling or revoking does not delete already saved files or retrieve data already sent.
 
+### Send the same files to selected devices (source build)
+
+In the existing file review, check additional recipients, review every selected device and file, and choose **Send batch**. Only the current conversation is selected initially. Online presence does not guarantee delivery; each recipient's approval and save result are independent.
+
+```sh
+soba send --peer PEER_A --peer PEER_B ./sample.txt ./sample-folder
+```
+
+The CLI prepares one local copy before reviewing exact recipients and contents. `--confirm` explicitly confirms the specified send; `--json` alone returns only the preparation and does not send. Existing `soba send PEER_ID PATH...` remains available.
+
+Recipients, trust and contents are checked again before commitment. A changed selection is rejected before peer delivery. After commitment, each recipient uses an ordinary transfer with separate success, failure and progress. Completed recipients are not resent; select only currently eligible failed transfers for retry. Declines and cancellations are not automatically resumed.
+
+Preparation is local storage. Upload completion and request acceptance are not delivery completion. If a reply is uncertain, use **Check this request** for the original request rather than creating another send. `send --help` describes status, commit and discard using the original preparation and process IDs. A failure before commitment has no child transfers. Check original delivery results before closing an uncertain draft.
+
+The shared sending copy is charged once; per-recipient records and concurrent sends use separate finite budgets. Completing one recipient does not delete another recipient's retry data. Automatic audience selection, group text messages, synchronization, a durable outbox and delivery resumption after restart are excluded. This describes source behavior, not published-binary or physical-device acceptance.
+
 ### Retry selected failed transfers (source build)
 
 Open a peer's conversation to see completed, failed and ongoing transfers. Select only the failed transfers you want to retry. The existing retry operation preserves successful files and retries failed files. A retry acknowledgement means the request was accepted; wait for the transfer's completed state to confirm delivery.

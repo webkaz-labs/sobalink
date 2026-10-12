@@ -45,6 +45,7 @@
 | `transferManifestBytes`・`transferMetadataBytes` | マニフェストの計上256 KiB、保持する転送メタデータ1 MiB |
 | `transferPending`・`transferPendingPerPeer` | 待機転送32件、相手ごと8件 |
 | `transferConcurrentFiles`・`transferConcurrentPerPeer` | 同時ファイル4本、相手ごと2本 |
+| `transferConcurrentRecipients` | 送信先4台（全送信・再試行の同時実行） |
 | `stagingInventoryEntries`・`stagingInventoryDepth` | 一時保存の調査100,000項目・64階層 |
 | `discoveryBytes`・`pageBytes`・`pageEntries` | 探索応答256 KiB、ローカルページ1 MiB・128項目 |
 
