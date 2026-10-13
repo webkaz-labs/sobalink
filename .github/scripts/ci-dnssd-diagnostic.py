@@ -36,19 +36,22 @@ COUNTERS = {'receivedPackets', 'receivedBytes', 'metadataAccepted', 'metadataRej
             'decodedPackets', 'decodeRejected', 'rateLimitedPackets', 'matchingRecordKinds'}
 STAGES = {'none', 'allocation', 'unknown', 'create_connection', 'schedule', 'registration', 'query', 'callback', 'admission'}
 KINDS = {'none', 'unavailable', 'permission_denied', 'name_conflict', 'invalid_argument', 'unsupported'}
-LEGACY_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined',
+LEGACY_FLAGS = {'nativeSendAttempted', 'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined',
                 'rawPacketVerified', 'networkMulticastVerified'}
-LEGACY_PROOF_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined'}
-LEGACY_KEYS = LEGACY_FLAGS | {'status', 'reason', 'scope', 'receivePath', 'failureStage', 'failureKind', 'receiveCounters'}
-LEGACY_SOCKET_STAGES = {'legacy_socket', 'legacy_deadline', 'legacy_send', 'legacy_receive'}
+LEGACY_PROOF_FLAGS = {'nativeSendAttempted', 'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined'}
+LEGACY_KEYS = LEGACY_FLAGS | {'status', 'reason', 'scope', 'receivePath', 'failureStage', 'failureKind', 'receiveCounters', 'sendPrimitive', 'socketReadback', 'routeLookup'}
+READBACK_KEYS = {'boundEndpoint', 'boundInterface', 'multicastInterface', 'multicastAddress', 'multicastTTL', 'multicastLoopback', 'nonblocking'}
+ROUTE_FLAGS = {'destinationMatched', 'interfaceMatched', 'up', 'multicast', 'scoped', 'reject', 'blackhole', 'ownerJoined'}
+ROUTE_STATUSES = {'observed', 'unavailable', 'timeout', 'output_limit', 'invalid'}
+LEGACY_SOCKET_STAGES = {'legacy_socket', 'legacy_readback', 'legacy_deadline', 'legacy_send', 'legacy_receive'}
 LEGACY_SEND_KINDS = {'invalid_argument', 'source_unavailable', 'network_unreachable',
     'host_unreachable', 'permission_denied', 'unsupported', 'timeout', 'other', 'short_payload'}
-LEGACY_STAGE_KINDS = {'legacy_socket': {'unavailable'}, 'legacy_receive': {'unavailable'},
+LEGACY_STAGE_KINDS = {'legacy_readback': {'unavailable', 'mismatch'}, 'legacy_socket': {'unavailable'}, 'legacy_receive': {'unavailable'},
     'legacy_deadline': LEGACY_SEND_KINDS - {'short_payload'}, 'legacy_send': LEGACY_SEND_KINDS}
 LEGACY_UNAVAILABLE = {'readiness_deadline', 'reply_deadline', 'private_scope_unavailable',
     'loopback_scope_unavailable', 'selected_binding_changed', 'native_api_unavailable',
-    'legacy_socket_unavailable', 'legacy_deadline_unavailable', 'legacy_send_unavailable', 'legacy_receive_unavailable'}
-LEGACY_FAILED = {'fixture_unavailable', 'provider_invariant', 'receive_budget',
+    'legacy_socket_unavailable', 'legacy_readback_unavailable', 'legacy_deadline_unavailable', 'legacy_send_unavailable', 'legacy_receive_unavailable'}
+LEGACY_FAILED = {'socket_readback_mismatch', 'fixture_unavailable', 'provider_invariant', 'receive_budget',
                  'cleanup_uncertain', 'owners_not_joined', 'owners_missing'}
 UNAVAILABLE = {'deadline', 'loopback_scope_unavailable', 'private_scope_unavailable', 'native_api_unavailable',
                'selected_binding_changed', 'raw_receiver_unavailable', 'raw_receive_unavailable'}
@@ -93,6 +96,8 @@ POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/
     'internal/nearby/dnssd_native_acceptance_test.go', 'internal/nearby/dnssd_raw_receive_test.go',
     'internal/nearby/dnssd_capability_test.go', 'internal/nearby/dnssd_wire_evidence_test.go',
     'internal/nearby/dnssd_legacy_native_test.go', 'internal/nearby/dnssd_legacy_send_unix_test.go',
+    'internal/nearby/dnssd_socket_diagnostic_test.go', 'internal/nearby/dnssd_socket_native_test.go',
+    'internal/nearby/dnssdprobe/probe_darwin.go',
     'go.mod', 'go.sum')
 
 
@@ -165,20 +170,55 @@ def capability(value, scope):
     return {key: counts if key == 'receiveCounters' else value[key] for key in sorted(KEYS)}
 
 
+def socket_readback(value):
+    if value is None:
+        return None
+    if type(value) is not dict or set(value) != READBACK_KEYS or any(type(item) is not str or item not in {'matched', 'mismatch', 'unavailable'} for item in value.values()):
+        raise ValueError('invalid closed socket readback')
+    return {key: value[key] for key in sorted(READBACK_KEYS)}
+
+
+def readback_state(value):
+    if value is None or 'unavailable' in value.values():
+        return 'unavailable'
+    return 'matched' if all(value[key] == 'matched' for key in READBACK_KEYS - {'multicastAddress'}) else 'mismatch'
+
+
+def route_lookup(value):
+    if value is None:
+        return None
+    if (type(value) is not dict or set(value) != ROUTE_FLAGS | {'status'}
+            or any(type(value[key]) is not bool for key in ROUTE_FLAGS)
+            or type(value['status']) is not str or value['status'] not in ROUTE_STATUSES
+            or value['status'] != 'observed' and any(value[key] for key in ROUTE_FLAGS - {'ownerJoined'})):
+        raise ValueError('invalid closed route snapshot')
+    return {key: value[key] for key in sorted(value)}
+
+
 def legacy_capability(value):
     # Legacy unicast DNS serialization has a different envelope and admission
     # contract. It cannot enter the four original capability/proof definitions.
     if (type(value) is not dict or set(value) != LEGACY_KEYS
             or any(type(value[key]) is not bool for key in LEGACY_FLAGS)
-            or any(type(value[key]) is not str for key in LEGACY_KEYS - LEGACY_FLAGS - {'receiveCounters'})
+            or any(type(value[key]) is not str for key in LEGACY_KEYS - LEGACY_FLAGS - {'receiveCounters', 'socketReadback', 'routeLookup'})
+            or value['sendPrimitive'] != 'native_c_sendto'
             or value['scope'] != LEGACY_SCOPE or value['receivePath'] not in {'none', 'selected_interface', 'local_loopback'}
             or value['failureStage'] not in STAGES | LEGACY_SOCKET_STAGES
-            or value['failureKind'] not in KINDS | LEGACY_SEND_KINDS
+            or value['failureKind'] not in KINDS | LEGACY_SEND_KINDS | {'mismatch'}
             or value['rawPacketVerified'] or value['networkMulticastVerified']):
         raise ValueError('invalid closed legacy DNS receipt')
     counts = receive_counters(value['receiveCounters'])
+    options = socket_readback(value['socketReadback'])
+    route = route_lookup(value['routeLookup'])
+    if ((options is not None or route is not None) and not value['apiRecordsReady']
+            or value['nativeSendAttempted'] and (not value['apiRecordsReady'] or readback_state(options) != 'matched'
+            or route is None or not route['ownerJoined'])
+            or value['oneQuerySent'] and not value['nativeSendAttempted']
+            or route is not None and not route['ownerJoined'] and value['status'] != 'failed'):
+        raise ValueError('native send escaped verified socket ownership')
     stage, kind, status, reason = (value[key] for key in ('failureStage', 'failureKind', 'status', 'reason'))
     if ((stage == 'none') != (kind == 'none')
+            or stage == 'legacy_readback' and options is None
             or kind == 'short_payload' and stage != 'legacy_send'
             or stage in LEGACY_SOCKET_STAGES and kind not in LEGACY_STAGE_KINDS[stage]
             or stage in STAGES and kind not in KINDS
@@ -197,7 +237,7 @@ def legacy_capability(value):
             if stage not in STAGES - {'none'}:
                 raise ValueError('missing native API classification')
         elif reason in {item + '_unavailable' for item in LEGACY_SOCKET_STAGES}:
-            if stage != reason.removesuffix('_unavailable'):
+            if stage != reason.removesuffix('_unavailable') or stage == 'legacy_readback' and (kind != 'unavailable' or readback_state(options) != 'unavailable'):
                 raise ValueError('incorrect legacy socket classification')
         elif stage != 'none':
             raise ValueError('unexpected legacy failure classification')
@@ -205,8 +245,10 @@ def legacy_capability(value):
         # Cleanup failure can retain the originating fixed API/socket category.
         if reason not in LEGACY_FAILED:
             raise ValueError('unknown legacy DNS invariant failure')
+        if reason == 'socket_readback_mismatch' and (stage != 'legacy_readback' or kind != 'mismatch' or readback_state(options) != 'mismatch'):
+            raise ValueError('invalid socket mismatch evidence')
     elif status == 'not_run':
-        if (reason != 'opt_in_required' or stage != 'none' or value['receivePath'] != 'none'
+        if (reason != 'opt_in_required' or stage != 'none' or value['receivePath'] != 'none' or options is not None or route is not None
                 or any(value[key] for key in LEGACY_FLAGS)):
             raise ValueError('invalid legacy opt-in receipt')
     else:
@@ -216,7 +258,7 @@ def legacy_capability(value):
     if counts is not None and ((value['receivePath'] != 'none') != (counts['decodedPackets'] > 0)
             or counts['decodedPackets'] > 0 and not value['oneQuerySent']):
         raise ValueError('incomplete legacy receive route')
-    return {key: counts if key == 'receiveCounters' else value[key] for key in sorted(LEGACY_KEYS)}
+    return {key: counts if key == 'receiveCounters' else options if key == 'socketReadback' else route if key == 'routeLookup' else value[key] for key in sorted(LEGACY_KEYS)}
 
 
 def test_events(raw, returncode):

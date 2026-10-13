@@ -27,7 +27,9 @@ def record(scope, status='verified', **changes):
     if scope == gate.LEGACY_SCOPE:
         value = {'scope': scope, 'status': status,
                  'reason': 'native_legacy_serialization_observed' if status == 'verified' else 'reply_deadline',
-                 'failureStage': 'none', 'failureKind': 'none',
+                 'failureStage': 'none', 'failureKind': 'none', 'sendPrimitive': 'native_c_sendto',
+                 'socketReadback': {key: 'matched' for key in gate.READBACK_KEYS} if status == 'verified' else None,
+                 'routeLookup': dict(status='observed', **{key: key in {'destinationMatched', 'interfaceMatched', 'up', 'multicast', 'scoped', 'ownerJoined'} for key in gate.ROUTE_FLAGS}) if status == 'verified' else None,
                  'receivePath': 'selected_interface' if status == 'verified' else 'none',
                  'receiveCounters': counters(status == 'verified'),
                  **{flag: status == 'verified' and flag in gate.LEGACY_PROOF_FLAGS for flag in gate.LEGACY_FLAGS}}
@@ -214,13 +216,15 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 stage = reason.removesuffix('_unavailable')
                 kind = 'other' if stage in {'legacy_deadline', 'legacy_send'} else 'unavailable'
             value = record(gate.LEGACY_SCOPE, 'unavailable', reason=reason,
-                           failureStage=stage, failureKind=kind)
+                           failureStage=stage, failureKind=kind,
+                           apiRecordsReady=stage == 'legacy_readback',
+                           socketReadback={key: 'unavailable' for key in gate.READBACK_KEYS} if stage == 'legacy_readback' else None)
             self.assertEqual(gate.legacy_capability(value), value)
             current = dict(records, **{gate.LEGACY_SCOPE: value})
             got, accepted = gate.test_events(raw(events(current)), 0)
             self.assertTrue(accepted)
             self.assertEqual(got[gate.LEGACY_SCOPE], value)
-        for reason in gate.LEGACY_FAILED:
+        for reason in gate.LEGACY_FAILED - {'socket_readback_mismatch'}:
             value = record(gate.LEGACY_SCOPE, 'failed', reason=reason,
                            apiRecordsReady=True, failureStage='legacy_send', failureKind='short_payload')
             self.assertEqual(gate.legacy_capability(value), value)
@@ -228,7 +232,8 @@ class DNSSDDiagnosticTests(unittest.TestCase):
             got, accepted = gate.test_events(raw(events(current)), 1)
             self.assertFalse(accepted)
             self.assertEqual(got[gate.LEGACY_SCOPE], value)
-        partial = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True, oneQuerySent=True,
+        partial = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True, oneQuerySent=True, nativeSendAttempted=True,
+                         socketReadback=record(gate.LEGACY_SCOPE)['socketReadback'], routeLookup=record(gate.LEGACY_SCOPE)['routeLookup'],
                          receivePath='local_loopback', receiveCounters=dict(counters(True), matchingRecordKinds=3))
         self.assertEqual(gate.legacy_capability(partial), partial)
         for changes in ({'reason': 'deadline'}, {'failureStage': 'legacy_send', 'failureKind': 'short_payload'},
@@ -248,9 +253,10 @@ class DNSSDDiagnosticTests(unittest.TestCase):
 
     def test_legacy_deadline_and_send_error_classes_are_separate(self):
         for stage, kinds in gate.LEGACY_STAGE_KINDS.items():
-            for kind in kinds:
+            for kind in kinds - {'mismatch'}:
                 value = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True,
-                               reason=stage + '_unavailable', failureStage=stage, failureKind=kind)
+                               reason=stage + '_unavailable', failureStage=stage, failureKind=kind,
+                               socketReadback={key: 'unavailable' for key in gate.READBACK_KEYS} if stage == 'legacy_readback' else None)
                 self.assertEqual(gate.legacy_capability(value), value)
                 self.assertFalse(value['oneQuerySent'])
                 self.assertFalse(value['legacySerializationVerified'])
@@ -266,6 +272,34 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 gate.legacy_capability(record(gate.LEGACY_SCOPE, 'unavailable',
                     reason='native_api_unavailable' if stage == 'query' else stage + '_unavailable',
                     apiRecordsReady=True, failureStage=stage, failureKind=kind))
+
+    def test_native_readback_route_and_send_boundaries(self):
+        good = record(gate.LEGACY_SCOPE)
+        for key in gate.READBACK_KEYS:
+            for state in ('unavailable', 'mismatch'):
+                changed = dict(good, socketReadback=dict(good['socketReadback'], **{key: state}))
+                if key == 'multicastAddress' and state == 'mismatch':
+                    self.assertEqual(gate.legacy_capability(changed), changed)
+                else:
+                    with self.assertRaises(ValueError): gate.legacy_capability(changed)
+        for value in (dict(good['socketReadback'], localAddress='synthetic-private'), {}, [], {'boundEndpoint': 1}):
+            with self.assertRaises(ValueError): gate.socket_readback(value)
+        mismatch = record(gate.LEGACY_SCOPE, 'failed', reason='socket_readback_mismatch', apiRecordsReady=True,
+                          failureStage='legacy_readback', failureKind='mismatch',
+                          socketReadback=dict(good['socketReadback'], nonblocking='mismatch'))
+        self.assertEqual(gate.legacy_capability(mismatch), mismatch)
+        for status in gate.ROUTE_STATUSES - {'observed'}:
+            route = dict(status=status, **{key: key == 'ownerJoined' for key in gate.ROUTE_FLAGS})
+            # A missing ordinary route is contextual; it cannot invalidate the
+            # independently verified selected-interface multicast socket.
+            value = dict(good, routeLookup=route)
+            self.assertEqual(gate.legacy_capability(value), value)
+        for route in (None, dict(good['routeLookup'], ownerJoined=False),
+                      dict(good['routeLookup'], gateway='synthetic-private')):
+            with self.assertRaises(ValueError): gate.legacy_capability(dict(good, routeLookup=route))
+        for changes in ({'sendPrimitive':'go_sendto'}, {'nativeSendAttempted':False},
+                        {'socketReadback':None}, {'routeLookup':None}):
+            with self.assertRaises(ValueError): gate.legacy_capability(dict(good, **changes))
 
     def test_marker_types_and_lifecycles_cannot_be_cross_wired(self):
         records = {scope: record(scope) for scope in gate.CASES.values()}

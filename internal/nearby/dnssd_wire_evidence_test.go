@@ -13,6 +13,10 @@ import (
 )
 
 type dnssdLegacyResult struct {
+	SendPrimitive               string                `json:"sendPrimitive"`
+	NativeSendAttempted         bool                  `json:"nativeSendAttempted"`
+	SocketReadback              *dnssdSocketReadback  `json:"socketReadback"`
+	RouteLookup                 *dnssdRouteResult     `json:"routeLookup"`
 	Status                      string                `json:"status"`
 	Reason                      string                `json:"reason"`
 	Scope                       string                `json:"scope"`
@@ -29,7 +33,7 @@ type dnssdLegacyResult struct {
 }
 
 func dnssdLegacyDefault() dnssdLegacyResult {
-	return dnssdLegacyResult{Status: "not_run", Reason: "opt_in_required", Scope: "selected_private_interface_legacy_dns", ReceivePath: "none", FailureStage: "none", FailureKind: "none"}
+	return dnssdLegacyResult{SendPrimitive: "native_c_sendto", Status: "not_run", Reason: "opt_in_required", Scope: "selected_private_interface_legacy_dns", ReceivePath: "none", FailureStage: "none", FailureKind: "none"}
 }
 
 // Legacy evidence is independent of production multicast admission. Late native

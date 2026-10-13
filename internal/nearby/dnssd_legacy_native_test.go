@@ -153,6 +153,7 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 	deadline, _ := ctx.Deadline()
 	var ownedSocket Transport
 	var api *dnssdCapabilityPeer
+	var routeOwner *dnssdRouteOwner
 	apiErr := make(chan error, 2)
 	apiReady := make(chan struct{}, 1)
 	readDone, watchDone := make(chan struct{}), make(chan struct{})
@@ -160,6 +161,9 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 	failure := func(err error) { dnssdLegacyError(&result, err) }
 	defer func() {
 		cancel()
+		if routeOwner != nil {
+			routeOwner.cancel()
+		}
 		closed := make(chan error, 2)
 		count := 0
 		if ownedSocket != nil {
@@ -210,6 +214,20 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 				return
 			}
 		}
+		if routeOwner != nil {
+			select {
+			case <-routeOwner.done:
+				result.RouteLookup = &routeOwner.result
+				if !routeOwner.result.OwnerJoined {
+					badCleanup("owners_not_joined")
+					return
+				}
+			case <-timer.C:
+				badCleanup("owners_not_joined")
+				return
+			}
+		}
+
 		for {
 			select {
 			case e := <-apiErr:
@@ -376,10 +394,41 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 			if ctx.Err() != nil {
 				return
 			}
-			// The exact bound source and sticky IP_BOUND_IF/multicast options
-			// already select this path. This one comparison query has no
-			// ancillary attempt, runtime fallback or resend.
-			stage, kind := writeDNSServiceLegacyQuery(socket.conn, query, deadline, time.Now())
+			result.SocketReadback = dnsServiceSocketReadback(socket, scope)
+			if dnsServiceReadbackFailure(&result) {
+				return
+			}
+			routeOwner = startDNSServiceRouteOwner(ctx, func(routeCtx context.Context) dnssdRouteResult {
+				return runDNSServiceRouteLookup(routeCtx, original.Name)
+			})
+			select {
+			case <-routeOwner.done:
+				result.RouteLookup = &routeOwner.result
+				if !routeOwner.result.OwnerJoined {
+					result.Status, result.Reason = "failed", "owners_not_joined"
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+			if e := binding(); e != nil {
+				failure(e)
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			// One C-only attempt on this existing descriptor, compared with
+			// the retained historical Go result. Route is context, not a gate.
+			writer := &dnssdNativeCWriter{socket: socket, scope: scope, ctx: ctx, deadline: deadline, binding: binding, result: &result}
+			stage, kind := writeDNSServiceLegacyQuery(writer, query, deadline, time.Now())
+			if writer.scopeError != nil {
+				failure(writer.scopeError)
+				return
+			}
+			if dnsServiceReadbackFailure(&result) {
+				return
+			}
 			if stage != "none" {
 				result.Reason = stage + "_unavailable"
 				result.FailureStage, result.FailureKind = stage, kind
