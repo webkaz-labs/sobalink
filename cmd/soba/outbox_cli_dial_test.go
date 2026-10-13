@@ -264,6 +264,7 @@ func TestOutboxCLIDialTrapRejectsRealOutbox(t *testing.T) {
 	t.Cleanup(cancel)
 	backend := &outboxIPCOnlineBackend{&outboxIPCBackend{}}
 	backend.dials.changed = make(chan struct{}, 1)
+	t.Cleanup(func() { backend.listeners.requireClosed(t) })
 	_, app := dispatchContractCore(t, ctx, func(profile *core.Profile) core.NetworkBackend {
 		backend.configure(profile)
 		return backend

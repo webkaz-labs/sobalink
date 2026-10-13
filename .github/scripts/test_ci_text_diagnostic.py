@@ -6,9 +6,11 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SCRIPT = Path(__file__).with_name('ci-text-diagnostic.py')
 SPEC = importlib.util.spec_from_file_location('ci_text_diagnostic', SCRIPT)
@@ -17,7 +19,7 @@ exec(compile(SCRIPT.read_bytes(), str(SCRIPT), 'exec'), gate.__dict__)
 
 
 def markers(case, phases=None):
-    source = (gate.ROOT / 'internal/core' / gate.FIXTURE_FILES[case]).read_text().splitlines()
+    source = (gate.ROOT / 'internal/core' / gate.FIXTURE_FILES[case]).read_text(encoding='utf-8').splitlines()
     return [{'Action': 'output', 'Package': gate.PACKAGE, 'Test': gate.CASES[case],
              'Output': '    ' + gate.FIXTURE_FILES[case] + ':' + str(next(
                  i for i, line in enumerate(source, 1) if line.strip() == 't.Log("SOBA_TEXT_PHASE ' + phase + '")'))
@@ -38,6 +40,21 @@ def raw(rows):
 
 
 class TextDiagnosticTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def synthetic_linux_file_api(self):
+        """Model Linux open flags for synthetic fixtures, not native OS proof."""
+        api = SimpleNamespace(**vars(os))
+        api.O_NOFOLLOW, api.O_NONBLOCK = 1 << 28, 1 << 29
+        def open_fixture(path, flags):
+            self.assertEqual(flags, api.O_RDONLY | api.O_NOFOLLOW | api.O_NONBLOCK)
+            native_flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0)
+            for name in ('O_NOFOLLOW', 'O_NONBLOCK'):
+                native_flags |= getattr(os, name, 0)
+            return os.open(path, native_flags)
+        api.open = open_fixture
+        with patch.object(gate, 'os', api):
+            yield
+
     def test_exact_cases_require_ordered_once_run_pass_and_zero_exit(self):
         self.assertEqual(tuple(gate.CASES.values()), ('TestDurableTextProcessRestartACKLossAndHiddenReplay',
                                                     'TestDurableTextThreeProcessBrowser'))
@@ -129,7 +146,7 @@ class TextDiagnosticTests(unittest.TestCase):
             gate.fixed_result(report)
 
     def test_layout_evidence_has_exact_closed_regions_and_bounded_numbers(self):
-        source = (gate.ROOT / 'web/browser/text-native-layout.mjs').read_text().split('].map(pair', 1)[0]
+        source = (gate.ROOT / 'web/browser/text-native-layout.mjs').read_text(encoding='utf-8').split('].map(pair', 1)[0]
         self.assertEqual(tuple(re.findall(r"\['([^']+)',", source)), gate.LAYOUT_ROLES)
         def layout():
             return {'viewportWidth': 320, 'regions': [dict(role=role, clientWidth=300, scrollWidth=341,
@@ -168,9 +185,11 @@ class TextDiagnosticTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIsNone(exported['browserFailure'])
 
+    @unittest.skipUnless(all(hasattr(os, name) for name in ('O_NOFOLLOW', 'O_NONBLOCK', 'mkfifo')),
+                         'native POSIX no-follow, nonblocking and FIFO APIs required')
     def test_receipt_and_hash_inputs_reject_unsafe_file_types(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             regular = root / 'regular'
             regular.write_text(json.dumps(gate.summary.TEXT_EXPECTED))
             self.assertEqual(gate.summary.text_summary(gate.summary.read_fixed(regular, 8192)), gate.summary.TEXT_EXPECTED)
@@ -209,9 +228,48 @@ class TextDiagnosticTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gate.assets(asset)
 
+    def test_digest_checks_flags_file_types_links_and_identity_portably(self):
+        # Model the Linux descriptor boundary; native POSIX enforcement is
+        # exercised separately where those filesystem primitives exist.
+        metadata = dict(st_mode=stat.S_IFREG | 0o600, st_nlink=1, st_dev=1,
+                        st_ino=2, st_size=9, st_mtime_ns=3, st_ctime_ns=4)
+        class Stream(io.BytesIO):
+            def fileno(self):
+                return 17
+        def check(*, before=None, opened=None, finished=None, final=None, unsafe=False):
+            initial = SimpleNamespace(**(metadata if before is None else before))
+            path = Mock()
+            path.lstat.side_effect = [initial, SimpleNamespace(**(metadata if final is None else final))]
+            api = SimpleNamespace(O_RDONLY=0, O_NOFOLLOW=1 << 28, O_NONBLOCK=1 << 29,
+                                  open=Mock(return_value=17), fdopen=Mock(return_value=Stream(b'synthetic')),
+                                  fstat=Mock(side_effect=[SimpleNamespace(**(metadata if opened is None else opened)),
+                                                         SimpleNamespace(**(metadata if finished is None else finished))]))
+            with patch.object(gate, 'os', api):
+                if any(value is not None for value in (before, opened, finished, final)):
+                    with self.assertRaises(ValueError):
+                        gate.digest(path)
+                else:
+                    self.assertEqual(gate.digest(path), gate.hashlib.sha256(b'synthetic').hexdigest())
+            if unsafe:
+                api.open.assert_not_called()
+                api.fdopen.assert_not_called()
+            else:
+                api.open.assert_called_once_with(path, api.O_RDONLY | api.O_NOFOLLOW | api.O_NONBLOCK)
+                api.fdopen.assert_called_once_with(17, 'rb')
+        check()
+        for mode in (stat.S_IFDIR, stat.S_IFLNK, stat.S_IFIFO, stat.S_IFSOCK):
+            with self.subTest(mode=mode):
+                check(before=dict(metadata, st_mode=mode | 0o600), unsafe=True)
+        check(before=dict(metadata, st_nlink=2), unsafe=True)
+        for field in metadata:
+            for boundary in ('opened', 'finished', 'final'):
+                with self.subTest(field=field, boundary=boundary):
+                    check(**{boundary: dict(metadata, **{field: metadata[field] + 1})})
+
     def test_source_inventory_rejects_unsafe_names_ignored_inputs_and_drift(self):
+        self.enterContext(self.synthetic_linux_file_api())
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             (root / 'source').write_text('synthetic source')
             def inventory(names=b'source\0', others=b'', status=b''):
                 values = {('git', 'status', '--porcelain', '--untracked-files=no'): status,
@@ -269,7 +327,7 @@ class TextDiagnosticTests(unittest.TestCase):
     def simulate(self, *, failure=None, source_drift=False, browser_failure_payload=None):
         """Run only orchestration against synthetic files and mocked commands."""
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             (root / 'internal/core').mkdir(parents=True)
             for file in gate.FIXTURE_FILES.values():
                 (root / 'internal/core' / file).write_bytes((gate.ROOT / 'internal/core' / file).read_bytes())
@@ -337,20 +395,43 @@ class TextDiagnosticTests(unittest.TestCase):
                     raise AssertionError('unexpected synthetic command')
                 return 'completed', 0, data, b''
             with patch.dict(os.environ, env, clear=True), patch.object(gate, 'ROOT', root), \
+                 patch.object(gate.sys, 'platform', 'linux'), \
+                 patch.object(gate.native.platform, 'machine', return_value='x86_64'), \
+                 self.synthetic_linux_file_api(), \
                  patch.object(gate.native, 'capture', side_effect=capture), \
                  patch.object(gate, 'source_inventory', return_value={'synthetic': 'c' * 64}), \
                  patch.object(gate.shutil, 'which', side_effect=lambda name: str(root / name)), \
                  patch.object(gate, 'verify_source', side_effect=ValueError('synthetic-private') if source_drift else None) as verified, \
                  contextlib.redirect_stdout(io.StringIO()) as printed:
                 status = gate.main([])
-            result = json.loads((runner / 'soba-text-sanitized/result.json').read_text())
-            provenance = json.loads((runner / 'soba-text-sanitized/provenance.json').read_text())
-            self.assertEqual(output.read_text(), 'sanitized_ready=true\n')
+            result = json.loads((runner / 'soba-text-sanitized/result.json').read_text(encoding='utf-8'))
+            provenance = json.loads((runner / 'soba-text-sanitized/provenance.json').read_text(encoding='utf-8'))
+            self.assertEqual(output.read_text(encoding='utf-8'), 'sanitized_ready=true\n')
             exported = json.dumps([result, provenance]) + printed.getvalue()
             for private in ('synthetic-private', str(root), 'TestDurableText', 'internal/core', 'text-native-summary.json'):
                 self.assertNotIn(private, exported)
             verified.assert_called_once()
             return status, result, provenance, calls
+
+    def test_simulation_is_isolated_from_each_native_ci_host(self):
+        # This models the Linux X64 diagnostic, even when policy tests run on
+        # another native CI host. Keep the real native identity validator active.
+        for host, machine in (('linux', 'x86_64'), ('linux', 'aarch64'),
+                              ('darwin', 'arm64'), ('win32', 'AMD64')):
+            with self.subTest(host=host, machine=machine), \
+                 patch.object(gate.sys, 'platform', host), \
+                 patch.object(gate.native.platform, 'machine', return_value=machine):
+                status, result, _, _ = self.simulate()
+                self.assertEqual(status, 0)
+                self.assertTrue(result['diagnosticPassed'])
+                for options, first_failure in (({'failure': 'restart-process'}, 'restart-process'),
+                                                ({'source_drift': True}, 'verify-source')):
+                    status, result, _, _ = self.simulate(**options)
+                    self.assertEqual(status, 1)
+                    self.assertFalse(result['diagnosticPassed'])
+                    self.assertEqual(result['firstFailure'], first_failure)
+                self.assertEqual(gate.sys.platform, host)
+                self.assertEqual(gate.native.platform.machine(), machine)
 
     def test_success_needs_both_real_case_gates_fixed_receipt_and_final_hashes(self):
         status, result, provenance, calls = self.simulate()
@@ -389,7 +470,7 @@ class TextDiagnosticTests(unittest.TestCase):
         self.assertEqual(result['firstFailure'], 'verify-source')
 
     def test_fixed_browser_failure_is_closed_and_matches_text_reporter_phases(self):
-        source = (gate.ROOT / 'web/browser/text-native-reporter.mjs').read_text()
+        source = (gate.ROOT / 'web/browser/text-native-reporter.mjs').read_text(encoding='utf-8')
         phases = source.split('PHASES = Object.freeze([', 1)[1].split('])', 1)[0]
         self.assertEqual(set(re.findall(r"'([^']+)'", phases)), gate.BROWSER_PHASES)
         for phase in gate.BROWSER_PHASES:
@@ -433,7 +514,7 @@ class TextDiagnosticTests(unittest.TestCase):
         self.assertEqual(result['browserPhase'], 'unavailable')
 
     def test_literal_text_linux_job_reuses_pins_and_closed_uploads(self):
-        workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
+        workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text(encoding='utf-8')
         job = workflow.split('  diagnostic-text:\n', 1)[1].split('  diagnostic-dnssd:\n', 1)[0]
         self.assertNotRegex(job, re.compile(r'^  [a-z][a-z0-9-]*:', re.M))
         self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'text'", job)
@@ -457,7 +538,7 @@ class TextDiagnosticTests(unittest.TestCase):
         self.assertIn('node web/node_modules/@playwright/test/cli.js install --with-deps chromium', job)
 
     def test_production_sources_deadlines_and_sandbox_baseline_are_reused(self):
-        source = SCRIPT.read_text()
+        source = SCRIPT.read_text(encoding='utf-8')
         self.assertIn("commit) != 'text'", source)
         self.assertIn('exec(compile(path.read_bytes()', source)
         self.assertIn('sys.dont_write_bytecode = True', source)
@@ -467,11 +548,11 @@ class TextDiagnosticTests(unittest.TestCase):
         self.assertLess(source.index("checked(['npm', 'run', 'build']"), source.index("checked(['go', 'test', '-race'"))
         self.assertIn('verify_source(before, asset_hashes, binary_hash, binary)', source)
         self.assertIn('summary.text_summary(summary.read_fixed(', source)
-        config = (gate.ROOT / 'web/playwright.text-native.config.mjs').read_text()
+        config = (gate.ROOT / 'web/playwright.text-native.config.mjs').read_text(encoding='utf-8')
         self.assertIn("import existing from './playwright.transfer-native.config.mjs'", config)
         self.assertNotIn('chromiumSandbox', config)
         self.assertNotIn('--no-sandbox', source)
-        existing = (gate.ROOT / '.github/workflows/ci.yml').read_text()
+        existing = (gate.ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
         for test in gate.CASES.values():
             self.assertIn('-run \'^' + test + "$'", existing)
 

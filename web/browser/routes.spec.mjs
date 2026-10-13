@@ -112,6 +112,7 @@ test.describe('paired route recovery', () => {
     test(`${locale}: offline candidate review, cancel, save and remove preserve original relay`, async ({ page, app }) => {
       await app.appearance(locale, ja ? 'dark' : 'light')
       await page.locator('.sidebar-title button').click()
+      await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
       const disclosure = page.locator('dialog .route-disclosure')
       await expect(disclosure.locator('summary')).toHaveText(text.prepared)
       await openDetailsSection(disclosure)

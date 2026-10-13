@@ -26,6 +26,7 @@ const text = locale => locale === 'ja' ? {
 }
 async function openCards(page, mode, labels) {
   await page.locator('.sidebar-title button').click()
+  await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
   await page.locator(`dialog input[value="${mode}"]`).check()
   const cards = page.locator('dialog .device-cards')
   await cards.getByRole('button', { name: labels.open, exact: true }).click()
@@ -170,6 +171,7 @@ test.describe('public device cards with an existing synthetic LAN identity', () 
       expect(await app.count('device-card.inspect')).toBe(2)
       await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0)
       await page.locator('.sidebar-title button').click()
+      await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
       await expect(page.getByRole('textbox', { name: labels.recipientKey, exact: true })).toHaveValue(publicKey)
       await expect(page.getByRole('textbox', { name: labels.recipientName, exact: true })).toHaveValue(recipientName)
       await assertReadOnly(page, before)

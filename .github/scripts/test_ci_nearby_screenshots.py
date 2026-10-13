@@ -1,12 +1,16 @@
 """Illustration export policy only; generated pixels here are unit inputs."""
 import copy
+import contextlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import stat
 import struct
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import zlib
 
 SPEC = importlib.util.spec_from_file_location('nearby_screenshots', Path(__file__).with_name('ci-nearby-screenshots.py'))
@@ -26,6 +30,25 @@ def fixture_png(width=335, height=128, ancillary=b'', pixels=None):
 
 
 class ScreenshotExportTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def synthetic_private_metadata(self, directory, overrides=None):
+        """Model POSIX ownership/modes only for these synthetic input paths."""
+        modes = {directory: 0o700, directory / 'screenshots.json': 0o600,
+                 **{directory / spec['file']: 0o600 for spec in gate.CAPTURES}}
+        lstat = Path.lstat
+        def fixture_stat(path, *args, **kwargs):
+            info = lstat(path, *args, **kwargs)
+            if path not in modes:
+                return info
+            fields = dict(st_mode=stat.S_IFMT(info.st_mode) | modes[path], st_uid=1234,
+                          st_nlink=info.st_nlink, st_size=info.st_size)
+            fields.update((overrides or {}).get(path, {}))
+            return SimpleNamespace(**fields)
+        api = SimpleNamespace(**vars(os))
+        api.getuid = lambda: 1234
+        with patch.object(Path, 'lstat', fixture_stat), patch.object(gate, 'os', api):
+            yield
+
     def stage(self, root, manifest=None):
         directory = root / 'private'
         directory.mkdir(mode=0o700)
@@ -49,16 +72,35 @@ class ScreenshotExportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             directory = self.stage(root)
-            for rejected in (False, None, 1, 'true'):
-                self.assertFalse(gate.export_initial_screenshots(directory, root / 'public', verified=rejected))
-                self.assertFalse((root / 'public').exists())
-            self.assertTrue(gate.export_initial_screenshots(directory, root / 'public', verified=True))
+            with self.synthetic_private_metadata(directory):
+                for rejected in (False, None, 1, 'true'):
+                    self.assertFalse(gate.export_initial_screenshots(directory, root / 'public', verified=rejected))
+                    self.assertFalse((root / 'public').exists())
+                self.assertTrue(gate.export_initial_screenshots(directory, root / 'public', verified=True))
+                self.assertFalse(gate.export_initial_screenshots(directory, root / 'public', verified=True))
             self.assertEqual({p.name for p in (root / 'public').iterdir()}, {'screenshots.json', *(s['file'] for s in gate.CAPTURES)})
             self.assertEqual(json.loads((root / 'public/screenshots.json').read_text()), gate.MANIFEST)
-            self.assertFalse(gate.export_initial_screenshots(directory, root / 'public', verified=True))
+
+    def test_real_filesystem_requires_native_private_ownership_and_modes(self):
+        # A modeled policy pass is not evidence of native Windows privacy.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = self.stage(root)
+            self.assertEqual(gate.export_initial_screenshots(directory, root / 'public', verified=True),
+                             os.name == 'posix')
+            self.assertEqual((root / 'public').exists(), os.name == 'posix')
+            if os.name == 'posix':
+                image = directory / gate.CAPTURES[0]['file']
+                image.chmod(0o644)
+                self.assertFalse(gate.export_initial_screenshots(directory, root / 'wide-file', verified=True))
+                self.assertFalse((root / 'wide-file').exists())
+                image.chmod(0o600)
+                directory.chmod(0o755)
+                self.assertFalse(gate.export_initial_screenshots(directory, root / 'wide-directory', verified=True))
+                self.assertFalse((root / 'wide-directory').exists())
 
     def test_invalid_metadata_and_paths_never_publish_partial_artifacts(self):
-        for mutation in ('extra', 'private-name', 'wrong-checkpoint', 'acceptance', 'wrong-type', 'duplicate', 'extra-file', 'symlink', 'hardlink', 'permissions', 'corrupt'):
+        for mutation in ('extra', 'private-name', 'wrong-checkpoint', 'acceptance', 'wrong-type', 'duplicate', 'extra-file', 'symlink', 'hardlink', 'permissions', 'owner', 'directory-permissions', 'directory-owner', 'corrupt'):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 manifest = copy.deepcopy(gate.MANIFEST)
@@ -74,9 +116,14 @@ class ScreenshotExportTests(unittest.TestCase):
                 if mutation == 'symlink':
                     image.unlink(); image.symlink_to(directory / gate.CAPTURES[1]['file'])
                 if mutation == 'hardlink': os.link(image, root / 'linked.png')
-                if mutation == 'permissions': image.chmod(0o644)
                 if mutation == 'corrupt': image.write_bytes(b'not a PNG')
-                self.assertFalse(gate.export_initial_screenshots(directory, root / 'public', verified=True))
+                overrides = {}
+                if mutation == 'permissions': overrides[image] = {'st_mode': stat.S_IFREG | 0o644}
+                if mutation == 'owner': overrides[image] = {'st_uid': 4321}
+                if mutation == 'directory-permissions': overrides[directory] = {'st_mode': stat.S_IFDIR | 0o755}
+                if mutation == 'directory-owner': overrides[directory] = {'st_uid': 4321}
+                with self.synthetic_private_metadata(directory, overrides):
+                    self.assertFalse(gate.export_initial_screenshots(directory, root / 'public', verified=True))
                 self.assertFalse((root / 'public').exists())
 
     def test_png_bounds_metadata_crc_trailing_data_and_decompression(self):

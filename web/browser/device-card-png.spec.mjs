@@ -12,6 +12,7 @@ const text = locale => locale === 'ja' ? {
 } : { open: 'Exchange device cards', close: 'Close device cards', png: 'Open a device-card PNG', input: 'Paste public card text', inspect: 'Review public card', review: 'Review recipient card', cancel: 'Cancel PNG reading' }
 async function open(page, mode, labels) {
   await page.locator('.sidebar-title button').click()
+  await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
   await page.locator(`dialog input[value="${mode}"]`).check()
   const cards = page.locator('dialog .device-cards')
   await cards.getByRole('button', { name: labels.open, exact: true }).click()

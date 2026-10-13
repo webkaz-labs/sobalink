@@ -69,7 +69,7 @@ def phase_sequence(raw, case):
         raise ValueError('invalid text phase capture')
     source = ROOT / 'internal/core' / FIXTURE_FILES[case]
     literals = {}
-    for number, line in enumerate(source.read_text().splitlines(), 1):
+    for number, line in enumerate(source.read_text(encoding='utf-8').splitlines(), 1):
         match = re.fullmatch(r'\s*t\.Log\("SOBA_TEXT_PHASE ([a-z-]+)"\)', line)
         if match:
             if match[1] in literals:

@@ -44,6 +44,7 @@ async function installReadyFixture(page, app, { failFirstJoin = false } = {}) {
 }
 async function openJoin(page, text) {
   await page.locator('.sidebar-title button').click()
+  await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
   await page.locator('dialog input[value="lan"]').check()
   await expect(page.locator('dialog .lan-setup .relay-summary')).toBeVisible()
   await page.getByRole('button', { name: text.joinTab, exact: true }).click()
