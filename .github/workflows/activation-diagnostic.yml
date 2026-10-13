@@ -182,7 +182,7 @@ jobs:
         run: |
           python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_diagnostic.py' -v
-          node --test web/browser/nearby-native-diagnostics.test.mjs
+          node --test web/browser/nearby-native-diagnostics.test.mjs web/browser/nearby-native-selectors.test.mjs
           node --check web/browser/nearby-native-fixtures.mjs
           node --check web/browser/nearby-setup-native.acceptance.mjs
       - name: Verify manual setup and browser with separate discovery capability

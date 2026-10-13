@@ -4,7 +4,7 @@ import { test, expect } from './nearby-native-fixtures.mjs'
 // Deliberately independent text expectations for both real rendered languages.
 const labels = {
   en: {
-    network: 'Set up network', open: 'Connect to a nearby device', back: 'Back to connection options',
+    network: 'Set up network', dialog: 'Choose how to connect', open: 'Connect to a nearby device', back: 'Back to connection options',
     alias: 'Name to show nearby', scope: 'Network to use', ports: 'Connection ports', bootstrapPort: 'Setup port', relayPort: 'Relay port',
     host: 'Allow this device to host the selected connection', consent: 'Allow discovery and setup on this network for 120 seconds', start: 'Find nearby devices',
     local: 'This device’s setup information', peer: 'Other device’s setup information', import: 'Review copied device',
@@ -15,7 +15,7 @@ const labels = {
     trust: 'This approval does not change receiving trust. Review receiving trust separately in the device’s settings. Autosave and service sharing require their own permission.',
   },
   ja: {
-    network: 'ネットワークを設定', open: '近くの端末と接続する', back: '接続方法の選択へ戻る',
+    network: 'ネットワークを設定', dialog: '接続方法を選択', open: '近くの端末と接続する', back: '接続方法の選択へ戻る',
     alias: '近くの端末に表示する名前', scope: '使用するネットワーク', ports: '接続ポート', bootstrapPort: 'セットアップ用ポート', relayPort: '中継用ポート',
     host: 'この端末が選択した接続のホストになることを許可する', consent: 'このネットワークで120秒間の探索とセットアップを許可する', start: '近くの端末を探す',
     local: 'この端末のセットアップ情報', peer: '相手の端末のセットアップ情報', import: 'コピーした相手を確認',
@@ -51,15 +51,20 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
   const [a, b] = devices
   const open = async device => {
     const c = labels[device.locale], { page } = device
-    if (!(await page.getByRole('dialog').count())) await page.getByRole('button', { name: c.network, exact: true }).first().click()
-    await page.getByRole('button', { name: c.open, exact: true }).click()
-    await expect(page.getByLabel(c.scope, { exact: true })).toBeVisible()
+    const dialog = page.getByRole('dialog', { name: c.dialog, exact: true })
+    if (!(await dialog.count())) {
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await page.locator('.sidebar-title').getByRole('button', { name: c.network, exact: true }).click()
+    }
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: c.open, exact: true }).click()
+    await expect(page.getByRole('combobox', { name: c.scope, exact: true })).toBeVisible()
   }
   const start = async device => {
     const c = labels[device.locale], { page } = device
     await page.getByRole('textbox', { name: new RegExp(`^${c.alias}`) }).fill(device.alias)
-    await expect(page.getByLabel(c.scope, { exact: true }).locator('option')).toHaveCount(2)
-    await page.getByLabel(c.scope, { exact: true }).selectOption({ label: '127.0.0.1 · 127.0.0.0/8' })
+    await expect(page.getByRole('combobox', { name: c.scope, exact: true }).locator('option')).toHaveCount(2)
+    await page.getByRole('combobox', { name: c.scope, exact: true }).selectOption({ label: '127.0.0.1 · 127.0.0.0/8' })
     await page.getByText(c.ports, { exact: true }).click()
     await page.getByLabel(c.bootstrapPort, { exact: true }).fill(String(device.bootstrapPort))
     await page.getByLabel(c.relayPort, { exact: true }).fill(String(device.relayPort))
