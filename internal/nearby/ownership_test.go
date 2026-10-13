@@ -254,3 +254,114 @@ func TestSendBudgetErrorPrecedesOwnerJoin(t *testing.T) {
 		})
 	}
 }
+
+// A split transport can unblock reads while a nested physical Close remains
+// active. Session.Done must join that worker, not just the outer Close wrapper.
+type heldNestedCloseTransport struct {
+	*fakeTransport
+	closeErr   error
+	closeOwner Transport
+	entered    chan struct{}
+	release    chan struct{}
+	calls      atomic.Int32
+}
+
+func newHeldNestedCloseTransport() *heldNestedCloseTransport {
+	tr := &heldNestedCloseTransport{fakeTransport: newFakeTransport(), entered: make(chan struct{}), release: make(chan struct{})}
+	first := &closeOnlyTransport{close: func() error {
+		tr.calls.Add(1)
+		_ = tr.fakeTransport.Close()
+		close(tr.entered)
+		<-tr.release
+		return tr.closeErr
+	}}
+	tr.closeOwner = pairedCloseOwner(first, &closeOnlyTransport{close: func() error { return nil }})
+	return tr
+}
+func (tr *heldNestedCloseTransport) Close() error { return tr.closeOwner.Close() }
+
+func TestSessionDoneWaitsForNestedPhysicalClose(t *testing.T) {
+	tr := newHeldNestedCloseTransport()
+	s, _ := startCloseTest(t, tr)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(tr.release)
+		}
+		_ = s.Close()
+	})
+	done := make(chan error, 1)
+	go func() { done <- s.Close() }()
+	<-tr.entered
+	err := <-done
+	if !errors.Is(err, ErrCloseUnresolved) {
+		t.Fatal("held nested close was not bounded at Session")
+	}
+	select {
+	case <-s.Done():
+		t.Fatal("Session.Done preceded nested physical close")
+	default:
+	}
+	if tr.calls.Load() != 1 {
+		t.Fatal("nested close repeated")
+	}
+	close(tr.release)
+	released = true
+	eventually(t, func() bool {
+		select {
+		case <-s.Done():
+			return true
+		default:
+			return false
+		}
+	})
+	if err := s.Close(); err != nil || tr.calls.Load() != 1 {
+		t.Fatal("joined close did not reuse original worker")
+	}
+}
+
+func TestConstructorRollbackRetainsNestedPhysicalJoin(t *testing.T) {
+	tr := newHeldNestedCloseTransport()
+	tr.closeErr = errSyntheticClose
+	type outcome struct {
+		owner Transport
+		err   error
+	}
+	done := make(chan outcome, 1)
+	go func() { owner, err := rollbackTransport(tr, ErrSocketUnavailable); done <- outcome{owner, err} }()
+	<-tr.entered
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(tr.release)
+		}
+	})
+	var result outcome
+	select {
+	case result = <-done:
+	case <-time.After(closeJoinTimeout + time.Second):
+		t.Fatal("constructor rollback was not bounded")
+	}
+	if result.owner == nil || !errors.Is(result.err, ErrCloseUncertain) || !errors.Is(result.err, ErrCloseUnresolved) || IsUnavailable(result.err) {
+		t.Fatal("rollback lost unresolved owner")
+	}
+	joined := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { joined <- result.owner.Close() }()
+	}
+	select {
+	case <-joined:
+		t.Fatal("retained rollback owner preceded physical join")
+	default:
+	}
+	close(tr.release)
+	released = true
+	for i := 0; i < 2; i++ {
+		if err := <-joined; !errors.Is(err, ErrCloseUnresolved) || !errors.Is(err, errSyntheticClose) || tr.calls.Load() != 1 {
+			t.Fatal("rollback erased late error/uncertainty or repeated close")
+		}
+	}
+	if err := result.owner.Close(); !errors.Is(err, ErrCloseUnresolved) || !errors.Is(err, errSyntheticClose) || tr.calls.Load() != 1 {
+		t.Fatal("repeated retained close changed evidence")
+	}
+}

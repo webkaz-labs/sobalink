@@ -53,8 +53,14 @@ receiving; changed bindings stop the session.
 - Linux binds exactly `224.0.0.251:5353` through a native socket, disables `IP_MULTICAST_ALL`, joins only
   the selected interface, and uses x/net IPv4 packet metadata for ingress and
   exact local source/interface selection on every send.
-- Darwin uses that exact native group bind with `IP_BOUND_IF` and the same supported
-  x/net source/interface and receive controls.
+- Darwin keeps an exact-group receive socket and a separate sender bound to
+  the exact selected local address on port 5353. Both use `IP_BOUND_IF`; the
+  sender also fixes the multicast interface, TTL 255 and multicast loopback.
+  Source-only pktinfo preserves the exact source, while the sticky bound
+  interface confines egress. Any partial setup failure closes both resources;
+  uncertainty retains the complete owner and prevents fallback or replacement.
+  Physical close workers must join before `Done`; finite waits at Session and
+  constructor boundaries retain unfinished close attempts without retrying them.
 - Windows binds exactly the selected local address on port 5353. It uses the
   socket-local `IP_IFLIST` with one interface, one group membership, and
   `IP_PKTINFO`/TTL metadata. Go `UDPConn.ReadMsgUDP`/`WriteMsgUDP` use supported
@@ -112,6 +118,12 @@ interface、Windows は選択したローカル数値 address bind と interface
 安全な socket を作れない場合は停止し、Core の手動/QR 導線を利用できる状態にする。
 Unix では Go の通常 UDP listener が multicast bind を wildcard に変更するため、
 native socket を正確な group に bind した後だけ `net.FilePacketConn` に渡す。
+macOS は受信用の正確な group bind と送信用の選択 address:5353 bind を分離し、
+両方に `IP_BOUND_IF` を設定する。送信は固定 multicast interface・TTL255 と、
+source-only pktinfo を用い、選択 address と interface を維持する。片方の準備失敗も
+両方を終了し、不確定なら全 owner を保持して代替・再開始を止める。
+実際の close worker が終了する前に `Done` を閉じない。Session と constructor の
+有限待機を超えた close は owner に保持し、同じ descriptor の終了を再試行しない。
 元の descriptor と Go が複製した descriptor を個別に管理し、元の終了が不確定なら
 起動成功とせず owner を保持する。close-on-exec・nonblocking を必須とする。
 
@@ -137,10 +149,12 @@ interface flag is not changed to make the test work. No other NIC is tried.
 The two synthetic advertisements carry distinct random sessions and high-port
 endpoint hints; no bootstrap TCP listener or connection is started.
 
-Linux/macOS retain the production exact-group mDNS bind, while Windows retains
-the exact selected-address bind. The required mDNS port remains 5353; bind
+Linux retains its production exact-group mDNS socket. Darwin retains the
+exact-group receiver plus exact-selected-address sender, and Windows retains
+its exact selected-address socket. The required mDNS port remains 5353; bind
 conflicts or unsupported native options produce `unavailable`, not a wildcard
-fallback. Both native sockets are opened before announcements; observation is
+fallback. Both native transports are fully opened before announcements (Darwin owns
+four sockets across the two transports); observation is
 limited to eight seconds and owner cleanup/join to two seconds.
 
 A `NEARBY_NATIVE_CAPABILITY` JSON marker reports `verified`, `unavailable`,
@@ -170,3 +184,45 @@ interface flag・経路・FW・全体設定を変更しない。別 NIC への�
 `socketFailureStage` は固定 enum で失敗段階を示し、失敗がなければ `none` とする。
 OS の生 error、interface の識別情報、address は出力しない。
 loopback 上の合格は、実 NIC・別端末の探索、bootstrap 認証、手動導線の合格とは別。
+
+## Platform diagnosis boundary
+
+Darwin's separate sender follows the published
+[XNU 12377.1.9 UDP source](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/netinet/udp_usrreq.c#L1401-L1739):
+bound-source validation precedes temporary source selection, and a nonzero
+pktinfo interface index overrides the requested source address. This source
+analysis justifies the correction; it does not prove the exact hosted error or
+establish native acceptance by itself.
+
+The fixed `sendFailureKind` distinguishes known OS error categories from short
+payload/control counts without emitting raw errors or numeric codes. If the
+Windows production send fails and all original owners joined, the opt-in test
+may record `windowsNoAncillaryProbe`: one unique synthetic advertisement on the
+same exact loopback source/interface/group/port, using the existing socket
+options with no send ancillary data. It uses the original eight-second deadline
+and requires the exact advertisement plus all receive metadata and confirmed
+cleanup. Its result never changes production discovery to verified. Metadata
+or cleanup invariant failure fails the whole test. It is not a product fallback.
+
+A Linux result cannot establish Darwin or Windows support. A target reporting
+`unavailable` has no automatic-discovery proof, even if its diagnostic job is
+green. Loopback discovery, manual-contact Core/browser setup and physical-LAN
+automatic setup remain distinct acceptance results.
+
+### プラットフォーム別の診断範囲
+
+macOS の送受信分離は上記の固定 XNU source の bound-source 検証順序と、pktinfo の
+interface 指定が source 指定に優先する動作に基づく修正である。source 調査だけで
+実行環境の error 原因や native 動作確認の完了を断定しない。
+
+`sendFailureKind` は既知の OS error 分類と payload/control の不足だけを固定値で示す。
+Windows の製品送信失敗後、元の owner が全て終了した場合だけ、試験専用の
+`windowsNoAncillaryProbe` が同じ厳密な loopback 範囲で一つの固有の模擬広告を送る。
+socket の選択 interface・source port・TTL 制約は維持し、送信 ancillary data だけを
+省く。元の八秒 deadline 内に、その広告と全 metadata、終了完了を確認する。
+この補助結果で製品探索を verified に昇格させず、metadata・終了の不変条件違反は
+試験全体を失敗させる。製品の代替送信経路にはしない。
+
+Linux の結果を macOS/Windows の対応証拠として流用しない。`unavailable` は job が
+緑でも自動探索未確認である。loopback 探索、手動 contact の Core/browser 接続、
+実 LAN の自動セットアップはそれぞれ別の確認結果として扱う。

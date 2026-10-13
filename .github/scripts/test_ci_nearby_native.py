@@ -20,9 +20,12 @@ exec(compile(SCRIPT.read_bytes(), str(SCRIPT), 'exec'), gate.__dict__)
 def capability(status='verified', **changes):
     reasons = {'verified': 'bidirectional_scoped_mdns', 'unavailable': 'native_socket_unavailable',
                'failed': 'cleanup_not_joined', 'not_run': 'opt_in_required'}
-    return {'scope': 'isolated_loopback', 'status': status, 'reason': reasons[status],
+    result = {'scope': 'isolated_loopback', 'status': status, 'reason': reasons[status],
             'bidirectionalCandidates': status == 'verified', 'ownersJoined': status == 'verified',
-            'socketFailureStage': 'none', **changes}
+            'socketFailureStage': 'none', 'sendFailureKind': 'none', 'windowsNoAncillaryProbe': None, **changes}
+    if result['socketFailureStage'] == 'socket_write' and 'sendFailureKind' not in changes:
+        result['sendFailureKind'] = 'other'
+    return result
 
 
 def events(record=None, terminal=None):
@@ -96,6 +99,16 @@ class NativeNearbyTests(unittest.TestCase):
             rows[2]['Output'] = 'NEARBY_NATIVE_CAPABILITY ' + json.dumps(record)
             with self.assertRaises(ValueError):
                 gate.native_events(raw(rows), 0)
+
+    def test_probe_invariants_cannot_remain_an_accepted_skip(self):
+        probe = {'status': 'failed', 'reason': 'foreign_or_missing_packet_metadata',
+                 'socketFailureStage': 'none', 'sendFailureKind': 'none', 'metadataVerified': False,
+                 'ownersJoined': True, 'productionDiscoveryVerified': False}
+        bad = capability('unavailable', ownersJoined=True, socketFailureStage='socket_write', windowsNoAncillaryProbe=probe)
+        with self.assertRaises(ValueError):
+            gate.native_events(raw(events(bad)), 0)
+        failed = dict(bad, status='failed', reason=probe['reason'])
+        self.assertEqual(gate.native_events(raw(events(failed)), 1), (failed, False))
 
     def test_unknown_test_package_subtest_optout_and_build_metadata_rejected(self):
         for change in ({'Package': 'example.test/foreign'}, {'Test': gate.TEST + '/child'}, {'Action': 'build-fail'}):

@@ -23,9 +23,20 @@ def raw(events):
 def capability(status='verified', **changes):
     value = {'scope': 'isolated_loopback', 'status': status,
              'reason': 'bidirectional_scoped_mdns' if status == 'verified' else 'native_receive_timeout',
-             'bidirectionalCandidates': status == 'verified', 'ownersJoined': True, 'socketFailureStage': 'none'}
+             'bidirectionalCandidates': status == 'verified', 'ownersJoined': True, 'socketFailureStage': 'none', 'sendFailureKind': 'none', 'windowsNoAncillaryProbe': None}
     value.update(changes)
+    if value['socketFailureStage'] == 'socket_write' and 'sendFailureKind' not in changes:
+        value['sendFailureKind'] = 'other'
     return value
+
+
+def cleanup_evidence():
+    peer = {**{key: False for key in gate.BROWSER_CLEANUP_PEER_FLAGS},
+            'cancelState': 'unknown', 'cancelReason': 'other', 'state': 'unknown', 'reason': 'other',
+            'freshHello': 'not_run', 'listener': 'not_run', 'childExit': 'not_run'}
+    return {**{key: False for key in gate.BROWSER_CLEANUP_FLAGS}, 'browserCommandExited': True,
+            'browserReceiptVerified': True, 'stage': 'browser_returned', 'peer': 'none',
+            'peers': [copy.deepcopy(peer), copy.deepcopy(peer)]}
 
 
 def events(case='manual', terminal='pass', marker=None):
@@ -151,6 +162,40 @@ class NearbyDiagnosticTests(unittest.TestCase):
         for stage in ('private-socket-error', '127.0.0.1', [], None, 1):
             with self.assertRaises(ValueError):
                 gate.capability(capability('unavailable', socketFailureStage=stage))
+
+    def test_send_failure_kinds_are_closed_and_bound_to_write_stage(self):
+        for kind in gate.SEND_FAILURE_KINDS - {'none'}:
+            record = capability('unavailable', socketFailureStage='socket_write', sendFailureKind=kind)
+            self.assertEqual(gate.capability(record)['sendFailureKind'], kind)
+            with self.assertRaises(ValueError):
+                gate.capability(dict(record, socketFailureStage='socket_read'))
+        for kind in ('private error', [], None, 1):
+            with self.assertRaises(ValueError):
+                gate.capability(capability('unavailable', socketFailureStage='socket_write', sendFailureKind=kind))
+        with self.assertRaises(ValueError):
+            gate.capability(capability('unavailable', socketFailureStage='socket_write', sendFailureKind='none'))
+
+    def test_supplemental_probe_is_closed_and_cannot_upgrade_production(self):
+        probe = {'status': 'verified', 'reason': 'scoped_no_ancillary_delivery',
+                 'socketFailureStage': 'none', 'sendFailureKind': 'none', 'metadataVerified': True,
+                 'ownersJoined': True, 'productionDiscoveryVerified': False}
+        record = capability('unavailable', socketFailureStage='socket_write', sendFailureKind='invalid_argument', windowsNoAncillaryProbe=probe)
+        got = gate.capability(record)
+        self.assertEqual(got['status'], 'unavailable')
+        self.assertFalse(got['bidirectionalCandidates'])
+        for change in ({'productionDiscoveryVerified': True}, {'ownersJoined': False},
+                       {'metadataVerified': False}, {'rawError': 'synthetic-private'}, {'status': []}):
+            with self.assertRaises(ValueError):
+                gate.capability(dict(record, windowsNoAncillaryProbe=dict(probe, **change)))
+        for change in ({'status': 'verified', 'reason': 'bidirectional_scoped_mdns', 'bidirectionalCandidates': True},
+                       {'socketFailureStage': 'none', 'sendFailureKind': 'none'}, {'ownersJoined': False}):
+            with self.assertRaises(ValueError):
+                gate.capability(dict(record, **change))
+        for reason in ('foreign_or_missing_packet_metadata', 'cleanup_close_uncertain', 'cleanup_not_joined'):
+            failed = dict(probe, status='failed', reason=reason, metadataVerified=False, ownersJoined=False)
+            with self.assertRaises(ValueError):
+                gate.capability(dict(record, windowsNoAncillaryProbe=failed))
+            self.assertEqual(gate.capability(dict(record, status='failed', reason=reason, windowsNoAncillaryProbe=failed))['status'], 'failed')
 
     def test_json_duplicates_and_nonfinite_values_are_rejected(self):
         for text in ('{"a":1,"a":2}', '{"a":NaN}', '{"a":Infinity}'):
@@ -289,6 +334,87 @@ class NearbyDiagnosticTests(unittest.TestCase):
         browser = (gate.ROOT / 'web/browser/nearby-native-fixtures.mjs').read_text()
         self.assertIn('await rename(`${marker}.tmp`, marker)', browser)
         self.assertIn('Date.now() + 15_000', browser)
+
+    def test_cleanup_vector_is_closed_and_never_substitutes_success(self):
+        value = cleanup_evidence()
+        fixed = {'schema': 1, 'phase': 'core-cleanup', 'errorKind': 'core_evidence', 'cleanup': value}
+        self.assertEqual(gate.browser_failure(fixed), fixed)
+        reconstructed = gate.browser_cleanup_evidence(value)
+        self.assertIsNot(reconstructed['peers'][0], value['peers'][0])
+        for stage in gate.BROWSER_CLEANUP_STAGES:
+            self.assertEqual(gate.browser_cleanup_evidence(dict(value, stage=stage))['stage'], stage)
+        for peer in ('none', 'a', 'b'):
+            self.assertEqual(gate.browser_cleanup_evidence(dict(value, peer=peer))['peer'], peer)
+        for key, values in (('state', gate.BROWSER_CORE_STATES), ('cancelState', gate.BROWSER_CORE_STATES),
+                            ('reason', gate.BROWSER_CORE_REASONS), ('cancelReason', gate.BROWSER_CORE_REASONS),
+                            ('freshHello', gate.BROWSER_CORE_HELLO), ('listener', gate.BROWSER_CLEANUP_LISTENER),
+                            ('childExit', gate.BROWSER_CLEANUP_CHILD)):
+            for allowed in values:
+                candidate = copy.deepcopy(value)
+                candidate['peers'][0][key] = allowed
+                self.assertEqual(gate.browser_cleanup_evidence(candidate), candidate)
+        with self.assertRaises(ValueError):
+            gate.browser_summary(fixed)
+        for changes in ({'stage': 'synthetic-private'}, {'peer': 'synthetic-private'}, {'peers': []},
+                        {'peers': value['peers'] * 2}, {'message': 'synthetic-private'}, {'stage': []}):
+            with self.assertRaises(ValueError):
+                gate.browser_cleanup_evidence(dict(value, **changes))
+        for key in gate.BROWSER_CLEANUP_FLAGS:
+            with self.assertRaises(ValueError):
+                gate.browser_cleanup_evidence(dict(value, **{key: 1}))
+        for key in value['peers'][0]:
+            candidate = copy.deepcopy(value)
+            candidate['peers'][0][key] = 1 if key in gate.BROWSER_CLEANUP_PEER_FLAGS else 'synthetic-private'
+            with self.assertRaises(ValueError):
+                gate.browser_cleanup_evidence(candidate)
+        for target in ('root', 'peer'):
+            base = value if target == 'root' else value['peers'][0]
+            for key in base:
+                candidate = copy.deepcopy(value)
+                destination = candidate if target == 'root' else candidate['peers'][0]
+                del destination[key]
+                with self.assertRaises(ValueError):
+                    gate.browser_cleanup_evidence(candidate)
+        for extra in ('endpoint', 'body', 'message', 'token', 'fingerprint'):
+            candidate = copy.deepcopy(value)
+            candidate['peers'][0][extra] = 'synthetic-private'
+            with self.assertRaises(ValueError):
+                gate.browser_cleanup_evidence(candidate)
+        with self.assertRaises(ValueError):
+            gate.browser_failure(dict(fixed, cleanup=None))
+
+    def test_cleanup_schema_and_unchanged_control_order_match_go(self):
+        import re
+        source = (gate.ROOT / 'internal/core/setup_browser_evidence_integration_test.go').read_text()
+        stages = source.split('func validNearbyBrowserCleanupEvidence(', 1)[1].split('switch v.Stage {', 1)[1].split('default:', 1)[0]
+        self.assertEqual(set(re.findall(r'"([^" ]+)"', stages)), gate.BROWSER_CLEANUP_STAGES)
+        for go_type, expected in (('nearbyBrowserCleanupEvidence', gate.BROWSER_CLEANUP_FLAGS),
+                                  ('nearbyBrowserCleanupPeer', gate.BROWSER_CLEANUP_PEER_FLAGS)):
+            fields = source.split('type ' + go_type + ' struct {', 1)[1].split('}', 1)[0]
+            self.assertEqual(set(re.findall(r'bool +`json:"([^" ]+)"', fields)), expected)
+        listener = set(re.findall(r'p.Listener != "([^" ]+)"', source))
+        self.assertEqual(listener, gate.BROWSER_CLEANUP_LISTENER)
+        child = source.split('switch p.ChildExit {', 1)[1].split('default:', 1)[0]
+        self.assertEqual(set(re.findall(r'"([^" ]+)"', child)), gate.BROWSER_CLEANUP_CHILD)
+        fixture = (gate.ROOT / 'internal/core/setup_browser_integration_test.go').read_text()
+        ordered = ['runTransferProcessBrowser(t,', 'cleanupEvidence = newNearbyBrowserCleanupEvidence()',
+                   'cleanupEvidence.Stage = "cancel_request"', 'cleanupEvidence.Stage = "join"',
+                   'cleanupEvidence.Stage = "post_cancel_snapshot"', 'if !current.Connected',
+                   'cleanupEvidence.Stage = "post_cancel_backend"', 'if !observed.Backend',
+                   'cleanupEvidence.Stage = "post_cancel_hello"', 'if !ok',
+                   'cleanupEvidence.Stage = "listener_release"', 'p.stopObserved(t,',
+                   'cleanupEvidence.Stage = "summary_open"', 'cleanupEvidence.Stage = "summary_write"',
+                   'cleanupEvidence.Stage = "summary_close"']
+        offset = 0
+        for fragment in ordered:
+            offset = fixture.index(fragment, offset) + len(fragment)
+        self.assertIn('100*time.Millisecond', fixture)
+        self.assertIn('wait(func() bool { observed.Joined = evidence(p).Joined; return observed.Joined }', fixture)
+        self.assertIn('writeErr != nil || closeErr != nil', fixture)
+        process = (gate.ROOT / 'internal/core/route_process_integration_test.go').read_text().split('func (p *routeCoreProcess) stopObserved(', 1)[1].split('// Two genuine Core processes', 1)[0]
+        self.assertIn('time.After(10 * time.Second)', process)
+        self.assertIn('p.invoke(t, "fixture.exit", nil)', process)
+        self.assertEqual(set(re.findall(r'record\("([^" ]+)"\)', process)), gate.BROWSER_CLEANUP_CHILD - {'not_run'})
 
     def test_failed_default_makes_no_acceptance_claim(self):
         result = gate.empty_result()

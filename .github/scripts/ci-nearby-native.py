@@ -262,6 +262,8 @@ def main(argv=None):
             if converted == 'completed':
                 try:
                     evidence, accepted = native_events(data, code)
+                    if key != 'windows-amd64' and evidence['windowsNoAncillaryProbe'] is not None:
+                        raise ValueError('supplemental probe on wrong platform')
                     report.update(nativeDiscovery=evidence, eventsAccepted=accepted,
                                   nativeDiscoveryVerified=accepted and evidence['status'] == 'verified')
                 except (ValueError, UnicodeError, TypeError, RecursionError):

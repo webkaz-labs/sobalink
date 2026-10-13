@@ -125,10 +125,7 @@ func (t *nativeTransport) WritePacket(data []byte) error {
 	}
 	oob := winSendControl(t.scope, strconv.IntSize/8)
 	n, nn, err := t.conn.WriteMsgUDP(data, oob, &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
-	if err != nil || n != len(data) || nn != len(oob) {
-		return socketFailure("socket_write")
-	}
-	return nil
+	return classifyNativeSend(n, len(data), nn, len(oob), err)
 }
 func (t *nativeTransport) Close() error {
 	t.once.Do(func() { t.closeErr = normalizedCloseError(t.conn.Close()) })

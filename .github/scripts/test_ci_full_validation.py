@@ -68,6 +68,62 @@ class FullProofTests(unittest.TestCase):
     def audit(self, **kwargs):
         return full.audit(self.api, SHA, **kwargs)
 
+    def test_linux_nearby_exact_step_source_and_target_are_required(self):
+        step = 'Verify Linux nearby native discovery without skips'
+        self.assertIn('.github/scripts/ci-nearby-native.py', full.SOURCES)
+        self.assertIn('.github/scripts/ci-nearby-required.py', full.SOURCES)
+        for target, (name, _) in full.TARGETS.items():
+            self.assertEqual(step in self.required[name], target in ('linux-amd64', 'linux-arm64'))
+        original = copy.deepcopy(self.jobs)
+        for target in ('linux-amd64', 'linux-arm64'):
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                self.jobs = copy.deepcopy(original)
+                job = next(j for j in self.jobs if j['name'] == full.TARGETS[target][0])
+                record = next(s for s in job['steps'] if s['name'] == step)
+                if mode == 'missing':
+                    job['steps'].remove(record)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(record))
+                elif mode == 'pending':
+                    record['status'] = 'in_progress'
+                else:
+                    record['conclusion'] = mode
+                with self.subTest(target=target, mode=mode), self.assertRaises(ValueError):
+                    self.audit()
+
+    def test_linux_nearby_literal_admission_rejects_weakened_commands_and_scope(self):
+        original = self.sources[full.WORKFLOW]
+        marker = b'      - name: Verify Linux nearby native discovery without skips\n'
+        start = original.index(marker)
+        end = original.index(b'      - ', start + len(marker))
+        block = original[start:end]
+        changes = ((b"if: matrix.goos == 'linux'", b'if: false'),
+                   (b"if: matrix.goos == 'linux'", b"if: matrix.goos == 'linux' && matrix.goarch == 'arm64'"),
+                   (b'timeout-minutes: 8', b'timeout-minutes: 80'),
+                   (b'ci-nearby-required.py', b'ci-nearby-native.py'),
+                   (b'SOBALINK_NEARBY_NATIVE_PLATFORM:', b'OTHER_PLATFORM:'),
+                   (b'python -B ', b'python '),
+                   (marker, marker + b'        continue-on-error: true\n'))
+        mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1)]
+        for before, after in changes:
+            self.assertIn(before, block)
+            mutations.append(original.replace(block, block.replace(before, after), 1))
+        moved = original.replace(block, b'', 1)
+        browser = moved.index(b'  browser:\n')
+        insert = moved.index(b'      - ', browser)
+        mutations.append(moved[:insert] + block + moved[insert:])
+        for index, value in enumerate(mutations):
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.validate_linux_nearby_workflow(value)
+        path = '.github/scripts/ci-coverage.py'
+        for before, after in ((b"LINUX_NEARBY_TARGETS = ('linux-amd64', 'linux-arm64')", b"LINUX_NEARBY_TARGETS = ('darwin-arm64',)"),
+                              (b"LINUX_NEARBY_STEPS = ('Verify Linux nearby native discovery without skips',)", b"LINUX_NEARBY_STEPS = ('Other gate',)")):
+            sources = dict(self.sources)
+            self.assertIn(before, sources[path])
+            sources[path] = sources[path].replace(before, after)
+            with self.assertRaises(ValueError):
+                full.required_jobs(sources)
+
     def test_full_proof_binds_source_jobs_and_policy(self):
         proof = self.audit(local_root=ROOT)
         self.assertEqual(proof['head_sha'], SHA)

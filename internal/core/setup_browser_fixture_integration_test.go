@@ -88,14 +88,15 @@ func browserSetupPeerHello(ctx context.Context, c *Core, peer string) bool {
 const nearbyBrowserFailureMaxBytes = 4096
 
 type nearbyBrowserFailure struct {
-	Schema    int                        `json:"schema"`
-	Phase     string                     `json:"phase"`
-	ErrorKind string                     `json:"errorKind"`
-	Core      *nearbyBrowserCoreEvidence `json:"core,omitempty"`
+	Schema    int                           `json:"schema"`
+	Phase     string                        `json:"phase"`
+	ErrorKind string                        `json:"errorKind"`
+	Core      *nearbyBrowserCoreEvidence    `json:"core,omitempty"`
+	Cleanup   *nearbyBrowserCleanupEvidence `json:"cleanup,omitempty"`
 }
 
 func validNearbyBrowserFailure(v nearbyBrowserFailure) bool {
-	if v.Schema != 1 || v.Core != nil && !validNearbyBrowserCoreEvidence(*v.Core) {
+	if v.Schema != 1 || v.Core != nil && !validNearbyBrowserCoreEvidence(*v.Core) || v.Cleanup != nil && !validNearbyBrowserCleanupEvidence(*v.Cleanup) {
 		return false
 	}
 	switch v.Phase {

@@ -2,8 +2,10 @@ package nearby
 
 import (
 	"errors"
+	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 var (
@@ -34,10 +36,25 @@ func normalizedCloseError(err error) error {
 // A failed post-bind constructor must return its owner if rollback cannot be
 // confirmed. Callers must preserve the nonnil owner even when err is nonnil.
 func rollbackTransport(owner Transport, cause error) (Transport, error) {
-	if closeErr := owner.Close(); closeErr != nil {
-		return owner, errors.Join(cause, normalizedCloseError(closeErr))
+	closed := make(chan error, 1)
+	go func() { closed <- owner.Close() }()
+	timer := time.NewTimer(closeJoinTimeout)
+	defer timer.Stop()
+	select {
+	case closeErr := <-closed:
+		if closeErr != nil {
+			return owner, errors.Join(cause, normalizedCloseError(closeErr))
+		}
+		return nil, cause
+	case <-timer.C:
+		// Retain the original in-flight attempt. Close on this owner does not
+		// finish until the actual close worker joins, and never retries an FD.
+		unresolved := errors.Join(ErrCloseUncertain, ErrCloseUnresolved)
+		retained := &closeOnlyTransport{close: func() error {
+			return errors.Join(unresolved, normalizedCloseError(<-closed))
+		}}
+		return retained, errors.Join(cause, unresolved)
 	}
-	return nil, cause
 }
 
 type closeOnlyTransport struct {
@@ -51,4 +68,16 @@ func (t *closeOnlyTransport) WritePacket([]byte) error    { return ErrCloseUncer
 func (t *closeOnlyTransport) Close() error {
 	t.once.Do(func() { t.err = normalizedCloseError(t.close()) })
 	return t.err
+}
+
+// Both distinct resources begin closing even if either Close blocks. This
+// worker returns only after both physical close calls join. Public Session and
+// constructor rollback boundaries own finite waits and retain unresolved work.
+func pairedCloseOwner(first, second io.Closer) Transport {
+	return &closeOnlyTransport{close: func() error {
+		done := make(chan error, 2)
+		go func() { done <- normalizedCloseError(first.Close()) }()
+		go func() { done <- normalizedCloseError(second.Close()) }()
+		return errors.Join(<-done, <-done)
+	}}
 }

@@ -398,15 +398,32 @@ func (p *routeCoreProcess) invokeResultID(t *testing.T, name, requestID string, 
 }
 func (p *routeCoreProcess) stop(t *testing.T) {
 	t.Helper()
+	p.stopObserved(t, nil)
+}
+
+// Optional fixed stages for the nearby cleanup receipt; all original process
+// shutdown commands, ownership, errors and deadlines remain unchanged.
+func (p *routeCoreProcess) stopObserved(t *testing.T, observe func(string)) {
+	t.Helper()
+	record := func(stage string) {
+		if observe != nil {
+			observe(stage)
+		}
+	}
+	record("requesting")
 	p.invoke(t, "fixture.exit", nil)
+	record("replied")
 	p.input.Close()
 	select {
 	case err := <-p.done:
 		p.stopped = true
 		if err != nil {
+			record("exit_failed")
 			t.Fatal("Core child did not shut down cleanly")
 		}
+		record("joined")
 	case <-time.After(10 * time.Second):
+		record("timeout")
 		p.cmd.Process.Kill()
 		t.Fatal("Core child shutdown timed out")
 	}

@@ -30,6 +30,8 @@ def jobs(scope="full"):
     if scope in ("native-short", "full"):
         for target, name in coverage.TARGETS.items():
             steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
+            if target in coverage.LINUX_NEARBY_TARGETS:
+                steps += coverage.LINUX_NEARBY_STEPS
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             result.append(job(name, steps))
@@ -54,6 +56,31 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_linux_nearby_is_mandatory_only_on_qualified_native_targets(self):
+        self.assertEqual(coverage.LINUX_NEARBY_TARGETS, ('linux-amd64', 'linux-arm64'))
+        self.assertEqual(coverage.LINUX_NEARBY_STEPS, ('Verify Linux nearby native discovery without skips',))
+        gate = coverage.LINUX_NEARBY_STEPS[0]
+        self.assertNotIn(gate, coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS)
+        for scope in ('native-short', 'full'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+            for target in coverage.LINUX_NEARBY_TARGETS:
+                for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j['name'] == coverage.TARGETS[target])
+                    record = next(s for s in selected['steps'] if s['name'] == gate)
+                    if mode == 'missing':
+                        selected['steps'].remove(record)
+                    elif mode == 'duplicate':
+                        selected['steps'].append(copy.deepcopy(record))
+                    elif mode == 'pending':
+                        record['status'] = 'in_progress'
+                    else:
+                        record['conclusion'] = mode
+                    with self.subTest(scope=scope, target=target, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+        for scope in ('docs', 'frontend', 'go'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+
     def test_setup_and_text_browser_gates_are_required_in_every_applicable_scope(self):
         native = 'Verify manual nearby setup across native Core peers'
         browser = ('Verify nearby setup with separate agents and actual browser',

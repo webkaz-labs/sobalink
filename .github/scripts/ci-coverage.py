@@ -60,6 +60,8 @@ FAST_STEPS = (
     "Wait for real-time lifecycle and lease checks",
     "Build native package and smoke archive contents",
 )
+LINUX_NEARBY_TARGETS = ('linux-amd64', 'linux-arm64')
+LINUX_NEARBY_STEPS = ('Verify Linux nearby native discovery without skips',)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 SCOPES = {"docs", "frontend", "go", "native-short", "full"}
@@ -182,6 +184,8 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     if scope in ("native-short", "full"):
         for target, name in TARGETS.items():
             steps = FAST_STEPS + (LONG_STEPS + FULL_ONLY_STEPS if scope == "full" else ())
+            if target in LINUX_NEARBY_TARGETS:
+                steps += LINUX_NEARBY_STEPS
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             passed(name, steps)
@@ -243,7 +247,7 @@ def job_timings(jobs):
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
     names = {*TARGETS.values(), "impact", "browser", "go-unit", "manifest-smoke"}
-    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS,
+    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}

@@ -12,13 +12,15 @@ import (
 )
 
 type nativeTransport struct {
-	conn     *net.UDPConn
-	packet   *ipv4.PacketConn
-	scope    Scope
-	ifi      net.Interface
-	policy   discoveryPolicy
-	once     sync.Once
-	closeErr error
+	conn       *net.UDPConn
+	packet     *ipv4.PacketConn
+	scope      Scope
+	ifi        net.Interface
+	policy     discoveryPolicy
+	once       sync.Once
+	closeErr   error
+	sender     nativePacketWriter
+	closeOwner Transport
 }
 
 // NativeFactory opens IPv4 mDNS on exactly one selected interface. It binds
@@ -47,7 +49,7 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 		return rollbackTransport(&closeOnlyTransport{close: raw.Close}, socketFailure("socket_type"))
 	}
 	packet := ipv4.NewPacketConn(conn)
-	owner := &nativeTransport{conn: conn, packet: packet, scope: scope, ifi: ifi, policy: policy}
+	owner := &nativeTransport{conn: conn, packet: packet, sender: packet, closeOwner: &closeOnlyTransport{close: packet.Close}, scope: scope, ifi: ifi, policy: policy}
 	fail := func(stage nativeSocketStage) (Transport, error) {
 		return rollbackTransport(owner, socketFailure(stage))
 	}
@@ -70,7 +72,7 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 			return fail(step.stage)
 		}
 	}
-	return owner, nil
+	return attachNativePlatformSender(owner)
 }
 func (t *nativeTransport) ReadPacket() (Packet, error) {
 	data := make([]byte, MaxDatagramBytes+1)
@@ -103,17 +105,46 @@ func (t *nativeTransport) WritePacket(data []byte) error {
 	if _, err := currentBindingWithPolicy(t.scope, &t.ifi, t.policy); err != nil {
 		return err
 	}
-	if t.conn.SetWriteDeadline(time.Now().Add(time.Second)) != nil {
+	return writeNativePacket(t.sender, data, nativeSendControl(t.scope))
+}
+
+// The writer interface permits ownership/control regressions without sockets.
+type nativePacketWriter interface {
+	SetWriteDeadline(time.Time) error
+	WriteTo([]byte, *ipv4.ControlMessage, net.Addr) (int, error)
+	Close() error
+}
+
+func writeNativePacket(sender nativePacketWriter, data []byte, cm *ipv4.ControlMessage) error {
+	if sender.SetWriteDeadline(time.Now().Add(time.Second)) != nil {
 		return socketFailure("socket_write_deadline")
 	}
-	cm := &ipv4.ControlMessage{Src: net.IP(t.scope.LocalAddress.AsSlice()), IfIndex: t.scope.InterfaceIndex}
-	n, err := t.packet.WriteTo(data, cm, &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
-	if err != nil || n != len(data) {
-		return socketFailure("socket_write")
-	}
-	return nil
+	n, err := sender.WriteTo(data, cm, &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
+	return classifyNativeSend(n, len(data), 0, 0, err)
 }
+
+func sourceOnlySendControl(scope Scope) *ipv4.ControlMessage {
+	// Darwin honors the source only when ancillary IfIndex is zero. Its
+	// socket-local IP_BOUND_IF still enforces the selected interface.
+	return &ipv4.ControlMessage{Src: net.IP(scope.LocalAddress.AsSlice())}
+}
+
+func adoptNativeSender(owner *nativeTransport, open func() (nativePacketWriter, Transport, error)) (Transport, error) {
+	sender, senderOwner, err := open()
+	if senderOwner != nil {
+		owner.closeOwner = pairedCloseOwner(owner.closeOwner, senderOwner)
+	}
+	if err != nil {
+		return rollbackTransport(owner, err)
+	}
+	if sender == nil || senderOwner == nil {
+		return rollbackTransport(owner, socketFailure("socket_type"))
+	}
+	owner.sender = sender
+	return owner, nil
+}
+
 func (t *nativeTransport) Close() error {
-	t.once.Do(func() { t.closeErr = normalizedCloseError(t.packet.Close()) })
+	t.once.Do(func() { t.closeErr = normalizedCloseError(t.closeOwner.Close()) })
 	return t.closeErr
 }

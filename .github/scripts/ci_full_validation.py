@@ -12,6 +12,7 @@ WORKFLOW = '.github/workflows/ci.yml'
 SOURCES = (WORKFLOW, '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
+           '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-required.py',
            '.github/scripts/release-validation.py')
 TARGETS = {
     'linux-amd64': ('native (ubuntu-24.04, linux, amd64)', 'ubuntu-24.04'),
@@ -535,15 +536,45 @@ def validate_setup_and_text_browser_workflow(workflow_bytes):
             'private browser evidence must not be exported')
 
 
+def validate_linux_nearby_workflow(workflow_bytes):
+    """Bind the one qualified Linux no-skip gate; preserve diagnostic semantics."""
+    workflow = workflow_bytes.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    expected = """      - name: Verify Linux nearby native discovery without skips
+        if: matrix.goos == 'linux'
+        timeout-minutes: 8
+        env:
+          SOBALINK_NEARBY_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-metrics.py run --suite nearby-native-linux -- python -B .github/scripts/ci-nearby-required.py
+"""
+    marker = expected.splitlines(keepends=True)[0]
+    require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
+            'invalid Linux nearby execution policy')
+    start = workflow.index(marker)
+    require(workflow[start + len(expected):].startswith('      - '),
+            'invalid Linux nearby step boundary')
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    native = [offset for offset, key in jobs if key == 'native']
+    require(len(native) == 1, 'missing Linux nearby native job')
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    require(native[0] < start < end, 'Linux nearby must run in the native job')
+    require('SOBALINK_NEARBY_NATIVE_PLATFORM' not in workflow[:start] + workflow[start + len(expected):],
+            'Linux nearby opt-in escaped its step')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
     validate_durable_text_workflow(sources[WORKFLOW])
+    validate_linux_nearby_workflow(sources[WORKFLOW])
     validate_setup_and_text_browser_workflow(sources[WORKFLOW])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
-    names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS'}
+    names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
+             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS'}
     values = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -573,9 +604,15 @@ def required_jobs(sources):
                                          'Verify native remote resource management',
                                          'Verify native fixed-group resource catalog'),
             'unexpected full-only gate policy')
+    require(values['LINUX_NEARBY_TARGETS'] == ('linux-amd64', 'linux-arm64')
+            and values['LINUX_NEARBY_STEPS'] == ('Verify Linux nearby native discovery without skips',),
+            'unexpected qualified Linux nearby policy')
     native_steps = values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
     require(len(set(native_steps)) == len(native_steps), 'overlapping required native gates')
     result = {name: native_steps for name, _ in TARGETS.values()}
+    require(not set(native_steps).intersection(values['LINUX_NEARBY_STEPS']), 'overlapping Linux nearby gate')
+    for target in values['LINUX_NEARBY_TARGETS']:
+        result[TARGETS[target][0]] += values['LINUX_NEARBY_STEPS']
     result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
     result.update({
         'impact': ('Select minimum CI scope',),

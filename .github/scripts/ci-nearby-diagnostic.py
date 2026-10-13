@@ -24,13 +24,18 @@ CASES = {
 MARKER = 'NEARBY_NATIVE_CAPABILITY '
 UNAVAILABLE = {'loopback_scope_unavailable', 'native_socket_unavailable', 'native_receive_unavailable', 'native_receive_timeout', 'native_session_unavailable'}
 FAILED = {'candidate_binding_or_freshness_mismatch', 'candidate_survived_close', 'cleanup_close_uncertain', 'cleanup_not_joined', 'foreign_or_missing_packet_metadata', 'native_owner_missing', 'native_session_failed', 'native_session_missing', 'native_session_start_failed', 'owners_missing', 'session_entropy_unavailable', 'session_not_joined', 'socket_not_closed', 'startup_cleanup_uncertain'}
-CAPABILITY_KEYS = {'status', 'reason', 'scope', 'bidirectionalCandidates', 'ownersJoined', 'socketFailureStage'}
+CAPABILITY_KEYS = {'status', 'reason', 'scope', 'bidirectionalCandidates', 'ownersJoined', 'socketFailureStage', 'sendFailureKind', 'windowsNoAncillaryProbe'}
 SOCKET_FAILURE_STAGES = {'none', 'socket_create', 'socket_cloexec', 'socket_nonblock',
     'socket_reuse_address', 'socket_interface_options', 'socket_bind', 'socket_wrap',
     'socket_original_close', 'socket_type', 'socket_bound_address', 'socket_read_buffer',
     'socket_write_buffer', 'socket_receive_metadata', 'socket_multicast_interface',
     'socket_multicast_ttl', 'socket_multicast_loopback', 'socket_join_group', 'socket_read',
     'socket_write_deadline', 'socket_write'}
+SEND_FAILURE_KINDS = {'none', 'short_payload', 'short_control', 'invalid_argument',
+    'source_unavailable', 'network_unreachable', 'host_unreachable', 'permission_denied',
+    'unsupported', 'timeout', 'other'}
+SEND_PROBE_KEYS = {'status', 'reason', 'socketFailureStage', 'sendFailureKind',
+    'metadataVerified', 'ownersJoined', 'productionDiscoveryVerified'}
 BROWSER_FAILURE_MAX_BYTES = 4096
 BROWSER_CORE_STAGES = {'waiting_checkpoint', 'waiting_discovery', 'invariants', 'hello_a', 'hello_b', 'acknowledged'}
 BROWSER_CORE_STATES = {'unknown', 'idle', 'discovering', 'selecting', 'authenticating',
@@ -113,25 +118,62 @@ def parse_json(text):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError('invalid number')))
 
 
+def send_failure(stage, kind):
+    if (type(stage) is not str or stage not in SOCKET_FAILURE_STAGES
+            or type(kind) is not str or kind not in SEND_FAILURE_KINDS
+            or (stage == 'socket_write') != (kind != 'none')):
+        raise ValueError('invalid fixed send failure')
+
+
+def send_probe(value):
+    if (type(value) is not dict or set(value) != SEND_PROBE_KEYS
+            or any(type(value[k]) is not bool for k in ('metadataVerified', 'ownersJoined', 'productionDiscoveryVerified'))
+            or value['productionDiscoveryVerified']):
+        raise ValueError('invalid supplemental probe schema')
+    send_failure(value['socketFailureStage'], value['sendFailureKind'])
+    status, reason = value['status'], value['reason']
+    if type(status) is not str or type(reason) is not str:
+        raise ValueError('invalid supplemental probe type')
+    if status == 'verified':
+        if (reason != 'scoped_no_ancillary_delivery' or not value['metadataVerified']
+                or not value['ownersJoined'] or value['socketFailureStage'] != 'none'):
+            raise ValueError('incomplete supplemental proof')
+    elif status == 'unavailable':
+        if reason not in UNAVAILABLE or value['metadataVerified']:
+            raise ValueError('invalid supplemental unavailable result')
+    elif status != 'failed' or reason not in FAILED:
+        raise ValueError('invalid supplemental failure')
+    return {key: value[key] for key in sorted(SEND_PROBE_KEYS)}
+
+
 def capability(value):
     if (type(value) is not dict or set(value) != CAPABILITY_KEYS or value['scope'] != 'isolated_loopback'
             or any(type(value[k]) is not bool for k in ('bidirectionalCandidates', 'ownersJoined'))):
         raise ValueError('invalid capability schema')
     status, reason, stage = value['status'], value['reason'], value['socketFailureStage']
-    if type(status) is not str or type(reason) is not str or type(stage) is not str or stage not in SOCKET_FAILURE_STAGES:
+    if type(status) is not str or type(reason) is not str:
         raise ValueError('invalid capability type')
+    send_failure(stage, value['sendFailureKind'])
+    probe = None if value['windowsNoAncillaryProbe'] is None else send_probe(value['windowsNoAncillaryProbe'])
+    if probe is not None:
+        if stage != 'socket_write' or not value['ownersJoined'] or status not in ('unavailable', 'failed'):
+            raise ValueError('supplemental probe outside joined write failure')
+        if probe['status'] == 'failed' and (status != 'failed' or reason != probe['reason']):
+            raise ValueError('unsafe supplemental probe was not fatal')
     if status == 'verified':
-        if stage != 'none' or reason != 'bidirectional_scoped_mdns' or not value['bidirectionalCandidates'] or not value['ownersJoined']:
+        if stage != 'none' or probe is not None or reason != 'bidirectional_scoped_mdns' or not value['bidirectionalCandidates'] or not value['ownersJoined']:
             raise ValueError('incomplete capability proof')
     elif status == 'unavailable':
         if reason not in UNAVAILABLE or value['bidirectionalCandidates']:
             raise ValueError('invalid unavailable classification')
     elif status == 'not_run':
-        if stage != 'none' or reason != 'opt_in_required' or value['bidirectionalCandidates'] or value['ownersJoined']:
+        if stage != 'none' or probe is not None or reason != 'opt_in_required' or value['bidirectionalCandidates'] or value['ownersJoined']:
             raise ValueError('invalid opt-in classification')
     elif status != 'failed' or reason not in FAILED:
         raise ValueError('unknown capability classification')
-    return {key: value[key] for key in sorted(CAPABILITY_KEYS)}
+    result = {key: value[key] for key in sorted(CAPABILITY_KEYS)}
+    result['windowsNoAncillaryProbe'] = probe
+    return result
 
 
 
@@ -161,8 +203,39 @@ def browser_core_evidence(value):
     return {'checkpointArrived': value['checkpointArrived'], 'stage': value['stage'], 'peers': peers}
 
 
+BROWSER_CLEANUP_STAGES = {'browser_returned', 'cancel_snapshot', 'cancel_request', 'cancel_reply',
+    'join', 'post_cancel_snapshot', 'post_cancel_backend', 'post_cancel_hello', 'listener_release',
+    'child_exit', 'summary_open', 'summary_write', 'summary_close', 'complete'}
+BROWSER_CLEANUP_FLAGS = {'browserCommandExited', 'browserReceiptVerified', 'contextEnded',
+                         'summaryOpened', 'summaryWritten', 'summaryClosed'}
+BROWSER_CLEANUP_PEER_FLAGS = {'cancelReturned', 'cancelDecoded', 'joined', 'postObserved', 'connected', 'backend'}
+BROWSER_CLEANUP_LISTENER = {'not_run', 'dial_rejected', 'still_open'}
+BROWSER_CLEANUP_CHILD = {'not_run', 'requesting', 'replied', 'joined', 'exit_failed', 'timeout'}
+
+
+def browser_cleanup_evidence(value):
+    if (type(value) is not dict or set(value) != BROWSER_CLEANUP_FLAGS | {'stage', 'peer', 'peers'}
+            or any(type(value[key]) is not bool for key in BROWSER_CLEANUP_FLAGS)
+            or type(value['stage']) is not str or value['stage'] not in BROWSER_CLEANUP_STAGES
+            or type(value['peer']) is not str or value['peer'] not in {'a', 'b', 'none'}
+            or type(value['peers']) is not list or len(value['peers']) != 2):
+        raise ValueError('invalid fixed cleanup evidence')
+    peers = []
+    categories = {'cancelState': BROWSER_CORE_STATES, 'cancelReason': BROWSER_CORE_REASONS,
+                  'state': BROWSER_CORE_STATES, 'reason': BROWSER_CORE_REASONS,
+                  'freshHello': BROWSER_CORE_HELLO, 'listener': BROWSER_CLEANUP_LISTENER,
+                  'childExit': BROWSER_CLEANUP_CHILD}
+    for peer in value['peers']:
+        if (type(peer) is not dict or set(peer) != BROWSER_CLEANUP_PEER_FLAGS | set(categories)
+                or any(type(peer[key]) is not bool for key in BROWSER_CLEANUP_PEER_FLAGS)
+                or any(type(peer[key]) is not str or peer[key] not in allowed for key, allowed in categories.items())):
+            raise ValueError('invalid fixed cleanup peer')
+        peers.append({key: peer[key] for key in sorted(peer)})
+    return {**{key: value[key] for key in sorted(BROWSER_CLEANUP_FLAGS | {'stage', 'peer'})}, 'peers': peers}
+
+
 def browser_failure(value):
-    if (type(value) is not dict or set(value) not in ({'schema', 'phase', 'errorKind'}, {'schema', 'phase', 'errorKind', 'core'})
+    if (type(value) is not dict or not {'schema', 'phase', 'errorKind'} <= set(value) <= {'schema', 'phase', 'errorKind', 'core', 'cleanup'}
             or type(value['schema']) is not int or value['schema'] != 1
             or type(value['phase']) is not str or value['phase'] not in BROWSER_PHASES
             or type(value['errorKind']) is not str or value['errorKind'] not in BROWSER_ERROR_KINDS):
@@ -170,6 +243,8 @@ def browser_failure(value):
     result = {'schema': 1, 'phase': value['phase'], 'errorKind': value['errorKind']}
     if 'core' in value:
         result['core'] = browser_core_evidence(value['core'])
+    if 'cleanup' in value:
+        result['cleanup'] = browser_cleanup_evidence(value['cleanup'])
     return result
 
 

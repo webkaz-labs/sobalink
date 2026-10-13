@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,8 +21,9 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 	}
 	failurePhase := "core-start"
 	var coreEvidence *nearbyBrowserCoreEvidence
+	var cleanupEvidence *nearbyBrowserCleanupEvidence
 	defer func() {
-		saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence", Core: coreEvidence})
+		saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence", Core: coreEvidence, Cleanup: cleanupEvidence})
 	}()
 	f := newNativeLANCoreFixture(t)
 	ctx, cancel := context.WithTimeout(f.ctx, 2*time.Minute)
@@ -192,31 +194,75 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 	// Retain the final connected checkpoint vector; subsequent cleanup has
 	// its own outer phase and must not relabel the older snapshot.
 	failurePhase = "core-cleanup"
-	for _, p := range peers {
+	// The runner returned only after command.Wait and the exact one-case,
+	// zero-error browser receipt passed. This is evidence, not wrapper success.
+	cleanupEvidence = newNearbyBrowserCleanupEvidence()
+	defer func() { cleanupEvidence.ContextEnded = ctx.Err() != nil }()
+	for i, p := range peers {
+		cleanupEvidence.Peer = []string{"a", "b"}[i]
+		observed := &cleanupEvidence.Peers[i]
+		cleanupEvidence.Stage = "cancel_snapshot"
 		v := view(p)
-		p.invoke(t, "setup.cancel", SetupSessionInput{SessionID: v.SessionID})
-		wait(func() bool { return evidence(p).Joined }, "promoted setup cleanup did not join")
-		if current := view(p); !current.Connected || !evidence(p).Backend || !catalogProcessDecode[bool](t, p.invoke(t, "fixture.setup-hello", nil)) {
+		cleanupEvidence.Stage = "cancel_request"
+		reply := p.invoke(t, "setup.cancel", SetupSessionInput{SessionID: v.SessionID})
+		observed.CancelReturned = true
+		cleanupEvidence.Stage = "cancel_reply"
+		var cancelled SetupSnapshot
+		observed.CancelDecoded = json.Unmarshal(reply, &cancelled) == nil
+		if observed.CancelDecoded {
+			observed.CancelState, observed.CancelReason = nearbyBrowserState(cancelled.State), nearbyBrowserReason(cancelled.ReasonCode)
+		}
+		cleanupEvidence.Stage = "join"
+		wait(func() bool { observed.Joined = evidence(p).Joined; return observed.Joined }, "promoted setup cleanup did not join")
+		cleanupEvidence.Stage = "post_cancel_snapshot"
+		current := view(p)
+		observed.PostObserved, observed.State, observed.Reason, observed.Connected = true, nearbyBrowserState(current.State), nearbyBrowserReason(current.ReasonCode), current.Connected
+		// Preserve the original assertion order and short-circuit behavior.
+		if !current.Connected {
 			t.Fatal("temporary cleanup closed the approved persistent connection")
 		}
+		cleanupEvidence.Stage = "post_cancel_backend"
+		observed.Backend = evidence(p).Backend
+		if !observed.Backend {
+			t.Fatal("temporary cleanup closed the approved persistent connection")
+		}
+		cleanupEvidence.Stage = "post_cancel_hello"
+		ok := catalogProcessDecode[bool](t, p.invoke(t, "fixture.setup-hello", nil))
+		observed.FreshHello = "failed"
+		if !ok {
+			t.Fatal("temporary cleanup closed the approved persistent connection")
+		}
+		observed.FreshHello = "passed"
+		cleanupEvidence.Stage = "listener_release"
 		conn, err := net.DialTimeout("tcp", v.Contact.Bootstrap, 100*time.Millisecond)
+		observed.Listener = "dial_rejected"
 		if err == nil {
+			observed.Listener = "still_open"
 			_ = conn.Close()
 			t.Fatal("joined setup retained its bootstrap listener")
 		}
 	}
-	for _, p := range peers {
-		p.stop(t)
+	for i, p := range peers {
+		cleanupEvidence.Peer, cleanupEvidence.Stage = []string{"a", "b"}[i], "child_exit"
+		p.stopObserved(t, func(stage string) { cleanupEvidence.Peers[i].ChildExit = stage })
 	}
+	cleanupEvidence.Peer = "none"
 	if path := os.Getenv("SOBA_SETUP_BROWSER_SUMMARY"); path != "" {
+		cleanupEvidence.Stage = "summary_open"
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			t.Fatal("sanitized nearby browser summary unavailable")
 		}
+		cleanupEvidence.SummaryOpened = true
+		cleanupEvidence.Stage = "summary_write"
 		_, writeErr := file.WriteString("{\"schema\":1,\"accepted\":true,\"observed\":1,\"passed\":1,\"errors\":0,\"cores\":2,\"browserContexts\":2,\"locales\":[\"en\",\"ja\"],\"widths\":[375,320],\"path\":\"manual-contact-loopback\",\"nativeMulticastVerified\":false,\"bilateralFingerprint\":true,\"persistentConsent\":true,\"approvalResponseLost\":true,\"originalSessionRecovered\":true,\"oneApprovalUnpaired\":true,\"helloConfirmed\":true,\"receivingTrustUnchanged\":true,\"cancelJoined\":true,\"browserCommandExited\":true,\"coreChildrenJoined\":true}\n")
+		cleanupEvidence.SummaryWritten = writeErr == nil
+		cleanupEvidence.Stage = "summary_close"
 		closeErr := file.Close()
+		cleanupEvidence.SummaryClosed = closeErr == nil
 		if writeErr != nil || closeErr != nil {
 			t.Fatal("sanitized nearby browser summary save failed")
 		}
 	}
+	cleanupEvidence.Stage = "complete"
 }

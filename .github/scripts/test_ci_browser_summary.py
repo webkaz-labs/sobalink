@@ -114,6 +114,41 @@ class FixedBrowserSummaryTests(unittest.TestCase):
                 else:
                     self.assertEqual(list(exported.iterdir()), [])
 
+    def test_cleanup_failure_reconstruction_preserves_prior_connection_without_accepting(self):
+        peer = {'observed': True, 'state': 'connected', 'reason': 'none',
+                'checks': {key: True for key in summary.nearby.BROWSER_CORE_CHECKS}, 'freshHello': 'passed'}
+        cleanup_peer = {**{key: True for key in summary.nearby.BROWSER_CLEANUP_PEER_FLAGS},
+                        'cancelState': 'cancelling', 'cancelReason': 'none', 'state': 'connected',
+                        'reason': 'none', 'freshHello': 'passed', 'listener': 'dial_rejected', 'childExit': 'joined'}
+        fixed = {'schema': 1, 'phase': 'core-cleanup', 'errorKind': 'core_evidence',
+                 'core': {'checkpointArrived': True, 'stage': 'acknowledged', 'peers': [copy.deepcopy(peer), copy.deepcopy(peer)]},
+                 'cleanup': {**{key: True for key in summary.nearby.BROWSER_CLEANUP_FLAGS}, 'contextEnded': False,
+                             'stage': 'summary_close', 'peer': 'none', 'peers': [copy.deepcopy(cleanup_peer), copy.deepcopy(cleanup_peer)]}}
+        encoded = json.dumps(fixed)
+        self.assertLessEqual(len(encoded.encode()), summary.nearby.BROWSER_FAILURE_MAX_BYTES)
+        for mutation in ('valid', 'unknown_field', 'integer_boolean', 'private_outcome', 'oversized'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                value = copy.deepcopy(fixed)
+                if mutation == 'unknown_field':
+                    value['cleanup']['peers'][0]['message'] = 'synthetic-private'
+                if mutation == 'integer_boolean':
+                    value['cleanup']['browserReceiptVerified'] = 1
+                if mutation == 'private_outcome':
+                    value['cleanup']['peers'][1]['childExit'] = 'synthetic-private'
+                text = json.dumps(value)
+                if mutation == 'oversized':
+                    text += ' ' * summary.nearby.BROWSER_FAILURE_MAX_BYTES
+                failure, success = directory / 'setup-native-failure.json', directory / 'setup-native-summary.json'
+                failure.write_text(text)
+                success.write_text(json.dumps(summary.nearby.BROWSER_EXPECTED))
+                self.assertFalse(summary.reconstruct('setup', 0, directory))
+                self.assertFalse(success.exists())
+                if mutation == 'valid':
+                    self.assertEqual(json.loads(failure.read_text()), fixed)
+                else:
+                    self.assertFalse(failure.exists())
+
     def test_invalid_failure_drops_both_inputs(self):
         for value in ({'schema': 1, 'phase': 'synthetic-private', 'errorKind': 'timeout'},
                       {'schema': 1, 'phase': 'open-a', 'errorKind': 'timeout', 'raw': 'synthetic-private'}):
