@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
@@ -86,6 +87,9 @@ func (c *Core) stopApplication() map[string]string {
 }
 
 func (c *Core) startNetwork(ctx context.Context) error {
+	if err := c.peerListenerFailure(); err != nil {
+		return err
+	}
 	c.mu.RLock()
 	removal, cleanupPending := c.managedRemoval, c.managedCleanupPending
 	c.mu.RUnlock()
@@ -229,25 +233,13 @@ func (c *Core) maintain() {
 				c.networkError = ""
 				c.networkErrorCode = ""
 			}
-			ps := c.peerServer
 			c.mu.Unlock()
 			if c.endpointReplacementOwnedLocked() {
 				c.mu.Lock()
 				c.networkState, c.networkError, c.networkErrorCode = "reconnecting", "", ""
 				c.mu.Unlock()
 			} else if e == nil && st.Snapshot.Running {
-				if ps == nil {
-					if err := c.startPeerServer(st.IPs); err != nil {
-						c.mu.Lock()
-						c.networkError = "Peer listener unavailable: " + err.Error()
-						c.mu.Unlock()
-					}
-				}
-				c.revalidateServices(st)
-				_ = c.syncWorkerTCPScopes()
-				c.revalidateProxies(st)
-				c.refreshPeers(st)
-				c.runStartup(c.ctx)
+				c.maintainPeerApplicationsLocked(st)
 			} else {
 				c.suspendServices()
 				c.suspendSavedProxies()
@@ -270,6 +262,36 @@ func (c *Core) maintain() {
 		c.pumpMessageQueue()
 		resourceacceptance.MaintenancePassed(c)
 	}
+}
+
+// maintainPeerApplicationsLocked requires c.op. A healthy backend snapshot was
+// read before peer startup, so it cannot authorize application recovery after
+// that startup fails or leaves a retained, uncertain listener owner.
+func (c *Core) maintainPeerApplicationsLocked(st identity.State) {
+	c.mu.RLock()
+	ps := c.peerServer
+	c.mu.RUnlock()
+	var err error
+	if ps == nil {
+		err = c.startPeerServer(st.IPs)
+	} else {
+		err = ps.startFailure
+	}
+	if err != nil {
+		c.networkReady.Store(false)
+		c.mu.Lock()
+		c.networkError = "Peer listener unavailable: " + err.Error()
+		c.mu.Unlock()
+		c.suspendServices()
+		c.suspendSavedProxies()
+		c.stopAllProxies()
+		return
+	}
+	c.revalidateServices(st)
+	_ = c.syncWorkerTCPScopes()
+	c.revalidateProxies(st)
+	c.refreshPeers(st)
+	c.runStartup(c.ctx)
 }
 
 func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
@@ -851,8 +873,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		}
 		if next.Paused {
 			c.mu.Lock()
-			messageJoins := c.stopMessageQueuePeerLocked(t.ID)
 			ps := c.peerServer
+			messageJoins := c.stopMessageQueuePeerLocked(t.ID)
 			var outgoing []*outgoingBatch
 			for _, b := range c.outgoing {
 				if b.PeerID == t.ID {

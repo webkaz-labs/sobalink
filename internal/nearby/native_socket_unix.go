@@ -58,7 +58,7 @@ func systemNativeSocketOps() nativeSocketOps {
 // On failure only, failedOwner retains any original/duplicate whose closure is
 // uncertain. A successful return owns only packet; the original was closed.
 func openNativeGroupSocket(index int, ops nativeSocketOps) (net.PacketConn, Transport, error) {
-	return openNativeBoundSocket(index, multicast4.As4(), ops)
+	return openNativeBoundSocket(index, multicast4.As4(), "group_receive", ops)
 }
 
 func openNativeLocalSocket(scope Scope, policy discoveryPolicy, ops nativeSocketOps) (net.PacketConn, Transport, error) {
@@ -68,10 +68,10 @@ func openNativeLocalSocket(scope Scope, policy discoveryPolicy, ops nativeSocket
 	if !scope.LocalAddress.Is4() {
 		return nil, nil, ErrUnsupported
 	}
-	return openNativeBoundSocket(scope.InterfaceIndex, scope.LocalAddress.As4(), ops)
+	return openNativeBoundSocket(scope.InterfaceIndex, scope.LocalAddress.As4(), "local_sender", ops)
 }
 
-func openNativeBoundSocket(index int, address [4]byte, ops nativeSocketOps) (packet net.PacketConn, failedOwner Transport, err error) {
+func openNativeBoundSocket(index int, address [4]byte, role string, ops nativeSocketOps) (packet net.PacketConn, failedOwner Transport, err error) {
 	// Hold Go's fork lock until FD_CLOEXEC is set on platforms without atomic
 	// socket flags. Do not silently ignore close-on-exec failures.
 	syscall.ForkLock.RLock()
@@ -101,7 +101,11 @@ func openNativeBoundSocket(index int, address [4]byte, ops nativeSocketOps) (pac
 			return ops.bind(fd, &unix.SockaddrInet4{Port: mdnsPort, Addr: address})
 		}},
 	} {
-		if step.apply(fd) != nil {
+		if err := step.apply(fd); err != nil {
+			if step.stage == "socket_bind" {
+				retained, failure := rollbackTransport(owner, nativeBindFailure(role, err))
+				return nil, retained, failure
+			}
 			return fail(step.stage)
 		}
 	}

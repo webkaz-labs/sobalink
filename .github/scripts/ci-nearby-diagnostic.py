@@ -24,7 +24,7 @@ CASES = {
 MARKER = 'NEARBY_NATIVE_CAPABILITY '
 UNAVAILABLE = {'loopback_scope_unavailable', 'native_socket_unavailable', 'native_receive_unavailable', 'native_receive_timeout', 'native_session_unavailable'}
 FAILED = {'candidate_binding_or_freshness_mismatch', 'candidate_survived_close', 'cleanup_close_uncertain', 'cleanup_not_joined', 'foreign_or_missing_packet_metadata', 'native_owner_missing', 'native_session_failed', 'native_session_missing', 'native_session_start_failed', 'owners_missing', 'session_entropy_unavailable', 'session_not_joined', 'socket_not_closed', 'startup_cleanup_uncertain'}
-CAPABILITY_KEYS = {'status', 'reason', 'scope', 'bidirectionalCandidates', 'ownersJoined', 'socketFailureStage', 'sendFailureKind', 'windowsNoAncillaryProbe'}
+CAPABILITY_KEYS = {'status', 'reason', 'scope', 'bidirectionalCandidates', 'ownersJoined', 'socketFailureStage', 'sendFailureKind', 'bindFailureKind', 'bindSocketRole', 'windowsNoAncillaryProbe'}
 SOCKET_FAILURE_STAGES = {'none', 'socket_create', 'socket_cloexec', 'socket_nonblock',
     'socket_reuse_address', 'socket_interface_options', 'socket_bind', 'socket_wrap',
     'socket_original_close', 'socket_type', 'socket_bound_address', 'socket_read_buffer',
@@ -34,6 +34,9 @@ SOCKET_FAILURE_STAGES = {'none', 'socket_create', 'socket_cloexec', 'socket_nonb
 SEND_FAILURE_KINDS = {'none', 'short_payload', 'short_control', 'invalid_argument',
     'source_unavailable', 'network_unreachable', 'host_unreachable', 'permission_denied',
     'unsupported', 'timeout', 'other'}
+BIND_FAILURE_KINDS = {'none', 'address_in_use', 'source_unavailable', 'permission_denied',
+    'invalid_argument', 'unsupported', 'other'}
+BIND_SOCKET_ROLES = {'none', 'group_receive', 'local_sender', 'local_duplex'}
 SEND_PROBE_KEYS = {'status', 'reason', 'socketFailureStage', 'sendFailureKind',
     'metadataVerified', 'ownersJoined', 'productionDiscoveryVerified'}
 BROWSER_FAILURE_MAX_BYTES = 4096
@@ -125,6 +128,14 @@ def send_failure(stage, kind):
         raise ValueError('invalid fixed send failure')
 
 
+def bind_failure(stage, kind, role):
+    if (type(kind) is not str or kind not in BIND_FAILURE_KINDS
+            or type(role) is not str or role not in BIND_SOCKET_ROLES
+            or (stage == 'socket_bind') != (kind != 'none')
+            or (stage == 'socket_bind') != (role != 'none')):
+        raise ValueError('invalid fixed bind failure')
+
+
 def send_probe(value):
     if (type(value) is not dict or set(value) != SEND_PROBE_KEYS
             or any(type(value[k]) is not bool for k in ('metadataVerified', 'ownersJoined', 'productionDiscoveryVerified'))
@@ -154,6 +165,7 @@ def capability(value):
     if type(status) is not str or type(reason) is not str:
         raise ValueError('invalid capability type')
     send_failure(stage, value['sendFailureKind'])
+    bind_failure(stage, value['bindFailureKind'], value['bindSocketRole'])
     probe = None if value['windowsNoAncillaryProbe'] is None else send_probe(value['windowsNoAncillaryProbe'])
     if probe is not None:
         if stage != 'socket_write' or not value['ownersJoined'] or status not in ('unavailable', 'failed'):
@@ -213,6 +225,42 @@ BROWSER_CLEANUP_LISTENER = {'not_run', 'dial_rejected', 'still_open'}
 BROWSER_CLEANUP_CHILD = {'not_run', 'requesting', 'replied', 'joined', 'exit_failed', 'timeout'}
 
 
+BROWSER_CHILD_WAIT = {'not_observed', 'success', 'exit_one', 'exit_two', 'race_exit', 'other_exit',
+    'signaled', 'context_canceled', 'context_deadline', 'io_wait_timeout', 'shutdown_timeout', 'wait_error'}
+BROWSER_CHILD_RUNTIME = {'race', 'panic', 'fatal', 'testTimeout', 'outputTruncated', 'markerInvalid', 'markerRepeated'}
+BROWSER_CHILD_AREAS = {'fixture', 'coreLifecycle', 'peerAPI', 'setup', 'lanBackend', 'web', 'config', 'transfer', 'engine', 'httpServer'}
+BROWSER_CHILD_CLOSE_ERRORS = {'closed', 'canceled', 'deadline', 'permission', 'other'}
+BROWSER_CHILD_CLOSE_STATES = {'not_run', 'running', 'passed', 'failed'}
+
+
+def fixed_flags(value, keys):
+    if type(value) is not dict or set(value) != keys or any(type(flag) is not bool for flag in value.values()):
+        raise ValueError('invalid fixed child flags')
+    return {key: value[key] for key in sorted(keys)}
+
+
+def browser_child_termination(value):
+    if (type(value) is not dict or set(value) not in ({'wait', 'runtime', 'areas'}, {'wait', 'runtime', 'areas', 'fixture'})
+            or type(value['wait']) is not str or value['wait'] not in BROWSER_CHILD_WAIT):
+        raise ValueError('invalid fixed child termination')
+    result = {'wait': value['wait'], 'runtime': fixed_flags(value['runtime'], BROWSER_CHILD_RUNTIME),
+              'areas': fixed_flags(value['areas'], BROWSER_CHILD_AREAS)}
+    if 'fixture' in value:
+        if result['runtime']['markerInvalid'] or result['runtime']['markerRepeated']:
+            raise ValueError('invalid or repeated child marker cannot supply fixture evidence')
+        fixture = value['fixture']
+        flags = {'exitRequested', 'replyWritten', 'testFailed'}
+        if (type(fixture) is not dict or set(fixture) != flags | {'schema', 'coreClose', 'coreErrors', 'lockClose', 'lockErrors'}
+                or type(fixture['schema']) is not int or fixture['schema'] != 1
+                or any(type(fixture[key]) is not bool for key in flags)
+                or any(type(fixture[key]) is not str or fixture[key] not in BROWSER_CHILD_CLOSE_STATES for key in ('coreClose', 'lockClose'))):
+            raise ValueError('invalid fixed child fixture')
+        result['fixture'] = {'schema': 1, **{key: fixture[key] for key in sorted(flags | {'coreClose', 'lockClose'})},
+                             'coreErrors': fixed_flags(fixture['coreErrors'], BROWSER_CHILD_CLOSE_ERRORS),
+                             'lockErrors': fixed_flags(fixture['lockErrors'], BROWSER_CHILD_CLOSE_ERRORS)}
+    return result
+
+
 def browser_cleanup_evidence(value):
     if (type(value) is not dict or set(value) != BROWSER_CLEANUP_FLAGS | {'stage', 'peer', 'peers'}
             or any(type(value[key]) is not bool for key in BROWSER_CLEANUP_FLAGS)
@@ -226,11 +274,14 @@ def browser_cleanup_evidence(value):
                   'freshHello': BROWSER_CORE_HELLO, 'listener': BROWSER_CLEANUP_LISTENER,
                   'childExit': BROWSER_CLEANUP_CHILD}
     for peer in value['peers']:
-        if (type(peer) is not dict or set(peer) != BROWSER_CLEANUP_PEER_FLAGS | set(categories)
+        if (type(peer) is not dict or set(peer) not in (BROWSER_CLEANUP_PEER_FLAGS | set(categories), BROWSER_CLEANUP_PEER_FLAGS | set(categories) | {'termination'})
                 or any(type(peer[key]) is not bool for key in BROWSER_CLEANUP_PEER_FLAGS)
                 or any(type(peer[key]) is not str or peer[key] not in allowed for key, allowed in categories.items())):
             raise ValueError('invalid fixed cleanup peer')
-        peers.append({key: peer[key] for key in sorted(peer)})
+        rebuilt = {key: peer[key] for key in sorted(BROWSER_CLEANUP_PEER_FLAGS | set(categories))}
+        if 'termination' in peer:
+            rebuilt['termination'] = browser_child_termination(peer['termination'])
+        peers.append(rebuilt)
     return {**{key: value[key] for key in sorted(BROWSER_CLEANUP_FLAGS | {'stage', 'peer'})}, 'peers': peers}
 
 

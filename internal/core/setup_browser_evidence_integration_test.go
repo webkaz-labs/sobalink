@@ -104,19 +104,20 @@ type nearbyBrowserCleanupEvidence struct {
 	SummaryClosed          bool                        `json:"summaryClosed"`
 }
 type nearbyBrowserCleanupPeer struct {
-	CancelReturned bool   `json:"cancelReturned"`
-	CancelDecoded  bool   `json:"cancelDecoded"`
-	CancelState    string `json:"cancelState"`
-	CancelReason   string `json:"cancelReason"`
-	Joined         bool   `json:"joined"`
-	PostObserved   bool   `json:"postObserved"`
-	State          string `json:"state"`
-	Reason         string `json:"reason"`
-	Connected      bool   `json:"connected"`
-	Backend        bool   `json:"backend"`
-	FreshHello     string `json:"freshHello"`
-	Listener       string `json:"listener"`
-	ChildExit      string `json:"childExit"`
+	CancelReturned bool                           `json:"cancelReturned"`
+	CancelDecoded  bool                           `json:"cancelDecoded"`
+	CancelState    string                         `json:"cancelState"`
+	CancelReason   string                         `json:"cancelReason"`
+	Joined         bool                           `json:"joined"`
+	PostObserved   bool                           `json:"postObserved"`
+	State          string                         `json:"state"`
+	Reason         string                         `json:"reason"`
+	Connected      bool                           `json:"connected"`
+	Backend        bool                           `json:"backend"`
+	FreshHello     string                         `json:"freshHello"`
+	Listener       string                         `json:"listener"`
+	ChildExit      string                         `json:"childExit"`
+	Termination    *routeChildTerminationEvidence `json:"termination,omitempty"`
 }
 
 func newNearbyBrowserCleanupEvidence() *nearbyBrowserCleanupEvidence {
@@ -136,6 +137,9 @@ func validNearbyBrowserCleanupEvidence(v nearbyBrowserCleanupEvidence) bool {
 		return false
 	}
 	for _, p := range v.Peers {
+		if p.Termination != nil && !validRouteChildTermination(*p.Termination) {
+			return false
+		}
 		if nearbyBrowserState(p.CancelState) != p.CancelState || nearbyBrowserState(p.State) != p.State {
 			return false
 		}

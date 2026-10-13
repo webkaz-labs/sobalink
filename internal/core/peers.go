@@ -28,12 +28,28 @@ import (
 )
 
 type peerServer struct {
-	http        *http.Server
-	listeners   []net.Listener
-	mu          sync.Mutex
-	connections map[net.Conn]string
-	slots       chan struct{}
+	http         *http.Server
+	listeners    []*peerServerListener
+	mu           sync.Mutex
+	connections  map[net.Conn]string
+	slots        chan struct{}
+	startFailure error // immutable after retained partial-start publication
 }
+
+// Both partial-startup cleanup and net/http own a reference to each listener.
+// Share one physical Close and its original result across those references.
+// Never treat an arbitrary ErrClosed-containing error as successful cleanup.
+type peerServerListener struct {
+	net.Listener
+	once     sync.Once
+	closeErr error
+}
+
+func (l *peerServerListener) Close() error {
+	l.once.Do(func() { l.closeErr = l.Listener.Close() })
+	return l.closeErr
+}
+
 type connectionKey struct{}
 
 type verifiedBody struct {
@@ -60,7 +76,23 @@ func (b *verifiedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (c *Core) peerListenerFailure() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.peerServer != nil {
+		return c.peerServer.startFailure
+	}
+	return nil
+}
+
 func (c *Core) startPeerServer(ips []netip.Addr) error {
+	c.mu.RLock()
+	existing := c.peerServer
+	c.mu.RUnlock()
+	if existing != nil {
+		return existing.startFailure
+	}
+
 	n := c.nodeCopy()
 	if n == nil {
 		return errors.New("network unavailable")
@@ -96,10 +128,23 @@ func (c *Core) startPeerServer(ips []netip.Addr) error {
 	for _, port := range []int{PeerPort, DiscoveryPort} {
 		l, e := n.Listen("tcp", config.Address(ip.String(), port))
 		if e != nil {
-			_ = p.Close()
-			return e
+			cleanupErr := p.Close()
+			failure := errors.Join(e, cleanupErr)
+			if cleanupErr != nil {
+				// Keep the exact unresolved listener owner reachable through final Core
+				// shutdown. A healthy backend cannot authorize replacement or traffic.
+				p.startFailure = errors.Join(failure, &localCommandError{"network_restart_required", "peer listener cleanup was not confirmed; stop and restart the application"})
+				c.mu.Lock()
+				c.peerServer = p
+				c.networkState, c.networkFatal, c.networkErrorCode = "error", "network_restart_required", "network_restart_required"
+				c.networkError = "Peer listener cleanup was not confirmed; restart the application"
+				c.networkReady.Store(false)
+				c.mu.Unlock()
+				return p.startFailure
+			}
+			return failure
 		}
-		p.listeners = append(p.listeners, &peerIncomingListener{Listener: l, core: c, slots: gate, requireOrigin: requireOrigin})
+		p.listeners = append(p.listeners, &peerServerListener{Listener: &peerIncomingListener{Listener: l, core: c, slots: gate, requireOrigin: requireOrigin}})
 	}
 	c.mu.Lock()
 	c.peerServer = p
@@ -110,13 +155,14 @@ func (c *Core) startPeerServer(ips []netip.Addr) error {
 	return nil
 }
 func (p *peerServer) Close() error {
+	var errs []error
 	for _, l := range p.listeners {
-		_ = l.Close()
+		errs = append(errs, l.Close())
 	}
 	if p.http != nil {
-		return p.http.Close()
+		errs = append(errs, p.http.Close())
 	}
-	return nil
+	return errors.Join(errs...)
 }
 func (p *peerServer) revoke(id string) {
 	p.mu.Lock()

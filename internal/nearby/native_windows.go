@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
-	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -35,6 +34,9 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 	if !scope.LocalAddress.Is4() {
 		return nil, ErrUnsupported
 	}
+	if _, err := windowsMulticastIndex(scope.InterfaceIndex); err != nil {
+		return nil, err
+	}
 	ifi, err := currentBindingWithPolicy(scope, nil, policy)
 	if err != nil {
 		return nil, err
@@ -57,12 +59,15 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 					return
 				}
 			}
-			local := scope.LocalAddress.As4()
-			if optionErr = windows.SetsockoptInet4Addr(socket, windows.IPPROTO_IP, windows.IP_MULTICAST_IF, local); optionErr != nil {
-				return
-			}
-			membership := windows.IPMreq{Multiaddr: multicast4.As4(), Interface: local}
-			optionErr = windows.SetsockoptIPMreq(socket, windows.IPPROTO_IP, windows.IP_ADD_MEMBERSHIP, &membership)
+			optionErr = configureWindowsMulticast(scope, windowsMulticastOps{
+				setInterface: func(selected [4]byte) error {
+					return windows.SetsockoptInet4Addr(socket, windows.IPPROTO_IP, windows.IP_MULTICAST_IF, selected)
+				},
+				joinGroup: func(group, selected [4]byte) error {
+					membership := windows.IPMreq{Multiaddr: group, Interface: selected}
+					return windows.SetsockoptIPMreq(socket, windows.IPPROTO_IP, windows.IP_ADD_MEMBERSHIP, &membership)
+				},
+			})
 		})
 		if err != nil || optionErr != nil {
 			controlFailure = socketFailure("socket_interface_options")
@@ -75,7 +80,7 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 		if controlFailure != nil {
 			return nil, controlFailure
 		}
-		return nil, socketFailure("socket_bind")
+		return nil, nativeBindFailure("local_duplex", err)
 	}
 	conn, ok := raw.(*net.UDPConn)
 	if !ok {
@@ -114,18 +119,10 @@ func (t *nativeTransport) ReadPacket() (Packet, error) {
 	return p, nil
 }
 func (t *nativeTransport) WritePacket(data []byte) error {
-	if len(data) > MaxDatagramBytes || len(data) < 12 {
-		return ErrInvalidPacket
-	}
-	if _, err := currentBindingWithPolicy(t.scope, &t.ifi, t.policy); err != nil {
+	return writeScopedUDPPacket(t.conn, data, func() error {
+		_, err := currentBindingWithPolicy(t.scope, &t.ifi, t.policy)
 		return err
-	}
-	if t.conn.SetWriteDeadline(time.Now().Add(time.Second)) != nil {
-		return socketFailure("socket_write_deadline")
-	}
-	oob := winSendControl(t.scope, strconv.IntSize/8)
-	n, nn, err := t.conn.WriteMsgUDP(data, oob, &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
-	return classifyNativeSend(n, len(data), nn, len(oob), err)
+	})
 }
 func (t *nativeTransport) Close() error {
 	t.once.Do(func() { t.closeErr = normalizedCloseError(t.conn.Close()) })

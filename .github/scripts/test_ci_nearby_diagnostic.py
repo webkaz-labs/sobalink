@@ -23,10 +23,15 @@ def raw(events):
 def capability(status='verified', **changes):
     value = {'scope': 'isolated_loopback', 'status': status,
              'reason': 'bidirectional_scoped_mdns' if status == 'verified' else 'native_receive_timeout',
-             'bidirectionalCandidates': status == 'verified', 'ownersJoined': True, 'socketFailureStage': 'none', 'sendFailureKind': 'none', 'windowsNoAncillaryProbe': None}
+             'bidirectionalCandidates': status == 'verified', 'ownersJoined': True, 'socketFailureStage': 'none', 'sendFailureKind': 'none', 'bindFailureKind': 'none', 'bindSocketRole': 'none', 'windowsNoAncillaryProbe': None}
     value.update(changes)
     if value['socketFailureStage'] == 'socket_write' and 'sendFailureKind' not in changes:
         value['sendFailureKind'] = 'other'
+    if value['socketFailureStage'] == 'socket_bind':
+        if 'bindFailureKind' not in changes:
+            value['bindFailureKind'] = 'other'
+        if 'bindSocketRole' not in changes:
+            value['bindSocketRole'] = 'group_receive'
     return value
 
 
@@ -37,6 +42,14 @@ def cleanup_evidence():
     return {**{key: False for key in gate.BROWSER_CLEANUP_FLAGS}, 'browserCommandExited': True,
             'browserReceiptVerified': True, 'stage': 'browser_returned', 'peer': 'none',
             'peers': [copy.deepcopy(peer), copy.deepcopy(peer)]}
+
+
+def child_termination_evidence():
+    return {'wait': 'exit_one', 'runtime': dict.fromkeys(gate.BROWSER_CHILD_RUNTIME, False),
+            'areas': dict.fromkeys(gate.BROWSER_CHILD_AREAS, False),
+            'fixture': {'schema': 1, 'exitRequested': True, 'replyWritten': True, 'testFailed': True,
+                        'coreClose': 'failed', 'coreErrors': dict.fromkeys(gate.BROWSER_CHILD_CLOSE_ERRORS, True),
+                        'lockClose': 'passed', 'lockErrors': dict.fromkeys(gate.BROWSER_CHILD_CLOSE_ERRORS, False)}}
 
 
 def events(case='manual', terminal='pass', marker=None):
@@ -175,6 +188,23 @@ class NearbyDiagnosticTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             gate.capability(capability('unavailable', socketFailureStage='socket_write', sendFailureKind='none'))
 
+    def test_bind_failure_is_closed_typed_and_bound_to_bind_stage(self):
+        for kind in gate.BIND_FAILURE_KINDS - {'none'}:
+            for role in gate.BIND_SOCKET_ROLES - {'none'}:
+                record = capability('unavailable', socketFailureStage='socket_bind',
+                                    bindFailureKind=kind, bindSocketRole=role)
+                self.assertEqual(gate.capability(record), record)
+                for changes in ({'socketFailureStage': 'socket_read'}, {'bindFailureKind': 'none'},
+                                {'bindSocketRole': 'none'}, {'sendFailureKind': 'other'}):
+                    with self.assertRaises(ValueError):
+                        gate.capability(dict(record, **changes))
+        for key in ('bindFailureKind', 'bindSocketRole'):
+            for value in ('synthetic-private', [], None, 1):
+                with self.assertRaises(ValueError):
+                    gate.capability(capability('unavailable', socketFailureStage='socket_bind', **{key: value}))
+            with self.assertRaises(ValueError):
+                gate.capability(capability(**{key: 'other' if key == 'bindFailureKind' else 'local_sender'}))
+
     def test_supplemental_probe_is_closed_and_cannot_upgrade_production(self):
         probe = {'status': 'verified', 'reason': 'scoped_no_ancillary_delivery',
                  'socketFailureStage': 'none', 'sendFailureKind': 'none', 'metadataVerified': True,
@@ -184,7 +214,8 @@ class NearbyDiagnosticTests(unittest.TestCase):
         self.assertEqual(got['status'], 'unavailable')
         self.assertFalse(got['bidirectionalCandidates'])
         for change in ({'productionDiscoveryVerified': True}, {'ownersJoined': False},
-                       {'metadataVerified': False}, {'rawError': 'synthetic-private'}, {'status': []}):
+                       {'metadataVerified': False}, {'rawError': 'synthetic-private'}, {'status': []},
+                       {'bindFailureKind': 'address_in_use'}, {'bindSocketRole': 'local_duplex'}):
             with self.assertRaises(ValueError):
                 gate.capability(dict(record, windowsNoAncillaryProbe=dict(probe, **change)))
         for change in ({'status': 'verified', 'reason': 'bidirectional_scoped_mdns', 'bidirectionalCandidates': True},
@@ -415,6 +446,76 @@ class NearbyDiagnosticTests(unittest.TestCase):
         self.assertIn('time.After(10 * time.Second)', process)
         self.assertIn('p.invoke(t, "fixture.exit", nil)', process)
         self.assertEqual(set(re.findall(r'record\("([^" ]+)"\)', process)), gate.BROWSER_CLEANUP_CHILD - {'not_run'})
+
+    def test_child_termination_is_closed_deep_reconstructed_and_bounded(self):
+        value = child_termination_evidence()
+        self.assertEqual(gate.browser_child_termination(value), value)
+        copied = gate.browser_child_termination(value)
+        copied['fixture']['coreErrors']['other'] = False
+        self.assertTrue(value['fixture']['coreErrors']['other'])
+        for kind in gate.BROWSER_CHILD_WAIT:
+            self.assertEqual(gate.browser_child_termination(dict(value, wait=kind))['wait'], kind)
+        for state in gate.BROWSER_CHILD_CLOSE_STATES:
+            candidate = copy.deepcopy(value)
+            candidate['fixture']['coreClose'] = candidate['fixture']['lockClose'] = state
+            self.assertEqual(gate.browser_child_termination(candidate), candidate)
+        for target in ('root', 'runtime', 'areas', 'fixture', 'coreErrors', 'lockErrors'):
+            for mutation in ('extra', 'missing', 'wrong_type'):
+                candidate = copy.deepcopy(value)
+                destination = (candidate if target == 'root' else candidate['fixture'][target]
+                               if target in ('coreErrors', 'lockErrors') else candidate[target])
+                if mutation == 'extra':
+                    destination['private'] = 'synthetic-private'
+                elif mutation == 'missing':
+                    del destination[next(iter(destination))]
+                else:
+                    first = next(iter(destination))
+                    destination[first] = 1 if type(destination[first]) is bool else 'synthetic-private'
+                with self.subTest(target=target, mutation=mutation), self.assertRaises(ValueError):
+                    gate.browser_child_termination(candidate)
+        for flag in ('markerInvalid', 'markerRepeated'):
+            candidate = copy.deepcopy(value)
+            candidate['runtime'][flag] = True
+            with self.assertRaises(ValueError):
+                gate.browser_child_termination(candidate)
+        for changes in ({'wait': 'synthetic-private'}, {'fixture': None}, {'runtime': []}, {'areas': None}):
+            with self.assertRaises(ValueError):
+                gate.browser_child_termination(dict(value, **changes))
+        cleanup = cleanup_evidence()
+        for peer in cleanup['peers']:
+            peer['termination'] = copy.deepcopy(value)
+        core_peer = {'observed': True, 'state': 'connected', 'reason': 'none', 'freshHello': 'passed',
+                     'checks': dict.fromkeys(gate.BROWSER_CORE_CHECKS, True)}
+        fixed = {'schema': 1, 'phase': 'core-cleanup', 'errorKind': 'core_evidence', 'cleanup': cleanup,
+                 'core': {'checkpointArrived': True, 'stage': 'acknowledged', 'peers': [core_peer, core_peer]}}
+        self.assertEqual(gate.browser_failure(fixed), fixed)
+        self.assertLess(len(json.dumps(fixed, separators=(',', ':')).encode()) + 1, gate.BROWSER_FAILURE_MAX_BYTES)
+        with self.assertRaises(ValueError):
+            gate.browser_summary(fixed)
+
+    def test_child_termination_go_parity_and_actual_deferred_test_status(self):
+        import re
+        source = (gate.ROOT / 'internal/core/route_process_termination_test.go').read_text()
+        for go_type, flags in (('routeChildCloseErrors', gate.BROWSER_CHILD_CLOSE_ERRORS),
+                               ('routeChildRuntimeFlags', gate.BROWSER_CHILD_RUNTIME),
+                               ('routeChildRuntimeAreas', gate.BROWSER_CHILD_AREAS)):
+            fields = source.split('type ' + go_type + ' struct {', 1)[1].split('}', 1)[0]
+            self.assertEqual(set(re.findall(r'bool +`json:"([^" ]+)"', fields)), flags)
+        valid = source.split('func validRouteChildTermination(', 1)[1].split('default:', 1)[0]
+        self.assertEqual(set(re.findall(r'"([^" ]+)"', valid)), gate.BROWSER_CHILD_WAIT)
+        valid = source.split('func validRouteChildFixture(', 1)[1].split('default:', 1)[0]
+        self.assertEqual(set(re.findall(r'"([^" ]+)"', valid)), gate.BROWSER_CHILD_CLOSE_STATES)
+        self.assertIn('len(d.line) < 2048', source)
+        self.assertIn('decoder.DisallowUnknownFields()', source)
+        self.assertNotIn('err.Error()', source)
+        process = (gate.ROOT / 'internal/core/route_process_integration_test.go').read_text()
+        self.assertIn('termination.TestFailed = t.Failed()', process)
+        self.assertIn('termination.CoreErrors = routeCloseErrors(err)', process)
+        self.assertIn('termination.LockErrors = routeCloseErrors(err)', process)
+        self.assertIn('t.Error("close isolated subprocess Core")', process)
+        self.assertIn('t.Error("close owned process lock")', process)
+        self.assertLess(process.index('defer func() { termination.TestFailed'), process.index('defer cancel()'))
+        self.assertLess(process.index('d.observeTermination(p)'), process.index('remaining := (64 << 10)'))
 
     def test_failed_default_makes_no_acceptance_claim(self):
         result = gate.empty_result()

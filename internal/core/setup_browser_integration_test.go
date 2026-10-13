@@ -197,7 +197,13 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 	// The runner returned only after command.Wait and the exact one-case,
 	// zero-error browser receipt passed. This is evidence, not wrapper success.
 	cleanupEvidence = newNearbyBrowserCleanupEvidence()
-	defer func() { cleanupEvidence.ContextEnded = ctx.Err() != nil }()
+	defer func() {
+		cleanupEvidence.ContextEnded = ctx.Err() != nil
+		for i, p := range peers {
+			observed := p.childTermination()
+			cleanupEvidence.Peers[i].Termination = &observed
+		}
+	}()
 	for i, p := range peers {
 		cleanupEvidence.Peer = []string{"a", "b"}[i]
 		observed := &cleanupEvidence.Peers[i]

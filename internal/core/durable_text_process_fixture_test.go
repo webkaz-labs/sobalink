@@ -131,7 +131,7 @@ func (f *durableTextProcessFixture) install(id string, drop bool) error {
 	owned := make([]peerIncomingListener, len(p.listeners))
 	addresses := make([]string, len(p.listeners))
 	for i, listener := range p.listeners {
-		value, ok := listener.(*peerIncomingListener)
+		value, ok := listener.Listener.(*peerIncomingListener)
 		if !ok {
 			return errors.New("owned native listener required")
 		}
@@ -140,7 +140,7 @@ func (f *durableTextProcessFixture) install(id string, drop bool) error {
 	if err := original.Close(); err != nil {
 		return errors.New("native response interceptor close failed")
 	}
-	listeners := make([]net.Listener, 0, len(owned))
+	listeners := make([]*peerServerListener, 0, len(owned))
 	for i := range owned {
 		listener, err := backend.Listen("tcp", addresses[i])
 		if err != nil {
@@ -150,7 +150,7 @@ func (f *durableTextProcessFixture) install(id string, drop bool) error {
 			return errors.New("native response interceptor listen failed")
 		}
 		owned[i].Listener = listener
-		listeners = append(listeners, &owned[i])
+		listeners = append(listeners, &peerServerListener{Listener: &owned[i]})
 	}
 	server := &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { f.serve(w, r, original.Handler) }),

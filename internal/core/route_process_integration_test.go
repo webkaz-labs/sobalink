@@ -34,6 +34,8 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 	if os.Getenv("SOBALINK_ROUTE_PROCESS_HELPER") != "1" {
 		t.Skip("parent-owned native fixture")
 	}
+	termination := routeChildFixtureEvidence{Schema: 1, CoreClose: "not_run", LockClose: "not_run"}
+	defer func() { termination.TestFailed = t.Failed(); emitRouteChildFixture(termination) }()
 	dir := os.Getenv("SOBALINK_ROUTE_PROCESS_DIR")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -43,7 +45,12 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		t.Fatal("open owned process lock")
 	}
 	defer func() {
-		if err := lock.Close(); err != nil {
+		termination.LockClose = "running"
+		err := lock.Close()
+		termination.LockErrors = routeCloseErrors(err)
+		termination.LockClose = "passed"
+		if err != nil {
+			termination.LockClose = "failed"
 			t.Error("close owned process lock")
 		}
 	}()
@@ -56,7 +63,12 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		t.Fatal("open isolated subprocess Core")
 	}
 	defer func() {
-		if err := c.Close(); err != nil {
+		termination.CoreClose = "running"
+		err := c.Close()
+		termination.CoreErrors = routeCloseErrors(err)
+		termination.CoreClose = "passed"
+		if err != nil {
+			termination.CoreClose = "failed"
 			t.Error("close isolated subprocess Core")
 		}
 	}()
@@ -127,7 +139,8 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 				value = map[string]any{"schema": 1, "url": address, "code": code}
 			}
 		case "fixture.exit":
-			encoder.Encode(processReply{Value: json.RawMessage(`true`)})
+			termination.ExitRequested = true
+			termination.ReplyWritten = encoder.Encode(processReply{Value: json.RawMessage(`true`)}) == nil
 			return
 		case "fixture.selection":
 			value = c.lanStoreCopy().copy().Selection
@@ -303,6 +316,7 @@ type routeCoreProcess struct {
 	output      *json.Decoder
 	done        chan error
 	stopped     bool
+	waitKind    string
 	diagnostics *routeProcessDiagnostics
 }
 
@@ -416,6 +430,7 @@ func (p *routeCoreProcess) stopObserved(t *testing.T, observe func(string)) {
 	p.input.Close()
 	select {
 	case err := <-p.done:
+		p.waitKind = routeChildWaitKind(err)
 		p.stopped = true
 		if err != nil {
 			record("exit_failed")
@@ -423,6 +438,7 @@ func (p *routeCoreProcess) stopObserved(t *testing.T, observe func(string)) {
 		}
 		record("joined")
 	case <-time.After(10 * time.Second):
+		p.waitKind = "shutdown_timeout"
 		record("timeout")
 		p.cmd.Process.Kill()
 		t.Fatal("Core child shutdown timed out")
@@ -662,14 +678,19 @@ func routeFixtureListener() (net.Listener, error) {
 // This is a synthetic fixture, but still do not publish arbitrary error strings
 // or captured protocol frames. Keep only runtime categories and source locations.
 type routeProcessDiagnostics struct {
-	mu   sync.Mutex
-	data []byte
+	mu         sync.Mutex
+	data       []byte
+	line       []byte
+	dropLine   bool
+	markerSeen bool
+	fixed      routeChildTerminationEvidence
 }
 
 func (d *routeProcessDiagnostics) Write(p []byte) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := len(p)
+	d.observeTermination(p)
 	remaining := (64 << 10) - len(d.data)
 	if remaining > 0 {
 		if len(p) > remaining {
@@ -680,40 +701,28 @@ func (d *routeProcessDiagnostics) Write(p []byte) (int, error) {
 	return n, nil
 }
 func (d *routeProcessDiagnostics) safeSummary() string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	var out []string
-	for _, line := range strings.Split(string(d.data), "\n") {
-		trim := strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(trim, "panic:"):
-			out = append(out, "panic reported (payload omitted)")
-		case strings.HasPrefix(trim, "fatal error:"):
-			out = append(out, "fatal runtime error (payload omitted)")
-		case strings.Contains(line, "WARNING: DATA RACE"):
-			out = append(out, "WARNING: DATA RACE")
-		case strings.Contains(line, ".go:"):
-			// Stack source locations contain neither argument values nor frames.
-			fields := strings.Fields(trim)
-			if len(fields) > 0 {
-				out = append(out, fields[0])
-			}
-		case strings.HasPrefix(trim, "goroutine "):
-			out = append(out, trim)
-		}
+	// Reconstruct from the same fixed schema as the artifact. Arbitrary stack
+	// paths, goroutine lines, arguments and errors never leave the private stream.
+	raw, err := json.Marshal(d.termination("not_observed"))
+	if err != nil {
+		return "child diagnostics unavailable"
 	}
-	if len(out) == 0 {
-		return "no runtime panic/race/source-location diagnostics"
-	}
-	return strings.Join(out, "\n")
+	return string(raw)
 }
 
 func TestRouteProcessDiagnosticsRemainBoundedAndPrivate(t *testing.T) {
 	d := new(routeProcessDiagnostics)
-	d.Write([]byte("private-frame-value\npanic: private-frame-value\n\tfixture.go:123 +0x42\ngoroutine 7 [running]:\nWARNING: DATA RACE\n"))
+	d.Write([]byte("private-frame-value\npanic: private-frame-value\n\t/private-path/internal/core/peers.go:123 +0x42\ngoroutine 7 [private-argument]:\nWARNING: DATA RACE\n"))
 	summary := d.safeSummary()
-	if strings.Contains(summary, "private-frame-value") || !strings.Contains(summary, "fixture.go:123") || !strings.Contains(summary, "panic reported") {
-		t.Fatal("unsafe or missing runtime classifications")
+	for _, private := range []string{"private-frame-value", "private-path", "private-argument", ".go:", "goroutine 7", "+0x42"} {
+		if strings.Contains(summary, private) {
+			t.Fatal("private child stream escaped fixed summary")
+		}
+	}
+	for _, fixed := range []string{`"panic":true`, `"race":true`, `"peerAPI":true`} {
+		if !strings.Contains(summary, fixed) {
+			t.Fatal("missing fixed runtime classification")
+		}
 	}
 	d.Write([]byte(strings.Repeat("x", 128<<10)))
 	if len(d.data) != 64<<10 {
@@ -724,11 +733,13 @@ func TestRouteProcessDiagnosticsRemainBoundedAndPrivate(t *testing.T) {
 func (p *routeCoreProcess) exitSummary() string {
 	select {
 	case err := <-p.done:
+		p.waitKind = routeChildWaitKind(err)
 		p.stopped = true
+		_ = p.diagnostics.termination(p.waitKind)
 		if err == nil {
 			return "child exited successfully"
 		}
-		return "child " + err.Error()
+		return "child " + p.waitKind
 	case <-time.After(time.Second):
 		return "child termination unconfirmed"
 	}

@@ -12,6 +12,8 @@ type nativeSocketStage string
 type nativeSocketError struct {
 	stage    nativeSocketStage
 	sendKind string
+	bindKind string
+	bindRole string
 }
 
 func (e nativeSocketError) Error() string         { return ErrSocketUnavailable.Error() }
@@ -21,6 +23,24 @@ func socketFailureStage(err error) string {
 	var failure nativeSocketError
 	if errors.As(err, &failure) {
 		return string(failure.stage)
+	}
+	return "none"
+}
+
+func nativeBindFailure(role string, err error) error {
+	return nativeSocketError{stage: "socket_bind", bindRole: role, bindKind: nativeBindErrorKind(err)}
+}
+func nativeBindFailureKind(err error) string {
+	var failure nativeSocketError
+	if errors.As(err, &failure) && failure.bindKind != "" {
+		return failure.bindKind
+	}
+	return "none"
+}
+func nativeBindSocketRole(err error) string {
+	var failure nativeSocketError
+	if errors.As(err, &failure) && failure.bindRole != "" {
+		return failure.bindRole
 	}
 	return "none"
 }

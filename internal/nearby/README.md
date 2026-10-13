@@ -63,8 +63,12 @@ receiving; changed bindings stop the session.
   constructor boundaries retain unfinished close attempts without retrying them.
 - Windows binds exactly the selected local address on port 5353. It uses the
   socket-local `IP_IFLIST` with one interface, one group membership, and
-  `IP_PKTINFO`/TTL metadata. Go `UDPConn.ReadMsgUDP`/`WriteMsgUDP` use supported
-  Winsock message I/O. The small ancillary codec uses bounded byte operations,
+  `IP_PKTINFO`/TTL metadata. `ReadMsgUDP` retains strict receive metadata;
+  `WriteToUDP` uses the exact bound source with selected-index `IP_MULTICAST_IF`
+  and TTL 255. Both multicast egress and membership use the documented 24-bit
+  network-order interface index, including when interfaces share a local IP.
+  Zero or unrepresentable indices are unsupported. Each send revalidates binding, has a one-second deadline, and
+  requires the full payload count without retry. The ancillary codec uses bounded byte operations,
   without `unsafe`. Required options may be unavailable on older Windows.
 - Unix uses `net.FilePacketConn` only after the exact native bind because Go's
   ordinary UDP listener rewrites multicast bind addresses to a wildcard before
@@ -84,9 +88,10 @@ Platform implementation evidence:
 
 - Pinned x/net IPv4 source: `sys_darwin.go`, `payload_cmsg.go`,
   `control_windows.go`, `sys_windows.go`. Windows x/net does not supply the
-  required controls, so the Windows adapter uses public Go UDP message I/O.
+  required controls, so the Windows adapter uses public Go UDP I/O.
 - Pinned Go Windows poll implementation: `internal/poll/fd_windows.go`.
 - Microsoft [IPPROTO_IP options](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options),
+  [IP_MREQ interface selection](https://learn.microsoft.com/en-us/windows/win32/api/ws2ipdef/ns-ws2ipdef-ip_mreq),
   [IN_PKTINFO](https://learn.microsoft.com/en-us/windows/win32/api/ws2ipdef/ns-ws2ipdef-in_pktinfo),
   and [SDK definitions](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/shared/ws2ipdef.h).
 
@@ -194,15 +199,30 @@ pktinfo interface index overrides the requested source address. This source
 analysis justifies the correction; it does not prove the exact hosted error or
 establish native acceptance by itself.
 
+Darwin bind failures additionally carry fixed `bindSocketRole` and
+`bindFailureKind` values, separating the group receiver from the local sender
+without printing an address, identifier or raw errno. Address construction uses
+the selected IPv4 bytes and port 5353 with checked ownership. The pinned
+[XNU bind rules](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/netinet/in_pcb.c#L948-L999)
+can reject nonmulticast exact-local port sharing across different socket-owner
+UIDs despite reuse options. This is a possible coexistence limit, not an
+established cause of a particular run. A confirmed conflict is a platform/design
+blocker; it does not authorize changing services, ports or bind scope.
+
+On Windows, the pinned Go 1.27.1 `WriteMsgInet4` passes no synchronous byte-count
+pointer to `WSASendMsg`. Its immediate-success path can therefore report zero
+bytes; this does not establish whether that message was transmitted. A bounded
+test-only `WriteToUDP` probe verified exact metadata and cleanup on the same
+loopback scope. Production now uses that exact-bound send primitive, retaining
+full-byte-count checks. Only a new reciprocal Session result can verify the
+corrected production path; the probe alone cannot.
+
 The fixed `sendFailureKind` distinguishes known OS error categories from short
-payload/control counts without emitting raw errors or numeric codes. If the
-Windows production send fails and all original owners joined, the opt-in test
-may record `windowsNoAncillaryProbe`: one unique synthetic advertisement on the
-same exact loopback source/interface/group/port, using the existing socket
-options with no send ancillary data. It uses the original eight-second deadline
-and requires the exact advertisement plus all receive metadata and confirmed
-cleanup. Its result never changes production discovery to verified. Metadata
-or cleanup invariant failure fails the whole test. It is not a product fallback.
+payload/control counts without emitting raw errors or numeric codes. The closed
+`windowsNoAncillaryProbe` schema retains the earlier test-only observation and
+its non-upgrade/safety checks. Current runs emit null: the extra probe was retired
+when production adopted the same send primitive, avoiding a redundant retry.
+Its historical result never establishes production discovery acceptance.
 
 A Linux result cannot establish Darwin or Windows support. A target reporting
 `unavailable` has no automatic-discovery proof, even if its diagnostic job is
@@ -215,13 +235,28 @@ macOS の送受信分離は上記の固定 XNU source の bound-source 検証順
 interface 指定が source 指定に優先する動作に基づく修正である。source 調査だけで
 実行環境の error 原因や native 動作確認の完了を断定しない。
 
+bind 失敗は `bindSocketRole` と `bindFailureKind` の固定値で受信 group / 送信 local
+socket と error 分類を区別し、address・識別子・生の errno は出力しない。
+選択 IPv4 と port 5353、既存の所有権確認は維持する。上記 XNU bind 規則では、
+所有 UID が異なる既存 socket との正確な local address の port 共有が reuse 設定下
+でも拒否され得る。これは共存制限の候補であり、個別実行の原因を断定するものではない。
+競合が確認された場合はプラットフォーム・設計上の blocker とし、service・port・bind
+範囲の変更で代替しない。
+
+Windows の固定 Go 1.27.1 `WriteMsgInet4` は `WSASendMsg` に同期 byte count の出力先を
+渡さず、即時成功時に零 byte を返し得る。実際に未送信だったとは断定できない。
+同じ loopback 範囲の `WriteToUDP` 補助試験では正確な metadata と終了を確認したため、
+製品経路もこの exact bind の送信 primitive を使用する。送信直前の binding 確認、
+送信・membership とも network byte order の24-bit interface index で指定し、同じ
+local IP を持つ別 interface と区別する。零・表現範囲外の index は unsupported とする。
+TTL 255、一秒 deadline、全 byte count 必須、retry なしを維持する。
+修正後の製品確認には新しい双方向 Session 結果が必要で、補助試験だけでは完了としない。
+
 `sendFailureKind` は既知の OS error 分類と payload/control の不足だけを固定値で示す。
-Windows の製品送信失敗後、元の owner が全て終了した場合だけ、試験専用の
-`windowsNoAncillaryProbe` が同じ厳密な loopback 範囲で一つの固有の模擬広告を送る。
-socket の選択 interface・source port・TTL 制約は維持し、送信 ancillary data だけを
-省く。元の八秒 deadline 内に、その広告と全 metadata、終了完了を確認する。
-この補助結果で製品探索を verified に昇格させず、metadata・終了の不変条件違反は
-試験全体を失敗させる。製品の代替送信経路にはしない。
+従来の試験専用結果を扱う `windowsNoAncillaryProbe` の閉じた schema と、製品確認へ
+昇格させない検証は維持する。製品が同じ送信 primitive を採用したため、追加 probe は
+廃止し、現在の実行では null とする。同一経路の冗長な再送は行わない。
+過去の補助結果を製品探索の動作確認として扱わない。
 
 Linux の結果を macOS/Windows の対応証拠として流用しない。`unavailable` は job が
 緑でも自動探索未確認である。loopback 探索、手動 contact の Core/browser 接続、

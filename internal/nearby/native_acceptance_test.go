@@ -55,21 +55,18 @@ type nativeCapabilityResult struct {
 	OwnersJoined            bool                   `json:"ownersJoined"`
 	SocketFailureStage      string                 `json:"socketFailureStage"`
 	SendFailureKind         string                 `json:"sendFailureKind"`
+	BindFailureKind         string                 `json:"bindFailureKind"`
+	BindSocketRole          string                 `json:"bindSocketRole"`
 	WindowsNoAncillaryProbe *nativeSendProbeResult `json:"windowsNoAncillaryProbe"`
-	selectedScope           Scope
-	probeDeadline           time.Time
 }
 
 // This result marker, not the enclosing go test exit status or package PASS,
 // is the native acceptance evidence. A platform incapable of safe loopback
 // delivery is explicitly skipped/unavailable, never called verified.
 func TestNativeLoopbackDiscoveryCapability(t *testing.T) {
-	result := nativeCapabilityResult{Status: "not_run", Reason: "opt_in_required", Scope: "isolated_loopback", SocketFailureStage: "none", SendFailureKind: "none"}
+	result := nativeCapabilityResult{Status: "not_run", Reason: "opt_in_required", Scope: "isolated_loopback", SocketFailureStage: "none", SendFailureKind: "none", BindFailureKind: "none", BindSocketRole: "none"}
 	if os.Getenv("SOBALINK_NATIVE_NEARBY_LOOPBACK") == "1" {
 		result = runNativeLoopbackCapability()
-		if result.Status == "unavailable" && result.SocketFailureStage == "socket_write" && result.OwnersJoined {
-			recordNativeSendProbe(&result, runPlatformSendProbe(result.selectedScope, result.probeDeadline))
-		}
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -142,14 +139,14 @@ func (t *observedNativeTransport) snapshot() (reads, writes int, bad, closed boo
 }
 
 func runNativeLoopbackCapability() (result nativeCapabilityResult) {
-	result = nativeCapabilityResult{Status: "unavailable", Reason: "loopback_scope_unavailable", Scope: "isolated_loopback", SocketFailureStage: "none", SendFailureKind: "none"}
+	result = nativeCapabilityResult{Status: "unavailable", Reason: "loopback_scope_unavailable", Scope: "isolated_loopback", SocketFailureStage: "none", SendFailureKind: "none", BindFailureKind: "none", BindSocketRole: "none"}
 	scope, err := isolatedLoopbackScope()
 	if err != nil {
 		return result
 	}
 	policy := isolatedLoopbackPolicy()
-	result.selectedScope, result.probeDeadline = scope, time.Now().Add(8*time.Second)
-	ctx, cancel := context.WithDeadline(context.Background(), result.probeDeadline)
+	deadline := time.Now().Add(8 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	var opened []*observedNativeTransport
 	var sessions []*Session
 	// Cleanup is shared by success, capability failure and assertion failure.
@@ -220,6 +217,7 @@ func runNativeLoopbackCapability() (result nativeCapabilityResult) {
 			result.Reason = "native_socket_unavailable"
 			result.SocketFailureStage = socketFailureStage(err)
 			result.SendFailureKind = nativeSendFailureKind(err)
+			result.BindFailureKind, result.BindSocketRole = nativeBindFailureKind(err), nativeBindSocketRole(err)
 			if errors.Is(err, ErrCloseUncertain) || errors.Is(err, ErrCloseUnresolved) {
 				result.Status, result.Reason = "failed", "startup_cleanup_uncertain"
 			}
@@ -254,6 +252,7 @@ func runNativeLoopbackCapability() (result nativeCapabilityResult) {
 			result.Status, result.Reason = "failed", "native_session_start_failed"
 			result.SocketFailureStage = socketFailureStage(err)
 			result.SendFailureKind = nativeSendFailureKind(err)
+			result.BindFailureKind, result.BindSocketRole = nativeBindFailureKind(err), nativeBindSocketRole(err)
 			if !errors.Is(err, ErrCloseUncertain) && !errors.Is(err, ErrCloseUnresolved) && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrSocketUnavailable) || errors.Is(err, ErrUnsupported)) {
 				result.Status, result.Reason = "unavailable", "native_session_unavailable"
 			}
@@ -273,6 +272,7 @@ func runNativeLoopbackCapability() (result nativeCapabilityResult) {
 				result.Status, result.Reason = "failed", "native_session_failed"
 				result.SocketFailureStage = socketFailureStage(err)
 				result.SendFailureKind = nativeSendFailureKind(err)
+				result.BindFailureKind, result.BindSocketRole = nativeBindFailureKind(err), nativeBindSocketRole(err)
 				if !errors.Is(err, ErrCloseUncertain) && !errors.Is(err, ErrCloseUnresolved) && (errors.Is(err, ErrSocketUnavailable) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrScopeChanged) || errors.Is(err, context.DeadlineExceeded)) {
 					result.Status, result.Reason = "unavailable", "native_receive_unavailable"
 				}
@@ -405,9 +405,8 @@ func TestNativeCapabilityAuditRejectsForeignMetadata(t *testing.T) {
 	}
 }
 
-// This supplemental probe can never verify production discovery. Its input
-// socket and destination scope remain identical; only test send ancillary data
-// is omitted to distinguish control rejection from loopback path failure.
+// Historical supplemental probe schema, retained with its non-upgrade checks.
+// Current runs never invoke the retired probe and emit null for this field.
 type nativeSendProbeResult struct {
 	Status                      string `json:"status"`
 	Reason                      string `json:"reason"`

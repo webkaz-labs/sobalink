@@ -594,6 +594,10 @@ func (c *Core) current(ctx context.Context) (identity.State, error) {
 	if err := c.ctx.Err(); err != nil {
 		return identity.State{}, err
 	}
+	if err := c.peerListenerFailure(); err != nil {
+		return identity.State{}, err
+	}
+
 	node := c.nodeCopy()
 	if node == nil {
 		return identity.State{}, errors.New("choose and activate a network first")

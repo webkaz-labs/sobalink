@@ -24,3 +24,15 @@ func nativeSendErrorKind(err error) string {
 	}
 	return "other"
 }
+
+func nativeBindErrorKind(err error) string {
+	if errors.Is(err, unix.EADDRINUSE) {
+		return "address_in_use"
+	}
+	switch kind := nativeSendErrorKind(err); kind {
+	case "source_unavailable", "permission_denied", "invalid_argument", "unsupported":
+		return kind
+	default:
+		return "other"
+	}
+}

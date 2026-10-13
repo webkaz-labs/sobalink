@@ -22,9 +22,14 @@ def capability(status='verified', **changes):
                'failed': 'cleanup_not_joined', 'not_run': 'opt_in_required'}
     result = {'scope': 'isolated_loopback', 'status': status, 'reason': reasons[status],
             'bidirectionalCandidates': status == 'verified', 'ownersJoined': status == 'verified',
-            'socketFailureStage': 'none', 'sendFailureKind': 'none', 'windowsNoAncillaryProbe': None, **changes}
+            'socketFailureStage': 'none', 'sendFailureKind': 'none', 'bindFailureKind': 'none', 'bindSocketRole': 'none', 'windowsNoAncillaryProbe': None, **changes}
     if result['socketFailureStage'] == 'socket_write' and 'sendFailureKind' not in changes:
         result['sendFailureKind'] = 'other'
+    if result['socketFailureStage'] == 'socket_bind':
+        if 'bindFailureKind' not in changes:
+            result['bindFailureKind'] = 'other'
+        if 'bindSocketRole' not in changes:
+            result['bindSocketRole'] = 'group_receive'
     return result
 
 

@@ -124,9 +124,16 @@ class FixedBrowserSummaryTests(unittest.TestCase):
                  'core': {'checkpointArrived': True, 'stage': 'acknowledged', 'peers': [copy.deepcopy(peer), copy.deepcopy(peer)]},
                  'cleanup': {**{key: True for key in summary.nearby.BROWSER_CLEANUP_FLAGS}, 'contextEnded': False,
                              'stage': 'summary_close', 'peer': 'none', 'peers': [copy.deepcopy(cleanup_peer), copy.deepcopy(cleanup_peer)]}}
+        child = {'wait': 'exit_one', 'runtime': dict.fromkeys(summary.nearby.BROWSER_CHILD_RUNTIME, False),
+                 'areas': dict.fromkeys(summary.nearby.BROWSER_CHILD_AREAS, False),
+                 'fixture': {'schema': 1, 'exitRequested': True, 'replyWritten': True, 'testFailed': True,
+                             'coreClose': 'failed', 'coreErrors': dict.fromkeys(summary.nearby.BROWSER_CHILD_CLOSE_ERRORS, True),
+                             'lockClose': 'passed', 'lockErrors': dict.fromkeys(summary.nearby.BROWSER_CHILD_CLOSE_ERRORS, False)}}
+        for peer in fixed['cleanup']['peers']:
+            peer['termination'] = copy.deepcopy(child)
         encoded = json.dumps(fixed)
         self.assertLessEqual(len(encoded.encode()), summary.nearby.BROWSER_FAILURE_MAX_BYTES)
-        for mutation in ('valid', 'unknown_field', 'integer_boolean', 'private_outcome', 'oversized'):
+        for mutation in ('valid', 'unknown_field', 'integer_boolean', 'private_outcome', 'private_child', 'integer_child', 'oversized'):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
                 directory = Path(tmp)
                 value = copy.deepcopy(fixed)
@@ -136,6 +143,10 @@ class FixedBrowserSummaryTests(unittest.TestCase):
                     value['cleanup']['browserReceiptVerified'] = 1
                 if mutation == 'private_outcome':
                     value['cleanup']['peers'][1]['childExit'] = 'synthetic-private'
+                if mutation == 'private_child':
+                    value['cleanup']['peers'][0]['termination']['fixture']['error'] = 'synthetic-private'
+                if mutation == 'integer_child':
+                    value['cleanup']['peers'][1]['termination']['runtime']['panic'] = 1
                 text = json.dumps(value)
                 if mutation == 'oversized':
                     text += ' ' * summary.nearby.BROWSER_FAILURE_MAX_BYTES
