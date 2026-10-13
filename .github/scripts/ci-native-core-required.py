@@ -303,6 +303,119 @@ def validate_receipt(value, identity, policy_hashes, *, complete=True):
     return value
 
 
+
+FAILURE_ARTIFACT = 'soba-native-core-failure'
+FAILURE_STAGES = frozenset({'entry', 'checkout-query', 'event-read', 'identity', 'export-directory',
+    'runtime', 'native-identity', 'source-inventory', 'private-directory', 'collector',
+    'collector-prepare', 'collector-verify', 'collector-modules', 'collector-inventory', 'collector-suite',
+    'package-inventory', 'source-recheck', 'cleanup', 'core-receipt', 'core-validation', 'suite-validation', 'remaining'})
+FAILURE_PREDICATES = shared.IDENTITY_PREDICATES | {'unclassified', 'runtime_unavailable', 'cleanup_unresolved'}
+HINT_STATES = frozenset({'unobserved', 'not-pr', 'missing', 'null', 'matching', 'different', 'malformed'})
+PROCESS_STATES = frozenset({'launch_failed', 'completed', 'nonzero', 'watchdog_timeout', 'output_limit',
+                          'capture_failed', 'unjoined_children', 'cleanup_unresolved'})
+
+
+def failure_predicate(error):
+    # Only reviewed literal codes cross the boundary, never exception text.
+    value = str(error) if type(error) is ValueError else ''
+    return value if value in FAILURE_PREDICATES else 'unclassified'
+
+
+def merge_hint_state(event, commit):
+    if os.environ.get('GITHUB_EVENT_NAME') != 'pull_request':
+        return 'not-pr'
+    pr = event.get('pull_request') if type(event) is dict else None
+    if type(pr) is not dict:
+        return 'malformed'
+    if 'merge_commit_sha' not in pr:
+        return 'missing'
+    hint = pr['merge_commit_sha']
+    if hint is None:
+        return 'null'
+    if type(hint) is not str or not SHA.fullmatch(hint) or set(hint) == {'0'}:
+        return 'malformed'
+    return 'matching' if hint == commit else 'different'
+
+
+def partial_process(row, phase):
+    keys = {'process', 'returncode', 'ownersJoined', 'executionState', 'observedReturncode',
+            'groupAbsenceObservedAfterWait', 'wallSeconds'}
+    require(type(row) is dict and set(row) == keys
+            and row['process'] in PROCESS_STATES and row['executionState'] in PROCESS_STATES
+            and type(row['ownersJoined']) is bool
+            and (row['groupAbsenceObservedAfterWait'] is None or type(row['groupAbsenceObservedAfterWait']) is bool)
+            and number(row['wallSeconds'], collector.BOUNDS[phase] + 60))
+    for name in ('returncode', 'observedReturncode'):
+        require(row[name] is None or type(row[name]) is int and -(2**31) <= row[name] < 2**32)
+    return {name: row[name] for name in sorted(keys)}
+
+
+def partial_core(value):
+    """Content-free reconstruction only; this is never an acceptance receipt."""
+    require(type(value) is dict and type(value.get('result')) is dict)
+    result = value['result']
+    require(set(result) in (set(empty_result()), set(empty_result()) | {'inventorySha256'})
+            and type(result['schema']) is int and result['schema'] == 1
+            and result['scope'] == 'native-core-exact-suite-timing'
+            and result['phase'] in {'preflight', 'prepare', 'verify', 'modules', 'inventory', 'suite', 'complete'}
+            and result['ownersState'] in {'not_started', 'in_flight', 'joined', 'unresolved'}
+            and result['releaseValidation'] is False)
+    flags = ('sourceVerified', 'cleanupComplete', 'timingComplete')
+    require(all(type(result[name]) is bool for name in flags)
+            and type(result['preparation']) is dict and set(result['preparation']) <= {'prepare', 'verify', 'modules', 'inventory'}
+            and type(result['runs']) is dict and set(result['runs']) <= {'suite'})
+    output = {'schema': 1, 'successEligible': False, 'phase': result['phase'], 'ownersState': result['ownersState'],
+              **{name: result[name] for name in flags}, 'preparation': {}, 'suite': None}
+    for phase, row in result['preparation'].items():
+        output['preparation'][phase] = partial_process(row, phase)
+    if 'suite' in result['runs']:
+        row = result['runs']['suite']
+        process_keys = {'process', 'returncode', 'ownersJoined', 'executionState', 'observedReturncode',
+                        'groupAbsenceObservedAfterWait', 'wallSeconds'}
+        process = partial_process({name: row[name] for name in process_keys}, 'suite')
+        template = collector.timing(b'', ['TestSummary'], process)
+        require(type(row) is dict and set(row) == set(template))
+        summary = dict(process)
+        for name in ('accountingComplete', 'allTestsPassed', 'eventStreamValid', 'packageTimeoutObserved'):
+            require(type(row[name]) is bool)
+            summary[name] = row[name]
+        for name in ('expectedCount', 'startedCount', 'terminalCount', 'passedCount', 'failedCount', 'skippedCount',
+                     'runningCount', 'notRunCount', 'subtestStarted', 'subtestTerminal', 'subtestSkipped', 'subtestFailed'):
+            require(type(row[name]) is int and 0 <= row[name] <= collector.MAX_TESTS + collector.MAX_SUBTESTS)
+            summary[name] = row[name]
+        require(row['packageOutcome'] in {'missing', 'pass', 'fail', 'skip'}
+                and (row['packageSeconds'] is None or number(row['packageSeconds']))
+                and number(row['observedThroughSeconds']))
+        for name in ('packageOutcome', 'packageSeconds', 'observedThroughSeconds'):
+            summary[name] = row[name]
+        output['suite'] = summary
+    # Test names, per-test rows, output, metrics, provenance and all other
+    # unvalidated dictionary values are intentionally never copied.
+    return output
+
+
+def export_failure(state, owned_export):
+    require(state['stage'] in FAILURE_STAGES and state['predicate'] in FAILURE_PREDICATES
+            and state['mergeHint'] in HINT_STATES)
+    temporary = Path(os.environ['RUNNER_TEMP'])
+    require(temporary.is_dir() and not temporary.is_symlink())
+    target = temporary / FAILURE_ARTIFACT
+    # Never read, overwrite or remove a preexisting failure destination.
+    target.mkdir(mode=0o700, exist_ok=False)
+    partial = None
+    if owned_export is not None and (owned_export / 'core.json').exists():
+        require(owned_export.is_dir() and not owned_export.is_symlink()
+                and (owned_export / 'core.json').stat().st_nlink == 1)
+        partial = partial_core(read_receipt(owned_export / 'core.json'))
+    failure = {'schema': 1, 'successEligible': False, 'stage': state['stage'], 'predicate': state['predicate'],
+               'mergeHint': state['mergeHint'], 'partialCorePresent': partial is not None}
+    for name, value in [('failure.json', failure)] + ([('partial-core.json', partial)] if partial is not None else []):
+        require(len(json.dumps(value, allow_nan=False).encode()) <= 32768)
+        write_receipt(target / name, value)
+        require(read_receipt(target / name) == value)
+    with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+        print('failure_ready=true', file=output)
+
 def read_receipt(path):
     require(path.is_file() and not path.is_symlink() and path.stat().st_size <= shared.MAX_BYTES)
     return module('ci-nearby-diagnostic').parse_json(path.read_text(encoding='utf-8'))
@@ -314,26 +427,35 @@ def write_receipt(path, value):
         output.write('\n')
 
 
-def context(platform):
+def context(platform, state=None):
+    state = {} if state is None else state
+    state['stage'] = 'checkout-query'
     commit = collector.checked(['git', 'rev-parse', 'HEAD']).decode().strip()
     tree = collector.checked(['git', 'rev-parse', 'HEAD^{tree}']).decode().strip()
+    state['stage'] = 'event-read'
     path = Path(os.environ['GITHUB_EVENT_PATH'])
     require(path.stat().st_size <= collector.CAPTURE_BYTES)
     event = module('ci-nearby-diagnostic').parse_json(path.read_text(encoding='utf-8'))
+    state['mergeHint'] = merge_hint_state(event, commit)
+    state['stage'] = 'identity'
     return ci_identity(event, commit, tree, platform)
 
 
-def collect(platform, export, identity):
+def collect(platform, export, identity, state=None):
+    state = {'stage': 'entry', 'predicate': 'unclassified', 'mergeHint': 'unobserved'} if state is None else state
     result, private = empty_result(), None
     value = {'schema': 1, 'requiredPassed': False, 'provenance': {}, 'result': result,
         'inventory': [], 'inventorySha256': None, 'groups': {}, 'remaining': None,
         'remainingSourceVerified': False, 'remainingInventoryVerified': False}
     try:
+        state['stage'] = 'runtime'
         runtime = collector.runtime_capability()
-        require(runtime['available'])
+        require(runtime['available'], 'runtime_unavailable')
+        state['stage'] = 'native-identity'
         toolchain = native_identity(platform)
         tool = Path(shutil.which('go'))
         tool_hash = collector.native.digest(tool)
+        state['stage'] = 'source-inventory'
         source = source_inventory()
         value['provenance'] = {'ciIdentity': identity, 'platform': platform, 'sourceSha256': collector.aggregate(source),
             'sourceFiles': len(source), 'policySha256': {name: source[name] for name in POLICY_FILES},
@@ -341,26 +463,32 @@ def collect(platform, export, identity):
             'commands': collector.COMMANDS, 'watchdogSeconds': collector.BOUNDS,
             'race': True, 'count': 1, 'packageTimeoutSeconds': 600,
             'ownershipMechanism': 'windows-job-object' if platform == 'windows-amd64' else 'unreaped-leader-posix-process-group'}
+        state['stage'] = 'private-directory'
         private = Path(tempfile.mkdtemp(prefix='soba-native-core-private-', dir=Path(os.environ['RUNNER_TEMP'])))
         env = dict(os.environ, TMPDIR=str(private), TMP=str(private), TEMP=str(private))
         previous_metrics = os.environ.get('SOBALINK_CI_METRICS')
         try:
             os.environ['SOBALINK_CI_METRICS'] = str(private / 'metrics.jsonl')
+            state['stage'] = 'collector'
             collector.run_diagnostic(env, result)
         finally:
             if previous_metrics is None:
                 os.environ.pop('SOBALINK_CI_METRICS', None)
             else:
                 os.environ['SOBALINK_CI_METRICS'] = previous_metrics
+        state['stage'] = 'package-inventory'
         inventory = packages.packages(packages.query(['go', 'list', '-race', './...']))
         value.update(inventory=inventory, inventorySha256=packages.fingerprint(inventory), groups=packages.partition(inventory))
+        state['stage'] = 'source-recheck'
         require(source_inventory() == source and collector.native.digest(tool) == tool_hash
                 and native_identity(platform) == toolchain and context(platform) == identity)
         result['sourceVerified'] = True
         result['timingComplete'] = collector.bound_suite(result) and collector.execution_complete(result['runs']['suite'])
         result['phase'] = 'complete'
-    except (Exception, KeyboardInterrupt):
-        pass
+    except (Exception, KeyboardInterrupt) as error:
+        state['predicate'] = failure_predicate(error)
+        if state['stage'] == 'collector' and result['phase'] in ('prepare', 'verify', 'modules', 'inventory', 'suite'):
+            state['stage'] = 'collector-' + result['phase']
     finally:
         if private is not None and result['ownersState'] in ('not_started', 'joined') and all(
                 row['ownersJoined'] for row in (*result['preparation'].values(), *result['runs'].values())):
@@ -370,14 +498,24 @@ def collect(platform, export, identity):
             except OSError:
                 pass
         result['timingComplete'] &= result['cleanupComplete'] and result['sourceVerified']
+        previous_stage, previous_predicate = state['stage'], state['predicate']
+        state.update(stage='core-receipt', predicate='unclassified')
         write_receipt(export / 'core.json', value)
+        state.update(stage=previous_stage, predicate=previous_predicate)
     # Genuine Core failure is retained as a failed step. Only a source-verified,
     # joined, cleaned receipt can authorize attempting the exact complement.
+    if not result['sourceVerified']:
+        raise ValueError('collection_incomplete')
+    if not result['cleanupComplete']:
+        state['stage'] = 'cleanup'
+        raise ValueError('cleanup_unresolved')
+    state['stage'] = 'core-validation'
     validate_receipt(read_receipt(export / 'core.json'), identity, value['provenance']['policySha256'], complete=False)
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
         print('remaining_safe=true', file=output)
     for metric in result['metrics']:
         collector.metrics.append_record(metric)
+    state['stage'] = 'suite-validation'
     validate_core(result, platform)
 
 
@@ -496,21 +634,35 @@ def audit_artifact(api, run, commit, tree, platform, *, download=None, policy_ha
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
+    state = {'stage': 'entry', 'predicate': 'unclassified', 'mergeHint': 'unobserved'}
+    owned_export = None
     try:
         require(args in (['core'], ['remaining']))
         platform = os.environ.get('SOBALINK_CORE_NATIVE_PLATFORM')
-        identity = context(platform)
+        identity = context(platform, state)
         export = Path(os.environ['RUNNER_TEMP']) / ARTIFACT
         os.umask(0o077)
         if args == ['core']:
+            state['stage'] = 'export-directory'
             export.mkdir(mode=0o700, exist_ok=False)
-            collect(platform, export, identity)
+            owned_export = export
+            collect(platform, export, identity, state)
         else:
+            state['stage'] = 'remaining'
             require(export.is_dir() and not export.is_symlink())
             remaining(platform, export, identity)
         print('Required native package phase passed.')
         return 0
-    except (Exception, KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt) as error:
+        if state['predicate'] == 'unclassified':
+            state['predicate'] = failure_predicate(error)
+        if args == ['core']:
+            try:
+                os.umask(0o077)
+                export_failure(state, owned_export)
+            except (Exception, KeyboardInterrupt):
+                # Partial or rejected diagnostics are never advertised/uploaded.
+                pass
         print('FAIL: Required native package phase is incomplete.')
         return 1
 

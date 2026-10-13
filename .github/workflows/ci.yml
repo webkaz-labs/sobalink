@@ -720,6 +720,16 @@ jobs:
             ${{ steps.go-cache-info.outputs.gocache }}
           key: ${{ steps.development-go-cache.outputs.cache-primary-key }}
 
+      - name: Preserve bounded Core failure context
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.failure_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-failure-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/soba-native-core-failure/failure.json
+            ${{ runner.temp }}/soba-native-core-failure/partial-core.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Summarize measured native suites
         if: always()
         run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/ci-suite-metrics.json"

@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import zipfile
 
 from test_ci_dnssd_diagnostic import record, events, raw
@@ -177,11 +177,12 @@ class RequiredProofTests(unittest.TestCase):
 
     def test_full_ci_event_binds_pull_merge_and_rejects_diagnostic_create(self):
         event={'repository':{'full_name':gate.REPOSITORY,'private':False,'default_branch':'main'}, 'number':7,
-            'pull_request':{'merge_commit_sha':SHA,'head':{'sha':'d'*40},'base':{'repo':{'full_name':gate.REPOSITORY}}}}
+            'pull_request':{'merge_commit_sha':SHA,'head':{'sha':'d'*40},'base':{'ref':'main','sha':'e'*40,'repo':{'full_name':gate.REPOSITORY}}}}
         env={'GITHUB_REPOSITORY':gate.REPOSITORY,'GITHUB_WORKFLOW':'Cross-platform CI','GITHUB_JOB':'native',
             'GITHUB_SHA':SHA,'GITHUB_EVENT_NAME':'pull_request','GITHUB_REF':'refs/pull/7/merge',
             'GITHUB_WORKFLOW_REF':gate.REPOSITORY+'/'+gate.WORKFLOW+'@refs/pull/7/merge','GITHUB_RUN_ID':'10','GITHUB_RUN_ATTEMPT':'1'}
-        with patch.dict(os.environ,env,clear=True), patch.object(Path,'cwd',return_value=gate.ROOT):
+        native=Mock(); native.checked.side_effect=lambda command: ((SHA+'\n'+TREE+'\n') if command[1]=='rev-parse' else ' '.join([SHA,'e'*40,'d'*40])).encode()
+        with patch.dict(os.environ,env,clear=True), patch.object(Path,'cwd',return_value=gate.ROOT), patch.object(gate,'module',return_value=native):
             self.assertEqual(gate.ci_identity(event,SHA,TREE)['eventHead'],'d'*40)
             for key,replacement in (('GITHUB_EVENT_NAME','create'),('GITHUB_SHA','d'*40),('GITHUB_RUN_ATTEMPT','0'),('GITHUB_WORKFLOW','Activation diagnostic'),('GITHUB_JOB','diagnostic-dnssd')):
                 with patch.dict(os.environ,{key:replacement}),self.assertRaises(ValueError):gate.ci_identity(event,SHA,TREE)
@@ -292,6 +293,18 @@ class ArtifactAdmissionTests(unittest.TestCase):
         self.assertEqual(self.audit()['producingAttempt'],1)
         self.carry(); proof=self.audit()
         self.assertEqual((proof['producingAttempt'],proof['effectiveAttempt'],proof['producingJobId'],proof['effectiveJobId']),(1,2,100,101))
+
+    def test_core_failure_artifacts_do_not_collide_with_current_or_carried_discovery_success(self):
+        extras=[{'name':'soba-native-core-failure-'+target+'-10-'+str(attempt)}
+                for target in ('windows-amd64','darwin-arm64') for attempt in (1,2)]
+        for index,row in enumerate(extras,400):row['id']=index
+        for carried in (False,True):
+            self.setUp()
+            if carried:self.carry()
+            self.artifacts.extend(extras)
+            self.assertEqual(self.audit()['producingAttempt'],1)
+            self.artifacts=extras
+            with self.assertRaises(ValueError):self.audit()
 
     def test_pull_request_api_head_is_separate_from_test_merge_source(self):
         self.run.update(event='pull_request', head_sha='d'*40, head_branch='synthetic-feature')

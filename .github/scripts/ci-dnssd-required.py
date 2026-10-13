@@ -52,31 +52,65 @@ def positive(value):
     return type(value) is int and value > 0
 
 
+IDENTITY_PREDICATES = frozenset({
+    'identity_environment', 'identity_repository', 'identity_checkout', 'identity_event',
+    'identity_pr_source', 'identity_pr_parents', 'identity_merge_hint',
+    'identity_workflow_ref', 'identity_run_attempt',
+})
+
+
+def identity_require(ok, predicate):
+    require(predicate in IDENTITY_PREDICATES)
+    require(ok, predicate)
+
+
 def ci_identity(event, commit, tree):
     env = os.environ
-    require(Path.cwd().resolve() == ROOT and env.get('GITHUB_REPOSITORY') == REPOSITORY
+    identity_require(Path.cwd().resolve() == ROOT and env.get('GITHUB_REPOSITORY') == REPOSITORY
             and env.get('GITHUB_WORKFLOW') == 'Cross-platform CI' and env.get('GITHUB_JOB') == 'native'
-            and commit == env.get('GITHUB_SHA') and SHA.fullmatch(commit) and SHA.fullmatch(tree))
-    metadata, kind, ref = event.get('repository', {}), env.get('GITHUB_EVENT_NAME'), env.get('GITHUB_REF')
-    require(metadata.get('full_name') == REPOSITORY and metadata.get('private') is False
-            and metadata.get('default_branch') == 'main')
+            and type(commit) is str and SHA.fullmatch(commit) and type(tree) is str and SHA.fullmatch(tree)
+            and commit == env.get('GITHUB_SHA'), 'identity_environment')
+    identity_require(type(event) is dict and type(event.get('repository')) is dict, 'identity_repository')
+    metadata, kind, ref = event['repository'], env.get('GITHUB_EVENT_NAME'), env.get('GITHUB_REF')
+    identity_require(metadata.get('full_name') == REPOSITORY and metadata.get('private') is False
+            and metadata.get('default_branch') == 'main', 'identity_repository')
+    native = module('ci-nearby-native')
+    identity_require(native.checked(['git', 'rev-parse', 'HEAD', 'HEAD^{tree}']).decode('ascii').splitlines()
+                     == [commit, tree], 'identity_checkout')
     event_head = commit
     if kind == 'pull_request':
-        pr, number = event.get('pull_request', {}), event.get('number')
-        require(positive(number) and ref == f'refs/pull/{number}/merge'
-                and pr.get('merge_commit_sha') == commit
-                and pr.get('base', {}).get('repo', {}).get('full_name') == REPOSITORY)
-        event_head = pr.get('head', {}).get('sha')
-        require(type(event_head) is str and SHA.fullmatch(event_head))
+        pr, number = event.get('pull_request'), event.get('number')
+        identity_require(type(pr) is dict and positive(number) and ref == f'refs/pull/{number}/merge', 'identity_event')
+        base, head = pr.get('base'), pr.get('head')
+        identity_require(type(base) is dict and type(head) is dict
+                and type(base.get('repo')) is dict and base['repo'].get('full_name') == REPOSITORY
+                and base.get('ref') == 'main', 'identity_pr_source')
+        base_sha, event_head = base.get('sha'), head.get('sha')
+        identity_require(all(type(value) is str and SHA.fullmatch(value) and set(value) != {'0'}
+                             for value in (base_sha, event_head)) and base_sha != event_head, 'identity_pr_source')
+        head_repo = head.get('repo')
+        identity_require(head_repo is None or type(head_repo) is dict
+                and type(head_repo.get('full_name')) is str
+                and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', head_repo['full_name']), 'identity_pr_source')
+        # Match the existing impact policy: the checked-out SHA, tree and exact
+        # ordered parents prove the tested merge. The mergeability hint may lag
+        # or be absent; it never supplies identity or rescues mismatched parents.
+        parents = native.checked(['git', 'rev-list', '--parents', '-n', '1', commit]).decode('ascii').split()
+        identity_require(parents == [commit, base_sha, event_head], 'identity_pr_parents')
+        hint = pr.get('merge_commit_sha')
+        identity_require(hint is None or type(hint) is str and SHA.fullmatch(hint) and set(hint) != {'0'},
+                         'identity_merge_hint')
     else:
-        require(kind in {'push', 'workflow_dispatch', 'schedule'} and type(ref) is str
+        identity_require(kind in {'push', 'workflow_dispatch', 'schedule'} and type(ref) is str
                 and (ref == 'refs/heads/main' or kind == 'workflow_dispatch'
-                     and re.fullmatch(r'refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,200}', ref)))
+                     and re.fullmatch(r'refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,200}', ref)), 'identity_event')
         if kind == 'push':
-            require(event.get('after') == commit)
-    require(env.get('GITHUB_WORKFLOW_REF') == REPOSITORY + '/' + WORKFLOW + '@' + ref)
+            identity_require(event.get('after') == commit, 'identity_event')
+    identity_require(env.get('GITHUB_WORKFLOW_REF') == REPOSITORY + '/' + WORKFLOW + '@' + ref,
+                     'identity_workflow_ref')
     run_id, attempt = env.get('GITHUB_RUN_ID', ''), env.get('GITHUB_RUN_ATTEMPT', '')
-    require(re.fullmatch('[1-9][0-9]{0,19}', run_id) and re.fullmatch('[1-9][0-9]{0,5}', attempt))
+    identity_require(re.fullmatch('[1-9][0-9]{0,19}', run_id) and re.fullmatch('[1-9][0-9]{0,5}', attempt),
+                     'identity_run_attempt')
     return {'repository': REPOSITORY, 'workflow': WORKFLOW, 'job': JOB, 'runId': int(run_id),
             'runAttempt': int(attempt), 'event': kind, 'eventHead': event_head, 'commit': commit, 'tree': tree}
 

@@ -689,7 +689,7 @@ def validate_native_packages_workflow(sources):
             'package partition runner differs from reviewed policy')
     require(digest(sources['.github/scripts/ci-native-core.py']) == 'd5e6b47a41cfd608e3d4f34a9f9949a351b07ac60299243ca1d68d677b881389',
             'native Core collector differs from reviewed policy')
-    require(digest(sources['.github/scripts/ci-native-core-required.py']) == '4682a4651583e23a46f84b0401b806138b1cf14deb52d2bdace087e936bb30e7',
+    require(digest(sources['.github/scripts/ci-native-core-required.py']) == 'b11baba01eaa6f438dad17eb12d596b12ec16c04bb52917f11db3122e4ccb0fc',
             'required native Core runner differs from reviewed policy')
     early = """      - name: Collect required whole-Core race evidence
         id: native-core
@@ -709,6 +709,17 @@ def validate_native_packages_workflow(sources):
         with:
           name: soba-native-core-required-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soba-native-core-required/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+"""
+    failure = """      - name: Preserve bounded Core failure context
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.failure_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-failure-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/soba-native-core-failure/failure.json
+            ${{ runner.temp }}/soba-native-core-failure/partial-core.json
           if-no-files-found: error
           retention-days: 14
 """
@@ -762,7 +773,7 @@ def validate_native_packages_workflow(sources):
         native = [offset for offset, key in jobs if key == 'native']
         require(len(native) == 1, 'missing native package job')
         end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
-        for block in (early, later + tail):
+        for block in (early, later + tail, failure):
             marker = block.splitlines(keepends=True)[0]
             require(workflow.count(marker) == workflow.count(block) == 1,
                     'invalid native package execution or receipt policy')

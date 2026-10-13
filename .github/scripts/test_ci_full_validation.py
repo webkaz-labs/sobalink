@@ -137,6 +137,25 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.audit()
         self.sources[full.WORKFLOW] = original
 
+    def test_failure_context_upload_is_exact_separate_and_not_a_required_success_step(self):
+        self.assertTrue(all('Preserve bounded Core failure context' not in names for names in self.required.values()))
+        for path in (full.WORKFLOW,'.github/workflows/prerelease.yml'):
+            original=self.sources[path]
+            marker=b'      - name: Preserve bounded Core failure context\n'
+            start=original.index(marker);end=original.index(b'      - ',start+len(marker))
+            block=original[start:end]
+            mutations=[original.replace(block,b'',1),original.replace(block,block+block,1)]
+            for old,new in [(b"steps.native-core.outputs.failure_ready == 'true'",b'true'),
+                (b'soba-native-core-failure-',b'soba-native-core-required-'),
+                (b'soba-native-core-failure/failure.json',b'soba-native-core-required/core.json'),
+                (b'soba-native-core-failure/partial-core.json',b'soba-native-core-failure/**'),
+                (b'if-no-files-found: error',b'if-no-files-found: warn')]:
+                mutations.append(original[:start]+block.replace(old,new)+original[end:])
+            for changed in mutations:
+                self.sources[path]=changed
+                with self.assertRaises(ValueError):full.required_jobs(self.sources)
+            self.sources[path]=original
+
     def test_early_core_placement_rejects_inserted_work_or_cache_before_collection(self):
         for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
             original = self.sources[path]
