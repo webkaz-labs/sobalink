@@ -29,6 +29,9 @@ OPT_INS = ('SOBALINK_DNSSD_LOCAL_ONLY', 'SOBALINK_DNSSD_SELECTED_LOOPBACK',
            'SOBALINK_DNSSD_LEGACY_SERIALIZATION')
 MARKER = 'NEARBY_DNSSD_CAPABILITY '
 LEGACY_MARKER = 'NEARBY_DNSSD_LEGACY_CAPABILITY '
+# Go test2json splits Output events at 1024 bytes. Reassemble one bounded
+# logical line, never across a test owner or lifecycle boundary.
+MAX_OUTPUT_LINE_BYTES = 4096
 FLAGS = {'reciprocalRecords', 'reciprocalCandidates', 'withdrawalObserved', 'ownersJoined',
          'rawPacketVerified', 'networkMulticastVerified'}
 KEYS = FLAGS | {'status', 'reason', 'scope', 'failureStage', 'failureKind', 'receiveCounters'}
@@ -268,12 +271,30 @@ def test_events(raw, returncode):
     lifecycles = {name: [] for name in CASES}
     markers = {name: [] for name in CASES}
     package, active, order_valid = [], None, True
+    pending, pending_owner, pending_bytes = '', None, 0
+
+    def accept_line(output, name):
+        present = [marker for marker in (MARKER, LEGACY_MARKER) if marker in output]
+        if not present:
+            return
+        expected = LEGACY_MARKER if name == 'TestDNSServiceLegacySerializationCapability' else MARKER
+        if (name not in CASES or present != [expected] or output.count(expected) != 1
+                or active != name or markers[name]):
+            raise ValueError('invalid DNS-SD marker owner or multiplicity')
+        value = shared.parse_json(output.split(expected, 1)[1].strip())
+        markers[name].append(legacy_capability(value) if expected == LEGACY_MARKER
+                             else capability(value, CASES[name]))
+
     for line in raw.splitlines():
         event = parser.parse_event(line)
         name, action = event.get('Test'), event['Action']
         if event.get('Package') != PACKAGE or name is not None and name not in CASES:
             raise ValueError('unexpected executed DNS-SD test')
         if action != 'output':
+            if pending:
+                raise ValueError('unfinished DNS-SD output before lifecycle boundary')
+            if any(marker in event.get('Output', '') for marker in (MARKER, LEGACY_MARKER)):
+                raise ValueError('DNS-SD marker outside output action')
             if name is None:
                 package.append(action)
             else:
@@ -286,16 +307,29 @@ def test_events(raw, returncode):
                     active = None
                 else:
                     order_valid = False
-        output = event.get('Output', '')
-        present = [marker for marker in (MARKER, LEGACY_MARKER) if marker in output]
-        if present:
-            expected = LEGACY_MARKER if name == 'TestDNSServiceLegacySerializationCapability' else MARKER
-            if (action != 'output' or name not in CASES or present != [expected] or output.count(expected) != 1
-                    or active != name):
-                raise ValueError('invalid DNS-SD marker owner')
-            value = shared.parse_json(output.split(expected, 1)[1].strip())
-            markers[name].append(legacy_capability(value) if expected == LEGACY_MARKER
-                                 else capability(value, CASES[name]))
+            continue
+        if pending and name != pending_owner or name is not None and name != active:
+            raise ValueError('DNS-SD output owner changed mid-line')
+        # A single Output event can contain several complete lines or only a
+        # fragment. Count UTF-8 bytes, including the newline, before appending.
+        parts = event['Output'].split('\n')
+        for index, part in enumerate(parts):
+            complete = index < len(parts) - 1
+            fragment = part + ('\n' if complete else '')
+            if not fragment:
+                continue
+            size = len(fragment.encode('utf-8'))
+            if pending_bytes + size > MAX_OUTPUT_LINE_BYTES:
+                raise ValueError('DNS-SD logical output line exceeds bound')
+            if not pending:
+                pending_owner = name
+            pending += fragment
+            pending_bytes += size
+            if complete:
+                accept_line(pending, pending_owner)
+                pending, pending_owner, pending_bytes = '', None, 0
+    if pending:
+        raise ValueError('unfinished DNS-SD output at capture end')
     result, accepted = {}, order_valid and active is None and returncode == 0 and package == ['start', 'pass']
     for name, scope in CASES.items():
         record = markers[name][0] if len(markers[name]) == 1 else None

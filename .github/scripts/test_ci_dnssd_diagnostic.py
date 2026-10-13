@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -51,7 +52,7 @@ def events(records):
         base = {'Package': gate.PACKAGE, 'Test': name}
         terminal = {'verified': 'pass', 'unavailable': 'skip', 'not_run': 'skip', 'failed': 'fail'}[value['status']]
         failed |= terminal == 'fail'
-        rows += [dict(base, Action='run'), dict(base, Action='output', Output=(gate.LEGACY_MARKER if scope == gate.LEGACY_SCOPE else gate.MARKER) + json.dumps(value)),
+        rows += [dict(base, Action='run'), dict(base, Action='output', Output=(gate.LEGACY_MARKER if scope == gate.LEGACY_SCOPE else gate.MARKER) + json.dumps(value) + '\n'),
                  dict(base, Action=terminal)]
     rows.append({'Action': 'fail' if failed else 'pass', 'Package': gate.PACKAGE})
     return rows
@@ -129,6 +130,73 @@ class DNSSDDiagnosticTests(unittest.TestCase):
         got, accepted = gate.test_events(raw(events(failed)), 1)
         self.assertEqual(got, failed)
         self.assertFalse(accepted)
+
+    def test_fragmented_markers_preserve_owner_schema_and_byte_bounds(self):
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        original = events(records)
+        for split in (1, len(gate.LEGACY_MARKER) - 1, 1024):
+            rows = copy.deepcopy(original)
+            target = next(i for i, row in enumerate(rows) if row.get('Test') == 'TestDNSServiceLegacySerializationCapability' and row['Action'] == 'output')
+            event = rows[target]
+            text = event['Output']
+            pieces = [text[:split], text[split:]]
+            rows[target:target + 1] = [dict(event, Output=piece) for piece in pieces]
+            self.assertEqual(gate.test_events(raw(rows), 0), (records, True))
+        target = next(i for i, row in enumerate(original) if row.get('Test') == 'TestDNSServiceLegacySerializationCapability' and row['Action'] == 'output')
+        event = original[target]
+        prefix, suffix = event['Output'][:10], event['Output'][10:]
+        for violation in ('owner-switch', 'package-switch', 'terminal', 'run', 'unfinished', 'duplicate', 'oversize', 'utf8-size', 'schema'):
+            rows = copy.deepcopy(original)
+            chunks = [dict(event, Output=prefix), dict(event, Output=suffix)]
+            if violation == 'owner-switch': chunks[1]['Test'] = 'TestDNSServiceLocalOnlyCapability'
+            elif violation == 'package-switch': chunks[1].pop('Test')
+            elif violation in ('terminal', 'run'):
+                chunks.insert(1, dict(event, Action='pass' if violation == 'terminal' else 'run', Output=''))
+            elif violation == 'unfinished': chunks[-1]['Output'] = suffix.rstrip('\n')
+            elif violation == 'duplicate': chunks.append(copy.deepcopy(event))
+            elif violation == 'oversize': chunks = [dict(event, Output='x' * gate.MAX_OUTPUT_LINE_BYTES), dict(event, Output='\n')]
+            elif violation == 'utf8-size': chunks = [dict(event, Output='é' * (gate.MAX_OUTPUT_LINE_BYTES // 2)), dict(event, Output='\n')]
+            else: chunks[-1]['Output'] = suffix.replace('native_c_sendto', 'unapproved_primitive')
+            rows[target:target + 1] = chunks
+            with self.subTest(violation=violation), self.assertRaises(ValueError):
+                gate.test_events(raw(rows), 0)
+        # A final fragment also fails without a following terminal event.
+        with self.assertRaises(ValueError):
+            gate.test_events(raw(original[:target] + [dict(event, Output=prefix)]), 0)
+        for text in ('x' * (gate.MAX_OUTPUT_LINE_BYTES - 1) + '\n', 'é' * ((gate.MAX_OUTPUT_LINE_BYTES - 2) // 2) + 'x\n'):
+            rows = copy.deepcopy(original)
+            rows.insert(target, dict(event, Output=text))
+            self.assertTrue(gate.test_events(raw(rows), 0)[1])
+
+    def test_pinned_converter_fragments_complete_logged_receipt(self):
+        # Opt-in runs the installed pinned converter only, never a Go test or
+        # native socket. CI without that explicit tool path keeps pure tests.
+        tool = os.environ.get('SOBALINK_TEST2JSON_GO')
+        if not tool:
+            self.skipTest('pinned converter path not selected')
+        env = dict(os.environ, GOTOOLCHAIN='local', GOPROXY='off', GOSUMDB='off')
+        version = subprocess.run([tool, 'env', 'GOVERSION'], capture_output=True, check=True, timeout=10, env=env).stdout.strip()
+        self.assertEqual(version, b'go1.27.1')
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        good = record(gate.LEGACY_SCOPE)
+        records[gate.LEGACY_SCOPE] = record(gate.LEGACY_SCOPE, 'unavailable',
+            reason='legacy_send_unavailable', apiRecordsReady=True, nativeSendAttempted=True, ownersJoined=True,
+            failureStage='legacy_send', failureKind='host_unreachable',
+            socketReadback=good['socketReadback'], routeLookup=good['routeLookup'])
+        lines = []
+        for name, scope in gate.CASES.items():
+            value = records[scope]
+            marker = gate.LEGACY_MARKER if scope == gate.LEGACY_SCOPE else gate.MARKER
+            lines += ['=== RUN   ' + name, '    dnssd_legacy_native_test.go:31: ' + marker + json.dumps(value, separators=(',', ':')),
+                      ('--- SKIP: ' if value['status'] == 'unavailable' else '--- PASS: ') + name + ' (0.00s)']
+        lines += ['PASS']
+        converted = subprocess.run([tool, 'tool', 'test2json', '-p', gate.PACKAGE],
+            input=('\n'.join(lines) + '\n').encode(), capture_output=True, check=True, timeout=10, env=env).stdout
+        chunks = [json.loads(line) for line in converted.splitlines()]
+        marker_chunk = next(row['Output'] for row in chunks if gate.LEGACY_MARKER in row.get('Output', ''))
+        self.assertEqual(len(marker_chunk.encode()), 1024)
+        self.assertFalse(marker_chunk.endswith('\n'))
+        self.assertEqual(gate.test_events(converted, 0), (records, True))
 
     def test_receive_counters_are_bounded_closed_and_retained_on_failure(self):
         observed = {'receivedPackets': 2, 'receivedBytes': 99, 'metadataAccepted': 1,
