@@ -649,6 +649,17 @@ def validate_macos_nearby_workflow(workflow_bytes):
     """One required five-scope Terminal run and its mandatory closed artifact."""
     workflow = workflow_bytes.decode('utf-8')
     metadata = workflow_metadata(workflow)
+    preparation = """      - name: Check exact toolchain and native target
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = '${{ matrix.goos }}'
+          test "$(go env GOARCH)" = '${{ matrix.goarch }}'
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+          python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+"""
     expected = """      - name: Verify macOS five-scope discovery without skips
         if: matrix.goos == 'darwin'
         timeout-minutes: 10
@@ -676,6 +687,13 @@ def validate_macos_nearby_workflow(workflow_bytes):
     require(len(native) == 1, 'missing macOS nearby native job')
     end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
     require(native[0] < start < end, 'macOS nearby must run in the native job')
+    region = workflow[native[0]:end]
+    require(region.count(preparation + expected) == 1,
+            'macOS nearby must immediately follow successful exact preparation')
+    require(region.index('      - name: Test and reproduce locked frontend assets\n')
+            < region.index(preparation) < region.index(expected)
+            < region.index('      - name: Verify remaining native package race coverage\n'),
+            'macOS nearby must precede unrelated native gates after preparation')
     outside = workflow[:start] + workflow[start + len(expected):]
     require('ci-dnssd-required.py' not in outside and 'soba-dnssd-required' not in outside
             and 'SOBALINK_DNSSD_' not in workflow and 'TestDNSService' not in workflow

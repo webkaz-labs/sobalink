@@ -272,59 +272,260 @@ type contextClaimCell struct {
 // Copies share the single claim cell; zero values and wrong attempt pointers fail.
 type VerifiedContextExchange struct{ cell *contextClaimCell }
 
+// ContextClaimSite is a fixed diagnostic label, never an error payload.
+type ContextClaimSite string
+
+// ContextClaimObservation is diagnostic data only. Its caller owns it for one
+// synchronous claim and may read it only after return. It contains no capability,
+// identifier or callback, and is never consulted for admission.
+type ContextClaimObservation struct{ Site ContextClaimSite }
+
+func (o *ContextClaimObservation) record(site ContextClaimSite) {
+	if o != nil {
+		o.Site = site
+	}
+}
+
 func (v VerifiedContextExchange) TryClaimFor(a *ContextAttempt) (ContextExchangeTranscript, error) {
-	if v.cell == nil || !v.cell.used.CompareAndSwap(false, true) {
+	return v.TryClaimForObserved(a, nil)
+}
+
+// TryClaimForObserved performs the same one-shot claim as TryClaimFor. A nil
+// observation does no diagnostic sampling or allocation. Sites are closed
+// literals at the actual return checks, never a later recheck of live state.
+func (v VerifiedContextExchange) TryClaimForObserved(a *ContextAttempt, observation *ContextClaimObservation) (ContextExchangeTranscript, error) {
+	if v.cell == nil {
+		observation.record("proof-empty")
+		return ContextExchangeTranscript{}, ErrUntrusted
+	}
+	if !v.cell.used.CompareAndSwap(false, true) {
+		observation.record("proof-used")
 		return ContextExchangeTranscript{}, ErrUntrusted
 	}
 	proof := v.cell.value.Swap(nil)
-	if proof == nil || proof.attempt != a || a.data() != proof.data || !proof.pinned {
+	if proof == nil {
+		observation.record("proof-missing")
+		return ContextExchangeTranscript{}, ErrUntrusted
+	}
+	if proof.attempt != a {
+		observation.record("proof-attempt")
+		return ContextExchangeTranscript{}, ErrUntrusted
+	}
+	if a.data() != proof.data {
+		observation.record("proof-data")
+		return ContextExchangeTranscript{}, ErrUntrusted
+	}
+	if !proof.pinned {
+		observation.record("proof-unpinned")
 		return ContextExchangeTranscript{}, ErrUntrusted
 	}
 	d := proof.data
-	if proof.transcript.operation != d.key.operation || proof.transcript.direction != d.direction ||
-		(d.direction == ContextOutbound && (!bytes.Equal(proof.transcript.request, d.expected) || !contextReplyMatches(d, proof.transcript.request, proof.transcript.reply))) ||
-		(d.direction == ContextInbound && (len(proof.transcript.reply) != 0 || !contextInboundRequestMatches(d, proof.transcript.request))) {
+	if proof.transcript.operation != d.key.operation {
+		observation.record("transcript-operation")
 		a.Cancel()
 		return ContextExchangeTranscript{}, ErrUntrusted
 	}
-	if !tryContextCurrent(a, d, d.epoch, proof.deadline, proof.done, false) {
+	if proof.transcript.direction != d.direction {
+		observation.record("transcript-direction")
+		a.Cancel()
+		return ContextExchangeTranscript{}, ErrUntrusted
+	}
+	if d.direction == ContextOutbound {
+		if !bytes.Equal(proof.transcript.request, d.expected) {
+			observation.record("outbound-request")
+			a.Cancel()
+			return ContextExchangeTranscript{}, ErrUntrusted
+		}
+		if !contextReplyMatches(d, proof.transcript.request, proof.transcript.reply) {
+			observation.record("outbound-reply")
+			a.Cancel()
+			return ContextExchangeTranscript{}, ErrUntrusted
+		}
+	}
+	if d.direction == ContextInbound {
+		if len(proof.transcript.reply) != 0 {
+			observation.record("inbound-reply")
+			a.Cancel()
+			return ContextExchangeTranscript{}, ErrUntrusted
+		}
+		if !contextInboundRequestMatches(d, proof.transcript.request) {
+			observation.record("inbound-request")
+			a.Cancel()
+			return ContextExchangeTranscript{}, ErrUntrusted
+		}
+	}
+	if !tryContextCurrentObserved(a, d, d.epoch, proof.deadline, proof.done, false, observation) {
 		a.Cancel()
 		return ContextExchangeTranscript{}, ErrUnavailable
 	}
 	// Old arm invalidation must still reject a future claim, but the accepted
 	// callback now owns completion. Its own durable write invalidates the old
 	// epoch and installs a distinct response epoch; it cannot roll back a save.
-	a.cell.claimed.Store(true)
-	if !d.epoch.Valid() {
-		a.Cancel()
+	if !claimContextEpochCurrent(a, d.epoch, observation) {
 		return ContextExchangeTranscript{}, ErrUnavailable
 	}
+	observation.record("claimed")
 	return ContextExchangeTranscript{request: bytes.Clone(proof.transcript.request), reply: bytes.Clone(proof.transcript.reply), operation: d.key.operation, direction: d.direction}, nil
+}
+
+// Signal-only final check, separated so its invalidation boundary can be
+// exercised without manufacturing authenticated evidence.
+func claimContextEpochCurrent(a *ContextAttempt, epoch *ContextEpoch, observation *ContextClaimObservation) bool {
+	a.cell.claimed.Store(true)
+	if !epoch.Valid() {
+		observation.record("post-claim-epoch")
+		a.Cancel()
+		return false
+	}
+	return true
 }
 
 // No engine.Admit, open(), external callback, context method or blocking lock
 // occurs inside this gate. Contention consumes/rejects rather than waiting.
 func tryContextCurrent(a *ContextAttempt, d *contextAttemptData, epoch *ContextEpoch, deadline time.Time, done <-chan struct{}, response bool) bool {
-	if a == nil || d == nil || !epoch.Valid() || channelClosed(done) || a.cancelled() || !time.Now().Before(deadline) {
+	return tryContextCurrentObserved(a, d, epoch, deadline, done, response, nil)
+}
+
+func tryContextCurrentObserved(a *ContextAttempt, d *contextAttemptData, epoch *ContextEpoch, deadline time.Time, done <-chan struct{}, response bool, observation *ContextClaimObservation) bool {
+	if a == nil {
+		observation.record("initial-attempt-missing")
+		return false
+	}
+	if d == nil {
+		observation.record("initial-data-missing")
+		return false
+	}
+	if !epoch.Valid() {
+		observation.record("initial-epoch")
+		return false
+	}
+	if channelClosed(done) {
+		observation.record("initial-exchange-done")
+		return false
+	}
+	if a.cancelled() {
+		observation.record("initial-attempt-cancelled")
+		return false
+	}
+	if !time.Now().Before(deadline) {
+		observation.record("initial-deadline")
 		return false
 	}
 	n, g := d.n, d.g
 	if !n.mu.TryLock() {
+		observation.record("node-lock")
 		return false
 	}
 	defer n.mu.Unlock()
 	if !g.mu.TryLock() {
+		observation.record("generation-lock")
 		return false
 	}
 	defer g.mu.Unlock()
-	if !n.contextControl || n.closed || n.closing.Load() || n.recovery || !n.started || n.generation.Load() != g ||
-		g.sealed || g.engine.Load() != nil || g.bind != nil || g.tunnel != nil || !g.controlOpen.Load() || g.origin != d.origin || d.registration == nil || d.registration.g != g ||
-		g.controlPeers[d.key.peer] != d.registration || d.registration.peer.Key != d.key.peer ||
-		n.contextAttempts[d.key] != a || a.data() != d || !epoch.Valid() || channelClosed(done) || a.cancelled() ||
-		channelClosed(d.nodeDone) || !time.Now().Before(deadline) {
+	return contextCurrentLockedObserved(a, d, epoch, deadline, done, response, observation)
+}
+
+// The caller holds the same Node and generation locks acquired above.
+func contextCurrentLockedObserved(a *ContextAttempt, d *contextAttemptData, epoch *ContextEpoch, deadline time.Time, done <-chan struct{}, response bool, observation *ContextClaimObservation) bool {
+	n, g := d.n, d.g
+	if !n.contextControl {
+		observation.record("node-mode")
 		return false
 	}
-	return !response || a.cell.claimed.Load()
+	if n.closed {
+		observation.record("node-closed")
+		return false
+	}
+	if n.closing.Load() {
+		observation.record("node-closing")
+		return false
+	}
+	if n.recovery {
+		observation.record("node-recovery")
+		return false
+	}
+	if !n.started {
+		observation.record("node-not-started")
+		return false
+	}
+	if n.generation.Load() != g {
+		observation.record("generation-identity")
+		return false
+	}
+	if g.sealed {
+		observation.record("generation-sealed")
+		return false
+	}
+	if g.engine.Load() != nil {
+		observation.record("generation-engine")
+		return false
+	}
+	if g.bind != nil {
+		observation.record("generation-bind")
+		return false
+	}
+	if g.tunnel != nil {
+		observation.record("generation-tunnel")
+		return false
+	}
+	if !g.controlOpen.Load() {
+		observation.record("generation-control-closed")
+		return false
+	}
+	if g.origin != d.origin {
+		observation.record("origin-identity")
+		return false
+	}
+	if d.registration == nil {
+		observation.record("registration-missing")
+		return false
+	}
+	if d.registration.g != g {
+		observation.record("registration-generation")
+		return false
+	}
+	if g.controlPeers[d.key.peer] != d.registration {
+		observation.record("registration-identity")
+		return false
+	}
+	if d.registration.peer.Key != d.key.peer {
+		observation.record("registration-peer")
+		return false
+	}
+	if n.contextAttempts[d.key] != a {
+		observation.record("attempt-identity")
+		return false
+	}
+	if a.data() != d {
+		observation.record("attempt-data")
+		return false
+	}
+	if !epoch.Valid() {
+		observation.record("locked-epoch")
+		return false
+	}
+	if channelClosed(done) {
+		observation.record("locked-exchange-done")
+		return false
+	}
+	if a.cancelled() {
+		observation.record("locked-attempt-cancelled")
+		return false
+	}
+	if channelClosed(d.nodeDone) {
+		observation.record("node-done")
+		return false
+	}
+	if !time.Now().Before(deadline) {
+		observation.record("locked-deadline")
+		return false
+	}
+	if response && !a.cell.claimed.Load() {
+		observation.record("response-unclaimed")
+		return false
+	}
+	observation.record("current")
+	return true
 }
 
 func mintContextExchange(a *ContextAttempt, d *contextAttemptData, ctx context.Context, request, reply []byte) VerifiedContextExchange {

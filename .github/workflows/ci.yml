@@ -228,6 +228,22 @@ jobs:
           go run ./cmd/prepare-engine --verify
           go mod verify
           python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Verify macOS five-scope discovery without skips
+        if: matrix.goos == 'darwin'
+        timeout-minutes: 10
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-metrics.py run --suite nearby-five-scope-macos -- python -B .github/scripts/ci-dnssd-required.py
+      - name: Preserve required macOS discovery proof
+        if: always() && matrix.goos == 'darwin'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-dnssd-required-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-dnssd-required/receipt.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify Windows receive-retirement directory barriers
         if: matrix.goos == 'windows'
         run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer
@@ -373,22 +389,6 @@ jobs:
         run: |
           set -euo pipefail
           python -B .github/scripts/ci-metrics.py run --suite nearby-native-linux -- python -B .github/scripts/ci-nearby-required.py
-      - name: Verify macOS five-scope discovery without skips
-        if: matrix.goos == 'darwin'
-        timeout-minutes: 10
-        env:
-          CGO_ENABLED: '1'
-        run: |
-          set -euo pipefail
-          python -B .github/scripts/ci-metrics.py run --suite nearby-five-scope-macos -- python -B .github/scripts/ci-dnssd-required.py
-      - name: Preserve required macOS discovery proof
-        if: always() && matrix.goos == 'darwin'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: soba-dnssd-required-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/soba-dnssd-required/receipt.json
-          if-no-files-found: error
-          retention-days: 90
       - name: Verify direct LAN synthetic expiry and rekey
         timeout-minutes: 3
         run: |

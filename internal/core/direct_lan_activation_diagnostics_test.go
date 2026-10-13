@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,10 +59,11 @@ type activationDiagnosticCounters struct {
 }
 
 type activationDiagnosticAttempt struct {
-	Reply, Attempt         int
-	ElapsedMS, RemainingMS int64
-	Error, Context         string
-	Before, After          activationDiagnosticCounters
+	Reply, Attempt                                                          int
+	ElapsedMS, RemainingMS                                                  int64
+	ResponderLockWaitMS, InitiatorLockWaitMS, CaptureMS, CaptureRemainingMS int64
+	Error, Context                                                          string
+	Before, After                                                           activationDiagnosticCounters
 }
 
 // Snapshots are independently atomic observations, not a coherent transport
@@ -177,4 +179,36 @@ func activationDiagnosticCaptureFailureLocked(c *Core, owner *contextControlOwne
 		}
 	}
 	return r
+}
+
+// Completed callback-local values only. Slots are bounded, append-only and
+// atomic: concurrent callbacks cannot overwrite or tear one another's result.
+// Ordinals describe completion-call entry order, not correlation with sender wires.
+type activationDiagnosticCompletion struct {
+	Ordinal uint32
+	Result  contextCompletionObservation
+}
+type activationDiagnosticCompletions struct {
+	started atomic.Uint32
+	records [32]atomic.Pointer[activationDiagnosticCompletion]
+}
+
+func (d *activationDiagnosticCompletions) begin() uint32 { return d.started.Add(1) }
+func (d *activationDiagnosticCompletions) finish(ordinal uint32, result contextCompletionObservation) {
+	if ordinal > 0 && ordinal <= uint32(len(d.records)) {
+		d.records[ordinal-1].Store(&activationDiagnosticCompletion{Ordinal: ordinal, Result: result})
+	}
+}
+func (d *activationDiagnosticCompletions) snapshot() (records []activationDiagnosticCompletion, omitted, unobserved uint32) {
+	started := d.started.Load()
+	if started > uint32(len(d.records)) {
+		omitted = started - uint32(len(d.records))
+	}
+	for i := range min(started, uint32(len(d.records))) {
+		if record := d.records[i].Load(); record != nil {
+			records = append(records, *record)
+		}
+	}
+	unobserved = min(started, uint32(len(d.records))) - uint32(len(records))
+	return records, omitted, unobserved
 }

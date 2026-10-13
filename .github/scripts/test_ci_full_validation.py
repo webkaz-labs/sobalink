@@ -239,6 +239,7 @@ class FullProofTests(unittest.TestCase):
         block = original[start:end]
         changes = ((b"if: matrix.goos == 'darwin'", b'if: false'),
                    (b"if: matrix.goos == 'darwin'", b"if: matrix.goos == 'linux'"),
+                   (b"if: matrix.goos == 'darwin'", b"if: always() && matrix.goos == 'darwin'"),
                    (b'timeout-minutes: 10', b'timeout-minutes: 60'),
                    (b"CGO_ENABLED: '1'", b"CGO_ENABLED: '0'"),
                    (b'ci-dnssd-required.py', b'ci-dnssd-diagnostic.py'),
@@ -257,6 +258,74 @@ class FullProofTests(unittest.TestCase):
         for index, value in enumerate(mutations):
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 full.validate_macos_nearby_workflow(value)
+
+    def test_macos_nearby_runs_once_immediately_after_exact_preparation(self):
+        workflow = self.sources[full.WORKFLOW]
+        full.validate_macos_nearby_workflow(workflow)
+        preparation = workflow.index(b'      - name: Check exact toolchain and native target\n')
+        execution = workflow.index(b'      - name: Verify macOS five-scope discovery without skips\n')
+        upload = workflow.index(b'      - name: Preserve required macOS discovery proof\n')
+        remaining = workflow.index(b'      - name: Verify remaining native package race coverage\n')
+        activation = workflow.index(b'      - name: Verify managed activation acceptance\n')
+        self.assertLess(preparation, execution)
+        self.assertLess(execution, upload)
+        self.assertLess(upload, remaining)
+        self.assertLess(remaining, activation)
+        self.assertTrue(workflow[:execution].endswith(
+            b"          python -m unittest discover -s .github/scripts -p 'test_*.py' -v\n"))
+        self.assertEqual(workflow.count(b'-- python -B .github/scripts/ci-dnssd-required.py\n'), 1)
+
+    def test_macos_nearby_early_receipt_cannot_mask_later_activation_failure(self):
+        native = next(job for job in self.jobs if job['name'] == full.TARGETS['darwin-arm64'][0])
+        self.assertTrue(all(step['conclusion'] == 'success' for step in native['steps']
+                            if step['name'] in dnssd_fixture.gate.STEPS))
+        activation = next(step for step in native['steps'] if step['name'] == 'Verify managed activation acceptance')
+        activation['conclusion'] = 'failure'
+        for conclusion in ('success', 'failure'):
+            native['conclusion'] = conclusion
+            with self.subTest(job_conclusion=conclusion), self.assertRaises(ValueError):
+                self.audit()
+
+    def test_macos_nearby_order_rejects_unprepared_delayed_or_interrupted_execution(self):
+        original = self.sources[full.WORKFLOW]
+        preparation = original.index(b'      - name: Check exact toolchain and native target\n')
+        execution = original.index(b'      - name: Verify macOS five-scope discovery without skips\n')
+        end = original.index(b'      - name: Verify Windows receive-retirement directory barriers\n')
+        for start, targets in ((execution, ('Check exact toolchain and native target',
+                                          'Verify remaining native package race coverage',
+                                          'Verify direct LAN synthetic expiry and rekey')),
+                               (preparation, ('Test and reproduce locked frontend assets',
+                                              'Local and mock tests, race detector, and vet'))):
+            block = original[start:end]
+            stripped = original[:start] + original[end:]
+            for target in targets:
+                insertion = stripped.index(('      - name: ' + target + '\n').encode())
+                moved = stripped[:insertion] + block + stripped[insertion:]
+                with self.subTest(start=start, target=target), self.assertRaises(ValueError):
+                    full.validate_macos_nearby_workflow(moved)
+        inserted = original[:execution] + b'      - name: Unrelated workload\n        run: echo synthetic\n' + original[execution:]
+        with self.assertRaises(ValueError):
+            full.validate_macos_nearby_workflow(inserted)
+
+    def test_macos_nearby_preparation_cannot_skip_failures_or_weaken_policy(self):
+        original = self.sources[full.WORKFLOW]
+        start = original.index(b'      - name: Check exact toolchain and native target\n')
+        end = original.index(b'      - name: Verify macOS five-scope discovery without skips\n')
+        block = original[start:end]
+        for old, new in ((b'        run: |\n', b'        if: false\n        run: |\n'),
+                         (b'        run: |\n', b'        continue-on-error: true\n        run: |\n'),
+                         (b'          set -euo pipefail\n', b''),
+                         (b' = go1.27.1', b' = go1.27.0'),
+                         (b" = '${{ matrix.goos }}'", b" = 'darwin'"),
+                         (b" = '${{ matrix.goarch }}'", b" = 'arm64'"),
+                         (b'          go run ./cmd/prepare-engine\n', b''),
+                         (b'          go run ./cmd/prepare-engine --verify\n', b''),
+                         (b'          go mod verify\n', b'          go mod verify || true\n'),
+                         (b"-p 'test_*.py'", b"-p 'test_ci_coverage.py'")):
+            self.assertIn(old, block)
+            changed = original[:start] + block.replace(old, new, 1) + original[end:]
+            with self.subTest(change=old), self.assertRaises(ValueError):
+                full.validate_macos_nearby_workflow(changed)
 
     def test_macos_nearby_literal_coverage_policy_cannot_reclassify_the_gate(self):
         path = '.github/scripts/ci-coverage.py'
