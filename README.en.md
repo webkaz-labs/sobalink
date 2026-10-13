@@ -10,34 +10,11 @@
 
 ## Get started
 
-### Use a signed release
+### Install
 
-The latest published prerelease is [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5), source `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6`. Its [release workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236) passed all 15 gates, including signatures/provenance, public retrieval and installation on all four native targets. It includes LAN destination admission, chosen-host relay operations, relayless LAN, advanced opt-in WAN discovery, mixed-backend routing and adjustable relay resources. The [exact-source CI](https://github.com/webkaz-labs/sobalink/actions/runs/37421937582) passed all six jobs. Physical-device enrollment, application compatibility and OS sign-in/suspend acceptance remain pending. [Assets and supported targets](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+Follow [signed-release installation](docs/DISTRIBUTION.md#install-a-signed-prerelease) to select an exact version and start it. The [verification record](docs/VERIFICATION.en.md#current-integration-and-published-baseline) is authoritative for the published version, source and completed checks. For a source checkout, use the [build instructions](docs/DISTRIBUTION.md#build-this-checkout). Node is not required to run the resulting binary.
 
-For outside-LAN connections, use Tailscale. Relay hosting and upcoming placement improvements focus on LAN hosts; external relay deployment is out of scope for now. Advanced opt-in WAN candidates require an already reachable compatible pinned relay.
-
-Run with mise **2026.9.18** available. `mise use -g` selects the version for normal use.
-
-```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
-mise exec -- soba version
-mise exec -- soba
-```
-
-### Build from source
-
-Build this checkout with Go **1.27.1**, Node **24.19.0** and npm **11.9.0**. Frontend dependencies are pinned in the lockfile.
-
-```sh
-npm --prefix web ci --no-audit --no-fund
-npm --prefix web run build
-go run ./cmd/prepare-engine
-go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba ./cmd/soba
-./bin/soba
-```
-
-On Windows, build with `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba` and run `./bin/soba.exe`. Node is not required to run the resulting binary.
+Published releases and development sources can have different features. Check the [user guide](docs/GENERIC.en.md) for its target version and profile compatibility first. The development-source connection setup and durable text queue are unreleased; old profiles are neither migrated nor deleted.
 
 ### After starting
 
@@ -60,7 +37,8 @@ Examples use `soba` as an executable on PATH. Substitute `./bin/soba`, or `./bin
 | Capacity | Explicit default/limited/unlimited logical choices, separate adjustable finite resource budgets |
 | Text, images, files and folders | Explicit send, reviewable batches and manual text copying |
 | Receiving | Per-batch acceptance by default; per-peer autosave to a fixed destination is optional |
-| Retry | Retry unfinished whole files during the same running session; no partial-byte or restart resume |
+| Immediate-send retry | Retry unfinished whole files during the same running session; no partial-byte or restart resume |
+| Explicit durable queues | [Files and folders](docs/DURABLE_OUTBOX.en.md) are released; [text](docs/DURABLE_TEXT.en.md) is unreleased. Recovery keeps original IDs, deadlines and save evidence; local acceptance is not delivery |
 | Local management | Exact `127.0.0.1` on an ephemeral port, one-time code, session, Origin and CSRF checks |
 
 Received files are never automatically opened, executed or allowed to overwrite existing files. Executable attributes and links are not preserved. Browser APIs can omit empty folders; use the CLI and verify the resulting tree when exact folder structure matters.
@@ -69,19 +47,11 @@ A broad TCP share also permits applications started later inside that range whil
 
 Direct and Relay describe the encrypted traffic's route; reconnecting means communication is being re-established. Unknown routes remain unknown instead of being inferred from latency. A single-backend profile never changes its selected network. In mixed mode, only new connections may choose another explicitly approved route for the same authenticated peer when availability failure is positively established; permission denial or unknown state never triggers fallback. Existing TCP sessions are not migrated or replayed. Tailcat never falls back to arbitrary public relays. [Network design](docs/ARCHITECTURE.md)
 
-## Prepared route recovery
+## Choose a connection method
 
-Keep the same Tailcat pairing while preparing exact LAN-local and external relay candidates. Before changing networks, configure the candidates on both devices, privately exchange their authenticated offers, and approve the selected routes locally. The CLI and local UI for prepared multi-relay recovery are included in alpha.4. [Short route setup](docs/LAN.en.md#prepare-another-route)
+Outside the LAN, normally use Tailscale. For LAN use, see [explicit relay pairing and route preparation](docs/LAN.en.md), [relayless LAN](docs/DIRECT_LAN.en.md), and [mixed connections](docs/MIXED_CONNECTIONS.en.md). Optional WAN candidates require an already reachable compatible pinned relay. The new [connection setup](docs/CONNECTION_SETUP.en.md) applies to unreleased development sources.
 
-```mermaid
-flowchart LR
-    A[Application reconnect] --> L[Same local service entrance]
-    L --> P[Same paired device]
-    P --> R[Approved local relay]
-    P --> E[Approved external relay]
-```
-
-The diagram describes approved recovery relationships, not guaranteed availability on every network. See the exact-source record for native evidence and remaining real-device checks. Local means the relay address class; ordinary relay mode retains direct peer traffic, which may use public paths. The [LAN destination policy](docs/LAN_DESTINATIONS.en.md) adds explicit destination admission; it does not promise whole-process zero egress or physical NIC/VPN isolation. Existing TCP may break, applications must reconnect, and file retry remains whole-item retry during the same process. [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
+Prepared routes do not promise seamless migration of existing TCP or physical-NIC isolation. Application reconnection, immediate-file retry and explicit durable queues are separate workflows. [Route contract](docs/ROUTE_RECOVERY_DESIGN.en.md) · [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
 
 ## Short CLI example
 
@@ -103,7 +73,7 @@ Replace `PEER_ID` with a current peer and run share/connect on the respective de
 
 Use the local UI or [guided CLI](docs/CLI_GUIDE.en.md) to select, edit and review a service; explicit CLI flags support automation. LAN host/relay setup, invitation files, receive folders, autosave and saved-service save/inspect/copy/restart need no JSON editing. [Private browser/link/QR sign-in](docs/SIGN_IN.en.md), [saved services, groups and tasks](docs/SAVED_SERVICES.en.md), and [startup/logout](docs/LIFECYCLE.en.md) have dedicated guides. See `soba help examples`, `soba lan --help` and `soba service --help`. `--dry-run` checks inputs before applying; it is not a reachability or free-port test. Language is automatic, with `soba --locale ja ...` / `en` overrides. Status, peers, groups and service workflows provide localized human views; use `--json` for machine output. Advanced typed actions retain structured results. Explicit login display modes give private human guidance. `--json-errors` writes failures as `{code,error}` to stderr. [Detailed CLI guide](docs/GENERIC.en.md#language-automation-and-troubleshooting)
 
-An optional [authenticated TCP proxy and diagnostics](docs/PROXY_DIAGNOSTICS.en.md) are also available. Broadcast delivery, a durable offline outbox, remote administration and remote filesystem browsing are outside the current implementation.
+An optional [authenticated TCP proxy and diagnostics](docs/PROXY_DIAGNOSTICS.en.md) are also available. Development-source [explicitly permitted transfer-setting management](docs/RESOURCE_MANAGEMENT.en.md) is a separate, limited feature. Broadcast delivery and remote filesystem browsing are not included.
 
 [Explicit startup and private proxy profiles](docs/STARTUP.en.md) · [Application settings and RustDesk](docs/CLIENT_HELPERS.en.md) · [Local Web controls](docs/WEB_CONTROLS.en.md) · [Feature parity and acceptance](docs/FEATURE_PARITY.en.md) · [Documentation index](docs/README.en.md)
 

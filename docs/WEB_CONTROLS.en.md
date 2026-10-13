@@ -6,7 +6,7 @@ The local Web UI supports service connections, reviewed sharing, files and messa
 
 ## Use the device list and network graph
 
-The published baseline is `0.3.0-alpha.5`, including the connection controls below. The [exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline) identifies its completed automated and distribution gates; physical-device and OS-lifecycle acceptance remain pending.
+See the [verification record](VERIFICATION.en.md#current-integration-and-published-baseline) for the target version and completed checks. Physical-device and OS-lifecycle acceptance are separate. The dedicated guides are authoritative for [durable files](DURABLE_OUTBOX.en.md), unreleased [durable text](DURABLE_TEXT.en.md) and [connection setup](CONNECTION_SETUP.en.md).
 
 **Device list** and **Network graph** use the same search and filter. Counts refer to remote devices and exclude this device. Use **Clear filters** when filtering hides the desired device. Select a node or line to open that peer's details; Close or Escape returns to the previous control. On narrow screens, details replace the graph.
 

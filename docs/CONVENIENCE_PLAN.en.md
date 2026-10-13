@@ -1,8 +1,8 @@
-# alpha.6 convenience patch: scope and acceptance
+# 0.3.0-alpha.6 convenience patch planning and acceptance history
 
 [日本語](CONVENIENCE_PLAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [Roadmap](ROADMAP.en.md)
 
-**The planned alpha.6 targets all ten areas below plus the confirmed alpha.5 saved-screen correction; these improvements are not yet a released version.** Deliver and review small independent changes while keeping the complete target. Reuse working service, group, permission and recovery contracts rather than replacing them.
+**This is a historical record of 0.3-series planning and source-specific acceptance.** Planned, unreleased and pending statements below describe their recorded snapshots, not the current release. See [verification](VERIFICATION.en.md) for current status, the [roadmap](ROADMAP.en.md) for remaining work and the [user guide](GENERIC.en.md) for usage. Dedicated service, group, permission and recovery documents remain authoritative for their contracts.
 
 The reviewed foundation in [merged PR #13](https://github.com/webkaz-labs/sobalink/pull/13) includes the saved-screen correction, inert favorites and group navigation, passive diagnosis, read-only device-card API/CLI/Web controls, reusable saved-share templates, and explicit alternate-port checks in the Core, CLI and Web UI. LAN invitation review also precedes pairing on an already-configured relay. Participant-host setup includes manual private-address fallback and guarded startup of the exact saved host.
 

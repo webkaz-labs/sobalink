@@ -2,33 +2,65 @@
 
 [日本語](README.md) · [Project overview](../README.en.md)
 
-The published baseline is [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5), including prepared relay recovery, LAN destination admission, chosen-host relay operations, relayless LAN, advanced opt-in WAN discovery, mixed connections and adjustable relay resources. Its exact-source native/browser CI and all 15 signed-release gates passed; see the [verification record](VERIFICATION.en.md) for source and run links. Physical-device, application and OS-lifecycle acceptance remain pending. Start with a task below.
+Start with the [user guide](GENERIC.en.md). The [verification record](VERIFICATION.en.md) is authoritative for published versions, development sources and executed checks. Each workflow identifies its target version and limitations; automated tests do not establish physical-device acceptance.
 
-For outside-LAN connections, use Tailscale. Relay hosting and upcoming placement improvements focus on LAN hosts; external relay deployment is out of scope for now. Advanced opt-in WAN candidates require an already reachable compatible pinned relay.
+This index routes readers to the right document. Dedicated guides own workflows, contracts own guarantees and limits, verification owns executed evidence, and the roadmap owns remaining work. Japanese and English pages are paired views of the same role. Architecture, distribution and the Web acceptance proposal use shared English documents.
 
-| Task | Guide |
-| --- | --- |
-| Get started | [GENERIC.en.md](GENERIC.en.md) |
-| Guided CLI and automation | [CLI_GUIDE.en.md](CLI_GUIDE.en.md) |
-| Local Web controls | [WEB_CONTROLS.en.md](WEB_CONTROLS.en.md) |
-| SSH/HTTP settings and RustDesk | [CLIENT_HELPERS.en.md](CLIENT_HELPERS.en.md) |
-| Private sign-in and cancellation | [SIGN_IN.en.md](SIGN_IN.en.md) |
-| Saved definitions, groups and tasks | [SAVED_SERVICES.en.md](SAVED_SERVICES.en.md) |
-| Run, stop, logout and OS sign-in | [LIFECYCLE.en.md](LIFECYCLE.en.md) |
-| Explicit outbound startup and private proxy profiles | [STARTUP.en.md](STARTUP.en.md) |
-| Scoped proxies and diagnostics | [PROXY_DIAGNOSTICS.en.md](PROXY_DIAGNOSTICS.en.md) |
-| Explicit relay pairing and recovery | [LAN.en.md](LAN.en.md) |
-| LAN destination restrictions | [LAN destinations](LAN_DESTINATIONS.en.md) |
-| Relayless LAN | [Direct LAN](DIRECT_LAN.en.md) |
-| Mixed connections and new-flow routing | [Mixed connections](MIXED_CONNECTIONS.en.md) |
-| Prepared-route implementation and gates | [Route recovery](ROUTE_RECOVERY_DESIGN.en.md) |
-| Inspect one managed peer (source development) | [Inspection permissions](RESOURCE_INSPECTION.en.md) |
-| Capacity, budgets and history | [CAPACITY.en.md](CAPACITY.en.md) |
-| Development and usability principles | [DEVELOPMENT_PRINCIPLES.en.md](DEVELOPMENT_PRINCIPLES.en.md) |
-| Feature parity and acceptance | [FEATURE_PARITY.en.md](FEATURE_PARITY.en.md) |
-| Verification by source | [Verification](VERIFICATION.en.md) |
-| Resource and transport observations | [Published binary resources](RESOURCE_MEASUREMENT.en.md) · [Isolated relay traffic](RELAY_TRAFFIC_MEASUREMENT.en.md) |
-| Security boundaries | [Security](../SECURITY.md) |
-| Architecture and distribution | [Architecture](ARCHITECTURE.md) · [Distribution](DISTRIBUTION.md) |
-| Remaining acceptance work | [Roadmap](ROADMAP.en.md) |
-| CI real-time test selection and timing | [Change-aware CI](CI_EFFICIENCY.en.md) |
+## Start and use
+
+- [First start, send and stop](GENERIC.en.md)
+- [Guided CLI and automation](CLI_GUIDE.en.md)
+- [Local Web controls](WEB_CONTROLS.en.md)
+- [Private sign-in and cancellation](SIGN_IN.en.md)
+- [SSH/HTTP settings and RustDesk](CLIENT_HELPERS.en.md)
+- [Saved definitions, groups and tasks](SAVED_SERVICES.en.md)
+- [Run, stop, sign out and OS sign-in](LIFECYCLE.en.md)
+- [Explicit startup and private proxy profiles](STARTUP.en.md)
+- [Durable files and folders](DURABLE_OUTBOX.en.md)
+- [Capacity, budgets and history](CAPACITY.en.md)
+- [Scoped proxies and diagnostics](PROXY_DIAGNOSTICS.en.md)
+- [Use cases (Japanese)](USE_CASES.ja.md)
+
+## Network workflows
+
+- [Explicit relay pairing and recovery](LAN.en.md)
+- [Relay host, certificates and resource budgets](RELAY_OPERATIONS.en.md)
+- [LAN destination restrictions](LAN_DESTINATIONS.en.md)
+- [Relayless LAN](DIRECT_LAN.en.md)
+- [Mixed connections](MIXED_CONNECTIONS.en.md)
+- [Review and exchange device cards](DEVICE_CARDS.en.md)
+- [Review alternate ports](PORT_PROPOSALS.en.md)
+
+## Development-source workflows and limits
+
+These are entry points for source workflows. Inclusion here does not establish release inclusion or completed acceptance.
+
+- [Connection setup (unreleased)](CONNECTION_SETUP.en.md)
+- [Durable text (unreleased)](DURABLE_TEXT.en.md)
+- [Resource catalog](RESOURCE_CATALOG.en.md)
+- [Local resource settings](RESOURCE_SETTINGS.en.md)
+- [Permitted peer inspection](RESOURCE_INSPECTION.en.md)
+- [Permitted peer transfer-setting management](RESOURCE_MANAGEMENT.en.md)
+- [Fixed peer-group settings](RESOURCE_GROUP.en.md)
+- [Web activation handoff and checks](WEB_ACTIVATION_HANDOFF.en.md)
+
+## Design, security and development contracts
+
+- [Development and usability principles](DEVELOPMENT_PRINCIPLES.en.md)
+- [Architecture and network boundaries](ARCHITECTURE.md)
+- [Security boundaries](../SECURITY.md)
+- [Route recovery contract](ROUTE_RECOVERY_DESIGN.en.md)
+- [Catalog view contract](CATALOG_VIEW_CONTRACT.en.md)
+- [Installation, build and signed distribution](DISTRIBUTION.md)
+- [Change-aware CI](CI_EFFICIENCY.en.md)
+
+## Evidence, remaining acceptance and history
+
+- [Published baseline and exact-source run results](VERIFICATION.en.md)
+- [Implementation and remaining acceptance](ROADMAP.en.md)
+- [Batch-send acceptance conditions](BATCH_SEND_ACCEPTANCE.en.md)
+- [Published-binary resource observations](RESOURCE_MEASUREMENT.en.md)
+- [Isolated relay traffic observations](RELAY_TRAFFIC_MEASUREMENT.en.md)
+- [0.3-series feature parity history](FEATURE_PARITY.en.md)
+- [0.3-series convenience planning and evidence](CONVENIENCE_PLAN.en.md)
+- [Web acceptance design and source-specific history](WEB_ACTIVATION_ACCEPTANCE_PROPOSAL.md)
