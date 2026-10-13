@@ -143,3 +143,46 @@ jobs:
             ${{ runner.temp }}/soba-web-activation-sanitized/provenance.json
           if-no-files-found: error
           retention-days: 14
+
+  diagnostic-dispatch-arm64:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'dispatch-arm64'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify native ARM64 toolchain and pinned dependencies
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = linux
+          test "$(go env GOARCH)" = arm64
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go mod verify
+          git diff --exit-code -- go.mod go.sum
+      - name: Compile the exact native fixture without executing tests
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          go test -c -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/dispatch-diagnostic.test" ./internal/core
+      - name: Verify bounded diagnostic projections
+        timeout-minutes: 2
+        run: python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDispatchDiagnosticCanonicalStates --expect github.com/webkaz-labs/sobalink/internal/core:TestDispatchDiagnosticRejectsFreeFormValues --expect github.com/webkaz-labs/sobalink/internal/core:TestDispatchDiagnosticObservationsBounded -- go test -race -count=1 -timeout=1m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^(TestDispatchDiagnosticCanonicalStates|TestDispatchDiagnosticRejectsFreeFormValues|TestDispatchDiagnosticObservationsBounded)$'
+      - name: Reproduce the exact three-process dispatch case once
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferDispatchThreeProcessPartialRetry -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestTransferDispatchThreeProcessPartialRetry$'

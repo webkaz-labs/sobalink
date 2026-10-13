@@ -20,7 +20,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
                     sha=sha, checkout_sha=sha)
 
     def test_exact_closed_suites(self):
-        for suite in ('web', 'product', 'activation'):
+        for suite in ('web', 'product', 'activation', 'dispatch-arm64'):
             self.assertEqual(gate.select(**self.args(suite)), suite)
 
     def test_rejects_other_events_refs_and_heads(self):
@@ -58,13 +58,29 @@ class DiagnosticPolicyTests(unittest.TestCase):
                                                        'name: diagnostic-soba-' + job + '-sanitized')
             self.assertEqual(self.body(diagnostic, 'diagnostic-' + job), expected)
 
+    def test_dispatch_diagnostic_is_exact_native_arm64_and_once(self):
+        text = self.workflow('activation-diagnostic')
+        job = self.body(text, 'diagnostic-dispatch-arm64')
+        self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'dispatch-arm64'", text)
+        self.assertIn('runs-on: ubuntu-24.04-arm', job)
+        self.assertIn('test "$(go env GOOS)" = linux', job)
+        self.assertIn('test "$(go env GOARCH)" = arm64', job)
+        self.assertIn("SOBALINK_RUN_DIRECT_INTEGRATION: '1'", job)
+        command = "python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferDispatchThreeProcessPartialRetry -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestTransferDispatchThreeProcessPartialRetry$'"
+        self.assertEqual(job.count(command), 1)
+        self.assertIn(command, self.workflow('ci'))
+        for name in ('TestDispatchDiagnosticCanonicalStates', 'TestDispatchDiagnosticRejectsFreeFormValues', 'TestDispatchDiagnosticObservationsBounded'):
+            self.assertIn('--expect github.com/webkaz-labs/sobalink/internal/core:' + name, job)
+        self.assertNotIn('strategy:', job)
+        self.assertNotIn('-count=2', job)
+
     def test_diagnostic_success_cannot_satisfy_full_coverage(self):
         spec = importlib.util.spec_from_file_location('ci_coverage', ROOT / '.github/scripts/ci-coverage.py')
         coverage = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(coverage)
         jobs = [dict(name=name, status='completed', conclusion='success', steps=[])
                 for name in ('diagnostic-selection', 'diagnostic-web-activation',
-                             'diagnostic-product-activation')]
+                             'diagnostic-product-activation', 'diagnostic-dispatch-arm64')]
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs, scope)
@@ -74,7 +90,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         trigger = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
         self.assertEqual(trigger.strip(), 'create:')
         self.assertEqual(re.findall(r'^  ([a-z][a-z0-9-]*):$', text.split('\njobs:\n')[1], re.M),
-                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation'])
+                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-dispatch-arm64'])
         for forbidden in ('continue-on-error:', 'actions/cache', 'secrets.', 'workflow_dispatch:',
                           'ci-coverage.py', 'ci-required:', 'package-tool', 'id-token: write', 'contents: write'):
             self.assertNotIn(forbidden, text)
