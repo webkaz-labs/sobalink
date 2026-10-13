@@ -142,7 +142,7 @@ class TerminalMarkerTests(unittest.TestCase):
                 self.assertFalse((root / 'dnssd.test').exists())
 
     def test_marker_only_parent_acknowledges_exit_without_a_network_permit(self):
-        for verified in (True, False):
+        for verified in (True, False, None):
             with self.subTest(verified=verified), tempfile.TemporaryDirectory() as temporary:
                 root, clock = Path(temporary), Clock()
                 directory = root / 'terminal-launch'
@@ -158,14 +158,19 @@ class TerminalMarkerTests(unittest.TestCase):
                     stack.enter_context(patch.object(gate, 'time', clock))
                     stack.enter_context(patch.object(gate, 'availability', return_value=True))
                     stack.enter_context(patch.object(gate, 'process_info', return_value=owner(os.getpid())))
-                    stack.enter_context(patch.object(gate, 'gate_observation', return_value=observation(verified)))
+                    observed = observation(bool(verified))
+                    if verified is None:
+                        observed.update(reason='ancestor_unavailable', hops=[{'uidRelation': 'unknown', 'commandClass': 'unknown'}])
+                    stack.enter_context(patch.object(gate, 'gate_observation', return_value=observed))
+                    explain = stack.enter_context(patch.object(gate, 'origin_observation', return_value=gate.empty_origin()))
                     stack.enter_context(patch.object(gate, 'same_process', return_value=False))
                     stack.enter_context(patch.object(gate, 'capture_owned', side_effect=launch))
                     _, _, _, _, result = gate.capture(None, env={}, private=root, marker_only=True)
                 self.assertTrue((directory / 'marker-ack.json').is_file())
                 self.assertFalse((directory / 'permit.json').exists())
                 self.assertEqual(result['mode'], 'marker_only')
-                self.assertEqual(result['terminalAncestorObserved'], verified)
+                self.assertEqual(result['terminalAncestorObserved'], bool(verified))
+                self.assertEqual(explain.call_count, 0 if verified is None else 1)
                 self.assertTrue(result['supervisorTerminationObserved'])
                 self.assertFalse(result['nativeStartObserved'])
                 self.assertEqual(result['nativeProcessStatus'], 'not_run')
@@ -204,7 +209,7 @@ class TerminalMarkerTests(unittest.TestCase):
                 gate.validate_observation(value)
 
     def test_entry_classifies_a_failed_gate_without_native_or_build_commands(self):
-        for fail in (False, True):
+        for fail in (False, True, 'source_changed', 'cleanup_failed', 'origin_timeout'):
             with self.subTest(fail=fail), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 sha, tree = 'a' * 40, 'b' * 40
@@ -223,9 +228,11 @@ class TerminalMarkerTests(unittest.TestCase):
                     self.assertIsNone(binary)
                     self.assertEqual(env, {})
                     self.assertTrue(marker_only)
-                    if fail:
+                    if fail is True:
                         raise ValueError('synthetic-private')
                     result = gate.empty_receipt(marker_only=True)
+                    result['originObservation'] = (gate.empty_origin('worker_incomplete') if fail == 'origin_timeout'
+                        else dict(gate.empty_origin('process_absent'), workerJoined=True, queriesJoined=True))
                     result.update(status='failed', reason='ancestry_unverified', gateObservation=observation(False),
                         availabilityVerified=True, openCompleted=True, markerVerified=True,
                         markerOwnerJoined=True, supervisorTerminationObserved=True)
@@ -237,13 +244,18 @@ class TerminalMarkerTests(unittest.TestCase):
                     stack.enter_context(patch.object(namespace['sys'], 'platform', 'darwin'))
                     stack.enter_context(patch.dict(namespace, module=module))
                     stack.enter_context(patch.object(native, 'checked', side_effect=checked))
-                    stack.enter_context(patch.object(native, 'source_inventory', return_value={name: '0' * 64 for name in namespace['POLICY_FILES']}))
+                    inventory = {name: '0' * 64 for name in namespace['POLICY_FILES']}
+                    stack.enter_context(patch.object(native, 'source_inventory', side_effect=[inventory,
+                        dict(inventory, synthetic='1' * 64) if fail == 'source_changed' else inventory]))
                     stack.enter_context(patch.object(gate, 'capture', side_effect=capture))
+                    if fail == 'cleanup_failed':
+                        stack.enter_context(patch.object(namespace['shutil'], 'rmtree', side_effect=OSError('synthetic-private')))
                     printed = stack.enter_context(patch('sys.stdout', new_callable=io.StringIO))
                     self.assertEqual(namespace['main']([]), 1 if fail else 0)
                 result_text = (root / 'soba-dnssd-sanitized/result.json').read_text()
                 result = json.loads(result_text)
-                self.assertEqual(result['markerProbeCompleted'], not fail)
+                self.assertEqual(result['markerProbeCompleted'], not fail or fail == 'origin_timeout')
+                self.assertEqual(result['originExplanationCompleted'], not fail)
                 self.assertFalse(result['nativeNetworkDiagnosticRun'])
                 self.assertFalse(result['networkMulticastVerified'])
                 self.assertFalse(result['releaseValidation'])

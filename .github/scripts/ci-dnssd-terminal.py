@@ -47,6 +47,7 @@ def empty_receipt(*, marker_only=False):
     # ownership/cleanup remains unresolved, not that nothing was launched.
     return {'schema': 1, 'mode': 'marker_only' if marker_only else 'native_comparison',
             'status': 'not_run', 'reason': 'not_run', 'gateObservation': None,
+            'originObservation': None,
             'availabilityVerified': False, 'openCompleted': False,
             'markerVerified': False, 'markerOwnerJoined': False,
             'terminalAncestorObserved': False, 'nativeStartObserved': False,
@@ -90,6 +91,10 @@ def receipt(value):
         validate_observation(value['gateObservation'])
         if value['terminalAncestorObserved'] != value['gateObservation']['verified']:
             raise ValueError('inconsistent ancestry evidence')
+    if value['originObservation'] is not None:
+        if value['mode'] != 'marker_only':
+            raise ValueError('origin explanation requires marker-only mode')
+        validate_origin(value['originObservation'])
     return dict(value)
 
 
@@ -125,7 +130,7 @@ def read_private(path):
     return json.loads(raw)
 
 
-def capture_owned(command, *, timeout, limit=RUNTIME_BYTES, env=None, stop_on_denial=False, cancelled=None):
+def capture_owned(command, *, timeout, limit=RUNTIME_BYTES, env=None, stop_on_denial=False, cancelled=None, on_cleanup=None):
     """Return only after direct-child wait, with bounded streams.
 
     Commands are fixed. The native binary owns its own route subprocess;
@@ -192,6 +197,8 @@ def capture_owned(command, *, timeout, limit=RUNTIME_BYTES, env=None, stop_on_de
                 state = 'output_limit'
             if denied.is_set():
                 state = 'policy_denied'
+        if on_cleanup is not None:
+            on_cleanup((process is None or joined) and not any(thread.is_alive() for thread in readers))
     return state, code, bytes(streams[0]), bytes(streams[1]), joined
 
 
@@ -201,15 +208,15 @@ class ProcessObservationError(ValueError):
         super().__init__('fixed process observation failure')
 
 
-def process_info(pid):
-    # Darwin ps keeps the command path with comm (without -c); -ww prevents
-    # truncation. This is bounded process observation, not code identity.
-    # https://github.com/apple-oss-distributions/adv_cmds/blob/main/ps/print.c
+def process_info(pid, *, on_cleanup=None):
+    # Darwin comm preserves any argv[0] path, but can fall back to a short
+    # accounting name. It is display metadata, not kernel executable identity.
+    # https://github.com/apple-oss-distributions/adv_cmds/blob/6bed8737a34dbb54782a18f47dccf933a9967a12/ps/print.c
     if type(pid) is not int or pid <= 0:
         raise ProcessObservationError('invalid')
     state, code, raw, error, joined = capture_owned(['/bin/ps', '-ww', '-p', str(pid),
         '-o', 'pid=,ppid=,uid=,lstart=,comm='], env={'LC_ALL': 'C', 'PATH': '/usr/bin:/bin'},
-        timeout=2, limit=FILE_BYTES)
+        timeout=2, limit=FILE_BYTES, on_cleanup=on_cleanup)
     if state == 'nonzero' and code == 1 and joined and not raw.strip() and not error.strip():
         return None
     if state != 'completed' or not joined:
@@ -360,6 +367,201 @@ def validate_observation(value):
             or reason == 'depth_limit' and len(hops) != 12):
         raise ValueError('inconsistent ancestry stop reason')
     return value
+
+
+ORIGIN_REASONS = {'terminal_path', 'end_reached', 'cycle', 'depth_limit', 'deadline',
+    'owner_mismatch', 'process_absent', 'process_unavailable', 'process_invalid',
+    'path_denied', 'path_unavailable', 'path_invalid', 'snapshot_changed',
+    'worker_incomplete', 'cleanup_unresolved', 'gate_incomplete'}
+PATH_CLASSES = {'terminal_exact', 'login', 'shell', 'other', 'unknown'}
+
+
+def empty_origin(reason='worker_incomplete'):
+    return {'reason': reason, 'hopCount': 0, 'hops': [], 'authorizesNative': False,
+            'terminalPathObserved': False, 'workerJoined': False, 'queriesJoined': False}
+
+
+def kernel_path(pid):
+    # Observational only. Apple maps this read-only API to the executable vnode;
+    # process security policy still applies. No fallback after a failed query.
+    # https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/wrappers/libproc/libproc.c
+    # https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/proc_info.c
+    import ctypes
+    import errno
+    try:
+        library = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+        read = library.proc_pidpath
+        read.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+        read.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(4096)
+        ctypes.set_errno(0)
+        count = read(pid, buffer, len(buffer))
+        if count <= 0:
+            return ('denied' if ctypes.get_errno() in (errno.EACCES, errno.EPERM) else 'unavailable'), None
+        if count >= len(buffer) or buffer.raw[count] != 0 or b'\0' in buffer.raw[:count]:
+            return 'invalid', None
+        value = buffer.raw[:count].decode('utf-8')
+        if not value.startswith('/') or '\n' in value or '\r' in value:
+            return 'invalid', None
+        return 'observed', value
+    except (OSError, AttributeError):
+        return 'unavailable', None
+    except UnicodeDecodeError:
+        return 'invalid', None
+
+
+def explain_chain(expected):
+    """Separate bounded explanation; never changes the authorization gate.
+
+    No new ps query starts after six seconds. An already-started query has at
+    most 2s capture + 5s wait + two 2s reader joins before the 20s owner watchdog.
+    Path calls occur between joined ps captures. A missing receipt or hard
+    timeout never establishes descendant cleanup or explanatory completion.
+    """
+    result, visited, deadline = empty_origin(), set(), time.monotonic() + 6
+    result['queriesJoined'] = True
+    def cleaned(joined):
+        result['queriesJoined'] = result['queriesJoined'] and joined
+    def snapshot(pid):
+        if time.monotonic() >= deadline:
+            raise TimeoutError('observation deadline')
+        value = process_info(pid, on_cleanup=cleaned)
+        if not result['queriesJoined']:
+            raise ProcessObservationError('unavailable')
+        return value
+    try:
+        current = snapshot(expected['pid'])
+        if identity(current) != expected or expected['uid'] != os.getuid():
+            result['reason'] = 'owner_mismatch'
+            return result
+        pid = expected['pid']
+        for _ in range(12):
+            if pid <= 1 or pid in visited:
+                result['reason'] = 'end_reached' if pid <= 1 else 'cycle'
+                return result
+            visited.add(pid)
+            before = snapshot(pid)
+            if before is None:
+                result['reason'] = 'process_absent'
+                return result
+            if len(visited) == 1 and identity(before) != expected:
+                result['reason'] = 'owner_mismatch'
+                return result
+            row = {'uidRelation': 'same' if before['uid'] == os.getuid() else 'other',
+                'effectiveUidClass': 'zero' if before['uid'] == 0 else 'nonzero',
+                'commandClass': command_class(before['command']), 'kernelPathClass': 'unknown',
+                'pathStatus': 'unavailable', 'commandMatchesKernelPath': False, 'snapshotStable': False}
+            result['hops'].append(row)
+            result['hopCount'] = len(result['hops'])
+            if time.monotonic() >= deadline:
+                raise TimeoutError('observation deadline')
+            status, path = kernel_path(pid)
+            row['pathStatus'] = status
+            if status != 'observed':
+                result['reason'] = 'path_' + status
+                return result
+            row['kernelPathClass'] = command_class(path)
+            if row['kernelPathClass'] == 'terminal_other_path':
+                row['kernelPathClass'] = 'other'
+            row['commandMatchesKernelPath'] = before['command'] == path
+            after = snapshot(pid)
+            if before != after:
+                result['reason'] = 'snapshot_changed'
+                return result
+            row['snapshotStable'] = True
+            if path == TERMINAL_EXECUTABLE:
+                result.update(reason='terminal_path', terminalPathObserved=True)
+                return result
+            pid = before['ppid']
+        result['reason'] = 'depth_limit'
+    except TimeoutError:
+        result['reason'] = 'deadline'
+    except ProcessObservationError as error:
+        result['reason'] = 'process_' + error.kind
+    finally:
+        if not result['queriesJoined']:
+            result['reason'] = 'cleanup_unresolved'
+    return result
+
+
+def validate_origin(value):
+    if (type(value) is not dict or set(value) != set(empty_origin())
+            or value['reason'] not in ORIGIN_REASONS or value['authorizesNative'] is not False
+            or any(type(value[key]) is not bool for key in ('terminalPathObserved', 'workerJoined', 'queriesJoined'))
+            or type(value['hopCount']) is not int or not 0 <= value['hopCount'] <= 12
+            or type(value['hops']) is not list or len(value['hops']) != value['hopCount']
+            or value['terminalPathObserved'] != (value['reason'] == 'terminal_path')):
+        raise ValueError('invalid closed origin explanation')
+    keys = {'uidRelation', 'effectiveUidClass', 'commandClass', 'kernelPathClass',
+            'pathStatus', 'commandMatchesKernelPath', 'snapshotStable'}
+    for row in value['hops']:
+        if (type(row) is not dict or set(row) != keys
+                or row['uidRelation'] not in {'same', 'other'}
+                or row['effectiveUidClass'] not in {'zero', 'nonzero'}
+                or row['commandClass'] not in COMMAND_CLASSES - {'unknown'}
+                or row['kernelPathClass'] not in PATH_CLASSES
+                or row['pathStatus'] not in {'observed', 'denied', 'unavailable', 'invalid'}
+                or type(row['commandMatchesKernelPath']) is not bool or type(row['snapshotStable']) is not bool
+                or (row['pathStatus'] == 'observed') != (row['kernelPathClass'] != 'unknown')
+                or row['pathStatus'] != 'observed' and (row['commandMatchesKernelPath'] or row['snapshotStable'])):
+            raise ValueError('invalid closed origin hop')
+    if any(not row['snapshotStable'] or row['kernelPathClass'] == 'terminal_exact' for row in value['hops'][:-1]):
+        raise ValueError('origin continued after stop')
+    if value['terminalPathObserved'] and (not value['queriesJoined'] or not value['hops']
+            or not value['hops'][-1]['snapshotStable'] or value['hops'][-1]['kernelPathClass'] != 'terminal_exact'):
+        raise ValueError('origin lacks stable terminal observation')
+    last = value['hops'][-1] if value['hops'] else None
+    if (value['reason'].startswith('path_') and (last is None or last['pathStatus'] != value['reason'][5:])
+            or value['reason'] == 'snapshot_changed' and (last is None or last['pathStatus'] != 'observed' or last['snapshotStable'])
+            or value['reason'] == 'depth_limit' and (len(value['hops']) != 12 or not last['snapshotStable'])
+            or value['reason'] == 'cleanup_unresolved' and value['queriesJoined']
+            or value['reason'] == 'worker_incomplete' and (value['queriesJoined'] or value['hops'])):
+        raise ValueError('inconsistent origin stop reason')
+    return value
+
+
+def observe_child(directory):
+    try:
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            return 1
+        plan, marker = read_private(directory / 'plan.json'), read_private(directory / 'marker.json')
+        owner = started_owner(directory, plan)
+        if (plan['markerOnly'] is not True or marker['owner'] != owner or marker['nonce'] != plan['nonce']
+                or marker['markerVerified'] is not True or marker['markerOwnerJoined'] is not True
+                or time.monotonic() >= plan['launchDeadline'] or (directory / 'cancelled').exists()
+                or digest(SCRIPT) != plan['scriptSha256']):
+            return 1
+        print(json.dumps(validate_origin(explain_chain(owner)), sort_keys=True))
+        return 0
+    except Exception:
+        return 1
+
+
+def origin_observation(directory, deadline):
+    if deadline - time.monotonic() < 21:
+        return empty_origin('deadline')
+    state, code, out, err, joined = capture_owned(
+        [sys.executable, '-I', '-B', str(SCRIPT), '--observe', str(directory)], timeout=20, limit=8192)
+    fallback = empty_origin()
+    fallback['workerJoined'] = joined
+    if state != 'completed' or code != 0 or err or not joined:
+        return fallback
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError('duplicate observation field')
+            value[key] = item
+        return value
+    try:
+        result = validate_origin(json.loads(out, object_pairs_hook=unique_object))
+        if result['workerJoined']:
+            raise ValueError('worker cannot assert owner wait')
+        result['workerJoined'] = joined
+        return result
+    except (ValueError, UnicodeDecodeError):
+        return fallback
 
 
 def availability():
@@ -529,6 +731,11 @@ def capture(binary, *, env, private, marker_only=False):
                     else:
                         result['terminalAncestorObserved'] = True
                     if marker_only:
+                        # Explain this known UID boundary (or a verified chain),
+                        # never retry a failed identity/process query via another API.
+                        result['originObservation'] = (origin_observation(directory, plan['launchDeadline'])
+                            if result['gateObservation']['reason'] in {'other_uid', 'verified'}
+                            else empty_origin('gate_incomplete'))
                         write_private(directory / 'marker-ack.json', {'nonce': plan['nonce'], 'owner': owner})
                         while time.monotonic() < plan['deadline'] and same_process(owner):
                             time.sleep(0.1)
@@ -606,4 +813,6 @@ def capture(binary, *, env, private, marker_only=False):
 
 
 if __name__ == '__main__':
-    raise SystemExit(child(Path(sys.argv[2])) if len(sys.argv) == 3 and sys.argv[1] == '--child' and sys.platform == 'darwin' else 1)
+    entry = {'--child': child, '--observe': observe_child}
+    raise SystemExit(entry[sys.argv[1]](Path(sys.argv[2]))
+        if len(sys.argv) == 3 and sys.argv[1] in entry and sys.platform == 'darwin' else 1)

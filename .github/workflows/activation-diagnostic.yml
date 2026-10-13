@@ -339,6 +339,7 @@ jobs:
           python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal_marker.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal_origin.py' -v
       - name: Classify one network-free Terminal marker
         id: dnssd
         timeout-minutes: 3

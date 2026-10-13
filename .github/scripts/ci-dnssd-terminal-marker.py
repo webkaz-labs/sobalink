@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/ci-diagnostic.py',
     '.github/scripts/ci-dnssd-terminal.py', '.github/scripts/ci-dnssd-terminal-marker.py',
     '.github/scripts/test_ci_dnssd_terminal.py', '.github/scripts/test_ci_dnssd_terminal_marker.py',
+    '.github/scripts/test_ci_dnssd_terminal_origin.py',
     '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-diagnostic.py')
 
 
@@ -28,6 +29,7 @@ def module(name):
 
 def empty_result():
     return {'schema': 1, 'diagnosticKind': 'terminal_marker_only', 'markerProbeCompleted': False,
+            'originExplanationCompleted': False,
             'terminalLaunch': None, 'failureKind': None, 'nativeNetworkDiagnosticRun': False,
             'selectedInterfaceVerified': False, 'rawReceiveVerified': False,
             'networkMulticastVerified': False, 'physicalLANVerified': False,
@@ -84,20 +86,25 @@ def main(argv=None):
         if launch['mode'] != 'marker_only':
             raise ValueError('wrong launch mode')
         report['markerProbeCompleted'] = marker_completed(launch)
+        origin = launch['originObservation']
+        report['originExplanationCompleted'] = origin is not None and origin['workerJoined'] and origin['queriesJoined'] and origin['reason'] not in {
+            'deadline', 'worker_incomplete', 'cleanup_unresolved', 'gate_incomplete'}
         provenance['stage'], failure = 'verify-source', 'source_changed'
         if before != native.source_inventory():
             raise ValueError('source changed')
-        provenance['stage'] = 'classified' if report['markerProbeCompleted'] else 'marker-incomplete'
-        if not report['markerProbeCompleted']:
-            report['failureKind'] = 'marker_incomplete'
+        provenance['stage'] = 'classified' if report['markerProbeCompleted'] and report['originExplanationCompleted'] else 'marker-incomplete'
+        if not report['markerProbeCompleted'] or not report['originExplanationCompleted']:
+            report['failureKind'] = 'marker_incomplete' if not report['markerProbeCompleted'] else 'origin_incomplete'
     except Exception:
         report['markerProbeCompleted'], report['failureKind'] = False, failure
+        report['originExplanationCompleted'] = False
     finally:
         if private is not None:
             try:
                 shutil.rmtree(private)
             except OSError:
                 report['markerProbeCompleted'], report['failureKind'] = False, 'private_cleanup_failed'
+                report['originExplanationCompleted'] = False
     try:
         if export is None:
             raise ValueError('export unavailable')
@@ -107,9 +114,11 @@ def main(argv=None):
             output.write('sanitized_ready=true\n')
     except Exception:
         report['markerProbeCompleted'] = False
+        report['originExplanationCompleted'] = False
+    complete = report['markerProbeCompleted'] and report['originExplanationCompleted']
     print('CLASSIFIED: network-free marker and closed ancestry observations recorded; native diagnostic not run.'
-          if report['markerProbeCompleted'] else 'FAIL: network-free marker incomplete; private details withheld.')
-    return 0 if report['markerProbeCompleted'] else 1
+          if complete else 'FAIL: network-free explanation incomplete; private details withheld.')
+    return 0 if complete else 1
 
 
 if __name__ == '__main__':
