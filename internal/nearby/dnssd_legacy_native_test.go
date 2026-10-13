@@ -376,18 +376,13 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 			if ctx.Err() != nil {
 				return
 			}
-			if e := socket.packet.SetWriteDeadline(minTime(deadline, time.Now().Add(time.Second))); e != nil {
-				result.Reason = "legacy_send_unavailable"
-				result.FailureStage, result.FailureKind = "legacy_send", "unavailable"
-				return
-			}
-			n, e := socket.packet.WriteTo(query, sourceOnlySendControl(scope), &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
-			if e != nil || n != len(query) {
-				result.Reason = "legacy_send_unavailable"
-				result.FailureStage, result.FailureKind = "legacy_send", "unavailable"
-				if e == nil {
-					result.FailureKind = "short_payload"
-				}
+			// The exact bound source and sticky IP_BOUND_IF/multicast options
+			// already select this path. This one comparison query has no
+			// ancillary attempt, runtime fallback or resend.
+			stage, kind := writeDNSServiceLegacyQuery(socket.conn, query, deadline, time.Now())
+			if stage != "none" {
+				result.Reason = stage + "_unavailable"
+				result.FailureStage, result.FailureKind = stage, kind
 				return
 			}
 			result.OneQuerySent = true

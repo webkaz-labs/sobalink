@@ -211,7 +211,8 @@ class DNSSDDiagnosticTests(unittest.TestCase):
             if reason == 'native_api_unavailable':
                 stage, kind = 'callback', 'name_conflict'
             elif reason.startswith('legacy_'):
-                stage, kind = reason.removesuffix('_unavailable'), 'unavailable'
+                stage = reason.removesuffix('_unavailable')
+                kind = 'other' if stage in {'legacy_deadline', 'legacy_send'} else 'unavailable'
             value = record(gate.LEGACY_SCOPE, 'unavailable', reason=reason,
                            failureStage=stage, failureKind=kind)
             self.assertEqual(gate.legacy_capability(value), value)
@@ -244,6 +245,27 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 parse(record(scope, 'unavailable', receiveCounters=None))
             with self.assertRaises(ValueError):
                 parse(record(scope, 'verified', receiveCounters=dict(counters(True), matchingRecordKinds=7)))
+
+    def test_legacy_deadline_and_send_error_classes_are_separate(self):
+        for stage, kinds in gate.LEGACY_STAGE_KINDS.items():
+            for kind in kinds:
+                value = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True,
+                               reason=stage + '_unavailable', failureStage=stage, failureKind=kind)
+                self.assertEqual(gate.legacy_capability(value), value)
+                self.assertFalse(value['oneQuerySent'])
+                self.assertFalse(value['legacySerializationVerified'])
+                self.assertFalse(value['rawPacketVerified'])
+                for bad_kind in (gate.KINDS | gate.LEGACY_SEND_KINDS) - kinds:
+                    with self.subTest(stage=stage, kind=bad_kind), self.assertRaises(ValueError):
+                        gate.legacy_capability(dict(value, failureKind=bad_kind))
+        # Old collapsed send classification must not pass as a new exact-source
+        # result; API callbacks cannot acquire socket-only errno categories.
+        for stage, kind in (('legacy_send', 'unavailable'), ('legacy_deadline', 'short_payload'),
+                            ('query', 'source_unavailable'), ('query', 'other')):
+            with self.subTest(stage=stage, kind=kind), self.assertRaises(ValueError):
+                gate.legacy_capability(record(gate.LEGACY_SCOPE, 'unavailable',
+                    reason='native_api_unavailable' if stage == 'query' else stage + '_unavailable',
+                    apiRecordsReady=True, failureStage=stage, failureKind=kind))
 
     def test_marker_types_and_lifecycles_cannot_be_cross_wired(self):
         records = {scope: record(scope) for scope in gate.CASES.values()}

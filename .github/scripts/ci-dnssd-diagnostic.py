@@ -40,10 +40,14 @@ LEGACY_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified'
                 'rawPacketVerified', 'networkMulticastVerified'}
 LEGACY_PROOF_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined'}
 LEGACY_KEYS = LEGACY_FLAGS | {'status', 'reason', 'scope', 'receivePath', 'failureStage', 'failureKind', 'receiveCounters'}
-LEGACY_SOCKET_STAGES = {'legacy_socket', 'legacy_send', 'legacy_receive'}
+LEGACY_SOCKET_STAGES = {'legacy_socket', 'legacy_deadline', 'legacy_send', 'legacy_receive'}
+LEGACY_SEND_KINDS = {'invalid_argument', 'source_unavailable', 'network_unreachable',
+    'host_unreachable', 'permission_denied', 'unsupported', 'timeout', 'other', 'short_payload'}
+LEGACY_STAGE_KINDS = {'legacy_socket': {'unavailable'}, 'legacy_receive': {'unavailable'},
+    'legacy_deadline': LEGACY_SEND_KINDS - {'short_payload'}, 'legacy_send': LEGACY_SEND_KINDS}
 LEGACY_UNAVAILABLE = {'readiness_deadline', 'reply_deadline', 'private_scope_unavailable',
     'loopback_scope_unavailable', 'selected_binding_changed', 'native_api_unavailable',
-    'legacy_socket_unavailable', 'legacy_send_unavailable', 'legacy_receive_unavailable'}
+    'legacy_socket_unavailable', 'legacy_deadline_unavailable', 'legacy_send_unavailable', 'legacy_receive_unavailable'}
 LEGACY_FAILED = {'fixture_unavailable', 'provider_invariant', 'receive_budget',
                  'cleanup_uncertain', 'owners_not_joined', 'owners_missing'}
 UNAVAILABLE = {'deadline', 'loopback_scope_unavailable', 'private_scope_unavailable', 'native_api_unavailable',
@@ -88,7 +92,7 @@ POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/
     'internal/nearby/dnssd_bridge_darwin.c', 'internal/nearby/dnssd_bridge_darwin.h',
     'internal/nearby/dnssd_native_acceptance_test.go', 'internal/nearby/dnssd_raw_receive_test.go',
     'internal/nearby/dnssd_capability_test.go', 'internal/nearby/dnssd_wire_evidence_test.go',
-    'internal/nearby/dnssd_legacy_native_test.go',
+    'internal/nearby/dnssd_legacy_native_test.go', 'internal/nearby/dnssd_legacy_send_unix_test.go',
     'go.mod', 'go.sum')
 
 
@@ -169,14 +173,15 @@ def legacy_capability(value):
             or any(type(value[key]) is not str for key in LEGACY_KEYS - LEGACY_FLAGS - {'receiveCounters'})
             or value['scope'] != LEGACY_SCOPE or value['receivePath'] not in {'none', 'selected_interface', 'local_loopback'}
             or value['failureStage'] not in STAGES | LEGACY_SOCKET_STAGES
-            or value['failureKind'] not in KINDS | {'short_payload'}
+            or value['failureKind'] not in KINDS | LEGACY_SEND_KINDS
             or value['rawPacketVerified'] or value['networkMulticastVerified']):
         raise ValueError('invalid closed legacy DNS receipt')
     counts = receive_counters(value['receiveCounters'])
     stage, kind, status, reason = (value[key] for key in ('failureStage', 'failureKind', 'status', 'reason'))
     if ((stage == 'none') != (kind == 'none')
             or kind == 'short_payload' and stage != 'legacy_send'
-            or stage in LEGACY_SOCKET_STAGES and kind not in {'unavailable', 'short_payload'}
+            or stage in LEGACY_SOCKET_STAGES and kind not in LEGACY_STAGE_KINDS[stage]
+            or stage in STAGES and kind not in KINDS
             or (counts is None) != (status == 'not_run')
             or value['oneQuerySent'] and not value['apiRecordsReady']):
         raise ValueError('inconsistent legacy DNS classification')

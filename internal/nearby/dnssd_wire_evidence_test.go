@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"net"
 	"net/netip"
 	"testing"
+	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 )
@@ -48,6 +50,24 @@ func dnssdLegacyError(result *dnssdLegacyResult, err error) {
 		return
 	}
 	result.Status, result.Reason = "failed", "provider_invariant"
+}
+
+// The test-only writer seam makes the single native WriteToUDP attempt and
+// deadline/count/error contract observable without opening a socket.
+type dnssdLegacyQueryWriter interface {
+	SetWriteDeadline(time.Time) error
+	WriteToUDP([]byte, *net.UDPAddr) (int, error)
+}
+
+func writeDNSServiceLegacyQuery(sender dnssdLegacyQueryWriter, query []byte, deadline, now time.Time) (stage, kind string) {
+	if err := sender.SetWriteDeadline(minTime(deadline, now.Add(time.Second))); err != nil {
+		return "legacy_deadline", nativeSendFailureKind(classifyNativeSend(0, 0, 0, 0, err))
+	}
+	n, err := sender.WriteToUDP(query, &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
+	if failure := classifyNativeSend(n, len(query), 0, 0, err); failure != nil {
+		return "legacy_send", nativeSendFailureKind(failure)
+	}
+	return "none", "none"
 }
 
 // This socket budget counts bytes copied from all datagrams, including rejected
@@ -351,5 +371,74 @@ func TestDNSServiceLegacyLateFailureAndCopiedByteBudget(t *testing.T) {
 	}
 	if !(&dnssdReceiveCounters{ReceivedBytes: dnssdMaxCopiedReceiveBytes}).exhausted() {
 		t.Fatal("independent byte cap missing")
+	}
+}
+
+// Deliberately has no ancillary-send method: the fixture can exercise only the
+// same-socket WriteToUDP comparison, never an automatic fallback sequence.
+type dnssdLegacyFakeWriter struct {
+	deadline              time.Time
+	deadlineCalls, writes int
+	deadlineErr, sendErr  error
+	n                     int
+	data                  []byte
+	destination           netip.AddrPort
+}
+
+func (w *dnssdLegacyFakeWriter) SetWriteDeadline(deadline time.Time) error {
+	w.deadlineCalls++
+	w.deadline = deadline
+	return w.deadlineErr
+}
+func (w *dnssdLegacyFakeWriter) WriteToUDP(data []byte, addr *net.UDPAddr) (int, error) {
+	w.writes++
+	w.data = append([]byte(nil), data...)
+	w.destination = addr.AddrPort()
+	return w.n, w.sendErr
+}
+func TestDNSServiceLegacySingleSendContract(t *testing.T) {
+	query, err := packLegacyQuery(dnssdTestConfig().Advertisement, 1234)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	for _, tc := range []struct {
+		name                 string
+		n                    int
+		deadlineErr, sendErr error
+		stage, kind          string
+		writes               int
+	}{
+		{"success", len(query), nil, nil, "none", "none", 1},
+		{"deadline failure", len(query), errors.New("synthetic"), nil, "legacy_deadline", "other", 0},
+		{"deadline timeout", len(query), context.DeadlineExceeded, nil, "legacy_deadline", "timeout", 0},
+		{"send failure", 0, nil, errors.New("synthetic"), "legacy_send", "other", 1},
+		{"full count with error", len(query), nil, errors.New("synthetic"), "legacy_send", "other", 1},
+		{"send timeout", 0, nil, context.DeadlineExceeded, "legacy_send", "timeout", 1},
+		{"zero payload", 0, nil, nil, "legacy_send", "short_payload", 1},
+		{"short payload", len(query) - 1, nil, nil, "legacy_send", "short_payload", 1},
+		{"oversized count", len(query) + 1, nil, nil, "legacy_send", "short_payload", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &dnssdLegacyFakeWriter{n: tc.n, deadlineErr: tc.deadlineErr, sendErr: tc.sendErr}
+			stage, kind := writeDNSServiceLegacyQuery(w, query, now.Add(500*time.Millisecond), now)
+			if stage != tc.stage || kind != tc.kind {
+				t.Fatalf("classification %s/%s", stage, kind)
+			}
+			if w.deadlineCalls != 1 || w.writes != tc.writes {
+				t.Fatal("write retried or skipped deadline gate")
+			}
+			if !w.deadline.Equal(now.Add(500 * time.Millisecond)) {
+				t.Fatal("original deadline extended")
+			}
+			if w.writes == 1 && (w.destination != netip.AddrPortFrom(multicast4, mdnsPort) || string(w.data) != string(query)) {
+				t.Fatal("query or fixed destination changed")
+			}
+		})
+	}
+	w := &dnssdLegacyFakeWriter{n: len(query)}
+	writeDNSServiceLegacyQuery(w, query, now.Add(8*time.Second), now)
+	if !w.deadline.Equal(now.Add(time.Second)) {
+		t.Fatal("one-second send deadline missing")
 	}
 }
