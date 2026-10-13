@@ -295,6 +295,78 @@ func TestOutboxLifecycleBusyDoesNotMutateAdmissionOrCancellation(t *testing.T) {
 		t.Fatal("busy restart changed original admitted identities")
 	}
 }
+
+func TestOutboxLifecycleBusyReplayPreservesOriginalRecord(t *testing.T) {
+	for _, completed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "admitted", true: "confirmed"}[completed], func(t *testing.T) {
+			c := outboxFixture(t)
+			review := outboxPrepareFixture(t, c, "busy-replay")
+			outboxCommitFixture(t, c, review)
+			if completed {
+				row := c.outbox.state.Intents[review.OutboxID]
+				for i := range row.Deliveries {
+					d := &row.Deliveries[i]
+					d.Attempted = true
+					d.Lease = &transfer.DurableLease{Version: 1, DeliveryID: d.Offer.DeliveryID, Digest: d.Offer.Digest, RecipientID: d.Trust.ID, ReceiverEpoch: strings.Repeat("d", 32), Token: strings.Repeat("e", 32), ExpiresAt: review.ExpiresAt, ReceiptUntil: review.ExpiresAt.Add(transfer.DurableReceiptGrace)}
+					e := review.Entries[0]
+					receipt := transfer.DurableReceipt{Lease: *d.Lease, State: transfer.Completed, SavedAt: time.Now(), Files: []transfer.FileAck{{BatchID: d.Offer.DeliveryID, FileID: e.ID, StoredName: e.Path, Size: e.Size, SHA256: e.SHA256}}}
+					if err := c.recordOutboxStatus(review.OutboxID, i, transfer.DurableStatus{Lease: *d.Lease, State: transfer.Completed, Receipt: &receipt}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			outboxReopenFixture(t, c)
+			o := c.outbox
+			want := cloneOutboxRecord(o.state.Intents[review.OutboxID].View)
+			if completed && (want.Status != "completed" || want.DeliveryOutcome != "confirmed") {
+				t.Fatal("fixture did not retain completed saved evidence")
+			}
+			before, err := json.Marshal(o.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			disk, err := os.ReadFile(filepath.Join(c.dir, outboxNamespace, "state.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			certified := append([]byte(nil), o.confirmedDisk...)
+			release := holdOutboxLifecycle(t, c)
+			defer func() {
+				if release != nil {
+					release()
+				}
+			}()
+			entered := false
+			o.mu.Lock()
+			err = o.withOwnedLocked(func() error { entered = true; return nil })
+			o.mu.Unlock()
+			if entered || networkErrorCode(err) != "outbox_storage_busy" {
+				t.Fatal("busy replay ownership entered its callback")
+			}
+			for range 2 {
+				value, err := c.commitOutbox(context.Background(), review.OutboxID, review.ProcessID, review.ReviewRevision, true)
+				if value != nil || networkErrorCode(err) != "outbox_storage_busy" {
+					t.Fatal("held lifecycle did not refuse original replay")
+				}
+			}
+			after, err := json.Marshal(o.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterDisk, err := os.ReadFile(filepath.Join(c.dir, outboxNamespace, "state.json"))
+			if err != nil || string(before) != string(after) || string(disk) != string(afterDisk) || !reflect.DeepEqual(certified, o.confirmedDisk) || o.frozen != "" {
+				t.Fatal("busy replay mutated memory, durable evidence or recovery state")
+			}
+			release()
+			release = nil
+			got, err := c.commitOutbox(context.Background(), review.OutboxID, review.ProcessID, review.ReviewRevision, true)
+			if err != nil || !reflect.DeepEqual(got, want) || len(o.state.Intents) != 1 {
+				t.Fatal("released replay changed the original record or created another intent")
+			}
+		})
+	}
+}
+
 func TestOutboxPublishedUncertaintyReopensSameIntent(t *testing.T) {
 	c := outboxFixture(t)
 	r := outboxPrepareFixture(t, c, "published-request")
