@@ -33,6 +33,19 @@ def observation(verified=True):
             'hopCount': 1, 'hops': [{'uidRelation': 'same' if verified else 'other', 'commandClass': 'terminal_exact'}]}
 
 
+def native_observation(verified=True):
+    if not verified:
+        return gate.empty_origin()
+    value = gate.empty_origin('terminal_path')
+    value.update(hopCount=4, terminalPathObserved=True, workerJoined=True, queriesJoined=True,
+                 supervisorExecutableMatched=True, chainRechecked=True)
+    value['hops'] = [{'uidRelation': relation, 'effectiveUidClass': uid, 'kernelPathClass': path,
+        'commandClass': path, 'pathStatus': 'observed', 'commandMatchesKernelPath': True, 'snapshotStable': True}
+        for relation, uid, path in [('same', 'nonzero', 'other'), ('same', 'nonzero', 'shell'),
+                                  ('other', 'zero', 'login'), ('same', 'nonzero', 'terminal_exact')]]
+    return value
+
+
 class Clock:
     def __init__(self):
         self.now = 1000
@@ -235,7 +248,7 @@ class TerminalDiagnosticTests(unittest.TestCase):
                     stack.enter_context(patch.object(gate, 'availability', return_value=failure != 'unavailable'))
                     stack.enter_context(patch.object(gate, 'process_info', return_value=owner(os.getpid())))
                     stack.enter_context(patch.object(gate, 'same_process', side_effect=same))
-                    stack.enter_context(patch.object(gate, 'gate_observation', return_value=observation(failure != 'ancestry')))
+                    stack.enter_context(patch.object(gate, 'origin_observation', return_value=native_observation(failure != 'ancestry')))
                     stack.enter_context(patch.object(gate, 'capture_owned', side_effect=launch))
                     state, code, out, err, result = gate.capture(binary, env=environment(root), private=root)
                 self.assertEqual(len(calls), 0 if failure == 'unavailable' else 1)

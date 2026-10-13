@@ -3,23 +3,28 @@ import copy
 import ctypes
 import errno
 import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from test_ci_dnssd_terminal import gate
+from test_ci_dnssd_terminal import gate, native_observation, observation
 
 
 def process(pid=123, ppid=1, uid=1001, command='/synthetic/python'):
     return {'pid': pid, 'ppid': ppid, 'uid': uid, 'start': 'Tue Oct 13 00:00:00 2026', 'command': command}
 
 
-def explain(chain, paths, *, mutate=None, cleanup=True):
+def explain(chain, paths, *, mutate=None, cleanup=True, verify_native=False):
     calls = [chain[0]]
     for row in chain:
         calls.extend((row, row))
+    if verify_native:
+        for row in chain:
+            calls.extend((row, row))
     if mutate:
         mutate(calls)
     def snapshot(pid, *, on_cleanup):
@@ -30,13 +35,108 @@ def explain(chain, paths, *, mutate=None, cleanup=True):
         return row
     with patch.object(gate.os, 'getuid', return_value=1001), \
             patch.object(gate, 'process_info', side_effect=snapshot), \
+            patch.object(gate.sys, 'executable', '/synthetic/python'), \
             patch.object(gate, 'kernel_path', side_effect=paths) as query:
-        result = gate.explain_chain(gate.identity(chain[0]))
+        result = gate.explain_chain(gate.identity(chain[0]), verify_native=verify_native)
     gate.validate_origin(result)
     return result, query.call_count
 
 
 class TerminalOriginTests(unittest.TestCase):
+    def test_native_verifier_requires_the_fresh_exact_four_hop_chain(self):
+        chain = [process(ppid=124), process(124, 125, command='-zsh'),
+                 process(125, 126, uid=0, command='(login)'), process(126, command=gate.TERMINAL_EXECUTABLE)]
+        paths = [('observed', path) for path in ('/synthetic/python', '/bin/zsh', '/usr/bin/login', gate.TERMINAL_EXECUTABLE)]
+        value, count = explain(chain, paths * 2, verify_native=True)
+        self.assertEqual(count, 8)
+        self.assertTrue(value['chainRechecked'])
+        self.assertTrue(value['supervisorExecutableMatched'])
+        self.assertFalse(gate.native_origin_verified(value))
+        value['workerJoined'] = True
+        self.assertTrue(gate.native_origin_verified(value))
+        self.assertFalse(value['authorizesNative'])
+        historical, _ = explain(chain, paths)
+        historical['workerJoined'] = True
+        self.assertFalse(historical['chainRechecked'])
+        self.assertFalse(gate.native_origin_verified(historical))
+
+    def test_native_verifier_rejects_every_unexpected_uid_path_or_shape(self):
+        base = native_observation()
+        changes = [lambda v: v.update(workerJoined=False), lambda v: v.update(chainRechecked=False),
+            lambda v: v.update(supervisorExecutableMatched=False),
+            lambda v: v['hops'][0].update(uidRelation='other'),
+            lambda v: v['hops'][1].update(uidRelation='other'),
+            lambda v: v['hops'][1].update(kernelPathClass='other'),
+            lambda v: v['hops'][2].update(uidRelation='same'),
+            lambda v: v['hops'][2].update(effectiveUidClass='nonzero'),
+            lambda v: v['hops'][2].update(kernelPathClass='other'),
+            lambda v: v['hops'][3].update(uidRelation='other'),
+            lambda v: v['hops'][3].update(effectiveUidClass='zero'),
+            lambda v: v.update(hops=[v['hops'][0], *v['hops']], hopCount=5),
+            lambda v: v.update(hops=[v['hops'][0], v['hops'][2], v['hops'][1], v['hops'][3]])]
+        for modify in changes:
+            value = copy.deepcopy(base)
+            modify(value)
+            self.assertFalse(gate.native_origin_verified(value))
+        # Display names are not used to establish a kernel path.
+        value = copy.deepcopy(base)
+        value['hops'][2].update(commandClass='login', kernelPathClass='other')
+        self.assertFalse(gate.native_origin_verified(value))
+
+    def test_final_recheck_rejects_changed_links_paths_and_denials(self):
+        chain = [process(ppid=124), process(124, 125, command='-zsh'),
+                 process(125, 126, uid=0, command='(login)'), process(126, command=gate.TERMINAL_EXECUTABLE)]
+        paths = [('observed', path) for path in ('/synthetic/python', '/bin/zsh', '/usr/bin/login', gate.TERMINAL_EXECUTABLE)]
+        for change in ({'pid': 999}, {'ppid': 999}, {'uid': 0}, {'start': 'changed'}):
+            value, count = explain(chain, paths * 2, verify_native=True,
+                mutate=lambda calls: calls.__setitem__(9, dict(calls[9], **change)))
+            self.assertEqual(value['reason'], 'recheck_changed')
+            self.assertEqual(count, 4)
+            self.assertFalse(value['chainRechecked'])
+        for state in ('denied', 'unavailable', 'invalid'):
+            value, count = explain(chain, paths + [(state, None)], verify_native=True)
+            self.assertEqual(value['reason'], 'recheck_' + state)
+            self.assertEqual(count, 5)
+            self.assertFalse(value['chainRechecked'])
+        value, _ = explain(chain, paths + [('observed', '/synthetic/changed')], verify_native=True)
+        self.assertEqual(value['reason'], 'recheck_changed')
+
+    def test_native_receipt_cannot_mix_old_gate_or_marker_explanation(self):
+        value = gate.empty_receipt()
+        value.update(nativeOriginObservation=native_observation(), nativeOriginVerified=True, terminalAncestorObserved=True,
+            availabilityVerified=True, openCompleted=True, markerVerified=True, markerOwnerJoined=True)
+        gate.receipt(value)
+        for modify in (lambda v: v.update(gateObservation=observation()),
+                lambda v: v.update(originObservation=native_observation()),
+                lambda v: v.update(nativeOriginVerified=False),
+                lambda v: v.update(markerVerified=False),
+                lambda v: v.update(nativeOriginObservation=None),
+                lambda v: v.update(terminalAncestorObserved=False), lambda v: v.update(mode='marker_only')):
+            changed = copy.deepcopy(value)
+            modify(changed)
+            with self.assertRaises(ValueError):
+                gate.receipt(changed)
+
+    def test_observer_mode_and_nonce_cannot_be_reused_across_gates(self):
+        for marker_only, verify, nonce_matches in ((True, False, True), (False, True, True),
+                (True, True, True), (False, False, True), (False, True, False)):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                own = gate.identity(dict(process(), uid=os.getuid()))
+                nonce = 'a' * 64
+                gate.write_private(root / 'plan.json', {'nonce': nonce, 'markerOnly': marker_only,
+                    'launchDeadline': 135, 'scriptSha256': gate.digest(gate.SCRIPT)})
+                gate.write_private(root / 'started.json', {'nonce': nonce, 'owner': own})
+                gate.write_private(root / 'marker.json', {'nonce': nonce if nonce_matches else 'b' * 64,
+                    'owner': own, 'markerVerified': True, 'markerOwnerJoined': True})
+                with patch.object(gate.time, 'monotonic', return_value=100), patch.object(gate, 'explain_chain',
+                        return_value=gate.empty_origin('deadline')) as explain_call, patch('builtins.print'):
+                    self.assertEqual(gate.observe_child(root, verify_native=verify),
+                        0 if marker_only != verify and nonce_matches else 1)
+                self.assertEqual(explain_call.call_count, int(marker_only != verify and nonce_matches))
+                if explain_call.called:
+                    self.assertEqual(explain_call.call_args.kwargs, {'verify_native': verify})
+
     def test_system_login_boundary_is_explained_but_never_authorizes(self):
         chain = [process(ppid=124), process(124, 125, command='-zsh'),
                  process(125, 126, uid=0, command='(login)'), process(126, command=gate.TERMINAL_EXECUTABLE)]

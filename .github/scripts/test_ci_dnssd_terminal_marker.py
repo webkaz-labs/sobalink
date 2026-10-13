@@ -263,13 +263,16 @@ class TerminalMarkerTests(unittest.TestCase):
                 self.assertNotIn('synthetic-private', result_text + printed.getvalue())
                 self.assertNotIn(temporary, result_text + printed.getvalue())
 
-    def test_workflow_has_one_network_free_mac_probe_and_only_closed_artifacts(self):
+    def test_workflow_restores_only_the_same_bounded_native_route(self):
         root = ENTRY.resolve().parents[2]
         job = (root / '.github/workflows/activation-diagnostic.yml').read_text().split('  diagnostic-dnssd:\n', 1)[1]
-        for forbidden in ('setup-go', 'go test', 'go mod', 'xcrun', 'ci-dnssd-diagnostic.py', 'matrix:', 'sudo', 'osascript'):
+        for forbidden in ('matrix:', 'sudo', 'osascript', 'run: python -B .github/scripts/ci-dnssd-terminal-marker.py'):
             self.assertNotIn(forbidden, job)
         self.assertEqual(job.count('runs-on: macos-26'), 1)
-        self.assertIn('run: python -B .github/scripts/ci-dnssd-terminal-marker.py', job)
+        self.assertIn('run: python -B .github/scripts/ci-dnssd-diagnostic.py', job)
+        self.assertIn("go-version: '1.27.1'", job)
+        self.assertIn('timeout-minutes: 12', job)
+        self.assertIn('timeout-minutes: 10', job)
         for filename in ('result.json', 'provenance.json'):
             self.assertIn('${{ runner.temp }}/soba-dnssd-sanitized/' + filename, job)
         self.assertNotIn('*.json', job)

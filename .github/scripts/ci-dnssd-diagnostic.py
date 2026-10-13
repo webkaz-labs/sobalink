@@ -94,6 +94,7 @@ class PreflightError(ValueError):
 POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/ci-diagnostic.py',
     '.github/scripts/ci-dnssd-diagnostic.py', '.github/scripts/test_ci_dnssd_diagnostic.py',
     '.github/scripts/ci-dnssd-terminal.py', '.github/scripts/test_ci_dnssd_terminal.py',
+    '.github/scripts/test_ci_dnssd_terminal_origin.py', '.github/scripts/test_ci_dnssd_terminal_marker.py',
     '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-diagnostic.py',
     '.github/scripts/ci-go-test.py', 'internal/nearby/provider_darwin.go',
     'internal/nearby/dnssd_bridge_darwin.c', 'internal/nearby/dnssd_bridge_darwin.h',
@@ -601,6 +602,7 @@ def main(argv=None):
         env.update({key: '1' for key in OPT_INS})
         provenance['stage'] = 'runtime'
         provenance['launchMethod'] = 'ordinary_terminal_command'
+        provenance['originVerification'] = 'exact-four-hop-kernel-path-with-final-recheck'
         provenance['testDriverDenialFence'] = True
         state, code, stdout, _, report['terminalLaunch'] = module('ci-dnssd-terminal').capture(
             binary, env=env, private=private)

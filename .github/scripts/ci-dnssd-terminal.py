@@ -48,6 +48,7 @@ def empty_receipt(*, marker_only=False):
     return {'schema': 1, 'mode': 'marker_only' if marker_only else 'native_comparison',
             'status': 'not_run', 'reason': 'not_run', 'gateObservation': None,
             'originObservation': None,
+            'nativeOriginObservation': None, 'nativeOriginVerified': False,
             'availabilityVerified': False, 'openCompleted': False,
             'markerVerified': False, 'markerOwnerJoined': False,
             'terminalAncestorObserved': False, 'nativeStartObserved': False,
@@ -77,7 +78,9 @@ def receipt(value):
                 or value['nativeExitCode'] is not None or value['nativeProcessStatus'] != 'not_run')
             or value['mode'] == 'native_comparison' and value['status'] == 'observed' and value['nativeProcessStatus'] not in {'completed', 'nonzero'}
             or value['markerVerified'] and not value['markerOwnerJoined']
-            or value['nativeStartObserved'] and not (value['markerVerified'] and value['terminalAncestorObserved'])
+            or value['nativeStartObserved'] and not (value['markerVerified'] and value['nativeOriginVerified'])
+            or value['nativeOriginVerified'] and not all(value[key] for key in (
+                'availabilityVerified', 'openCompleted', 'markerVerified', 'markerOwnerJoined'))
             or value['nativeOwnerJoined'] and not value['nativeStartObserved']
             or value['status'] == 'observed' and not all(value[key] for key in (
                 'availabilityVerified', 'openCompleted', 'markerVerified', 'markerOwnerJoined',
@@ -85,16 +88,23 @@ def receipt(value):
             or value['mode'] == 'native_comparison' and value['status'] == 'observed'
                 and not (value['nativeStartObserved'] and value['nativeOwnerJoined'])):
         raise ValueError('incomplete fixed launch evidence')
-    if value['terminalAncestorObserved'] and value['gateObservation'] is None:
+    if value['mode'] == 'marker_only' and value['terminalAncestorObserved'] and value['gateObservation'] is None:
         raise ValueError('missing ancestry observation')
     if value['gateObservation'] is not None:
         validate_observation(value['gateObservation'])
-        if value['terminalAncestorObserved'] != value['gateObservation']['verified']:
+        if value['mode'] != 'marker_only' or value['terminalAncestorObserved'] != value['gateObservation']['verified']:
             raise ValueError('inconsistent ancestry evidence')
     if value['originObservation'] is not None:
         if value['mode'] != 'marker_only':
             raise ValueError('origin explanation requires marker-only mode')
         validate_origin(value['originObservation'])
+    if value['mode'] == 'marker_only':
+        if value['nativeOriginObservation'] is not None or value['nativeOriginVerified']:
+            raise ValueError('marker explanation cannot authorize native execution')
+    else:
+        verified = value['nativeOriginObservation'] is not None and native_origin_verified(value['nativeOriginObservation'])
+        if value['nativeOriginVerified'] != verified or value['terminalAncestorObserved'] != verified:
+            raise ValueError('inconsistent native origin verification')
     return dict(value)
 
 
@@ -372,13 +382,15 @@ def validate_observation(value):
 ORIGIN_REASONS = {'terminal_path', 'end_reached', 'cycle', 'depth_limit', 'deadline',
     'owner_mismatch', 'process_absent', 'process_unavailable', 'process_invalid',
     'path_denied', 'path_unavailable', 'path_invalid', 'snapshot_changed',
-    'worker_incomplete', 'cleanup_unresolved', 'gate_incomplete'}
+    'worker_incomplete', 'cleanup_unresolved', 'gate_incomplete',
+    'recheck_changed', 'recheck_denied', 'recheck_unavailable', 'recheck_invalid'}
 PATH_CLASSES = {'terminal_exact', 'login', 'shell', 'other', 'unknown'}
 
 
 def empty_origin(reason='worker_incomplete'):
     return {'reason': reason, 'hopCount': 0, 'hops': [], 'authorizesNative': False,
-            'terminalPathObserved': False, 'workerJoined': False, 'queriesJoined': False}
+            'terminalPathObserved': False, 'workerJoined': False, 'queriesJoined': False,
+            'supervisorExecutableMatched': False, 'chainRechecked': False}
 
 
 def kernel_path(pid):
@@ -410,15 +422,19 @@ def kernel_path(pid):
         return 'invalid', None
 
 
-def explain_chain(expected):
-    """Separate bounded explanation; never changes the authorization gate.
+def explain_chain(expected, *, verify_native=False):
+    """Bounded kernel-path observation, with optional native final rechecks.
+
+    Marker explanations remain non-authorizing. Native mode adds a final chain
+    recheck; the caller separately requires the exact native_origin_verified
+    policy and an actual observer wait before publishing any native permit.
 
     No new ps query starts after six seconds. An already-started query has at
     most 2s capture + 5s wait + two 2s reader joins before the 20s owner watchdog.
     Path calls occur between joined ps captures. A missing receipt or hard
     timeout never establishes descendant cleanup or explanatory completion.
     """
-    result, visited, deadline = empty_origin(), set(), time.monotonic() + 6
+    result, visited, retained, deadline = empty_origin(), set(), [], time.monotonic() + 6
     result['queriesJoined'] = True
     def cleaned(joined):
         result['queriesJoined'] = result['queriesJoined'] and joined
@@ -464,12 +480,33 @@ def explain_chain(expected):
             if row['kernelPathClass'] == 'terminal_other_path':
                 row['kernelPathClass'] = 'other'
             row['commandMatchesKernelPath'] = before['command'] == path
+            if len(visited) == 1:
+                result['supervisorExecutableMatched'] = os.path.realpath(path) == os.path.realpath(sys.executable)
             after = snapshot(pid)
             if before != after:
                 result['reason'] = 'snapshot_changed'
                 return result
             row['snapshotStable'] = True
+            retained.append((before, path))
             if path == TERMINAL_EXECUTABLE:
+                if verify_native:
+                    # Recheck every retained identity and parent link, and each
+                    # kernel executable path, after the complete ordered chain.
+                    # A denial/race stops the same attempt; no alternate lookup.
+                    for retained_info, retained_path in retained:
+                        if snapshot(retained_info['pid']) != retained_info:
+                            result['reason'] = 'recheck_changed'
+                            return result
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError('observation deadline')
+                        repeated_status, repeated_path = kernel_path(retained_info['pid'])
+                        if repeated_status != 'observed':
+                            result['reason'] = 'recheck_' + repeated_status
+                            return result
+                        if repeated_path != retained_path or snapshot(retained_info['pid']) != retained_info:
+                            result['reason'] = 'recheck_changed'
+                            return result
+                    result['chainRechecked'] = True
                 result.update(reason='terminal_path', terminalPathObserved=True)
                 return result
             pid = before['ppid']
@@ -487,7 +524,7 @@ def explain_chain(expected):
 def validate_origin(value):
     if (type(value) is not dict or set(value) != set(empty_origin())
             or value['reason'] not in ORIGIN_REASONS or value['authorizesNative'] is not False
-            or any(type(value[key]) is not bool for key in ('terminalPathObserved', 'workerJoined', 'queriesJoined'))
+            or any(type(value[key]) is not bool for key in ('terminalPathObserved', 'workerJoined', 'queriesJoined', 'supervisorExecutableMatched', 'chainRechecked'))
             or type(value['hopCount']) is not int or not 0 <= value['hopCount'] <= 12
             or type(value['hops']) is not list or len(value['hops']) != value['hopCount']
             or value['terminalPathObserved'] != (value['reason'] == 'terminal_path')):
@@ -517,32 +554,50 @@ def validate_origin(value):
             or value['reason'] == 'cleanup_unresolved' and value['queriesJoined']
             or value['reason'] == 'worker_incomplete' and (value['queriesJoined'] or value['hops'])):
         raise ValueError('inconsistent origin stop reason')
+    if value['chainRechecked'] and (not value['terminalPathObserved'] or not value['queriesJoined']):
+        raise ValueError('incomplete final chain recheck')
     return value
 
 
-def observe_child(directory):
+def native_origin_verified(value):
+    """Exact observed Terminal chain; never TCC responsible-code identity.
+
+    Only the one root system-login intermediary may differ from the execution
+    UID. No basename/display-name trust, extra shells or other UID exceptions.
+    """
+    validate_origin(value)
+    expected = [('same', 'nonzero', 'other'), ('same', 'nonzero', 'shell'),
+                ('other', 'zero', 'login'), ('same', 'nonzero', 'terminal_exact')]
+    return (value['workerJoined'] and value['queriesJoined'] and value['chainRechecked']
+        and value['supervisorExecutableMatched'] and value['terminalPathObserved']
+        and value['hopCount'] == 4
+        and [(row['uidRelation'], row['effectiveUidClass'], row['kernelPathClass']) for row in value['hops']] == expected
+        and all(row['snapshotStable'] and row['pathStatus'] == 'observed' for row in value['hops']))
+
+
+def observe_child(directory, *, verify_native=False):
     try:
         info = directory.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             return 1
         plan, marker = read_private(directory / 'plan.json'), read_private(directory / 'marker.json')
         owner = started_owner(directory, plan)
-        if (plan['markerOnly'] is not True or marker['owner'] != owner or marker['nonce'] != plan['nonce']
+        if (plan['markerOnly'] is not (not verify_native) or marker['owner'] != owner or marker['nonce'] != plan['nonce']
                 or marker['markerVerified'] is not True or marker['markerOwnerJoined'] is not True
                 or time.monotonic() >= plan['launchDeadline'] or (directory / 'cancelled').exists()
                 or digest(SCRIPT) != plan['scriptSha256']):
             return 1
-        print(json.dumps(validate_origin(explain_chain(owner)), sort_keys=True))
+        print(json.dumps(validate_origin(explain_chain(owner, verify_native=verify_native)), sort_keys=True))
         return 0
     except Exception:
         return 1
 
 
-def origin_observation(directory, deadline):
+def origin_observation(directory, deadline, *, verify_native=False):
     if deadline - time.monotonic() < 21:
         return empty_origin('deadline')
     state, code, out, err, joined = capture_owned(
-        [sys.executable, '-I', '-B', str(SCRIPT), '--observe', str(directory)], timeout=20, limit=8192)
+        [sys.executable, '-I', '-B', str(SCRIPT), '--verify-origin' if verify_native else '--observe', str(directory)], timeout=20, limit=8192)
     fallback = empty_origin()
     fallback['workerJoined'] = joined
     if state != 'completed' or code != 0 or err or not joined:
@@ -725,12 +780,11 @@ def capture(binary, *, env, private, marker_only=False):
                         raise ValueError('marker owner changed')
                     owner = value['owner']
                     result.update(markerVerified=True, markerOwnerJoined=True)
-                    result['gateObservation'] = validate_observation(gate_observation(owner))
-                    if not result['gateObservation']['verified']:
-                        result.update(status='failed', reason='ancestry_unverified')
-                    else:
-                        result['terminalAncestorObserved'] = True
                     if marker_only:
+                        result['gateObservation'] = validate_observation(gate_observation(owner))
+                        result['terminalAncestorObserved'] = result['gateObservation']['verified']
+                        if not result['terminalAncestorObserved']:
+                            result.update(status='failed', reason='ancestry_unverified')
                         # Explain this known UID boundary (or a verified chain),
                         # never retry a failed identity/process query via another API.
                         result['originObservation'] = (origin_observation(directory, plan['launchDeadline'])
@@ -745,7 +799,13 @@ def capture(binary, *, env, private, marker_only=False):
                         elif result['terminalAncestorObserved']:
                             result.update(status='observed', reason='observed')
                             state, code = 'completed', 0
-                    elif result['terminalAncestorObserved']:
+                    else:
+                        result['nativeOriginObservation'] = origin_observation(directory, plan['launchDeadline'], verify_native=True)
+                        result['nativeOriginVerified'] = native_origin_verified(result['nativeOriginObservation'])
+                        result['terminalAncestorObserved'] = result['nativeOriginVerified']
+                        if not result['nativeOriginVerified']:
+                            result.update(status='failed', reason='ancestry_unverified')
+                    if not marker_only and result['nativeOriginVerified']:
                         if time.monotonic() >= plan['launchDeadline']:
                             raise TimeoutError('launch gate expired')
                         write_private(directory / 'permit.json', {'nonce': plan['nonce'], 'owner': owner})
@@ -813,6 +873,7 @@ def capture(binary, *, env, private, marker_only=False):
 
 
 if __name__ == '__main__':
-    entry = {'--child': child, '--observe': observe_child}
+    entry = {'--child': child, '--observe': observe_child,
+             '--verify-origin': lambda directory: observe_child(directory, verify_native=True)}
     raise SystemExit(entry[sys.argv[1]](Path(sys.argv[2]))
         if len(sys.argv) == 3 and sys.argv[1] in entry and sys.platform == 'darwin' else 1)
