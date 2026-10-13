@@ -184,73 +184,6 @@ func TestPacketMetadataMustMatchSelectedScope(t *testing.T) {
 		}
 	}
 }
-func TestCandidateRevisionsExpiryCollisionsAndCapacity(t *testing.T) {
-	s := newStore(testScope())
-	now := time.Now()
-	a := testAd(1)
-	source := netip.AddrPortFrom(a.Bootstrap.Addr(), mdnsPort)
-	s.observe(a, source, CandidateTTL, now)
-	old := s.list(now)[0]
-	s.observe(a, source, CandidateTTL, now.Add(time.Second))
-	current := s.list(now.Add(time.Second))[0]
-	if old.ID != current.ID || current.ExpiresAt != now.Add(31*time.Second) {
-		t.Fatal("heartbeat changed immutable ID or expiry")
-	}
-	a.Bootstrap = netip.MustParseAddrPort("192.168.40.2:42001")
-	s.observe(a, source, CandidateTTL, now.Add(2*time.Second))
-	replacement := s.list(now.Add(2 * time.Second))[0]
-	if replacement.ID == old.ID {
-		t.Fatal("endpoint silently retargeted")
-	}
-	if _, err := s.lookup(old.ID, now.Add(2*time.Second)); !errors.Is(err, ErrCandidateUnavailable) {
-		t.Fatal("old selection survived replacement")
-	}
-	a.Bootstrap = old.Advertisement.Bootstrap
-	s.observe(a, source, CandidateTTL, now.Add(3*time.Second))
-	replay := s.list(now.Add(3 * time.Second))[0]
-	if replay.ID == old.ID {
-		t.Fatal("replay resurrected stale ID")
-	}
-	s.observe(a, source, CandidateTTL, now.Add(33*time.Second))
-	afterExpiry := s.list(now.Add(33 * time.Second))[0]
-	if afterExpiry.ID == replay.ID {
-		t.Fatal("expiry revived old candidate")
-	}
-	second := a
-	second.Bootstrap = netip.MustParseAddrPort("192.168.40.3:42000")
-	s.observe(second, netip.MustParseAddrPort("192.168.40.3:5353"), CandidateTTL, now.Add(33*time.Second))
-	if len(s.list(now.Add(33*time.Second))) != 2 {
-		t.Fatal("same alias/session merged distinct sources")
-	}
-	for i := 2; i < 100; i++ {
-		s.observe(testAd(i), source, CandidateTTL, now.Add(34*time.Second))
-	}
-	if len(s.items) != MaxCandidates {
-		t.Fatal("candidate cap failed")
-	}
-	s.prune(now.Add(64 * time.Second))
-	if len(s.items) != 0 {
-		t.Fatal("expired candidates retained")
-	}
-}
-func TestGoodbyeOnlyRemovesMatchingObservation(t *testing.T) {
-	s := newStore(testScope())
-	a := testAd(1)
-	now := time.Now()
-	source := netip.MustParseAddrPort("192.168.40.2:5353")
-	s.observe(a, source, CandidateTTL, now)
-	changed := a
-	changed.Alias = "other"
-	s.observe(changed, source, 0, now)
-	if len(s.items) != 1 {
-		t.Fatal("unmatched goodbye removed candidate")
-	}
-	s.observe(a, source, 0, now)
-	if len(s.items) != 0 {
-		t.Fatal("matching goodbye ignored")
-	}
-}
-
 func TestBindingRejectsStaleAddressPrefixAndInterface(t *testing.T) {
 	scope := testScope()
 	ifi := net.Interface{Index: 7, Name: "test-interface", HardwareAddr: net.HardwareAddr{0x02, 0, 0, 0, 0, 1}, Flags: net.FlagUp | net.FlagMulticast}
@@ -476,7 +409,7 @@ func TestSessionTTLUsesLocalObservationAndSelectionChanges(t *testing.T) {
 	id := s.Candidates()[0].ID
 	a.Alias = "Peer B"
 	tr.incoming <- testPacket(t, a)
-	eventually(t, func() bool { return len(s.Candidates()) == 1 && s.Candidates()[0].ID != id })
+	eventually(t, func() bool { return len(s.Candidates()) == 0 })
 	if _, err := s.Lookup(id); err == nil {
 		t.Fatal("changed selection remains usable")
 	}

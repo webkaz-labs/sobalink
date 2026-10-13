@@ -111,14 +111,23 @@ func (a Advertisement) validate(policy discoveryPolicy) error {
 	return nil
 }
 
+// CandidateProvenance identifies the observation mechanism, never peer trust.
+type CandidateProvenance string
+
+const (
+	RawPacketProvenance    CandidateProvenance = "raw-packet"
+	OSDNSServiceProvenance CandidateProvenance = "os-dns-service"
+)
+
 // Candidate is an unauthenticated observation. ID names one immutable local
 // observation revision, not an authenticated peer. Consumers must look up the
 // exact ID again before using it and authenticate the selected endpoint.
 type Candidate struct {
+	Provenance    CandidateProvenance
 	ID            string
 	Advertisement Advertisement
 	Scope         Scope
-	Source        netip.AddrPort
+	Source        netip.AddrPort // Actual raw source only; absent for OS DNS-SD.
 	ObservedAt    time.Time
 	ExpiresAt     time.Time
 }

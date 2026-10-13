@@ -10,8 +10,8 @@ import (
 )
 
 // candidateStore is confined by Session.mu. It retains at most 64 candidates;
-// no history grows with attacker-controlled IDs. A monotonically increasing
-// revision prevents a replay after expiry/replacement from reviving an old ID.
+// the assembler separately retains a bounded lifetime tombstone for each bundle.
+// Revisions and a local owner generation bind immutable observation identities.
 type candidateStore struct {
 	scope      Scope
 	generation string
@@ -22,9 +22,6 @@ type candidateStore struct {
 func newStore(s Scope) candidateStore {
 	return candidateStore{scope: s, items: make(map[string]Candidate)}
 }
-func observationKey(a Advertisement, source netip.AddrPort) string {
-	return a.SessionID + "/" + source.String()
-}
 func (s *candidateStore) prune(now time.Time) {
 	for key, c := range s.items {
 		if !now.Before(c.ExpiresAt) {
@@ -32,36 +29,25 @@ func (s *candidateStore) prune(now time.Time) {
 		}
 	}
 }
-func (s *candidateStore) observe(a Advertisement, source netip.AddrPort, ttl time.Duration, now time.Time) {
-	s.prune(now)
-	key := observationKey(a, source)
-	prior, exists := s.items[key]
-	if ttl <= 0 {
-		if exists && prior.Advertisement == a {
-			delete(s.items, key)
-		}
-		return
-	}
-	if ttl > CandidateTTL {
-		ttl = CandidateTTL
-	}
-	if exists && prior.Advertisement == a {
-		prior.ObservedAt, prior.ExpiresAt = now, now.Add(ttl)
+func (s *candidateStore) publish(key string, a Advertisement, kind observationKind, source netip.AddrPort, first, expiry time.Time) {
+	if prior, ok := s.items[key]; ok && prior.Advertisement == a {
+		prior.ExpiresAt = expiry
 		s.items[key] = prior
 		return
-	}
-	if exists {
-		delete(s.items, key)
 	}
 	if len(s.items) >= MaxCandidates {
 		return
 	}
+	provenance := RawPacketProvenance
+	if kind == osDNSServiceObservation {
+		provenance = OSDNSServiceProvenance
+	}
 	s.revision++
-	// Every string is length delimited by %q and every structural value explicit.
-	binding := fmt.Sprintf("%q|%d|%s|%s|%s|%q|%q|%q|%q|%s|%d", s.generation, s.scope.InterfaceIndex, s.scope.LocalAddress, s.scope.Prefix, source, a.SessionID, a.Alias, a.Protocol, a.Capability, a.Bootstrap, s.revision)
+	binding := fmt.Sprintf("%q|%d|%s|%s|%s|%q|%q|%q|%q|%s|%q|%d", s.generation, s.scope.InterfaceIndex, s.scope.LocalAddress, s.scope.Prefix, source, a.SessionID, a.Alias, a.Protocol, a.Capability, a.Bootstrap, provenance, s.revision)
 	digest := sha256.Sum256([]byte(binding))
-	s.items[key] = Candidate{ID: hex.EncodeToString(digest[:]), Advertisement: a, Scope: s.scope, Source: source, ObservedAt: now, ExpiresAt: now.Add(ttl)}
+	s.items[key] = Candidate{ID: hex.EncodeToString(digest[:]), Advertisement: a, Scope: s.scope, Source: source, Provenance: provenance, ObservedAt: first, ExpiresAt: expiry}
 }
+
 func (s *candidateStore) list(now time.Time) []Candidate {
 	s.prune(now)
 	out := make([]Candidate, 0, len(s.items))

@@ -24,7 +24,8 @@ type Session struct {
 	policy         discoveryPolicy
 	deadline       time.Time
 	local          Advertisement
-	transport      Transport
+	provider       recordProvider
+	assembler      recordAssembler
 	ctx            context.Context
 	cancel         context.CancelCauseFunc
 	closeOnce      sync.Once
@@ -44,9 +45,25 @@ func Start(ctx context.Context, cfg Config, open TransportFactory) (*Session, er
 	return start(ctx, cfg, open, discoveryPolicy{})
 }
 
+// StartNative selects the platform provider after the caller's explicit scope
+// and advertisement consent. It does not create a bootstrap listener.
+func StartNative(ctx context.Context, cfg Config) (*Session, error) {
+	return startProvider(ctx, cfg, newNativeRecordProvider, discoveryPolicy{})
+}
 func start(ctx context.Context, cfg Config, open TransportFactory, policy discoveryPolicy) (*Session, error) {
+	if open == nil {
+		return nil, ErrUnsupported
+	}
+	return startProvider(ctx, cfg, func(ctx context.Context, cfg Config, p discoveryPolicy) (recordProvider, error) {
+		return newRawRecordProvider(ctx, cfg, p, open)
+	}, policy)
+}
+func startProvider(ctx context.Context, cfg Config, open recordProviderFactory, policy discoveryPolicy) (*Session, error) {
 	if err := policy.validateScope(cfg.Scope); err != nil {
 		return nil, err
+	}
+	if !cfg.Scope.LocalAddress.Is4() {
+		return nil, ErrUnsupported
 	}
 	if err := cfg.Advertisement.validate(policy); err != nil {
 		return nil, err
@@ -68,8 +85,8 @@ func start(ctx context.Context, cfg Config, open TransportFactory, policy discov
 		return nil, err
 	}
 	deadline := cfg.Clock.Now().Add(SessionLifetime)
-	transport, startErr := open(cfg.Scope)
-	if transport == nil {
+	provider, startErr := open(ctx, cfg, policy)
+	if provider == nil {
 		if startErr != nil {
 			return nil, startErr
 		}
@@ -85,14 +102,14 @@ func start(ctx context.Context, cfg Config, open TransportFactory, policy discov
 	ctx, cancel := context.WithCancelCause(ctx)
 	store := newStore(cfg.Scope)
 	store.generation = generation
-	s := &Session{store: store, clock: cfg.Clock, policy: policy, deadline: deadline, local: cfg.Advertisement, transport: transport, ctx: ctx, cancel: cancel, done: make(chan struct{}), closeDone: make(chan struct{})}
+	s := &Session{store: store, clock: cfg.Clock, policy: policy, deadline: deadline, local: cfg.Advertisement, provider: provider, assembler: newRecordAssembler(cfg.Scope, policy, deadline, cfg.Advertisement.SessionID), ctx: ctx, cancel: cancel, done: make(chan struct{}), closeDone: make(chan struct{})}
 	if startErr != nil {
 		s.err = startErr
 		if errors.Is(startErr, ErrCloseUncertain) || errors.Is(startErr, ErrCloseUnresolved) {
 			s.closeErr = startErr
 		}
 		s.cancel(startErr)
-		s.requestTransportClose()
+		s.requestProviderClose()
 		go func() { <-s.closeDone; close(s.done) }()
 		if closeErr := s.Close(); closeErr != nil {
 			return s, errors.Join(startErr, closeErr)
@@ -137,10 +154,10 @@ func (s *Session) Err() error {
 	}
 	return s.err
 }
-func (s *Session) requestTransportClose() {
+func (s *Session) requestProviderClose() {
 	s.closeOnce.Do(func() {
 		go func() {
-			err := normalizedCloseError(s.transport.Close())
+			err := normalizedCloseError(s.provider.Close())
 			s.mu.Lock()
 			if s.closeErr == nil {
 				s.closeErr = err
@@ -154,13 +171,13 @@ func (s *Session) requestTransportClose() {
 	})
 }
 
-// Close cancels admission immediately and starts one owned socket-close
+// Close cancels admission immediately and starts one owned provider-close
 // operation. It waits at most two seconds for all owners to join; retries reuse
 // the same operation and retained first close result. On any error the caller
 // must retain this Session and block replacement rather than report stopped.
 func (s *Session) Close() error {
 	s.cancel(context.Canceled)
-	s.requestTransportClose()
+	s.requestProviderClose()
 	timer := time.NewTimer(closeJoinTimeout)
 	defer timer.Stop()
 	select {
@@ -177,18 +194,24 @@ func (s *Session) Close() error {
 }
 
 type readResult struct {
-	packet Packet
-	err    error
+	observation recordObservation
+	err         error
 }
 
 func (s *Session) run(ctx context.Context) {
 	defer close(s.done)
 	expires := s.clock.NewTimer(max(time.Duration(0), s.deadline.Sub(s.clock.Now())))
 	defer expires.Stop()
-	packets := make(chan readResult)
+	raw, isRaw := s.provider.(*rawRecordProvider)
+	queueSize := 0
+	if isRaw {
+		queueSize = maxObservationQueue
+	}
+	// OS callback queues own their bound; do not add another buffered layer.
+	packets := make(chan readResult, queueSize)
 	readDone := make(chan struct{})
 	watchDone := make(chan struct{})
-	// This watcher closes a blocked socket even when the main loop is in Write.
+	// This watcher closes a blocked provider even when the main loop is in Write.
 	go func() {
 		defer close(watchDone)
 		select {
@@ -197,16 +220,27 @@ func (s *Session) run(ctx context.Context) {
 			s.cancel(ErrExpired)
 		}
 		expires.Stop()
-		s.requestTransportClose()
+		s.requestProviderClose()
 	}()
 	go func() {
 		defer close(readDone)
 		for read := 0; read < MaxReceivedDatagrams; read++ {
-			p, err := s.transport.ReadPacket()
-			select {
-			case packets <- readResult{p, err}:
-			case <-ctx.Done():
-				return
+			p, err := s.provider.ReadObservation()
+			if isRaw {
+				select {
+				case packets <- readResult{p, err}:
+				case <-ctx.Done():
+					return
+				default:
+					s.cancel(ErrReceiveBudget)
+					return
+				}
+			} else {
+				select {
+				case packets <- readResult{p, err}:
+				case <-ctx.Done():
+					return
+				}
 			}
 			if err != nil {
 				return
@@ -224,7 +258,7 @@ func (s *Session) run(ctx context.Context) {
 		clear(s.store.items)
 		s.mu.Unlock()
 		s.cancel(err)
-		s.requestTransportClose()
+		s.requestProviderClose()
 		expires.Stop()
 		if tick != nil {
 			tick.Stop()
@@ -253,15 +287,20 @@ func (s *Session) run(ctx context.Context) {
 			return ErrSendBudget
 		}
 		sent++
-		return s.transport.WritePacket(b)
+		if !isRaw {
+			return nil
+		}
+		return raw.WritePacket(b)
 	}
-	if err := send(query); err != nil {
-		finish(err)
-		return
-	}
-	if err := send(ad); err != nil {
-		finish(err)
-		return
+	if isRaw {
+		if err := send(query); err != nil {
+			finish(err)
+			return
+		}
+		if err := send(ad); err != nil {
+			finish(err)
+			return
+		}
 	}
 	lastAd, lastQuery := s.clock.Now(), s.clock.Now()
 	windowStart := s.clock.Now()
@@ -280,14 +319,14 @@ func (s *Session) run(ctx context.Context) {
 			s.mu.Lock()
 			s.store.prune(now)
 			s.mu.Unlock()
-			if now.Sub(lastAd) >= AdvertisementInterval {
+			if isRaw && now.Sub(lastAd) >= AdvertisementInterval {
 				if err := send(ad); err != nil {
 					finish(err)
 					return
 				}
 				lastAd = now
 			}
-			if now.Sub(lastQuery) >= QueryInterval {
+			if isRaw && now.Sub(lastQuery) >= QueryInterval {
 				if err := send(query); err != nil {
 					finish(err)
 					return
@@ -318,20 +357,26 @@ func (s *Session) run(ctx context.Context) {
 				windowStart, parsed = now, 0
 			}
 			if parsed >= MaxParsedPerSecond {
+				// Dropping an OS removal/conflict while queries remain active
+				// could retain a stale hint. Fence the whole owner instead.
+				if !isRaw {
+					finish(ErrReceiveBudget)
+					return
+				}
 				continue
 			}
 			// Invalid metadata still consumes the finite receive budget. Parsing work
 			// and per-second responses have separate budgets from input admission.
 			parsed++
-			if !validatePacketWithPolicy(s.store.scope, result.packet, s.policy) {
-				continue
+			observed := result.observation
+			if !isRaw && (observed.Kind != osDNSServiceObservation || observed.query) {
+				// Only the raw adapter validates socket metadata. A system
+				// provider may never claim raw provenance for OS callbacks.
+				finish(ErrInvalidPacket)
+				return
 			}
-			observed, ttl, isQuery, err := unpackPacketWithPolicy(result.packet, s.policy)
-			if err != nil {
-				continue
-			}
-			if isQuery {
-				if now.Sub(lastAd) >= time.Second {
+			if observed.query {
+				if isRaw && observed.Kind == rawPacketObservation && now.Sub(lastAd) >= time.Second {
 					if err := send(ad); err != nil {
 						finish(err)
 						return
@@ -340,12 +385,23 @@ func (s *Session) run(ctx context.Context) {
 				}
 				continue
 			}
-			if observed.SessionID == s.local.SessionID {
-				continue
-			}
 			s.mu.Lock()
-			s.store.observe(observed, result.packet.Source, ttl, now)
+			err := s.assembler.observe(observed, now, &s.store)
+			var followups []string
+			if err == nil && isRaw {
+				followups = s.assembler.requestQueries(observed, now, &s.store)
+			}
 			s.mu.Unlock()
+			if (!isRaw && err != nil) || errors.Is(err, ErrReceiveBudget) || errors.Is(err, ErrExpired) {
+				finish(err)
+				return
+			}
+			for _, sid := range followups {
+				if err := send(packRecordQuery(sid)); err != nil {
+					finish(err)
+					return
+				}
+			}
 		}
 	}
 }

@@ -346,9 +346,9 @@ class TextDiagnosticTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(result['firstFailure'], 'verify-source')
 
-    def test_literal_final_linux_job_reuses_pins_and_closed_uploads(self):
+    def test_literal_text_linux_job_reuses_pins_and_closed_uploads(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
-        job = workflow.split('  diagnostic-text:\n')[1]
+        job = workflow.split('  diagnostic-text:\n', 1)[1].split('  diagnostic-dnssd:\n', 1)[0]
         self.assertNotRegex(job, re.compile(r'^  [a-z][a-z0-9-]*:', re.M))
         self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'text'", job)
         self.assertIn('runs-on: ubuntu-24.04', job)
