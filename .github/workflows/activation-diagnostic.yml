@@ -273,12 +273,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: windows-2025
-            platform: windows-amd64
           - runner: macos-26
             platform: darwin-arm64
     runs-on: ${{ matrix.runner }}
-    # One exhaustive race run per target, with the unchanged 10m package limit.
+    # Mac-only follow-up; retain the completed Windows diagnostic separately.
+    # One exhaustive race run with the unchanged 10m package limit.
     timeout-minutes: 40
     permissions:
       contents: read

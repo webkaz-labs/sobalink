@@ -184,11 +184,21 @@ class OwnedGroup:
     def terminate(self):
         if self.pgid is None or self.signals_closed:
             raise OSError('group signal ownership unavailable')
-        self.observe()  # ECHILD or another observation failure prohibits signals.
         try:
-            os.killpg(self.pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            # A waitable exited leader can leave a zombie-only Darwin group.
+            # No signal is needed: fence, reap exactly this child, then require
+            # reader joins and observation-only group absence in capture().
+            # Recheck here so exit just before cleanup takes the same path.
+            if self.observe() is not None:
+                return
+            try:
+                os.killpg(self.pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        finally:
+            # A query or permission error is still a failure. Never retry a
+            # failed signal, and never signal after the caller's final wait.
+            self.finish_signals()
 
     def close(self):
         pass
@@ -271,8 +281,8 @@ def capture(phase, env):
             try:
                 if posix:
                     if job.pgid is not None:
-                        # Always close the inherited group while its leader is
-                        # unreaped. This is cleanup, not test/release acceptance.
+                        # Signal only a still-live inherited group while its
+                        # leader is unreaped; an exited owner takes no signal.
                         job.terminate()
                 elif job.active():
                     job.terminate()

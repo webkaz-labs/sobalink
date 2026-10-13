@@ -383,15 +383,17 @@ class PosixOwnershipTests(unittest.TestCase):
         child = Mock(pid=123456)
         with patch.object(gate.os, 'getpgid', return_value=123456, create=True):
             group.assign(child)
-        with patch.object(group, 'observe', return_value=0), patch.object(gate.os, 'killpg', create=True) as kill:
+        with patch.object(group, 'observe', return_value=None), patch.object(gate.os, 'killpg', create=True) as kill:
             self.assertEqual(group.active(), 1)
             group.terminate()
         self.assertEqual(kill.call_args_list[0].args, (123456, 0))
         self.assertEqual(kill.call_args_list[1].args, (123456, gate.signal.SIGKILL))
-        with patch.object(group, 'observe', return_value=0), patch.object(gate.os, 'killpg', side_effect=ProcessLookupError, create=True):
+        group.signals_closed = False
+        with patch.object(group, 'observe', return_value=None), patch.object(gate.os, 'killpg', side_effect=ProcessLookupError, create=True):
             self.assertEqual(group.active(), 0)
             group.terminate()
-        with patch.object(group, 'observe', return_value=0), patch.object(gate.os, 'killpg', side_effect=PermissionError, create=True):
+        group.signals_closed = False
+        with patch.object(group, 'observe', return_value=None), patch.object(gate.os, 'killpg', side_effect=PermissionError, create=True):
             with self.assertRaises(OSError):
                 group.active()
             with self.assertRaises(OSError):
@@ -407,6 +409,109 @@ class PosixOwnershipTests(unittest.TestCase):
         self.assertFalse(report['ownersJoined'])
         self.assertEqual(report['process'], 'cleanup_unresolved')
         self.assertNotIn('synthetic-private-group-query', json.dumps(report))
+
+
+class PosixExitCleanupTests(unittest.TestCase):
+    setup_capture = OwnershipTests.setup_capture
+
+    @contextlib.contextmanager
+    def fixture(self, observations, *, active=0, read_error=False, signal_error=False):
+        calls, _, child = self.setup_capture()
+        group = object.__new__(gate.OwnedGroup)
+        group.pgid, group.process, group.signals_closed = 123456, child, False
+        group.assign = Mock(side_effect=lambda process: calls.append('assign'))
+        group.observe = Mock(side_effect=observations)
+        def query():
+            calls.append('query')
+            if isinstance(active, Exception):
+                raise active
+            return active
+        group.active = Mock(side_effect=query)
+        child.poll = Mock(side_effect=AssertionError('reaping poll forbidden'))
+        if read_error:
+            child.stdout = Mock()
+            child.stdout.read.side_effect = OSError('synthetic-private-reader-error')
+        def signal(pgid, signum):
+            self.assertFalse(group.signals_closed)
+            self.assertNotIn('wait', calls)
+            calls.append('signal')
+            if signal_error:
+                raise PermissionError('synthetic-private-signal-error')
+        with patch.object(gate.sys, 'platform', 'darwin'), patch.object(gate, 'OwnedGroup', return_value=group), patch.object(gate.subprocess, 'Popen', return_value=child), patch.object(gate.os, 'killpg', side_effect=signal, create=True) as kill, patch.object(gate.signal, 'SIGKILL', 9, create=True):
+            yield calls, group, child, kill
+
+    def test_normal_exit_withholds_signals_and_requires_wait_before_absence(self):
+        with self.fixture([0, 0]) as (calls, group, child, kill):
+            report, _ = gate.capture('suite', {})
+            kill.assert_not_called()
+        self.assertEqual(report['process'], 'completed')
+        self.assertTrue(report['ownersJoined'])
+        self.assertTrue(report['groupAbsenceObservedAfterWait'])
+        self.assertTrue(group.signals_closed)
+        self.assertLess(calls.index('wait'), calls.index('query'))
+        child.poll.assert_not_called()
+
+    def test_exit_just_before_signal_keeps_watchdog_failure_without_signal(self):
+        with self.fixture([None, 0]) as (calls, group, child, kill), patch.dict(gate.BOUNDS, {'suite': 0}):
+            report, _ = gate.capture('suite', {})
+            kill.assert_not_called()
+        self.assertEqual(report['process'], 'watchdog_timeout')
+        self.assertEqual(report['executionState'], 'watchdog_timeout')
+        self.assertTrue(report['ownersJoined'])
+        self.assertTrue(group.signals_closed)
+
+    def test_live_timeout_signals_once_before_fence_and_wait(self):
+        with self.fixture([None, None]) as (calls, group, child, kill), patch.dict(gate.BOUNDS, {'suite': 0}):
+            report, _ = gate.capture('suite', {})
+            self.assertEqual(kill.call_count, 1)
+            with self.assertRaises(OSError):
+                group.terminate()
+            self.assertEqual(kill.call_count, 1)
+        self.assertEqual(report['process'], 'watchdog_timeout')
+        self.assertTrue(group.signals_closed)
+        self.assertLess(calls.index('signal'), calls.index('wait'))
+
+    def test_residual_or_reused_group_after_wait_is_failure_without_signal(self):
+        ticks = iter(range(0, 1000, 20))
+        with self.fixture([0, 0], active=1) as (calls, group, child, kill), patch.object(gate.time, 'monotonic', side_effect=lambda: next(ticks)):
+            report, _ = gate.capture('suite', {})
+            kill.assert_not_called()
+        self.assertEqual(report['process'], 'cleanup_unresolved')
+        self.assertEqual(report['executionState'], 'completed')
+        self.assertFalse(report['ownersJoined'])
+        self.assertFalse(report['groupAbsenceObservedAfterWait'])
+        self.assertTrue(group.signals_closed)
+
+    def test_group_query_errors_never_become_absence(self):
+        for error in (PermissionError('synthetic-private-query-denied'), OSError('synthetic-private-query-error')):
+            with self.fixture([0, 0], active=error) as (calls, group, child, kill):
+                report, _ = gate.capture('suite', {})
+                kill.assert_not_called()
+            self.assertEqual(report['process'], 'cleanup_unresolved')
+            self.assertFalse(report['ownersJoined'])
+            self.assertIsNone(report['groupAbsenceObservedAfterWait'])
+            self.assertNotIn('synthetic-private', json.dumps(report))
+
+    def test_live_signal_permission_failure_is_retained_without_retry(self):
+        with self.fixture([None, None], signal_error=True) as (calls, group, child, kill), patch.dict(gate.BOUNDS, {'suite': 0}):
+            report, _ = gate.capture('suite', {})
+            self.assertEqual(kill.call_count, 1)
+            with self.assertRaises(OSError):
+                group.terminate()
+            self.assertEqual(kill.call_count, 1)
+        self.assertEqual(report['process'], 'cleanup_unresolved')
+        self.assertEqual(report['executionState'], 'watchdog_timeout')
+        self.assertFalse(report['ownersJoined'])
+        self.assertTrue(group.signals_closed)
+        self.assertNotIn('synthetic-private', json.dumps(report))
+
+    def test_reader_error_prevents_completion_even_with_absent_group(self):
+        with self.fixture([0, 0], read_error=True) as (calls, group, child, kill):
+            report, _ = gate.capture('suite', {})
+            kill.assert_not_called()
+        self.assertEqual(report['process'], 'capture_failed')
+        self.assertTrue(report['groupAbsenceObservedAfterWait'])
+        self.assertNotIn('synthetic-private', json.dumps(report))
 
 
 @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'waitid'), 'real POSIX waitid required')
@@ -438,7 +543,7 @@ class RealPosixOwnershipTests(unittest.TestCase):
             self.assertEqual(report['executionState'], expected)
             self.assertTrue(report['ownersJoined'])
             self.assertTrue(report['groupAbsenceObservedAfterWait'])
-            self.assertIn(gate.signal.SIGKILL, signals)
+            self.assertEqual(gate.signal.SIGKILL in signals, expected == 'watchdog_timeout')
             self.assertIsNotNone(children[0].returncode)
             children[0].poll.assert_not_called()
 
@@ -452,17 +557,19 @@ class RealPosixOwnershipTests(unittest.TestCase):
                 gate.time.sleep(.01)
             self.assertEqual(group.observe(), 0)
             self.assertIsNone(child.returncode)
-            group.terminate()
-            group.finish_signals()
+            with patch.object(gate.os, 'killpg') as kill:
+                group.terminate()
+            kill.assert_not_called()
+            self.assertTrue(group.signals_closed)
             self.assertEqual(child.wait(timeout=2), 0)
             with patch.object(gate.os, 'killpg') as kill, self.assertRaises(OSError):
                 group.terminate()
             kill.assert_not_called()
         finally:
-            if not group.signals_closed:
-                group.terminate()
-                group.finish_signals()
-                child.wait(timeout=2)
+            # This literal pass child needs no signal. Preserve an earlier
+            # failure while always fencing before its final direct wait.
+            group.finish_signals()
+            child.wait(timeout=2)
 
     def test_lost_child_and_missing_nonreaping_support_prohibit_signals(self):
         group = gate.OwnedGroup()
@@ -624,15 +731,15 @@ class MainReceiptTests(unittest.TestCase):
 
 
 class WorkflowPolicyTests(unittest.TestCase):
-    def test_exact_ordinary_native_environment_and_no_suite_selection_change(self):
+    def test_exact_macos_followup_environment_without_windows_rerun(self):
         normal = (gate.ROOT / '.github/workflows/ci.yml').read_text()
         diagnostic = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
         job = diagnostic.split('  diagnostic-native-core:\n', 1)[1].split('  diagnostic-text:\n', 1)[0]
-        self.assertIn('runner: windows-2025', job)
+        self.assertNotIn('runner: windows-2025', job)
         self.assertIn('runner: macos-26', job)
-        self.assertIn('platform: windows-amd64', job)
+        self.assertNotIn('platform: windows-amd64', job)
         self.assertIn('platform: darwin-arm64', job)
-        self.assertEqual(job.count('- runner:'), 2)
+        self.assertEqual(job.count('- runner:'), 1)
         self.assertIn('fail-fast: false', job)
         self.assertIn("go-version: '1.27.1'", job)
         self.assertIn("suite == 'native-core'", job)
