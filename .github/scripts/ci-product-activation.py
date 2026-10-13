@@ -14,6 +14,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 TAGS = 'ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native,product_activation_native'
+FIXTURE_REGRESSIONS = '^TestProduct(ParentWait|MissingParentWait|WaitRejects|LauncherWait|FinalOwner|CleanupDiagnostic|EvidenceWriters)'
 SCOPE = 'Linux production Web and CLI with real Core owners and synthetic loopback peers; OS-open stubbed; other behavior not established'
 BOOLS = ('accepted', 'allSelectedPassed', 'runnerExitedSuccessfully', 'timedOut', 'outputOverflow', 'nativeCleanupProven')
 KEYS = {'schema', 'expected', 'scope', 'diagnostics', *BOOLS}
@@ -25,7 +26,7 @@ FAILURE_PHASES = ('none', 'unknown', *WORK_PHASES)
 CLEANUP_PHASES = ('not-started', 'context', 'supervisor', 'proof', 'safety', 'remove', 'complete')
 CLEANUP_FAILURE_PHASES = ('none', 'unknown', *CLEANUP_PHASES)
 EXITS = ('not-observed', 'zero', 'one', 'race', 'other', 'signal', 'spawn-error', 'profile-rejected', 'watchdog', 'mode-rejected', 'owner-failed', 'supervisor-failed', 'registration-failed')
-SUPERVISOR_FAILURES = ('none', 'origin-write', 'observer-wait', 'start-observe', 'progress-write', 'wait-error', 'child-exit', 'extra-observe', 'extra-close')
+SUPERVISOR_FAILURES = ('none', 'origin-write', 'observer-wait', 'start-observe', 'progress-write', 'wait-error', 'child-exit', 'extra-observe', 'extra-close', 'exit-status-missing', 'exit-status-invalid', 'exit-status-conflict')
 RESOURCE_FAILURES = ('none', 'slave-close', 'master-close', 'capture-error', 'helper-exit', 'result-parse', 'result-write')
 NATIVE_STAGES = ('not-started', 'owner-start', 'peer-open', 'peer-review', 'peer-apply', 'foreground', 'identity', 'management-announced', 'cli-launch', 'review-read', 'owner-status', 'peer-status', 'review-binding', 'network-ready', 'persisted-context', 'pair-binding', 'proof-written', 'cli-terminal', 'cli-review', 'cli-review-binding', 'cli-apply', 'cli-complete')
 NATIVE_STATUSES = ('unobserved', 'idle', 'restart-required', 'preparing', 'exchanging', 'local-confirmed', 'connected', 'network-started', 'failed', 'cancelled', 'other')
@@ -37,7 +38,7 @@ LIFECYCLE_ENUMS = {'workPhase': WORK_PHASES, 'firstFailurePhase': FAILURE_PHASES
                    'supervisorFailure': SUPERVISOR_FAILURES, 'resourceFailure': RESOURCE_FAILURES,
                    'helperExit': EXITS, 'successorExit': EXITS}
 LIFECYCLE_KEYS = {*LIFECYCLE_ENUMS, *LIFECYCLE_BOOLS, *LIFECYCLE_COUNTS, 'native'}
-NATIVE_KEYS = {'available', 'invalid', 'stage', 'failed', 'ownerStatus', 'peerStatus'}
+NATIVE_KEYS = {'available', 'invalid', 'stage', 'failed', 'foregroundFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed', 'ownerStatus', 'peerStatus'}
 CASE_KEYS = {'id', 'started', 'status', 'diagnosticAvailable', 'diagnosticRejected', 'lifecycle'}
 DIAGNOSTIC_KEYS = {'summaryAvailable', 'selectionValid', 'unexpected', 'globalErrors', 'observed', 'passed', 'cases'}
 
@@ -47,7 +48,7 @@ def empty_lifecycle():
             'firstCleanupFailurePhase': 'none', 'supervisorExit': 'not-observed', 'oldExit': 'not-observed',
             'supervisorFailure': 'none', 'resourceFailure': 'none', 'helperExit': 'not-observed', 'successorExit': 'not-observed',
             **dict.fromkeys(LIFECYCLE_BOOLS, False), **dict.fromkeys(LIFECYCLE_COUNTS, 0),
-            'native': {role: {'available': False, 'invalid': False, 'stage': 'not-started', 'failed': False,
+            'native': {role: {'available': False, 'invalid': False, 'stage': 'not-started', 'failed': False, 'foregroundFailed': False, 'monitorFailed': False, 'peerCloseFailed': False, 'lockCloseFailed': False,
                               'ownerStatus': 'unobserved', 'peerStatus': 'unobserved'} for role in NATIVE_ROLES}}
 
 
@@ -73,9 +74,9 @@ def validate_lifecycle(value):
         row = native[role]
         if type(row) is not dict or set(row) != NATIVE_KEYS:
             raise ValueError('invalid fixed native schema')
-        if any(type(row[key]) is not bool for key in ('available', 'invalid', 'failed')) or type(row['stage']) is not str or row['stage'] not in NATIVE_STAGES or any(type(row[key]) is not str or row[key] not in NATIVE_STATUSES for key in ('ownerStatus', 'peerStatus')):
+        if any(type(row[key]) is not bool for key in ('available', 'invalid', 'failed', 'foregroundFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed')) or type(row['stage']) is not str or row['stage'] not in NATIVE_STAGES or any(type(row[key]) is not str or row[key] not in NATIVE_STATUSES for key in ('ownerStatus', 'peerStatus')):
             raise ValueError('invalid fixed native value')
-        if row['available'] and row['invalid'] or not row['available'] and (row['stage'] != 'not-started' or row['failed'] or row['ownerStatus'] != 'unobserved' or row['peerStatus'] != 'unobserved'):
+        if row['available'] and row['invalid'] or not row['available'] and (row['stage'] != 'not-started' or any(row[key] for key in ('failed', 'foregroundFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed')) or row['ownerStatus'] != 'unobserved' or row['peerStatus'] != 'unobserved'):
             raise ValueError('inconsistent fixed native observation')
         observations[role] = {key: row[key] for key in sorted(NATIVE_KEYS)}
     return {**{key: value[key] for key in sorted(LIFECYCLE_KEYS - {'native'})}, 'native': observations}
@@ -269,7 +270,7 @@ def _main(cancellation, argv=None):
     accepted = False
     export_ready = False
     report = failed_report()
-    provenance = {'schema': 1, 'scope': SCOPE, 'stage': 'preflight'}
+    provenance = {'schema': 1, 'scope': SCOPE, 'stage': 'preflight', 'fixtureRegressions': FIXTURE_REGRESSIONS, 'fixtureRegressionsPassed': False}
     export = Path(os.environ['RUNNER_TEMP']) / 'soba-product-activation-sanitized'
     try:
         os.umask(0o077)
@@ -332,6 +333,11 @@ def _main(cancellation, argv=None):
         env = dict(preparation_env, GOTOOLCHAIN='local', GOWORK='off', GOPROXY='off', GOSUMDB='off', GOTELEMETRY='off', GOFLAGS='-mod=readonly -buildvcs=false')
         run_command(['go', 'test', '-race', '-tags=' + TAGS, '-c', '-o', str(binary), './cmd/soba'], log, env=env)
         provenance['fixtureSha256'] = digest(binary)
+        # Exercise status ownership on the exact race binary before browser work.
+        # These regressions use synthetic child exits and files, never Core/network.
+        run_command([str(binary), '-test.run=' + FIXTURE_REGRESSIONS, '-test.count=1'],
+                    log, env=dict(env, GORACE='halt_on_error=1 exitcode=66 atexit_sleep_ms=0'), timeout=60)
+        provenance['fixtureRegressionsPassed'] = True
         if asset_hashes(assets) != provenance['assetSha256']:
             raise ValueError('production assets changed during compile')
         wrapper_report = private / 'wrapper-result.json'

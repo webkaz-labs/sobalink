@@ -96,6 +96,7 @@ func runProductActivationDispatch(dir string) int {
 		}
 		return 0
 	}
+	installProductWaitObserver(dir)
 	watchdog := time.AfterFunc(80*time.Second, func() { os.Exit(92) })
 	defer watchdog.Stop()
 	launchLoginBrowser = func(_ context.Context, url string) error {
@@ -243,7 +244,13 @@ func runProductOwner(dir string, successor bool) (result error) {
 		if err != nil {
 			return errors.Join(err, lock.Close())
 		}
-		defer func() { cancel(); result = errors.Join(result, peer.Close(), peerLock.Close()) }()
+		defer func() {
+			cancel()
+			peerErr, lockErr := peer.Close(), peerLock.Close()
+			diagnostic.view.PeerCloseFailed = peerErr != nil
+			diagnostic.view.LockCloseFailed = lockErr != nil
+			result = errors.Join(result, peerErr, lockErr)
+		}()
 		intent := core.UpgradeIntent{PeerID: manifest.OwnerID, Deadline: time.Now().Add(45 * time.Second).UTC().Format(time.RFC3339Nano)}
 		invoke := func(name string, in any) (any, error) {
 			raw, _ := json.Marshal(in)
@@ -274,6 +281,8 @@ func runProductOwner(dir string, successor bool) (result error) {
 	err := runForeground(ctx, dir, successor, false, io.Discard)
 	cancel()
 	monitorErr := <-monitorDone
+	diagnostic.view.ForegroundFailed = err != nil
+	diagnostic.view.MonitorFailed = monitorErr != nil
 	return errors.Join(err, monitorErr)
 }
 func randomProductRequest() string { token, _ := upgradeRandomToken(); return "product-" + token }
