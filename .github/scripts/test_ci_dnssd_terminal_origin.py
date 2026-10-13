@@ -18,11 +18,18 @@ def process(pid=123, ppid=1, uid=1001, command='/synthetic/python'):
     return {'pid': pid, 'ppid': ppid, 'uid': uid, 'start': 'Tue Oct 13 00:00:00 2026', 'command': command}
 
 
-def explain(chain, paths, *, mutate=None, cleanup=True, verify_native=False):
+def explain(chain, paths, *, mutate=None, cleanup=True, verify_native=False,
+            reference_path='/synthetic/python', reference_status='observed', reference_recheck_path=None):
     calls = [chain[0]]
+    reference = process(900, command='/synthetic/launcher')
+    if verify_native:
+        calls.extend((reference, reference))
+        paths = [(reference_status, reference_path), *paths[:len(chain)],
+                 ('observed', reference_path if reference_recheck_path is None else reference_recheck_path), *paths[len(chain):]]
     for row in chain:
         calls.extend((row, row))
     if verify_native:
+        calls.extend((reference, reference))
         for row in chain:
             calls.extend((row, row))
     if mutate:
@@ -35,20 +42,73 @@ def explain(chain, paths, *, mutate=None, cleanup=True, verify_native=False):
         return row
     with patch.object(gate.os, 'getuid', return_value=1001), \
             patch.object(gate, 'process_info', side_effect=snapshot), \
-            patch.object(gate.sys, 'executable', '/synthetic/python'), \
+            patch.object(gate.sys, 'executable', '/synthetic/launcher' if verify_native else '/synthetic/python'), \
             patch.object(gate, 'kernel_path', side_effect=paths) as query:
-        result = gate.explain_chain(gate.identity(chain[0]), verify_native=verify_native)
+        result = gate.explain_chain(gate.identity(chain[0]), verify_native=verify_native,
+                                   interpreter_parent=gate.identity(reference) if verify_native else None)
     gate.validate_origin(result)
     return result, query.call_count
 
 
 class TerminalOriginTests(unittest.TestCase):
+    def test_live_coordinator_image_matches_despite_a_different_launcher_path(self):
+        chain = [process(ppid=124), process(124, 125, command='-zsh'),
+                 process(125, 126, uid=0, command='(login)'), process(126, command=gate.TERMINAL_EXECUTABLE)]
+        paths = [('observed', path) for path in ('/synthetic/python', '/bin/zsh', '/usr/bin/login', gate.TERMINAL_EXECUTABLE)]
+        value, _ = explain(chain, paths * 2, verify_native=True)
+        value['workerJoined'] = True
+        self.assertTrue(value['interpreterReferenceVerified'])
+        self.assertTrue(gate.native_origin_verified(value))
+        value, _ = explain(chain, paths * 2, verify_native=True, reference_path='/synthetic/different-python')
+        value['workerJoined'] = True
+        self.assertTrue(value['interpreterReferenceVerified'])
+        self.assertFalse(value['supervisorExecutableMatched'])
+        self.assertFalse(gate.native_origin_verified(value))
+
+    def test_missing_mismatched_or_raced_coordinator_reference_is_closed(self):
+        for changed in (None, process(900, uid=0), dict(process(900), start='changed'), process(901)):
+            value, count = explain([process()], [], verify_native=True,
+                mutate=lambda calls: calls.__setitem__(1, changed))
+            self.assertEqual(value['reason'], 'reference_changed')
+            self.assertEqual(count, 0)
+            self.assertFalse(value['interpreterReferenceVerified'])
+        value, count = explain([process()], [], verify_native=True,
+            mutate=lambda calls: calls.__setitem__(2, process(900, ppid=901)))
+        self.assertEqual(value['reason'], 'reference_changed')
+        self.assertEqual(count, 1)
+        self.assertFalse(value['interpreterReferenceVerified'])
+
+    def test_reference_denial_and_unavailability_never_try_fallback(self):
+        for status in ('denied', 'unavailable', 'invalid'):
+            value, count = explain([process()], [], verify_native=True, reference_status=status, reference_path=None)
+            self.assertEqual(value['reason'], 'reference_' + status)
+            self.assertEqual(count, 1)
+            self.assertFalse(value['interpreterReferenceVerified'])
+            self.assertFalse(value['supervisorExecutableMatched'])
+        for status in ('unavailable', 'invalid'):
+            value, count = explain([process()], [], verify_native=True,
+                mutate=lambda calls: calls.__setitem__(1, gate.ProcessObservationError(status)))
+            self.assertEqual(value['reason'], 'reference_' + status)
+            self.assertEqual(count, 0)
+
+    def test_final_reference_identity_and_image_are_rechecked_with_chain(self):
+        chain = [process(ppid=124), process(124, 125, command='-zsh'),
+                 process(125, 126, uid=0, command='(login)'), process(126, command=gate.TERMINAL_EXECUTABLE)]
+        paths = [('observed', path) for path in ('/synthetic/python', '/bin/zsh', '/usr/bin/login', gate.TERMINAL_EXECUTABLE)]
+        value, count = explain(chain, paths * 2, verify_native=True,
+            mutate=lambda calls: calls.__setitem__(11, dict(calls[11], start='changed')))
+        self.assertEqual((value['reason'], count), ('recheck_changed', 5))
+        self.assertFalse(value['chainRechecked'])
+        value, count = explain(chain, paths * 2, verify_native=True, reference_recheck_path='/synthetic/changed')
+        self.assertEqual((value['reason'], count), ('recheck_changed', 6))
+        self.assertFalse(value['chainRechecked'])
+
     def test_native_verifier_requires_the_fresh_exact_four_hop_chain(self):
         chain = [process(ppid=124), process(124, 125, command='-zsh'),
                  process(125, 126, uid=0, command='(login)'), process(126, command=gate.TERMINAL_EXECUTABLE)]
         paths = [('observed', path) for path in ('/synthetic/python', '/bin/zsh', '/usr/bin/login', gate.TERMINAL_EXECUTABLE)]
         value, count = explain(chain, paths * 2, verify_native=True)
-        self.assertEqual(count, 8)
+        self.assertEqual(count, 10)
         self.assertTrue(value['chainRechecked'])
         self.assertTrue(value['supervisorExecutableMatched'])
         self.assertFalse(gate.native_origin_verified(value))
@@ -63,6 +123,7 @@ class TerminalOriginTests(unittest.TestCase):
     def test_native_verifier_rejects_every_unexpected_uid_path_or_shape(self):
         base = native_observation()
         changes = [lambda v: v.update(workerJoined=False), lambda v: v.update(chainRechecked=False),
+            lambda v: v.update(interpreterReferenceVerified=False),
             lambda v: v.update(supervisorExecutableMatched=False),
             lambda v: v['hops'][0].update(uidRelation='other'),
             lambda v: v['hops'][1].update(uidRelation='other'),
@@ -89,14 +150,14 @@ class TerminalOriginTests(unittest.TestCase):
         paths = [('observed', path) for path in ('/synthetic/python', '/bin/zsh', '/usr/bin/login', gate.TERMINAL_EXECUTABLE)]
         for change in ({'pid': 999}, {'ppid': 999}, {'uid': 0}, {'start': 'changed'}):
             value, count = explain(chain, paths * 2, verify_native=True,
-                mutate=lambda calls: calls.__setitem__(9, dict(calls[9], **change)))
+                mutate=lambda calls: calls.__setitem__(13, dict(calls[13], **change)))
             self.assertEqual(value['reason'], 'recheck_changed')
-            self.assertEqual(count, 4)
+            self.assertEqual(count, 6)
             self.assertFalse(value['chainRechecked'])
         for state in ('denied', 'unavailable', 'invalid'):
             value, count = explain(chain, paths + [(state, None)], verify_native=True)
             self.assertEqual(value['reason'], 'recheck_' + state)
-            self.assertEqual(count, 5)
+            self.assertEqual(count, 7)
             self.assertFalse(value['chainRechecked'])
         value, _ = explain(chain, paths + [('observed', '/synthetic/changed')], verify_native=True)
         self.assertEqual(value['reason'], 'recheck_changed')
@@ -125,6 +186,7 @@ class TerminalOriginTests(unittest.TestCase):
                 own = gate.identity(dict(process(), uid=os.getuid()))
                 nonce = 'a' * 64
                 gate.write_private(root / 'plan.json', {'nonce': nonce, 'markerOnly': marker_only,
+                    'parent': gate.identity(dict(process(900), uid=os.getuid())),
                     'launchDeadline': 135, 'scriptSha256': gate.digest(gate.SCRIPT)})
                 gate.write_private(root / 'started.json', {'nonce': nonce, 'owner': own})
                 gate.write_private(root / 'marker.json', {'nonce': nonce if nonce_matches else 'b' * 64,
@@ -135,7 +197,8 @@ class TerminalOriginTests(unittest.TestCase):
                         0 if marker_only != verify and nonce_matches else 1)
                 self.assertEqual(explain_call.call_count, int(marker_only != verify and nonce_matches))
                 if explain_call.called:
-                    self.assertEqual(explain_call.call_args.kwargs, {'verify_native': verify})
+                    self.assertEqual(explain_call.call_args.kwargs, {'verify_native': verify,
+                        'interpreter_parent': gate.identity(dict(process(900), uid=os.getuid())) if verify else None})
 
     def test_system_login_boundary_is_explained_but_never_authorizes(self):
         chain = [process(ppid=124), process(124, 125, command='-zsh'),

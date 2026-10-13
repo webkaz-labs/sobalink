@@ -38,7 +38,7 @@ def native_observation(verified=True):
         return gate.empty_origin()
     value = gate.empty_origin('terminal_path')
     value.update(hopCount=4, terminalPathObserved=True, workerJoined=True, queriesJoined=True,
-                 supervisorExecutableMatched=True, chainRechecked=True)
+                 supervisorExecutableMatched=True, interpreterReferenceVerified=True, chainRechecked=True)
     value['hops'] = [{'uidRelation': relation, 'effectiveUidClass': uid, 'kernelPathClass': path,
         'commandClass': path, 'pathStatus': 'observed', 'commandMatchesKernelPath': True, 'snapshotStable': True}
         for relation, uid, path in [('same', 'nonzero', 'other'), ('same', 'nonzero', 'shell'),

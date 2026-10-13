@@ -383,14 +383,15 @@ ORIGIN_REASONS = {'terminal_path', 'end_reached', 'cycle', 'depth_limit', 'deadl
     'owner_mismatch', 'process_absent', 'process_unavailable', 'process_invalid',
     'path_denied', 'path_unavailable', 'path_invalid', 'snapshot_changed',
     'worker_incomplete', 'cleanup_unresolved', 'gate_incomplete',
-    'recheck_changed', 'recheck_denied', 'recheck_unavailable', 'recheck_invalid'}
+    'recheck_changed', 'recheck_denied', 'recheck_unavailable', 'recheck_invalid',
+    'reference_changed', 'reference_denied', 'reference_unavailable', 'reference_invalid'}
 PATH_CLASSES = {'terminal_exact', 'login', 'shell', 'other', 'unknown'}
 
 
 def empty_origin(reason='worker_incomplete'):
     return {'reason': reason, 'hopCount': 0, 'hops': [], 'authorizesNative': False,
             'terminalPathObserved': False, 'workerJoined': False, 'queriesJoined': False,
-            'supervisorExecutableMatched': False, 'chainRechecked': False}
+            'supervisorExecutableMatched': False, 'interpreterReferenceVerified': False, 'chainRechecked': False}
 
 
 def kernel_path(pid):
@@ -422,7 +423,7 @@ def kernel_path(pid):
         return 'invalid', None
 
 
-def explain_chain(expected, *, verify_native=False):
+def explain_chain(expected, *, verify_native=False, interpreter_parent=None):
     """Bounded kernel-path observation, with optional native final rechecks.
 
     Marker explanations remain non-authorizing. Native mode adds a final chain
@@ -450,6 +451,36 @@ def explain_chain(expected, *, verify_native=False):
         if identity(current) != expected or expected['uid'] != os.getuid():
             result['reason'] = 'owner_mismatch'
             return result
+        reference_path = None
+        if verify_native:
+            # sys.executable may name a macOS framework launcher, not its live
+            # interpreter image. Compare kernel image to kernel image instead.
+            # https://github.com/python/cpython/blob/989b25490519167dba428ccac9f9176e39d45bdc/Modules/getpath.py
+            # The private coordinator identity is retained in the original plan.
+            if (type(interpreter_parent) is not dict or set(interpreter_parent) != {'pid', 'uid', 'start'}
+                    or type(interpreter_parent['pid']) is not int or interpreter_parent['pid'] <= 1
+                    or interpreter_parent['pid'] == expected['pid'] or interpreter_parent['uid'] != os.getuid()):
+                result['reason'] = 'reference_changed'
+                return result
+            try:
+                reference = snapshot(interpreter_parent['pid'])
+                if identity(reference) != interpreter_parent:
+                    result['reason'] = 'reference_changed'
+                    return result
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('observation deadline')
+                reference_status, reference_path = kernel_path(interpreter_parent['pid'])
+                if reference_status != 'observed':
+                    result['reason'] = 'reference_' + reference_status
+                    return result
+                if snapshot(interpreter_parent['pid']) != reference:
+                    result['reason'] = 'reference_changed'
+                    return result
+            except ProcessObservationError as error:
+                result['reason'] = 'reference_' + error.kind
+                return result
+            result['interpreterReferenceVerified'] = True
+            retained.append((reference, reference_path))
         pid = expected['pid']
         for _ in range(12):
             if pid <= 1 or pid in visited:
@@ -481,7 +512,8 @@ def explain_chain(expected, *, verify_native=False):
                 row['kernelPathClass'] = 'other'
             row['commandMatchesKernelPath'] = before['command'] == path
             if len(visited) == 1:
-                result['supervisorExecutableMatched'] = os.path.realpath(path) == os.path.realpath(sys.executable)
+                result['supervisorExecutableMatched'] = (path == reference_path if verify_native
+                    else os.path.realpath(path) == os.path.realpath(sys.executable))
             after = snapshot(pid)
             if before != after:
                 result['reason'] = 'snapshot_changed'
@@ -524,7 +556,8 @@ def explain_chain(expected, *, verify_native=False):
 def validate_origin(value):
     if (type(value) is not dict or set(value) != set(empty_origin())
             or value['reason'] not in ORIGIN_REASONS or value['authorizesNative'] is not False
-            or any(type(value[key]) is not bool for key in ('terminalPathObserved', 'workerJoined', 'queriesJoined', 'supervisorExecutableMatched', 'chainRechecked'))
+            or any(type(value[key]) is not bool for key in ('terminalPathObserved', 'workerJoined', 'queriesJoined',
+                'supervisorExecutableMatched', 'interpreterReferenceVerified', 'chainRechecked'))
             or type(value['hopCount']) is not int or not 0 <= value['hopCount'] <= 12
             or type(value['hops']) is not list or len(value['hops']) != value['hopCount']
             or value['terminalPathObserved'] != (value['reason'] == 'terminal_path')):
@@ -569,7 +602,7 @@ def native_origin_verified(value):
     expected = [('same', 'nonzero', 'other'), ('same', 'nonzero', 'shell'),
                 ('other', 'zero', 'login'), ('same', 'nonzero', 'terminal_exact')]
     return (value['workerJoined'] and value['queriesJoined'] and value['chainRechecked']
-        and value['supervisorExecutableMatched'] and value['terminalPathObserved']
+        and value['interpreterReferenceVerified'] and value['supervisorExecutableMatched'] and value['terminalPathObserved']
         and value['hopCount'] == 4
         and [(row['uidRelation'], row['effectiveUidClass'], row['kernelPathClass']) for row in value['hops']] == expected
         and all(row['snapshotStable'] and row['pathStatus'] == 'observed' for row in value['hops']))
@@ -587,7 +620,8 @@ def observe_child(directory, *, verify_native=False):
                 or time.monotonic() >= plan['launchDeadline'] or (directory / 'cancelled').exists()
                 or digest(SCRIPT) != plan['scriptSha256']):
             return 1
-        print(json.dumps(validate_origin(explain_chain(owner, verify_native=verify_native)), sort_keys=True))
+        print(json.dumps(validate_origin(explain_chain(owner, verify_native=verify_native,
+            interpreter_parent=plan['parent'] if verify_native else None)), sort_keys=True))
         return 0
     except Exception:
         return 1
