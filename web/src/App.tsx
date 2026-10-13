@@ -181,6 +181,7 @@ export function App() {
   const [batches, setBatches] = useState<Record<string, DraftBatch | undefined>>({})
   const [uploadActivity, setUploadActivity] = useState<UploadActivity | null>(null)
   const lastConversationId = useRef<string | null>(null)
+  const networkCloseGuard = useRef<(() => Promise<boolean>) | undefined>(undefined)
   const [selectedId, setSelectedId] = useState<string | null>(() => typeof history.state?.sobalinkPeer === 'string' ? history.state.sobalinkPeer : null)
   const [deviceSection, setDeviceSection] = useState<'services' | 'exchange'>(history.state?.sobalinkSection === 'exchange' ? 'exchange' : 'services')
   const changeSection = (value: 'services' | 'exchange') => { setDeviceSection(value); history.replaceState({ ...history.state, sobalinkSection: value }, '') }
@@ -197,7 +198,7 @@ export function App() {
   }
   const closeDetails = () => { setDetails(false); history.replaceState({ ...history.state, sobalinkDetails: false }, '') }
   useEffect(() => {
-    const back = () => {
+    const finishBack = () => {
       setCatalogViewNavigation(value => value + 1)
       ++catalogNavigationGeneration.current; catalogNavigationBusy.current = false; catalogController.close(); setCatalogNavigating(false); setTransferFocus(null); setCatalogNavigationMissing(false)
       resourceController.close(); groupController.close()
@@ -207,6 +208,7 @@ export function App() {
       setNetworkView(history.state?.sobalinkNetworkView === 'list' ? 'list' : 'diagram')
       setDetails(Boolean(history.state?.sobalinkDetails)); setDialog(history.state?.sobalinkOutbox ? 'outbox' : null)
     }
+    const back = () => { const guard = networkCloseGuard.current; if (guard) { void guard().then(ok => { if (ok) finishBack() }); return }; finishBack() }
     window.addEventListener('popstate', back)
     return () => window.removeEventListener('popstate', back)
   }, [])
@@ -380,7 +382,7 @@ export function App() {
     {dialog === 'resource-settings' && <ResourceSettingsDialog controller={resourceController} initialPeerKey={resourceInitialPeerKey} onAddToGroup={addSelectedToGroup} addToGroupLabel={groupText(locale, 'addSelected')} locale={locale} t={t} onClose={() => setDialog(null)} />}
     {dialog === 'receive-recovery' && <ReceiveRecoveryDialog server={server} locale={locale} t={t} onClose={() => setDialog(null)} onBack={() => openDialog('preferences')} />}
     {dialog === 'preferences' && <Preferences onResourceSettings={() => openDialog('resource-settings')} resourceSettingsLabel={resourceText(locale, 'title')} recoveryLocale={locale} onReviewReceiving={() => openDialog('receive-recovery')} onStartup={() => openDialog('startup')} startupLabel={lifecycleText(locale, 'startup')} onAdvancedConnections={() => openDialog('advanced-connections')} advancedConnectionsLabel={advancedText(locale, 'title')} onStopSharing={() => openDialog('stop-shares')} stopSharingLabel={serviceText(locale, 'stopShares')} onPolicy={() => openDialog('policy')} policyLabel={policyText(locale, 'title')} directoryDraft={directoryDrafts.preferences} onDirectoryDraft={value => setDirectoryDrafts(current => ({ ...current, preferences: value }))} server={server} t={t} onClose={() => setDialog(null)} locale={localePreference} theme={theme} setLocale={setLocalePreference} setTheme={setTheme} />}
-    {dialog === 'network' && <NetworkDialog locale={locale} directLanDraft={directLanDraft} setDirectLanDraft={setDirectLanDraft} lanDraft={lanDraft} setLanDraft={setLanDraft} onViewPeer={id => { navigatePeer(id, 'chat', true); setDialog(null) }} t={t} onClose={() => setDialog(null)} server={server} />}
+    {dialog === 'network' && <NetworkDialog navigationGuard={networkCloseGuard} locale={locale} directLanDraft={directLanDraft} setDirectLanDraft={setDirectLanDraft} lanDraft={lanDraft} setLanDraft={setLanDraft} onViewPeer={id => { navigatePeer(id, 'chat', true); setDialog(null) }} t={t} onClose={() => setDialog(null)} server={server} />}
     {(dialog === 'autosave' || dialog === 'autosave-folder') && peer && <AutosaveDialog directoryDraft={directoryDrafts[`autosave:${peer.id}`]} onDirectoryDraft={value => setDirectoryDrafts(current => ({ ...current, [`autosave:${peer.id}`]: value }))} locale={locale} edit={dialog === 'autosave-folder'} t={t} onClose={() => setDialog(null)} server={server} peer={peer} />}
     {dialog === 'pause-peer' && peer && <PausePeerDialog t={t} onClose={() => setDialog(null)} server={server} peer={peer} />}
     {dialog === 'revoke-pairing' && peer && <RevokePairingDialog key={peer.id} t={t} onClose={() => setDialog(null)} server={server} peer={peer} />}

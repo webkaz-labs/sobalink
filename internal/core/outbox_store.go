@@ -122,6 +122,7 @@ type outboxCoordinator struct {
 	next              map[string]time.Time
 	certified         map[string]OutboxRecord
 	capabilities      map[string]bool
+	cleanupCursor     string // process-local fair scan; grants no deletion authority
 	orphanBytes       int64
 	now               func() time.Time
 	write             func(string, []byte) error
@@ -583,7 +584,7 @@ func (o *outboxCoordinator) validateLocked() error {
 			if row.PayloadID != payload.ID {
 				continue
 			}
-			if payload.NamespaceRemoval && (row.View.DeliveryOutcome != "confirmed" && row.View.DeliveryOutcome != "not_attempted") {
+			if payload.NamespaceRemoval && !outboxKnownChildOutcomes(row) {
 				return outboxError("outbox_recovery_required")
 			}
 			for _, child := range row.View.Children {

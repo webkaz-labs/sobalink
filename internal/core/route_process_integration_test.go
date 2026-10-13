@@ -51,6 +51,9 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		t.Fatal("open isolated subprocess Core")
 	}
 	defer c.Close()
+	if os.Getenv("SOBALINK_ROUTE_PROCESS_SETUP") == "1" {
+		installBrowserSetupScope(c)
+	}
 	var closers []io.Closer
 	defer func() {
 		for _, v := range closers {
@@ -86,6 +89,10 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 			if callErr == nil {
 				value, callErr = c.transfers.Get(in.TransferID)
 			}
+		case "fixture.setup-evidence":
+			value = browserSetupEvidence(c)
+		case "fixture.setup-hello":
+			value = browserSetupHello(ctx, c)
 		case "fixture.snapshot":
 			value, callErr = c.Snapshot(ctx)
 		case "fixture.catalog-local":

@@ -131,7 +131,10 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
     // Public-card reads have no effect to retry or retain. Keep this exact
     // allowlist separate from mutating commands and their uncertainty guards.
     const cardRead = name === 'device-card.export' || name === 'device-card.inspect'
-    const retainUncertain = !name.startsWith('favorites.') && !cardRead
+    // Setup recovers by its original session, never by blindly replaying a
+    // command response. Status must be a fresh read, including after a lost reply.
+    const setupCommand = name.startsWith('setup.')
+    const retainUncertain = !name.startsWith('favorites.') && !cardRead && !setupCommand
     try {
       if (name === 'message.send') {
         const message = payload as api.CommandPayloads['message.send']

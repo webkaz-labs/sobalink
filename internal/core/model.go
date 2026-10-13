@@ -106,6 +106,9 @@ type Options struct {
 }
 
 type Core struct {
+	setup          *setupSession                // mu; one bounded, explicitly consented setup owner
+	setupScopeRead func() ([]SetupScope, error) // optional isolated-test address source
+
 	durableProfileError          string                          // mu; uncertain or incomplete profile initialization blocks durable work
 	catalogViews                 *resourceCatalogViewCoordinator // op; nil unless explicitly enabled
 	catalogViewReceived          *catalogViewReceipt             // op; one explicitly selected remote view

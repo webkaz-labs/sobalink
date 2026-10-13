@@ -115,13 +115,16 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" && command != "outbox" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" && command != "outbox" && command != "nearby" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
 		}
 		fmt.Fprintln(out, text(ja, "Usage: soba ", "使い方: soba ")+usage)
 		return nil
+	}
+	if command == "nearby" {
+		return nearbyCLICommand(ctx, args, dir, ja, jsonErrors, *dryRun, *offlineDefinitions, out, stdin, client)
 	}
 	if command == "card" {
 		return deviceCardCLI(ctx, args, dir, ja, jsonErrors, *dryRun, *offlineDefinitions, out, stdin, client)
@@ -526,6 +529,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba start --offline         Open settings without starting the saved network
   soba ui                      Get the local URL and a fresh one-time code
   soba status                  Show current state (--json for machines)
+  soba nearby                 Connect to a nearby device with explicit review
   soba setup --network tailnet Activate the existing Tailscale connection
   soba login                   Request an official interactive sign-in link
   soba logout                  Stop traffic, log out of Tailnet and exit
@@ -586,6 +590,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba start --offline         保存済みネットワークを開始せず設定画面を開く
   soba ui                      画面URLと新しい一回用コードを表示
   soba status                  現在の状態を表示（機械向けは --json）
+  soba nearby                 確認と承認で近くの端末へ接続
   soba setup --network tailnet 既存のTailscale接続を有効化
   soba login                   公式の対話型ログインを開始
   soba logout                  通信を停止し、Tailnet からログアウトして終了

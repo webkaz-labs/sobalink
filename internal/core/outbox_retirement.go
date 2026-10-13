@@ -49,7 +49,7 @@ func (o *outboxCoordinator) retireOwnedLocked() error {
 }
 func (o *outboxCoordinator) retirementEligibleLocked(row *outboxIntent) bool {
 	p := o.state.Payloads[row.PayloadID]
-	if p == nil || !p.Released || p.CleanupPending || (row.View.DeliveryOutcome != "confirmed" && row.View.DeliveryOutcome != "not_attempted") {
+	if p == nil || !p.Released || p.CleanupPending || !outboxKnownChildOutcomes(row) {
 		return false
 	}
 	for _, child := range row.View.Children {
@@ -69,6 +69,21 @@ func (o *outboxCoordinator) retirementEligibleLocked(row *outboxIntent) bool {
 	}
 	for _, prep := range o.prepared {
 		if prep.intent.PayloadID == p.ID && (prep.staging || !prep.discarded) {
+			return false
+		}
+	}
+	return true
+}
+
+// An aggregate "partial" can mean an entirely known mixture of delivered and
+// never-attempted children. Inspect each child rather than retaining that safe
+// history forever. Actual partial/unknown child evidence remains queryable.
+func outboxKnownChildOutcomes(row *outboxIntent) bool {
+	if len(row.View.Children) == 0 {
+		return false
+	}
+	for _, child := range row.View.Children {
+		if child.DeliveryOutcome != "confirmed" && child.DeliveryOutcome != "not_attempted" {
 			return false
 		}
 	}

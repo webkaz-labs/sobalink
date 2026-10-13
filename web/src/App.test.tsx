@@ -1,3 +1,4 @@
+import { nearbyText } from './nearby-i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -270,6 +271,7 @@ describe('explicit and interrupted flows', () => {
     const { requests } = setup({ ...state, self: { ...state.self, status }, settings: { network: 'tailnet' } })
     render(<App />)
     await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    await userEvent.click(screen.getByRole('button', { name: nearbyText('en', 'advanced') }))
     await userEvent.click(screen.getByRole('radio', { name: /^LAN/ }))
     await userEvent.click(screen.getByText('Advanced: use an existing relay'))
     expect(screen.getByRole('button', { name: 'Create device identity' })).toBeInTheDocument()
@@ -281,6 +283,7 @@ describe('explicit and interrupted flows', () => {
     const { requests } = setup({ ...state, self: { ...state.self, status: 'idle', name: 'notebook' }, settings: { network: 'lan' } })
     render(<App />)
     await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    await userEvent.click(screen.getByRole('button', { name: nearbyText('en', 'advanced') }))
     await userEvent.click(screen.getByRole('radio', { name: /^Tailnet/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Activate' }))
     await waitFor(() => expect(requests.find(request => request.body.name === 'network.configure')?.body).toMatchObject({ name: 'network.configure', payload: { mode: 'tailnet', hostname: 'notebook' } }))
@@ -289,6 +292,7 @@ describe('explicit and interrupted flows', () => {
   it('keeps reviewed whole-app Stop available while switching away from a running network', async () => {
     const { requests } = setup(); render(<App />)
     await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    await userEvent.click(screen.getByRole('button', { name: nearbyText('en', 'advanced') }))
     await userEvent.click(screen.getByRole('radio', { name: /^LAN/ }))
     expect(screen.queryByRole('button', { name: 'Start relay' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Stop sobalink' }))
@@ -312,6 +316,7 @@ describe('explicit and interrupted flows', () => {
     const { requests } = setup({ ...state, self: { ...state.self, status, networks: [] }, peers: [], settings: { network: 'none' } })
     render(<App />)
     await userEvent.click((await screen.findAllByRole('button', { name: t('addDevice') }))[0])
+    await userEvent.click(screen.getByRole('button', { name: nearbyText(locale, 'advanced') }))
     expect(screen.queryByText(t('networkRestart'))).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: t('signInTailscale') })).toBeDisabled()
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -334,9 +339,12 @@ describe('explicit and interrupted flows', () => {
     const { requests } = setup({ ...state, self: { ...state.self, status: 'idle' }, settings: { network: 'none' } })
     render(<App />)
     await userEvent.click((await screen.findAllByRole('button', { name: 'Set up network' }))[0])
+    await userEvent.click(screen.getByRole('button', { name: nearbyText('en', 'advanced') }))
     fireEvent.change(screen.getByRole('textbox', { name: /This device name/ }), { target: { value: 'draft-device' } })
-    await userEvent.keyboard('{Escape}')
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await userEvent.click(screen.getAllByRole('button', { name: 'Set up network' })[0])
+    await userEvent.click(screen.getByRole('button', { name: nearbyText('en', 'advanced') }))
     expect(screen.getByRole('textbox', { name: /This device name/ })).toHaveValue('draft-device')
     expect(requests).toHaveLength(0)
     expect(screen.getByRole('button', { name: 'Sign in to Tailscale' })).toBeDisabled()

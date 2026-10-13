@@ -49,6 +49,9 @@ func (c *Core) pumpOutbox() {
 			if o.drainCompletionsLocked() != nil {
 				return
 			}
+			if o.retryPendingCleanupLocked() != nil {
+				return
+			}
 			now := o.now().UTC()
 			if o.retireLocked() != nil {
 				return

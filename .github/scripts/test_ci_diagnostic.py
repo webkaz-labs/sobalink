@@ -20,7 +20,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
                     sha=sha, checkout_sha=sha)
 
     def test_exact_closed_suites(self):
-        for suite in ('web', 'product', 'activation'):
+        for suite in ('web', 'product', 'activation', 'nearby'):
             self.assertEqual(gate.select(**self.args(suite)), suite)
 
     def test_rejects_other_events_refs_and_heads(self):
@@ -64,7 +64,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         spec.loader.exec_module(coverage)
         jobs = [dict(name=name, status='completed', conclusion='success', steps=[])
                 for name in ('diagnostic-selection', 'diagnostic-web-activation',
-                             'diagnostic-product-activation')]
+                             'diagnostic-product-activation', 'diagnostic-nearby')]
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs, scope)
@@ -74,7 +74,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         trigger = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
         self.assertEqual(trigger.strip(), 'create:')
         self.assertEqual(re.findall(r'^  ([a-z][a-z0-9-]*):$', text.split('\njobs:\n')[1], re.M),
-                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation'])
+                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby'])
         for forbidden in ('continue-on-error:', 'actions/cache', 'secrets.', 'workflow_dispatch:',
                           'ci-coverage.py', 'ci-required:', 'package-tool', 'id-token: write', 'contents: write'):
             self.assertNotIn(forbidden, text)
@@ -84,6 +84,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         for suite in ('web', 'product'):
             self.assertIn("if: needs.diagnostic-selection.outputs.suite == '" + suite +
                           "' || needs.diagnostic-selection.outputs.suite == 'activation'", text)
+        self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'nearby'", text)
         self.assertIn('cancel-in-progress: false', text)
         self.assertIn('not release validation', text)
         self.assertIn('push:\n    branches: [main]', self.workflow('ci'))

@@ -1,3 +1,4 @@
+import type { SetupCommandPayloads } from './nearby-setup'
 import { outboxRequestTime } from './outbox-id'
 import type { GroupCommandName, GroupCommandPayloads } from './group/types'
 import type { EndpointCommand, EndpointPayload } from './direct-lan-endpoint'
@@ -241,7 +242,7 @@ export interface GroupList { groups: ServiceGroup[] | null; revision: string }
 export type FavoriteReference = { kind: 'service'; serviceId: string } | { kind: 'group'; groupName: string }
 export type FavoriteEntry = FavoriteReference & { available: boolean }
 export interface FavoritesView { version: 1; revision: string; entries: FavoriteEntry[]; durabilityUncertain: boolean }
-export interface CommandPayloads extends Record<EndpointCommand, EndpointPayload>, ResourceCommandPayloads, ResourceCatalogCommandPayloads, GroupCommandPayloads {
+export interface CommandPayloads extends SetupCommandPayloads, Record<EndpointCommand, EndpointPayload>, ResourceCommandPayloads, ResourceCatalogCommandPayloads, GroupCommandPayloads {
   'outbox.list': Record<string, never>
   'outbox.status': { outboxId?: string; requestId?: string }
   'outbox.commit': { processId: string; outboxId: string; reviewRevision: string; confirm: true }
