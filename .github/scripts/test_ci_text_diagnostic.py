@@ -226,7 +226,7 @@ class TextDiagnosticTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gate.fixed_result(dict(gate.empty_result(), **changes))
 
-    def simulate(self, *, failure=None, source_drift=False):
+    def simulate(self, *, failure=None, source_drift=False, browser_failure_payload=None):
         """Run only orchestration against synthetic files and mocked commands."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -281,6 +281,8 @@ class TextDiagnosticTests(unittest.TestCase):
                         if failure == 'browser-receipt':
                             receipt['commitCalls'] = 2
                         Path(kwargs['env']['SOBA_TEXT_BROWSER_SUMMARY']).write_text(json.dumps(receipt))
+                        if browser_failure_payload is not None:
+                            Path(kwargs['env']['SOBA_TEXT_BROWSER_FAILURE']).write_text(json.dumps(browser_failure_payload))
                     if failure == active + '-process':
                         return 'nonzero', 1, b'synthetic-private-body-id-path-token', b'synthetic-private-error'
                     data = b'synthetic-private-body-id-path-token'
@@ -345,6 +347,50 @@ class TextDiagnosticTests(unittest.TestCase):
         status, result, _, _ = self.simulate(source_drift=True)
         self.assertEqual(status, 1)
         self.assertEqual(result['firstFailure'], 'verify-source')
+
+    def test_fixed_browser_failure_is_closed_and_matches_text_reporter_phases(self):
+        source = (gate.ROOT / 'web/browser/text-native-reporter.mjs').read_text()
+        phases = source.split('PHASES = Object.freeze([', 1)[1].split('])', 1)[0]
+        self.assertEqual(set(re.findall(r"'([^']+)'", phases)), gate.BROWSER_PHASES)
+        for phase in gate.BROWSER_PHASES:
+            for kind in gate.summary.nearby.BROWSER_ERROR_KINDS:
+                value = {'schema': 1, 'phase': phase, 'errorKind': kind}
+                self.assertEqual(gate.browser_failure(value), value)
+                self.assertIsNot(gate.browser_failure(value), value)
+        good = {'schema': 1, 'phase': 'detail-exact', 'errorKind': 'locator_missing'}
+        for changes in ({'schema': True}, {'phase': 'synthetic-private'}, {'errorKind': 'synthetic-private'},
+                        {'phase': []}, {'errorKind': None}, {'body': 'synthetic-private'}):
+            with self.assertRaises(ValueError):
+                gate.browser_failure(dict(good, **changes))
+        for key in good:
+            value = dict(good)
+            del value[key]
+            with self.assertRaises(ValueError):
+                gate.browser_failure(value)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'failure.json'
+            for raw in (b'{"schema":1,"schema":1}', b'{', b'x' * 1025):
+                path.write_bytes(raw)
+                with self.assertRaises(ValueError):
+                    gate.browser_failure(gate.summary.read_fixed(path, 1024))
+
+    def test_first_browser_failure_is_retained_without_receipt_or_exit_override(self):
+        record = {'schema': 1, 'phase': 'detail-exact', 'errorKind': 'locator_missing'}
+        for failure in (None, 'browser-process'):
+            status, result, _, _ = self.simulate(failure=failure, browser_failure_payload=record)
+            self.assertEqual(status, 1)
+            self.assertFalse(result['browserPassed'])
+            self.assertIsNone(result['browser'])
+            self.assertEqual(result['browserFailure'], record)
+            self.assertEqual(result['firstFailure'], failure or 'browser-evidence')
+        status, result, _, _ = self.simulate(failure='browser-process', browser_failure_payload=dict(record, body='synthetic-private'))
+        self.assertEqual(status, 1)
+        self.assertEqual(result['firstFailure'], 'browser-process')
+        self.assertEqual(result['browserFailure'], {'schema': 1, 'phase': 'unavailable', 'errorKind': 'evidence_unavailable'})
+        status, result, _, _ = self.simulate(failure='browser-process', browser_failure_payload=record, source_drift=True)
+        self.assertEqual(status, 1)
+        self.assertIsNone(result['browserFailure'])
+        self.assertEqual(result['browserPhase'], 'unavailable')
 
     def test_literal_text_linux_job_reuses_pins_and_closed_uploads(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()

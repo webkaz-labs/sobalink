@@ -13,7 +13,7 @@ SOURCES = (WORKFLOW, '.github/scripts/ci-impact.py', '.github/scripts/ci-coverag
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
            '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-required.py',
-           '.github/scripts/release-validation.py')
+           '.github/scripts/release-validation.py', '.github/scripts/source_provenance.py')
 TARGETS = {
     'linux-amd64': ('native (ubuntu-24.04, linux, amd64)', 'ubuntu-24.04'),
     'linux-arm64': ('native (ubuntu-24.04-arm, linux, arm64)', 'ubuntu-24.04-arm'),
@@ -135,9 +135,9 @@ def source_bytes(api, commit, local_root=None):
         if local_root is not None:
             require((Path(local_root) / path).read_bytes() == data, 'checkout policy differs from exact source')
         sources[path] = data
-    # Publication consumes these two scripts from the gate artifact, not a new
-    # checkout. Verify both loaded tools still match the immutable source.
-    for name in ('ci_full_validation.py', 'release-validation.py'):
+    # Publication consumes these scripts from the gate artifact, not a new
+    # checkout. Verify all loaded tools still match the immutable source.
+    for name in ('ci_full_validation.py', 'release-validation.py', 'source_provenance.py'):
         require(Path(__file__).with_name(name).read_bytes() == sources['.github/scripts/' + name],
                 'loaded release tool differs from exact source')
     return sources

@@ -13,7 +13,7 @@ func (s *setupSession) startDiscovery() (setupDiscovery, error) {
 	// The native adapter is selected only after local scope/disclosure consent.
 	// Loopback tests and unsupported adapters use the same manual contact path.
 	scope := nearby.Scope{InterfaceIndex: s.scope.InterfaceIndex, LocalAddress: s.local.Scope.LocalAddress, Prefix: s.local.Scope.Prefix}
-	d, e := nearby.Start(s.ctx, nearby.Config{Scope: scope, Advertisement: nearby.Advertisement{SessionID: s.local.SessionID, Alias: s.local.Alias, Protocol: nearby.Protocol, Capability: nearby.Capability, Bootstrap: s.local.Bootstrap}}, nearby.NativeFactory)
+	d, e := nearby.StartNative(s.ctx, nearby.Config{Scope: scope, Advertisement: nearby.Advertisement{SessionID: s.local.SessionID, Alias: s.local.Alias, Protocol: nearby.Protocol, Capability: nearby.Capability, Bootstrap: s.local.Bootstrap}})
 	if d == nil {
 		return nil, e
 	}

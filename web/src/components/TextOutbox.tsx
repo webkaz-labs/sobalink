@@ -100,27 +100,44 @@ export function useTextQueue({ peer, state, server, locale, text, onAccepted, on
   return { panel, queueMode, locked: !!pending, busy, supported, canPrepare: enabled && !unresolved && !pending && !busy && !!text.trim() && api.messageByteLength(text) <= api.exchangeBudgets(state).messageBytes, prepare: () => run('prepare') }
 }
 
+// Both list and detail readers return normalized metadata. A body is valid
+// only for that exact metadata revision and the Core process that verified it.
+function textRecordRevision(record: TextOutboxRecord) {
+  const { text: _text, ...metadata } = record
+  return JSON.stringify(metadata)
+}
+
 function TextQueueCard({ initial, state, server, locale, onChange }: { initial: TextOutboxRecord; state: api.State; server: Server; locale: api.Locale; onChange: (record: TextOutboxRecord) => void }) {
   const t = (key: Parameters<typeof textQueueText>[1]) => textQueueText(locale, key)
-  const [detail, setDetail] = useState<TextOutboxRecord | null>(null), [code, setCode] = useState(''), [busy, setBusy] = useState(false), [consent, setConsent] = useState(false)
+  const [inspection, setInspection] = useState<{ record: TextOutboxRecord; processId?: string } | null>(null), [code, setCode] = useState(''), [busy, setBusy] = useState(false), [consent, setConsent] = useState(false)
   const working = useRef(false), alive = useRef(true)
+  const revision = textRecordRevision(initial), processId = state.resourceCatalogProcessId
+  const current = JSON.stringify([processId, revision]), latest = useRef({ current })
+  if (latest.current.current !== current) latest.current = { current }
+  const observed = latest.current
+  const detail = inspection?.processId === processId && inspection && textRecordRevision(inspection.record) === revision ? inspection.record : null
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  useEffect(() => { setConsent(false); setDetail(null) }, [initial.updatedAt, state.resourceCatalogProcessId])
+  useEffect(() => {
+    setConsent(false)
+    setInspection(value => value?.processId === processId && value && textRecordRevision(value.record) === revision ? value : null)
+  }, [revision, processId])
   const record = detail || initial, ready = server.auth === 'ready' && !server.stale
   const prepared = record.status === 'prepared' && record.admission === 'prepared'
   const peer = state.peers.find(p => p.id === record.peerId)
   const live = record.processId === state.resourceCatalogProcessId && Date.parse(record.expiresAt) > Date.now() && Date.now() < Date.parse(record.createdAt) + 15 * 60000
   const act = async (action: 'status' | 'commit' | 'discard' | 'cancel') => {
-    if (working.current || !ready || action === 'commit' && (!detail || !consent || !live || !peer || !canQueueText(peer, state)) || action === 'discard' && (!prepared || record.processId !== state.resourceCatalogProcessId)) return
+    if (working.current || !ready || latest.current !== observed || action === 'commit' && (!detail || !consent || !live || !peer || !canQueueText(peer, state)) || action === 'discard' && (!prepared || record.processId !== state.resourceCatalogProcessId)) return
+    const started = observed
     working.current = true; setBusy(true); setConsent(false); setCode(''); retainTextLocator(record.requestId)
     try {
       const result = action === 'status' ? await api.command('message.queue.status', { outboxId: record.requestId }) : action === 'cancel' ? await api.command('message.queue.cancel', { outboxId: record.requestId }) : action === 'discard' ? await api.command('message.queue.discard', { outboxId: record.requestId, processId: record.processId! }) : await api.command('message.queue.commit', { outboxId: record.requestId, processId: record.processId!, reviewRevision: record.reviewRevision, confirm: true })
       const value = await verifiedTextOutbox(result.result, { requestId: record.requestId, review: record, detail: true })
       if (action === 'commit' && value.admission !== 'enqueued' || action === 'discard' && value.status !== 'discarded' || action === 'cancel' && !['cancel_requested', 'cancelled', 'completed', 'expired'].includes(value.status)) throw new api.ApiError('message_invalid_response', '')
+      if (!alive.current || latest.current !== started) return
       if (value.admission === 'enqueued' || value.status === 'discarded') resolveTextLocator(record.requestId)
-      if (alive.current) { onChange(value); setDetail(value) }
+      onChange(value); setInspection({ record: value, processId })
       if (action !== 'status') await server.refresh(true)
-    } catch (error) { if (alive.current) { setCode(error instanceof api.ApiError ? error.code : 'message_invalid_response'); if (error instanceof api.ApiError && error.code === 'unauthenticated') server.handleError(error) } }
+    } catch (error) { if (alive.current && latest.current === started) { setCode(error instanceof api.ApiError ? error.code : 'message_invalid_response'); if (error instanceof api.ApiError && error.code === 'unauthenticated') server.handleError(error) } }
     finally { working.current = false; if (alive.current) setBusy(false) }
   }
   return <article className="outbox-card" tabIndex={-1} data-text-request-id={record.requestId} aria-label={`${t('title')}: ${peer?.name || record.peerId}`}>

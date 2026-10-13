@@ -8,7 +8,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
-from source_provenance import verify_sources
+from source_provenance import read_json, verify_native, verify_sources
 
 archive = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
                 else:
                     raise ValueError("package contains a special file")
     share = root / "share" / "sobalink"
-    build = json.loads((share / "build.json").read_text(encoding="utf-8"))
+    build = read_json((share / "build.json").read_bytes())
     binary = destination(build["binary"]["path"])
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == build["binary"]["sha256"]
     assert build["product"] == "sobalink"
@@ -51,15 +51,16 @@ with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
     assert (share / "LICENSE").is_file()
     assert (share / "README.md").is_file()
     assert (share / "SECURITY.md").is_file()
-    bom = json.loads((share / "bom.cdx.json").read_text(encoding="utf-8"))
+    bom = read_json((share / "bom.cdx.json").read_bytes())
     assert bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5"
-    notices = json.loads((share / "third-party-notices.json").read_text(encoding="utf-8"))
+    notices = read_json((share / "third-party-notices.json").read_bytes())
     assert notices["modules"] and notices["frontend_modules"], "no target dependencies recorded"
     for module in notices["modules"] + notices["frontend_modules"] + [notices["go_standard_library"]]:
         assert module["notices"], "missing notices"
         for entry in module["notices"]:
             notice = share / entry["path"]
             assert hashlib.sha256(notice.read_bytes()).hexdigest() == entry["sha256"]
+    verify_native(build, notices, bom, binary)
     verify_sources(share, build, notices, bom)
     binary.chmod(0o755)
     result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)

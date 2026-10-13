@@ -306,7 +306,7 @@ jobs:
           python -B -m unittest discover -s .github/scripts -p 'test_ci_text_diagnostic.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_browser_summary.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_go_test.py' -v
-          node --test web/browser/text-native-contract.test.mjs
+          node --test web/browser/text-native-contract.test.mjs web/browser/text-native-diagnostics.test.mjs
           node --check web/browser/text-outbox-native.acceptance.mjs
       - name: Verify exact existing text restart and browser cases privately
         id: text

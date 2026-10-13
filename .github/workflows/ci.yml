@@ -635,8 +635,23 @@ jobs:
           version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
           commit="$(git rev-parse HEAD)"
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          if [[ '${{ matrix.goos }}' == darwin ]]; then
+            clean_packages="$(mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX")"
+            trap 'rm -rf "$clean_packages"' EXIT
+            export GOCACHEPROG=
+            export GOCACHE="$clean_packages/first-cache" GOTMPDIR="$clean_packages/first-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+          fi
           go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
           go run ./cmd/package-tool checksums
+          if [[ '${{ matrix.goos }}' == darwin ]]; then
+            cp dist/SHA256SUMS "$clean_packages/first-SHA256SUMS"
+            export GOCACHE="$clean_packages/second-cache" GOTMPDIR="$clean_packages/second-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+            go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
+            go run ./cmd/package-tool checksums
+            cmp "$clean_packages/first-SHA256SUMS" dist/SHA256SUMS
+          fi
           if [[ '${{ matrix.goos }}' == windows ]]; then
             extension=zip
           else

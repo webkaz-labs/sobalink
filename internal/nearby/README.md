@@ -8,6 +8,15 @@ certificate pin, trust grant, or evidence of connectivity. Core must consent to
 and own the bootstrap listener, look up the exact selected candidate ID again,
 and authenticate that endpoint independently.
 
+## Current provider selection
+
+Core uses `StartNative` only after scope and advertisement consent. Linux and
+Windows use scoped raw IPv4 packets. Darwin+cgo uses the selected-interface
+system DNS-SD API; see [its exact contract](DNSSD.en.md) ([日本語](DNSSD.ja.md)).
+Darwin without cgo reports unavailable. The older explicit raw Darwin factory
+and loopback fixture remain diagnostic code, not the selected product provider.
+OS hints carry no invented packet metadata and may come from a daemon cache.
+
 ## Contract
 
 - `Start` requires an explicit transport factory, selected interface index,
@@ -18,16 +27,22 @@ and authenticate that endpoint independently.
   bootstrap endpoint. DNS instance/target labels derive only from the ephemeral
   session ID. No OS hostname, permanent identity, pin, invitation or files are
   included. The alias is visible to the selected scope during discovery.
-- Advertised addresses must equal the observed packet source and lie in the
+- Raw packet sources and advertised addresses must independently lie in the
   selected prefix. Receive interface, destination, source port and TTL are checked.
-  This does **not** authenticate a packet source or prevent local spoofing.
+  Record bundles bind their actual observation provenance; this does **not**
+  authenticate an advertised endpoint or equate its ownership with packet source.
+  OS observations instead bind the exact selected interface and live queries.
 - A candidate ID binds the entire advertisement, observed source, selected scope
   a fresh local discovery generation and an observation revision. A changed advertisement invalidates its old
   ID. Replaying an older advertisement, or returning after expiry, cannot revive
-  a previously selected ID, including across local discovery restarts. Same aliases and cross-source session collisions
-  never merge identities.
-- Sessions last at most 120 seconds; candidate TTL is at most 30 seconds from
-  local observation; at most 64 candidates are retained. Datagrams are at most
+  a previously selected ID, including across local discovery restarts. Raw
+  observations never merge cross-source session collisions. OS bundles bind the
+  selected interface and session and reject conflicting records; they cannot
+  attribute records to distinct packet sources. An alias never establishes identity.
+- Sessions last at most 120 seconds; raw candidate TTL is at most 30 seconds from
+  each matching live observation. OS cached hints stay within active exact queries
+  and the immutable session deadline. Neither path revives invalidated or expired
+  IDs; at most 64 candidates are retained. Raw datagrams are at most
   1,200 bytes. DNS counts/types/TXT fields are bounded before interpretation.
   The 512th received datagram stops the session, including malformed traffic;
   at most 16 packets per second are parsed. At most 64 datagrams are sent.
@@ -44,7 +59,8 @@ and authenticate that endpoint independently.
 
 ## Native platform boundary
 
-The native implementation is IPv4-only; IPv6 currently reports unsupported.
+Advertised/bootstrap endpoints are IPv4-only. Raw transport is IPv4-only; the
+Darwin system API does not attest the daemon packet family or wire metadata.
 It does not change interface flags, routing, firewall rules, credentials or
 permissions. Every startup option/bind failure fails closed. Interface binding
 metadata, local address and exact prefix are rechecked before sending and after
@@ -53,7 +69,7 @@ receiving; changed bindings stop the session.
 - Linux binds exactly `224.0.0.251:5353` through a native socket, disables `IP_MULTICAST_ALL`, joins only
   the selected interface, and uses x/net IPv4 packet metadata for ingress and
   exact local source/interface selection on every send.
-- Darwin keeps an exact-group receive socket and a separate sender bound to
+- The diagnostic-only raw Darwin factory keeps an exact-group receive socket and a separate sender bound to
   the exact selected local address on port 5353. Both use `IP_BOUND_IF`; the
   sender also fixes the multicast interface, TTL 255 and multicast loopback.
   Source-only pktinfo preserves the exact source, while the sticky bound
@@ -70,12 +86,13 @@ receiving; changed bindings stop the session.
   Zero or unrepresentable indices are unsupported. Each send revalidates binding, has a one-second deadline, and
   requires the full payload count without retry. The ancillary codec uses bounded byte operations,
   without `unsafe`. Required options may be unavailable on older Windows.
-- Unix uses `net.FilePacketConn` only after the exact native bind because Go's
+- Raw Unix sockets use `net.FilePacketConn` only after the exact native bind because Go's
   ordinary UDP listener rewrites multicast bind addresses to a wildcard before
   its control callback. The original descriptor is close-on-exec/nonblocking;
   both the original and Go-owned duplicate have explicit rollback ownership.
   A failed original close prevents successful startup and retains uncertainty.
-- No native path retries a wildcard bind, global membership or another NIC.
+- No raw path retries a wildcard bind, global membership or another NIC.
+  The Darwin system provider does not bind an application UDP5353 socket.
   Unsupported or blocked discovery must leave Core's manual/QR setup available.
 
 The protocol/store/lifecycle tests use synthetic transports and a fake clock;
@@ -105,11 +122,17 @@ Platform implementation evidence:
 - 広告は一時的な 256-bit session ID、利用者が選んだ alias、固定 protocol と
   capability、数値 bootstrap 端点だけ。alias は探索中に選択範囲へ公開される。
   OS hostname、恒久 identity、招待、pin、ファイル情報は含まない。
-- 広告端点は観測した送信元と一致する必要がある。interface、宛先、送信元 port、
-  TTL、選択 prefix を検証するが、送信元の真正性までは保証しない。
+- raw packet の送信元と広告端点は、それぞれ選択 prefix 内である必要がある。
+  interface、宛先、送信元 port、TTL と record の観測由来を検証するが、広告端点の
+  所有者や送信元の真正性は保証しない。OS 観測は選択 interface と継続中の正確な
+  query に結び付け、packet metadata を捏造しない。
 - 候補の変更・失効で古い選択 ID は無効になる。古い広告が再送されても ID は
-  復活しない。同名候補や送信元の違う同一 session を同じ相手として統合しない。
-- session は最大 120 秒、候補は最終観測から最大 30 秒、最大 64 件。
+  復活しない。raw 観測は送信元の違う同一 session を統合しない。OS bundle は
+  選択 interface と session に結び付けて矛盾する record を拒否するが、異なる
+  packet 送信元を識別できない。alias の一致を identity の証明にしない。
+- session は最大120秒、raw 候補は同じ有効な広告の最終観測から最大30秒、最大64件。
+  OS cache の候補は正確な query の継続中かつ元の session 期限内だけ保持する。
+  どちらも失効・無効化した ID を復活させない。以下の packet 上限は raw 経路のもの。
   datagram は最大 1,200 bytes、受信 512 件で停止、解析は毎秒最大 16 件、
   送信は session 全体で最大 64 件。応答は multicast のみで毎秒最大 1 回。
 - Cancel・期限切れは候補を即座に無効化して I/O の終了を要求する。正常終了は
@@ -117,13 +140,16 @@ Platform implementation evidence:
   保持して再開始を止める。Start が owner と error の両方を返した場合も owner を
   捨てない。候補は保存せず、能動 bootstrap 接続はこの package の対象外。
 
-native 実装は IPv4 のみ。Linux/macOS は正確な multicast group bind と選択
-interface、Windows は選択したローカル数値 address bind と interface 制限を
-用いる。wildcard bind、別 NIC、全 IP/port scan、OS/FW/経路変更へは拡張しない。
+Core は同意後に StartNative を使う。Linux は正確な multicast group bind と選択
+interface、Windows は選択したローカル数値 address bind と interface 制限を用いる。
+macOS+cgo は選択 interface のシステム DNS-SD API を使う。広告端点は IPv4 だが、
+API は daemon の packet family や wire metadata を証明しない。詳細は
+[API 契約](DNSSD.ja.md)を参照。cgo なしは unavailable とする。
+raw 経路を wildcard bind、別 NIC、全 IP/port scan、OS/FW/経路変更へ拡張しない。
 安全な socket を作れない場合は停止し、Core の手動/QR 導線を利用できる状態にする。
 Unix では Go の通常 UDP listener が multicast bind を wildcard に変更するため、
 native socket を正確な group に bind した後だけ `net.FilePacketConn` に渡す。
-macOS は受信用の正確な group bind と送信用の選択 address:5353 bind を分離し、
+診断専用の旧 macOS raw factory は受信用の正確な group bind と送信用の選択 address:5353 bind を分離し、
 両方に `IP_BOUND_IF` を設定する。送信は固定 multicast interface・TTL255 と、
 source-only pktinfo を用い、選択 address と interface を維持する。片方の準備失敗も
 両方を終了し、不確定なら全 owner を保持して代替・再開始を止める。
@@ -136,7 +162,7 @@ source-only pktinfo を用い、選択 address と interface を維持する。�
 確認ではない。native 通信と範囲制限、実機の探索・ペアリング・アプリ互換性は、
 別途その source の試験結果が記録されるまで未検証として扱う。
 
-## Opt-in native loopback capability test
+## Opt-in raw native loopback capability test
 
 The default suite skips `TestNativeLoopbackDiscoveryCapability` without opening
 sockets. A separately authorized native runner can opt in with:
@@ -192,7 +218,7 @@ loopback 上の合格は、実 NIC・別端末の探索、bootstrap 認証、手
 
 ## Platform diagnosis boundary
 
-Darwin's separate sender follows the published
+The diagnostic-only raw Darwin sender follows the published
 [XNU 12377.1.9 UDP source](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/netinet/udp_usrreq.c#L1401-L1739):
 bound-source validation precedes temporary source selection, and a nonzero
 pktinfo interface index overrides the requested source address. This source
@@ -231,7 +257,7 @@ automatic setup remain distinct acceptance results.
 
 ### プラットフォーム別の診断範囲
 
-macOS の送受信分離は上記の固定 XNU source の bound-source 検証順序と、pktinfo の
+診断専用の旧 macOS raw 経路の送受信分離は上記の固定 XNU source の bound-source 検証順序と、pktinfo の
 interface 指定が source 指定に優先する動作に基づく修正である。source 調査だけで
 実行環境の error 原因や native 動作確認の完了を断定しない。
 

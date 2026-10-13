@@ -56,6 +56,7 @@ const en = {
   peerExchange: 'Other device’s setup information',
   importPeer: 'Review copied device',
   invalidPeer: 'Use current, complete setup information from the other device.',
+  candidateExpired: 'This nearby device changed or is no longer available. Check the original setup, cancel its temporary session, then search and confirm again on both devices.',
   png: 'Read a setup QR from a PNG image',
   pngReading: 'Reading the PNG locally…',
   pngCancel: 'Cancel image reading',
@@ -170,6 +171,7 @@ const ja: Record<NearbyTextKey, string> = {
   peerExchange: '相手の端末のセットアップ情報',
   importPeer: 'コピーした相手を確認',
   invalidPeer: '相手の端末の最新のセットアップ情報を、省略せずに入力してください。',
+  candidateExpired: '近くの端末の情報が変わったか、利用できなくなりました。元のセットアップを確認して一時的なセッションを取り消し、両端末で改めて探索・確認してください。',
   png: 'PNG画像からセットアップQRを読む',
   pngReading: 'PNG画像をこの端末で読み取っています…',
   pngCancel: '画像の読取りを取り消す',
@@ -233,7 +235,7 @@ export function nearbyReasonKey(code: unknown): NearbyTextKey | undefined {
   if (typeof code !== 'string') return
   const keys: Record<string, NearbyTextKey> = {
     setup_scope_changed: 'scopeChanged', setup_scope_unavailable: 'scopeChanged', setup_scope_mismatch: 'scopeMismatch',
-    setup_candidate_expired: 'invalidPeer', setup_contact_invalid: 'invalidPeer', setup_port_invalid: 'invalidInput', setup_port_unavailable: 'portUnavailable',
+    setup_candidate_expired: 'candidateExpired', setup_contact_invalid: 'invalidPeer', setup_port_invalid: 'invalidInput', setup_port_unavailable: 'portUnavailable',
     setup_no_permitted_host: 'noHost', setup_existing_anchor_conflict: 'advancedRequired', setup_saved_authority_review_required: 'advancedRequired',
     setup_plan_changed: 'planChanged', setup_plan_expired: 'planChanged', setup_authority_changed: 'planChanged', setup_state_changed: 'planChanged',
     setup_selection_locked: 'selectionLocked', setup_cleanup_unconfirmed: 'cleanupUnconfirmed', setup_commit_uncertain: 'recovery',

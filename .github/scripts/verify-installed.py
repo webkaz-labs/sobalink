@@ -6,12 +6,12 @@ import pathlib
 import platform
 import subprocess
 import sys
-from source_provenance import verify_sources
+from source_provenance import read_json, verify_native, verify_sources
 
 root = pathlib.Path(sys.argv[1])
 version, commit, target = sys.argv[2:]
 share = root / "share" / "sobalink"
-meta = json.loads((share / "build.json").read_text(encoding="utf-8"))
+meta = read_json((share / "build.json").read_bytes())
 assert meta["product"] == "sobalink"
 assert meta["version"] == version and meta["source_commit"] == commit and meta["target"] == target
 actual_os = {"Linux": "linux", "Darwin": "darwin", "Windows": "windows"}[platform.system()]
@@ -25,10 +25,10 @@ binary = root / expected_binary
 assert binary.is_file()
 assert hashlib.sha256(binary.read_bytes()).hexdigest() == meta["binary"]["sha256"]
 assert hashlib.sha256((share / "go.sum").read_bytes()).hexdigest() == meta["go_sum_sha256"]
-bom = json.loads((share / "bom.cdx.json").read_text(encoding="utf-8"))
+bom = read_json((share / "bom.cdx.json").read_bytes())
 assert hashlib.sha256((share / "web" / "package-lock.json").read_bytes()).hexdigest() == meta["frontend"]["lock_sha256"]
 assert bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5"
-notices = json.loads((share / "third-party-notices.json").read_text(encoding="utf-8"))
+notices = read_json((share / "third-party-notices.json").read_bytes())
 assert notices["modules"] and notices["frontend_modules"]
 for module in notices["modules"] + notices["frontend_modules"] + [notices["go_standard_library"]]:
     assert module["notices"], "missing installed module notices"
@@ -38,6 +38,7 @@ for module in notices["modules"] + notices["frontend_modules"] + [notices["go_st
         notice = share.joinpath(*relative.parts)
         assert notice.is_file() and not notice.is_symlink()
         assert hashlib.sha256(notice.read_bytes()).hexdigest() == entry["sha256"]
+verify_native(meta, notices, bom, binary)
 verify_sources(share, meta, notices, bom)
 result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
 assert result.stdout.strip() == "sobalink " + version + " (soba)"

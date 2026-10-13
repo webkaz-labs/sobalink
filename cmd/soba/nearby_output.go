@@ -141,6 +141,8 @@ func nearbyError(ja bool, code string) error {
 	for _, key := range []string{"setup_candidate_expired", "setup_session_changed", "setup_session_expired", "setup_plan_changed", "setup_plan_expired", "setup_scope_changed", "setup_listener_changed", "setup_state_changed", "setup_authority_changed"} {
 		messages[key] = messages["setup_stale"]
 	}
+	messages["setup_candidate_expired"] = [2]string{"This nearby device changed or is no longer available. Check the original nearby status, cancel its temporary setup, then search and confirm again on both devices.", "近くの端末の情報が変わったか、利用できなくなりました。元の nearby status を確認して一時的なセットアップを取り消し、両端末で改めて探索・確認してください。"}
+	messages["setup_session_expired"] = [2]string{"This setup session expired. Check its original status and cleanup, then start a fresh setup on both devices with new consent. Do not repeat the expired approval.", "セットアップの有効期限が切れました。元の状態と終了処理を確認し、両端末で改めて許可して新しく開始してください。期限切れの承認を繰り返さないでください。"}
 	for _, key := range []string{"setup_commit_uncertain", "setup_cleanup_unconfirmed"} {
 		messages[key] = messages["setup_recovery_required"]
 	}

@@ -31,7 +31,13 @@ MARKER = 'SOBA_TEXT_PHASE '
 VERSIONS = {'go': 'go1.27.1', 'node': 'v24.19.0', 'npm': '11.9.0'}
 CAPTURE_BYTES = 8 * 1024 * 1024
 PHASES = {'none', 'preflight', 'assets', 'compile', 'restart-process', 'restart-events',
-          'browser-process', 'browser-events', 'browser-receipt', 'verify-source', 'cleanup', 'export'}
+          'browser-process', 'browser-events', 'browser-receipt', 'browser-evidence', 'verify-source', 'cleanup', 'export'}
+BROWSER_PHASES = {'fixture-setup', 'session', 'open-peer', 'queue-mode', 'prepare', 'review-exact',
+    'review-consent', 'review-fit', 'review-checkpoint', 'commit', 'lost-response', 'recover',
+    'recovery-checkpoint', 'outbox-open', 'outbox-status-en', 'detail-request', 'detail-exact',
+    'detail-receipt-en', 'detail-fit-en', 'escape', 'locale-ja', 'outbox-open-ja', 'outbox-status-ja',
+    'outbox-receipt-ja', 'outbox-fit-ja', 'command-counts', 'runtime-counts', 'result-write',
+    'body-complete', 'fixture-cleanup', 'unavailable'}
 SCOPE = 'linux-synthetic-loopback-text-restart-and-browser'
 
 
@@ -182,9 +188,18 @@ def verify_source(before, asset_hashes, binary_hash, binary):
         raise ValueError('source or executable changed')
 
 
+def browser_failure(value):
+    if (type(value) is not dict or set(value) != {'schema', 'phase', 'errorKind'}
+            or type(value['schema']) is not int or value['schema'] != 1
+            or type(value['phase']) is not str or value['phase'] not in BROWSER_PHASES
+            or type(value['errorKind']) is not str or value['errorKind'] not in summary.nearby.BROWSER_ERROR_KINDS):
+        raise ValueError('invalid fixed text browser failure')
+    return {'schema': 1, 'phase': value['phase'], 'errorKind': value['errorKind']}
+
+
 def empty_result():
     return {'schema': 1, 'scope': SCOPE, 'diagnosticPassed': False, 'restartPassed': False,
-            'browserPassed': False, 'sourceVerified': False, 'browser': None,
+            'browserPassed': False, 'sourceVerified': False, 'browser': None, 'browserFailure': None,
             'restartProcess': 'not_run', 'browserProcess': 'not_run', 'firstFailure': 'none',
             'restartPhase': 'not_run', 'browserPhase': 'not_run',
             'physicalLANVerified': False, 'releaseValidation': False}
@@ -203,7 +218,7 @@ def fixed_result(report):
     if type(report) is not dict or set(report) != set(expected):
         raise ValueError('invalid fixed result')
     for key, default in expected.items():
-        if key != 'browser' and type(report[key]) is not type(default):
+        if key not in ('browser', 'browserFailure') and type(report[key]) is not type(default):
             raise ValueError('invalid fixed result type')
     if (report['schema'] != 1 or report['scope'] != SCOPE or report['physicalLANVerified']
             or report['releaseValidation'] or report['firstFailure'] not in PHASES
@@ -211,13 +226,15 @@ def fixed_result(report):
             or any(report[case + 'Phase'] not in ('not_run', 'unavailable', *FIXTURE_PHASES[case]) for case in CASES)):
         raise ValueError('invalid fixed result value')
     browser = None if report['browser'] is None else summary.text_summary(report['browser'])
+    failure = None if report['browserFailure'] is None else browser_failure(report['browserFailure'])
     if (report['browserPassed'] != (browser is not None)
+            or report['browserPassed'] and failure is not None
             or any(report[case + 'Passed'] and report[case + 'Process'] != 'completed' for case in CASES)
             or report['diagnosticPassed'] != (report['restartPassed'] and report['browserPassed']
                                              and report['sourceVerified'] and report['firstFailure'] == 'none')
             or report['diagnosticPassed'] and any(report[case + 'Phase'] != 'complete' for case in CASES)):
         raise ValueError('inconsistent fixed result')
-    return {**report, 'browser': browser}
+    return {**report, 'browser': browser, 'browserFailure': failure}
 
 
 def main(argv=None):
@@ -276,7 +293,8 @@ def main(argv=None):
         provenance['fixtureSha256'] = binary_hash
         env.update(SOBALINK_RUN_DIRECT_INTEGRATION='1', SOBALINK_RUN_TRANSFER_BROWSER_NATIVE='1',
                    SOBA_TRANSFER_BROWSER_NODE=shutil.which('node'), SOBA_TRANSFER_BROWSER_CHROMIUM=str(chromium),
-                   SOBA_TEXT_BROWSER_SUMMARY=str(private / 'text-native-summary.json'))
+                   SOBA_TEXT_BROWSER_SUMMARY=str(private / 'text-native-summary.json'),
+                   SOBA_TEXT_BROWSER_FAILURE=str(private / 'text-native-failure.json'))
         for case, name in CASES.items():
             phase = case + '-process'
             # Own the binary directly so the bounded capture does not time out
@@ -287,13 +305,19 @@ def main(argv=None):
             report[case + 'Phase'] = 'unavailable'
             if state != 'completed' or code != 0:
                 fail(report, phase)
+            if case == 'browser' and os.path.lexists(private / 'text-native-failure.json'):
+                try:
+                    report['browserFailure'] = browser_failure(summary.read_fixed(private / 'text-native-failure.json', 1024))
+                except Exception:
+                    report['browserFailure'] = {'schema': 1, 'phase': 'unavailable', 'errorKind': 'evidence_unavailable'}
+                fail(report, 'browser-evidence')
             phase = case + '-events'
             converted, converted_code, data, _ = native.capture(['go', 'tool', 'test2json', '-p', PACKAGE],
                 cwd=ROOT, env=env, timeout=15, limit=CAPTURE_BYTES, stdin=stdout)
             if converted != 'completed' or converted_code != 0:
                 raise ValueError('text event conversion failed')
             report[case + 'Phase'] = phase_sequence(data, case)[-1]
-            if state != 'completed' or code != 0:
+            if state != 'completed' or code != 0 or report['browserFailure'] is not None:
                 raise ValueError('text process did not complete')
             test_events(data, case, code)
             if case == 'browser':
@@ -310,6 +334,7 @@ def main(argv=None):
                 report['sourceVerified'] = True
             except Exception:
                 fail(report, 'verify-source')
+                report['browserFailure'] = None
                 for case in CASES:
                     if report[case + 'Phase'] != 'not_run':
                         report[case + 'Phase'] = 'unavailable'

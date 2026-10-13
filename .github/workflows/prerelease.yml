@@ -365,9 +365,20 @@ jobs:
         run: |
           set -euo pipefail
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          if [[ "$TARGET_OS" == darwin ]]; then
+            clean_packages="$(mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX")"
+            trap 'rm -rf "$clean_packages"' EXIT
+            export GOCACHEPROG=
+            export GOCACHE="$clean_packages/first-cache" GOTMPDIR="$clean_packages/first-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+          fi
           go run ./cmd/package-tool build "$RELEASE_VERSION" "$TARGET_OS" "$TARGET_ARCH" "$TESTED_COMMIT" 2>&1 | tee logs/first-build.txt
           go run ./cmd/package-tool checksums
           cp dist/SHA256SUMS "$RUNNER_TEMP/first-SHA256SUMS"
+          if [[ "$TARGET_OS" == darwin ]]; then
+            export GOCACHE="$clean_packages/second-cache" GOTMPDIR="$clean_packages/second-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+          fi
           go run ./cmd/package-tool build "$RELEASE_VERSION" "$TARGET_OS" "$TARGET_ARCH" "$TESTED_COMMIT" 2>&1 | tee logs/second-build.txt
           go run ./cmd/package-tool checksums
           cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS

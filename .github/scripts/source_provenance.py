@@ -278,3 +278,147 @@ def verify_direct_source(share, source):
             assert raw.startswith(b"/* SPDX-License-Identifier: MIT\n * Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.\n")
     for name in ("go.mod", "go.sum"):
         assert inputs[name] == digest(read_regular(share, name))
+
+
+# Finite Darwin native boundary. Paths below are public SDK install names or
+# repository/module-relative names, never paths on a developer's computer.
+DARWIN_LIBRARIES = (
+    '/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation',
+    '/System/Library/Frameworks/Security.framework/Versions/A/Security',
+    '/usr/lib/libSystem.B.dylib',
+    '/usr/lib/libresolv.9.dylib',
+)
+DARWIN_SDK_INPUTS = (
+    'SDKSettings.json',
+    'System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation.tbd',
+    'System/Library/Frameworks/Security.framework/Versions/A/Security.tbd',
+    'usr/include/dispatch/dispatch.h', 'usr/include/dns_sd.h',
+    'usr/lib/libSystem.tbd', 'usr/lib/libresolv.9.tbd',
+)
+DARWIN_POLICY_INPUTS = {
+    'tailscale.com/control/controlclient/sign_supported.go': '2319d740882481d8cf4f1dfd1f1ac853b678971928fd176ecfe5be1ffda9082b',
+    'tailscale.com/util/syspolicy/policyclient/policyclient.go': 'e7fa6ea83699de60241f0f96c018c66ec1fb1061860435c7a325097ce5ebbaba',
+    'tailscale.com/tsd/tsd.go': '255dee50953d2a19b3dd8e57a21d9bc2c3d10095a4828fb6d1126776a645383d',
+    'github.com/tailscale/certstore/certstore.go': '4c63ea6a06aeac9f027de208d1113997867b1ad77bf75d91f12740ba3df5b977',
+    'github.com/tailscale/certstore/certstore_darwin.go': '4e2698e090e5cec688c4d7d3d5178d4233b070c47c60fbb9e73cf1430179c117',
+}
+DARWIN_PACKAGES = ('github.com/tailscale/certstore',
+                   'github.com/webkaz-labs/sobalink/internal/nearby', 'runtime/cgo')
+DARWIN_CFLAGS = ['-O2', '-g0', '-isysroot', '${SDKROOT}', '-mmacosx-version-min=13.0']
+DARWIN_LDFLAGS = ['-isysroot', '${SDKROOT}', '-mmacosx-version-min=13.0']
+NATIVE_KEYS = {'schema', 'host_os', 'host_arch', 'host_version', 'host_build',
+               'compiler_version', 'compiler_sha256', 'linker_sha256',
+               'xcode_version', 'xcode_build', 'sdk_version', 'sdk_build',
+               'deployment_target', 'sdk_inputs', 'cflags', 'ldflags',
+               'packages', 'policy_inputs', 'system_libraries'}
+
+
+def native_digest(native):
+    return digest(json.dumps(native, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
+
+
+def verify_native(build, notices, bom, binary=None):
+    """The same target-aware admission in assets, archive smoke and installation."""
+    target = build.get('target')
+    assert target in ('linux-amd64', 'linux-arm64', 'darwin-arm64', 'windows-amd64'), 'invalid build target'
+    darwin = target == 'darwin-arm64'
+    assert type(build.get('cgo_enabled')) is bool and build['cgo_enabled'] == darwin, 'wrong target cgo policy'
+    assert build.get('go_version') == 'go1.27.1' and build.get('trimpath') is True and build.get('buildvcs') is False, 'unexpected native build settings'
+    expected_flags = '-s -w -buildid= -X main.version=' + build['version']
+    if darwin:
+        expected_flags += ' -linkmode=external -B=none'
+    assert build.get('ldflags') == expected_flags, 'unexpected linker flags'
+    props = source_properties(bom['metadata'])
+    assert props.get('build:target') == target and props.get('source:commit') == build['source_commit'], 'SBOM build identity differs'
+    assert props.get('build:cgo') == ('1' if darwin else '0'), 'SBOM cgo policy differs'
+    assert notices.get('scope') == props.get('inventory:scope') and ('CGO_ENABLED=' + ('1' if darwin else '0')) in notices['scope'], 'notice cgo scope differs'
+    system = [c for c in bom.get('components', []) if c.get('bom-ref', '').startswith('system:')]
+    if not darwin:
+        assert 'native_build' not in build and 'native_build' not in notices and not system and 'build:native:sha256' not in props, 'unexpected native provenance for cgo0 target'
+        return
+    native = build.get('native_build')
+    assert type(native) is dict and set(native) == NATIVE_KEYS and native == notices.get('native_build'), 'native provenance missing or inconsistent'
+    assert type(native['schema']) is int and native['schema'] == 1, 'invalid native schema'
+    assert native['host_os'] == 'darwin' and native['host_arch'] == 'arm64', 'non-native Darwin compiler'
+    assert native['deployment_target'] == '13.0', 'unexpected deployment target'
+    for key in ('host_version', 'xcode_version', 'sdk_version'):
+        assert isinstance(native[key], str) and re.fullmatch(r'[0-9]{1,3}(\.[0-9]{1,3}){1,2}', native[key]), 'invalid native version'
+    for key in ('host_build', 'xcode_build', 'sdk_build'):
+        assert isinstance(native[key], str) and re.fullmatch(r'[0-9A-Za-z.]{1,32}', native[key]), 'invalid native build identifier'
+    assert isinstance(native['compiler_version'], str) and re.fullmatch(r'Apple clang version [0-9.]{3,24} \(clang-[0-9.]{3,40}\)', native['compiler_version']), 'invalid compiler identity'
+    for key in ('compiler_sha256', 'linker_sha256'):
+        assert isinstance(native[key], str) and re.fullmatch('[0-9a-f]{64}', native[key]), 'missing native tool digest'
+    assert native['cflags'] == DARWIN_CFLAGS and native['ldflags'] == DARWIN_LDFLAGS, 'unexpected C flags'
+    assert list(record_hashes(native['sdk_inputs'])) == list(DARWIN_SDK_INPUTS), 'SDK input inventory differs'
+    assert record_hashes(native['policy_inputs']) == DARWIN_POLICY_INPUTS, 'credential boundary is not reviewed'
+    assert native['policy_inputs'] == sorted(native['policy_inputs'], key=lambda x: x['path']), 'unsorted policy inventory'
+    cert_name = DARWIN_PACKAGES[0]
+    cert_version = 'v0.1.1-0.20260409135935-3638fb84b77d'
+    cert_sum = 'h1:JcGKBZAL7ePLwOhUdN8qGQZlP5GueEiIZwY7R62pejE='
+    cert_ref = 'golang:' + digest((cert_name + '@' + cert_version).encode())
+    cert_notices = [m for m in notices.get('modules', []) if m.get('module') == cert_name]
+    assert len(cert_notices) == 1 and cert_notices[0].get('version') == cert_version and cert_notices[0].get('go_module_sum') == cert_sum, 'certificate-store module inventory differs'
+    cert_license = record_hashes(cert_notices[0]['notices'])
+    assert cert_license.get('licenses/' + cert_ref.removeprefix('golang:') + '/LICENSE.md') == 'e4a0c3d87230b78d441e4666fba1ab95211fd1e9be76bf445d664685ae0a9e48', 'certificate-store notice missing or changed'
+    cert_components = [c for c in bom.get('components', []) if c.get('bom-ref') == cert_ref]
+    assert len(cert_components) == 1 and cert_components[0].get('name') == cert_name and cert_components[0].get('version') == cert_version, 'certificate-store SBOM identity differs'
+    assert source_properties(cert_components[0]).get('go:module:sum') == cert_sum, 'certificate-store SBOM source differs'
+    packages = native['packages']
+    assert isinstance(packages, list) and [p.get('package') for p in packages] == list(DARWIN_PACKAGES), 'native package closure differs'
+    for package in packages:
+        assert set(package) == {'package', 'inputs', 'cflags', 'cppflags', 'cxxflags', 'ldflags'}, 'invalid native package record'
+        inputs = record_hashes(package['inputs'])
+        assert inputs and package['inputs'] == sorted(package['inputs'], key=lambda x: x['path']), 'missing or unsorted native inputs'
+        assert all('/' not in p and not p.endswith('_test.go') for p in inputs), 'invalid native source name'
+        assert package['cppflags'] == [] and package['cxxflags'] == [], 'unreviewed preprocessor/C++ flags'
+        if package['package'] == DARWIN_PACKAGES[0]:
+            assert package['cflags'] == ['-x', 'objective-c'] and package['ldflags'] == ['-framework', 'CoreFoundation', '-framework', 'Security'], 'certificate-store flags differ'
+            assert inputs == {p.rsplit('/', 1)[-1]: h for p, h in DARWIN_POLICY_INPUTS.items() if p.startswith(DARWIN_PACKAGES[0] + '/')}, 'certificate-store source differs'
+        elif package['package'] == DARWIN_PACKAGES[1]:
+            assert package['cflags'] == ['-std=c11'] and package['ldflags'] == [], 'DNS-SD flags differ'
+            assert {'provider_darwin.go', 'dnssd_bridge_darwin.c', 'dnssd_bridge_darwin.h'} <= set(inputs), 'DNS-SD shim inputs missing'
+        else:
+            assert package['cflags'] == ['-Wall', '-Werror', '-fno-stack-protector', '-Wdeclaration-after-statement', '-std=gnu90'] and package['ldflags'] == [], 'Go runtime cgo flags differ'
+    libraries = native['system_libraries']
+    assert libraries == list(DARWIN_LIBRARIES), 'system library inventory differs'
+    assert len(system) == len(libraries) and {c['bom-ref'] for c in system} == {'system:' + p for p in libraries}, 'system SBOM inventory differs'
+    for component in system:
+        assert component.get('type') == 'library' and component.get('name') in libraries and component['bom-ref'] == 'system:' + component['name'], 'system component identity differs'
+        assert source_properties(component) == {'distribution:provided-by': 'operating-system', 'distribution:redistributed': 'false'}, 'system component distribution differs'
+    root_edges = [e for e in bom['dependencies'] if e.get('ref') == 'application:sobalink']
+    assert len(root_edges) == 1 and {'system:' + p for p in libraries} <= set(root_edges[0]['dependsOn']), 'system dependency edges missing'
+    assert props.get('build:native:sha256') == native_digest(native), 'native SBOM digest differs'
+    if binary is not None:
+        assert read_macho_libraries(binary) == libraries, 'installed native linkage differs'
+
+
+def read_macho_libraries(path):
+    """Bounded direct Mach-O inspection; no compiler or credential API invoked."""
+    import struct
+    with pathlib.Path(path).open('rb') as stream:
+        header = stream.read(32)
+        assert len(header) == 32, 'incomplete Mach-O header'
+        magic, cpu, subtype, filetype, count, size, flags, reserved = struct.unpack('<8I', header)
+        assert magic == 0xfeedfacf and cpu == 0x100000c and filetype == 2, 'wrong installed Mach-O target'
+        assert 0 < count <= 1024 and 0 < size <= 1024 * 1024, 'unbounded Mach-O commands'
+        raw = stream.read(size)
+        assert len(raw) == size, 'incomplete Mach-O commands'
+    libraries, offset, deployment = [], 0, False
+    for _ in range(count):
+        assert offset + 8 <= len(raw), 'short Mach-O command'
+        command, length = struct.unpack_from('<2I', raw, offset)
+        assert length >= 8 and length % 8 == 0 and offset + length <= len(raw), 'invalid Mach-O command length'
+        block = raw[offset:offset + length]
+        assert command not in (0x8000001c, 0x1b), 'unreviewed Mach-O runtime search path or UUID'
+        if command in (0xc, 0x80000018, 0x8000001f, 0x20, 0x80000023):
+            assert length >= 24, 'short Mach-O library command'
+            start = struct.unpack_from('<I', block, 8)[0]
+            assert 24 <= start < length and b'\0' in block[start:], 'invalid Mach-O library name'
+            libraries.append(block[start:].split(b'\0', 1)[0].decode('ascii'))
+        if command == 0x32:
+            assert not deployment and length >= 24, 'invalid Mach-O deployment command'
+            assert struct.unpack_from('<2I', block, 8) == (1, 13 << 16), 'wrong installed macOS deployment target'
+            deployment = True
+        offset += length
+    assert offset == size and deployment and len(set(libraries)) == len(libraries), 'invalid Mach-O inventory'
+    return sorted(libraries)

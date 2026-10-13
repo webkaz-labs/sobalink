@@ -5,7 +5,7 @@ const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 
 test('text native case reuses sealed one-case browser runner without changing launch policy', () => {
   const config = read('../playwright.text-native.config.mjs')
-  assert.equal(config, "import existing from './playwright.transfer-native.config.mjs'\nexport default {\n  ...existing,\n  testMatch: '**/text-outbox-native.acceptance.mjs',\n}\n")
+  assert.equal(config, "import existing from './playwright.transfer-native.config.mjs'\nexport default {\n  ...existing,\n  reporter: './browser/text-native-reporter.mjs',\n  testMatch: '**/text-outbox-native.acceptance.mjs',\n}\n")
   const fixture = read('./transfer-native-fixtures.mjs')
   assert.ok(fixture.includes('session.textOutbox === true'))
   for (const guard of ['(info.mode & 0o077) === 0', "url.hostname === '127.0.0.1'", "script-src 'self'", 'session.viewer.code = \'\'', 'drainRoutesBeforeCleanup']) assert.ok(fixture.includes(guard))

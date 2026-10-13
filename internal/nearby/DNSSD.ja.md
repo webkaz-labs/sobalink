@@ -22,7 +22,7 @@ DNSService が選択するのはインターフェースです。IPv4 パケッ�
 
 ## ビルドと検証
 
-Darwin+cgo、システム SDK の dns_sd.h・dispatch ヘッダー、libdns_sd・libSystem を使います。外部 FFI は追加しません。cgo なしの Darwin ビルドは明示的に利用不可です。配布物はコンパイラー・SDK・システム入力と対象の cgo モードを記録します。Linux 上で cgo なしの代替処理をクロスコンパイルしても、このアダプターの実動作検証にはなりません。
+Darwin+cgo、システム SDK の dns_sd.h・dispatch ヘッダーと、DNS-SD・dispatch を再エクスポートする自動リンクの libSystem を使います。パッケージ固有のリンクフラグや単独の libdns_sd SDK スタブは使いません。外部 FFI は追加しません。cgo なしの Darwin ビルドは明示的に利用不可です。配布物はコンパイラー・SDK・システム入力と対象の cgo モードを記録します。Linux 上で cgo なしの代替処理をクロスコンパイルしても、このアダプターの実動作検証にはなりません。
 
 ネイティブテストは別々の明示的な opt-in を持ちます。
 

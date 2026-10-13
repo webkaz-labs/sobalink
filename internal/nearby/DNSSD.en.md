@@ -22,7 +22,7 @@ Deallocation terminates application registrations/queries, but does not acknowle
 
 ## Build and evidence
 
-The adapter requires Darwin+cgo, the system SDK's dns_sd.h and dispatch headers, and libdns_sd/libSystem. There is no third-party FFI. A Darwin build without cgo explicitly reports unavailable. Native package provenance must record the compiler/SDK/system inputs and target cgo mode; Linux cross-compilation of the no-cgo fallback does not verify this adapter.
+The adapter requires Darwin+cgo, the system SDK's dns_sd.h and dispatch headers, and the automatically linked libSystem umbrella that reexports DNS-SD and dispatch. It uses no package-specific linker flag or standalone libdns_sd SDK stub. There is no third-party FFI. A Darwin build without cgo explicitly reports unavailable. Native package provenance must record the compiler/SDK/system inputs and target cgo mode; Linux cross-compilation of the no-cgo fallback does not verify this adapter.
 
 Native tests have independent closed opt-ins:
 
