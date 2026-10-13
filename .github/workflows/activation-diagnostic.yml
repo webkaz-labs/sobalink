@@ -266,6 +266,54 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  diagnostic-native-core:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'native-core'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            platform: windows-amd64
+          - runner: macos-26
+            platform: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    # One exhaustive race run per target, with the unchanged 10m package limit.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify closed native Core timing diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_native_core.py' -v
+      - name: Time one exhaustive unchanged Core suite privately
+        id: native-core
+        timeout-minutes: 38
+        run: python -B .github/scripts/ci-native-core.py
+      - name: Preserve only reconstructed exact-source Core timing evidence
+        if: always() && steps.native-core.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-native-core-${{ matrix.platform }}-sanitized
+          path: |
+            ${{ runner.temp }}/soba-native-core-sanitized/result.json
+            ${{ runner.temp }}/soba-native-core-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
   diagnostic-text:
     needs: diagnostic-selection
     if: needs.diagnostic-selection.outputs.suite == 'text'
