@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -383,23 +384,35 @@ func TestSessionMalformedFloodStopsAtFiniteBudget(t *testing.T) {
 	}
 }
 func TestSessionParserAndResponseRateBounded(t *testing.T) {
-	s, clock, tr := startFake(t)
-	for i := 1; i <= 32; i++ {
-		tr.incoming <- testPacket(t, testAd(i))
-	}
-	eventually(t, func() bool { return len(tr.incoming) == 0 })
-	eventually(t, func() bool { return len(s.Candidates()) == MaxParsedPerSecond })
-	clock.advance(time.Second)
-	query := testPacket(t, testAd(100))
-	query.Data = packQuery()
-	for i := 0; i < 32; i++ {
-		tr.incoming <- query
-	}
-	eventually(t, func() bool { return len(tr.incoming) == 0 })
-	eventually(t, func() bool { return tr.count() == 3 })
-	if len(s.Candidates()) != MaxParsedPerSecond {
-		t.Fatal("query created candidate")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s, clock, tr := startFake(t)
+		for i := 1; i <= 32; i++ {
+			tr.incoming <- testPacket(t, testAd(i))
+		}
+		// Draining the transport channel alone leaves observations queued in
+		// Session.run. Join both workers' progress before changing fake time,
+		// so rejected first-window packets cannot consume the next window.
+		synctest.Wait()
+		if got := len(s.Candidates()); got != MaxParsedPerSecond {
+			t.Fatalf("candidates = %d, want %d", got, MaxParsedPerSecond)
+		}
+		clock.advance(time.Second)
+		query := testPacket(t, testAd(100))
+		query.Data = packQuery()
+		for i := 0; i < 32; i++ {
+			tr.incoming <- query
+		}
+		synctest.Wait()
+		if got := tr.count(); got != 3 {
+			t.Fatalf("writes = %d, want 3", got)
+		}
+		if len(s.Candidates()) != MaxParsedPerSecond {
+			t.Fatal("query created candidate")
+		}
+		if err := s.Err(); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 func TestSessionTTLUsesLocalObservationAndSelectionChanges(t *testing.T) {
 	s, clock, tr := startFake(t)
