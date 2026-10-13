@@ -327,30 +327,23 @@ jobs:
     needs: diagnostic-selection
     if: needs.diagnostic-selection.outputs.suite == 'dnssd'
     runs-on: macos-26
-    timeout-minutes: 12
+    timeout-minutes: 4
     permissions:
       contents: read
-    env:
-      CGO_ENABLED: '1'
-      GOMAXPROCS: '2'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - name: Verify closed Darwin API diagnostic policy
+      - name: Verify closed network-free Terminal marker policy
         run: |
           python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
-          python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_diagnostic.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal.py' -v
-      - name: Compile native SDK API and compare five Terminal-launched scopes
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal_marker.py' -v
+      - name: Classify one network-free Terminal marker
         id: dnssd
-        timeout-minutes: 10
-        run: python -B .github/scripts/ci-dnssd-diagnostic.py
-      - name: Preserve only reconstructed DNS-SD capability evidence
+        timeout-minutes: 3
+        run: python -B .github/scripts/ci-dnssd-terminal-marker.py
+      - name: Preserve only reconstructed Terminal marker evidence
         if: always() && steps.dnssd.outputs.sanitized_ready == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

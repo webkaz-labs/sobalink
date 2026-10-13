@@ -448,6 +448,9 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 def terminal_capture(binary, *, env, private):
                     state, code, out, err = native.capture(terminal.native_command(binary), env=env, timeout=75, limit=native.RUNTIME_BYTES)
                     launch = terminal.empty_receipt()
+                    launch['gateObservation'] = {'verified': True, 'reason': 'verified',
+                        'identity': {'state': 'observed', 'pidMatched': True, 'uidMatched': True, 'startMatched': True, 'matched': True},
+                        'hopCount': 1, 'hops': [{'uidRelation': 'same', 'commandClass': 'terminal_exact'}]}
                     launch.update(status='observed', reason='observed', nativeProcessStatus=state, nativeExitCode=code, **{key: True for key in (
                         'availabilityVerified', 'openCompleted', 'markerVerified', 'markerOwnerJoined',
                         'terminalAncestorObserved', 'nativeStartObserved', 'nativeOwnerJoined', 'supervisorTerminationObserved')})
@@ -610,21 +613,19 @@ class DNSSDDiagnosticTests(unittest.TestCase):
         self.assertEqual(gate.REQUIRED_SDK_FILES, {'dns_sd.h', 'SDKSettings.json', 'libSystem.tbd'})
         self.assertEqual(gate.SDK_FILES['libSystem.tbd'], 'usr/lib/libSystem.tbd')
 
-    def test_workflow_is_one_native_only_job_with_literal_safe_artifacts(self):
+    def test_workflow_is_one_marker_only_job_with_literal_safe_artifacts(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
         job = workflow.split('  diagnostic-dnssd:\n', 1)[1]
         self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'dnssd'", job)
         self.assertEqual(job.count('runs-on:'), 1)
         self.assertIn('runs-on: macos-26', job)
-        for required in ("go-version: '1.27.1'", 'persist-credentials: false', 'contents: read',
-                         "CGO_ENABLED: '1'", "GOMAXPROCS: '2'", 'cache: false',
-                         'run: python -B .github/scripts/ci-dnssd-diagnostic.py'):
+        for required in ('persist-credentials: false', 'contents: read',
+                         'run: python -B .github/scripts/ci-dnssd-terminal-marker.py'):
             self.assertIn(required, job)
-        for forbidden in ('matrix:', 'setup-node', 'npm', 'prepare-engine', 'sudo', 'xcode-select',
+        for forbidden in ('setup-go', 'go test', 'go mod', 'CGO_ENABLED', 'ci-dnssd-diagnostic.py', 'matrix:', 'setup-node', 'npm', 'prepare-engine', 'sudo', 'xcode-select',
                           'continue-on-error', 'secrets.', 'contents: write', 'id-token:', 'sandbox'):
             self.assertNotIn(forbidden, job)
         for action in ('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-                       'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16',
                        'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'):
             self.assertIn(action, job)
         artifact = job.split('uses: actions/upload-artifact', 1)[1]

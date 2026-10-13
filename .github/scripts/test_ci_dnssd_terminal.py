@@ -27,6 +27,12 @@ def environment(root):
             **{key: str(root) for key in ('TMPDIR', 'TMP', 'TEMP')}}
 
 
+def observation(verified=True):
+    return {'verified': verified, 'reason': 'verified' if verified else 'other_uid',
+            'identity': {'state': 'observed', 'pidMatched': True, 'uidMatched': True, 'startMatched': True, 'matched': True},
+            'hopCount': 1, 'hops': [{'uidRelation': 'same' if verified else 'other', 'commandClass': 'terminal_exact'}]}
+
+
 class Clock:
     def __init__(self):
         self.now = 1000
@@ -160,7 +166,7 @@ class TerminalDiagnosticTests(unittest.TestCase):
                 binary = root / 'dnssd.test'
                 binary.write_bytes(b'synthetic binary')
                 clock, own = Clock(), owner(os.getpid())
-                plan = {'nonce': 'a' * 64, 'parent': owner(77), 'deadline': 1120,
+                plan = {'markerOnly': False, 'nonce': 'a' * 64, 'parent': owner(77), 'deadline': 1120,
                     'launchDeadline': 999 if failure == 'expired' else 1035,
                     'scriptSha256': gate.digest(gate.SCRIPT),
                     'binarySha256': '0' * 64 if failure == 'hash' else gate.digest(binary), 'env': environment(root)}
@@ -229,7 +235,7 @@ class TerminalDiagnosticTests(unittest.TestCase):
                     stack.enter_context(patch.object(gate, 'availability', return_value=failure != 'unavailable'))
                     stack.enter_context(patch.object(gate, 'process_info', return_value=owner(os.getpid())))
                     stack.enter_context(patch.object(gate, 'same_process', side_effect=same))
-                    stack.enter_context(patch.object(gate, 'terminal_ancestry', return_value=failure != 'ancestry'))
+                    stack.enter_context(patch.object(gate, 'gate_observation', return_value=observation(failure != 'ancestry')))
                     stack.enter_context(patch.object(gate, 'capture_owned', side_effect=launch))
                     state, code, out, err, result = gate.capture(binary, env=environment(root), private=root)
                 self.assertEqual(len(calls), 0 if failure == 'unavailable' else 1)

@@ -41,11 +41,12 @@ REASONS = {'not_run', 'observed', 'availability_unavailable', 'open_failed',
            'policy_denied', 'source_changed', 'private_state_invalid'}
 
 
-def empty_receipt():
+def empty_receipt(*, marker_only=False):
     # nativeOwnerJoined means a direct-child Wait, never descendant cleanup.
     # marker_timeout with supervisorTerminationObserved=false means launch
     # ownership/cleanup remains unresolved, not that nothing was launched.
-    return {'schema': 1, 'status': 'not_run', 'reason': 'not_run',
+    return {'schema': 1, 'mode': 'marker_only' if marker_only else 'native_comparison',
+            'status': 'not_run', 'reason': 'not_run', 'gateObservation': None,
             'availabilityVerified': False, 'openCompleted': False,
             'markerVerified': False, 'markerOwnerJoined': False,
             'terminalAncestorObserved': False, 'nativeStartObserved': False,
@@ -59,6 +60,7 @@ def receipt(value):
     expected = empty_receipt()
     if (type(value) is not dict or set(value) != set(expected)
             or type(value['schema']) is not int or value['schema'] != 1
+            or value['mode'] not in {'marker_only', 'native_comparison'}
             or value['status'] not in {'not_run', 'unavailable', 'observed', 'failed'}
             or value['reason'] not in REASONS or value['promptState'] != 'unobserved'
             or value['nativeProcessStatus'] not in STATES
@@ -70,14 +72,24 @@ def receipt(value):
             or value['policyDeniedObserved'] != (value['nativeProcessStatus'] == 'policy_denied')
             or value['nativeProcessStatus'] == 'completed' and value['nativeExitCode'] != 0
             or value['nativeProcessStatus'] == 'nonzero' and value['nativeExitCode'] in (None, 0)
-            or value['status'] == 'observed' and value['nativeProcessStatus'] not in {'completed', 'nonzero'}
+            or value['mode'] == 'marker_only' and (value['nativeStartObserved'] or value['nativeOwnerJoined']
+                or value['nativeExitCode'] is not None or value['nativeProcessStatus'] != 'not_run')
+            or value['mode'] == 'native_comparison' and value['status'] == 'observed' and value['nativeProcessStatus'] not in {'completed', 'nonzero'}
             or value['markerVerified'] and not value['markerOwnerJoined']
             or value['nativeStartObserved'] and not (value['markerVerified'] and value['terminalAncestorObserved'])
             or value['nativeOwnerJoined'] and not value['nativeStartObserved']
             or value['status'] == 'observed' and not all(value[key] for key in (
                 'availabilityVerified', 'openCompleted', 'markerVerified', 'markerOwnerJoined',
-                'terminalAncestorObserved', 'nativeStartObserved', 'nativeOwnerJoined', 'supervisorTerminationObserved'))):
+                'terminalAncestorObserved', 'supervisorTerminationObserved'))
+            or value['mode'] == 'native_comparison' and value['status'] == 'observed'
+                and not (value['nativeStartObserved'] and value['nativeOwnerJoined'])):
         raise ValueError('incomplete fixed launch evidence')
+    if value['terminalAncestorObserved'] and value['gateObservation'] is None:
+        raise ValueError('missing ancestry observation')
+    if value['gateObservation'] is not None:
+        validate_observation(value['gateObservation'])
+        if value['terminalAncestorObserved'] != value['gateObservation']['verified']:
+            raise ValueError('inconsistent ancestry evidence')
     return dict(value)
 
 
@@ -183,24 +195,33 @@ def capture_owned(command, *, timeout, limit=RUNTIME_BYTES, env=None, stop_on_de
     return state, code, bytes(streams[0]), bytes(streams[1]), joined
 
 
+class ProcessObservationError(ValueError):
+    def __init__(self, kind):
+        self.kind = kind
+        super().__init__('fixed process observation failure')
+
+
 def process_info(pid):
     # Darwin ps keeps the command path with comm (without -c); -ww prevents
     # truncation. This is bounded process observation, not code identity.
     # https://github.com/apple-oss-distributions/adv_cmds/blob/main/ps/print.c
     if type(pid) is not int or pid <= 0:
-        raise ValueError('invalid process identity')
+        raise ProcessObservationError('invalid')
     state, code, raw, error, joined = capture_owned(['/bin/ps', '-ww', '-p', str(pid),
         '-o', 'pid=,ppid=,uid=,lstart=,comm='], env={'LC_ALL': 'C', 'PATH': '/usr/bin:/bin'},
         timeout=2, limit=FILE_BYTES)
     if state == 'nonzero' and code == 1 and joined and not raw.strip() and not error.strip():
         return None
     if state != 'completed' or not joined:
-        raise ValueError('process observation unavailable')
+        raise ProcessObservationError('unavailable')
     match = re.fullmatch(rb'\s*(\d+)\s+(\d+)\s+(\d+)\s+([A-Z][a-z]{2} [A-Z][a-z]{2} [ 0-9][0-9] [0-9:]{8} [0-9]{4})\s+([^\r\n]+)\s*', raw)
     if not match or int(match[1]) != pid:
-        raise ValueError('process observation invalid')
-    return {'pid': pid, 'ppid': int(match[2]), 'uid': int(match[3]),
-            'start': match[4].decode(), 'command': match[5].decode().strip()}
+        raise ProcessObservationError('invalid')
+    try:
+        return {'pid': pid, 'ppid': int(match[2]), 'uid': int(match[3]),
+                'start': match[4].decode(), 'command': match[5].decode().strip()}
+    except UnicodeDecodeError as error:
+        raise ProcessObservationError('invalid') from error
 
 
 def identity(info):
@@ -224,6 +245,121 @@ def terminal_ancestry(pid):
             return True
         pid = info['ppid']
     return False
+
+
+# These observers use exactly the existing short-circuit predicates. Classes
+# explain a failed gate; they never authorize a path that failed that gate.
+COMMAND_CLASSES = {'terminal_exact', 'terminal_other_path', 'login', 'shell', 'other', 'unknown'}
+GATE_REASONS = {'verified', 'identity_absent', 'identity_mismatch', 'identity_unavailable',
+    'identity_invalid', 'end_reached', 'cycle', 'ancestor_absent', 'other_uid',
+    'depth_limit', 'ancestor_unavailable', 'ancestor_invalid'}
+
+
+def command_class(command):
+    if command == TERMINAL_EXECUTABLE:
+        return 'terminal_exact'
+    if Path(command).name == 'Terminal':
+        return 'terminal_other_path'
+    if command == '/usr/bin/login':
+        return 'login'
+    if command in {'/bin/sh', '/bin/bash', '/bin/zsh'}:
+        return 'shell'
+    return 'other'
+
+
+def gate_observation(expected):
+    comparison = {'state': 'unobserved', 'pidMatched': False, 'uidMatched': False,
+                  'startMatched': False, 'matched': False}
+    result = {'verified': False, 'reason': 'identity_unavailable',
+              'identity': comparison, 'hopCount': 0, 'hops': []}
+    try:
+        current = process_info(expected['pid'])
+    except ProcessObservationError as error:
+        comparison['state'] = error.kind
+        result['reason'] = 'identity_' + error.kind
+        return result
+    if current is None:
+        comparison['state'], result['reason'] = 'absent', 'identity_absent'
+        return result
+    comparison.update(state='observed', pidMatched=current['pid'] == expected['pid'],
+        uidMatched=current['uid'] == expected['uid'], startMatched=current['start'] == expected['start'],
+        matched=identity(current) == expected)
+    if not comparison['matched']:
+        result['reason'] = 'identity_mismatch'
+        return result
+    pid, visited = expected['pid'], set()
+    for _ in range(12):
+        if pid <= 1:
+            result['reason'] = 'end_reached'
+            return result
+        if pid in visited:
+            result['reason'] = 'cycle'
+            return result
+        visited.add(pid)
+        row = {'uidRelation': 'unknown', 'commandClass': 'unknown'}
+        result['hops'].append(row)
+        result['hopCount'] = len(result['hops'])
+        try:
+            info = process_info(pid)
+        except ProcessObservationError as error:
+            result['reason'] = 'ancestor_' + error.kind
+            return result
+        if info is None:
+            result['reason'] = 'ancestor_absent'
+            return result
+        row.update(uidRelation='same' if info['uid'] == os.getuid() else 'other',
+                   commandClass=command_class(info['command']))
+        if info['uid'] != os.getuid():
+            result['reason'] = 'other_uid'
+            return result
+        if info['command'] == TERMINAL_EXECUTABLE:
+            result.update(verified=True, reason='verified')
+            return result
+        pid = info['ppid']
+    result['reason'] = 'depth_limit'
+    return result
+
+
+def validate_observation(value):
+    if (type(value) is not dict or set(value) != {'verified', 'reason', 'identity', 'hopCount', 'hops'}
+            or type(value['verified']) is not bool or value['reason'] not in GATE_REASONS
+            or value['verified'] != (value['reason'] == 'verified')
+            or type(value['hopCount']) is not int or not 0 <= value['hopCount'] <= 12
+            or type(value['hops']) is not list or len(value['hops']) != value['hopCount']):
+        raise ValueError('invalid closed gate observation')
+    comparison = value['identity']
+    flags = {'pidMatched', 'uidMatched', 'startMatched', 'matched'}
+    if (type(comparison) is not dict or set(comparison) != flags | {'state'}
+            or comparison['state'] not in {'observed', 'absent', 'unavailable', 'invalid'}
+            or any(type(comparison[key]) is not bool for key in flags)
+            or comparison['matched'] != all(comparison[key] for key in flags - {'matched'})
+            or comparison['state'] != 'observed' and any(comparison[key] for key in flags)
+            or value['hops'] and not comparison['matched']):
+        raise ValueError('invalid closed identity observation')
+    for row in value['hops']:
+        if (type(row) is not dict or set(row) != {'uidRelation', 'commandClass'}
+                or row['uidRelation'] not in {'same', 'other', 'unknown'}
+                or row['commandClass'] not in COMMAND_CLASSES):
+            raise ValueError('invalid closed ancestry hop')
+    reason, hops = value['reason'], value['hops']
+    if reason.startswith('identity_'):
+        expected_state = 'observed' if reason == 'identity_mismatch' else reason.removeprefix('identity_')
+        if hops or comparison['matched'] or comparison['state'] != expected_state:
+            raise ValueError('inconsistent identity failure')
+    elif not comparison['matched'] or comparison['state'] != 'observed':
+        raise ValueError('ancestry lacks matching identity')
+    if any(row != {'uidRelation': 'same', 'commandClass': row['commandClass']}
+            or row['commandClass'] in {'terminal_exact', 'unknown'} for row in hops[:-1]):
+        raise ValueError('ancestry continued after stop')
+    last = hops[-1] if hops else None
+    if (value['verified'] and last != {'uidRelation': 'same', 'commandClass': 'terminal_exact'}
+            or reason == 'other_uid' and (not last or last['uidRelation'] != 'other' or last['commandClass'] == 'unknown')
+            or reason.startswith('ancestor_') and last != {'uidRelation': 'unknown', 'commandClass': 'unknown'}
+            or reason in {'end_reached', 'cycle', 'depth_limit'} and last is not None
+                and (last['uidRelation'] != 'same' or last['commandClass'] in {'terminal_exact', 'unknown'})
+            or reason == 'depth_limit' and len(hops) != 12):
+        raise ValueError('inconsistent ancestry stop reason')
+    return value
 
 
 def availability():
@@ -257,14 +393,17 @@ def child(directory):
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             return 1
         plan = read_private(directory / 'plan.json')
-        keys = {'nonce', 'parent', 'deadline', 'launchDeadline', 'scriptSha256', 'binarySha256', 'env'}
+        keys = {'nonce', 'parent', 'deadline', 'launchDeadline', 'scriptSha256', 'binarySha256', 'env', 'markerOnly'}
         if (type(plan) is not dict or set(plan) != keys
                 or not re.fullmatch('[0-9a-f]{64}', plan['nonce'])
-                or type(plan['env']) is not dict or set(plan['env']) != ENV_KEYS
-                or any(type(value) is not str for value in plan['env'].values())
-                or any(plan['env'][key] != '1' for key in OPT_INS)
-                or plan['env']['GOMAXPROCS'] != '2'
-                or any(plan['env'][key] != str(directory.parent) for key in ('TMPDIR', 'TMP', 'TEMP'))
+                or type(plan['markerOnly']) is not bool
+                or type(plan['env']) is not dict
+                or plan['markerOnly'] and (plan['env'] or plan['binarySha256'] is not None)
+                or not plan['markerOnly'] and (set(plan['env']) != ENV_KEYS
+                    or any(type(value) is not str for value in plan['env'].values())
+                    or any(plan['env'][key] != '1' for key in OPT_INS)
+                    or plan['env']['GOMAXPROCS'] != '2'
+                    or any(plan['env'][key] != str(directory.parent) for key in ('TMPDIR', 'TMP', 'TEMP')))
                 or not time.monotonic() < plan['launchDeadline'] <= plan['deadline'] <= time.monotonic() + TOTAL_SECONDS
                 or digest(SCRIPT) != plan['scriptSha256'] or not same_process(plan['parent'])):
             return 1
@@ -277,6 +416,15 @@ def child(directory):
             'markerVerified': marker_ok, 'markerOwnerJoined': joined})
         if not marker_ok:
             return 1
+        if plan['markerOnly']:
+            acknowledgement = directory / 'marker-ack.json'
+            while not acknowledgement.exists():
+                if (time.monotonic() >= plan['launchDeadline'] or (directory / 'cancelled').exists()
+                        or not same_process(plan['parent'])):
+                    return 1
+                time.sleep(0.1)
+            # This acknowledgement permits only exit, never native execution.
+            return 0 if read_private(acknowledgement) == {'nonce': plan['nonce'], 'owner': owner} else 1
         permit = directory / 'permit.json'
         while not permit.exists():
             if (time.monotonic() >= plan['launchDeadline'] or (directory / 'cancelled').exists()
@@ -319,12 +467,12 @@ def started_owner(directory, plan):
     return value['owner']
 
 
-def capture(binary, *, env, private):
+def capture(binary, *, env, private, marker_only=False):
     """Launch once and accept actual child evidence, never open's status alone."""
-    result, state, code, out, err = empty_receipt(), 'not_run', None, b'', b''
+    result, state, code, out, err = empty_receipt(marker_only=marker_only), 'not_run', None, b'', b''
     directory, owner, owned_directory = private / 'terminal-launch', None, False
     try:
-        if binary != private / 'dnssd.test':
+        if type(marker_only) is not bool or (binary is not None if marker_only else binary != private / 'dnssd.test'):
             raise ValueError('unexpected diagnostic binary')
         try:
             available = availability()
@@ -339,8 +487,8 @@ def capture(binary, *, env, private):
         started = time.monotonic()
         plan = {'nonce': secrets.token_hex(32), 'parent': identity(process_info(os.getpid())),
             'deadline': started + TOTAL_SECONDS, 'launchDeadline': started + LAUNCH_SECONDS,
-            'scriptSha256': digest(SCRIPT), 'binarySha256': digest(binary),
-            'env': {key: env[key] for key in ENV_KEYS}}
+            'scriptSha256': digest(SCRIPT), 'binarySha256': None if marker_only else digest(binary),
+            'env': {} if marker_only else {key: env[key] for key in ENV_KEYS}, 'markerOnly': marker_only}
         write_private(directory / 'plan.json', plan)
         command = directory / 'diagnostic.command'
         # All variable values are quoted literal path arguments. No user or
@@ -375,10 +523,22 @@ def capture(binary, *, env, private):
                         raise ValueError('marker owner changed')
                     owner = value['owner']
                     result.update(markerVerified=True, markerOwnerJoined=True)
-                    if not same_process(owner) or not terminal_ancestry(owner['pid']):
+                    result['gateObservation'] = validate_observation(gate_observation(owner))
+                    if not result['gateObservation']['verified']:
                         result.update(status='failed', reason='ancestry_unverified')
                     else:
                         result['terminalAncestorObserved'] = True
+                    if marker_only:
+                        write_private(directory / 'marker-ack.json', {'nonce': plan['nonce'], 'owner': owner})
+                        while time.monotonic() < plan['deadline'] and same_process(owner):
+                            time.sleep(0.1)
+                        result['supervisorTerminationObserved'] = not same_process(owner)
+                        if not result['supervisorTerminationObserved']:
+                            result.update(status='failed', reason='supervisor_timeout')
+                        elif result['terminalAncestorObserved']:
+                            result.update(status='observed', reason='observed')
+                            state, code = 'completed', 0
+                    elif result['terminalAncestorObserved']:
                         if time.monotonic() >= plan['launchDeadline']:
                             raise TimeoutError('launch gate expired')
                         write_private(directory / 'permit.json', {'nonce': plan['nonce'], 'owner': owner})
