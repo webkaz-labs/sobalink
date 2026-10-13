@@ -182,7 +182,8 @@ jobs:
         run: |
           python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_diagnostic.py' -v
-          node --test web/browser/nearby-native-diagnostics.test.mjs web/browser/nearby-native-selectors.test.mjs
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_screenshots.py' -v
+          node --test web/browser/nearby-native-diagnostics.test.mjs web/browser/nearby-native-selectors.test.mjs web/browser/nearby-native-screenshots.test.mjs
           node --check web/browser/nearby-native-fixtures.mjs
           node --check web/browser/nearby-setup-native.acceptance.mjs
       - name: Verify manual setup and browser with separate discovery capability
@@ -197,6 +198,18 @@ jobs:
           path: |
             ${{ runner.temp }}/soba-nearby-sanitized/result.json
             ${{ runner.temp }}/soba-nearby-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve verified-flow initial UI illustrations separately
+        if: success() && steps.nearby.outputs.screenshots_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-nearby-ui-sanitized
+          path: |
+            ${{ runner.temp }}/soba-nearby-ui-sanitized/screenshots.json
+            ${{ runner.temp }}/soba-nearby-ui-sanitized/nearby-initial-en-375.png
+            ${{ runner.temp }}/soba-nearby-ui-sanitized/nearby-initial-ja-320.png
           if-no-files-found: error
           retention-days: 14
 
@@ -250,5 +263,62 @@ jobs:
           path: |
             ${{ runner.temp }}/soba-nearby-native-sanitized/result.json
             ${{ runner.temp }}/soba-nearby-native-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+  diagnostic-text:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'text'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Prepare locked dependencies and official Chromium
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go list -mod=readonly -deps -test -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify exact text diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_text_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_browser_summary.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_go_test.py' -v
+          node --test web/browser/text-native-contract.test.mjs
+          node --check web/browser/text-outbox-native.acceptance.mjs
+      - name: Verify exact existing text restart and browser cases privately
+        id: text
+        timeout-minutes: 22
+        run: python -B .github/scripts/ci-text-diagnostic.py
+      - name: Preserve only reconstructed sanitized text evidence
+        if: always() && steps.text.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-text-sanitized
+          path: |
+            ${{ runner.temp }}/soba-text-sanitized/result.json
+            ${{ runner.temp }}/soba-text-sanitized/provenance.json
           if-no-files-found: error
           retention-days: 14

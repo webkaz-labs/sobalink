@@ -47,7 +47,7 @@ const fits = async page => {
 // are no fabricated states, prebuilt plans, invitations or trust grants. Only
 // one actual successful approval response is dropped to exercise recovery.
 test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app }) => {
-  const { devices, checkpoint, phase } = app
+  const { devices, checkpoint, phase, captureInitial } = app
   const [a, b] = devices
   const open = async device => {
     const c = labels[device.locale], { page } = device
@@ -64,6 +64,7 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
     const c = labels[device.locale], { page } = device
     await page.getByRole('textbox', { name: new RegExp(`^${c.alias}`) }).fill(device.alias)
     await expect(page.getByRole('combobox', { name: c.scope, exact: true }).locator('option')).toHaveCount(2)
+    await captureInitial(device) // Optional real illustration, before this page creates setup secrets.
     await page.getByRole('combobox', { name: c.scope, exact: true }).selectOption({ label: '127.0.0.1 · 127.0.0.0/8' })
     await page.getByText(c.ports, { exact: true }).click()
     await page.getByRole('spinbutton', { name: c.bootstrapPort, exact: true }).fill(String(device.bootstrapPort))

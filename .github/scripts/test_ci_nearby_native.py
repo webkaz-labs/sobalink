@@ -5,6 +5,7 @@ import json
 import io
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -309,7 +310,7 @@ class NativeNearbyTests(unittest.TestCase):
     def test_workflow_has_three_new_native_platforms_and_reuses_fourth_ubuntu_job(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
         browser = workflow.split('  diagnostic-nearby:\n', 1)[1].split('  diagnostic-nearby-native:\n', 1)[0]
-        job = workflow.split('  diagnostic-nearby-native:\n', 1)[1]
+        job = re.split(r'^  [a-z][a-z0-9-]*:\n', workflow.split('  diagnostic-nearby-native:\n', 1)[1], maxsplit=1, flags=re.M)[0]
         self.assertEqual(browser.count('runs-on:'), 1)
         self.assertIn('runs-on: ubuntu-24.04\n', browser)
         self.assertNotIn('matrix:', browser)

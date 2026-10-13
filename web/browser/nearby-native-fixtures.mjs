@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
 import { errorKind, failureRecord, recordSessionFailure } from './nearby-native-diagnostics.mjs'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
+import { initialScreenshots } from './nearby-native-screenshots.mjs'
 export { expect }
 
 export const test = base.extend({
@@ -73,7 +74,9 @@ export const test = base.extend({
           await delay(25)
         }
       }
-      await use({ devices, checkpoint, phase })
+      const screenshots = initialScreenshots(process.env.SOBA_SETUP_BROWSER_SCREENSHOTS)
+      await use({ devices, checkpoint, phase, captureInitial: device => screenshots.capture(device) })
+      if (!testInfo.errors.length) await screenshots.stage()
     } catch (error) { failure(error); throw error } finally {
       // A test-body failure precedes teardown; preserve it before cleanup runs.
       if (testInfo.errors.length) failure(testInfo.errors[0])

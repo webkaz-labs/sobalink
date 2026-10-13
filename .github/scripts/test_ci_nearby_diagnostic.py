@@ -562,7 +562,7 @@ class NearbyDiagnosticTests(unittest.TestCase):
 
     def test_only_reconstructed_literal_artifacts_are_uploaded(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text().split('  diagnostic-nearby:\n', 1)[1].split('  diagnostic-nearby-native:\n', 1)[0]
-        artifact = workflow.split('uses: actions/upload-artifact', 1)[1]
+        artifact = workflow.split('uses: actions/upload-artifact', 1)[1].split('      - name:', 1)[0]
         for file in ('soba-nearby-sanitized/result.json', 'soba-nearby-sanitized/provenance.json'):
             self.assertIn(file, artifact)
         for forbidden in ('*.json', 'private', 'playwright-results', 'screenshots', 'trace.zip'):

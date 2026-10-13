@@ -22,6 +22,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	if !directLANNetstackReady {
 		t.Skip("userspace netstack activation remains gated")
 	}
+	t.Log("SOBA_TEXT_PHASE start")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	dirs, peers, keys := startDispatchProcessPeers(t, ctx)
@@ -73,6 +74,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	command := func(name, requestID string, payload any) json.RawMessage {
 		return messageCommand(0, name, requestID, payload)
 	}
+	t.Log("SOBA_TEXT_PHASE prepare")
 	oldProcess := process(0)
 	if oldProcess == "" {
 		t.Fatal("owned sender process identity unavailable")
@@ -108,6 +110,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 			t.Fatal("native text restart changed original review or locator")
 		}
 	}
+	t.Log("SOBA_TEXT_PHASE commit")
 	immutable(commit())
 	assertOffline := func() {
 		t.Helper()
@@ -119,6 +122,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 		}
 	}
 	assertOffline()
+	t.Log("SOBA_TEXT_PHASE sender-restart")
 	peers[0].stop(t)
 	start(0)
 	if process(0) == oldProcess {
@@ -126,6 +130,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	}
 	assertOffline()
 	immutable(commit()) // exact old process/review retry resolves the durable row
+	t.Log("SOBA_TEXT_PHASE saved-ack-loss")
 	// Stop the sender before installing the receiver-only ACK fault so there
 	// is no unprotected race between network readiness and interceptor setup.
 	peers[0].stop(t)
@@ -144,6 +149,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	if unknown.DeliveryOutcome != "unknown" || unknown.Receipt != nil || !sender.ExposurePossible || sender.Lease == nil || !sameTextLease(*sender.Lease, receipt.Lease) || receipt.MessageID != id || receipt.TextBytes != review.TextBytes || receipt.TextSHA256 != review.SHA256 {
 		t.Fatal("saved ACK loss did not preserve original lease and unknown sender evidence")
 	}
+	t.Log("SOBA_TEXT_PHASE receiver-restart")
 	peers[0].stop(t)
 	if settled := evidence(1); settled.Fault.SavedACKDrops != 1 || settled.Fault.InvalidCapture || settled.Receipt == nil || !reflect.DeepEqual(receipt, *settled.Receipt) {
 		t.Fatal("sender stop changed the single lost saved ACK or original receipt")
@@ -156,6 +162,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	if reopened.IncomingRows != 1 || reopened.VisibleRows != 1 || !reopened.BodyExact || reopened.Receipt == nil || !reflect.DeepEqual(receipt, *reopened.Receipt) {
 		t.Fatal("receiver process restart lost exact saved text or receipt")
 	}
+	t.Log("SOBA_TEXT_PHASE receipt-recovery")
 	peers[1].invoke(t, "fixture.text-fault", map[string]string{"messageId": id, "operation": "observe"})
 	start(0)
 	await("original saved receipt reconciliation", func() bool { return status().DeliveryOutcome == "confirmed" })
@@ -168,6 +175,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	if current := evidence(1); current.VisibleRows != 1 || current.IncomingRows != 1 || !current.BodyExact || !current.Fault.Installed || current.Fault.InvalidCapture || current.Fault.StatusRequests < 1 || current.Fault.OfferRequests != 0 || current.Fault.DeliverRequests != 0 || current.Fault.SavedACKDrops != 0 {
 		t.Fatal("reconciliation duplicated text or replaced original status inquiry")
 	}
+	t.Log("SOBA_TEXT_PHASE history-hide")
 	// Use the actual policy review/apply and history preview/cleanup commands.
 	// Only the synthetic visible message is selected, and evidence must remain.
 	policy := catalogProcessDecode[struct {
@@ -193,6 +201,7 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 		}
 	}
 	assertHidden()
+	t.Log("SOBA_TEXT_PHASE hidden-replay")
 	for _, operation := range []string{"status", "deliver", "offer", "status"} {
 		value := catalogProcessDecode[DurableTextStatus](t, peers[0].invoke(t, "fixture.text-wire", map[string]string{"messageId": id, "text": body, "operation": operation}))
 		if value.State != "received" || value.Receipt == nil || !sameTextLease(value.Lease, receipt.Lease) || !reflect.DeepEqual(receipt, *value.Receipt) {
@@ -217,8 +226,10 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	if current := evidence(0); current.OutgoingRows != 1 || current.VisibleRows != 1 || current.Receipt == nil || !reflect.DeepEqual(receipt, *current.Receipt) {
 		t.Fatal("native replay changed sender history or saved evidence")
 	}
+	t.Log("SOBA_TEXT_PHASE child-join")
 	for _, p := range peers {
 		p.stop(t)
 	}
+	t.Log("SOBA_TEXT_PHASE complete")
 	t.Log("durable_text_native offline_restart=true saved_ack_drops=1 receiver_rows=1 visible_after_cleanup=0 receipt_retained=true replay_rejected=2")
 }

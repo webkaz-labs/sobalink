@@ -22,6 +22,7 @@ func TestDurableTextThreeProcessBrowser(t *testing.T) {
 	if !directLANNetstackReady {
 		t.Skip("userspace netstack activation remains gated")
 	}
+	t.Log("SOBA_TEXT_PHASE start")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	_, peers, keys := startDispatchProcessPeers(t, ctx)
@@ -91,11 +92,18 @@ func TestDurableTextThreeProcessBrowser(t *testing.T) {
 			t.Fatal("browser recovery duplicated text, changed content, or reached an unselected peer")
 		}
 	}
+	t.Log("SOBA_TEXT_PHASE browser-launch")
 	private := runTransferProcessBrowser(t, ctx, map[string]any{"schema": 1, "textOutbox": true, "viewer": viewer, "peerId": keys[1], "peerName": recipients[0]["name"], "recipients": recipients, "processId": inventory.ProcessID}, false, func(private string) {
 		for _, stage := range []string{"review", "recovered"} {
+			if stage == "review" {
+				t.Log("SOBA_TEXT_PHASE review-wait")
+			} else {
+				t.Log("SOBA_TEXT_PHASE recovery-wait")
+			}
 			path := filepath.Join(private, "text-browser-"+stage+".json")
 			wait(func() bool { _, err := os.Stat(path); return err == nil }, "actual text browser checkpoint did not arrive")
 			if stage == "review" {
+				t.Log("SOBA_TEXT_PHASE review-verify")
 				review = catalogProcessDecode[struct {
 					Prepared TextOutboxRecord `json:"prepared"`
 				}](t, read(path)).Prepared
@@ -115,6 +123,7 @@ func TestDurableTextThreeProcessBrowser(t *testing.T) {
 					}
 				}
 			} else {
+				t.Log("SOBA_TEXT_PHASE recovery-verify")
 				result := catalogProcessDecode[struct {
 					Prepared  TextOutboxRecord `json:"prepared"`
 					Admitted  TextOutboxRecord `json:"admitted"`
@@ -136,6 +145,7 @@ func TestDurableTextThreeProcessBrowser(t *testing.T) {
 				t.Fatal("private text browser checkpoint acknowledgement unavailable")
 			}
 		}
+		t.Log("SOBA_TEXT_PHASE browser-result")
 	})
 	result := catalogProcessDecode[struct {
 		Schema         int      `json:"schema"`
@@ -150,10 +160,13 @@ func TestDurableTextThreeProcessBrowser(t *testing.T) {
 	if result.Schema != 1 || result.Prepares != 1 || result.Commits != 1 || result.Drops != 1 || result.RecoveryChecks != 1 || result.DetailChecks != 1 || !reflect.DeepEqual(result.Widths, []int{375, 320}) || !reflect.DeepEqual(result.Locales, []string{"en", "ja"}) {
 		t.Fatal("text browser final fixed evidence invalid")
 	}
+	t.Log("SOBA_TEXT_PHASE core-save")
 	assertSaved()
+	t.Log("SOBA_TEXT_PHASE child-join")
 	for _, p := range peers {
 		p.stop(t)
 	}
+	t.Log("SOBA_TEXT_PHASE summary")
 	if path := os.Getenv("SOBA_TEXT_BROWSER_SUMMARY"); path != "" {
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
@@ -165,4 +178,5 @@ func TestDurableTextThreeProcessBrowser(t *testing.T) {
 			t.Fatal("sanitized text browser summary save failed")
 		}
 	}
+	t.Log("SOBA_TEXT_PHASE complete")
 }

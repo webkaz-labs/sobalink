@@ -371,13 +371,15 @@ def main(argv=None):
         print('FAIL: fixed Linux hosted diagnostic entry required.')
         return 1
     report, provenance = empty_result(), {'schema': 1, 'stage': 'preflight'}
-    export_ready, private = False, None
+    export_ready, private, screenshots_ready = False, None, False
     export = Path(os.environ['RUNNER_TEMP']) / 'soba-nearby-sanitized'
     try:
         os.umask(0o077)
         export.mkdir(mode=0o700, exist_ok=False)
         export_ready = True
         private = Path(tempfile.mkdtemp(prefix='soba-nearby-', dir=os.environ['RUNNER_TEMP']))
+        illustrations = private / 'initial-ui'
+        illustrations.mkdir(mode=0o700)
         log = private / 'private-build.log'
         def read(command, cwd=ROOT):
             with log.open('ab') as errors:
@@ -423,6 +425,7 @@ def main(argv=None):
         provenance['fixtures'] = {'core': digest(core), 'nearby': digest(nearby)}
         env.update(SOBALINK_RUN_LAN_INTEGRATION='1', SOBALINK_RUN_SETUP_BROWSER_NATIVE='1', SOBALINK_NATIVE_NEARBY_LOOPBACK='1',
                    SOBA_TRANSFER_BROWSER_NODE=shutil.which('node'), SOBA_TRANSFER_BROWSER_CHROMIUM=str(chromium),
+                   SOBA_SETUP_BROWSER_SCREENSHOTS=str(illustrations),
                    SOBA_SETUP_BROWSER_SUMMARY=str(private / 'browser.json'), SOBA_SETUP_BROWSER_FAILURE=str(private / 'browser-failure.json'))
         for case, (package, name) in CASES.items():
             provenance['stage'] = case
@@ -468,6 +471,10 @@ def main(argv=None):
         report['diagnosticPassed'] = report['manualCorePassed'] and report['browserPassed'] and report['nativeDiscovery'] is not None
         provenance['stage'] = 'passed' if report['diagnosticPassed'] else 'runtime-failed'
         if report['diagnosticPassed']:
+            # Illustrations never supply acceptance. Only this final exact-source
+            # gate and the original receipt (including child joins) allow export.
+            screenshots_ready = module('ci-nearby-screenshots').export_initial_screenshots(
+                illustrations, export.parent / 'soba-nearby-ui-sanitized', verified=True)
             shutil.rmtree(private)
             private = None
     except Exception:
@@ -479,6 +486,8 @@ def main(argv=None):
         (export / 'provenance.json').write_text(json.dumps(provenance, sort_keys=True) + '\n')
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
             output.write('sanitized_ready=true\n')
+            if screenshots_ready and report['diagnosticPassed']:
+                output.write('screenshots_ready=true\n')
     except Exception:
         report['diagnosticPassed'] = False
     print('PASS: manual Core and browser verified; see separate native discovery capability status.' if report['diagnosticPassed'] else 'FAIL: nearby diagnostic acceptance not established; private details withheld.')
