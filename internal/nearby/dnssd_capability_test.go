@@ -3,6 +3,7 @@ package nearby
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 )
 
@@ -60,5 +61,59 @@ func TestDNSServiceCapabilityLateErrorDowngradesProof(t *testing.T) {
 		if result.Status == "verified" || result.RawPacketVerified || result.ReciprocalRecords || result.ReciprocalCandidates || result.WithdrawalObserved || result.NetworkMulticastVerified || !result.OwnersJoined {
 			t.Fatalf("late failure retained final proof: %+v", result)
 		}
+	}
+}
+
+// The hosted diagnostic driver must not start another scope after an explicit
+// native policy denial. This test-only latch never changes production policy.
+// These five top-level cases are intentionally not parallel. Observation is
+// recorded after each run function returns and its cleanup defers complete.
+type dnssdDiagnosticBatch struct{ denied atomic.Bool }
+
+func (b *dnssdDiagnosticBatch) allowed() bool { return !b.denied.Load() }
+func (b *dnssdDiagnosticBatch) observe(kind string) {
+	if kind == "permission_denied" {
+		b.denied.Store(true)
+	}
+}
+
+var dnssdNativeDiagnosticBatch dnssdDiagnosticBatch
+
+func requireDNSServiceBatchPermission(t *testing.T) {
+	t.Helper()
+	if !dnssdNativeDiagnosticBatch.allowed() {
+		t.Skip("diagnostic stopped after prior native policy denial")
+	}
+}
+
+func TestDNSServiceBatchDenialFence(t *testing.T) {
+	for _, kind := range []string{"none", "host_unreachable", "permission_denied"} {
+		t.Run(kind, func(t *testing.T) {
+			var batch dnssdDiagnosticBatch
+			started, joined := 0, false
+			run := func() string {
+				started++
+				defer func() { joined = true }()
+				return kind
+			}
+			batch.observe(run())
+			if !joined {
+				t.Fatal("result observed before owned cleanup returned")
+			}
+			if batch.allowed() {
+				started++
+			}
+			want := 2
+			if kind == "permission_denied" {
+				want = 1
+			}
+			if started != want {
+				t.Fatal("batch started a scope outside the denial fence")
+			}
+			batch.observe("none")
+			if kind == "permission_denied" && batch.allowed() {
+				t.Fatal("denial was not latched")
+			}
+		})
 	}
 }

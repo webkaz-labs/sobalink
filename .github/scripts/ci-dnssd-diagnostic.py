@@ -93,6 +93,7 @@ class PreflightError(ValueError):
 
 POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/ci-diagnostic.py',
     '.github/scripts/ci-dnssd-diagnostic.py', '.github/scripts/test_ci_dnssd_diagnostic.py',
+    '.github/scripts/ci-dnssd-terminal.py', '.github/scripts/test_ci_dnssd_terminal.py',
     '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-diagnostic.py',
     '.github/scripts/ci-go-test.py', 'internal/nearby/provider_darwin.go',
     'internal/nearby/dnssd_bridge_darwin.c', 'internal/nearby/dnssd_bridge_darwin.h',
@@ -435,6 +436,7 @@ def sdk_file_inventory(sdk):
 def empty_result():
     return {'schema': 1, 'diagnosticPassed': False, 'cCompilePassed': False, 'cLinkPassed': False, 'goCompilePassed': False,
             'compileFailureKind': None, 'compileFailureLocation': None, 'preflightFailureKind': None, 'processStatus': 'not_run', 'eventsAccepted': False,
+            'terminalLaunch': None,
             'capabilities': {scope: None for scope in CASES.values()}, 'selectedInterfaceVerified': False,
             'rawReceiveVerified': False, 'legacySerializationVerified': False, 'legacyReceivePath': 'none',
             'networkMulticastVerified': False, 'physicalLANVerified': False,
@@ -598,8 +600,10 @@ def main(argv=None):
         provenance['testSha256'] = native.digest(binary)
         env.update({key: '1' for key in OPT_INS})
         provenance['stage'] = 'runtime'
-        state, code, stdout, _ = native.capture([str(binary), '-test.v=test2json', '-test.run=' + SELECTOR,
-            '-test.count=1', '-test.timeout=60s'], env=env, timeout=75, limit=native.RUNTIME_BYTES)
+        provenance['launchMethod'] = 'ordinary_terminal_command'
+        provenance['testDriverDenialFence'] = True
+        state, code, stdout, _, report['terminalLaunch'] = module('ci-dnssd-terminal').capture(
+            binary, env=env, private=private)
         report['processStatus'] = state
         if state in ('completed', 'nonzero'):
             converted, _, data, _ = native.capture(['go', 'tool', 'test2json', '-p', PACKAGE],
@@ -611,7 +615,8 @@ def main(argv=None):
                 or compiler_hashes != {'clang': native.digest(clang), 'go': native.digest(tool),
                     'sdk': {key: native.digest(path) for key, path in sdk_files.items()}}):
             raise ValueError('source or toolchain changed')
-        report['diagnosticPassed'] = report['eventsAccepted'] and state == 'completed'
+        report['diagnosticPassed'] = (report['eventsAccepted'] and state == 'completed'
+            and report['terminalLaunch']['status'] == 'observed')
         provenance['stage'] = 'passed' if report['diagnosticPassed'] else 'runtime-failed'
     except Exception as error:
         if provenance['stage'] in PREFLIGHT_STAGES:

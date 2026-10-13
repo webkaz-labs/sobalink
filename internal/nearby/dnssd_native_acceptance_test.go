@@ -21,6 +21,7 @@ func emitDNSServiceCapability(t *testing.T, r dnssdCapabilityResult) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dnssdNativeDiagnosticBatch.observe(r.FailureKind)
 	t.Log("NEARBY_DNSSD_CAPABILITY " + string(data))
 	if r.Status == "unavailable" || r.Status == "not_run" {
 		t.Skip("OS DNS-SD capability not verified: " + r.Reason)
@@ -30,6 +31,7 @@ func emitDNSServiceCapability(t *testing.T, r dnssdCapabilityResult) {
 	}
 }
 func TestDNSServiceLocalOnlyCapability(t *testing.T) {
+	requireDNSServiceBatchPermission(t)
 	result := dnssdCapability("os_local_only")
 	if os.Getenv("SOBALINK_DNSSD_LOCAL_ONLY") != "1" {
 		result.Status, result.Reason = "not_run", "opt_in_required"
@@ -39,6 +41,7 @@ func TestDNSServiceLocalOnlyCapability(t *testing.T) {
 	emitDNSServiceCapability(t, result)
 }
 func TestDNSServiceSelectedLoopbackCapability(t *testing.T) {
+	requireDNSServiceBatchPermission(t)
 	result := dnssdCapability("selected_loopback_os")
 	if os.Getenv("SOBALINK_DNSSD_SELECTED_LOOPBACK") != "1" {
 		result.Status, result.Reason = "not_run", "opt_in_required"
@@ -51,6 +54,7 @@ func TestDNSServiceSelectedLoopbackCapability(t *testing.T) {
 // This separate opt-in is authorized only for a bounded hosted synthetic test.
 // Ambiguous/no suitable scope is unavailable, never an implicit fallback.
 func TestDNSServiceSelectedInterfaceCapability(t *testing.T) {
+	requireDNSServiceBatchPermission(t)
 	result := dnssdCapability("selected_private_interface_os")
 	if os.Getenv("SOBALINK_DNSSD_SELECTED_INTERFACE") != "1" {
 		result.Status, result.Reason = "not_run", "opt_in_required"

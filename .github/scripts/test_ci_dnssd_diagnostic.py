@@ -444,8 +444,17 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     'repository': {'full_name': 'webkaz-labs/sobalink', 'private': False}}))
                 native = gate.module('ci-nearby-native')
                 real_module = gate.module
+                terminal = real_module('ci-dnssd-terminal')
+                def terminal_capture(binary, *, env, private):
+                    state, code, out, err = native.capture(terminal.native_command(binary), env=env, timeout=75, limit=native.RUNTIME_BYTES)
+                    launch = terminal.empty_receipt()
+                    launch.update(status='observed', reason='observed', nativeProcessStatus=state, nativeExitCode=code, **{key: True for key in (
+                        'availabilityVerified', 'openCompleted', 'markerVerified', 'markerOwnerJoined',
+                        'terminalAncestorObserved', 'nativeStartObserved', 'nativeOwnerJoined', 'supervisorTerminationObserved')})
+                    return state, code, out, err, terminal.receipt(launch)
+                terminal.capture = terminal_capture
                 def module(name):
-                    return native if name == 'ci-nearby-native' else real_module(name)
+                    return native if name == 'ci-nearby-native' else terminal if name == 'ci-dnssd-terminal' else real_module(name)
                 def checked(command, **kwargs):
                     if command == ['git', 'rev-parse', 'HEAD']: return sha.encode()
                     if command == ['git', 'rev-parse', 'HEAD^{tree}']: return tree.encode()

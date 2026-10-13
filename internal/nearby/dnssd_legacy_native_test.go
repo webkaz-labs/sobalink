@@ -21,6 +21,7 @@ import (
 )
 
 func TestDNSServiceLegacySerializationCapability(t *testing.T) {
+	requireDNSServiceBatchPermission(t)
 	result := dnssdLegacyDefault()
 	if os.Getenv("SOBALINK_DNSSD_LEGACY_SERIALIZATION") == "1" {
 		result = runDNSServiceLegacySerialization()
@@ -29,6 +30,7 @@ func TestDNSServiceLegacySerializationCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dnssdNativeDiagnosticBatch.observe(result.FailureKind)
 	t.Log("NEARBY_DNSSD_LEGACY_CAPABILITY " + string(data))
 	if result.Status == "not_run" || result.Status == "unavailable" {
 		t.Skip("legacy DNS serialization not verified: " + result.Reason)
