@@ -18,6 +18,10 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 	if os.Getenv("SOBALINK_RUN_SETUP_BROWSER_NATIVE") != "1" {
 		t.Skip("unperformed: explicit nearby process/browser acceptance required")
 	}
+	failurePhase := "core-start"
+	defer func() {
+		saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence"})
+	}()
 	f := newNativeLANCoreFixture(t)
 	ctx, cancel := context.WithTimeout(f.ctx, 2*time.Minute)
 	defer cancel()
@@ -68,7 +72,14 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 	}
 	var reviewed [2]SetupSnapshot
 	runTransferProcessBrowser(t, ctx, map[string]any{"schema": 1, "nearby": true, "devices": devices}, false, func(private string) {
+		defer func() {
+			// Capture an earlier browser failure, or this Core evidence failure,
+			// before runner cancellation can produce a secondary interruption.
+			exportNearbyBrowserFailure(t, private)
+			saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence"})
+		}()
 		for _, stage := range []string{"cancelled", "review", "one-approved", "connected"} {
+			failurePhase = "core-" + stage
 			wait(func() bool { _, err := os.Stat(filepath.Join(private, "nearby-"+stage+".json")); return err == nil }, "browser setup checkpoint did not arrive")
 			switch stage {
 			case "cancelled":
@@ -115,6 +126,7 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 			}
 		}
 	})
+	failurePhase = "core-cleanup"
 	for _, p := range peers {
 		v := view(p)
 		p.invoke(t, "setup.cancel", SetupSessionInput{SessionID: v.SessionID})

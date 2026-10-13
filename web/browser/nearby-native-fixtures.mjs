@@ -3,11 +3,16 @@ import { readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
+import { errorKind, failureRecord, recordSessionFailure } from './nearby-native-diagnostics.mjs'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
 export { expect }
 
 export const test = base.extend({
-  app: async ({ browser }, use) => {
+  app: async ({ browser }, use, testInfo) => {
+    let currentPhase = 'descriptor'
+    const phase = async value => { failureRecord(value, 'unexpected'); currentPhase = value; await base.step(`nearby:${value}`, async () => {}) }
+    const failure = (error, kind) => recordSessionFailure(currentPhase, kind || errorKind(error, testInfo.status))
+    await phase('descriptor')
     let session
     try {
       const file = process.env.SOBA_TRANSFER_BROWSER_SESSION, info = await stat(file)
@@ -24,22 +29,23 @@ export const test = base.extend({
       }
       assert.notEqual(session.devices[0].viewer.url, session.devices[1].viewer.url)
       assert.equal(new Set(session.devices.flatMap(d => [d.bootstrapPort, d.relayPort])).size, 4)
-    } catch { throw Error('Private nearby browser descriptor invalid; contents withheld') }
+    } catch (error) { failure(error); throw Error('Private nearby browser descriptor invalid; contents withheld') }
     const devices = [], contexts = []
     let errors = 0
     try {
       for (const [index, device] of session.devices.entries()) {
+        await phase(index === 0 ? 'authenticate-a' : 'authenticate-b')
         const context = await browser.newContext({ locale: device.locale === 'ja' ? 'ja-JP' : 'en-US', viewport: { width: [375, 320][index], height: 844 }, serviceWorkers: 'block', acceptDownloads: false })
         contexts.push(context)
         const page = await context.newPage(), commands = []
-        page.on('pageerror', () => errors++)
+        page.on('pageerror', () => { errors++; recordSessionFailure(currentPhase, 'runtime') })
         page.on('request', request => {
           if (new URL(request.url()).pathname !== '/api/command') return
           try {
             const command = request.postDataJSON()
             assert.ok(['setup.scopes', 'setup.status', 'setup.start', 'setup.manual', 'setup.approve', 'setup.cancel'].includes(command.name))
             commands.push(command)
-          } catch { errors++ }
+          } catch { errors++; recordSessionFailure(currentPhase, 'command_boundary') }
         })
         try {
           const response = await page.goto(device.viewer.url)
@@ -49,27 +55,33 @@ export const test = base.extend({
           await page.locator('.workspace').waitFor()
           if (await page.locator('html').getAttribute('lang') !== device.locale) await page.locator('.locale-toggle').click()
           await expect(page.locator('html')).toHaveAttribute('lang', device.locale)
-        } catch { throw Error('Real nearby browser authentication failed; private details withheld') }
+        } catch (error) { failure(error); throw Error('Real nearby browser authentication failed; private details withheld') }
         device.viewer.code = ''
         devices.push({ ...device, page, commands })
       }
       const checkpoint = async stage => {
         assert.ok(['cancelled', 'review', 'one-approved', 'connected'].includes(stage))
+        await phase(`checkpoint-${stage}`)
         const root = dirname(process.env.SOBA_TRANSFER_BROWSER_SESSION)
         await writeFile(join(root, `nearby-${stage}.json`), JSON.stringify({ schema: 1, stage }), { mode: 0o600, flag: 'wx' })
         const until = Date.now() + 15_000
         while (true) {
           try { assert.equal(await readFile(join(root, `nearby-${stage}.ok`), 'utf8'), 'verified\n'); return } catch (error) { if (error.code !== 'ENOENT') throw error }
-          if (Date.now() >= until) throw Error('Actual Core evidence checkpoint unavailable')
+          if (Date.now() >= until) { recordSessionFailure(currentPhase, 'checkpoint'); throw Error('Actual Core evidence checkpoint unavailable') }
           await delay(25)
         }
       }
-      await use({ devices, checkpoint })
-    } finally {
-      for (const device of session.devices) device.viewer.code = ''
-      for (const { page } of devices) await drainRoutesBeforeCleanup(page, async () => { await page.close() })
-      for (const context of contexts) await context.close()
-      assert.equal(errors, 0, 'Actual nearby UI runtime or command boundary failed')
+      await use({ devices, checkpoint, phase })
+    } catch (error) { failure(error); throw error } finally {
+      // A test-body failure precedes teardown; preserve it before cleanup runs.
+      if (testInfo.errors.length) failure(testInfo.errors[0])
+      currentPhase = 'cleanup' // Do not add an awaited step that could interrupt teardown.
+      try {
+        for (const device of session.devices) device.viewer.code = ''
+        for (const { page } of devices) await drainRoutesBeforeCleanup(page, async () => { await page.close() })
+        for (const context of contexts) await context.close()
+        assert.equal(errors, 0, 'Actual nearby UI runtime or command boundary failed')
+      } catch (error) { failure(error, 'cleanup'); throw error }
     }
   },
 })

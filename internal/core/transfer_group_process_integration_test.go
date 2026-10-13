@@ -317,6 +317,9 @@ func runTransferGroupProcessBrowser(t *testing.T, ctx context.Context, sender *r
 func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map[string]any, dispatch bool, whileRunning ...func(string)) string {
 	t.Helper()
 	private := t.TempDir()
+	if descriptor["nearby"] == true {
+		defer exportNearbyBrowserFailure(t, private)
+	}
 	raw, err := json.Marshal(descriptor)
 	if err != nil {
 		t.Fatal("private transfer browser descriptor encoding failed")

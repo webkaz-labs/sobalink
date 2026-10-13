@@ -47,7 +47,7 @@ const fits = async page => {
 // are no fabricated states, prebuilt plans, invitations or trust grants. Only
 // one actual successful approval response is dropped to exercise recovery.
 test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app }) => {
-  const { devices, checkpoint } = app
+  const { devices, checkpoint, phase } = app
   const [a, b] = devices
   const open = async device => {
     const c = labels[device.locale], { page } = device
@@ -76,30 +76,35 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
     device.session = result
     return result
   }
-  await open(a)
+  await phase('open-a'); await open(a)
+  await phase('start-a')
   const cancelled = await start(a)
+  await phase('cancel-a')
   const cancelResult = await commandResult(a.page, 'setup.cancel', () => a.page.getByRole('button', { name: labels.en.back, exact: true }).click())
   assert.equal(cancelResult.sessionId, cancelled.sessionId)
   assert.ok(['cancelling', 'cancelled'].includes(cancelResult.state))
   await expect(a.page.locator('.nearby-setup')).toHaveCount(0)
   await checkpoint('cancelled') // Go verifies actual join and listener release.
-  await open(a); await start(a)
+  await phase('restart-a'); await open(a); await start(a)
   assert.notEqual(a.session.sessionId, cancelled.sessionId)
-  await open(b); await start(b)
+  await phase('open-b'); await open(b)
+  await phase('start-b'); await start(b)
   const contacts = await Promise.all(devices.map(d => d.page.getByRole('textbox', { name: labels[d.locale].local, exact: true }).inputValue()))
   for (const [index, device] of devices.entries()) {
     const c = labels[device.locale], { page } = device
+    await phase(index === 0 ? 'manual-a' : 'manual-b')
     await page.getByLabel(c.peer, { exact: true }).fill(contacts[1 - index])
     const result = await commandResult(page, 'setup.manual', () => page.getByRole('button', { name: c.import, exact: true }).click())
     assert.equal(result.sessionId, device.session.sessionId)
     assert.equal(result.selected.sessionId, devices[1 - index].session.sessionId)
   }
-  for (const device of devices) await expect(device.page.getByRole('region', { name: labels[device.locale].review, exact: true })).toBeVisible({ timeout: 20_000 })
+  for (const [index, device] of devices.entries()) { await phase(index === 0 ? 'plan-a' : 'plan-b'); await expect(device.page.getByRole('region', { name: labels[device.locale].review, exact: true })).toBeVisible({ timeout: 20_000 }) }
   const fingerprints = await Promise.all(devices.map(d => d.page.getByRole('textbox', { name: labels[d.locale].fingerprint, exact: true }).inputValue()))
   assert.match(fingerprints[0], /^sobalink-setup-verify-v1:[a-f0-9]{64}$/)
   assert.equal(fingerprints[0], fingerprints[1])
   for (const [index, device] of devices.entries()) {
     const c = labels[device.locale], { page } = device
+    await phase(index === 0 ? 'fingerprint-a' : 'fingerprint-b')
     const review = page.getByRole('region', { name: c.review, exact: true }), approve = review.getByRole('button', { name: c.approve, exact: true })
     await expect(approve).toBeDisabled()
     await review.getByLabel(c.otherFingerprint, { exact: true }).fill(`${fingerprints[1 - index].slice(0, -1)}${fingerprints[0].endsWith('0') ? '1' : '0'}`)
@@ -117,6 +122,7 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
     await fits(page)
   }
   await checkpoint('review')
+  await phase('approve-a')
   let approvalDrops = 0, acceptedApproval
   let acceptedResolve
   const accepted = new Promise(resolve => { acceptedResolve = resolve })
@@ -136,6 +142,7 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
   await expect(a.page.getByText('The last response was not confirmed. Check the original session before trying another action.', { exact: true })).toBeVisible()
   await expect(a.page.getByRole('button', { name: labels.en.approve, exact: true })).toBeDisabled()
   await expect(a.page.getByRole('button', { name: labels.en.start, exact: true })).toHaveCount(0)
+  await phase('recover-a')
   const approvedA = await commandResult(a.page, 'setup.status', () => a.page.getByRole('button', { name: 'Check original session', exact: true }).click())
   assert.equal(approvedA.sessionId, a.session.sessionId)
   assert.equal(approvedA.plan.fingerprint, acceptedApproval.plan.fingerprint)
@@ -144,8 +151,10 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
   assert.equal(approvedA.localApproved, true); assert.equal(approvedA.remoteApproved, false)
   assert.equal(approvedA.paired, false); assert.equal(approvedA.connected, false)
   await checkpoint('one-approved') // Real remote receipt, still no backend/pair.
+  await phase('approve-b')
   await commandResult(b.page, 'setup.approve', () => b.page.getByRole('button', { name: labels.ja.approve, exact: true }).click())
   for (const device of devices) {
+    await phase(device === a ? 'connected-a' : 'connected-b')
     await expect(device.page.getByText(labels[device.locale].connected, { exact: true })).toBeVisible({ timeout: 30_000 })
     await fits(device.page)
     const starts = device.commands.filter(command => command.name === 'setup.start')

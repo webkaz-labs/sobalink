@@ -161,6 +161,43 @@ class NearbyDiagnosticTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gate.browser_summary(dict(expected, **changes))
 
+    def test_failure_evidence_is_closed_and_separate_from_success(self):
+        record = {'schema': 1, 'phase': 'fingerprint-b', 'errorKind': 'assertion'}
+        self.assertEqual(gate.browser_failure(record), record)
+        for phase in gate.BROWSER_PHASES:
+            for kind in gate.BROWSER_ERROR_KINDS:
+                self.assertEqual(gate.browser_failure(dict(record, phase=phase, errorKind=kind))['phase'], phase)
+        for changes in ({'schema': True}, {'phase': 'synthetic-private-endpoint'},
+                        {'errorKind': 'synthetic-private-body'}, {'message': 'synthetic-private-token'},
+                        {'selector': 'synthetic-private-text'}, {'stack': 'synthetic-private-path'},
+                        {'phase': []}, {'errorKind': None}, {'accepted': True}):
+            with self.assertRaises(ValueError):
+                gate.browser_failure(dict(record, **changes))
+        source = SCRIPT.read_text()
+        self.assertIn("if (private / 'browser-failure.json').exists():", source)
+        self.assertIn("report['browserFailure'] = browser_failure", source)
+        self.assertIsNone(gate.empty_result()['browserFailure'])
+
+    def test_failure_enums_match_browser_and_native_export(self):
+        import re
+        js = (gate.ROOT / 'web/browser/nearby-native-diagnostics.mjs').read_text()
+        phases = set(re.findall(r"'([^']+)'", js.split('export const PHASES = Object.freeze([', 1)[1].split('])', 1)[0]))
+        kinds = set(re.findall(r"'([^']+)'", js.split('export const ERROR_KINDS = Object.freeze([', 1)[1].split('])', 1)[0]))
+        self.assertEqual(phases, gate.BROWSER_PHASES)
+        self.assertEqual(kinds, gate.BROWSER_ERROR_KINDS)
+        native = (gate.ROOT / 'internal/core/setup_browser_fixture_integration_test.go').read_text()
+        for value in phases | kinds:
+            self.assertIn('"' + value + '"', native)
+        self.assertIn('os.O_WRONLY|os.O_CREATE|os.O_EXCL', native)
+        self.assertIn('decoder.DisallowUnknownFields()', native)
+        self.assertIn('info.Size() > 1024', native)
+        fixture = (gate.ROOT / 'web/browser/nearby-native-fixtures.mjs').read_text()
+        self.assertLess(fixture.index('if (testInfo.errors.length) failure(testInfo.errors[0])'), fixture.index("currentPhase = 'cleanup'"))
+        reporter = (gate.ROOT / 'web/browser/nearby-native-reporter.mjs').read_text()
+        self.assertIn('extends TransferNativeReporter', reporter)
+        self.assertNotIn('console.', reporter)
+        self.assertNotIn('error.message', reporter)
+
     def test_failed_default_makes_no_acceptance_claim(self):
         result = gate.empty_result()
         for key in ('diagnosticPassed', 'manualCorePassed', 'browserPassed', 'nativeDiscoveryVerified', 'physicalLANVerified', 'releaseValidation'):

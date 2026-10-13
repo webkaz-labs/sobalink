@@ -116,6 +116,20 @@ def capability(value):
     return {key: value[key] for key in sorted(CAPABILITY_KEYS)}
 
 
+
+BROWSER_PHASES = {'launch', 'descriptor', 'authenticate-a', 'authenticate-b', 'open-a', 'start-a', 'cancel-a', 'checkpoint-cancelled', 'restart-a', 'open-b', 'start-b', 'manual-a', 'manual-b', 'plan-a', 'plan-b', 'fingerprint-a', 'fingerprint-b', 'checkpoint-review', 'approve-a', 'recover-a', 'checkpoint-one-approved', 'approve-b', 'connected-a', 'connected-b', 'checkpoint-connected', 'cleanup', 'core-start', 'core-cancelled', 'core-review', 'core-one-approved', 'core-connected', 'core-cleanup'}
+BROWSER_ERROR_KINDS = {'timeout', 'assertion', 'selector_ambiguous', 'browser_launch', 'browser_closed', 'runtime', 'command_boundary', 'checkpoint', 'cleanup', 'interrupted', 'unexpected', 'core_evidence', 'evidence_unavailable'}
+
+
+def browser_failure(value):
+    if (type(value) is not dict or set(value) != {'schema', 'phase', 'errorKind'}
+            or type(value['schema']) is not int or value['schema'] != 1
+            or type(value['phase']) is not str or value['phase'] not in BROWSER_PHASES
+            or type(value['errorKind']) is not str or value['errorKind'] not in BROWSER_ERROR_KINDS):
+        raise ValueError('invalid fixed browser failure')
+    return {'schema': 1, 'phase': value['phase'], 'errorKind': value['errorKind']}
+
+
 def browser_summary(value):
     if type(value) is not dict or set(value) != set(BROWSER_EXPECTED):
         raise ValueError('invalid browser receipt schema')
@@ -178,7 +192,7 @@ def assets(directory):
 
 def empty_result():
     return {'schema': 1, 'diagnosticPassed': False, 'manualCorePassed': False, 'browserPassed': False,
-            'nativeDiscoveryVerified': False, 'nativeDiscovery': None, 'browser': None,
+            'nativeDiscoveryVerified': False, 'nativeDiscovery': None, 'browser': None, 'browserFailure': None,
             'scope': 'synthetic-loopback-manual-core-and-browser', 'physicalLANVerified': False,
             'releaseValidation': False}
 
@@ -240,7 +254,7 @@ def main(argv=None):
         provenance['fixtures'] = {'core': digest(core), 'nearby': digest(nearby)}
         env.update(SOBALINK_RUN_LAN_INTEGRATION='1', SOBALINK_RUN_SETUP_BROWSER_NATIVE='1', SOBALINK_NATIVE_NEARBY_LOOPBACK='1',
                    SOBA_TRANSFER_BROWSER_NODE=shutil.which('node'), SOBA_TRANSFER_BROWSER_CHROMIUM=str(chromium),
-                   SOBA_SETUP_BROWSER_SUMMARY=str(private / 'browser.json'))
+                   SOBA_SETUP_BROWSER_SUMMARY=str(private / 'browser.json'), SOBA_SETUP_BROWSER_FAILURE=str(private / 'browser-failure.json'))
         for case, (package, name) in CASES.items():
             provenance['stage'] = case
             binary = nearby if case == 'discovery' else core
@@ -263,11 +277,21 @@ def main(argv=None):
                     receipt = private / 'browser.json'
                     if receipt.is_symlink() or receipt.stat().st_size > 8192:
                         raise ValueError('invalid browser receipt file')
+                    if (private / 'browser-failure.json').exists():
+                        raise ValueError('browser success conflicts with failure evidence')
                     report['browser'] = browser_summary(parse_json(receipt.read_text()))
                     report['browserPassed'] = True
             except Exception:
-                # Fixed false/absent evidence remains; raw output is never exported.
-                pass
+                # Preserve only a closed, reconstructed first failure. Never
+                # export the native/framework log or an exception's text.
+                if case == 'browser':
+                    failure = private / 'browser-failure.json'
+                    try:
+                        if failure.is_symlink() or not failure.is_file() or failure.stat().st_size > 1024:
+                            raise ValueError('invalid fixed failure file')
+                        report['browserFailure'] = browser_failure(parse_json(failure.read_text()))
+                    except Exception:
+                        report['browserFailure'] = {'schema': 1, 'phase': 'launch', 'errorKind': 'evidence_unavailable'}
         provenance['stage'] = 'verify-source'
         require_source_inventory(log, after_build=True)
         if before != {name: digest(ROOT / name) for name in inventory} or assets(web / 'dist') != asset_hashes or provenance['fixtures'] != {'core': digest(core), 'nearby': digest(nearby)}:
