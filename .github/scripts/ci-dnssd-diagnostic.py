@@ -341,6 +341,93 @@ def test_events(raw, returncode):
     return result, bool(accepted)
 
 
+def collector_observation(stdout, stderr, state='not_run', code=None, data=b'', error=b''):
+    """Closed explanatory counts only; never used by capability acceptance."""
+    native, parser = module('ci-nearby-native'), module('ci-go-test')
+    if (any(type(value) is not bytes for value in (stdout, stderr, data, error))
+            or max(len(stdout), len(stderr)) > native.RUNTIME_BYTES
+            or max(len(data), len(error)) > 2 * native.RUNTIME_BYTES
+            or state not in native.PROCESS_STATES
+            or code is not None and (type(code) is not int or not -127 <= code <= 255)):
+        raise ValueError('invalid bounded collector observation')
+    result = {'nativeStdoutBytes': len(stdout), 'nativeStderrBytes': len(stderr),
+        'rawStreams': {},
+        'converterState': state, 'converterExitCode': code,
+        'converterStdoutBytes': len(data), 'converterStderrBytes': len(error),
+        'converterStderrClass': ('empty' if not error else 'usage' if error.startswith(b'usage: go tool test2json ')
+            else 'go_tool_error' if error.startswith(b'go: ') else 'panic' if error.startswith(b'panic: ') else 'unclassified'),
+        'eventScanStatus': 'not_run' if state != 'completed' else 'scanned',
+        'eventCount': 0, 'outputEventCount': 0, 'countsCapped': False,
+        'packageLifecycleCounts': {name: 0 for name in ('start', 'pass', 'skip', 'fail', 'other')},
+        'testLifecycleCounts': {name: {action: 0 for action in ('run', 'pass', 'skip', 'fail', 'other')} for name in CASES},
+        'completeMarkerLineCounts': {name: 0 for name in CASES},
+        'incompleteOutputLines': 0, 'incompleteMarkerLines': 0, 'acceptanceStatus': 'not_run'}
+    def bounded(value, maximum=16):
+        if value > maximum:
+            result['countsCapped'] = True
+        return min(value, maximum)
+    for stream, value in (('stdout', stdout), ('stderr', stderr)):
+        observed = {'runTokenCounts': {}, 'terminalTokenCounts': {}, 'markerTokenCounts': {},
+            'completeMarkerLineCounts': {},
+            'passTokenSeen': bool(re.search(rb'(?m)^\x16?PASS\r?\n', value)),
+            'failTokenSeen': bool(re.search(rb'(?m)^\x16?FAIL\r?\n', value)),
+            'noTestsTokenSeen': b'testing: warning: no tests to run' in value}
+        for name in CASES:
+            observed['runTokenCounts'][name] = bounded(len(re.findall(
+                rb'(?m)^\x16?=== RUN   ' + re.escape(name.encode()) + rb'\r?\n', value)))
+            observed['terminalTokenCounts'][name] = {action: bounded(len(re.findall(
+                rb'(?m)^\x16?--- ' + action.upper().encode() + rb': ' + re.escape(name.encode())
+                + rb' \([0-9]+(?:\.[0-9]+)?s\)\r?\n', value))) for action in ('pass', 'skip', 'fail')}
+        for kind, marker in (('standard', MARKER.encode()), ('legacy', LEGACY_MARKER.encode())):
+            observed['markerTokenCounts'][kind] = bounded(value.count(marker))
+            observed['completeMarkerLineCounts'][kind] = bounded(sum(marker in line and line.endswith(b'\n')
+                for line in value.splitlines(keepends=True)))
+        result['rawStreams'][stream] = observed
+    if state != 'completed':
+        return result
+    pending, pending_owner = '', None
+    def unfinished():
+        if pending:
+            result['incompleteOutputLines'] = bounded(result['incompleteOutputLines'] + 1)
+            result['incompleteMarkerLines'] = bounded(result['incompleteMarkerLines'] + int(MARKER in pending or LEGACY_MARKER in pending))
+    try:
+        for line in data.splitlines():
+            event = parser.parse_event(line)
+            result['eventCount'] = bounded(result['eventCount'] + 1, 4096)
+            name, action = event.get('Test'), event['Action']
+            if event.get('Package') != PACKAGE or name is not None and name not in CASES:
+                result['eventScanStatus'] = 'unexpected_inventory'
+                break
+            if action != 'output':
+                unfinished()
+                pending, pending_owner = '', None
+                counts = result['packageLifecycleCounts'] if name is None else result['testLifecycleCounts'][name]
+                key = action if action in counts else 'other'
+                counts[key] = bounded(counts[key] + 1)
+                continue
+            result['outputEventCount'] = bounded(result['outputEventCount'] + 1, 4096)
+            if pending and pending_owner != name:
+                unfinished()
+                pending = ''
+            pending_owner = name
+            # Only join adjacent fragments for the same owner. A token in an
+            # unfinished line never counts as a complete logical marker line.
+            parts = (pending + event['Output']).split('\n')
+            pending = parts.pop()
+            if name in CASES:
+                marker = LEGACY_MARKER if name == 'TestDNSServiceLegacySerializationCapability' else MARKER
+                result['completeMarkerLineCounts'][name] = bounded(
+                    result['completeMarkerLineCounts'][name] + sum(marker in part for part in parts))
+        unfinished()
+        if result['eventScanStatus'] == 'scanned' and result['incompleteOutputLines']:
+            result['eventScanStatus'] = 'incomplete_lines'
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        result['eventScanStatus'] = 'invalid_event'
+    except Exception:
+        result['eventScanStatus'] = 'scanner_failed'
+    return result
+
+
 def compiler_kind(stderr, state):
     if state in ('timeout', 'output_limit', 'launch_failed', 'capture_failed'):
         return state
@@ -437,7 +524,7 @@ def sdk_file_inventory(sdk):
 def empty_result():
     return {'schema': 1, 'diagnosticPassed': False, 'cCompilePassed': False, 'cLinkPassed': False, 'goCompilePassed': False,
             'compileFailureKind': None, 'compileFailureLocation': None, 'preflightFailureKind': None, 'processStatus': 'not_run', 'eventsAccepted': False,
-            'terminalLaunch': None,
+            'terminalLaunch': None, 'collector': None,
             'capabilities': {scope: None for scope in CASES.values()}, 'selectedInterfaceVerified': False,
             'rawReceiveVerified': False, 'legacySerializationVerified': False, 'legacyReceivePath': 'none',
             'networkMulticastVerified': False, 'physicalLANVerified': False,
@@ -604,14 +691,23 @@ def main(argv=None):
         provenance['launchMethod'] = 'ordinary_terminal_command'
         provenance['originVerification'] = 'exact-four-hop-kernel-path-with-final-recheck'
         provenance['testDriverDenialFence'] = True
-        state, code, stdout, _, report['terminalLaunch'] = module('ci-dnssd-terminal').capture(
+        state, code, stdout, stderr, report['terminalLaunch'] = module('ci-dnssd-terminal').capture(
             binary, env=env, private=private)
         report['processStatus'] = state
         if state in ('completed', 'nonzero'):
-            converted, _, data, _ = native.capture(['go', 'tool', 'test2json', '-p', PACKAGE],
+            # Failed launch/ownership paths intentionally withhold raw streams.
+            # Absence of a collector must not misreport those streams as empty.
+            report['collector'] = collector_observation(stdout, stderr)
+            converted, converted_code, data, converted_error = native.capture(['go', 'tool', 'test2json', '-p', PACKAGE],
                 env=env, timeout=15, limit=2 * native.RUNTIME_BYTES, stdin=stdout)
+            report['collector'] = collector_observation(stdout, stderr, converted, converted_code, data, converted_error)
             if converted == 'completed':
-                report['capabilities'], report['eventsAccepted'] = test_events(data, code)
+                try:
+                    report['capabilities'], report['eventsAccepted'] = test_events(data, code)
+                    report['collector']['acceptanceStatus'] = 'accepted' if report['eventsAccepted'] else 'unaccepted'
+                except Exception:
+                    report['collector']['acceptanceStatus'] = 'validation_failed'
+                    raise
         provenance['stage'] = 'verify-source'
         if (before != native.source_inventory() or provenance['testSha256'] != native.digest(binary)
                 or compiler_hashes != {'clang': native.digest(clang), 'go': native.digest(tool),

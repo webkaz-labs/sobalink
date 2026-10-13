@@ -197,6 +197,121 @@ class DNSSDDiagnosticTests(unittest.TestCase):
         self.assertEqual(len(marker_chunk.encode()), 1024)
         self.assertFalse(marker_chunk.endswith('\n'))
         self.assertEqual(gate.test_events(converted, 0), (records, True))
+        observed = gate.collector_observation(('\n'.join(lines) + '\n').encode(), b'', 'completed', 0, converted)
+        self.assertEqual(observed['eventScanStatus'], 'scanned')
+        self.assertEqual(observed['rawStreams']['stdout']['markerTokenCounts'], {'standard': 4, 'legacy': 1})
+        self.assertTrue(all(count == 1 for count in observed['completeMarkerLineCounts'].values()))
+        self.assertEqual(observed['incompleteMarkerLines'], 0)
+
+    def test_collector_fixed_counts_do_not_replace_acceptance(self):
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        rows = events(records)
+        source = b''.join(b'\x16=== RUN   ' + name.encode() + b'\n' for name in gate.CASES)
+        source += b''.join(b'--- PASS: ' + name.encode() + b' (0.00s)\n' for name in gate.CASES)
+        source += gate.MARKER.encode() + b'synthetic-private\n\x16PASS\n'
+        data = raw(rows)
+        observed = gate.collector_observation(source, source, 'completed', 0, data, b'synthetic-private')
+        self.assertEqual(observed['nativeStdoutBytes'], len(source))
+        self.assertEqual(observed['nativeStderrBytes'], len(source))
+        self.assertEqual(observed['rawStreams']['stdout'], observed['rawStreams']['stderr'])
+        self.assertEqual(observed['converterStderrClass'], 'unclassified')
+        self.assertEqual(observed['converterStdoutBytes'], len(data))
+        self.assertEqual(observed['converterState'], 'completed')
+        self.assertEqual(observed['converterExitCode'], 0)
+        self.assertEqual(observed['eventScanStatus'], 'scanned')
+        self.assertEqual(observed['eventCount'], 17)
+        self.assertEqual(observed['outputEventCount'], 5)
+        self.assertTrue(observed['rawStreams']['stdout']['passTokenSeen'])
+        self.assertFalse(observed['rawStreams']['stdout']['noTestsTokenSeen'])
+        self.assertTrue(all(count == 1 for count in observed['rawStreams']['stdout']['runTokenCounts'].values()))
+        self.assertEqual(observed['packageLifecycleCounts'], {'start': 1, 'pass': 1, 'skip': 0, 'fail': 0, 'other': 0})
+        for name in gate.CASES:
+            self.assertEqual(observed['rawStreams']['stdout']['terminalTokenCounts'][name], {'pass': 1, 'skip': 0, 'fail': 0})
+            self.assertEqual(observed['testLifecycleCounts'][name], {'run': 1, 'pass': 1, 'skip': 0, 'fail': 0, 'other': 0})
+            self.assertEqual(observed['completeMarkerLineCounts'][name], 1)
+        self.assertEqual(observed['acceptanceStatus'], 'not_run')
+        self.assertNotIn('synthetic-private', json.dumps(observed))
+        self.assertEqual(gate.test_events(data, 0), (records, True))
+        # Explanatory counts can stay positive when the independent validator
+        # rejects the JSON receipt. No scanner result is a capability proof.
+        rows[2]['Output'] = gate.MARKER + 'synthetic-private\n'
+        self.assertEqual(gate.collector_observation(b'', b'', 'completed', 0, raw(rows))['completeMarkerLineCounts'][rows[2]['Test']], 1)
+        with self.assertRaises(ValueError):
+            gate.test_events(raw(rows), 0)
+
+    def test_collector_fragments_require_complete_same_owner_lines(self):
+        name, other = list(gate.CASES)[:2]
+        base = {'Action': 'output', 'Package': gate.PACKAGE, 'Test': name}
+        for boundary in ('complete', 'eof', 'owner', 'lifecycle'):
+            rows = [dict(base, Output=gate.MARKER[:5]), dict(base, Output=gate.MARKER[5:] + 'synthetic-private')]
+            if boundary == 'complete':
+                rows.append(dict(base, Output='\n'))
+            elif boundary == 'owner':
+                rows.append(dict(base, Test=other, Output='\n'))
+            elif boundary == 'lifecycle':
+                rows.append(dict(base, Action='pass'))
+            observed = gate.collector_observation(gate.MARKER.encode(), b'', 'completed', 0, raw(rows))
+            self.assertEqual(observed['rawStreams']['stdout']['markerTokenCounts']['standard'], 1)
+            self.assertEqual(observed['rawStreams']['stdout']['completeMarkerLineCounts']['standard'], 0)
+            self.assertEqual(observed['completeMarkerLineCounts'][name], int(boundary == 'complete'))
+            self.assertEqual(observed['incompleteMarkerLines'], int(boundary != 'complete'))
+            self.assertEqual(observed['eventScanStatus'], 'scanned' if boundary == 'complete' else 'incomplete_lines')
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+
+    def test_collector_preserves_converter_failure_and_no_test_evidence(self):
+        source = b'testing: warning: no tests to run\nPASS\n'
+        for state, code in (('not_run', None), ('timeout', -9), ('output_limit', -9),
+                            ('launch_failed', None), ('capture_failed', None), ('nonzero', 2)):
+            observed = gate.collector_observation(source, b'', state, code, b'synthetic-private', b'synthetic-private')
+            self.assertEqual((observed['converterState'], observed['converterExitCode']), (state, code))
+            self.assertEqual(observed['eventScanStatus'], 'not_run')
+            self.assertEqual(observed['eventCount'], 0)
+            self.assertEqual(observed['acceptanceStatus'], 'not_run')
+            self.assertTrue(observed['rawStreams']['stdout']['noTestsTokenSeen'])
+            self.assertTrue(observed['rawStreams']['stdout']['passTokenSeen'])
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+        for error, category in ((b'', 'empty'), (b'usage: go tool test2json synthetic-private', 'usage'),
+                (b'go: synthetic-private', 'go_tool_error'), (b'panic: synthetic-private', 'panic'),
+                (b'synthetic-private', 'unclassified')):
+            observed = gate.collector_observation(b'', b'', 'nonzero', 2, error=error)
+            self.assertEqual(observed['converterStderrClass'], category)
+            self.assertEqual(observed['converterStderrBytes'], len(error))
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+        observed = gate.collector_observation(b'', b'', 'completed', 0)
+        self.assertEqual(observed['eventScanStatus'], 'scanned')
+        self.assertEqual(observed['nativeStdoutBytes'], 0)
+        self.assertEqual(observed['eventCount'], 0)
+        self.assertEqual(gate.test_events(b'', 0), ({scope: None for scope in gate.CASES.values()}, False))
+
+    def test_collector_strict_event_inventory_and_bounded_counts(self):
+        base = {'Action': 'output', 'Package': gate.PACKAGE, 'Test': next(iter(gate.CASES)), 'Output': 'synthetic-private\n'}
+        for data, status in ((b'synthetic-private', 'invalid_event'), (b'\xff', 'invalid_event'),
+                (b'[' * 1500 + b']' * 1500, 'invalid_event'),
+                (b'{"Action":"start","Action":"pass","Package":"synthetic-private"}', 'invalid_event'),
+                (raw([dict(base, Test='synthetic-private')]), 'unexpected_inventory'),
+                (raw([dict(base, Package='synthetic-private')]), 'unexpected_inventory'),
+                (raw([dict(base, Output=3)]), 'invalid_event')):
+            observed = gate.collector_observation(b'', b'', 'completed', 0, data)
+            self.assertEqual(observed['eventScanStatus'], status)
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+        parser, load = gate.module('ci-go-test'), gate.module
+        with patch.object(parser, 'parse_event', side_effect=RuntimeError('synthetic-private')), \
+                patch.object(gate, 'module', side_effect=lambda name: parser if name == 'ci-go-test' else load(name)):
+            observed = gate.collector_observation(b'', b'', 'completed', 0, raw([base]))
+        self.assertEqual(observed['eventScanStatus'], 'scanner_failed')
+        self.assertNotIn('synthetic-private', json.dumps(observed))
+        source = (b'=== RUN   ' + base['Test'].encode() + b'\n') * 17 + (gate.MARKER.encode() + b'\n') * 17
+        observed = gate.collector_observation(source, b'', 'completed', 0,
+            raw([dict(base, Output=gate.MARKER + '\n')] * 17))
+        self.assertTrue(observed['countsCapped'])
+        self.assertEqual(observed['rawStreams']['stdout']['runTokenCounts'][base['Test']], 16)
+        self.assertEqual(observed['rawStreams']['stdout']['markerTokenCounts']['standard'], 16)
+        self.assertEqual(observed['completeMarkerLineCounts'][base['Test']], 16)
+        for kwargs in ({'stdout': b'x' * (64 * 1024 + 1)}, {'stderr': b'x' * (64 * 1024 + 1)},
+                       {'data': b'x' * (128 * 1024 + 1)}, {'error': b'x' * (128 * 1024 + 1)},
+                       {'stdout': 'synthetic-private'}, {'code': True}, {'code': 256}, {'state': 'synthetic-private'}):
+            with self.assertRaises(ValueError):
+                gate.collector_observation(**dict({'stdout': b'', 'stderr': b''}, **kwargs))
 
     def test_receive_counters_are_bounded_closed_and_retained_on_failure(self):
         observed = {'receivedPackets': 2, 'receivedBytes': 99, 'metadataAccepted': 1,
@@ -424,7 +539,8 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                      'sdk-version': 'sdk_version_format', 'sdk-build': 'sdk_build_format',
                      'sdk-files': 'sdk_file_missing', 'source-policy': 'source_policy_missing',
                      'clang-discovery': 'command_failed'}
-        for failure in (None, 'c-compile', 'c-link', 'go-compile', 'unavailable', 'runtime-failed', *preflight):
+        for failure in (None, 'c-compile', 'c-link', 'go-compile', 'unavailable', 'runtime-failed',
+                        'converter-timeout', 'converter-empty', 'converter-invalid', *preflight):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 provider = root / 'internal/nearby/provider_darwin.go'
@@ -486,6 +602,12 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                             return 'nonzero', 1, b'', b'synthetic-private: too few arguments'
                         Path(command[command.index('-o') + 1]).write_bytes(b'synthetic object')
                     elif command[:3] == ['go', 'tool', 'test2json']:
+                        if failure == 'converter-timeout':
+                            return 'timeout', -9, b'', b'synthetic-private'
+                        if failure == 'converter-empty':
+                            return 'completed', 0, b'', b''
+                        if failure == 'converter-invalid':
+                            return 'completed', 0, b'synthetic-private', b''
                         return 'completed', 0, raw(events(records)), b'synthetic-private'
                     else:
                         return ('nonzero', 1, b'synthetic-private', b'') if failure == 'runtime-failed' else ('completed', 0, b'synthetic-private', b'')
@@ -533,7 +655,19 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     self.assertEqual(provenance['stage'], failure)
                     self.assertEqual(result['compileFailureKind'], 'argument_count')
                 else:
-                    self.assertEqual(result['capabilities'], records)
+                    collector = result['collector']
+                    if failure and failure.startswith('converter-'):
+                        self.assertEqual(result['capabilities'], {scope: None for scope in gate.CASES.values()})
+                        self.assertFalse(result['eventsAccepted'])
+                        self.assertFalse(result['diagnosticPassed'])
+                        expected = {'converter-timeout': ('timeout', 'not_run', 'not_run'),
+                                    'converter-empty': ('completed', 'scanned', 'unaccepted'),
+                                    'converter-invalid': ('completed', 'invalid_event', 'validation_failed')}[failure]
+                        self.assertEqual(tuple(collector[key] for key in ('converterState', 'eventScanStatus', 'acceptanceStatus')), expected)
+                    else:
+                        self.assertEqual(result['capabilities'], records)
+                        self.assertEqual(collector['acceptanceStatus'], 'accepted' if failure != 'runtime-failed' else 'unaccepted')
+                    self.assertEqual(collector['nativeStdoutBytes'], len(b'synthetic-private'))
                     self.assertTrue(result['cLinkPassed'])
                     self.assertEqual(provenance['sdkFiles']['libdns_sd.tbd'], 'missing')
                     self.assertEqual(provenance['sdkFiles']['libSystem.tbd'], 'available')
@@ -546,6 +680,11 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     self.assertEqual(runtime[0][1:], ['-test.v=test2json', '-test.run=' + gate.SELECTOR, '-test.count=1', '-test.timeout=60s'])
                     self.assertEqual(runtime[1]['timeout'], 75)
                     self.assertTrue(all(runtime[1]['env'][key] == '1' for key in gate.OPT_INS))
+                    converter = next((command, kwargs) for command, kwargs in commands if command[:3] == ['go', 'tool', 'test2json'])
+                    self.assertEqual(converter[0], ['go', 'tool', 'test2json', '-p', gate.PACKAGE])
+                    self.assertEqual(converter[1]['timeout'], 15)
+                    self.assertEqual(converter[1]['limit'], 2 * native.RUNTIME_BYTES)
+                    self.assertEqual(converter[1]['stdin'], b'synthetic-private')
 
     def test_compiler_location_is_first_error_in_exact_tracked_bridge_only(self):
         with tempfile.TemporaryDirectory() as temporary:
