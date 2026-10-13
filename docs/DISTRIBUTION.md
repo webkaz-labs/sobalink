@@ -8,15 +8,15 @@ The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the ear
 
 ## Install a signed prerelease
 
-[0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5) is published from `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6`. [Release run 37423908236](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236) passed all 15 gates, including four native packages, signatures/provenance, unauthenticated public retrieval and actual mise installation on all four targets. The commands below select that exact release. Its connection-mode and saved-capacity corrections are included; later CI optimization is separate post-release work and is not part of alpha.5. [Exact-source record](VERIFICATION.en.md#current-integration-and-published-baseline)
+[0.4.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.4.0-alpha.4) is the published baseline, from source `e4f7f4ef0a38a032eef9776c5e4a5d0ea8cbf28f`. The commands below pin that release, which includes the explicit durable file queue. The current development checkout additionally implements the [durable text queue](DURABLE_TEXT.en.md); it is unreleased and requires its own final-source checks. Its profile format 3 is incompatible with alpha.4 and older profiles: keep existing state unchanged and select a separate empty `--state-dir`. No migration or wipe is performed. Earlier 0.3-series release results remain [historical evidence](VERIFICATION.en.md#current-integration-and-published-baseline), not evidence for this checkout.
 
 A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
 
 With mise **2026.9.18** available, the same explicit prerelease pin used by the publication workflow is:
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
 mise exec -- soba version
 mise exec -- soba
 ```

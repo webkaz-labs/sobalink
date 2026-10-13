@@ -54,6 +54,54 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_setup_and_text_browser_gates_are_required_in_every_applicable_scope(self):
+        native = 'Verify manual nearby setup across native Core peers'
+        browser = ('Verify nearby setup with separate agents and actual browser',
+                   'Verify durable text recovery with separate agents and actual browser')
+        self.assertEqual(coverage.FAST_STEPS.count(native), 1)
+        for gate in browser:
+            self.assertEqual(coverage.BROWSER_STEPS.count(gate), 1)
+        for scope in ('frontend', 'native-short', 'full'):
+            required = [('browser', gate) for gate in browser]
+            if scope != 'frontend':
+                required += [(target, native) for target in coverage.TARGETS.values()]
+            for target, gate in required:
+                for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j['name'] == target)
+                    step = next(s for s in selected['steps'] if s['name'] == gate)
+                    if mode == 'missing':
+                        selected['steps'].remove(step)
+                    elif mode == 'duplicate':
+                        selected['steps'].append(copy.deepcopy(step))
+                    elif mode == 'pending':
+                        step['status'] = 'in_progress'
+                    else:
+                        step['conclusion'] = mode
+                    with self.subTest(scope=scope, target=target, gate=gate, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
+    def test_durable_text_is_mandatory_on_every_native_scope_and_target(self):
+        gate = "Verify durable text restart and lost ACK across Core processes"
+        self.assertEqual(coverage.FAST_STEPS.count(gate), 1)
+        self.assertNotIn(gate, coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS)
+        for scope in ("native-short", "full"):
+            for name in coverage.TARGETS.values():
+                for mode in ("missing", "duplicate", "skipped", "failure", "cancelled", None, "pending"):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j["name"] == name)
+                    record = next(s for s in selected["steps"] if s["name"] == gate)
+                    if mode == "missing":
+                        selected["steps"].remove(record)
+                    elif mode == "duplicate":
+                        selected["steps"].append(copy.deepcopy(record))
+                    elif mode == "pending":
+                        record["status"] = "in_progress"
+                    else:
+                        record["conclusion"] = mode
+                    with self.subTest(scope=scope, target=name, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
     def test_native_resource_gates_are_full_only_and_unambiguous_on_every_target(self):
         gates = ("Verify native remote resource inspection", "Verify native remote resource management",
                  "Verify native fixed-group resource catalog")

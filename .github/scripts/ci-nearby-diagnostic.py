@@ -24,7 +24,25 @@ CASES = {
 MARKER = 'NEARBY_NATIVE_CAPABILITY '
 UNAVAILABLE = {'loopback_scope_unavailable', 'native_socket_unavailable', 'native_receive_unavailable', 'native_receive_timeout', 'native_session_unavailable'}
 FAILED = {'candidate_binding_or_freshness_mismatch', 'candidate_survived_close', 'cleanup_close_uncertain', 'cleanup_not_joined', 'foreign_or_missing_packet_metadata', 'native_owner_missing', 'native_session_failed', 'native_session_missing', 'native_session_start_failed', 'owners_missing', 'session_entropy_unavailable', 'session_not_joined', 'socket_not_closed', 'startup_cleanup_uncertain'}
-CAPABILITY_KEYS = {'status', 'reason', 'scope', 'bidirectionalCandidates', 'ownersJoined'}
+CAPABILITY_KEYS = {'status', 'reason', 'scope', 'bidirectionalCandidates', 'ownersJoined', 'socketFailureStage'}
+SOCKET_FAILURE_STAGES = {'none', 'socket_create', 'socket_cloexec', 'socket_nonblock',
+    'socket_reuse_address', 'socket_interface_options', 'socket_bind', 'socket_wrap',
+    'socket_original_close', 'socket_type', 'socket_bound_address', 'socket_read_buffer',
+    'socket_write_buffer', 'socket_receive_metadata', 'socket_multicast_interface',
+    'socket_multicast_ttl', 'socket_multicast_loopback', 'socket_join_group', 'socket_read',
+    'socket_write_deadline', 'socket_write'}
+BROWSER_FAILURE_MAX_BYTES = 4096
+BROWSER_CORE_STAGES = {'waiting_checkpoint', 'waiting_discovery', 'invariants', 'hello_a', 'hello_b', 'acknowledged'}
+BROWSER_CORE_STATES = {'unknown', 'idle', 'discovering', 'selecting', 'authenticating',
+    'awaiting_approval', 'preparing', 'connecting', 'connected', 'recovery_required',
+    'needs_restart', 'cancelling', 'cancelled', 'expired', 'stop_required', 'failed'}
+BROWSER_CORE_REASONS = {'none', 'other', 'setup_connection_failed', 'setup_commit_uncertain',
+    'setup_cleanup_unconfirmed', 'setup_session_expired', 'setup_authority_changed',
+    'setup_state_changed', 'lan_environment_proxy', 'lan_environment_override', 'lan_start_failed'}
+BROWSER_CORE_HELLO = {'not_run', 'passed', 'failed'}
+BROWSER_CORE_CHECKS = {'connected', 'paired', 'untrusted', 'localApproved', 'remoteApproved',
+    'sessionMatches', 'planMatches', 'discoveryStopped', 'backend', 'exactlyOnePair',
+    'trustUnchanged', 'strictScope', 'localHello', 'remoteReceipt'}
 BROWSER_EXPECTED = {
     'schema': 1, 'accepted': True, 'observed': 1, 'passed': 1, 'errors': 0, 'cores': 2,
     'browserContexts': 2, 'locales': ['en', 'ja'], 'widths': [375, 320],
@@ -99,17 +117,17 @@ def capability(value):
     if (type(value) is not dict or set(value) != CAPABILITY_KEYS or value['scope'] != 'isolated_loopback'
             or any(type(value[k]) is not bool for k in ('bidirectionalCandidates', 'ownersJoined'))):
         raise ValueError('invalid capability schema')
-    status, reason = value['status'], value['reason']
-    if type(status) is not str or type(reason) is not str:
+    status, reason, stage = value['status'], value['reason'], value['socketFailureStage']
+    if type(status) is not str or type(reason) is not str or type(stage) is not str or stage not in SOCKET_FAILURE_STAGES:
         raise ValueError('invalid capability type')
     if status == 'verified':
-        if reason != 'bidirectional_scoped_mdns' or not value['bidirectionalCandidates'] or not value['ownersJoined']:
+        if stage != 'none' or reason != 'bidirectional_scoped_mdns' or not value['bidirectionalCandidates'] or not value['ownersJoined']:
             raise ValueError('incomplete capability proof')
     elif status == 'unavailable':
         if reason not in UNAVAILABLE or value['bidirectionalCandidates']:
             raise ValueError('invalid unavailable classification')
     elif status == 'not_run':
-        if reason != 'opt_in_required' or value['bidirectionalCandidates'] or value['ownersJoined']:
+        if stage != 'none' or reason != 'opt_in_required' or value['bidirectionalCandidates'] or value['ownersJoined']:
             raise ValueError('invalid opt-in classification')
     elif status != 'failed' or reason not in FAILED:
         raise ValueError('unknown capability classification')
@@ -121,13 +139,38 @@ BROWSER_PHASES = {'launch', 'descriptor', 'authenticate-a', 'authenticate-b', 'o
 BROWSER_ERROR_KINDS = {'timeout', 'assertion', 'selector_ambiguous', 'browser_launch', 'browser_closed', 'runtime', 'command_boundary', 'checkpoint', 'cleanup', 'interrupted', 'unexpected', 'core_evidence', 'evidence_unavailable', 'locator_missing', 'element_disabled', 'element_hidden', 'element_not_editable', 'element_detached', 'pointer_intercepted', 'element_unstable'}
 
 
+def browser_core_evidence(value):
+    if (type(value) is not dict or set(value) != {'checkpointArrived', 'stage', 'peers'}
+            or type(value['checkpointArrived']) is not bool
+            or type(value['stage']) is not str or value['stage'] not in BROWSER_CORE_STAGES
+            or type(value['peers']) is not list or len(value['peers']) != 2):
+        raise ValueError('invalid fixed core evidence')
+    peers = []
+    for peer in value['peers']:
+        if (type(peer) is not dict or set(peer) != {'observed', 'state', 'reason', 'checks', 'freshHello'}
+                or type(peer['observed']) is not bool
+                or type(peer['state']) is not str or peer['state'] not in BROWSER_CORE_STATES
+                or type(peer['reason']) is not str or peer['reason'] not in BROWSER_CORE_REASONS
+                or type(peer['freshHello']) is not str or peer['freshHello'] not in BROWSER_CORE_HELLO
+                or type(peer['checks']) is not dict or set(peer['checks']) != BROWSER_CORE_CHECKS
+                or any(type(flag) is not bool for flag in peer['checks'].values())):
+            raise ValueError('invalid fixed peer evidence')
+        peers.append({'observed': peer['observed'], 'state': peer['state'], 'reason': peer['reason'],
+                      'freshHello': peer['freshHello'],
+                      'checks': {key: peer['checks'][key] for key in sorted(BROWSER_CORE_CHECKS)}})
+    return {'checkpointArrived': value['checkpointArrived'], 'stage': value['stage'], 'peers': peers}
+
+
 def browser_failure(value):
-    if (type(value) is not dict or set(value) != {'schema', 'phase', 'errorKind'}
+    if (type(value) is not dict or set(value) not in ({'schema', 'phase', 'errorKind'}, {'schema', 'phase', 'errorKind', 'core'})
             or type(value['schema']) is not int or value['schema'] != 1
             or type(value['phase']) is not str or value['phase'] not in BROWSER_PHASES
             or type(value['errorKind']) is not str or value['errorKind'] not in BROWSER_ERROR_KINDS):
         raise ValueError('invalid fixed browser failure')
-    return {'schema': 1, 'phase': value['phase'], 'errorKind': value['errorKind']}
+    result = {'schema': 1, 'phase': value['phase'], 'errorKind': value['errorKind']}
+    if 'core' in value:
+        result['core'] = browser_core_evidence(value['core'])
+    return result
 
 
 def browser_summary(value):
@@ -287,7 +330,7 @@ def main(argv=None):
                 if case == 'browser':
                     failure = private / 'browser-failure.json'
                     try:
-                        if failure.is_symlink() or not failure.is_file() or failure.stat().st_size > 1024:
+                        if failure.is_symlink() or not failure.is_file() or failure.stat().st_size > BROWSER_FAILURE_MAX_BYTES:
                             raise ValueError('invalid fixed failure file')
                         report['browserFailure'] = browser_failure(parse_json(failure.read_text()))
                     except Exception:

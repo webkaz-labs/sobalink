@@ -330,6 +330,20 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite outbox-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessRestart -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxProcessRestart$'
+      - name: Verify durable text restart and lost ACK across Core processes
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite durable-text-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'
+      - name: Verify manual nearby setup across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-manual-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreNearbySetupManualIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreNearbySetupManualIntegration$'
       - name: Verify direct LAN synthetic expiry and rekey
         timeout-minutes: 3
         run: |
@@ -901,6 +915,7 @@ jobs:
           go mod verify
           go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
           npm --prefix web run test:browser:safety
+          node --test web/browser/nearby-native-selectors.test.mjs web/browser/nearby-native-diagnostics.test.mjs web/browser/text-native-contract.test.mjs
           screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
           mkdir -m 700 "$screenshots"
           SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
@@ -939,6 +954,37 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxThreeProcessBrowser$' -count=1 -timeout=4m
+      - name: Verify nearby setup with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+          SOBALINK_RUN_SETUP_BROWSER_NATIVE: '1'
+          SOBA_SETUP_BROWSER_SUMMARY: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-summary.json
+          SOBA_SETUP_BROWSER_FAILURE: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-failure.json
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-setup-browser-evidence"
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestNearbySetupTwoProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestNearbySetupTwoProcessBrowser$' -count=1 -timeout=3m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py setup "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
+      - name: Verify durable text recovery with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+          SOBALINK_RUN_TRANSFER_BROWSER_NATIVE: '1'
+          SOBA_TEXT_BROWSER_SUMMARY: ${{ runner.temp }}/soba-text-browser-evidence/text-native-summary.json
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-text-browser-evidence"
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextThreeProcessBrowser$' -count=1 -timeout=4m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py text "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
       - name: Preserve sanitized UI screenshots and typography measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -951,6 +997,9 @@ jobs:
             ${{ runner.temp }}/soba-playwright-screenshots/transfer-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-failure.json
+            ${{ runner.temp }}/soba-playwright-screenshots/text-native-summary.json
           if-no-files-found: warn
           retention-days: 14
 

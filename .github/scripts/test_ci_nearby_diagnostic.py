@@ -23,7 +23,7 @@ def raw(events):
 def capability(status='verified', **changes):
     value = {'scope': 'isolated_loopback', 'status': status,
              'reason': 'bidirectional_scoped_mdns' if status == 'verified' else 'native_receive_timeout',
-             'bidirectionalCandidates': status == 'verified', 'ownersJoined': True}
+             'bidirectionalCandidates': status == 'verified', 'ownersJoined': True, 'socketFailureStage': 'none'}
     value.update(changes)
     return value
 
@@ -66,7 +66,7 @@ class NearbyDiagnosticTests(unittest.TestCase):
         self.assertLess(source.index('        require_source_inventory(log)\n'), source.index("inventory = read(['git', 'ls-files'])"))
         self.assertLess(source.index('        require_source_inventory(log, after_build=True)\n'), source.index("run(['go', 'test', '-race'"))
         self.assertGreater(source.rindex('        require_source_inventory(log, after_build=True)\n'), source.index("for case, (package, name) in CASES.items()"))
-        job = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text().split('  diagnostic-nearby:\n', 1)[1]
+        job = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text().split('  diagnostic-nearby:\n', 1)[1].split('  diagnostic-nearby-native:\n', 1)[0]
         self.assertIn('python -B -m unittest', job)
         self.assertIn('run: python -B .github/scripts/ci-nearby-diagnostic.py', job)
 
@@ -137,6 +137,21 @@ class NearbyDiagnosticTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gate.capability(reduced)
 
+    def test_native_socket_stage_is_closed_and_cannot_claim_success(self):
+        self.assertEqual(len(gate.SOCKET_FAILURE_STAGES), 21)
+        for stage in gate.SOCKET_FAILURE_STAGES:
+            for status, reason in (('unavailable', 'native_socket_unavailable'), ('failed', 'cleanup_not_joined')):
+                record = capability(status, reason=reason, socketFailureStage=stage)
+                self.assertEqual(gate.capability(record), record)
+            if stage != 'none':
+                for record in (capability(socketFailureStage=stage),
+                               capability('not_run', reason='opt_in_required', ownersJoined=False, socketFailureStage=stage)):
+                    with self.assertRaises(ValueError):
+                        gate.capability(record)
+        for stage in ('private-socket-error', '127.0.0.1', [], None, 1):
+            with self.assertRaises(ValueError):
+                gate.capability(capability('unavailable', socketFailureStage=stage))
+
     def test_json_duplicates_and_nonfinite_values_are_rejected(self):
         for text in ('{"a":1,"a":2}', '{"a":NaN}', '{"a":Infinity}'):
             with self.assertRaises(ValueError):
@@ -196,13 +211,84 @@ class NearbyDiagnosticTests(unittest.TestCase):
                 self.assertEqual(gate.browser_failure(record), record)
         self.assertIn('os.O_WRONLY|os.O_CREATE|os.O_EXCL', native)
         self.assertIn('decoder.DisallowUnknownFields()', native)
-        self.assertIn('info.Size() > 1024', native)
+        self.assertIn('info.Size() > nearbyBrowserFailureMaxBytes', native)
+        self.assertIn(f'const nearbyBrowserFailureMaxBytes = {gate.BROWSER_FAILURE_MAX_BYTES}', native)
         fixture = (gate.ROOT / 'web/browser/nearby-native-fixtures.mjs').read_text()
         self.assertLess(fixture.index('if (testInfo.errors.length) failure(testInfo.errors[0])'), fixture.index("currentPhase = 'cleanup'"))
         reporter = (gate.ROOT / 'web/browser/nearby-native-reporter.mjs').read_text()
         self.assertIn('extends TransferNativeReporter', reporter)
         self.assertNotIn('console.', reporter)
         self.assertNotIn('error.message', reporter)
+
+    def test_core_failure_vector_reconstructs_exact_bounded_observations(self):
+        core = {'checkpointArrived': True, 'stage': 'invariants', 'peers': [
+            {'observed': True, 'state': 'connected', 'reason': 'none', 'freshHello': 'not_run',
+             'checks': {key: True for key in gate.BROWSER_CORE_CHECKS}} for _ in range(2)]}
+        record = {'schema': 1, 'phase': 'core-connected', 'errorKind': 'core_evidence', 'core': core}
+        got = gate.browser_failure(record)
+        self.assertEqual(got, record)
+        self.assertLess(len(json.dumps(got).encode()), gate.BROWSER_FAILURE_MAX_BYTES)
+        self.assertIsNot(got['core'], core)
+        self.assertIsNot(got['core']['peers'][0], core['peers'][0])
+        self.assertIsNot(got['core']['peers'][0]['checks'], core['peers'][0]['checks'])
+        for stage in gate.BROWSER_CORE_STAGES:
+            self.assertEqual(gate.browser_core_evidence(dict(core, stage=stage))['stage'], stage)
+        for key, values in (('state', gate.BROWSER_CORE_STATES), ('reason', gate.BROWSER_CORE_REASONS),
+                            ('freshHello', gate.BROWSER_CORE_HELLO)):
+            for value in values:
+                candidate = copy.deepcopy(core)
+                candidate['peers'][0][key] = value
+                self.assertEqual(gate.browser_core_evidence(candidate), candidate)
+        # Each false predicate remains an observation, never a substitute success receipt.
+        for key in gate.BROWSER_CORE_CHECKS:
+            candidate = copy.deepcopy(core)
+            candidate['peers'][1]['checks'][key] = False
+            self.assertIs(gate.browser_core_evidence(candidate)['peers'][1]['checks'][key], False)
+            with self.assertRaises(ValueError):
+                gate.browser_summary(dict(record, core=candidate))
+        for changes in ({'stage': 'private-path'}, {'checkpointArrived': 1}, {'stage': []},
+                        {'peers': []}, {'peers': core['peers'] * 2}, {'private': 'private-token'}):
+            with self.assertRaises(ValueError):
+                gate.browser_core_evidence(dict(core, **changes))
+        for changes in ({'observed': 1}, {'state': 'private-endpoint'}, {'reason': 'private-body'},
+                        {'freshHello': 'private-token'}, {'state': []}, {'reason': None},
+                        {'checks': {}}, {'checks': dict(core['peers'][0]['checks'], connected=1)},
+                        {'checks': dict(core['peers'][0]['checks'], secret=True)}, {'message': 'private'}):
+            candidate = copy.deepcopy(core)
+            candidate['peers'][0].update(changes)
+            with self.assertRaises(ValueError):
+                gate.browser_core_evidence(candidate)
+        for container in ('core', 'peer', 'checks'):
+            base = core if container == 'core' else core['peers'][0] if container == 'peer' else core['peers'][0]['checks']
+            for key in base:
+                candidate = copy.deepcopy(core)
+                target = candidate if container == 'core' else candidate['peers'][0] if container == 'peer' else candidate['peers'][0]['checks']
+                del target[key]
+                with self.assertRaises(ValueError):
+                    gate.browser_core_evidence(candidate)
+        with self.assertRaises(ValueError):
+            gate.browser_failure(dict(record, core=None))
+
+    def test_core_vector_enum_and_predicate_parity_with_go(self):
+        import re
+        source = (gate.ROOT / 'internal/core/setup_browser_evidence_integration_test.go').read_text()
+        checks = source.split('type nearbyBrowserChecks struct {', 1)[1].split('}', 1)[0]
+        self.assertEqual(set(re.findall(r'json:"([^" ]+)"', checks)), gate.BROWSER_CORE_CHECKS)
+        stage = source.split('switch v.Stage {', 1)[1].split('default:', 1)[0]
+        self.assertEqual(set(re.findall(r'"([^" ]+)"', stage)), gate.BROWSER_CORE_STAGES)
+        states = source.split('func nearbyBrowserState(', 1)[1].split('func nearbyBrowserReason(', 1)[0]
+        self.assertEqual(set(re.findall(r'"([^" ]+)"', states)), gate.BROWSER_CORE_STATES)
+        reasons = source.split('func nearbyBrowserReason(', 1)[1].split('func observeNearbyBrowserPeer(', 1)[0]
+        self.assertEqual(set(re.findall(r'"([^" ]+)"', reasons)) | {'other'}, gate.BROWSER_CORE_REASONS)
+        self.assertEqual(set(re.findall(r'p.FreshHello != "([^" ]+)"', source)), gate.BROWSER_CORE_HELLO)
+        fixture = (gate.ROOT / 'internal/core/setup_browser_integration_test.go').read_text()
+        self.assertIn('until := time.Now().Add(45 * time.Second)', fixture)
+        self.assertIn('waitUntil(until,', fixture)
+        self.assertIn('marker.Schema != 1 || marker.Stage != stage', fixture)
+        self.assertIn('coreEvidence.Peers[i].Checks.ready()', fixture)
+        browser = (gate.ROOT / 'web/browser/nearby-native-fixtures.mjs').read_text()
+        self.assertIn('await rename(`${marker}.tmp`, marker)', browser)
+        self.assertIn('Date.now() + 15_000', browser)
 
     def test_failed_default_makes_no_acceptance_claim(self):
         result = gate.empty_result()
@@ -229,7 +315,7 @@ class NearbyDiagnosticTests(unittest.TestCase):
 
     def test_single_ubuntu_lane_preserves_pins_and_permission_floor(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
-        job = workflow.split('  diagnostic-nearby:\n', 1)[1]
+        job = workflow.split('  diagnostic-nearby:\n', 1)[1].split('  diagnostic-nearby-native:\n', 1)[0]
         self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'nearby'", job)
         self.assertIn('runs-on: ubuntu-24.04', job)
         self.assertEqual(job.count('runs-on:'), 1)
@@ -248,7 +334,7 @@ class NearbyDiagnosticTests(unittest.TestCase):
         self.assertIn('npm@11.9.0', job)
 
     def test_only_reconstructed_literal_artifacts_are_uploaded(self):
-        workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text().split('  diagnostic-nearby:\n', 1)[1]
+        workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text().split('  diagnostic-nearby:\n', 1)[1].split('  diagnostic-nearby-native:\n', 1)[0]
         artifact = workflow.split('uses: actions/upload-artifact', 1)[1]
         for file in ('soba-nearby-sanitized/result.json', 'soba-nearby-sanitized/provenance.json'):
             self.assertIn(file, artifact)

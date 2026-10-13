@@ -78,11 +78,172 @@ class FullProofTests(unittest.TestCase):
         self.assertNotIn('runner_name', str(proof))
         self.assertIn('.github/scripts/ci-go-test.py', proof['source_sha256'])
         self.assertIn('.github/scripts/ci_full_validation.py', proof['source_sha256'])
+        self.assertIn('.github/scripts/ci-browser-summary.py', proof['source_sha256'])
+        self.assertIn('.github/scripts/ci-nearby-diagnostic.py', proof['source_sha256'])
         for name, _ in full.TARGETS.values():
             result = next(j for j in proof['jobs'] if j['name'] == name)
             self.assertEqual(result['required_steps_passed'].count('Verify native remote resource inspection'), 1)
             self.assertEqual(result['required_steps_passed'].count('Verify native remote resource management'), 1)
             self.assertEqual(result['required_steps_passed'].count('Verify native fixed-group resource catalog'), 1)
+            self.assertEqual(result['required_steps_passed'].count('Verify durable text restart and lost ACK across Core processes'), 1)
+            self.assertEqual(result['required_steps_passed'].count('Verify manual nearby setup across native Core peers'), 1)
+
+    def test_setup_and_text_browser_missing_duplicate_or_non_success_blocks_release(self):
+        original = copy.deepcopy(self.jobs)
+        gates = [(name, 'Verify manual nearby setup across native Core peers') for name, _ in full.TARGETS.values()]
+        gates += [('browser', 'Verify nearby setup with separate agents and actual browser'),
+                  ('browser', 'Verify durable text recovery with separate agents and actual browser')]
+        for name, gate in gates:
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                self.jobs = copy.deepcopy(original)
+                job = next(j for j in self.jobs if j['name'] == name)
+                step = next(s for s in job['steps'] if s['name'] == gate)
+                if mode == 'missing':
+                    job['steps'].remove(step)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(step))
+                elif mode == 'pending':
+                    step['status'] = 'in_progress'
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(target=name, gate=gate, mode=mode), self.assertRaises(ValueError):
+                    self.audit()
+
+    def test_setup_and_text_browser_exact_execution_and_exports_are_required(self):
+        original = self.sources[full.WORKFLOW]
+        gates = (
+            ('Verify manual nearby setup across native Core peers', 'TestLANCoreNearbySetupManualIntegration', '3m'),
+            ('Verify nearby setup with separate agents and actual browser', 'TestNearbySetupTwoProcessBrowser', '3m'),
+            ('Verify durable text recovery with separate agents and actual browser', 'TestDurableTextThreeProcessBrowser', '4m'),
+        )
+        for gate, test, timeout in gates:
+            marker = ('      - name: ' + gate + '\n').encode()
+            start = original.index(marker)
+            end = original.index(b'      - ', start + len(marker))
+            block = original[start:end]
+            changes = [
+                (b'--exact ', b''), (b'-race ', b''), (b'-count=1', b'-count=0'),
+                (('-timeout=' + timeout).encode(), b'-timeout=0'),
+                (test.encode(), b'TestOther'),
+                (b"INTEGRATION: '1'", b"INTEGRATION: '0'"),
+                (marker, marker + b'        if: false\n'),
+                (marker, marker + b"        if: matrix.goos != 'windows'\n"),
+                (marker, marker + b'        continue-on-error: true\n'),
+            ]
+            if 'actual browser' in gate:
+                changes += [(b'ci-browser-summary.py', b'other-summary.py'),
+                            (b' || status=$?', b' || true'),
+                            (b' || summary_status=$?', b' || true'),
+                            (b'exit "$summary_status"', b'exit 0'),
+                            (b'if [ "$status" -ne 0 ]; then exit "$status"; fi', b'true')]
+            mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1)]
+            moved = original.replace(block, b'', 1)
+            wrong_job = b'  native:\n' if 'actual browser' in gate else b'  browser:\n'
+            wrong_start = moved.index(wrong_job)
+            wrong_step = moved.index(b'      - ', wrong_start)
+            mutations.append(moved[:wrong_step] + block + moved[wrong_step:])
+            for before, after in changes:
+                self.assertIn(before, block)
+                mutations.append(original.replace(block, block.replace(before, after), 1))
+            for index, value in enumerate(mutations):
+                with self.subTest(gate=gate, mutation=index), self.assertRaises(ValueError):
+                    full.validate_setup_and_text_browser_workflow(value)
+        for filename in ('setup-native-summary.json', 'setup-native-failure.json', 'text-native-summary.json'):
+            line = ('            ${{ runner.temp }}/soba-playwright-screenshots/' + filename + '\n').encode()
+            self.assertEqual(original.count(line), 1)
+            for replacement in (b'', b'            ${{ runner.temp }}/**\n'):
+                with self.subTest(export=filename, replacement=replacement), self.assertRaises(ValueError):
+                    full.validate_setup_and_text_browser_workflow(original.replace(line, replacement, 1))
+
+    def test_setup_and_text_browser_gates_cannot_be_omitted_from_literal_policy(self):
+        path = '.github/scripts/ci-coverage.py'
+        original = self.sources[path]
+        for gate in ('Verify manual nearby setup across native Core peers',
+                     'Verify nearby setup with separate agents and actual browser',
+                     'Verify durable text recovery with separate agents and actual browser'):
+            needle = ('"' + gate + '"').encode()
+            self.assertEqual(original.count(needle), 1)
+            self.sources[path] = original.replace(needle, b'"Other gate"', 1)
+            with self.subTest(gate=gate), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+
+    def test_fixed_browser_summary_sources_are_bound_to_checkout(self):
+        for path in ('.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py'):
+            original = self.sources[path]
+            self.sources[path] += b'\n# synthetic changed source\n'
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'checkout policy'):
+                self.audit(local_root=ROOT)
+            self.sources[path] = original
+
+    def test_durable_text_missing_duplicate_or_non_success_blocks_release(self):
+        original = copy.deepcopy(self.jobs)
+        gate = 'Verify durable text restart and lost ACK across Core processes'
+        for name, _ in full.TARGETS.values():
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                self.jobs = copy.deepcopy(original)
+                job = next(j for j in self.jobs if j['name'] == name)
+                step = next(s for s in job['steps'] if s['name'] == gate)
+                if mode == 'missing':
+                    job['steps'].remove(step)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(step))
+                elif mode == 'pending':
+                    step['status'] = 'in_progress'
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(target=name, mode=mode), self.assertRaises(ValueError):
+                    self.audit()
+
+    def test_durable_text_exact_execution_contract_is_required(self):
+        original = self.sources[full.WORKFLOW]
+        marker = b'      - name: Verify durable text restart and lost ACK across Core processes\n'
+        start = original.index(marker)
+        end = original.index(b'      - ', start + len(marker))
+        block = original[start:end]
+        changes = (
+            (b'--expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay', b'--expect Other'),
+            (b"-run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'", b"-run '^Other$'"),
+            (b'--exact ', b''),
+            (b'-race ', b''),
+            (b'-count=1', b'-count=0'),
+            (b'-timeout=4m', b'-timeout=0'),
+            (b'timeout-minutes: 6', b'timeout-minutes: 60'),
+            (b'SOBALINK_RUN_DIRECT_INTEGRATION: \'1\'', b'SOBALINK_RUN_DIRECT_INTEGRATION: \'0\''),
+            (b'lanlink_integration,directlan_integration,', b'lanlink_integration,'),
+            (marker, marker + b'        if: false\n'),
+            (marker, marker + b"        if: matrix.goos != 'windows'\n"),
+            (marker, marker + b'        continue-on-error: true\n'),
+            (b"HiddenReplay$'\n", b"HiddenReplay$' || true\n"),
+        )
+        mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1)]
+        for before, after in changes:
+            self.assertEqual(block.count(before), 1)
+            mutations.append(original.replace(block, block.replace(before, after, 1), 1))
+        # Keeping the exact command only in the browser job cannot qualify any
+        # of the four required native targets.
+        moved = original.replace(block, b'', 1)
+        browser_start = moved.index(b'  browser:\n')
+        browser_step = moved.index(b'      - ', browser_start)
+        mutations.append(moved[:browser_step] + block + moved[browser_step:])
+        for index, source in enumerate(mutations):
+            with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, 'durable text'):
+                full.validate_durable_text_workflow(source)
+
+    def test_durable_text_required_gate_cannot_be_omitted_or_reclassified(self):
+        path = '.github/scripts/ci-coverage.py'
+        original = self.sources[path]
+        entry = b'    "Verify durable text restart and lost ACK across Core processes",\n'
+        self.assertEqual(original.count(entry), 1)
+        missing = original.replace(entry, b'', 1)
+        for index, source in enumerate((
+                missing,
+                original.replace(entry, entry + entry, 1),
+                missing.replace(b'LONG_STEPS = (\n', b'LONG_STEPS = (\n' + entry, 1),
+                missing.replace(b'FULL_ONLY_STEPS = (\n', b'FULL_ONLY_STEPS = (\n' + entry, 1),
+                missing.replace(b'BROWSER_STEPS = (', b'BROWSER_STEPS = (' + entry, 1))):
+            self.sources[path] = source
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
 
     def test_durable_outbox_missing_or_skipped_gate_blocks_release(self):
         original = copy.deepcopy(self.jobs)

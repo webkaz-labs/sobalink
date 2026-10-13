@@ -3,15 +3,12 @@
 package nearby
 
 import (
-	"context"
 	"net"
 	"net/netip"
 	"sync"
-	"syscall"
 	"time"
 
 	"golang.org/x/net/ipv4"
-	"golang.org/x/sys/unix"
 )
 
 type nativeTransport struct {
@@ -41,47 +38,37 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	lc := net.ListenConfig{Control: func(network, address string, raw syscall.RawConn) error {
-		if network != "udp4" || address != "224.0.0.251:5353" {
-			return ErrInvalidScope
-		}
-		var optionErr error
-		err := raw.Control(func(fd uintptr) {
-			if optionErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); optionErr != nil {
-				return
-			}
-			optionErr = configureNativeSocket(int(fd), scope.InterfaceIndex)
-		})
-		if err != nil {
-			return err
-		}
-		return optionErr
-	}}
-	raw, err := lc.ListenPacket(context.Background(), "udp4", "224.0.0.251:5353")
+	raw, failedOwner, err := openNativeGroupSocket(scope.InterfaceIndex, systemNativeSocketOps())
 	if err != nil {
-		return nil, ErrSocketUnavailable
+		return failedOwner, err
 	}
 	conn, ok := raw.(*net.UDPConn)
 	if !ok {
-		return rollbackTransport(&closeOnlyTransport{close: raw.Close}, ErrSocketUnavailable)
+		return rollbackTransport(&closeOnlyTransport{close: raw.Close}, socketFailure("socket_type"))
 	}
 	packet := ipv4.NewPacketConn(conn)
 	owner := &nativeTransport{conn: conn, packet: packet, scope: scope, ifi: ifi, policy: policy}
-	fail := func() (Transport, error) { return rollbackTransport(owner, ErrSocketUnavailable) }
+	fail := func(stage nativeSocketStage) (Transport, error) {
+		return rollbackTransport(owner, socketFailure(stage))
+	}
 	if conn.LocalAddr().String() != "224.0.0.251:5353" {
-		return fail()
+		return fail("socket_bound_address")
 	}
-	if conn.SetReadBuffer(16*MaxDatagramBytes) != nil || conn.SetWriteBuffer(4*MaxDatagramBytes) != nil {
-		return fail()
-	}
-	if packet.SetControlMessage(ipv4.FlagTTL|ipv4.FlagDst|ipv4.FlagInterface, true) != nil {
-		return fail()
-	}
-	if packet.SetMulticastInterface(&ifi) != nil || packet.SetMulticastTTL(255) != nil || packet.SetMulticastLoopback(true) != nil {
-		return fail()
-	}
-	if packet.JoinGroup(&ifi, &net.UDPAddr{IP: net.IP(multicast4.AsSlice())}) != nil {
-		return fail()
+	for _, step := range []struct {
+		stage nativeSocketStage
+		apply func() error
+	}{
+		{"socket_read_buffer", func() error { return conn.SetReadBuffer(16 * MaxDatagramBytes) }},
+		{"socket_write_buffer", func() error { return conn.SetWriteBuffer(4 * MaxDatagramBytes) }},
+		{"socket_receive_metadata", func() error { return packet.SetControlMessage(ipv4.FlagTTL|ipv4.FlagDst|ipv4.FlagInterface, true) }},
+		{"socket_multicast_interface", func() error { return packet.SetMulticastInterface(&ifi) }},
+		{"socket_multicast_ttl", func() error { return packet.SetMulticastTTL(255) }},
+		{"socket_multicast_loopback", func() error { return packet.SetMulticastLoopback(true) }},
+		{"socket_join_group", func() error { return packet.JoinGroup(&ifi, &net.UDPAddr{IP: net.IP(multicast4.AsSlice())}) }},
+	} {
+		if step.apply() != nil {
+			return fail(step.stage)
+		}
 	}
 	return owner, nil
 }
@@ -89,7 +76,7 @@ func (t *nativeTransport) ReadPacket() (Packet, error) {
 	data := make([]byte, MaxDatagramBytes+1)
 	n, cm, source, err := t.packet.ReadFrom(data)
 	if err != nil {
-		return Packet{}, ErrSocketUnavailable
+		return Packet{}, socketFailure("socket_read")
 	}
 	if _, err := currentBindingWithPolicy(t.scope, &t.ifi, t.policy); err != nil {
 		return Packet{}, err
@@ -117,12 +104,12 @@ func (t *nativeTransport) WritePacket(data []byte) error {
 		return err
 	}
 	if t.conn.SetWriteDeadline(time.Now().Add(time.Second)) != nil {
-		return ErrSocketUnavailable
+		return socketFailure("socket_write_deadline")
 	}
 	cm := &ipv4.ControlMessage{Src: net.IP(t.scope.LocalAddress.AsSlice()), IfIndex: t.scope.InterfaceIndex}
 	n, err := t.packet.WriteTo(data, cm, &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
 	if err != nil || n != len(data) {
-		return ErrSocketUnavailable
+		return socketFailure("socket_write")
 	}
 	return nil
 }

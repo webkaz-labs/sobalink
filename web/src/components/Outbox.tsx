@@ -1,3 +1,4 @@
+import { TextOutboxSection } from './TextOutbox'
 import { newOutboxRequestID } from '../outbox-id'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from '../api'
@@ -82,7 +83,7 @@ export function QueuePreparation({ selection, peerIds, pending, onPending, onFin
   </section>
 }
 
-export function OutboxDialog({ server, state, locale, t, onClose }: { server: Server; state: api.State; locale: api.Locale; t: Translate; onClose: () => void }) {
+export function OutboxDialog({ server, state, locale, t, onClose, focusTextRequest }: { server: Server; state: api.State; locale: api.Locale; t: Translate; onClose: () => void; focusTextRequest?: string }) {
   const ot = (key: Parameters<typeof outboxText>[1]) => outboxText(locale, key)
   const [absent, setAbsent] = useState<string[]>([])
   const [availability, setAvailability] = useState<{ status: string; reasonCode?: string } | null>(null)
@@ -125,6 +126,7 @@ export function OutboxDialog({ server, state, locale, t, onClose }: { server: Se
     finally { operation.current = false; if (alive.current) setBusy(null) }
   }
   return <Modal title={ot('title')} t={t} onClose={onClose} wide><div className="outbox-view">
+    <h2>{ot('filesTitle')}</h2>
     {availability?.status === 'blocked_recovery' && <p role="status">{ot('blocked_recovery')}: {outboxReason(locale, availability.reasonCode)}</p>}
     <p>{ot('autoRetry')}</p><Button disabled={server.stale || !!busy} onClick={() => void refresh()}>{ot('refresh')}</Button>
     {absent.length > 0 && <div role="status"><p>{ot('absent')}</p>{absent.map(id => <p className="small code-value" key={id}>{id}</p>)}</div>}
@@ -151,5 +153,6 @@ export function OutboxDialog({ server, state, locale, t, onClose }: { server: Se
         </div>
       </article>
     })}
+    {/^[a-f0-9]{64}$/.test(state.resourceCatalogProcessId || '') && <TextOutboxSection state={state} server={server} locale={locale} focusRequest={focusTextRequest} />}
   </div></Modal>
 }

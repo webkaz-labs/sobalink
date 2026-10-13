@@ -243,7 +243,7 @@ func (f *endpointAcceptanceFixture) openSeed(local, remote directlan.Identity, o
 			f.t.Fatal("synthetic private seed write failed")
 		}
 	}
-	c, err := Open(f.ctx, Options{Directory: dir, Version: "synthetic-acceptance", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) { return nil, errors.New("non-direct backend forbidden") }})
+	c, err := openOwnedTestCore(f.t, f.ctx, Options{Directory: dir, Version: "synthetic-acceptance", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) { return nil, errors.New("non-direct backend forbidden") }})
 	if err != nil {
 		f.t.Fatal("real offline Core open failed")
 	}
@@ -625,7 +625,7 @@ func TestIntegratedEndpointStillValidReopen(t *testing.T) {
 	if offline.close() != nil {
 		t.Fatal("reopen endpoint handoff failed")
 	}
-	reopened, err := Open(f.ctx, Options{Directory: b.dir, Version: "synthetic-acceptance", NodeFactory: func(string, string) (NetworkBackend, error) { return nil, errors.New("non-direct backend forbidden") }})
+	reopened, err := openOwnedTestCore(f.t, f.ctx, Options{Directory: b.dir, LifecycleLock: b.resourceLock, Version: "synthetic-acceptance", NodeFactory: func(string, string) (NetworkBackend, error) { return nil, errors.New("non-direct backend forbidden") }})
 	if err != nil {
 		t.Fatal("normal current-state reopen failed")
 	}

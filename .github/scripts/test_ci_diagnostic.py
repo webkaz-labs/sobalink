@@ -64,7 +64,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         spec.loader.exec_module(coverage)
         jobs = [dict(name=name, status='completed', conclusion='success', steps=[])
                 for name in ('diagnostic-selection', 'diagnostic-web-activation',
-                             'diagnostic-product-activation', 'diagnostic-nearby')]
+                             'diagnostic-product-activation', 'diagnostic-nearby', 'diagnostic-nearby-native')]
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs, scope)
@@ -74,7 +74,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         trigger = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
         self.assertEqual(trigger.strip(), 'create:')
         self.assertEqual(re.findall(r'^  ([a-z][a-z0-9-]*):$', text.split('\njobs:\n')[1], re.M),
-                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby'])
+                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby', 'diagnostic-nearby-native'])
         for forbidden in ('continue-on-error:', 'actions/cache', 'secrets.', 'workflow_dispatch:',
                           'ci-coverage.py', 'ci-required:', 'package-tool', 'id-token: write', 'contents: write'):
             self.assertNotIn(forbidden, text)

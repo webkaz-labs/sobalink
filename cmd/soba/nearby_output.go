@@ -127,8 +127,8 @@ func nearbyError(ja bool, code string) error {
 		"setup_busy":                            {"An existing session is active or closing. Check that original session; finish or cancel it before starting another.", "既存のセッションが実行中か終了処理中です。元のセッションを確認し、完了または取消の後に次を開始してください。"},
 		"setup_discovery_unavailable":           {"Discovery is unavailable. Privately exchange current contact text/files and select each other on both devices.", "探索を利用できません。現在の連絡先の文字列・ファイルを非公開の方法で交換し、両端末で互いを選んでください。"},
 		"setup_port_invalid":                    {"Choose distinct high ports excluding 54543–54545 and the local management port. A relay port also requires --allow-host.", "54543〜54545とローカル管理用を除き、重複しない高位ポートを選んでください。中継ポートには --allow-host も必要です。"},
-		"setup_port_unavailable":                {"The selected listener is unavailable. Review the exact port/address; no automatic remapping or firewall change occurs.", "選択した待受を利用できません。正確なポートとアドレスを確認してください。ポートの自動変更やファイアウォール変更は行いません。"},
-		"setup_no_permitted_host":               {"No reachable, permitted relay host was found. Review host permission and observed reachability on both devices; use an already approved network if available.", "到達可能で許可された中継役がありません。両端末の中継の許可と到達性の観測を確認し、利用できる場合は既に承認済みのネットワークを使ってください。"},
+		"setup_port_unavailable":                {"The selected listener is unavailable. Check the original session first. For a fresh guided review, enter p at the final review to edit ports, then approve the exact new endpoints. No automatic remapping or firewall change occurs.", "選択した待受を利用できません。先に元のセッションを確認してください。新しい案内付きの確認では、最終確認の p でポートを編集し、新しい正確な待受を承認します。自動変更やファイアウォール変更はしません。"},
+		"setup_no_permitted_host":               {"No permitted, reachable relay was found; the cause is not confirmed. If both devices declined, allow one device to relay in a fresh review after cleanup. Start fresh setup on both devices; existing connections must keep their approved host.", "許可され、到達可能な中継役が見つかりませんでした。原因は未確認です。両方で許可しなかった場合は、終了処理後の新しい確認で片方を中継に使うことを許可してください。両端末で新しく開始し、既存の接続では承認済みのホストを維持します。"},
 		"setup_selection_locked":                {"This session is bound to another selection. Check its original state and cancel it explicitly before choosing a different device.", "このセッションは別の選択に固定されています。元の状態を確認し、別の端末を選ぶ前に明示的に取り消してください。"},
 		"setup_scope_mismatch":                  {"The selected contact is outside this scope or refers to this same session. Review the intended contact without broadening permission.", "連絡先がこの範囲外か、自分自身のセッションです。許可範囲を広げず、接続する連絡先を確認してください。"},
 		"setup_saved_authority_review_required": {"Saved peers or permissions require separate review. Preserve this profile and review the existing network before nearby setup.", "保存済みの相手や権限を別途確認する必要があります。このプロファイルを保持し、接続設定の前に既存ネットワークを確認してください。"},
@@ -261,7 +261,7 @@ func nearbyWriteHuman(out io.Writer, dir string, ja bool, s nearbySnapshot) erro
 		fmt.Fprintln(&b, text(ja, "Cancellation was requested. Listener cleanup has not finished; keep checking the original session.", "取消を要求しました。待受の終了処理は未完了です。元のセッションを続けて照会してください。"))
 	} else if s.State == "awaiting_approval" {
 		fmt.Fprintln(&b, text(ja, "Next: compare the full fingerprint, then approve this exact revision on each device. Matching text alone does not approve.", "次: 指紋の全桁を照合し、各端末でこの正確な版を承認してください。文字列の一致だけでは承認されません。"))
-	} else if s.Selected != nil && !s.Connected {
+	} else if s.Selected != nil && !s.Connected && (s.State == "selecting" || s.State == "authenticating") {
 		fmt.Fprintln(&b, text(ja, "Next: select this device on the other screen too, then refresh this session. A timeout does not establish which direction is blocked.", "次: 相手の画面でもこの端末を選び、このセッションを更新してください。時間切れだけで通信が遮断された方向は断定できません。"))
 	}
 	if s.State == "connected" && s.Process.State == "ready" {
@@ -294,8 +294,8 @@ func nearbyWriteHuman(out io.Writer, dir string, ja bool, s nearbySnapshot) erro
 func nearbyWriteApprovalEffect(out io.Writer, dir string, ja bool) error {
 	var b strings.Builder
 	fmt.Fprintln(&b, text(ja,
-		"The setup/contact deadline limits this review, not the resulting connection. After both approvals, the confirmed LAN connection and selected relay listener continue beyond this short setup session until explicitly stopped. The saved network can reconnect when Sobalink starts again. Stop this same profile to end its active connections; stopping does not revoke saved pairs:",
-		"接続設定と連絡先の期限は今回の確認の期限で、成立後の接続期限ではありません。両側の承認後に確認されたLAN接続と選択された中継待受は、短い設定セッションが終わっても明示的に停止するまで継続します。保存済みネットワークはSobalinkの次の起動時に再接続できます。現在の接続を終了するには同じプロファイルを停止してください。停止しても保存済みのペアは解除されません:"))
+		"The setup/contact deadline is at most 120 seconds and limits this review, not the resulting connection. After both approvals, the confirmed LAN connection and selected relay listener continue beyond this short setup session until explicitly stopped. The saved network can reconnect when Sobalink starts again. Stop this same profile to end its active connections; stopping does not revoke saved pairs:",
+		"最大120秒の接続設定と連絡先の期限は今回の確認の期限で、成立後の接続期限ではありません。両側の承認後に確認されたLAN接続と選択された中継待受は、短い設定セッションが終わっても明示的に停止するまで継続します。保存済みネットワークはSobalinkの次の起動時に再接続できます。現在の接続を終了するには同じプロファイルを停止してください。停止しても保存済みのペアは解除されません:"))
 	fmt.Fprintln(&b, cliCommandExample(dir, "stop"))
 	n, err := io.WriteString(out, b.String())
 	if err == nil && n != b.Len() {
@@ -325,6 +325,8 @@ Start advertises the alias and short-lived contact only within the selected scop
 It opens a bootstrap listener; --allow-host also permits a provisional relay there.
 --bootstrap-port defaults to 54546; --relay-port defaults to 54547.
 Review the exact scope/address/ports before --consent. The guided flow can select one unambiguous scope for your review.
+Choose y or n explicitly for the relay role; at least one device must allow hosting.
+At the final guided review, p edits ports and displays the new endpoints before consent.
 JSON never prompts, selects an ambiguous scope, or supplies consent.
 Both devices must select each other before setup proceeds. Advertisements are unverified.
 Copy contact text or save it with contact --output NEW_FILE. Manual also accepts --stdin
@@ -373,6 +375,8 @@ const nearbyHelpJA = `範囲と許可を確認して近くの端末へ接続す�
 --allow-host は同じ範囲の一時的な中継待受も許可します。
 --bootstrap-port の既定は54546、--relay-port の既定は54547です。
 --consent の前に正確な範囲・アドレス・ポートを確認し、案内付き操作では一つだけの範囲を選んで確認に進めます。
+中継役には y または n を明示的に選び、少なくとも片方で中継を許可してください。
+案内付きの最終確認では p でポートを編集し、承認前に新しい待受を確認できます。
 JSONでは質問・曖昧な範囲の選択・暗黙の承認を行いません。
 両端末で互いを選んでから設定を進めます。広告は未検証です。
 連絡先の文字列をコピーするか、contact --output NEW_FILE で保存してください。

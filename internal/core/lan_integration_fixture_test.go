@@ -70,7 +70,7 @@ func (f *nativeLANCoreFixture) open() *Core {
 	f.t.Helper()
 	dir := f.t.TempDir()
 	f.t.Cleanup(f.cleanup) // Close engines before this directory's cleanup on failure.
-	c, err := Open(f.ctx, Options{Directory: dir, Version: "native-test", SkipNetworkStart: true})
+	c, err := openOwnedTestCore(f.t, f.ctx, Options{Directory: dir, Version: "native-test", SkipNetworkStart: true})
 	if err != nil {
 		f.t.Fatal("could not open isolated Core state")
 	}

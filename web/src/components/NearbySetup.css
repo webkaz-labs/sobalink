@@ -9,3 +9,5 @@
 .nearby-candidates { list-style: none; padding: 0; display: grid; gap: .75rem; }
 .nearby-candidates li { min-width: 0; display: grid; gap: .35rem; }
 .nearby-entry { display: grid; gap: .8rem; margin-bottom: 1rem; }
+
+.nearby-host-choice { display: grid; gap: .65rem; min-width: 0; border: 1px solid currentColor; border-radius: .5rem; padding: .8rem; }

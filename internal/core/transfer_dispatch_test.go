@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
-	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/policy"
 	"github.com/webkaz-labs/sobalink/internal/transportorigin"
@@ -27,17 +26,12 @@ import (
 func dispatchTrio(t *testing.T) (corePair, *Core) {
 	t.Helper()
 	pair := newCorePair(t)
-	lock, err := config.AcquireLock(pair.a.dir)
-	if err != nil {
-		t.Fatal(err)
+	if pair.a.resourceLock == nil || pair.a.resourceIdentity == "" {
+		t.Fatal("fixture lacks its original lifecycle owner")
 	}
-	pair.a.op.Lock()
-	pair.a.initializeResourceIdentity(lock)
-	pair.a.op.Unlock()
-	t.Cleanup(func() { _ = pair.a.Close(); _ = lock.Close() })
 	thirdIP := netip.MustParseAddr("100.64.0.3")
 	node := &pipeNode{hub: pair.hub, ip: thirdIP, who: map[netip.Addr]string{pair.na.ip: "peer-a"}, state: identity.State{IPs: []netip.Addr{thirdIP}, Backend: "Running", Snapshot: policy.Snapshot{Running: true, Peers: []policy.Peer{{ID: "peer-a", DNSName: "peer-a.invalid", IPs: []netip.Addr{pair.na.ip}, Online: true}}}}}
-	third, err := Open(context.Background(), Options{Directory: t.TempDir(), Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) { return node, nil }})
+	third, err := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) { return node, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -53,13 +53,14 @@ type nativeCapabilityResult struct {
 	Scope                   string `json:"scope"`
 	BidirectionalCandidates bool   `json:"bidirectionalCandidates"`
 	OwnersJoined            bool   `json:"ownersJoined"`
+	SocketFailureStage      string `json:"socketFailureStage"`
 }
 
 // This result marker, not the enclosing go test exit status or package PASS,
 // is the native acceptance evidence. A platform incapable of safe loopback
 // delivery is explicitly skipped/unavailable, never called verified.
 func TestNativeLoopbackDiscoveryCapability(t *testing.T) {
-	result := nativeCapabilityResult{Status: "not_run", Reason: "opt_in_required", Scope: "isolated_loopback"}
+	result := nativeCapabilityResult{Status: "not_run", Reason: "opt_in_required", Scope: "isolated_loopback", SocketFailureStage: "none"}
 	if os.Getenv("SOBALINK_NATIVE_NEARBY_LOOPBACK") == "1" {
 		result = runNativeLoopbackCapability()
 	}
@@ -134,7 +135,7 @@ func (t *observedNativeTransport) snapshot() (reads, writes int, bad, closed boo
 }
 
 func runNativeLoopbackCapability() (result nativeCapabilityResult) {
-	result = nativeCapabilityResult{Status: "unavailable", Reason: "loopback_scope_unavailable", Scope: "isolated_loopback"}
+	result = nativeCapabilityResult{Status: "unavailable", Reason: "loopback_scope_unavailable", Scope: "isolated_loopback", SocketFailureStage: "none"}
 	scope, err := isolatedLoopbackScope()
 	if err != nil {
 		return result
@@ -209,6 +210,7 @@ func runNativeLoopbackCapability() (result nativeCapabilityResult) {
 		}
 		if err != nil {
 			result.Reason = "native_socket_unavailable"
+			result.SocketFailureStage = socketFailureStage(err)
 			if errors.Is(err, ErrCloseUncertain) || errors.Is(err, ErrCloseUnresolved) {
 				result.Status, result.Reason = "failed", "startup_cleanup_uncertain"
 			}
@@ -241,6 +243,7 @@ func runNativeLoopbackCapability() (result nativeCapabilityResult) {
 		}
 		if err != nil {
 			result.Status, result.Reason = "failed", "native_session_start_failed"
+			result.SocketFailureStage = socketFailureStage(err)
 			if !errors.Is(err, ErrCloseUncertain) && !errors.Is(err, ErrCloseUnresolved) && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrSocketUnavailable) || errors.Is(err, ErrUnsupported)) {
 				result.Status, result.Reason = "unavailable", "native_session_unavailable"
 			}
@@ -258,6 +261,7 @@ func runNativeLoopbackCapability() (result nativeCapabilityResult) {
 		for i, s := range sessions {
 			if err := s.Err(); err != nil {
 				result.Status, result.Reason = "failed", "native_session_failed"
+				result.SocketFailureStage = socketFailureStage(err)
 				if !errors.Is(err, ErrCloseUncertain) && !errors.Is(err, ErrCloseUnresolved) && (errors.Is(err, ErrSocketUnavailable) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrScopeChanged) || errors.Is(err, context.DeadlineExceeded)) {
 					result.Status, result.Reason = "unavailable", "native_receive_unavailable"
 				}

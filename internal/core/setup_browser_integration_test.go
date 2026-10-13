@@ -19,8 +19,9 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 		t.Skip("unperformed: explicit nearby process/browser acceptance required")
 	}
 	failurePhase := "core-start"
+	var coreEvidence *nearbyBrowserCoreEvidence
 	defer func() {
-		saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence"})
+		saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence", Core: coreEvidence})
 	}()
 	f := newNativeLANCoreFixture(t)
 	ctx, cancel := context.WithTimeout(f.ctx, 2*time.Minute)
@@ -60,9 +61,8 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 			}
 		}
 	}
-	wait := func(condition func() bool, message string) {
+	waitUntil := func(until time.Time, condition func() bool, message string) {
 		t.Helper()
-		until := time.Now().Add(45 * time.Second)
 		for !condition() {
 			if time.Now().After(until) || ctx.Err() != nil {
 				t.Fatal(message)
@@ -70,21 +70,71 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 			time.Sleep(30 * time.Millisecond)
 		}
 	}
+	wait := func(condition func() bool, message string) {
+		t.Helper()
+		waitUntil(time.Now().Add(45*time.Second), condition, message)
+	}
 	var reviewed [2]SetupSnapshot
+	collect := func() {
+		for i, p := range peers {
+			previousHello := coreEvidence.Peers[i].FreshHello
+			coreEvidence.Peers[i] = observeNearbyBrowserPeer(view(p), reviewed[i], evidence(p))
+			coreEvidence.Peers[i].FreshHello = previousHello
+		}
+	}
+	checkpoint := func(private, stage string) bool {
+		path := filepath.Join(private, "nearby-"+stage+".json")
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 128 {
+			t.Fatal("private browser checkpoint invalid")
+		}
+		raw, err := os.ReadFile(path)
+		var marker struct {
+			Schema int    `json:"schema"`
+			Stage  string `json:"stage"`
+		}
+		if err != nil || strictLANJSON(raw, &marker) != nil || marker.Schema != 1 || marker.Stage != stage {
+			t.Fatal("private browser checkpoint did not bind exact stage")
+		}
+		return true
+	}
 	runTransferProcessBrowser(t, ctx, map[string]any{"schema": 1, "nearby": true, "devices": devices}, false, func(private string) {
 		defer func() {
 			// Capture an earlier browser failure, or this Core evidence failure,
 			// before runner cancellation can produce a secondary interruption.
-			exportNearbyBrowserFailure(t, private)
-			saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence"})
+			exportNearbyBrowserFailure(t, private, coreEvidence)
+			saveNearbyBrowserFailure(t, nearbyBrowserFailure{Schema: 1, Phase: failurePhase, ErrorKind: "core_evidence", Core: coreEvidence})
 		}()
 		for _, stage := range []string{"cancelled", "review", "one-approved", "connected"} {
 			failurePhase = "core-" + stage
-			wait(func() bool { _, err := os.Stat(filepath.Join(private, "nearby-"+stage+".json")); return err == nil }, "browser setup checkpoint did not arrive")
+			until := time.Now().Add(45 * time.Second)
+			if stage == "connected" {
+				coreEvidence = &nearbyBrowserCoreEvidence{Stage: "waiting_checkpoint"}
+				for i := range coreEvidence.Peers {
+					coreEvidence.Peers[i] = nearbyBrowserPeerEvidence{State: "unknown", Reason: "other", FreshHello: "not_run"}
+				}
+				lastSample := time.Time{}
+				// Sample actual state while awaiting the browser marker, so a missing
+				// UI checkpoint cannot be confused with a failed backend connection.
+				waitUntil(until, func() bool {
+					coreEvidence.CheckpointArrived = checkpoint(private, stage)
+					if coreEvidence.CheckpointArrived || time.Since(lastSample) >= 250*time.Millisecond {
+						collect()
+						lastSample = time.Now()
+					}
+					return coreEvidence.CheckpointArrived
+				}, "browser connected checkpoint did not arrive")
+			} else {
+				waitUntil(until, func() bool { return checkpoint(private, stage) }, "browser setup checkpoint did not arrive")
+			}
 			switch stage {
 			case "cancelled":
-				v := view(peers[0])
-				if v.State != "cancelled" || !evidence(peers[0]).Joined || v.Discovery.State != "stopped" {
+				var v SetupSnapshot
+				waitUntil(until, func() bool { v = view(peers[0]); return v.State == "cancelled" && evidence(peers[0]).Joined }, "cancelled setup workers did not join")
+				if v.Discovery.State != "stopped" {
 					t.Fatal("browser navigation completed before actual setup workers joined")
 				}
 				listener, err := net.Listen("tcp4", v.Contact.Bootstrap)
@@ -105,27 +155,42 @@ func TestNearbySetupTwoProcessBrowser(t *testing.T) {
 				}
 				unpaired()
 			case "one-approved":
-				wait(func() bool { return view(peers[1]).RemoteApproved }, "actual peer did not observe first browser approval")
+				waitUntil(until, func() bool { return view(peers[1]).RemoteApproved }, "actual peer did not observe first browser approval")
 				if !view(peers[0]).LocalApproved || view(peers[1]).LocalApproved {
 					t.Fatal("one browser approval became bilateral consent")
 				}
 				unpaired()
 			case "connected":
+				// checkConnected publishes Connected before run closes discovery.
+				// Wait only for that documented owner transition, within the same
+				// existing stage deadline, before requiring every original invariant.
+				coreEvidence.Stage = "waiting_discovery"
+				waitUntil(until, func() bool {
+					collect()
+					return coreEvidence.Peers[0].Checks.DiscoveryStopped && coreEvidence.Peers[1].Checks.DiscoveryStopped
+				}, "connected discovery owners did not stop")
 				for i, p := range peers {
-					v, e := view(p), evidence(p)
-					if !v.Connected || !v.Paired || v.Trusted || !v.LocalApproved || !v.RemoteApproved || v.SessionID != reviewed[i].SessionID || v.Plan.Fingerprint != reviewed[i].Plan.Fingerprint || v.Discovery.State != "stopped" || !e.Backend || e.Pairs != 1 || e.Trusts != 0 || !e.StrictScope || !e.LocalHello || !e.RemoteReceipt {
+					coreEvidence.Stage = "invariants"
+					if !coreEvidence.Peers[i].Checks.ready() {
 						t.Fatal("browser connected result lacks independent pairing, hello, receipt or trust evidence")
 					}
-					if !catalogProcessDecode[bool](t, p.invoke(t, "fixture.setup-hello", nil)) {
+					coreEvidence.Stage = []string{"hello_a", "hello_b"}[i]
+					ok := catalogProcessDecode[bool](t, p.invoke(t, "fixture.setup-hello", nil))
+					coreEvidence.Peers[i].FreshHello = "failed"
+					if !ok {
 						t.Fatal("connected peer API hello unavailable through actual transport")
 					}
+					coreEvidence.Peers[i].FreshHello = "passed"
 				}
+				coreEvidence.Stage = "acknowledged"
 			}
 			if err := os.WriteFile(filepath.Join(private, "nearby-"+stage+".ok"), []byte("verified\n"), 0600); err != nil {
 				t.Fatal("private browser evidence checkpoint unavailable")
 			}
 		}
 	})
+	// Retain the final connected checkpoint vector; subsequent cleanup has
+	// its own outer phase and must not relabel the older snapshot.
 	failurePhase = "core-cleanup"
 	for _, p := range peers {
 		v := view(p)

@@ -38,6 +38,27 @@ func (c *nearbyCLI) wizard() error {
 		if err := nearbyWriteHuman(c.out, c.dir, c.ja, s); err != nil {
 			return err
 		}
+		if s.State == "failed" && s.NextAction == "try_again" && s.Process.State == "ready" && !s.Paired && !s.Connected {
+			answer, promptErr := p.ask(text(c.ja, "Review a fresh setup on both devices? Alias, scope, relay role and permission must be chosen again [y/N]: ", "両端末で新しいセットアップを確認しますか。表示名・範囲・中継役・許可を改めて選びます [y/N]: "))
+			if errors.Is(promptErr, errPromptCanceled) || promptErr == nil && !affirmativeInput(answer) {
+				return nil
+			}
+			if promptErr != nil {
+				return promptErr
+			}
+			input, startErr := c.wizardStart(p)
+			if errors.Is(startErr, errPromptCanceled) {
+				return nil
+			}
+			if startErr != nil {
+				return startErr
+			}
+			s, _, err = c.snapshot("start", input, "")
+			if err != nil {
+				return c.uncertain("", err)
+			}
+			continue
+		}
 		if s.State == "connected" {
 			next, started, err := c.wizardAnotherDevice(p, s)
 			if err != nil {
@@ -183,31 +204,99 @@ func (c *nearbyCLI) wizardStart(p *prompts) (nearbyStartInput, error) {
 		if err := nearbyWriteScope(c.out, c.ja, scope); err != nil {
 			return nearbyStartInput{}, err
 		}
-		hostAnswer, err := p.ask(text(c.ja, "May this device host a provisional relay if selected? [y/N]: ", "選ばれた場合に、この端末を一時的な中継役にしてよいですか [y/N]: "))
-		if err != nil {
-			return nearbyStartInput{}, err
+		fmt.Fprintln(c.out, text(c.ja,
+			"For a new connection, we recommend allowing one device to relay it. Ability to host and reachability are not yet confirmed. If already connected through another host, keep using that host. Both devices declining prevents this setup from connecting.",
+			"新しい接続には、どちらか一方で中継を許可することを推奨します。中継できるか、相手から到達できるかはまだ未確認です。すでに別のホスト経由で接続中なら、そのホストを使い続けてください。両方で許可しない場合、このセットアップでは接続できません。"))
+		var allowHost bool
+		for {
+			hostAnswer, err := p.ask(text(c.ja, "Allow this device to relay this connection? y to allow, n to use the other device, q to cancel (choose y/n): ", "接続のため、この端末を中継に使うことを許可しますか。y で許可、n で相手を中継に使用、q で取消（y/n を選択）: "))
+			if err != nil {
+				return nearbyStartInput{}, err
+			}
+			if affirmativeInput(hostAnswer) {
+				allowHost = true
+				break
+			}
+			if strings.EqualFold(hostAnswer, "n") || strings.EqualFold(hostAnswer, "no") || hostAnswer == "いいえ" {
+				break
+			}
+			fmt.Fprintln(c.out, text(c.ja, "Choose y or n explicitly. No relay permission has been granted.", "y または n を明示的に選んでください。中継の許可はまだ行っていません。"))
 		}
-		input := nearbyStartInput{Alias: alias, ScopeID: scope.ScopeID, BootstrapPort: 54546, AllowHost: affirmativeInput(hostAnswer), RelayPort: 54547}
+		input := nearbyStartInput{Alias: alias, ScopeID: scope.ScopeID, BootstrapPort: 54546, AllowHost: allowHost, RelayPort: 54547}
 		if !input.AllowHost {
 			input.RelayPort = 0
 		}
-		if err := nearbyWritePermission(c.out, c.ja, input.Alias, scope, int(input.BootstrapPort), int(input.RelayPort), input.AllowHost); err != nil {
-			return nearbyStartInput{}, err
+		editInputs := false
+		for {
+			if err := nearbyWritePermission(c.out, c.ja, input.Alias, scope, int(input.BootstrapPort), int(input.RelayPort), input.AllowHost); err != nil {
+				return nearbyStartInput{}, err
+			}
+			if err := nearbyWriteApprovalEffect(c.out, c.dir, c.ja); err != nil {
+				return nearbyStartInput{}, err
+			}
+			answer, err := p.ask(text(c.ja, "Start within exactly this scope? y to consent, p to edit ports, b to edit all, q to cancel [N]: ", "この正確な範囲で開始しますか。y で承認、p でポート編集、b で全体編集、q で取消 [N]: "))
+			if err != nil {
+				return nearbyStartInput{}, err
+			}
+			if strings.EqualFold(answer, "p") {
+				if err := c.wizardPorts(p, &input); err != nil {
+					return nearbyStartInput{}, err
+				}
+				continue
+			}
+			if strings.EqualFold(answer, "b") {
+				editInputs = true
+				break
+			}
+			if !affirmativeInput(answer) {
+				return nearbyStartInput{}, errPromptCanceled
+			}
+			break
 		}
-		answer, err := p.ask(text(c.ja, "Start within exactly this scope? y to consent, b to edit, q to cancel [N]: ", "この正確な範囲で開始しますか。y で承認、b で編集、q で取消 [N]: "))
-		if err != nil {
-			return nearbyStartInput{}, err
-		}
-		if strings.EqualFold(answer, "b") {
+		if editInputs {
 			continue
-		}
-		if !affirmativeInput(answer) {
-			return nearbyStartInput{}, errPromptCanceled
 		}
 		input.Consent = true
 		return input, nil
 	}
 }
+
+// Editing ports is local-only. The exact new endpoints are reviewed again;
+// neither corrections nor a blank answer can grant network permission.
+func (c *nearbyCLI) wizardPorts(p *prompts, input *nearbyStartInput) error {
+	fmt.Fprintln(c.out, text(c.ja, "Choose distinct ports from 1024–65535, excluding 54543–54545 and the local management port. Availability is checked only when starting; no automatic remapping occurs.", "1024〜65535から、54543〜54545とローカル管理用を除く重複しないポートを選んでください。利用可能かは開始時に確認し、自動変更はしません。"))
+	readPort := func(question string, current uint16, other uint16) (uint16, error) {
+		for {
+			answer, err := p.ask(fmt.Sprintf("%s [%d]: ", question, current))
+			if err != nil {
+				return 0, err
+			}
+			port := int(current)
+			if answer != "" {
+				port, err = strconv.Atoi(answer)
+			}
+			if err != nil || !nearbyPort(port) || uint16(port) == other {
+				fmt.Fprintln(c.out, nearbyError(c.ja, "setup_port_invalid"))
+				continue
+			}
+			return uint16(port), nil
+		}
+	}
+	bootstrap, err := readPort(text(c.ja, "Setup port (Enter keeps it, q cancels)", "セットアップ用ポート（Enter で維持、q で取消）"), input.BootstrapPort, 0)
+	if err != nil {
+		return err
+	}
+	relay := input.RelayPort
+	if input.AllowHost {
+		relay, err = readPort(text(c.ja, "Relay port (Enter keeps it, q cancels)", "中継用ポート（Enter で維持、q で取消）"), relay, bootstrap)
+		if err != nil {
+			return err
+		}
+	}
+	input.BootstrapPort, input.RelayPort = bootstrap, relay
+	return nil
+}
+
 func (c *nearbyCLI) wizardApprove(p *prompts, s nearbySnapshot) (nearbySnapshot, error) {
 	original := s
 	answer, err := p.ask(text(c.ja, "Independently obtain and paste the OTHER device's verification line or all 64 fingerprint digits (q returns): ", "独立した方法で相手から取得した照合情報の1行か指紋の64桁すべてを貼り付けてください（q で戻る）: "))

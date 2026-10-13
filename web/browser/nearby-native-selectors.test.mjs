@@ -91,7 +91,7 @@ for (const locale of ['en', 'ja']) {
         field(c.peer, 'textarea', value), h('button', null, c.import),
         h('div', { role: 'region', 'aria-label': c.review },
           field(c.fingerprint, 'textarea', 'synthetic-full-fingerprint', { readOnly: true }), field(c.otherFingerprint, 'textarea', value),
-          ...[c.host, c.consent, c.save, c.verified].map(name => h('label', { key: name }, h('input', { type: 'checkbox', checked, onChange() {} }), name)),
+          ...[c.host, c.consent, c.save, c.verified].map(name => h('label', { key: name }, h('input', { type: name === c.host ? 'radio' : 'checkbox', checked, onChange() {} }), name)),
           h('button', null, c.start), h('button', null, c.approve), h('button', null, nearbyText(locale, 'checkStatus'))),
         h('p', null, c.unavailable), h('p', null, c.trust), h('p', null, c.connected)))))
     try {
@@ -110,7 +110,7 @@ for (const locale of ['en', 'ja']) {
         assert.equal(one('combobox', c.scope).value, 'synthetic')
         assert.equal(one('spinbutton', c.bootstrapPort).value, checked ? '48446' : '48445')
         assert.equal(one('spinbutton', c.relayPort).value, checked ? '48444' : '48443')
-        for (const name of [c.host, c.consent, c.save, c.verified]) assert.equal(one('checkbox', name).checked, checked)
+        for (const name of [c.host, c.consent, c.save, c.verified]) assert.equal(one(name === c.host ? 'radio' : 'checkbox', name).checked, checked)
         for (const name of [c.network, c.open, c.back, c.import, c.start, c.approve, nearbyText(locale, 'checkStatus')]) one('button', name)
         one('dialog', c.dialog); one('region', c.review)
         for (const value of [c.ports, c.unavailable, c.trust, c.connected]) assert.equal(query(`internal:text=${JSON.stringify(value)}s`).length, 1)
@@ -128,6 +128,9 @@ test('controlled DOM regression stays bound to the production field shapes', () 
   assert.match(ui, /<label className="field">\{label\}<textarea ref=\{field\} rows=\{3\} readOnly value=\{text\}/)
   assert.match(ui, /<label className="field">\{c\('alias'\)\}<input[\s\S]*?<small className="muted">\{c\('aliasHint'\)\}<\/small><\/label>/)
   for (const port of ['bootstrapPort', 'relayPort']) assert.ok(ui.includes(`<label className="field">{c('${port}')}<input type="number"`))
+  assert.ok(ui.includes('<input type="radio" name="nearby-host-role" checked={allowHost === true}'))
+  assert.ok(ui.includes('<input type="radio" name="nearby-host-role" checked={allowHost === false}'))
+  assert.ok(spec.includes("getByRole('radio', { name: c.host, exact: true }).check()"))
   for (const key of ['peer', 'otherFingerprint']) assert.ok(spec.includes(`getByRole('textbox', { name: c.${key}, exact: true })`))
   for (const key of ['bootstrapPort', 'relayPort']) assert.ok(spec.includes(`getByRole('spinbutton', { name: c.${key}, exact: true })`))
 })

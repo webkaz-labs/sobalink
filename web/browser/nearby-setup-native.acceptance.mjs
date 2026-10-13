@@ -6,7 +6,7 @@ const labels = {
   en: {
     network: 'Set up network', dialog: 'Choose how to connect', open: 'Connect to a nearby device', back: 'Back to connection options',
     alias: 'Name to show nearby', scope: 'Network to use', ports: 'Connection ports', bootstrapPort: 'Setup port', relayPort: 'Relay port',
-    host: 'Allow this device to host the selected connection', consent: 'Allow discovery and setup on this network for 120 seconds', start: 'Find nearby devices',
+    host: 'Allow this device to relay this connection', consent: 'Allow discovery and setup on this network for 120 seconds', start: 'Find nearby devices',
     local: 'This device’s setup information', peer: 'Other device’s setup information', import: 'Review copied device',
     unavailable: 'Nearby discovery is unavailable here. QR or copied setup information can still be used. Exchanging an address does not remove network restrictions.',
     review: 'Compare and approve this connection', fingerprint: 'Full connection fingerprint', otherFingerprint: 'Paste the other device’s full fingerprint',
@@ -17,7 +17,7 @@ const labels = {
   ja: {
     network: 'ネットワークを設定', dialog: '接続方法を選択', open: '近くの端末と接続する', back: '接続方法の選択へ戻る',
     alias: '近くの端末に表示する名前', scope: '使用するネットワーク', ports: '接続ポート', bootstrapPort: 'セットアップ用ポート', relayPort: '中継用ポート',
-    host: 'この端末が選択した接続のホストになることを許可する', consent: 'このネットワークで120秒間の探索とセットアップを許可する', start: '近くの端末を探す',
+    host: '接続のため、この端末を中継に使うことを許可', consent: 'このネットワークで120秒間の探索とセットアップを許可する', start: '近くの端末を探す',
     local: 'この端末のセットアップ情報', peer: '相手の端末のセットアップ情報', import: 'コピーした相手を確認',
     unavailable: '近隣探索を利用できません。QRまたはコピーした接続情報は引き続き使用できます。アドレスの交換だけではネットワーク制限を解除できません。',
     review: '接続を照合して承認', fingerprint: '接続フィンガープリント全体', otherFingerprint: '相手のフィンガープリント全体を貼り付け',
@@ -68,7 +68,9 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
     await page.getByText(c.ports, { exact: true }).click()
     await page.getByRole('spinbutton', { name: c.bootstrapPort, exact: true }).fill(String(device.bootstrapPort))
     await page.getByRole('spinbutton', { name: c.relayPort, exact: true }).fill(String(device.relayPort))
-    await page.getByRole('checkbox', { name: c.host, exact: true }).check()
+    await expect(page.getByRole('radio', { name: c.host, exact: true })).not.toBeChecked()
+    await expect(page.getByRole('checkbox', { name: c.consent, exact: true })).toBeDisabled()
+    await page.getByRole('radio', { name: c.host, exact: true }).check()
     const button = page.getByRole('button', { name: c.start, exact: true })
     await expect(button).toBeDisabled()
     await page.getByRole('checkbox', { name: c.consent, exact: true }).check()

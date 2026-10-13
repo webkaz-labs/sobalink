@@ -239,7 +239,7 @@ func runProductOwner(dir string, successor bool) (result error) {
 			return err
 		}
 		peerLock = lock
-		peer, err = core.Open(ctx, core.Options{Directory: peerDir, Version: "synthetic-product-peer", SkipNetworkStart: true})
+		peer, err = core.Open(ctx, core.Options{Directory: peerDir, LifecycleLock: lock, Version: "synthetic-product-peer", SkipNetworkStart: true})
 		if err != nil {
 			return errors.Join(err, lock.Close())
 		}
@@ -478,7 +478,7 @@ func prepareProductSupervisor(dir string, command *exec.Cmd) (activationSupervis
 			return nil, errors.Join(err, closeReservations())
 		}
 		state := productPrivateState{Version: 3, Identity: identities[i], Selection: core.DirectLANSelection{Listen: endpoints[i].String(), Prefixes: []string{"127.0.0.1/32"}}, Revision: "1", PreviousLocalEndpoint: endpoints[i].String(), ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Peers: []endpointmeta.PeerRecord{{Peer: endpointmeta.PeerWire{Key: identities[1-i].PublicKey(), TunnelKey: identities[1-i].TunnelKey(), Endpoint: endpoints[1-i].String(), Name: "synthetic-product-peer"}, Revision: "1"}}}
-		profile := core.Profile{Version: 2, DurableFiles: syntheticDurableProfile(), Settings: core.Settings{Locale: "en", Theme: "system", Network: "direct-lan", Hostname: "synthetic-product-owner"}, Peers: []core.Trust{}, Services: []core.ServiceSpec{}}
+		profile := core.Profile{Version: 3, DurableFiles: syntheticDurableProfile(), Settings: core.Settings{Locale: "en", Theme: "system", Network: "direct-lan", Hostname: "synthetic-product-owner"}, Peers: []core.Trust{}, Services: []core.ServiceSpec{}}
 		if err := productPrivateJSON(filepath.Join(path, "direct-lan.json"), state); err != nil {
 			return nil, errors.Join(err, closeReservations())
 		}

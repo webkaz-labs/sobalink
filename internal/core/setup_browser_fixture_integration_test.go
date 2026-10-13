@@ -67,25 +67,35 @@ func browserSetupHello(ctx context.Context, c *Core) bool {
 	if peer == "" {
 		return false
 	}
+	return browserSetupPeerHello(ctx, c, peer)
+}
+
+type setupBrowserHelloReply struct {
+	Protocol     int      `json:"protocol"`
+	Product      string   `json:"product"`
+	Capabilities []string `json:"capabilities"`
+}
+
+func browserSetupPeerHello(ctx context.Context, c *Core, peer string) bool {
 	call, stop := context.WithTimeout(ctx, 5*time.Second)
 	defer stop()
-	var hello struct {
-		Protocol int    `json:"protocol"`
-		Product  string `json:"product"`
-	}
+	var hello setupBrowserHelloReply
 	return c.peerJSON(call, peer, "GET", "/v1/hello", nil, &hello) == nil && hello.Protocol == 1 && hello.Product == "sobalink"
 }
 
 // This failure-only receipt is intentionally independent of the success proof.
 // No unvalidated bytes, runtime error, DOM, selector, or contact is exported.
+const nearbyBrowserFailureMaxBytes = 4096
+
 type nearbyBrowserFailure struct {
-	Schema    int    `json:"schema"`
-	Phase     string `json:"phase"`
-	ErrorKind string `json:"errorKind"`
+	Schema    int                        `json:"schema"`
+	Phase     string                     `json:"phase"`
+	ErrorKind string                     `json:"errorKind"`
+	Core      *nearbyBrowserCoreEvidence `json:"core,omitempty"`
 }
 
 func validNearbyBrowserFailure(v nearbyBrowserFailure) bool {
-	if v.Schema != 1 {
+	if v.Schema != 1 || v.Core != nil && !validNearbyBrowserCoreEvidence(*v.Core) {
 		return false
 	}
 	switch v.Phase {
@@ -123,14 +133,14 @@ func saveNearbyBrowserFailure(t *testing.T, v nearbyBrowserFailure) {
 	}
 }
 
-func exportNearbyBrowserFailure(t *testing.T, private string) {
+func exportNearbyBrowserFailure(t *testing.T, private string, observed ...*nearbyBrowserCoreEvidence) {
 	t.Helper()
 	if !t.Failed() {
 		return
 	}
 	path := filepath.Join(private, "nearby-browser-failure.json")
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1024 {
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > nearbyBrowserFailureMaxBytes {
 		return
 	}
 	raw, err := os.ReadFile(path)
@@ -142,6 +152,9 @@ func exportNearbyBrowserFailure(t *testing.T, private string) {
 	var value nearbyBrowserFailure
 	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF || !validNearbyBrowserFailure(value) {
 		return
+	}
+	if len(observed) == 1 {
+		value.Core = observed[0]
 	}
 	saveNearbyBrowserFailure(t, value)
 }

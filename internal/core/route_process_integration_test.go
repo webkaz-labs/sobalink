@@ -38,19 +38,29 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	opts := Options{Directory: dir, Version: "process-fixture", SkipNetworkStart: os.Getenv("SOBALINK_ROUTE_PROCESS_OFFLINE") == "1"}
-	if os.Getenv("SOBALINK_ROUTE_PROCESS_CATALOG") == "1" {
-		lock, err := config.AcquireLock(dir)
-		if err != nil {
-			t.Fatal("open owned catalog process lock")
+	lock, err := config.AcquireLock(dir)
+	if err != nil {
+		t.Fatal("open owned process lock")
+	}
+	defer func() {
+		if err := lock.Close(); err != nil {
+			t.Error("close owned process lock")
 		}
-		defer lock.Close()
-		opts.LifecycleLock, opts.EnableResourceInspection, opts.EnableCatalogView = lock, true, true
+	}()
+	opts.LifecycleLock = lock
+	if os.Getenv("SOBALINK_ROUTE_PROCESS_CATALOG") == "1" {
+		opts.EnableResourceInspection, opts.EnableCatalogView = true, true
 	}
 	c, err := Open(ctx, opts)
 	if err != nil {
 		t.Fatal("open isolated subprocess Core")
 	}
-	defer c.Close()
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Error("close isolated subprocess Core")
+		}
+	}()
+	textFixture := &durableTextProcessFixture{core: c}
 	if os.Getenv("SOBALINK_ROUTE_PROCESS_SETUP") == "1" {
 		installBrowserSetupScope(c)
 	}
@@ -63,8 +73,9 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 	decoder, encoder := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
 	for {
 		var request struct {
-			Name    string
-			Payload json.RawMessage
+			Name      string
+			Payload   json.RawMessage
+			RequestID string
 		}
 		if decoder.Decode(&request) != nil {
 			return
@@ -72,6 +83,8 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		var value any
 		var callErr error
 		switch request.Name {
+		case "fixture.text-fault", "fixture.text-evidence", "fixture.text-wire":
+			value, callErr = textFixture.command(ctx, request.Name, request.Payload)
 		case "fixture.send-paths":
 			var in struct {
 				PeerID string   `json:"peerId"`
@@ -254,9 +267,14 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 			}
 		default:
 			call, stop := context.WithTimeout(ctx, 30*time.Second)
-			requestID := randomID()
-			if request.Name == "outbox.prepare" {
-				requestID = newOutboxRequestID(time.Now())
+			requestID := request.RequestID
+			if requestID == "" {
+				requestID = randomID()
+				if request.Name == "outbox.prepare" {
+					requestID = newOutboxRequestID(time.Now())
+				} else if request.Name == "message.queue.prepare" {
+					requestID = newTextRequestID(time.Now())
+				}
 			}
 			value, callErr = c.Command(call, webui.Command{RequestID: requestID, Name: request.Name, Payload: request.Payload})
 			stop()
@@ -348,11 +366,17 @@ func (p *routeCoreProcess) invoke(t *testing.T, name string, payload any) json.R
 
 func (p *routeCoreProcess) invokeResult(t *testing.T, name string, payload any) processReply {
 	t.Helper()
+	return p.invokeResultID(t, name, "", payload)
+}
+
+func (p *routeCoreProcess) invokeResultID(t *testing.T, name, requestID string, payload any) processReply {
+	t.Helper()
 	raw, _ := json.Marshal(payload)
 	if json.NewEncoder(p.input).Encode(struct {
-		Name    string
-		Payload json.RawMessage
-	}{name, raw}) != nil {
+		Name      string
+		Payload   json.RawMessage
+		RequestID string
+	}{name, raw, requestID}) != nil {
 		t.Fatalf("subprocess command write %s; %s; runtime diagnostics:\n%s", name, p.exitSummary(), p.diagnostics.safeSummary())
 	}
 	ch := make(chan processReply, 1)

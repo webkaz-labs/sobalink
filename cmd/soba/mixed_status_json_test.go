@@ -13,7 +13,7 @@ import (
 
 func TestReviewDamagedMixedJSONRemainsStable(t *testing.T) {
 	dir := t.TempDir()
-	c, e := core.Open(context.Background(), core.Options{Directory: dir, SkipNetworkStart: true})
+	c, e := core.Open(context.Background(), core.Options{Directory: dir, LifecycleLock: cliFixtureLifecycleOwner(t, dir), SkipNetworkStart: true})
 	if e != nil {
 		t.Fatal(e)
 	}

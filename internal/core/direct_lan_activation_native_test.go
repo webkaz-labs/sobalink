@@ -130,7 +130,7 @@ func newActivationNativePairDirectories(t *testing.T, retainOnFailure bool) *act
 			dir = t.TempDir()
 		}
 		t.Cleanup(f.close) // Join before TempDir removal, even on early failure.
-		c, err := Open(ctx, Options{Directory: dir, Version: "synthetic-activation", SkipNetworkStart: true})
+		c, err := openOwnedTestCore(t, ctx, Options{Directory: dir, Version: "synthetic-activation", SkipNetworkStart: true})
 		if err != nil {
 			t.Fatal("offline Core construction failed")
 		}

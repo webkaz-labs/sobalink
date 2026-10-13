@@ -199,3 +199,56 @@ jobs:
             ${{ runner.temp }}/soba-nearby-sanitized/provenance.json
           if-no-files-found: error
           retention-days: 14
+
+  # Four native platforms share this exact diagnostic branch source. Linux x64
+  # is already covered by diagnostic-nearby's separate native capability result;
+  # these three lanes add no duplicate Core/browser or native x64 execution.
+  diagnostic-nearby-native:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'nearby'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-26
+            platform: darwin-arm64
+          - runner: windows-2025
+            platform: windows-amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify closed native-only diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_native.py' -v
+      - name: Classify one isolated-loopback native capability
+        id: native-nearby
+        timeout-minutes: 10
+        env:
+          SOBALINK_NEARBY_NATIVE_PLATFORM: ${{ matrix.platform }}
+        run: python -B .github/scripts/ci-nearby-native.py
+      - name: Preserve only reconstructed native capability evidence
+        if: always() && steps.native-nearby.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-nearby-native-${{ matrix.platform }}-sanitized
+          path: |
+            ${{ runner.temp }}/soba-nearby-native-sanitized/result.json
+            ${{ runner.temp }}/soba-nearby-native-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14

@@ -90,6 +90,12 @@ func capturePeerHTTPBackend(ctx context.Context, backend string, node NetworkBac
 func (c *Core) capturePeerHTTPRoute(ctx context.Context, id string, attempted map[string]bool) (*peerHTTPRoute, error) {
 	c.mu.RLock()
 	node, network, closing := c.node, c.profile.Settings.Network, c.closing
+	if selected, ok := ctx.Value(messageQueueSelectionKey{}).(*messageQueueSelection); ok {
+		if err := c.checkMessageQueueSelectionLocked(id, selected, node); err != nil {
+			c.mu.RUnlock()
+			return nil, err
+		}
+	}
 	if selected, ok := ctx.Value(outgoingSelectionKey{}).(*outgoingBatch); ok {
 		approved := false
 		if selected.outboxID != "" && (c.profile.DurableFiles == nil || c.profile.DurableFiles.Phase != "ready" || c.durableProfileError != "") {

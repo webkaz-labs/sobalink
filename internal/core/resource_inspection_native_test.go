@@ -110,9 +110,9 @@ func newResourceNativeOwnedPairWithPolicy(t *testing.T, alignPolicy bool) *resou
 		if base.endpoints[i].Addr() != netip.MustParseAddr("127.0.0.1") {
 			t.Fatal("fixture endpoint left the exact loopback address")
 		}
-		owner, err := config.AcquireLock(c.dir)
-		if err != nil {
-			t.Fatal("synthetic lifecycle lock acquisition failed")
+		owner := c.resourceLock
+		if owner == nil {
+			t.Fatal("synthetic Core lacks its original lifecycle owner")
 		}
 		f.owners[i].lock = owner
 		c.op.Lock()

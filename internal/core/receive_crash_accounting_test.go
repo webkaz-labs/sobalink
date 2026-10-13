@@ -35,7 +35,7 @@ func TestCoreReceiveCrashChild(t *testing.T) {
 	if err := config.WriteJSON(filepath.Join(dir, capacityPolicyFile), policy); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestCoreOpenReconcilesReceiveCrashAccounting(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 82 {
 		t.Fatalf("Core crash helper exit: %v, %s", err, output)
 	}
-	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

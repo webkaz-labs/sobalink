@@ -50,16 +50,21 @@ permissions. Every startup option/bind failure fails closed. Interface binding
 metadata, local address and exact prefix are rechecked before sending and after
 receiving; changed bindings stop the session.
 
-- Linux binds exactly `224.0.0.251:5353`, disables `IP_MULTICAST_ALL`, joins only
+- Linux binds exactly `224.0.0.251:5353` through a native socket, disables `IP_MULTICAST_ALL`, joins only
   the selected interface, and uses x/net IPv4 packet metadata for ingress and
   exact local source/interface selection on every send.
-- Darwin uses that exact group bind with `IP_BOUND_IF` and the same supported
+- Darwin uses that exact native group bind with `IP_BOUND_IF` and the same supported
   x/net source/interface and receive controls.
 - Windows binds exactly the selected local address on port 5353. It uses the
   socket-local `IP_IFLIST` with one interface, one group membership, and
   `IP_PKTINFO`/TTL metadata. Go `UDPConn.ReadMsgUDP`/`WriteMsgUDP` use supported
   Winsock message I/O. The small ancillary codec uses bounded byte operations,
   without `unsafe`. Required options may be unavailable on older Windows.
+- Unix uses `net.FilePacketConn` only after the exact native bind because Go's
+  ordinary UDP listener rewrites multicast bind addresses to a wildcard before
+  its control callback. The original descriptor is close-on-exec/nonblocking;
+  both the original and Go-owned duplicate have explicit rollback ownership.
+  A failed original close prevents successful startup and retains uncertainty.
 - No native path retries a wildcard bind, global membership or another NIC.
   Unsupported or blocked discovery must leave Core's manual/QR setup available.
 
@@ -105,6 +110,10 @@ native 実装は IPv4 のみ。Linux/macOS は正確な multicast group bind と
 interface、Windows は選択したローカル数値 address bind と interface 制限を
 用いる。wildcard bind、別 NIC、全 IP/port scan、OS/FW/経路変更へは拡張しない。
 安全な socket を作れない場合は停止し、Core の手動/QR 導線を利用できる状態にする。
+Unix では Go の通常 UDP listener が multicast bind を wildcard に変更するため、
+native socket を正確な group に bind した後だけ `net.FilePacketConn` に渡す。
+元の descriptor と Go が複製した descriptor を個別に管理し、元の終了が不確定なら
+起動成功とせず owner を保持する。close-on-exec・nonblocking を必須とする。
 
 模擬 transport・偽時計の試験や他 OS 向けコンパイルは、native multicast の実動
 確認ではない。native 通信と範囲制限、実機の探索・ペアリング・アプリ互換性は、
@@ -139,7 +148,9 @@ A `NEARBY_NATIVE_CAPABILITY` JSON marker reports `verified`, `unavailable`,
 and both owners joined, counts as capability evidence. A skipped test can still
 leave the enclosing Go package with a `PASS` exit status: **a runner must check
 the marker, not that status**. Foreign/missing packet metadata and unresolved
-cleanup fail the test. A bind/receive limitation is explicitly unavailable.
+cleanup fail the test. A bind/receive limitation is explicitly unavailable. The additional
+`socketFailureStage` field is a fixed enum (`none` when there was no socket
+failure); it contains no raw platform errors, interface identifiers or addresses.
 
 Even a verified result proves only exact loopback adapter behavior on that
 native target. It does not prove physical-NIC multicast, multi-device discovery,
@@ -156,4 +167,6 @@ interface flag・経路・FW・全体設定を変更しない。別 NIC への�
 専用 JSON marker の `verified` と、双方向の候補確認・両 owner の終了確認だけを
 能力試験の根拠にする。`unavailable` / `not_run` による skip は、Go package 全体が
 `PASS` と表示されても合格証拠ではない。metadata の範囲不一致や終了不能は失敗。
+`socketFailureStage` は固定 enum で失敗段階を示し、失敗がなければ `none` とする。
+OS の生 error、interface の識別情報、address は出力しない。
 loopback 上の合格は、実 NIC・別端末の探索、bootstrap 認証、手動導線の合格とは別。

@@ -18,7 +18,7 @@ import (
 
 func TestCoreLegacyReceiveReviewKeepsCoreAvailableAndPersists(t *testing.T) {
 	dir := t.TempDir()
-	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestCoreLegacyReceiveReviewKeepsCoreAvailableAndPersists(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "receive-accounting.json")); err != nil {
 		t.Fatal(err)
 	}
-	c, err = Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err = openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatalf("receive migration stopped all Core functions: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestCoreLegacyReceiveReviewKeepsCoreAvailableAndPersists(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	c, err = Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err = openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestCoreLegacyReceiveReviewKeepsCoreAvailableAndPersists(t *testing.T) {
 
 func TestCoreDamagedIndexStopsOnlyReceiveAndCannotBeDiscarded(t *testing.T) {
 	dir := t.TempDir()
-	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestCoreDamagedIndexStopsOnlyReceiveAndCannotBeDiscarded(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "receive-accounting.json"), damaged, 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err = Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err = openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal("damaged accounting stopped Core", err)
 	}
@@ -119,7 +119,7 @@ func TestReceiveRecoveryCannotBeConfirmedByPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	nb := &pipeNode{hub: p.hub, ip: p.nb.ip, who: map[netip.Addr]string{p.na.ip: "peer-a"}, state: p.nb.state}
-	receiver, err := Open(context.Background(), Options{Directory: dir, NodeFactory: func(string, string) (NetworkBackend, error) { return nb, nil }})
+	receiver, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: p.b.resourceLock, NodeFactory: func(string, string) (NetworkBackend, error) { return nb, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestReceiveRecoveryCannotBeConfirmedByPeer(t *testing.T) {
 func TestCoreCloseAfterContextCancellationPreservesSavedFiles(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
-	c, err := Open(ctx, Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, ctx, Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestCoreCloseAfterContextCancellationPreservesSavedFiles(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	c, err = Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err = openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestCoreUnavailableAutosaveStopsOnlyReceiveAndRequiresReenable(t *testing.T
 				t.Fatal(err)
 			}
 			nb := &pipeNode{hub: p.hub, ip: p.nb.ip, who: map[netip.Addr]string{p.na.ip: "peer-a"}, state: p.nb.state}
-			c, err := Open(context.Background(), Options{Directory: p.b.dir, NodeFactory: func(string, string) (NetworkBackend, error) { return nb, nil }})
+			c, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.b.dir, LifecycleLock: p.b.resourceLock, NodeFactory: func(string, string) (NetworkBackend, error) { return nb, nil }})
 			if err != nil {
 				t.Fatalf("unavailable autosave stopped Core: %v", err)
 			}
@@ -313,7 +313,7 @@ func TestCoreUnavailableAutosaveStopsOnlyReceiveAndRequiresReenable(t *testing.T
 			if err := c.Close(); err != nil {
 				t.Fatal(err)
 			}
-			reopened, err := Open(context.Background(), Options{Directory: c.dir, SkipNetworkStart: true})
+			reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -329,7 +329,7 @@ func TestCoreUnavailableAutosaveStopsOnlyReceiveAndRequiresReenable(t *testing.T
 func TestCoreUnavailableDefaultWithoutAutosaveDoesNotGrantOrBlockReceive(t *testing.T) {
 	dir := t.TempDir()
 	destination := t.TempDir()
-	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestCoreUnavailableDefaultWithoutAutosaveDoesNotGrantOrBlockReceive(t *test
 	if err := os.Rename(destination, destination+"-offline"); err != nil {
 		t.Fatal(err)
 	}
-	c, err = Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err = openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestCoreRecoveryInventoryStopsOnCallerOrLifetimeCancellation(t *testing.T) 
 	for _, source := range []string{"caller", "lifetime-close"} {
 		t.Run(source, func(t *testing.T) {
 			dir := t.TempDir()
-			c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+			c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -411,7 +411,7 @@ func TestCoreRecoveryInventoryStopsOnCallerOrLifetimeCancellation(t *testing.T) 
 			if err := os.Rename(r.Destination, r.Destination+"-offline"); err != nil {
 				t.Fatal(err)
 			}
-			c, err = Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+			c, err = openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 			if err != nil {
 				t.Fatal(err)
 			}

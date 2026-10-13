@@ -174,3 +174,83 @@ func TestAcceptanceObserverRetainsCloseError(t *testing.T) {
 		t.Fatal("uncertain observer falsely confirmed closure")
 	}
 }
+
+// Hold Close after the budget error is published, making the Err-before-Done
+// ordering deterministic rather than depending on goroutine scheduling.
+type heldBudgetCloseTransport struct {
+	*fakeTransport
+	started  chan struct{}
+	release  chan struct{}
+	closeErr error
+	calls    atomic.Int32
+}
+
+func (tr *heldBudgetCloseTransport) Close() error {
+	tr.calls.Add(1)
+	close(tr.started)
+	<-tr.release
+	_ = tr.fakeTransport.Close()
+	return tr.closeErr
+}
+func TestSendBudgetErrorPrecedesOwnerJoin(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		name := "joined"
+		if uncertain {
+			name = "retained_uncertain_owner"
+		}
+		t.Run(name, func(t *testing.T) {
+			tr := &heldBudgetCloseTransport{fakeTransport: newFakeTransport(), started: make(chan struct{}), release: make(chan struct{})}
+			if uncertain {
+				tr.closeErr = errSyntheticClose
+			}
+			s, clock := startCloseTest(t, tr)
+			released := false
+			t.Cleanup(func() {
+				if !released {
+					close(tr.release)
+				}
+				_ = tr.fakeTransport.Close()
+				_ = s.Close()
+			})
+			eventually(t, func() bool { return tr.count() == 2 })
+			driveQueryFloodToTerminal(t, s, clock, tr.fakeTransport)
+			eventually(t, func() bool {
+				select {
+				case <-tr.started:
+					return true
+				default:
+					return false
+				}
+			})
+			select {
+			case <-s.Done():
+				t.Fatal("terminal error falsely implied owner join")
+			default:
+			}
+			if len(s.Candidates()) != 0 || tr.calls.Load() != 1 {
+				t.Fatal("budget termination retained hints or repeated close")
+			}
+			close(tr.release)
+			released = true
+			eventually(t, func() bool {
+				select {
+				case <-s.Done():
+					return true
+				default:
+					return false
+				}
+			})
+			err := s.Close()
+			if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams || tr.calls.Load() != 1 {
+				t.Fatal("joined budget result changed")
+			}
+			if uncertain {
+				if !errors.Is(err, ErrCloseUncertain) || !errors.Is(err, errSyntheticClose) || IsUnavailable(s.Err()) {
+					t.Fatal("joined owner lost cleanup uncertainty")
+				}
+			} else if err != nil {
+				t.Fatal("successful close was not confirmed")
+			}
+		})
+	}
+}

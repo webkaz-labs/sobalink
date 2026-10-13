@@ -77,6 +77,8 @@ require review again. Offline launches suppress all startup selections.
 Finite lifetimes begin anew on an explicitly requested process restart;
 transport recovery preserves the existing expiry. Stopping never restarts a
 selection in the current process. Disable prevents future launch starts.
+Peer approval changes can make a separately saved scope stale; review and explicitly save it again.
+App trust never silently renews startup approval.
 Startup approval and private proxy credentials are excluded from profile export.`
 const startupHelpJA = `任意の起動時接続
 
@@ -94,4 +96,5 @@ const startupHelpJA = `任意の起動時接続
 明示的な本体の再起動では有限の有効期間を新たに開始します。通信の復旧では
 既存の期限を維持します。停止後、同じ本体内で自動的に再開始しません。
 disable は次回以降の自動開始を無効にします。起動許可とプロキシ認証情報は
-プロファイルの書き出しに含まれません。`
+プロファイルの書き出しに含まれません。相手の承認変更で保存済みの範囲が古くなった場合は、
+別途確認して明示的に保存し直してください。アプリの信頼だけで起動許可を暗黙に更新しません。`

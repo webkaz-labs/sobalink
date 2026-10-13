@@ -162,12 +162,16 @@ type Core struct {
 	peerHTTPTransport          *peerHTTPFront
 	transfers                  *transfer.Manager
 	diskSpace                  *diskspace.Guard
+	messageStore               *messageStore // all mutable message state is protected by mu
+	messageQueue               *messageQueueRuntime
 	messages                   []Message
 	messageHistoryUncertain    bool // protected by mu; cleared only by a successful whole-history save
 	outbox                     *outboxCoordinator
 	outboxReserved             atomic.Int64
 	outboxChildren             atomic.Int64
 	outboxMetadata             atomic.Int64
+	outboxActiveChildren       atomic.Int64
+	outboxActiveMetadata       atomic.Int64
 	outgoing                   map[string]*outgoingBatch
 	transferPreparations       map[string]*transferPreparation
 	outgoingQueue              []*outgoingRun
@@ -344,6 +348,9 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	}
 	_ = c.restoreDurableProfile()
 	if err := c.loadMessages(); err != nil {
+		c.mu.Lock()
+		_ = c.closeMessageStoreLocked()
+		c.mu.Unlock()
 		m.Close()
 		cancel()
 		return nil, err
@@ -486,6 +493,7 @@ func (c *Core) beginWork() (func(), error) {
 func (c *Core) close() error {
 	c.mu.Lock()
 	c.closing = true
+	messageJoins := c.stopMessageQueueLocked()
 	peerHTTP := c.peerHTTPTransport
 	control := c.contextControl
 	upgrade := c.contextUpgrade
@@ -556,6 +564,12 @@ func (c *Core) close() error {
 		<-management.done
 	}
 	c.wg.Wait()
+	for _, joined := range messageJoins {
+		<-joined
+	}
+	c.mu.Lock()
+	errs = append(errs, c.closeMessageStoreLocked())
+	c.mu.Unlock()
 	if o := c.outboxCopy(); o != nil {
 		o.mu.Lock()
 		if o.root != nil {

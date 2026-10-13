@@ -11,7 +11,7 @@ import (
 
 func startupFixture(t *testing.T) (*Core, ServiceSpec) {
 	t.Helper()
-	c, err := Open(context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

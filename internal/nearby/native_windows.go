@@ -40,9 +40,11 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 		return nil, err
 	}
 	bind := net.JoinHostPort(scope.LocalAddress.String(), "5353")
+	var controlFailure error
 	lc := net.ListenConfig{Control: func(network, address string, raw syscall.RawConn) error {
 		if network != "udp4" || address != bind {
-			return ErrInvalidScope
+			controlFailure = socketFailure("socket_bound_address")
+			return controlFailure
 		}
 		var optionErr error
 		err := raw.Control(func(fd uintptr) {
@@ -62,22 +64,32 @@ func nativeFactory(scope Scope, policy discoveryPolicy) (Transport, error) {
 			membership := windows.IPMreq{Multiaddr: multicast4.As4(), Interface: local}
 			optionErr = windows.SetsockoptIPMreq(socket, windows.IPPROTO_IP, windows.IP_ADD_MEMBERSHIP, &membership)
 		})
-		if err != nil {
-			return err
+		if err != nil || optionErr != nil {
+			controlFailure = socketFailure("socket_interface_options")
+			return controlFailure
 		}
-		return optionErr
+		return nil
 	}}
 	raw, err := lc.ListenPacket(context.Background(), "udp4", bind)
 	if err != nil {
-		return nil, ErrSocketUnavailable
+		if controlFailure != nil {
+			return nil, controlFailure
+		}
+		return nil, socketFailure("socket_bind")
 	}
 	conn, ok := raw.(*net.UDPConn)
 	if !ok {
-		return rollbackTransport(&closeOnlyTransport{close: raw.Close}, ErrSocketUnavailable)
+		return rollbackTransport(&closeOnlyTransport{close: raw.Close}, socketFailure("socket_type"))
 	}
 	owner := &nativeTransport{conn: conn, scope: scope, ifi: ifi, policy: policy}
-	if conn.LocalAddr().String() != bind || conn.SetReadBuffer(16*MaxDatagramBytes) != nil || conn.SetWriteBuffer(4*MaxDatagramBytes) != nil {
-		return rollbackTransport(owner, ErrSocketUnavailable)
+	if conn.LocalAddr().String() != bind {
+		return rollbackTransport(owner, socketFailure("socket_bound_address"))
+	}
+	if conn.SetReadBuffer(16*MaxDatagramBytes) != nil {
+		return rollbackTransport(owner, socketFailure("socket_read_buffer"))
+	}
+	if conn.SetWriteBuffer(4*MaxDatagramBytes) != nil {
+		return rollbackTransport(owner, socketFailure("socket_write_buffer"))
 	}
 	return owner, nil
 }
@@ -85,7 +97,7 @@ func (t *nativeTransport) ReadPacket() (Packet, error) {
 	data, oob := make([]byte, MaxDatagramBytes+1), make([]byte, 128)
 	n, nn, flags, source, err := t.conn.ReadMsgUDP(data, oob)
 	if err != nil {
-		return Packet{}, ErrSocketUnavailable
+		return Packet{}, socketFailure("socket_read")
 	}
 	if _, err := currentBindingWithPolicy(t.scope, &t.ifi, t.policy); err != nil {
 		return Packet{}, err
@@ -109,12 +121,12 @@ func (t *nativeTransport) WritePacket(data []byte) error {
 		return err
 	}
 	if t.conn.SetWriteDeadline(time.Now().Add(time.Second)) != nil {
-		return ErrSocketUnavailable
+		return socketFailure("socket_write_deadline")
 	}
 	oob := winSendControl(t.scope, strconv.IntSize/8)
 	n, nn, err := t.conn.WriteMsgUDP(data, oob, &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
 	if err != nil || n != len(data) || nn != len(oob) {
-		return ErrSocketUnavailable
+		return socketFailure("socket_write")
 	}
 	return nil
 }

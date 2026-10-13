@@ -1,5 +1,6 @@
 import { beforeEach, expect, it } from 'vitest'
 import { pendingOutboxLocators, readOutbox, readOutboxList, readOutboxSnapshot, resolveOutboxLocator, retainOutboxLocator } from './outbox'
+import { outboxReason } from './outbox-i18n'
 import { fixtureOutbox, fixtureOutboxID } from './outbox-fixture'
 beforeEach(() => sessionStorage.clear())
 it('binds exact review while durable status survives process change', () => {
@@ -32,4 +33,17 @@ it('requires complete exact durable receipts including empty directories', () =>
  expect(() => readOutbox(r)).toThrow()
  r.children[0].files = [{ batchId: 'delivery-a', fileId: 'directory-a', size: 0, sha256: '' }]
  expect(readOutbox(r).children[0].files).toHaveLength(1)
+})
+
+it('explains busy recovery and retained evidence limits in both languages', () => {
+ expect(outboxReason('en', 'outbox_storage_busy')).toContain('same operation')
+ expect(outboxReason('ja', 'outbox_storage_busy')).toContain('同じ操作')
+ for (const code of ['outbox_evidence_capacity', 'durable_evidence_capacity']) {
+  expect(outboxReason('en', code)).toContain('evidence is full')
+  expect(outboxReason('ja', code)).toContain('保持容量が上限')
+ }
+ expect(outboxReason('en', 'outbox_evidence_capacity')).toContain('clearing visible history does not guarantee')
+ expect(outboxReason('ja', 'outbox_evidence_capacity')).toContain('とは限りません')
+ expect(outboxReason('en', 'durable_evidence_capacity')).toContain('do not resend with a new ID')
+ expect(outboxReason('ja', 'durable_evidence_capacity')).toContain('新しい ID で再送しない')
 })

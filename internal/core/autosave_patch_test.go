@@ -202,7 +202,7 @@ func TestPauseAfterFailedAutosaveDisablePersistsReconciliationBeforeReopen(t *te
 	if err := p.b.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: p.b.dir, SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.b.dir, LifecycleLock: p.b.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

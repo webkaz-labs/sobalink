@@ -204,7 +204,7 @@ func newCorePair(t *testing.T) corePair {
 	}
 	na, nb := makeNode(aIP, bIP, "peer-b"), makeNode(bIP, aIP, "peer-a")
 	open := func(node *pipeNode) *Core {
-		c, err := Open(context.Background(), Options{Directory: t.TempDir(), Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) { return node, nil }})
+		c, err := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) { return node, nil }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -528,7 +528,7 @@ func TestPrivateStatusAndRestartDoNotExposeLoginOrResumeGrants(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := &pipeNode{hub: p.hub, ip: p.nb.ip, who: map[netip.Addr]string{p.na.ip: "peer-a"}, state: p.nb.state}
-	reopened, err := Open(context.Background(), Options{Directory: p.b.dir, Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) { return fresh, nil }})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.b.dir, LifecycleLock: p.b.resourceLock, Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) { return fresh, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

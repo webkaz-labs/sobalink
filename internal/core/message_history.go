@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
@@ -23,14 +22,39 @@ func messageHistoryError(err error, receivedUncertain bool) error {
 	return privateAtomicError(&localCommandError{"message_history_unavailable", message}, err)
 }
 
-// All history writers share this state, including cleanup and same-ID replay.
-// Unpublished failures leave the previous publication's uncertainty intact.
+// Reviewed history cleanup edits the canonical rows. Active outgoing bodies
+// stay retained until a durable no-more-send fence and physical-owner join.
 func (c *Core) saveMessageHistoryLocked(history []Message) error {
-	err := writeMessageHistoryWith(c.writeAtomic, filepath.Join(c.dir, "messages.json"), c.messageHistoryStorageBytesLocked(), history)
-	if atomicPublished(err) {
-		c.messageHistoryUncertain = err != nil
+	keep := make(map[string]bool, len(history))
+	for _, m := range history {
+		keep[historyMessageKey(m)] = true
 	}
-	return err
+	return c.mutateMessageStoreLocked(func(next *messageEnvelope) error {
+		immediate := make([]Message, 0, len(next.Immediate))
+		for _, m := range next.Immediate {
+			if keep[historyMessageKey(m)] {
+				immediate = append(immediate, m)
+			}
+		}
+		next.Immediate = immediate
+		for id, row := range next.Outgoing {
+			if row.Visible && !keep["outgoing:"+row.View.PeerID+":"+id] {
+				row.Visible = false
+				if row.NoMoreSend && !row.Active {
+					row.Text = ""
+					row.BodyRetained = false
+				}
+			}
+		}
+		for id, row := range next.Incoming {
+			if row.Visible && !keep["incoming:"+row.PeerID+":"+id] {
+				row.Visible = false
+				row.Text = ""
+				row.BodyRetained = false
+			}
+		}
+		return nil
+	})
 }
 
 func (c *Core) messageHistoryStorageBytesLocked() int64 {
@@ -108,12 +132,10 @@ func (c *Core) messageHistoryCommand(name string, raw json.RawMessage) (any, err
 	if remaining == nil {
 		remaining = []Message{}
 	}
-	saveErr := c.saveMessageHistoryLocked(remaining)
-	if !atomicPublished(saveErr) {
-		return nil, saveErr
+	if err := c.saveMessageHistoryLocked(remaining); err != nil {
+		return nil, err
 	}
-	c.messages = remaining
-	return view, saveErr
+	return view, nil
 }
 
 func historyMessageKey(m Message) string { return m.Direction + ":" + m.PeerID + ":" + m.ID }

@@ -541,3 +541,75 @@ func TestSetupUncertainAuthorityBlocksNewSession(t *testing.T) {
 		t.Fatal("uncertain identity authority permitted setup")
 	}
 }
+
+func TestSetupNoHostRetryRequiresCleanJoinedSession(t *testing.T) {
+	newFailure := func() *setupSession {
+		s, _, _ := setupTestSessions(t)
+		s.done = make(chan struct{})
+		s.state, s.reason, s.next = "failed", "setup_no_permitted_host", "review_existing_network"
+		return s
+	}
+	s := newFailure()
+	if v := s.snapshot(); v.State != "cancelling" || v.NextAction != "wait_for_cleanup" {
+		t.Fatal("exposed terminal no-host before join", v.State, v.NextAction)
+	}
+	close(s.done)
+	if v := s.snapshot(); v.State != "failed" || v.ReasonCode != "setup_no_permitted_host" || v.NextAction != "try_again" {
+		t.Fatal("clean joined result cannot reopen review", v.State, v.NextAction)
+	}
+	for name, block := range map[string]func(*setupSession){
+		"other-reason":    func(s *setupSession) { s.reason = "setup_existing_anchor_conflict" },
+		"plan":            func(s *setupSession) { s.plan = &lanlink.SetupPlan{} },
+		"local-approval":  func(s *setupSession) { s.localApproved = true },
+		"remote-approval": func(s *setupSession) { s.remoteApproved = true },
+		"pairing-attempt": func(s *setupSession) { s.pairingAttempted = true },
+		"paired":          func(s *setupSession) { s.paired = true },
+		"connected":       func(s *setupSession) { s.connected = true },
+		"cleanup-error":   func(s *setupSession) { s.cleanupFailure = errors.New("synthetic cleanup failure") },
+		"recovery":        func(s *setupSession) { s.state = "recovery_required"; s.next = "review_recovery" },
+		"process-fence":   func(s *setupSession) { s.core = openLANTestCore(t); s.core.networkFatal = "setup_cleanup_unconfirmed" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newFailure()
+			close(s.done)
+			block(s)
+			if v := s.snapshot(); v.NextAction == "try_again" {
+				t.Fatal("unsafe retry", name)
+			}
+		})
+	}
+}
+
+func TestSetupBothDeclineNoHostDoesNotGrantRole(t *testing.T) {
+	a, b, now := setupTestSessions(t)
+	for _, s := range []*setupSession{a, b} {
+		s.local.AllowHost = false
+		s.local.Relay = nil
+		s.done = make(chan struct{})
+	}
+	setupTestExchange(t, a, b, true, now)
+	setupTestExchange(t, b, a, false, now)
+	setupTestExchange(t, a, b, true, now)
+	setupTestExchange(t, b, a, true, now)
+	if err := a.electLocked(now.Add(4 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if a.state != "cancelling" || a.terminalState != "failed" || a.terminalReason != "setup_no_permitted_host" {
+		t.Fatal("missing bounded no-host failure", a.state, a.terminalReason)
+	}
+	for _, s := range []*setupSession{a, b} {
+		if s.local.AllowHost || s.local.Relay != nil || s.plan != nil || s.localApproved || s.remoteApproved || s.pairingAttempted {
+			t.Fatal("declined role acquired authority")
+		}
+	}
+	// The owner publishes its terminal result only after cleanup; the public
+	// projection still waits for the final join before offering fresh review.
+	a.state, a.reason, a.next = a.terminalState, a.terminalReason, a.terminalNext
+	if v := a.snapshot(); v.State != "cancelling" || v.NextAction != "wait_for_cleanup" {
+		t.Fatal(v.State, v.NextAction)
+	}
+	close(a.done)
+	if v := a.snapshot(); v.NextAction != "try_again" || v.Paired || v.Connected {
+		t.Fatal(v.State, v.NextAction)
+	}
+}

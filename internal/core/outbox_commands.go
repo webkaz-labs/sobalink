@@ -229,36 +229,16 @@ func (c *Core) reserveOutbox(ctx context.Context, id, process string, ids []stri
 			if err = transfer.ValidateManifest(manifest, c.transferLimits()); err != nil {
 				return nil, nil, err
 			}
-			lim := c.transferLimits()
-			for _, peer := range peers {
-				pending := 0
-				for _, row := range o.state.Intents {
-					for _, child := range row.View.Children {
-						if child.PeerID == peer.ID && child.Status != "completed" && child.Status != "cancelled" && child.Status != "expired" {
-							pending++
-						}
-					}
-				}
-				for _, prep := range o.prepared {
-					if !prep.discarded {
-						for _, child := range prep.intent.View.Children {
-							if child.PeerID == peer.ID {
-								pending++
-							}
-						}
-					}
-				}
-				if pending >= lim.MaxPendingPerPeer {
-					return nil, nil, outboxError("outbox_capacity")
-				}
-			}
 			encoded, _ := json.Marshal(o.state)
 			estimate := int64(len(encoded)) + outboxPreparationMetadata(manifest, len(peers))
 			for _, prep := range o.prepared {
 				estimate += outboxPreparationMetadata(transfer.Manifest{Entries: prep.intent.View.Entries}, len(prep.intent.Deliveries))
 			}
+			for _, row := range o.state.Intents {
+				estimate += int64(len(row.Deliveries)) * int64(outboxReceiptReserve+len(row.View.Entries)*512)
+			}
 			if estimate > outboxMaxMetadata {
-				return nil, nil, outboxError("outbox_capacity")
+				return nil, nil, outboxError("outbox_evidence_capacity")
 			}
 
 			livePayloads := 0
@@ -268,7 +248,7 @@ func (c *Core) reserveOutbox(ctx context.Context, id, process string, ids []stri
 				}
 			}
 			if len(o.prepared) >= outboxMaxChildren || int(c.outboxChildren.Load())+len(peers) > outboxMaxChildren || livePayloads >= outboxMaxChildren || len(o.state.Payloads) >= outboxMaxChildren {
-				return nil, nil, outboxError("outbox_capacity")
+				return nil, nil, outboxError("outbox_evidence_capacity")
 			}
 			var size int64
 			for _, e := range manifest.Entries {
@@ -277,11 +257,23 @@ func (c *Core) reserveOutbox(ctx context.Context, id, process string, ids []stri
 			c.mu.Lock()
 			capacity := transferLimitsFor(c.capacity, "transferSpoolBytes")
 			capacity.MaxReservedBytes -= outboxMarkerBytes
+			capacity.MaxMetadataBytes -= 1024 // active row overhead, separate from retained evidence
 			err = c.checkOutgoingCapacityLocked(capacity, manifest, len(peers), nil)
+			if err == nil {
+				for _, peer := range peers {
+					_, ordinary := c.outgoingPendingLocked(peer.ID, nil)
+					if ordinary+o.activePeerCountLocked(peer.ID) >= capacity.MaxPendingPerPeer {
+						err = outboxError("outbox_capacity")
+						break
+					}
+				}
+			}
 			if err == nil {
 				c.outboxReserved.Add(size + outboxMarkerBytes)
 				c.outboxChildren.Add(int64(len(peers)))
 				c.outboxMetadata.Add(transfer.ManifestMetadataBytes(manifest)*int64(len(peers)) + 1024)
+				c.outboxActiveChildren.Add(int64(len(peers)))
+				c.outboxActiveMetadata.Add(transfer.ManifestMetadataBytes(manifest)*int64(len(peers)) + 1024)
 			}
 			c.mu.Unlock()
 			if err != nil {

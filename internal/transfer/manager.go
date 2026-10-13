@@ -366,17 +366,7 @@ func (m *Manager) Offer(peer Peer, manifest Manifest) (Batch, error) {
 	if len(m.batches)+m.durableCountLocked() >= m.limits.MaxBatches || total > durableCapacityLeft(m.limits.MaxReservedBytes, m.reserved, m.durableReservedLocked()) || metadata > m.limits.MaxMetadataBytes-m.metadata-m.durableMetadataLocked() {
 		return Batch{}, ErrLimit
 	}
-	pending, perPeer := 0, 0
-	if m.durable != nil {
-		for _, r := range m.durable.state.Records {
-			if !terminal(r.State) {
-				pending++
-				if r.Peer.ID == peer.ID {
-					perPeer++
-				}
-			}
-		}
-	}
+	pending, perPeer, _ := m.durableAdmissionLocked(peer.ID)
 	for _, b := range m.batches {
 		if b.value.State == Pending {
 			pending++

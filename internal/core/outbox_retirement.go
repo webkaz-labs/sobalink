@@ -200,6 +200,7 @@ func (o *outboxCoordinator) retireLocked() error {
 		err := o.retireOwnedLocked()
 		if err != nil {
 			o.frozen = "outbox_payload_recovery_required"
+			o.updateAccountingLocked()
 		}
 		return err
 	})

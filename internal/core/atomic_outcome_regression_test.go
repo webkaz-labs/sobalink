@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,6 +19,49 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
+
+// These immediate-message fixtures have no durable incoming/outgoing rows.
+// An uncertain real publication is evidence, never the certified UI projection.
+// Read the mandatory envelope and compare exact saved bytes as well as IDs, so
+// returning a committed sentinel without a native publication cannot pass.
+func assertAtomicMessageHistory(t *testing.T, c *Core, certifiedIDs, candidateIDs []string) []byte {
+	t.Helper()
+	ids := func(messages []Message) []string {
+		values := make([]string, 0, len(messages))
+		for _, m := range messages {
+			values = append(values, m.ID)
+		}
+		return values
+	}
+	c.mu.RLock()
+	s := c.messageStore
+	valid := s != nil && slices.Equal(ids(c.messages), certifiedIDs) && slices.Equal(ids(s.state.Immediate), certifiedIDs) && len(s.state.Incoming) == 0 && len(s.state.Outgoing) == 0
+	var expected []byte
+	if valid && candidateIDs == nil {
+		valid = s.candidate == nil && !c.messageHistoryUncertain && s.frozen == ""
+		expected = append([]byte(nil), s.confirmedDisk...)
+	} else if valid {
+		valid = s.candidate != nil && slices.Equal(ids(s.candidate.Immediate), candidateIDs) && len(s.candidate.Incoming) == 0 && len(s.candidate.Outgoing) == 0 && c.messageHistoryUncertain && s.frozen == "message_storage_uncertain"
+		expected = append([]byte(nil), s.candidateDisk...)
+	}
+	c.mu.RUnlock()
+	if !valid {
+		t.Fatal("certified history or exact uncertain candidate diverged")
+	}
+	disk, err := os.ReadFile(filepath.Join(c.dir, "messages.json"))
+	if err != nil || len(expected) == 0 || !bytes.Equal(disk, expected) {
+		t.Fatal("message envelope publication did not match retained exact bytes", err)
+	}
+	var history []Message
+	want := certifiedIDs
+	if candidateIDs != nil {
+		want = candidateIDs
+	}
+	if err := readMessageHistory(filepath.Join(c.dir, "messages.json"), messageStoreHardBytes, &history); err != nil || !slices.Equal(ids(history), want) {
+		t.Fatal("saved envelope history differs from the exact publication", err)
+	}
+	return disk
+}
 
 func TestAtomicOutcomeJournalCommittedRevocationMustCloseTrust(t *testing.T) {
 	p := newCorePair(t)
@@ -69,39 +114,53 @@ func TestAtomicOutcomeCommittedPrivateSettingsMustRedactPath(t *testing.T) {
 func TestAtomicOutcomeCommittedIncomingMessageMustReportUncertainty(t *testing.T) {
 	p := newCorePair(t)
 	trustPair(t, p)
+	before := assertAtomicMessageHistory(t, p.b, nil, nil)
 	var calls atomic.Int64
-	p.b.atomicWrite = committedWriter(&calls)
+	p.b.mu.Lock()
+	p.b.messageStore.afterWrite = func() error { calls.Add(1); return config.ErrAtomicCommitted }
+	p.b.mu.Unlock()
 	payload := map[string]any{"id": "committed-incoming", "text": "retained message"}
-	status, body := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
-	p.b.mu.RLock()
-	count := len(p.b.messages)
-	p.b.mu.RUnlock()
-	nextStatus, nextBody := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
-	t.Logf("firstHTTP=%d firstBody=%s retainedMessages=%d replayHTTP=%d replayBody=%s writes=%d", status, body, count, nextStatus, nextBody, calls.Load())
-	if count != 1 || strings.Contains(string(body), "message could not be saved") || nextStatus == 200 {
-		t.Errorf("committed uncertainty reported as failed save then as durable receipt")
+	var candidate []byte
+	for attempt := 0; attempt < 2; attempt++ {
+		status, body := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
+		if status != 507 || !strings.Contains(string(body), "message was received") || !strings.Contains(string(body), "same message ID") || strings.Contains(string(body), "message could not be saved") || strings.Contains(string(body), p.b.dir) {
+			t.Fatal("committed uncertainty became an ACK or false/private save failure", status, string(body))
+		}
+		disk := assertAtomicMessageHistory(t, p.b, nil, []string{"committed-incoming"})
+		if bytes.Equal(disk, before) || attempt != 0 && !bytes.Equal(disk, candidate) || calls.Load() != int64(attempt+1) {
+			t.Fatal("uncertainty did not retain/re-publish the exact actual candidate")
+		}
+		candidate = disk
 	}
 }
 
 func TestAtomicIncomingReplayReconcilesExactlyOncePerUncertainAttempt(t *testing.T) {
 	p := newCorePair(t)
 	trustPair(t, p)
-	var calls atomic.Int64
-	p.b.atomicWrite = func(path string, data []byte) error {
+	before := assertAtomicMessageHistory(t, p.b, nil, nil)
+	var calls, publications atomic.Int64
+	p.b.mu.Lock()
+	p.b.messageStore.afterWrite = func() error {
+		publications.Add(1)
 		n := calls.Add(1)
-		if n == 3 {
-			return &os.PathError{Op: "write", Path: path, Err: os.ErrPermission}
-		}
-		if err := config.AtomicWrite(path, data); err != nil {
-			return err
-		}
 		if n <= 2 {
-			return fmt.Errorf("%w: %w", config.ErrAtomicCommitted, &os.PathError{Op: "sync", Path: path, Err: os.ErrPermission})
+			return fmt.Errorf("%w: %w", config.ErrAtomicCommitted, &os.PathError{Op: "sync", Path: filepath.Join(p.b.dir, "messages.json"), Err: os.ErrPermission})
 		}
 		return nil
 	}
+	p.b.mu.Unlock()
 	payload := map[string]any{"id": "uncertain-replay", "text": "retain only once"}
+	var candidate []byte
 	for attempt, want := range []int{507, 507, 507, 200, 200} {
+		p.b.mu.Lock()
+		p.b.messageStore.write = nil
+		if attempt == 2 {
+			p.b.messageStore.write = func(path string, _ []byte) error {
+				calls.Add(1)
+				return &os.PathError{Op: "write", Path: path, Err: os.ErrPermission}
+			}
+		}
+		p.b.mu.Unlock()
 		status, body := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
 		if status != want {
 			t.Fatalf("attempt %d: %d %s", attempt, status, body)
@@ -117,51 +176,61 @@ func TestAtomicIncomingReplayReconcilesExactlyOncePerUncertainAttempt(t *testing
 		} else if len(envelope) != 2 || envelope["id"] != payload["id"] || envelope["status"] != "received" {
 			t.Fatalf("ACK changed: %s", body)
 		}
-		p.b.mu.RLock()
-		count, uncertain := len(p.b.messages), p.b.messageHistoryUncertain
-		p.b.mu.RUnlock()
+		var disk []byte
+		if attempt < 3 {
+			disk = assertAtomicMessageHistory(t, p.b, nil, []string{"uncertain-replay"})
+			p.b.mu.RLock()
+			unchanged := bytes.Equal(before, p.b.messageStore.confirmedDisk)
+			p.b.mu.RUnlock()
+			if !unchanged {
+				t.Fatal("uncertain replay promoted uncertified bytes")
+			}
+		} else {
+			disk = assertAtomicMessageHistory(t, p.b, []string{"uncertain-replay"}, nil)
+		}
+		if attempt == 0 {
+			candidate = disk
+		}
 		expectedWrites := int64(attempt + 1)
 		if expectedWrites > 4 {
 			expectedWrites = 4
 		}
-		if count != 1 || uncertain != (attempt < 3) || calls.Load() != expectedWrites {
-			t.Fatalf("attempt %d: messages=%d uncertain=%v writes=%d", attempt, count, uncertain, calls.Load())
+		expectedPublications := []int64{1, 2, 2, 3, 3}[attempt]
+		if !bytes.Equal(disk, candidate) || calls.Load() != expectedWrites || publications.Load() != expectedPublications {
+			t.Fatalf("attempt %d changed candidate or replay accounting: writes=%d publications=%d", attempt, calls.Load(), publications.Load())
 		}
 	}
 	var history []Message
-	if err := config.ReadJSON(filepath.Join(p.b.dir, "messages.json"), &history); err != nil || len(history) != 1 {
+	if err := readMessageHistory(filepath.Join(p.b.dir, "messages.json"), messageStoreHardBytes, &history); err != nil || len(history) != 1 || history[0].Text != payload["text"] {
 		t.Fatal(history, err)
 	}
 	status, _ := peerCall(t, p.na, p.nb, "POST", "/v1/messages", map[string]string{"id": "uncertain-replay", "text": "changed"})
-	if status != 409 || calls.Load() != 4 {
+	if status != 409 || calls.Load() != 4 || publications.Load() != 3 {
 		t.Fatal("conflicting duplicate wrote history", status, calls.Load())
 	}
+	assertAtomicMessageHistory(t, p.b, []string{"uncertain-replay"}, nil)
 }
 
 func TestAtomicIncomingUnpublishedFailureRetainsNothingAndNormalDuplicatesSkipIO(t *testing.T) {
 	p := newCorePair(t)
 	trustPair(t, p)
+	before := assertAtomicMessageHistory(t, p.b, nil, nil)
 	var calls atomic.Int64
-	p.b.atomicWrite = func(path string, data []byte) error {
-		if calls.Add(1) == 1 {
-			return os.ErrPermission
-		}
-		return config.AtomicWrite(path, data)
-	}
+	p.b.mu.Lock()
+	p.b.messageStore.write = func(string, []byte) error { calls.Add(1); return os.ErrPermission }
+	p.b.mu.Unlock()
 	payload := map[string]any{"id": "not-yet-written", "text": "save later"}
 	status, body := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
 	if status != 507 || !strings.Contains(string(body), "message could not be saved") {
 		t.Fatal(status, string(body))
 	}
-	p.b.mu.RLock()
-	count, uncertain := len(p.b.messages), p.b.messageHistoryUncertain
-	p.b.mu.RUnlock()
-	if count != 0 || uncertain || calls.Load() != 1 {
-		t.Fatal("unpublished failure retained a receipt", count, uncertain, calls.Load())
+	if after := assertAtomicMessageHistory(t, p.b, nil, nil); !bytes.Equal(before, after) || calls.Load() != 1 {
+		t.Fatal("unpublished failure changed the existing certified empty envelope")
 	}
-	if _, err := os.Stat(filepath.Join(p.b.dir, "messages.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("unpublished failure wrote history", err)
-	}
+	p.b.mu.Lock()
+	p.b.messageStore.write = nil
+	p.b.messageStore.afterWrite = func() error { calls.Add(1); return nil }
+	p.b.mu.Unlock()
 	for i := 0; i < 2; i++ {
 		status, _ := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
 		if status != 200 {
@@ -171,6 +240,7 @@ func TestAtomicIncomingUnpublishedFailureRetainsNothingAndNormalDuplicatesSkipIO
 	if calls.Load() != 2 {
 		t.Fatal("normal duplicate caused IO", calls.Load())
 	}
+	assertAtomicMessageHistory(t, p.b, []string{"not-yet-written"}, nil)
 }
 
 func TestAtomicHistoryCleanupSharesUncertaintyWithoutCountingReplayAsMessage(t *testing.T) {
@@ -187,38 +257,65 @@ func TestAtomicHistoryCleanupSharesUncertaintyWithoutCountingReplayAsMessage(t *
 		}
 	}
 	p.b.mu.Unlock()
-	var calls atomic.Int64
-	p.b.atomicWrite = committedWriter(&calls)
+	before := assertAtomicMessageHistory(t, p.b, []string{"old", "recent"}, nil)
+	var calls, publications atomic.Int64
+	p.b.mu.Lock()
+	p.b.messageStore.afterWrite = func() error { calls.Add(1); publications.Add(1); return config.ErrAtomicCommitted }
+	p.b.mu.Unlock()
 	preview := mustCommand(t, p.b, "message.history.preview", map[string]any{}).(historyCleanup)
+	if preview.Remove != 1 || preview.Retained != 1 {
+		t.Fatal("fixture did not review exact cleanup", preview)
+	}
 	result, err := command(p.b, randomID(), "message.history.cleanup", map[string]any{"expectedRevision": preview.Revision})
-	if !errors.Is(err, config.ErrAtomicCommitted) || result.(historyCleanup).Remove != 1 || calls.Load() != 1 {
+	if !errors.Is(err, config.ErrAtomicCommitted) || result != nil || calls.Load() != 1 || publications.Load() != 1 {
 		t.Fatal(result, err, calls.Load())
+	}
+	candidate := assertAtomicMessageHistory(t, p.b, []string{"old", "recent"}, []string{"recent"})
+	if bytes.Equal(before, candidate) {
+		t.Fatal("uncertain cleanup did not actually publish its reduced envelope")
 	}
 	payload := map[string]string{"id": "recent", "text": "recent"}
 	status, _ := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
 	if status != 507 || calls.Load() != 2 {
 		t.Fatal(status, calls.Load())
 	}
+	stillPreview := mustCommand(t, p.b, "message.history.preview", map[string]any{}).(historyCleanup)
+	if stillPreview.Revision != preview.Revision || stillPreview.Remove != 1 || stillPreview.Retained != 1 {
+		t.Fatal("uncertain replay changed the certified cleanup review", stillPreview)
+	}
+	// Cleanup cannot act on an uncertified projection or silently reconcile it.
+	_, err = command(p.b, randomID(), "message.history.cleanup", map[string]any{"expectedRevision": preview.Revision})
+	if networkErrorCode(err) != "message_storage_uncertain" || calls.Load() != 2 {
+		t.Fatal("cleanup changed an uncertified publication", err, calls.Load())
+	}
+	p.b.mu.Lock()
+	p.b.messageStore.write = func(string, []byte) error { calls.Add(1); return os.ErrPermission }
+	p.b.mu.Unlock()
+	status, body := peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
+	if status != 507 || !strings.Contains(string(body), "message was received") || strings.Contains(string(body), "message could not be saved") || strings.Contains(string(body), p.b.dir) || calls.Load() != 3 || publications.Load() != 2 {
+		t.Fatal("failed prewrite reconciliation lost cleanup uncertainty", status, string(body), calls.Load())
+	}
+	if after := assertAtomicMessageHistory(t, p.b, []string{"old", "recent"}, []string{"recent"}); !bytes.Equal(after, candidate) {
+		t.Fatal("failed prewrite reconciliation changed the exact cleanup candidate")
+	}
+	p.b.mu.Lock()
+	p.b.messageStore.write = nil
+	p.b.messageStore.afterWrite = func() error { calls.Add(1); publications.Add(1); return nil }
+	p.b.mu.Unlock()
+	status, _ = peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
+	if status != 200 || calls.Load() != 4 || publications.Load() != 3 {
+		t.Fatal("exact replay did not certify the original cleanup", status, calls.Load())
+	}
+	if after := assertAtomicMessageHistory(t, p.b, []string{"recent"}, nil); !bytes.Equal(after, candidate) {
+		t.Fatal("certification replayed a mutation instead of the exact cleanup bytes")
+	}
+	_, err = command(p.b, randomID(), "message.history.cleanup", map[string]any{"expectedRevision": preview.Revision})
+	if networkErrorCode(err) != "history_revision_conflict" || calls.Load() != 4 {
+		t.Fatal("old cleanup review survived certified history change", err)
+	}
 	preview = mustCommand(t, p.b, "message.history.preview", map[string]any{}).(historyCleanup)
 	if preview.Remove != 0 || preview.Retained != 1 {
-		t.Fatal("replay overcounted cleanup", preview)
-	}
-	p.b.atomicWrite = func(string, []byte) error { calls.Add(1); return os.ErrPermission }
-	_, err = command(p.b, randomID(), "message.history.cleanup", map[string]any{"expectedRevision": preview.Revision})
-	p.b.mu.RLock()
-	stillUncertain := p.b.messageHistoryUncertain
-	p.b.mu.RUnlock()
-	if !errors.Is(err, os.ErrPermission) || !stillUncertain || calls.Load() != 3 {
-		t.Fatal("unpublished cleanup cleared uncertainty", err, stillUncertain, calls.Load())
-	}
-	p.b.atomicWrite = func(path string, data []byte) error { calls.Add(1); return config.AtomicWrite(path, data) }
-	mustCommand(t, p.b, "message.history.cleanup", map[string]any{"expectedRevision": preview.Revision})
-	status, _ = peerCall(t, p.na, p.nb, "POST", "/v1/messages", payload)
-	p.b.mu.RLock()
-	count, uncertain := len(p.b.messages), p.b.messageHistoryUncertain
-	p.b.mu.RUnlock()
-	if status != 200 || calls.Load() != 4 || count != 1 || uncertain {
-		t.Fatal("successful cleanup did not reconcile", status, calls.Load(), count, uncertain)
+		t.Fatal("replay added a second visible message", preview)
 	}
 }
 
@@ -337,7 +434,7 @@ func TestAtomicJournalAuthorityOnReopenSurvivesUnpublishedProfileFailureAndFresh
 	if err := p.b.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: p.b.dir, SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.b.dir, LifecycleLock: p.b.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +461,7 @@ func TestAtomicJournalAuthorityOnReopenSurvivesUnpublishedProfileFailureAndFresh
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
 	}
-	again, err := Open(context.Background(), Options{Directory: p.b.dir, SkipNetworkStart: true})
+	again, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.b.dir, LifecycleLock: p.b.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +604,7 @@ func TestAtomicJournalUncertaintyCannotRestartSavedStartupOrProxyApproval(t *tes
 	if err := p.a.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: p.a.dir, SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.a.dir, LifecycleLock: p.a.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

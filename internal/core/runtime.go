@@ -263,7 +263,11 @@ func (c *Core) maintain() {
 		}
 		// Complete local lifecycle-owned maintenance before dispatching workers
 		// that need the same owner to admit their first durable network attempt.
+		c.mu.Lock()
+		_ = c.maintainDurableTextReceiverLocked(time.Now())
+		c.mu.Unlock()
 		c.pumpOutbox()
+		c.pumpMessageQueue()
 		resourceacceptance.MaintenancePassed(c)
 	}
 }
@@ -403,6 +407,8 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	}
 	resourceacceptance.ProcessLocalCommand(c, cmd.Name, cmd.RequestID)
 	switch cmd.Name {
+	case "message.queue.prepare", "message.queue.commit", "message.queue.status", "message.queue.list", "message.queue.cancel", "message.queue.discard":
+		return c.messageQueueCommand(ctx, cmd.Name, cmd.RequestID, cmd.Payload)
 	case "outbox.prepare", "outbox.commit", "outbox.status", "outbox.list", "outbox.cancel", "outbox.discard":
 		return c.outboxCommand(ctx, cmd.Name, cmd.RequestID, cmd.Payload)
 	case "transfer.dispatch.prepare", "transfer.dispatch.commit", "transfer.dispatch.status", "transfer.dispatch.discard":
@@ -773,14 +779,20 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, errors.New("peer approval generation is exhausted")
 		}
 		c.trustGeneration++
-		p.Peers = append(p.Peers, Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: c.trustGeneration, RevocationEpoch: c.reviewPeerEpochs([]string{peer.ID})[peer.ID]})
+		trust := Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: c.trustGeneration}
 		// General trust does not create, restore, or expand a separate inspect grant.
-		trust := p.Peers[len(p.Peers)-1]
 		if err := c.transfers.ValidatePeerBinding(transfer.Peer{ID: trust.ID, Generation: trust.Generation}); err != nil {
 			return nil, err
 		}
+		trust.RevocationEpoch, err = c.certifyPeerApprovalEpoch(peer.ID)
+		if err != nil {
+			return nil, err
+		}
+		p.Peers = append(p.Peers, trust)
 		saveErr := c.saveProfile(p)
-		if !atomicPublished(saveErr) {
+		if saveErr != nil {
+			// A published but uncertain approval remains inactive in this process.
+			// Explicit retry or owned reopen must certify it before new work.
 			return nil, saveErr
 		}
 		c.mu.Lock()
@@ -838,8 +850,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, err
 		}
 		if next.Paused {
-			_ = c.discardPreparedForPeer(t.ID)
-			c.mu.RLock()
+			c.mu.Lock()
+			messageJoins := c.stopMessageQueuePeerLocked(t.ID)
 			ps := c.peerServer
 			var outgoing []*outgoingBatch
 			for _, b := range c.outgoing {
@@ -847,12 +859,16 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 					outgoing = append(outgoing, b)
 				}
 			}
-			c.mu.RUnlock()
+			c.mu.Unlock()
 			if ps != nil {
 				ps.revoke(t.ID)
 			}
 			for _, b := range outgoing {
 				b.stop()
+			}
+			_ = c.discardPreparedForPeer(t.ID)
+			for _, joined := range messageJoins {
+				<-joined
 			}
 		}
 		return nil, saveErr
@@ -938,9 +954,10 @@ func (c *Core) revokePeerWithFailure(id string, failure *peerScopeFailure) error
 // receive-policy/profile cleanup. The coordinator performs full revocation only
 // after the sole evidence writer confirms durability.
 func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, pauseOnly bool) error {
-	c.mu.RLock()
+	c.mu.Lock()
 	retries := c.peerRefreshRetries
-	c.mu.RUnlock()
+	messageJoins := c.stopMessageQueuePeerLocked(id)
+	c.mu.Unlock()
 	if retries != nil {
 		retries.forget(id)
 	}
@@ -977,6 +994,9 @@ func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, p
 		ps.revoke(id)
 	}
 	_ = c.discardPreparedForPeer(id)
+	for _, joined := range messageJoins {
+		<-joined
+	}
 	if transferErr != nil && !errors.Is(err, transferErr) {
 		err = errors.Join(transferErr, err)
 	}

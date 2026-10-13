@@ -11,6 +11,7 @@ REPOSITORY = 'webkaz-labs/sobalink'
 WORKFLOW = '.github/workflows/ci.yml'
 SOURCES = (WORKFLOW, '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
+           '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
            '.github/scripts/release-validation.py')
 TARGETS = {
     'linux-amd64': ('native (ubuntu-24.04, linux, amd64)', 'ubuntu-24.04'),
@@ -426,10 +427,120 @@ def validate_outbox_workflow(workflow_bytes):
         require(following.startswith('      - '), 'invalid durable outbox step boundary')
 
 
+def validate_durable_text_workflow(workflow_bytes):
+    """Require one exact no-skip text recovery gate in the common native job."""
+    workflow = workflow_bytes.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    expected = """      - name: Verify durable text restart and lost ACK across Core processes
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite durable-text-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'
+"""
+    marker = expected.splitlines(keepends=True)[0]
+    require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
+            'invalid durable text execution policy')
+    start = workflow.index(marker)
+    require(workflow[start + len(expected):].startswith('      - '),
+            'invalid durable text step boundary')
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    native = [offset for offset, key in jobs if key == 'native']
+    require(len(native) == 1, 'missing durable text native job')
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    require(native[0] < start < end, 'durable text gate must run in the common native job')
+
+
+def validate_setup_and_text_browser_workflow(workflow_bytes):
+    """Bind manual setup and actual-browser gates, exits and fixed exports."""
+    workflow = workflow_bytes.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    expected = (
+        ('native', """      - name: Verify manual nearby setup across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-manual-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreNearbySetupManualIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreNearbySetupManualIntegration$'
+"""),
+        ('browser', """      - name: Verify nearby setup with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+          SOBALINK_RUN_SETUP_BROWSER_NATIVE: '1'
+          SOBA_SETUP_BROWSER_SUMMARY: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-summary.json
+          SOBA_SETUP_BROWSER_FAILURE: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-failure.json
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-setup-browser-evidence"
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestNearbySetupTwoProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestNearbySetupTwoProcessBrowser$' -count=1 -timeout=3m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py setup "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
+"""),
+        ('browser', """      - name: Verify durable text recovery with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+          SOBALINK_RUN_TRANSFER_BROWSER_NATIVE: '1'
+          SOBA_TEXT_BROWSER_SUMMARY: ${{ runner.temp }}/soba-text-browser-evidence/text-native-summary.json
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-text-browser-evidence"
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextThreeProcessBrowser$' -count=1 -timeout=4m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py text "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
+"""),
+    )
+    for job, block in expected:
+        marker = block.splitlines(keepends=True)[0]
+        require(workflow.count(marker) == 1 and workflow.count(block) == 1,
+                'invalid setup or text browser execution policy')
+        start = workflow.index(marker)
+        require(workflow[start + len(block):].startswith('      - '),
+                'invalid setup or text browser step boundary')
+        positions = [offset for offset, key in jobs if key == job]
+        require(len(positions) == 1, 'missing setup or text browser job')
+        end = next((offset for offset, _ in jobs if offset > positions[0]), len(workflow))
+        require(positions[0] < start < end, 'setup or text browser gate is in the wrong job')
+    artifact = """      - name: Preserve sanitized UI screenshots and typography measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-browser-screenshots
+          path: |
+            ${{ runner.temp }}/soba-playwright-screenshots/*.png
+            ${{ runner.temp }}/soba-playwright-screenshots/typography-*.json
+            ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
+            ${{ runner.temp }}/soba-playwright-screenshots/transfer-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-failure.json
+            ${{ runner.temp }}/soba-playwright-screenshots/text-native-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+"""
+    require(workflow.count(artifact) == 1, 'invalid fixed browser summary export policy')
+    require(workflow.count('soba-setup-browser-evidence') == 3
+            and workflow.count('soba-text-browser-evidence') == 2,
+            'private browser evidence must not be exported')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
+    validate_durable_text_workflow(sources[WORKFLOW])
+    validate_setup_and_text_browser_workflow(sources[WORKFLOW])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS'}
@@ -452,6 +563,12 @@ def required_jobs(sources):
     require(values['FAST_STEPS'].count('Verify durable outbox restart across Core processes') == 1
             and values['BROWSER_STEPS'].count('Verify durable outbox recovery with separate agents and actual browser') == 1,
             'missing durable outbox required gates')
+    require(values['FAST_STEPS'].count('Verify durable text restart and lost ACK across Core processes') == 1,
+            'missing durable text required gate')
+    require(values['FAST_STEPS'].count('Verify manual nearby setup across native Core peers') == 1
+            and values['BROWSER_STEPS'].count('Verify nearby setup with separate agents and actual browser') == 1
+            and values['BROWSER_STEPS'].count('Verify durable text recovery with separate agents and actual browser') == 1,
+            'missing setup or text browser required gates')
     require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',
                                          'Verify native remote resource management',
                                          'Verify native fixed-group resource catalog'),

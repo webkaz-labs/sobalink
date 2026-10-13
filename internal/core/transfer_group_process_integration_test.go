@@ -343,6 +343,9 @@ func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map
 	call, cancel := context.WithTimeout(ctx, 75*time.Second)
 	defer cancel()
 	configuration := "playwright.transfer-native.config.mjs"
+	if descriptor["textOutbox"] == true {
+		configuration = "playwright.text-native.config.mjs"
+	}
 	if descriptor["nearby"] == true {
 		configuration = "playwright.nearby-native.config.mjs"
 	}

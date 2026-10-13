@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
@@ -63,7 +63,9 @@ export const test = base.extend({
         assert.ok(['cancelled', 'review', 'one-approved', 'connected'].includes(stage))
         await phase(`checkpoint-${stage}`)
         const root = dirname(process.env.SOBA_TRANSFER_BROWSER_SESSION)
-        await writeFile(join(root, `nearby-${stage}.json`), JSON.stringify({ schema: 1, stage }), { mode: 0o600, flag: 'wx' })
+        const marker = join(root, `nearby-${stage}.json`)
+        await writeFile(`${marker}.tmp`, JSON.stringify({ schema: 1, stage }), { mode: 0o600, flag: 'wx' })
+        await rename(`${marker}.tmp`, marker)
         const until = Date.now() + 15_000
         while (true) {
           try { assert.equal(await readFile(join(root, `nearby-${stage}.ok`), 'utf8'), 'verified\n'); return } catch (error) { if (error.code !== 'ENOENT') throw error }

@@ -109,7 +109,7 @@ func newOfflineEndpointFixture(t *testing.T, edit func(*directLANState)) *offlin
 
 func openOfflineEndpointCore(t *testing.T, dir string) *Core {
 	t.Helper()
-	c, err := Open(context.Background(), Options{Directory: dir, Version: "offline-metadata-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, Version: "offline-metadata-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
 		t.Fatal("offline endpoint metadata test reached NodeFactory")
 		return nil, errors.New("network forbidden")
 	}})

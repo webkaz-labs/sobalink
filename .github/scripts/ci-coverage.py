@@ -50,6 +50,8 @@ FAST_STEPS = (
     'Verify managed restart acceptance',
     "Verify direct LAN WireGuard and Core native applications",
     "Verify durable outbox restart across Core processes",
+    "Verify durable text restart and lost ACK across Core processes",
+    "Verify manual nearby setup across native Core peers",
     "Verify direct LAN synthetic expiry and rekey",
     "Verify explicit WAN discovery with isolated native STUN",
     "Verify guarded production direct and relay underlays",
@@ -63,7 +65,9 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 SCOPES = {"docs", "frontend", "go", "native-short", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Verify actual UI workflows with isolated Playwright fixtures",
-                 "Verify durable outbox recovery with separate agents and actual browser")
+                 "Verify durable outbox recovery with separate agents and actual browser",
+                 "Verify nearby setup with separate agents and actual browser",
+                 "Verify durable text recovery with separate agents and actual browser")
 GO_STEPS = ("Validate scoped Go selection", "Check exact toolchain and module graph",
             "Test affected Go packages and reverse dependencies")
 SCHEDULE_ACCEPTANCE = {

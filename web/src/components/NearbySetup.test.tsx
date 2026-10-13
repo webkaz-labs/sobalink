@@ -3,7 +3,7 @@ import { createRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Locale } from '../api'
 import type { Server } from '../useServer'
-import { nearbyText } from '../nearby-i18n'
+import { nearbyText, nearbyNextAction } from '../nearby-i18n'
 import { contactText, idleSetup, liveSetup, reviewSetup, setupScopes } from '../nearby-fixture'
 import type { SetupSnapshot } from '../nearby-setup'
 import type { DecodeResult } from '../qr/decode-job'
@@ -19,10 +19,10 @@ function setup(initial: SetupSnapshot = idleSetup(), locale: Locale = 'en') {
   const view = render(<NearbySetup server={server} locale={locale} ref={ref} />)
   const c = (key: Parameters<typeof nearbyText>[1]) => nearbyText(locale, key)
   const ready = () => waitFor(() => expect(screen.queryByText(c('loading'))).not.toBeInTheDocument())
-  const fill = () => { fireEvent.change(screen.getByLabelText(c('alias'), { exact: false }), { target: { value: 'Peer A' } }); fireEvent.click(screen.getByLabelText(c('consent'))) }
+  const fill = () => { fireEvent.change(screen.getByLabelText(c('alias'), { exact: false }), { target: { value: 'Peer A' } }); fireEvent.change(screen.getByLabelText(c('scope')), { target: { value: setupScopes.scopes[0].scopeId } }); fireEvent.click(screen.getByLabelText(c('otherHost'))); fireEvent.click(screen.getByLabelText(c('consent'))) }
   return { ...view, ref, server, run, mutations, c, ready, fill, set: (next: SetupSnapshot) => { current = next }, refresh: async () => { fireEvent.click(screen.getAllByRole('button', { name: c('checkStatus') })[0]); await act(async () => {}) } }
 }
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => { vi.clearAllMocks(); png.start.mockReset() })
 describe('nearby setup explicit consent and recovery', () => {
   it.each(['en', 'ja'] as const)('requires an entered alias and network consent in %s', async locale => {
     const v = setup(idleSetup(), locale); await v.ready()
@@ -71,6 +71,8 @@ describe('nearby setup explicit consent and recovery', () => {
   it('allows a fresh failed-session retry only with new consent after confirmed cleanup', async () => {
     const failed = { ...liveSetup(), state: 'failed' as const, nextAction: 'try_again', discovery: { state: 'stopped' as const } }
     const v = setup(failed); await v.ready()
+    expect(screen.queryByRole('button', { name: v.c('start') })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: v.c('startAgain') }))
     expect(screen.getByRole('button', { name: v.c('start') })).toBeDisabled()
     v.fill(); v.mutations.mockResolvedValueOnce({ ok: true, result: liveSetup() as any })
     fireEvent.click(screen.getByRole('button', { name: v.c('start') }))
@@ -131,7 +133,7 @@ describe('full transcript comparison and stale UI boundaries', () => {
     const s = reviewSetup(), v = setup(s); await v.ready(); const pending = deferred<DecodeResult>(); png.start.mockReturnValueOnce(pending.promise)
     fireEvent.change(screen.getByLabelText(v.c('fingerprintPNG')), { target: { files: [new File(['synthetic'], 'fixture.png')] } })
     if (boundary === 'edit') fireEvent.change(screen.getByLabelText(v.c('peerFingerprint')), { target: { value: 'new draft' } })
-    if (boundary === 'cancel') fireEvent.click(screen.getByRole('button', { name: v.c('pngCancel') }))
+    if (boundary === 'cancel') fireEvent.click(await screen.findByRole('button', { name: v.c('pngCancel') }))
     if (boundary === 'unmount') v.unmount()
     if (boundary === 'stale') v.rerender(<NearbySetup server={{ ...v.server, stale: true }} locale="en" ref={v.ref} />)
     await act(async () => pending.resolve({ ok: true, text: s.plan!.verificationText }))
@@ -146,6 +148,7 @@ describe('repeat setup preserves the completed connection', () => {
   const freshConsent = (v: ReturnType<typeof setup>) => {
     fireEvent.change(screen.getByLabelText(v.c('alias'), { exact: false }), { target: { value: 'Peer A' } })
     fireEvent.change(screen.getByLabelText(v.c('scope')), { target: { value: setupScopes.scopes[0].scopeId } })
+    fireEvent.click(screen.getByLabelText(v.c('otherHost')))
     fireEvent.click(screen.getByLabelText(v.c('consent')))
   }
   const newer = (): SetupSnapshot => {
@@ -247,4 +250,91 @@ describe('repeat setup preserves the completed connection', () => {
     expect(screen.queryByRole('button', { name: v.c('start') })).not.toBeInTheDocument()
     expect(screen.getByText(v.c('newStartPending'))).toBeInTheDocument()
   })
+})
+
+
+describe('plain-language role choice and bounded corrections', () => {
+  it.each(['en', 'ja'] as const)('requires an explicit host choice without granting networking in %s', async locale => {
+    const v = setup(idleSetup(), locale); await v.ready()
+    expect(screen.getByRole('radio', { name: v.c('allowHost') })).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: v.c('otherHost') })).not.toBeChecked()
+    expect(screen.getByLabelText(v.c('consent'))).toBeDisabled()
+    expect(screen.getByText(v.c('hostHint'))).toBeInTheDocument()
+    expect(screen.getByText(v.c('stopImpact'))).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(v.c('alias'), { exact: false }), { target: { value: 'Peer A' } })
+    fireEvent.click(screen.getByRole('radio', { name: v.c('otherHost') }))
+    expect(screen.getByText(v.c('otherHostHint'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: v.c('start') })).toBeDisabled()
+    expect(v.mutations).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByLabelText(v.c('consent')))
+    fireEvent.click(screen.getByRole('button', { name: v.c('start') }))
+    expect(v.mutations).toHaveBeenCalledWith('setup.start', expect.objectContaining({ allowHost: false, relayPort: 0, consent: true }), 'setup.mutation')
+  })
+  it.each(['en', 'ja'] as const)('offers a clean no-host retry with every choice reset in %s', async locale => {
+    const old = liveSetup(), v = setup(idleSetup(), locale); await v.ready(); v.fill()
+    fireEvent.click(screen.getByLabelText(v.c('allowHost'))); fireEvent.click(screen.getByLabelText(v.c('consent')))
+    v.mutations.mockResolvedValueOnce({ ok: true, result: old as any })
+    fireEvent.click(screen.getByRole('button', { name: v.c('start') })); await screen.findByText('Peer B')
+    v.set({ ...old, state: 'cancelling', reasonCode: 'setup_no_permitted_host', nextAction: 'wait_for_cleanup' }); await v.refresh()
+    expect(screen.getByText(v.c('noHost'))).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: v.c('reviewHost') })).not.toBeInTheDocument()
+    v.set({ ...old, state: 'failed', reasonCode: 'setup_no_permitted_host', nextAction: 'try_again', discovery: { state: 'stopped' } }); await v.refresh()
+    fireEvent.click(screen.getByRole('button', { name: v.c('reviewHost') }))
+    expect(screen.getByLabelText(v.c('alias'), { exact: false })).toHaveValue('')
+    expect(screen.getByLabelText(v.c('scope'))).toHaveValue('')
+    expect(screen.getByLabelText(v.c('allowHost'))).not.toBeChecked()
+    expect(screen.getByLabelText(v.c('otherHost'))).not.toBeChecked()
+    expect(screen.getByLabelText(v.c('consent'))).not.toBeChecked()
+    expect(v.mutations).toHaveBeenCalledTimes(1)
+    v.fill(); fireEvent.click(screen.getByLabelText(v.c('allowHost'))); fireEvent.click(screen.getByLabelText(v.c('consent')))
+    v.mutations.mockResolvedValueOnce(undefined)
+    fireEvent.click(screen.getByRole('button', { name: v.c('start') }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(v.c('uncertain'))
+    expect(screen.getByRole('button', { name: v.c('start') })).toBeDisabled()
+    v.set(old); await v.refresh()
+    expect(screen.getByRole('alert')).toHaveTextContent(v.c('uncertain'))
+    expect(v.mutations).toHaveBeenCalledTimes(2)
+  })
+  it.each([
+    { state: 'failed', reasonCode: 'setup_no_permitted_host', nextAction: 'review_existing_network' },
+    { state: 'failed', reasonCode: 'setup_existing_anchor_conflict', nextAction: 'review_existing_network' },
+    { state: 'recovery_required', reasonCode: 'setup_cleanup_unconfirmed', nextAction: 'review_recovery' },
+    { state: 'failed', nextAction: 'try_again', paired: true },
+    { state: 'failed', nextAction: 'try_again', process: { state: 'needs_restart', profilePreserved: true, approvalsSurviveRestart: false } },
+  ] as const)('does not reopen an unsafe terminal result: %j', async changes => {
+    const base = 'paired' in changes && changes.paired ? reviewSetup() : liveSetup()
+    const v = setup({ ...base, discovery: { state: 'stopped' }, ...changes }); await v.ready()
+    expect(screen.queryByText(v.c('invalidResponse'))).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: v.c('reviewHost') })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: v.c('startAgain') })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: v.c('start') })).not.toBeInTheDocument()
+    expect(v.mutations).not.toHaveBeenCalled()
+  })
+  it.each(['en', 'ja'] as const)('re-reviews corrected ports and removes raw next-action tokens in %s', async locale => {
+    const v = setup({ ...idleSetup(), nextAction: 'choose_scope' }, locale); await v.ready(); v.fill()
+    expect(screen.getByText(nearbyNextAction(locale, 'choose_scope'))).toBeInTheDocument()
+    expect(screen.queryByText('choose_scope')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(v.c('bootstrapPort')), { target: { value: '54544' } })
+    expect(screen.getByLabelText(v.c('consent'))).not.toBeChecked()
+    fireEvent.click(screen.getByLabelText(v.c('consent'))); fireEvent.click(screen.getByRole('button', { name: v.c('start') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(v.c('invalidInput')); expect(v.mutations).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText(v.c('bootstrapPort')), { target: { value: '55000' } })
+    fireEvent.click(screen.getByLabelText(v.c('consent'))); fireEvent.click(screen.getByRole('button', { name: v.c('start') }))
+    expect(v.mutations).toHaveBeenCalledWith('setup.start', expect.objectContaining({ bootstrapPort: 55000, allowHost: false, relayPort: 0 }), 'setup.mutation')
+    for (const action of ['wait_for_cleanup', 'select_peer', 'select_on_both_devices', 'compare_full_fingerprint', 'wait_for_peer', 'review_recovery', 'restart_offline', 'review_existing_network', 'try_manual', 'try_again', 'done', 'start_new_setup', 'future_unknown']) {
+      expect(nearbyNextAction(locale, action)).not.toContain(action)
+      expect(nearbyNextAction(locale, action)).not.toBe(nearbyNextAction(locale === 'ja' ? 'en' : 'ja', action))
+    }
+  })
+})
+
+
+it('hides the previous failed plan when deliberately opening a fresh review', async () => {
+  const failed = { ...reviewSetup(), state: 'failed' as const, nextAction: 'try_again', discovery: { state: 'stopped' as const } }
+  const v = setup(failed); await v.ready()
+  expect(screen.getByRole('region', { name: v.c('review') })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: v.c('startAgain') }))
+  expect(screen.queryByRole('region', { name: v.c('review') })).not.toBeInTheDocument()
+  expect(screen.queryByText(v.c('failed'))).not.toBeInTheDocument()
+  expect(v.mutations).not.toHaveBeenCalled()
 })

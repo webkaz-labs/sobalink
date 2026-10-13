@@ -469,6 +469,17 @@ func (s *setupSession) snapshotLocked() SetupSnapshot {
 	v.SessionID = s.local.SessionID
 	v.ExpiresAt = s.local.Expires
 	v.State, v.ReasonCode, v.NextAction = s.state, s.reason, s.next
+	// Only a clean, uncommitted no-host result can reopen role review. The
+	// terminal state is assigned during cleanup, just before run closes done;
+	// keep clients polling until every temporary owner has physically joined.
+	if s.state == "failed" && s.reason == "setup_no_permitted_host" && s.plan == nil && !s.localApproved && !s.remoteApproved && !s.pairingAttempted && !s.paired && !s.connected && s.cleanupFailure == nil && v.Process.State == "ready" {
+		select {
+		case <-s.done:
+			v.NextAction = "try_again"
+		default:
+			v.State, v.NextAction = "cancelling", "wait_for_cleanup"
+		}
+	}
 	if s.state == "connected" && v.Process.State == "ready" {
 		select {
 		case <-s.done:

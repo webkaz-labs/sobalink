@@ -2,7 +2,7 @@ import { useEffect, useImperativeHandle, useRef, useState, type FormEvent, type 
 import type { CommandPayloads, Locale } from '../api'
 import type { Server } from '../useServer'
 import { MAX_SETUP_TEXT_BYTES, readSetupContact, readSetupFingerprint, readSetupScopes, readSetupSnapshot, setupEndpoint, setupTerminal, validSetupPort, validSetupAlias, type SetupCommandPayloads, type SetupPlan, type SetupScope, type SetupSnapshot } from '../nearby-setup'
-import { nearbyText, nearbyReasonKey, type NearbyTextKey } from '../nearby-i18n'
+import { nearbyText, nearbyReasonKey, nearbyNextAction, type NearbyTextKey } from '../nearby-i18n'
 import { PngCardImporter } from '../qr/png-import'
 import { pngPolicy } from '../qr/png-policy'
 import { Button, useAlive } from './ui'
@@ -22,16 +22,20 @@ export function NearbySetup({ server, locale, disabled = false, ref }: { server:
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [uncertain, setUncertain] = useState(false), uncertainRef = useRef(false)
   const [error, setError] = useState<NearbyTextKey>(), [now, setNow] = useState(Date.now())
   const [alias, setAlias] = useState(''), [scopeId, setScopeId] = useState(''), [bootstrapPort, setBootstrapPort] = useState('48445'), [relayPort, setRelayPort] = useState('48443')
-  const [allowHost, setAllowHost] = useState(false), [consent, setConsent] = useState(false)
+  const [allowHost, setAllowHost] = useState<boolean>(), [consent, setConsent] = useState(false)
+  const [retryReview, setRetryReview] = useState<string>()
   const finishCleanupWait = (done: boolean) => { for (const complete of cleanupWaiters.current) complete(done); cleanupWaiters.current.clear() }
   const markUncertain = (key: NearbyTextKey) => { finishCleanupWait(false); uncertainRef.current = true; setUncertain(true); setError(key) }
-  const accept = (next: SetupSnapshot) => { current.current = next; setSnapshot(next); uncertainRef.current = false; setUncertain(false); setError(undefined); if (setupTerminal(next)) { setConsent(false); const safe = !next.connected && next.state !== 'recovery_required' || next.connected && next.nextAction === 'start_new_setup' && newFormOwner.current === next.sessionId; if (cleanupWaiters.current.size && !safe) setError(next.connected ? 'alreadyConnected' : 'recovery'); finishCleanupWait(safe) } }
+  const accept = (next: SetupSnapshot) => { if (['cancelled', 'expired', 'failed'].includes(next.state) && (current.current?.sessionId !== next.sessionId || current.current?.state !== next.state)) resetForm(); current.current = next; setSnapshot(next); uncertainRef.current = false; setUncertain(false); setError(undefined); if (setupTerminal(next)) { setConsent(false); const safe = !next.connected && next.state !== 'recovery_required' || next.connected && next.nextAction === 'start_new_setup' && newFormOwner.current === next.sessionId; if (cleanupWaiters.current.size && !safe) setError(next.connected ? 'alreadyConnected' : 'recovery'); finishCleanupWait(safe) } }
   const unavailable = disabled || server.auth !== 'ready' || server.stale
   const scope = scopes?.find(item => item.scopeId === scopeId)
   const expired = Boolean(snapshot?.expiresAt && Date.parse(snapshot.expiresAt) <= now && snapshot.state !== 'idle')
   const active = Boolean(snapshot?.sessionId && !setupTerminal(snapshot))
   const freshForm = Boolean(snapshot?.connected && snapshot.nextAction === 'start_new_setup' && snapshot.process.state === 'ready' && newFormIntent === snapshot.sessionId && !starting.current)
-  const startable = snapshot && (freshForm || ['idle', 'cancelled', 'expired'].includes(snapshot.state) || snapshot.state === 'failed' && snapshot.nextAction === 'try_again') && snapshot.process.state === 'ready'
+  const retryable = Boolean(snapshot?.sessionId && snapshot.state === 'failed' && snapshot.nextAction === 'try_again' && snapshot.process.state === 'ready' && !snapshot.paired && !snapshot.connected)
+  const retryForm = retryable && retryReview === snapshot?.sessionId
+  const startable = snapshot && (freshForm || ['idle', 'cancelled', 'expired'].includes(snapshot.state) || retryForm) && snapshot.process.state === 'ready'
+  const resetForm = () => { setAlias(''); setScopeId(''); setBootstrapPort('48445'); setRelayPort('48443'); setAllowHost(undefined); setConsent(false) }
   const loadScopes = async () => {
     if (latestServer.current.auth !== 'ready' || pending.current) return
     const result = await latestServer.current.run('setup.scopes', {}, 'setup.scopes')
@@ -117,7 +121,7 @@ export function NearbySetup({ server, locale, disabled = false, ref }: { server:
     if (!previous?.connected || previous.process.state !== 'ready' || !previous.sessionId) return
     if (!newFormOwner.current) {
       newFormOwner.current = previous.sessionId; setNewFormIntent(previous.sessionId)
-      setAlias(''); setScopeId(''); setBootstrapPort('48445'); setRelayPort('48443'); setAllowHost(false); setConsent(false)
+      resetForm()
       ++generation.current
       void loadScopes()
     }
@@ -127,7 +131,7 @@ export function NearbySetup({ server, locale, disabled = false, ref }: { server:
   useImperativeHandle(ref, () => ({ close: cancel }))
   const start = (event: FormEvent) => {
     event.preventDefault()
-    if (!startable || !consent || !scope || !validSetupAlias(alias) || !validSetupPort(Number(bootstrapPort)) || (allowHost && (!validSetupPort(Number(relayPort)) || Number(bootstrapPort) === Number(relayPort)))) { setError('invalidInput'); return }
+    if (!startable || allowHost === undefined || !consent || !scope || !validSetupAlias(alias) || !validSetupPort(Number(bootstrapPort)) || (allowHost && (!validSetupPort(Number(relayPort)) || Number(bootstrapPort) === Number(relayPort)))) { setError('invalidInput'); return }
     void mutate('setup.start', { alias, scopeId: scope.scopeId, bootstrapPort: Number(bootstrapPort), allowHost, relayPort: allowHost ? Number(relayPort) : 0, consent: true })
   }
   const blocked = unavailable || busy || uncertain || snapshot?.state === 'cancelling'
@@ -142,14 +146,20 @@ export function NearbySetup({ server, locale, disabled = false, ref }: { server:
     {snapshot?.state === 'cancelled' && <p role="status">{c('cancelled')}</p>}{(snapshot?.state === 'expired' || expired && active) && <p role="status">{c('expired')}</p>}
     {newFormIntent && <p className="scope-note" role="status">{c(starting.current ? 'newStartPending' : freshForm ? 'freshForm' : 'finishPrevious')}</p>}
     {snapshot?.connected && !freshForm && !starting.current && <Button variant="primary" disabled={blocked || snapshot.process.state !== 'ready'} onClick={() => void connectAnother()}>{c(newFormIntent ? 'finishPreviousAction' : 'connectAnother')}</Button>}
+    {retryable && !retryForm && <Button disabled={blocked} onClick={() => { resetForm(); setRetryReview(snapshot!.sessionId) }}>{c(snapshot?.reasonCode === 'setup_no_permitted_host' ? 'reviewHost' : 'startAgain')}</Button>}
+    {retryForm && <p className="scope-note" role="status">{c('retryReview')}</p>}
     {startable && <form onSubmit={start} className="form-stack">
       <label className="field">{c('alias')}<input value={alias} maxLength={80} disabled={blocked} onChange={event => { setAlias(event.target.value); setConsent(false) }} autoComplete="off" required /><small className="muted">{c('aliasHint')}</small></label>
       <label className="field">{c('scope')}<select value={scopeId} disabled={blocked} onChange={event => { setScopeId(event.target.value); setConsent(false) }} required><option value="">{c('chooseScope')}</option>{scopes?.map(item => <option key={item.scopeId} value={item.scopeId}>{item.localAddress} · {item.prefix}</option>)}</select></label>
       {scopes?.length === 0 && <p>{c('noScopes')}</p>}<Button type="button" disabled={blocked} onClick={() => { setConsent(false); void loadScopes() }}>{c('refreshScopes')}</Button>{scope && <ScopeDetails scope={scope} locale={locale} />}
       <details><summary>{c('ports')}</summary><label className="field">{c('bootstrapPort')}<input type="number" min={1024} max={65535} value={bootstrapPort} disabled={blocked} onChange={event => { setBootstrapPort(event.target.value); setConsent(false) }} /></label><label className="field">{c('relayPort')}<input type="number" min={1024} max={65535} value={relayPort} disabled={blocked} onChange={event => { setRelayPort(event.target.value); setConsent(false) }} /></label></details>
       {scope && <p className="code-value">{c('bootstrapPort')}: {setupEndpoint(scope.localAddress, Number(bootstrapPort))}</p>}
-      <label className="checkbox-field"><input type="checkbox" checked={allowHost} disabled={blocked} onChange={event => { setAllowHost(event.target.checked); setConsent(false) }} />{c('allowHost')}</label><p className="small muted">{c('hostHint')}</p>{allowHost && scope && <p className="code-value">{c('relay')}: {setupEndpoint(scope.localAddress, Number(relayPort))}</p>}
-      <label className="checkbox-field"><input type="checkbox" checked={consent} disabled={blocked || !scope} onChange={event => setConsent(event.target.checked)} />{c('consent')}</label><p className="small muted">{c('consentHint')}</p><Button type="submit" variant="primary" disabled={blocked || !consent || !scope || !alias} busy={busy}>{c('start')}</Button>
+      <fieldset className="nearby-host-choice"><legend>{c('hostChoice')}</legend><p className="small muted">{c('hostHint')}</p>
+        <label className="checkbox-field"><input type="radio" name="nearby-host-role" checked={allowHost === true} disabled={blocked} onChange={() => { setAllowHost(true); setConsent(false) }} />{c('allowHost')}</label>
+        <label className="checkbox-field"><input type="radio" name="nearby-host-role" checked={allowHost === false} disabled={blocked} onChange={() => { setAllowHost(false); setConsent(false) }} />{c('otherHost')}</label>
+        {allowHost === false && <p className="scope-note">{c('otherHostHint')}</p>}{allowHost === true && scope && <p className="code-value">{c('relay')}: {setupEndpoint(scope.localAddress, Number(relayPort))}</p>}
+      </fieldset>
+      <label className="checkbox-field"><input type="checkbox" checked={consent} disabled={blocked || !scope || allowHost === undefined} onChange={event => setConsent(event.target.checked)} />{c('consent')}</label><p className="small muted">{c('consentHint')}</p><p className="small muted">{c('stopImpact')}</p><Button type="submit" variant="primary" disabled={blocked || !consent || !scope || !alias || allowHost === undefined} busy={busy}>{c('start')}</Button>
     </form>}
     {snapshot?.scope && !startable && <ScopeDetails scope={snapshot.scope} locale={locale} />}
     {!freshForm && snapshot?.sessionId && snapshot.expiresAt && <p className="small muted">{c('expires')}: <time dateTime={snapshot.expiresAt}>{new Date(snapshot.expiresAt).toLocaleTimeString(locale)}</time>{active && <> · {c('countdown')}: {Math.max(0, Math.ceil((Date.parse(snapshot.expiresAt) - now) / 1000))}</>}</p>}
@@ -158,11 +168,11 @@ export function NearbySetup({ server, locale, disabled = false, ref }: { server:
       <ul className="nearby-candidates">{snapshot?.candidates.filter(item => Date.parse(item.expiresAt) > now && Date.parse(item.contact.expiresAt) > now).map(item => <li key={item.candidateId}><strong>{item.contact.alias}</strong><span className="code-value">{item.contact.bootstrap}</span><Button disabled={blocked || expired || Boolean(snapshot.selected)} onClick={() => { if (Date.parse(item.expiresAt) > Date.now() && Date.parse(item.contact.expiresAt) > Date.now()) void mutate('setup.select', { sessionId: snapshot.sessionId!, candidateId: item.candidateId }) }}>{c('select')}</Button></li>)}</ul>
       {snapshot?.contactText && <ContactExchange key={JSON.stringify([snapshot.sessionId, unavailable, uncertain])} snapshot={snapshot} server={server} locale={locale} disabled={blocked || expired || Boolean(snapshot.selected)} onSelect={text => void mutate('setup.manual', { sessionId: snapshot.sessionId!, contactText: text })} />}
     </>}
-    {!newFormIntent && snapshot?.plan && <PlanReview key={JSON.stringify([snapshot.sessionId, snapshot.plan, unavailable, uncertain])} snapshot={snapshot} locale={locale} server={server} disabled={blocked || expired || snapshot.process.state !== 'ready' || snapshot.state !== 'awaiting_approval'} onApprove={() => { if (!current.current || current.current.sessionId !== snapshot.sessionId || JSON.stringify(current.current.plan) !== JSON.stringify(snapshot.plan) || current.current.localApproved || Date.parse(snapshot.plan!.expiresAt) <= Date.now()) return; void mutate('setup.approve', { sessionId: snapshot.sessionId!, revision: snapshot.plan!.revision, fingerprint: snapshot.plan!.fingerprint, verified: true }) }} />}
-    {snapshot?.connected ? !newFormIntent && <p role="status" className="scope-note">{c('connected')}</p> : snapshot?.paired ? <p role="status">{c('paired')}</p> : snapshot?.plan && <p role="status">{c(snapshot.state === 'awaiting_approval' ? 'awaiting' : snapshot.state === 'recovery_required' ? 'recovery' : snapshot.state === 'failed' ? 'failed' : snapshot.state === 'cancelling' ? 'cancelling' : snapshot.state === 'cancelled' ? 'cancelled' : snapshot.state === 'expired' ? 'expired' : 'preparing')}</p>}
-    {snapshot?.state === 'recovery_required' && !snapshot.plan && <p role="alert">{c('recovery')}</p>}{snapshot?.state === 'failed' && !snapshot.plan && <p role="alert">{c('failed')}</p>}
+    {!newFormIntent && !retryForm && snapshot?.plan && <PlanReview key={JSON.stringify([snapshot.sessionId, snapshot.plan, unavailable, uncertain])} snapshot={snapshot} locale={locale} server={server} disabled={blocked || expired || snapshot.process.state !== 'ready' || snapshot.state !== 'awaiting_approval'} onApprove={() => { if (!current.current || current.current.sessionId !== snapshot.sessionId || JSON.stringify(current.current.plan) !== JSON.stringify(snapshot.plan) || current.current.localApproved || Date.parse(snapshot.plan!.expiresAt) <= Date.now()) return; void mutate('setup.approve', { sessionId: snapshot.sessionId!, revision: snapshot.plan!.revision, fingerprint: snapshot.plan!.fingerprint, verified: true }) }} />}
+    {snapshot?.connected ? !newFormIntent && <p role="status" className="scope-note">{c('connected')}</p> : snapshot?.paired ? <p role="status">{c('paired')}</p> : snapshot?.plan && !retryForm && <p role="status">{c(snapshot.state === 'awaiting_approval' ? 'awaiting' : snapshot.state === 'recovery_required' ? 'recovery' : snapshot.state === 'failed' ? 'failed' : snapshot.state === 'cancelling' ? 'cancelling' : snapshot.state === 'cancelled' ? 'cancelled' : snapshot.state === 'expired' ? 'expired' : 'preparing')}</p>}
+    {snapshot?.state === 'recovery_required' && !snapshot.plan && <p role="alert">{c('recovery')}</p>}{snapshot?.state === 'failed' && !retryForm && !snapshot.plan && <p role="alert">{c('failed')}</p>}
     {snapshot?.connected && !newFormIntent && <p className="small muted">{c('connectedReceipt')}</p>}
-    <p className="small muted">{c('trustSeparate')}</p>{snapshot && <details><summary>{c('details')}</summary><dl><dt>{c('reason')}</dt><dd>{snapshot.reasonCode || snapshot.discovery.reasonCode || '—'}</dd><dt>{c('nextAction')}</dt><dd>{snapshot.nextAction || '—'}</dd></dl></details>}
+    <p className="small muted">{c('trustSeparate')}</p>{snapshot && <details><summary>{c('details')}</summary><dl><dt>{c('reason')}</dt><dd>{snapshot.reasonCode || snapshot.discovery.reasonCode || '—'}</dd><dt>{c('nextAction')}</dt><dd>{nearbyNextAction(locale, snapshot.nextAction)}</dd></dl></details>}
     {active && <div className="modal-actions"><Button disabled={unavailable || busy} onClick={() => void status()}>{c('checkStatus')}</Button><Button variant="danger" disabled={unavailable || busy || snapshot?.state === 'cancelling'} onClick={() => void cancel()}>{c('cancel')}</Button></div>}
   </section>
 }

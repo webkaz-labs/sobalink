@@ -575,28 +575,39 @@ func TestParentCancellationImmediatelyHidesHints(t *testing.T) {
 		t.Fatal("cancelled context accepted selection")
 	}
 }
-func TestSessionSendBudgetClosesQueryFlood(t *testing.T) {
-	s, clock, tr := startFake(t)
+
+// Reaching a terminal error invalidates admission before the asynchronous
+// reader/watcher/close owners have joined. Do not equate Err with Done.
+func driveQueryFloodToTerminal(t *testing.T, s *Session, clock *fakeClock, tr *fakeTransport) {
+	t.Helper()
 	query := testPacket(t, testAd(1))
 	query.Data = packQuery()
-	for i := 0; i < MaxSentDatagrams; i++ {
-		select {
-		case <-s.Done():
-			if !errors.Is(s.Err(), ErrSendBudget) {
-				t.Fatal(s.Err())
-			}
-			if tr.count() != MaxSentDatagrams {
-				t.Fatal("wrong send limit")
-			}
-			return
-		default:
-		}
+	for i := 0; i < MaxSentDatagrams && s.Err() == nil; i++ {
 		before := tr.count()
 		clock.advance(time.Second)
 		tr.incoming <- query
 		eventually(t, func() bool { return tr.count() > before || s.Err() != nil })
 	}
-	t.Fatal("send flood did not stop")
+	eventually(t, func() bool { return s.Err() != nil })
+	if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams {
+		t.Fatal("query flood did not reach exact send budget")
+	}
+}
+
+func TestSessionSendBudgetClosesQueryFlood(t *testing.T) {
+	s, clock, tr := startFake(t)
+	driveQueryFloodToTerminal(t, s, clock, tr)
+	eventually(t, func() bool {
+		select {
+		case <-s.Done():
+			return true
+		default:
+			return false
+		}
+	})
+	if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams || s.Close() != nil {
+		t.Fatal("query flood did not join with exact send budget")
+	}
 }
 func TestOwnAdvertisementsNeverBecomeCandidates(t *testing.T) {
 	s, _, tr := startFake(t)

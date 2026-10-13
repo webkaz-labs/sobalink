@@ -1,3 +1,4 @@
+import type { TextOutboxStatus } from './text-outbox'
 import type { SetupCommandPayloads } from './nearby-setup'
 import { outboxRequestTime } from './outbox-id'
 import type { GroupCommandName, GroupCommandPayloads } from './group/types'
@@ -30,7 +31,7 @@ export interface Message {
   direction: 'incoming' | 'outgoing'
   text: string
   createdAt: string
-  status: 'sent' | 'received' | 'failed' | 'pending'
+  status: 'sent' | 'received' | 'failed' | 'pending' | TextOutboxStatus
   error?: string
 }
 export interface TransferEntry {
@@ -293,6 +294,12 @@ export interface CommandPayloads extends SetupCommandPayloads, Record<EndpointCo
   'transfer.list': { cursor?: string; revision?: string }
   'service.list': { direction?: 'share' | 'forward'; cursor?: string; revision?: string }
   'message.send': { peerId: string; text: string }
+  'message.queue.prepare': { processId: string; peerId: string; text: string; expiresAt: string }
+  'message.queue.commit': { outboxId: string; processId: string; reviewRevision: string; confirm: true }
+  'message.queue.status': { outboxId: string }
+  'message.queue.cancel': { outboxId: string }
+  'message.queue.discard': { outboxId: string; processId: string }
+  'message.queue.list': { cursor?: string; revision?: string }
   'transfer.accept': { transferId: string; destination?: string }
   'receive.recovery.confirm': { reviewed: boolean }
   'transfer.decline': { transferId: string }
