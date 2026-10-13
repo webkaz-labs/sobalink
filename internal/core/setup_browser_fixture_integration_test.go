@@ -89,12 +89,12 @@ func validNearbyBrowserFailure(v nearbyBrowserFailure) bool {
 		return false
 	}
 	switch v.Phase {
-	case "launch", "descriptor", "authenticate-a", "authenticate-b", "open-a", "start-a", "cancel-a", "checkpoint-cancelled", "restart-a", "open-b", "start-b", "manual-a", "manual-b", "plan-a", "plan-b", "fingerprint-a", "fingerprint-b", "checkpoint-review", "approve-a", "recover-a", "checkpoint-one-approved", "approve-b", "connected-a", "connected-b", "checkpoint-connected", "cleanup", "core-start", "core-cancelled", "core-review", "core-one-approved", "core-connected", "core-cleanup":
+	case "launch", "descriptor", "authenticate-a", "authenticate-b", "open-a", "start-a", "cancel-a", "checkpoint-cancelled", "restart-a", "open-b", "start-b", "manual-a", "manual-b", "plan-a", "plan-b", "fingerprint-a", "fingerprint-b", "checkpoint-review", "approve-a", "recover-a", "checkpoint-one-approved", "approve-b", "connected-a", "connected-b", "checkpoint-connected", "cleanup", "core-start", "core-cancelled", "core-review", "core-one-approved", "core-connected", "core-cleanup", "manual-edit-a", "manual-edit-b", "manual-submit-a", "manual-submit-b", "fingerprint-read-a", "fingerprint-read-b", "fingerprint-initial-a", "fingerprint-initial-b", "fingerprint-mismatch-edit-a", "fingerprint-mismatch-edit-b", "fingerprint-mismatch-blocked-a", "fingerprint-mismatch-blocked-b", "fingerprint-match-edit-a", "fingerprint-match-edit-b", "fingerprint-verify-a", "fingerprint-verify-b", "fingerprint-consent-a", "fingerprint-consent-b", "fingerprint-unverify-a", "fingerprint-unverify-b", "fingerprint-ready-a", "fingerprint-ready-b", "approve-send-a", "approve-response-a", "approve-uncertain-a", "recover-request-a", "recover-receipt-a", "approve-send-b", "approve-receipt-b":
 	default:
 		return false
 	}
 	switch v.ErrorKind {
-	case "timeout", "assertion", "selector_ambiguous", "browser_launch", "browser_closed", "runtime", "command_boundary", "checkpoint", "cleanup", "interrupted", "unexpected", "core_evidence", "evidence_unavailable":
+	case "timeout", "assertion", "selector_ambiguous", "browser_launch", "browser_closed", "runtime", "command_boundary", "checkpoint", "cleanup", "interrupted", "unexpected", "core_evidence", "evidence_unavailable", "locator_missing", "element_disabled", "element_hidden", "element_not_editable", "element_detached", "pointer_intercepted", "element_unstable":
 		return true
 	default:
 		return false
@@ -150,6 +150,11 @@ func TestNearbyBrowserFailureSchema(t *testing.T) {
 	valid := nearbyBrowserFailure{Schema: 1, Phase: "fingerprint-b", ErrorKind: "assertion"}
 	if !validNearbyBrowserFailure(valid) {
 		t.Fatal("fixed failure rejected")
+	}
+	for _, kind := range []string{"locator_missing", "element_disabled", "element_hidden", "element_not_editable", "element_detached", "pointer_intercepted", "element_unstable"} {
+		if !validNearbyBrowserFailure(nearbyBrowserFailure{Schema: 1, Phase: "fingerprint-match-edit-a", ErrorKind: kind}) {
+			t.Fatal("fixed actionability failure rejected")
+		}
 	}
 	for _, invalid := range []nearbyBrowserFailure{
 		{Schema: 0, Phase: valid.Phase, ErrorKind: valid.ErrorKind},

@@ -186,8 +186,14 @@ class NearbyDiagnosticTests(unittest.TestCase):
         self.assertEqual(phases, gate.BROWSER_PHASES)
         self.assertEqual(kinds, gate.BROWSER_ERROR_KINDS)
         native = (gate.ROOT / 'internal/core/setup_browser_fixture_integration_test.go').read_text()
-        for value in phases | kinds:
-            self.assertIn('"' + value + '"', native)
+        native_phases = set(re.findall(r'"([^"]+)"', native.split('switch v.Phase {', 1)[1].split('default:', 1)[0]))
+        native_kinds = set(re.findall(r'"([^"]+)"', native.split('switch v.ErrorKind {', 1)[1].split('default:', 1)[0]))
+        self.assertEqual(phases, native_phases)
+        self.assertEqual(kinds, native_kinds)
+        for phase in phases:
+            for kind in kinds:
+                record = {'schema': 1, 'phase': phase, 'errorKind': kind}
+                self.assertEqual(gate.browser_failure(record), record)
         self.assertIn('os.O_WRONLY|os.O_CREATE|os.O_EXCL', native)
         self.assertIn('decoder.DisallowUnknownFields()', native)
         self.assertIn('info.Size() > 1024', native)
