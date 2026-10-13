@@ -478,6 +478,10 @@ func (c *Core) refreshUpgradeInbound(run context.Context, owner *contextControlO
 		return nil
 	}
 	defer c.op.Unlock()
+	if owner != nil && owner.diagnosticRefresh != nil {
+		owner.diagnosticRefresh.Add(1)
+		defer owner.diagnosticRefresh.Add(1) // mark exit before releasing Core.op
+	}
 	if policy != c.upgradePolicyDigest() {
 		return endpointmeta.ErrReview
 	}
