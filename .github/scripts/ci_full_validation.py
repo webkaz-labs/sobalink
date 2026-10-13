@@ -9,7 +9,9 @@ import re
 
 REPOSITORY = 'webkaz-labs/sobalink'
 WORKFLOW = '.github/workflows/ci.yml'
-SOURCES = (WORKFLOW, '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
+WINDOWS_PACKAGES_HELPER = '.github/scripts/ci-windows-packages.py'
+WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb731c4f42070'
+SOURCES = (WORKFLOW, WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
            '.github/scripts/ci-nearby-screenshots.py',
@@ -603,8 +605,61 @@ def validate_macos_nearby_workflow(workflow_bytes):
             'macOS nearby opt-in escaped its step')
 
 
+def validate_windows_packages_workflow(sources):
+    """Bind the reviewed partition runner and both mandatory workflow surfaces."""
+    require(digest(sources[WINDOWS_PACKAGES_HELPER]) == WINDOWS_PACKAGES_SHA256,
+            'Windows package runner differs from reviewed policy')
+    workflow = sources[WORKFLOW].decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    expected = """      - name: Verify isolated Windows whole-package race coverage
+        if: matrix.goos == 'windows'
+        run: python -B .github/scripts/ci-windows-packages.py
+      - name: Local and mock tests, race detector, and vet
+        run: |
+          set -euo pipefail
+          if [[ '${{ matrix.goos }}' != 'windows' ]]; then
+            python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
+          fi
+          # Enforce offline route-revocation recovery using the real protected fixture.
+          python .github/scripts/ci-metrics.py run --suite offline-route-race -- go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
+          python .github/scripts/ci-metrics.py run --suite backend-route-race -- go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
+          python .github/scripts/ci-metrics.py run --suite mixed-core-race -- go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
+          # Repeat real native IPC cleanup; exact timer policy is tested virtually.
+          python .github/scripts/ci-metrics.py run --suite ipc-repeat-race -- go test -race -count=5 -timeout=2m ./internal/control
+          python .github/scripts/ci-metrics.py run --suite native-vet -- go vet ./...
+          unformatted="$(gofmt -l cmd internal web)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Go files need gofmt (check checkout line endings):\\n%s\\n' "$unformatted" >&2
+            exit 1
+          fi
+"""
+    receipt = """      - name: Preserve Windows whole-package race receipt
+        if: always() && matrix.goos == 'windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-package-race
+          path: ${{ runner.temp }}/windows-package-race.json
+          if-no-files-found: error
+          retention-days: 14
+"""
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    native = [offset for offset, key in jobs if key == 'native']
+    require(len(native) == 1, 'missing Windows package native job')
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    for block in (expected, receipt):
+        marker = block.splitlines(keepends=True)[0]
+        require(workflow.count(marker) == 1 and workflow.count(block) == 1,
+                'invalid Windows package execution or receipt policy')
+        start = workflow.index(marker)
+        require(native[0] < start < end and workflow[start + len(block):].startswith('      - '),
+                'invalid Windows package step boundary')
+    require(workflow.count('python -B .github/scripts/ci-windows-packages.py') == 1,
+            'Windows package runner escaped its exact step')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
+    validate_windows_packages_workflow(sources)
     validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
     validate_durable_text_workflow(sources[WORKFLOW])
@@ -614,7 +669,7 @@ def required_jobs(sources):
     validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
-             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS'}
+             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'WINDOWS_PACKAGE_STEPS'}
     values = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -660,7 +715,11 @@ def required_jobs(sources):
             'overlapping macOS nearby gate')
     for target in values['MACOS_NEARBY_TARGETS']:
         result[TARGETS[target][0]] += values['MACOS_NEARBY_STEPS']
-    result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
+    require(values['WINDOWS_PACKAGE_STEPS'] == ('Verify isolated Windows whole-package race coverage',
+                                               'Preserve Windows whole-package race receipt'),
+            'unexpected Windows package coverage policy')
+    require(not set(native_steps).intersection(values['WINDOWS_PACKAGE_STEPS']), 'overlapping Windows package gate')
+    result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',) + values['WINDOWS_PACKAGE_STEPS']
     result.update({
         'impact': ('Select minimum CI scope',),
         'browser': values['BROWSER_STEPS'],

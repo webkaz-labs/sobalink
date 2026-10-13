@@ -68,6 +68,81 @@ class FullProofTests(unittest.TestCase):
     def audit(self, **kwargs):
         return full.audit(self.api, SHA, **kwargs)
 
+    def test_windows_package_gate_and_receipt_require_unique_actual_success(self):
+        steps = ('Verify isolated Windows whole-package race coverage', 'Preserve Windows whole-package race receipt')
+        self.assertIn(full.WINDOWS_PACKAGES_HELPER, full.SOURCES)
+        self.assertIn('.github/scripts/ci-metrics.py', full.SOURCES)
+        original = copy.deepcopy(self.jobs)
+        for gate in steps:
+            for target, (name, _) in full.TARGETS.items():
+                self.assertEqual(gate in self.required[name], target == 'windows-amd64')
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
+                self.jobs = copy.deepcopy(original)
+                job = next(j for j in self.jobs if j['name'] == full.TARGETS['windows-amd64'][0])
+                record = next(s for s in job['steps'] if s['name'] == gate)
+                if mode in ('missing', 'wrong-target'):
+                    job['steps'].remove(record)
+                    if mode == 'wrong-target':
+                        next(j for j in self.jobs if j['name'] == full.TARGETS['linux-amd64'][0])['steps'].append(record)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(record))
+                elif mode == 'pending':
+                    record['status'] = 'in_progress'
+                else:
+                    record['conclusion'] = mode
+                with self.subTest(gate=gate, mode=mode), self.assertRaises(ValueError):
+                    self.audit()
+
+    def test_windows_literal_policy_preserves_complement_vet_and_failure_handling(self):
+        original = self.sources[full.WORKFLOW]
+        marker = b'      - name: Verify isolated Windows whole-package race coverage\n'
+        start = original.index(marker)
+        end = original.index(b'      - name: Verify adapted engine admission', start)
+        block = original[start:end]
+        mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1)]
+        for old, new in ((b"if: matrix.goos == 'windows'", b'if: false'),
+                (b"if: matrix.goos == 'windows'", b"if: matrix.goos == 'linux'"),
+                (b"!= 'windows'", b"== 'windows'"), (b'python -B .github/scripts/ci-windows-packages.py', b'true'),
+                (b'run: python -B', b'continue-on-error: true\n        run: python -B'),
+                (b'-race -count=1 -timeout=10m ./...', b'-race -count=1 -timeout=20m ./...'),
+                (b'-- go vet ./...', b'-- go vet ./internal/core'),
+                (b'--suite native-vet', b'--suite native-vet-skipped'),
+                (b'-timeout=10m ./...', b'-timeout=10m ./... || true')):
+            self.assertIn(old, block)
+            mutations.append(original.replace(block, block.replace(old, new), 1))
+        receipt_start = original.index(b'      - name: Preserve Windows whole-package race receipt\n')
+        receipt_end = original.index(b'      - name: Preserve native suite timings', receipt_start)
+        receipt = original[receipt_start:receipt_end]
+        for old, new in ((b"always() && matrix.goos == 'windows'", b'false'),
+                         (b'if-no-files-found: error', b'if-no-files-found: ignore'),
+                         (b'windows-package-race.json', b'other.json')):
+            mutations.append(original.replace(receipt, receipt.replace(old, new), 1))
+        mutations.append(original.replace(receipt, b'', 1))
+        for changed in mutations:
+            self.sources[full.WORKFLOW] = changed
+            with self.assertRaises(ValueError):
+                self.audit()
+        self.sources[full.WORKFLOW] = original
+
+    def test_windows_helper_policy_rejects_altered_flags_missing_phase_or_union(self):
+        original = self.sources[full.WINDOWS_PACKAGES_HELPER]
+        for old, new in ((b"'-race', ", b''), (b"'-count=1'", b"'-count=2'"),
+                         (b"'-timeout=10m'", b"'-timeout=20m'"),
+                         (b"GROUPS = ('core', 'remaining')", b"GROUPS = ('core',)"),
+                         (b'validate_partition(inventory, groups)', b'no_partition(inventory, groups)'),
+                         (b"['go', 'list', '-race', './...']", b"['go', 'list', '-race', './internal/core']"),
+                         (b'source_identity() == source', b'True')):
+            self.assertIn(old, original)
+            self.sources[full.WINDOWS_PACKAGES_HELPER] = original.replace(old, new, 1)
+            with self.subTest(change=old), self.assertRaises(ValueError):
+                self.audit()
+        self.sources[full.WINDOWS_PACKAGES_HELPER] = original
+        self.sources['.github/scripts/ci-coverage.py'] = self.sources['.github/scripts/ci-coverage.py'].replace(
+            b"'Verify isolated Windows whole-package race coverage', 'Preserve Windows whole-package race receipt'",
+            b"'Verify isolated Windows whole-package race coverage'")
+        with self.assertRaises(ValueError):
+            self.audit()
+
     def test_linux_nearby_exact_step_source_and_target_are_required(self):
         step = 'Verify Linux nearby native discovery without skips'
         self.assertIn('.github/scripts/ci-nearby-native.py', full.SOURCES)

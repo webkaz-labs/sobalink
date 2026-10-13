@@ -700,7 +700,9 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 		success, attempts, last := false, 0, "no-arm"
 		for time.Now().Before(until) {
 			var armed *contextExchangeOperation
+			responderWait := time.Now()
 			right.op.Lock()
+			responderWaitElapsed := time.Since(responderWait)
 			for _, candidate := range responder.operations {
 				if candidate != previous && candidate.direction == directlan.ContextInbound && candidate.operation == directlan.ContextPrepare && candidate.epoch.Valid() && !candidate.attempt.Cancelled() {
 					armed = candidate
@@ -713,13 +715,28 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 				continue
 			}
 			previous = armed
+			initiatorWait := time.Now()
 			left.op.Lock()
-			outbound, err := left.prepareContextOutboundLocked(run, initiator, right.directLAN.copy().Identity.PublicKey(), directlan.ContextPrepare)
-			left.op.Unlock()
+			captureStarted := time.Now()
+			peer := right.directLAN.copy().Identity.PublicKey()
+			outbound, err := left.prepareContextOutboundLocked(run, initiator, peer, directlan.ContextPrepare)
+			captureFinished := time.Now()
 			if err != nil {
+				// Freeze the failure before stop() changes a live run to cancelled.
+				// The earlier attempt snapshots remain independently observed.
+				capture := activationDiagnosticCaptureFailureLocked(left, initiator, peer, run, ctx, err)
+				capture.Reply, capture.WireAttempts = reply, attempts
+				capture.ResponderLockWaitMS = activationDiagnosticMillis(responderWaitElapsed)
+				capture.InitiatorLockWaitMS = activationDiagnosticMillis(captureStarted.Sub(initiatorWait))
+				capture.CaptureMS = activationDiagnosticMillis(captureFinished.Sub(captureStarted))
+				capture.RemainingMS = activationDiagnosticMillis(until.Sub(captureFinished))
+				left.op.Unlock()
 				stop()
+				t.Logf("duplicate PREPARE capture observation (before cleanup, not an internal return-site trace): %+v", capture)
+				t.Logf("duplicate PREPARE attempt observations (independent snapshots, not joined inbound completion): records=%+v omitted=%d", diagnostics.Records[:diagnostics.Count], diagnostics.Omitted)
 				t.Fatal("duplicate PREPARE capture failed")
 			}
+			left.op.Unlock()
 			attempts++
 			before, started := observe(), time.Now()
 			err = left.exchangeContext(run, outbound)

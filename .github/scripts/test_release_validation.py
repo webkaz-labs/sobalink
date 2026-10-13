@@ -466,6 +466,20 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
+    def test_windows_packages_are_exhaustive_and_do_not_skip_later_policy_gates(self):
+        isolated = self.step('ci', 'native', 'name: Verify isolated Windows whole-package race coverage')
+        self.assertIn("        if: matrix.goos == 'windows'\n", isolated)
+        self.assertIn('run: python -B .github/scripts/ci-windows-packages.py', isolated)
+        ordinary = self.step('ci', 'native', 'name: Local and mock tests, race detector, and vet')
+        self.assertIn("if [[ '${{ matrix.goos }}' != 'windows' ]]; then", ordinary)
+        self.assertIn('go test -race -count=1 -timeout=10m ./...', ordinary)
+        self.assertIn('go vet ./...', ordinary)
+        self.assertLess(ordinary.index('          fi\n'), ordinary.index('go vet ./...'))
+        self.assertNotIn('ci-windows-packages.py', self.workflow('prerelease'))
+        for name in ('ci', 'prerelease'):
+            self.assertIn('./internal/backendworker ./internal/connectionroute', self.job(name, 'native'))
+            self.assertIn("./internal/core -run '^TestMixed'", self.job(name, 'native'))
+
     def test_development_cache_keeps_existing_triggers_and_browser_gates(self):
         workflow = self.workflow("ci")
         self.assertIn("on:\n  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:\n", workflow)

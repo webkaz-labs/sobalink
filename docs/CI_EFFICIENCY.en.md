@@ -88,6 +88,8 @@ The warm run's longest job was Windows at 11m46s: ordinary/native test stages to
 
 Full native validation retains race detection, vet, Windows retirement barriers, repeated IPC cleanup, synthetic key checks, engine negative controls, native discovery, direct/relay recovery and the original natural lifecycle/lease waits. Production timers, payloads, assertions and test timeouts are not shortened by scope selection.
 
+In Cross-platform CI, Windows runs the complete Core package first, then every remaining package from the current `go list -race ./...` inventory. The groups are disjoint and exhaustive; both must succeed, with source-bound inventory and separate timings. Each retains `-race -count=1 -timeout=10m`, normal examples/fuzz seeds and fixture scheduling. Other targets keep the single whole-inventory command, and vet and all later gates remain unchanged. This scheduling choice does not establish the cause of a previous timeout.
+
 Fixtures requiring TCP and UDP on one endpoint reserve both protocols on the exact loopback address, with bounded real-bind attempts and cleanup. The helper is imported only by tests. Browser teardown drains pending intercepted requests before stopping the fixture and still propagates failures. A failed required target or step fails `ci-required`.
 
 Automated CI evidence remains separate from physical-device enrollment, network, OS-login and suspend acceptance.

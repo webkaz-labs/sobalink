@@ -62,6 +62,7 @@ FAST_STEPS = (
 )
 LINUX_NEARBY_TARGETS = ('linux-amd64', 'linux-arm64')
 LINUX_NEARBY_STEPS = ('Verify Linux nearby native discovery without skips',)
+WINDOWS_PACKAGE_STEPS = ('Verify isolated Windows whole-package race coverage', 'Preserve Windows whole-package race receipt')
 MACOS_NEARBY_TARGETS = ('darwin-arm64',)
 MACOS_NEARBY_STEPS = ('Verify macOS selected-interface discovery without skips',)
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -191,7 +192,7 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
             if target in MACOS_NEARBY_TARGETS:
                 steps += MACOS_NEARBY_STEPS
             if target == "windows-amd64":
-                steps += ("Verify Windows receive-retirement directory barriers",)
+                steps += ("Verify Windows receive-retirement directory barriers",) + WINDOWS_PACKAGE_STEPS
             passed(name, steps)
             if scope == "native-short":
                 for full_step in LONG_STEPS + FULL_ONLY_STEPS:
@@ -251,7 +252,7 @@ def job_timings(jobs):
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
     names = {*TARGETS.values(), "impact", "browser", "go-unit", "manifest-smoke"}
-    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS,
+    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *WINDOWS_PACKAGE_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}

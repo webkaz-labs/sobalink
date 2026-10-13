@@ -225,10 +225,15 @@ jobs:
       - name: Verify Windows receive-retirement directory barriers
         if: matrix.goos == 'windows'
         run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer
+      - name: Verify isolated Windows whole-package race coverage
+        if: matrix.goos == 'windows'
+        run: python -B .github/scripts/ci-windows-packages.py
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
+          if [[ '${{ matrix.goos }}' != 'windows' ]]; then
+            python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
+          fi
           # Enforce offline route-revocation recovery using the real protected fixture.
           python .github/scripts/ci-metrics.py run --suite offline-route-race -- go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
           python .github/scripts/ci-metrics.py run --suite backend-route-race -- go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
@@ -695,6 +700,14 @@ jobs:
       - name: Summarize measured native suites
         if: always()
         run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/ci-suite-metrics.json"
+      - name: Preserve Windows whole-package race receipt
+        if: always() && matrix.goos == 'windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-package-race
+          path: ${{ runner.temp }}/windows-package-race.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve native suite timings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
