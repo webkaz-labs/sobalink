@@ -15,6 +15,7 @@ from unittest.mock import patch, Mock
 
 from test_ci_native_core import event, raw
 from test_ci_dnssd_required import archive
+import test_ci_dnssd_required as dnssd_fixtures
 
 SCRIPT = Path(__file__).with_name('ci-native-core-required.py')
 SPEC = importlib.util.spec_from_file_location('ci_native_core_required', SCRIPT)
@@ -173,7 +174,7 @@ class RunnerTests(unittest.TestCase):
     def model(self, *, failed=False, joined=True):
         stack = ExitStack()
         self.addCleanup(stack.close)
-        root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        root = Path(stack.enter_context(tempfile.TemporaryDirectory())).resolve()
         export = root / gate.ARTIFACT; export.mkdir()
         value = fixture(complete=False)
         source = policy_hashes()
@@ -206,7 +207,7 @@ class RunnerTests(unittest.TestCase):
     def test_one_collection_and_one_complement_then_no_reuse(self):
         root,export=self.model()
         gate.collect(PLATFORM,export,identity())
-        self.assertEqual((root/'output').read_text(),'remaining_safe=true\n')
+        self.assertEqual((root/'output').read_text(encoding='utf-8'),'remaining_safe=true\n')
         self.assertEqual(len(gate.collector.metrics.read_records()),1)
         with patch.object(gate.packages,'run_group',return_value=fixture()['remaining']) as run_group:
             gate.remaining(PLATFORM,export,identity())
@@ -219,7 +220,7 @@ class RunnerTests(unittest.TestCase):
     def test_failed_core_stays_failed_but_joined_failure_still_executes_complement(self):
         root,export=self.model(failed=True)
         with self.assertRaises(ValueError):gate.collect(PLATFORM,export,identity())
-        self.assertEqual((root/'output').read_text(),'remaining_safe=true\n')
+        self.assertEqual((root/'output').read_text(encoding='utf-8'),'remaining_safe=true\n')
         self.assertEqual(gate.collector.metrics.read_records()[0]['status'],'failed')
         with patch.object(gate.packages,'run_group',return_value=fixture()['remaining']) as run_group:
             with self.assertRaises(ValueError):gate.remaining(PLATFORM,export,identity())
@@ -263,9 +264,9 @@ class RunnerTests(unittest.TestCase):
 
     def test_late_release_outputs_are_exact_regular_owned_files(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory); (root/'logs').mkdir(); (root/'source.go').write_text('synthetic')
-            (root/'logs/go-cache.txt').write_text('synthetic')
-            (root/'logs/dependencies.txt').write_text('synthetic')
+            root=Path(directory).resolve(); (root/'logs').mkdir(); (root/'source.go').write_text('synthetic',encoding='utf-8')
+            (root/'logs/go-cache.txt').write_text('synthetic',encoding='utf-8')
+            (root/'logs/dependencies.txt').write_text('synthetic',encoding='utf-8')
             def query(command):
                 if command[1]=='status':return b''
                 if '--others' in command:return b'logs/go-cache.txt\0logs/dependencies.txt\0'
@@ -314,7 +315,8 @@ class ActualContextTests(unittest.TestCase):
     """Real synthetic Git objects and actual entry/context; native execution is mocked."""
     def setUp(self):
         self.stack=ExitStack(); self.addCleanup(self.stack.close)
-        self.folder=Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        # Match production ROOT and cwd, including temporary-path aliases.
+        self.folder=Path(self.stack.enter_context(tempfile.TemporaryDirectory())).resolve()
         self.root=self.folder/'repo'; self.root.mkdir()
         self.temporary=self.folder/'runner'; self.temporary.mkdir()
         self.output=self.folder/'output'
@@ -322,7 +324,7 @@ class ActualContextTests(unittest.TestCase):
             return subprocess.check_output(['git','-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid',
                                             *args],cwd=self.root,stderr=subprocess.DEVNULL).decode().strip()
         self.git=git
-        git('init','-q'); (self.root/'synthetic.txt').write_text('synthetic fixture\n')
+        git('init','-q'); (self.root/'synthetic.txt').write_text('synthetic fixture\n',encoding='utf-8')
         git('add','synthetic.txt'); self.tree=git('write-tree')
         self.base=git('commit-tree',self.tree,'-m','synthetic base')
         self.head=git('commit-tree',self.tree,'-p',self.base,'-m','synthetic head')
@@ -345,9 +347,11 @@ class ActualContextTests(unittest.TestCase):
             patch.dict(gate.collector.native.capture.__kwdefaults__,{'cwd':self.root}),
             patch.object(gate.shared,'module',side_effect=lambda name:native if name=='ci-nearby-native' else original_module(name))):
             self.stack.enter_context(manager)
+        # Every negative case must begin with a valid actual identity.
+        self.check_identity()
 
     def write_event(self):
-        self.event_path.write_text(json.dumps(self.event))
+        self.event_path.write_text(json.dumps(self.event),encoding='utf-8')
 
     def check_identity(self):
         core=gate.context(PLATFORM)
@@ -393,6 +397,9 @@ class ActualContextTests(unittest.TestCase):
                     with self.subTest(parents=len(parents)),self.assertRaisesRegex(ValueError,'identity_pr_parents'):call()
 
     def test_checkout_tree_event_ref_workflow_and_attempt_remain_exact(self):
+        with chdir(self.folder):
+            for call in (lambda:gate.context(PLATFORM),lambda:gate.shared.ci_identity(self.event,self.commit,self.tree)):
+                with self.assertRaisesRegex(ValueError,'identity_environment'):call()
         for commit,tree in [('f'*40,self.tree),(self.commit,'f'*40),(self.commit,None)]:
             with self.subTest(commit=commit,tree=tree),self.assertRaises(ValueError):
                 gate.shared.ci_identity(self.event,commit,tree)
@@ -407,16 +414,16 @@ class ActualContextTests(unittest.TestCase):
         stream=io.StringIO()
         with redirect_stdout(stream):self.assertEqual(gate.main(['core']),1)
         self.assertEqual(stream.getvalue(),'FAIL: Required native package phase is incomplete.\n')
-        self.assertEqual(self.output.read_text(),'failure_ready=true\n')
+        self.assertEqual(self.output.read_text(encoding='utf-8'),'failure_ready=true\n')
         folder=self.temporary/gate.FAILURE_ARTIFACT
-        failure=json.loads((folder/'failure.json').read_text())
+        failure=json.loads((folder/'failure.json').read_text(encoding='utf-8'))
         self.assertEqual(failure,{'schema':1,'successEligible':False,'stage':stage,'predicate':predicate,
                                  'mergeHint':hint,'partialCorePresent':partial})
         self.assertEqual(set(p.name for p in folder.iterdir()),{'failure.json','partial-core.json'} if partial else {'failure.json'})
         for path in folder.iterdir():
             self.assertLess(path.stat().st_size,32768)
-            self.assertNotIn('synthetic-private',path.read_text())
-            with self.assertRaises(ValueError):gate.validate_receipt(json.loads(path.read_text()),identity(),{name:HASH for name in gate.POLICY_FILES})
+            self.assertNotIn('synthetic-private',path.read_text(encoding='utf-8'))
+            with self.assertRaises(ValueError):gate.validate_receipt(json.loads(path.read_text(encoding='utf-8')),identity(),{name:HASH for name in gate.POLICY_FILES})
         self.assertFalse((self.temporary/gate.ARTIFACT/'receipt.json').exists())
         return folder
 
@@ -427,7 +434,7 @@ class ActualContextTests(unittest.TestCase):
             runtime.assert_not_called()
 
     def test_actual_main_unparseable_event_exports_no_event_or_parser_text(self):
-        self.event_path.write_text('{synthetic-private')
+        self.event_path.write_text('{synthetic-private',encoding='utf-8')
         with patch.object(gate.collector,'runtime_capability') as runtime:
             self.entry_failure('event-read',partial=False,hint='unobserved');runtime.assert_not_called()
 
@@ -438,7 +445,7 @@ class ActualContextTests(unittest.TestCase):
     def test_actual_main_runtime_failure_exports_empty_partial_without_native_execution(self):
         with patch.object(gate.collector,'runtime_capability',return_value={'available':False}),patch.object(gate,'native_identity') as native:
             folder=self.entry_failure('runtime','runtime_unavailable'); native.assert_not_called()
-        self.assertEqual(json.loads((folder/'partial-core.json').read_text())['phase'],'preflight')
+        self.assertEqual(json.loads((folder/'partial-core.json').read_text(encoding='utf-8'))['phase'],'preflight')
 
     def test_actual_main_native_failure_sanitizes_injected_exception(self):
         with patch.object(gate.collector,'runtime_capability',return_value={'available':True}),patch.object(gate,'native_identity',side_effect=ValueError('synthetic-private\ntext')):
@@ -464,7 +471,7 @@ class ActualContextTests(unittest.TestCase):
             raise ValueError('synthetic-private')
         with patch.object(gate,'source_inventory',return_value={name:HASH for name in gate.POLICY_FILES}),patch.object(gate.collector,'run_diagnostic',side_effect=fail_prepare):
             folder=self.entry_failure('collector-prepare')
-        partial=json.loads((folder/'partial-core.json').read_text())
+        partial=json.loads((folder/'partial-core.json').read_text(encoding='utf-8'))
         self.assertEqual(partial['preparation']['prepare']['process'],'nonzero')
         self.assertTrue(partial['cleanupComplete']);self.assertFalse(partial['sourceVerified'])
         self.assertFalse(list(self.temporary.glob('soba-native-core-private-*')))
@@ -473,8 +480,8 @@ class ActualContextTests(unittest.TestCase):
         target=self.temporary/gate.FAILURE_ARTIFACT
         for mode in ('file','directory','symlink'):
             with self.subTest(mode=mode):
-                if mode=='file':target.write_text('synthetic-private')
-                elif mode=='directory':target.mkdir();(target/'failure.json').write_text('synthetic-private')
+                if mode=='file':target.write_text('synthetic-private',encoding='utf-8')
+                elif mode=='directory':target.mkdir();(target/'failure.json').write_text('synthetic-private',encoding='utf-8')
                 elif os.name!='nt':target.symlink_to(self.event_path)
                 with ExitStack() as local:
                     if mode=='symlink' and os.name=='nt':
@@ -490,9 +497,9 @@ class ActualContextTests(unittest.TestCase):
                     self.assertEqual(gate.main(['core']),1)
                 self.assertFalse(self.output.exists())
                 if mode=='directory':
-                    self.assertEqual((target/'failure.json').read_text(),'synthetic-private');(target/'failure.json').unlink();target.rmdir()
+                    self.assertEqual((target/'failure.json').read_text(encoding='utf-8'),'synthetic-private');(target/'failure.json').unlink();target.rmdir()
                 elif mode!='symlink' or os.name!='nt':
-                    self.assertTrue(target.is_symlink() if mode=='symlink' else target.read_text()=='synthetic-private');target.unlink()
+                    self.assertTrue(target.is_symlink() if mode=='symlink' else target.read_text(encoding='utf-8')=='synthetic-private');target.unlink()
                 else:self.assertFalse(target.exists())
                 # Remove only the fixture's own known Core directory between cases.
                 export=self.temporary/gate.ARTIFACT
@@ -500,10 +507,10 @@ class ActualContextTests(unittest.TestCase):
 
     def test_preexisting_core_directory_is_never_used_as_failure_partial(self):
         export=self.temporary/gate.ARTIFACT;export.mkdir()
-        (export/'core.json').write_text('synthetic-private')
+        (export/'core.json').write_text('synthetic-private',encoding='utf-8')
         with patch.object(gate.collector,'runtime_capability') as runtime:
             self.entry_failure('export-directory',partial=False);runtime.assert_not_called()
-        self.assertEqual((export/'core.json').read_text(),'synthetic-private')
+        self.assertEqual((export/'core.json').read_text(encoding='utf-8'),'synthetic-private')
 
     def test_failure_export_write_error_is_suppressed_without_ready_output(self):
         original=gate.write_receipt
@@ -622,7 +629,7 @@ class WorkflowAndBundleTests(unittest.TestCase):
                          '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb731c4f42070')
     def test_early_core_precedes_frontend_and_policy_but_linux_path_remains(self):
         for name in ('ci.yml','prerelease.yml'):
-            text=(gate.ROOT/'.github/workflows'/name).read_text()
+            text=(gate.ROOT/'.github/workflows'/name).read_text(encoding='utf-8')
             native=text.split('  native:\n',1)[1]
             self.assertLess(native.index('name: Collect required whole-Core'),native.index('name: Test and reproduce locked frontend'))
             self.assertEqual(text.count('ci-native-core-required.py core'),1)
@@ -632,17 +639,69 @@ class WorkflowAndBundleTests(unittest.TestCase):
             self.assertIn('steps.native-core.outputs.remaining_safe',native)
             self.assertNotIn('continue-on-error:',native.split('name: Collect required whole-Core')[1].split('      - ',1)[0])
     def test_downloaded_release_bundle_imports_and_validates_without_checkout(self):
-        workflow=(gate.ROOT/'.github/workflows/prerelease.yml').read_text()
+        workflow=(gate.ROOT/'.github/workflows/prerelease.yml').read_text(encoding='utf-8')
         region=workflow.split('name: release-validation-tools\n',1)[1].split('          if-no-files-found:',1)[0]
         names=[line.strip() for line in region.splitlines() if line.strip().startswith('.github/scripts/')]
         with tempfile.TemporaryDirectory() as directory:
-            folder=Path(directory)/'tools';folder.mkdir()
+            folder=Path(directory).resolve()/'tools';folder.mkdir()
             for name in names:shutil.copyfile(gate.ROOT/name,folder/Path(name).name)
-            value=fixture();payload=Path(directory)/'synthetic.json'
-            payload.write_text(json.dumps({'value':value,'identity':identity(),'policy':policy_hashes()}))
-            code="import importlib.util,json,sys; from pathlib import Path; p=Path(sys.argv[1]); s=importlib.util.spec_from_file_location('gate',p); m=importlib.util.module_from_spec(s); exec(compile(p.read_bytes(),str(p),'exec'),m.__dict__); d=json.loads(Path(sys.argv[2]).read_text()); m.validate_receipt(d['value'],d['identity'],d['policy'])"
+            value=fixture();payload=Path(directory).resolve()/'synthetic.json'
+            payload.write_text(json.dumps({'value':value,'identity':identity(),'policy':policy_hashes()}),encoding='utf-8')
+            code="import importlib.util,json,sys; from pathlib import Path; p=Path(sys.argv[1]); s=importlib.util.spec_from_file_location('gate',p); m=importlib.util.module_from_spec(s); exec(compile(p.read_bytes(),str(p),'exec'),m.__dict__); d=json.loads(Path(sys.argv[2]).read_text(encoding='utf-8')); m.validate_receipt(d['value'],d['identity'],d['policy'])"
             result=subprocess.run([os.sys.executable,'-I','-B','-c',code,str(folder/SCRIPT.name),str(payload)],cwd=directory,capture_output=True)
             self.assertEqual(result.returncode,0,result.stderr.decode())
+
+
+class FixturePortabilityTests(unittest.TestCase):
+    """Exercise fixture setup without relaxing the actual admission predicates."""
+    def assert_fixture_cases(self):
+        cases = [
+            ActualContextTests('test_actual_ordered_merge_accepts_missing_null_matching_and_stale_hints_for_both_callers'),
+            ActualContextTests('test_actual_missing_reversed_or_extra_parents_reject_even_matching_hint'),
+            ActualContextTests('test_checkout_tree_event_ref_workflow_and_attempt_remain_exact'),
+            RunnerTests('test_one_collection_and_one_complement_then_no_reuse'),
+            RunnerTests('test_late_release_outputs_are_exact_regular_owned_files'),
+            dnssd_fixtures.RequiredProofTests('test_prepared_inventory_rejects_ignored_sources_and_symlink_roots'),
+        ]
+        result = unittest.TestResult()
+        unittest.TestSuite(cases).run(result)
+        self.assertEqual(result.testsRun, len(cases))
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(result.errors + result.failures, [])
+
+    def test_noncanonical_temporary_spelling_preserves_identity_and_negative_guards(self):
+        # A lexical alias works on every platform, including Windows without
+        # depending on the volume's 8.3-name or case-normalization settings.
+        original = tempfile.TemporaryDirectory.__enter__
+        def enter(temporary):
+            directory = Path(original(temporary))
+            (directory/'spelling').mkdir()
+            return str(directory/'spelling'/'..')
+        with patch.object(tempfile.TemporaryDirectory, '__enter__', enter):
+            self.assert_fixture_cases()
+
+    def test_symlinked_temporary_ancestor_preserves_identity_and_negative_guards(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            target = root/'canonical'; target.mkdir()
+            alias = root/'alias'; alias.symlink_to(target, target_is_directory=True)
+            # Keep the alias above ROOT.parent, like a system temp ancestor.
+            (alias/'nested').mkdir()
+            with patch.object(tempfile, 'tempdir', str(alias/'nested')):
+                self.assert_fixture_cases()
+
+    def test_workflow_fixtures_use_utf8_with_legacy_default_encoding(self):
+        original = Path.open
+        def legacy_open(path, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
+            if 'b' not in mode and encoding in (None, 'locale'):
+                encoding = 'cp1252'
+            return original(path, mode, buffering, encoding, errors, newline)
+        result = unittest.TestResult()
+        with patch.object(Path, 'open', legacy_open):
+            unittest.defaultTestLoader.loadTestsFromTestCase(WorkflowAndBundleTests).run(result)
+        self.assertEqual(result.testsRun, 3)
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(result.errors + result.failures, [])
 
 
 if __name__=='__main__':unittest.main()

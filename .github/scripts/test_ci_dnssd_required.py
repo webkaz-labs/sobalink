@@ -171,9 +171,9 @@ class RequiredProofTests(unittest.TestCase):
     def test_fresh_failure_receipt_is_written_and_not_success(self):
         value=fixture(); value['result']['capabilities']['os_local_only']=record('os_local_only','unavailable')
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary)
+            root=Path(temporary).resolve()
             with self.assertRaises(ValueError): gate.write_receipt(root,value['result'],value['provenance'])
-            self.assertIs(json.loads((root/'receipt.json').read_text())['requiredPassed'],False)
+            self.assertIs(json.loads((root/'receipt.json').read_text(encoding='utf-8'))['requiredPassed'],False)
 
     def test_full_ci_event_binds_pull_merge_and_rejects_diagnostic_create(self):
         event={'repository':{'full_name':gate.REPOSITORY,'private':False,'default_branch':'main'}, 'number':7,
@@ -197,13 +197,13 @@ class RequiredProofTests(unittest.TestCase):
         stdout += b'PASS\n'
         for unavailable in (False, True):
             with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
-                root = Path(temporary)
+                root = Path(temporary).resolve()
                 clang, go, sdk = root/'clang', root/'go', root/'sdk'
                 clang.write_bytes(b'synthetic clang'); go.write_bytes(b'synthetic go')
                 for relative in gate.diag.SDK_FILES.values():
                     path = sdk/relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'synthetic sdk')
-                provider = root/'internal/nearby/provider_darwin.go'; provider.parent.mkdir(parents=True); provider.write_text('package nearby\n')
-                event = root/'event.json'; event.write_text('{}')
+                provider = root/'internal/nearby/provider_darwin.go'; provider.parent.mkdir(parents=True); provider.write_text('package nearby\n',encoding='utf-8')
+                event = root/'event.json'; event.write_text('{}',encoding='utf-8')
                 output = root/'output'
                 native, terminal = gate.module('ci-nearby-native'), gate.module('ci-dnssd-terminal')
                 original_module = gate.diag.module
@@ -242,7 +242,7 @@ class RequiredProofTests(unittest.TestCase):
                 stack.enter_context(patch.object(gate.diag.shutil,'which',return_value=str(go)))
                 printed = stack.enter_context(patch('sys.stdout',new_callable=io.StringIO))
                 self.assertEqual(gate.diag.main([],required=gate),1 if unavailable else 0)
-                value=json.loads((root/'soba-dnssd-required/receipt.json').read_text())
+                value=json.loads((root/'soba-dnssd-required/receipt.json').read_text(encoding='utf-8'))
                 self.assertEqual(value['requiredPassed'],not unavailable)
                 self.assertEqual(launch.call_count,1)
                 self.assertEqual(sum(command[:3]==['go','test','-race'] for command in commands),1)
@@ -254,7 +254,7 @@ class RequiredProofTests(unittest.TestCase):
     def test_prepared_inventory_rejects_ignored_sources_and_symlink_roots(self):
         native=gate.module('ci-nearby-native'); shared=gate.module('ci-nearby-diagnostic')
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary); (root/'tracked.go').write_text('package synthetic\n')
+            root=Path(temporary).resolve(); (root/'tracked.go').write_text('package synthetic\n',encoding='utf-8')
             raw=b'.sobalink-deps/tailscale/file.go\0web/node_modules/package/file.js\0web/tsconfig.tsbuildinfo\0.github/scripts/__pycache__/ci-test.cpython-312.pyc\0'
             def checked(command):
                 if '--porcelain' in command: return b''
