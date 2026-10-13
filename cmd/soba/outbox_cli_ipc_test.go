@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +28,7 @@ import (
 // peers and a non-network dial stub prevent any claim of remote delivery.
 type outboxIPCBackend struct {
 	dispatchIPCBackend
-	dials atomic.Int32
+	dials outboxIPCDialLog
 }
 
 func (b *outboxIPCBackend) State(ctx context.Context) (identity.State, error) {
@@ -41,7 +40,7 @@ func (b *outboxIPCBackend) State(ctx context.Context) (identity.State, error) {
 	return state, err
 }
 func (b *outboxIPCBackend) DialIP(context.Context, string, netip.AddrPort) (net.Conn, error) {
-	b.dials.Add(1)
+	b.dials.record(outboxIPCCurrentDialCategory())
 	return nil, errors.New("synthetic offline peer transport unavailable")
 }
 func (b *outboxIPCBackend) configure(profile *core.Profile) core.NetworkBackend {
@@ -110,7 +109,27 @@ func testOutboxCLIContract(t *testing.T, setup func(*testing.T, context.Context,
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			t.Cleanup(cancel)
 			backend := &outboxIPCBackend{}
+			backend.dials.changed = make(chan struct{}, 1)
+			// Registered before setup so the final observation follows Core.Close,
+			// including any worker that was still joining at the last CLI reply.
+			t.Cleanup(func() { backend.dials.requireDiscoveryOnly(t) })
 			dir, actualCall := setup(t, ctx, backend)
+			state, err := backend.State(ctx)
+			if err != nil || !state.Snapshot.Running || len(state.Snapshot.Peers) != 2 {
+				t.Fatal("offline fixture lost its running peer inventory")
+			}
+			for _, peer := range state.Snapshot.Peers {
+				if peer.Online {
+					t.Fatal("offline fixture advertised an online peer")
+				}
+			}
+			// Observe the real maintenance loop before any Outbox command. The
+			// stub denies every transport, so discovery cannot confirm either peer.
+			backend.dials.wait(t, ctx, func(counts outboxIPCDialCounts) bool {
+				return counts.Discovery >= 2 || !counts.discoveryOnly()
+			})
+			backend.dials.requireDiscoveryOnly(t)
+			t.Logf("maintenance before outbox: %+v", backend.dials.snapshot())
 			calls := map[string]int{}
 			var originalRequest string
 			client := func(ctx context.Context, selectedDir, wire string, target any) error {
@@ -282,9 +301,10 @@ func testOutboxCLIContract(t *testing.T, setup func(*testing.T, context.Context,
 			if data, err := os.ReadFile(source); err != nil || !bytes.Equal(data, changed) {
 				t.Fatal("cancellation changed or deleted original input")
 			}
-			if calls["process"] != 1 || calls["outbox.prepare"] != 1 || calls["outbox.commit"] != 3 || calls["outbox.cancel"] != 3 || backend.dials.Load() != 0 {
-				t.Fatalf("unexpected admission/replay/network activity: calls=%v, dials=%d", calls, backend.dials.Load())
+			if calls["process"] != 1 || calls["outbox.prepare"] != 1 || calls["outbox.commit"] != 3 || calls["outbox.cancel"] != 3 {
+				t.Fatalf("unexpected admission/replay activity: calls=%v", calls)
 			}
+			backend.dials.requireDiscoveryOnly(t)
 		})
 	}
 }
