@@ -481,6 +481,12 @@ def validate_setup_and_text_browser_workflow(workflow_bytes):
         run: |
           set -euo pipefail
           mkdir -m 700 "$RUNNER_TEMP/soba-setup-browser-evidence"
+          export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=0
+          if mkdir -m 700 "$SOBA_SETUP_BROWSER_SCREENSHOTS" 2>/dev/null; then
+            export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=1
+          else
+            unset SOBA_SETUP_BROWSER_SCREENSHOTS
+          fi
           status=0
           python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestNearbySetupTwoProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestNearbySetupTwoProcessBrowser$' -count=1 -timeout=3m || status=$?
           summary_status=0

@@ -42,16 +42,33 @@ def raw(rows):
 class TextDiagnosticTests(unittest.TestCase):
     @contextlib.contextmanager
     def synthetic_linux_file_api(self):
-        """Model Linux open flags for synthetic fixtures, not native OS proof."""
+        """Model Linux flags and descriptor metadata, not native OS proof."""
         api = SimpleNamespace(**vars(os))
         api.O_NOFOLLOW, api.O_NONBLOCK = 1 << 28, 1 << 29
+        ctime_offsets = {}
         def open_fixture(path, flags):
             self.assertEqual(flags, api.O_RDONLY | api.O_NOFOLLOW | api.O_NONBLOCK)
             native_flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0)
             for name in ('O_NOFOLLOW', 'O_NONBLOCK'):
                 native_flags |= getattr(os, name, 0)
-            return os.open(path, native_flags)
+            fd = os.open(path, native_flags)
+            try:
+                ctime_offsets[fd] = path.lstat().st_ctime_ns - os.fstat(fd).st_ctime_ns
+            except Exception:
+                os.close(fd)
+                raise
+            return fd
         api.open = open_fixture
+        def stat_fixture(fd):
+            # Model only Windows' different path/descriptor ctime representation.
+            # Retain live identity fields and changes after the modeled open.
+            offset = ctime_offsets[fd]
+            current = os.fstat(fd)
+            fields = {name: getattr(current, name) for name in (
+                'st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')}
+            fields['st_ctime_ns'] += offset
+            return SimpleNamespace(**fields)
+        api.fstat = stat_fixture
         with patch.object(gate, 'os', api):
             yield
 
@@ -432,6 +449,56 @@ class TextDiagnosticTests(unittest.TestCase):
                     self.assertEqual(result['firstFailure'], first_failure)
                 self.assertEqual(gate.sys.platform, host)
                 self.assertEqual(gate.native.platform.machine(), machine)
+
+    def test_simulation_models_host_descriptor_ctime_without_changing_failures(self):
+        host_api = SimpleNamespace(**vars(os))
+        real_fstat = os.fstat
+        def shifted_ctime(fd):
+            current = real_fstat(fd)
+            fields = {name: getattr(current, name) for name in dir(current) if name.startswith('st_')}
+            fields['st_ctime_ns'] += 100
+            return SimpleNamespace(**fields)
+        host_api.fstat = Mock(side_effect=shifted_ctime)
+        with patch.dict(globals(), os=host_api):
+            status, result, _, _ = self.simulate()
+            self.assertEqual(status, 0)
+            self.assertTrue(result['diagnosticPassed'])
+            for options, first_failure in (({'failure': 'restart-process'}, 'restart-process'),
+                                            ({'source_drift': True}, 'verify-source')):
+                status, result, _, _ = self.simulate(**options)
+                self.assertEqual(status, 1)
+                self.assertFalse(result['diagnosticPassed'])
+                self.assertEqual(result['firstFailure'], first_failure)
+        self.assertGreater(host_api.fstat.call_count, 0)
+
+    def test_synthetic_file_api_preserves_live_identity_and_content_changes(self):
+        real_fstat = os.fstat
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve() / 'synthetic'
+            path.write_bytes(b'before')
+            with self.synthetic_linux_file_api():
+                before = gate.digest(path)
+                path.write_bytes(b'after')
+                self.assertNotEqual(before, gate.digest(path))
+                with self.assertRaises(KeyError):
+                    gate.os.fstat(-1)
+            for field in ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns'):
+                for boundary in (2, 3):
+                    calls = 0
+                    def changed_stat(fd):
+                        nonlocal calls
+                        calls += 1
+                        current = real_fstat(fd)
+                        fields = {name: getattr(current, name) for name in dir(current) if name.startswith('st_')}
+                        fields['st_ctime_ns'] += 100
+                        if calls == boundary:
+                            fields[field] += 1
+                        return SimpleNamespace(**fields)
+                    host_api = SimpleNamespace(**vars(os))
+                    host_api.fstat = changed_stat
+                    with self.subTest(field=field, boundary=boundary), patch.dict(globals(), os=host_api), \
+                         self.synthetic_linux_file_api(), self.assertRaises(ValueError):
+                        gate.digest(path)
 
     def test_success_needs_both_real_case_gates_fixed_receipt_and_final_hashes(self):
         status, result, provenance, calls = self.simulate()

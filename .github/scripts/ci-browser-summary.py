@@ -97,8 +97,10 @@ def reconstruct(case, status, directory, destination=None):
     return accepted
 
 
-def initial_illustrations(root, *, accepted):
-    """Optional images follow acceptance and private cleanup, never supply it."""
+def initial_illustrations(root, *, accepted, prepared=False):
+    """Optional images follow acceptance and owned cleanup, never supply it."""
+    if prepared is not True:
+        return False  # Never read, export, or remove a preexisting unowned path.
     private = root / 'soba-setup-browser-illustrations'
     output = root / 'soba-setup-ui-sanitized'
     ready = False
@@ -132,7 +134,8 @@ def main():
     except (OSError, ValueError, KeyError, TypeError):
         accepted = False
     if case == 'setup' and root is not None:
-        ready = initial_illustrations(root, accepted=accepted)
+        ready = initial_illustrations(root, accepted=accepted,
+                                     prepared=os.environ.get('SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED') == '1')
         if ready and 'GITHUB_OUTPUT' in os.environ:
             try:
                 with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:

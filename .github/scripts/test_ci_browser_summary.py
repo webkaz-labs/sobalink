@@ -3,7 +3,11 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import stat
+import subprocess
+import textwrap
 import tempfile
 import unittest
 from unittest import mock
@@ -15,14 +19,87 @@ SPEC.loader.exec_module(summary)
 
 
 class FixedBrowserSummaryTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix', 'Browser job uses POSIX private directory ownership')
+    def test_workflow_exclusively_prepares_optional_private_illustrations(self):
+        workflow = (SOURCE.parents[1] / 'workflows' / 'ci.yml').read_text()
+        start = workflow.index('          export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=0\n')
+        finish = workflow.index('          status=0\n', start)
+        preparation = textwrap.dedent(workflow[start:finish])
+        for case in ('fresh', 'existing-directory', 'symlink', 'mkdir-failure'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                private = root / 'soba-setup-browser-illustrations'
+                target = root / 'synthetic-target'
+                target.mkdir()
+                (target / 'preserved').write_text('synthetic')
+                if case == 'existing-directory':
+                    private.mkdir(mode=0o700)
+                    (private / 'preserved').write_text('synthetic')
+                elif case == 'symlink':
+                    try:
+                        private.symlink_to(target, target_is_directory=True)
+                    except OSError:
+                        self.skipTest('symlink creation unavailable')
+                script = 'set -euo pipefail\n'
+                if case == 'mkdir-failure':
+                    script += 'mkdir() { return 1; }\n'
+                script += preparation + 'printf "%s\\n%s\\n" "$SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED" "${SOBA_SETUP_BROWSER_SCREENSHOTS-unset}"\n'
+                environment = dict(os.environ, SOBA_SETUP_BROWSER_SCREENSHOTS=str(private),
+                                   SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED='1')
+                result = subprocess.run(['bash', '-c', script], env=environment,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stderr, '')
+                prepared, directory = result.stdout.splitlines()
+                if case == 'fresh':
+                    self.assertEqual((prepared, directory), ('1', str(private)))
+                    self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
+                    self.assertEqual(private.stat().st_uid, os.getuid())
+                    self.assertEqual(list(private.iterdir()), [])
+                    continue
+                self.assertEqual((prepared, directory), ('0', 'unset'))
+                output = root / 'github-output'
+                with mock.patch.object(summary.sys, 'argv', ['ci-browser-summary.py', 'setup', '0']), \
+                        mock.patch.dict(summary.os.environ, {'RUNNER_TEMP': str(root),
+                                                            'GITHUB_OUTPUT': str(output),
+                                                            'SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED': prepared}), \
+                        mock.patch.object(summary, 'reconstruct', return_value=True), \
+                        mock.patch.object(summary.nearby, 'module') as exporter, \
+                        mock.patch.object(summary.sys, 'stdout', new_callable=io.StringIO) as stdout:
+                    self.assertEqual(summary.main(), 0)
+                    self.assertEqual(stdout.getvalue(), 'Fixed browser summary accepted\n')
+                    exporter.assert_not_called()
+                self.assertFalse(output.exists())
+                self.assertFalse((root / 'soba-setup-ui-sanitized').exists())
+                self.assertEqual((target / 'preserved').read_text(), 'synthetic')
+                if case in ('existing-directory', 'symlink'):
+                    self.assertEqual((private / 'preserved').read_text(), 'synthetic')
+                    self.assertEqual(private.is_symlink(), case == 'symlink')
+                else:
+                    self.assertFalse(private.exists())
+
+    def test_unprepared_illustrations_are_untouched(self):
+        for prepared in (False, None, 0, 1, '1'):
+            with self.subTest(prepared=prepared), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                private = root / 'soba-setup-browser-illustrations'
+                private.mkdir(mode=0o700)
+                (private / 'preserved').write_text('synthetic')
+                with mock.patch.object(summary.nearby, 'module') as exporter:
+                    self.assertFalse(summary.initial_illustrations(root, accepted=True, prepared=prepared))
+                    exporter.assert_not_called()
+                self.assertEqual((private / 'preserved').read_text(), 'synthetic')
+
     def test_optional_output_flag_failure_preserves_accepted_result_without_raw_error(self):
         with mock.patch.object(summary.sys, 'argv', ['ci-browser-summary.py', 'setup', '0']), \
-                mock.patch.dict(summary.os.environ, {'RUNNER_TEMP': '/synthetic', 'GITHUB_OUTPUT': '/synthetic/output'}), \
+                mock.patch.dict(summary.os.environ, {'RUNNER_TEMP': '/synthetic', 'GITHUB_OUTPUT': '/synthetic/output',
+                                                      'SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED': '1'}), \
                 mock.patch.object(summary, 'reconstruct', return_value=True), \
-                mock.patch.object(summary, 'initial_illustrations', return_value=True), \
+                mock.patch.object(summary, 'initial_illustrations', return_value=True) as images, \
                 mock.patch('builtins.open', side_effect=OSError('synthetic private path')), \
                 mock.patch.object(summary.sys, 'stdout', new_callable=io.StringIO) as output:
             self.assertEqual(summary.main(), 0)
+            images.assert_called_once_with(Path('/synthetic'), accepted=True, prepared=True)
             self.assertEqual(output.getvalue(), 'Fixed browser summary accepted\n')
 
     def test_initial_illustrations_require_accepted_receipt_and_joined_cleanup(self):
@@ -35,7 +112,7 @@ class FixedBrowserSummaryTests(unittest.TestCase):
                 exporter = mock.Mock()
                 exporter.export_initial_screenshots.return_value = True
                 with mock.patch.object(summary.nearby, 'module', return_value=exporter) as loader:
-                    self.assertEqual(summary.initial_illustrations(root, accepted=accepted), accepted)
+                    self.assertEqual(summary.initial_illustrations(root, accepted=accepted, prepared=True), accepted)
                 self.assertFalse(private.exists())
                 if accepted:
                     loader.assert_called_once_with('ci-nearby-screenshots')
@@ -53,7 +130,7 @@ class FixedBrowserSummaryTests(unittest.TestCase):
             exporter.export_initial_screenshots.return_value = True
             with mock.patch.object(summary.nearby, 'module', return_value=exporter), \
                     mock.patch.object(summary.shutil, 'rmtree', side_effect=OSError('synthetic')):
-                self.assertFalse(summary.initial_illustrations(root, accepted=True))
+                self.assertFalse(summary.initial_illustrations(root, accepted=True, prepared=True))
 
     def test_initial_illustrations_failed_export_is_optional_and_cleans_private_input(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,7 +140,7 @@ class FixedBrowserSummaryTests(unittest.TestCase):
             exporter = mock.Mock()
             exporter.export_initial_screenshots.return_value = False
             with mock.patch.object(summary.nearby, 'module', return_value=exporter):
-                self.assertFalse(summary.initial_illustrations(root, accepted=True))
+                self.assertFalse(summary.initial_illustrations(root, accepted=True, prepared=True))
             self.assertFalse(private.exists())
 
     def test_initial_illustrations_symlink_does_not_remove_target(self):
@@ -77,7 +154,7 @@ class FixedBrowserSummaryTests(unittest.TestCase):
                 private.symlink_to(target, target_is_directory=True)
             except OSError:
                 self.skipTest('symlink creation unavailable')
-            self.assertFalse(summary.initial_illustrations(root, accepted=True))
+            self.assertFalse(summary.initial_illustrations(root, accepted=True, prepared=True))
             self.assertFalse(private.is_symlink())
             self.assertEqual((target / 'preserved').read_text(), 'synthetic')
 

@@ -284,6 +284,12 @@ class FullProofTests(unittest.TestCase):
                             (b' || summary_status=$?', b' || true'),
                             (b'exit "$summary_status"', b'exit 0'),
                             (b'if [ "$status" -ne 0 ]; then exit "$status"; fi', b'true')]
+            if test == 'TestNearbySetupTwoProcessBrowser':
+                changes += [(b'export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=0', b'true'),
+                            (b'mkdir -m 700 "$SOBA_SETUP_BROWSER_SCREENSHOTS"', b'mkdir -p -m 700 "$SOBA_SETUP_BROWSER_SCREENSHOTS"'),
+                            (b'mkdir -m 700 "$SOBA_SETUP_BROWSER_SCREENSHOTS"', b'mkdir -m 755 "$SOBA_SETUP_BROWSER_SCREENSHOTS"'),
+                            (b'export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=1', b'true'),
+                            (b'unset SOBA_SETUP_BROWSER_SCREENSHOTS', b'true')]
             mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1)]
             moved = original.replace(block, b'', 1)
             wrong_job = b'  native:\n' if 'actual browser' in gate else b'  browser:\n'
