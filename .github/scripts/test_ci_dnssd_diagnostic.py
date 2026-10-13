@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -27,7 +28,9 @@ def record(scope, status='verified', **changes):
     if scope == gate.LEGACY_SCOPE:
         value = {'scope': scope, 'status': status,
                  'reason': 'native_legacy_serialization_observed' if status == 'verified' else 'reply_deadline',
-                 'failureStage': 'none', 'failureKind': 'none',
+                 'failureStage': 'none', 'failureKind': 'none', 'sendPrimitive': 'native_c_sendto',
+                 'socketReadback': {key: 'matched' for key in gate.READBACK_KEYS} if status == 'verified' else None,
+                 'routeLookup': dict(status='observed', **{key: key in {'destinationMatched', 'interfaceMatched', 'up', 'multicast', 'scoped', 'ownerJoined'} for key in gate.ROUTE_FLAGS}) if status == 'verified' else None,
                  'receivePath': 'selected_interface' if status == 'verified' else 'none',
                  'receiveCounters': counters(status == 'verified'),
                  **{flag: status == 'verified' and flag in gate.LEGACY_PROOF_FLAGS for flag in gate.LEGACY_FLAGS}}
@@ -49,7 +52,7 @@ def events(records):
         base = {'Package': gate.PACKAGE, 'Test': name}
         terminal = {'verified': 'pass', 'unavailable': 'skip', 'not_run': 'skip', 'failed': 'fail'}[value['status']]
         failed |= terminal == 'fail'
-        rows += [dict(base, Action='run'), dict(base, Action='output', Output=(gate.LEGACY_MARKER if scope == gate.LEGACY_SCOPE else gate.MARKER) + json.dumps(value)),
+        rows += [dict(base, Action='run'), dict(base, Action='output', Output=(gate.LEGACY_MARKER if scope == gate.LEGACY_SCOPE else gate.MARKER) + json.dumps(value) + '\n'),
                  dict(base, Action=terminal)]
     rows.append({'Action': 'fail' if failed else 'pass', 'Package': gate.PACKAGE})
     return rows
@@ -127,6 +130,188 @@ class DNSSDDiagnosticTests(unittest.TestCase):
         got, accepted = gate.test_events(raw(events(failed)), 1)
         self.assertEqual(got, failed)
         self.assertFalse(accepted)
+
+    def test_fragmented_markers_preserve_owner_schema_and_byte_bounds(self):
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        original = events(records)
+        for split in (1, len(gate.LEGACY_MARKER) - 1, 1024):
+            rows = copy.deepcopy(original)
+            target = next(i for i, row in enumerate(rows) if row.get('Test') == 'TestDNSServiceLegacySerializationCapability' and row['Action'] == 'output')
+            event = rows[target]
+            text = event['Output']
+            pieces = [text[:split], text[split:]]
+            rows[target:target + 1] = [dict(event, Output=piece) for piece in pieces]
+            self.assertEqual(gate.test_events(raw(rows), 0), (records, True))
+        target = next(i for i, row in enumerate(original) if row.get('Test') == 'TestDNSServiceLegacySerializationCapability' and row['Action'] == 'output')
+        event = original[target]
+        prefix, suffix = event['Output'][:10], event['Output'][10:]
+        for violation in ('owner-switch', 'package-switch', 'terminal', 'run', 'unfinished', 'duplicate', 'oversize', 'utf8-size', 'schema'):
+            rows = copy.deepcopy(original)
+            chunks = [dict(event, Output=prefix), dict(event, Output=suffix)]
+            if violation == 'owner-switch': chunks[1]['Test'] = 'TestDNSServiceLocalOnlyCapability'
+            elif violation == 'package-switch': chunks[1].pop('Test')
+            elif violation in ('terminal', 'run'):
+                chunks.insert(1, dict(event, Action='pass' if violation == 'terminal' else 'run', Output=''))
+            elif violation == 'unfinished': chunks[-1]['Output'] = suffix.rstrip('\n')
+            elif violation == 'duplicate': chunks.append(copy.deepcopy(event))
+            elif violation == 'oversize': chunks = [dict(event, Output='x' * gate.MAX_OUTPUT_LINE_BYTES), dict(event, Output='\n')]
+            elif violation == 'utf8-size': chunks = [dict(event, Output='é' * (gate.MAX_OUTPUT_LINE_BYTES // 2)), dict(event, Output='\n')]
+            else: chunks[-1]['Output'] = suffix.replace('native_c_sendto', 'unapproved_primitive')
+            rows[target:target + 1] = chunks
+            with self.subTest(violation=violation), self.assertRaises(ValueError):
+                gate.test_events(raw(rows), 0)
+        # A final fragment also fails without a following terminal event.
+        with self.assertRaises(ValueError):
+            gate.test_events(raw(original[:target] + [dict(event, Output=prefix)]), 0)
+        for text in ('x' * (gate.MAX_OUTPUT_LINE_BYTES - 1) + '\n', 'é' * ((gate.MAX_OUTPUT_LINE_BYTES - 2) // 2) + 'x\n'):
+            rows = copy.deepcopy(original)
+            rows.insert(target, dict(event, Output=text))
+            self.assertTrue(gate.test_events(raw(rows), 0)[1])
+
+    def test_pinned_converter_fragments_complete_logged_receipt(self):
+        # Opt-in runs the installed pinned converter only, never a Go test or
+        # native socket. CI without that explicit tool path keeps pure tests.
+        tool = os.environ.get('SOBALINK_TEST2JSON_GO')
+        if not tool:
+            self.skipTest('pinned converter path not selected')
+        env = dict(os.environ, GOTOOLCHAIN='local', GOPROXY='off', GOSUMDB='off')
+        version = subprocess.run([tool, 'env', 'GOVERSION'], capture_output=True, check=True, timeout=10, env=env).stdout.strip()
+        self.assertEqual(version, b'go1.27.1')
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        good = record(gate.LEGACY_SCOPE)
+        records[gate.LEGACY_SCOPE] = record(gate.LEGACY_SCOPE, 'unavailable',
+            reason='legacy_send_unavailable', apiRecordsReady=True, nativeSendAttempted=True, ownersJoined=True,
+            failureStage='legacy_send', failureKind='host_unreachable',
+            socketReadback=good['socketReadback'], routeLookup=good['routeLookup'])
+        lines = []
+        for name, scope in gate.CASES.items():
+            value = records[scope]
+            marker = gate.LEGACY_MARKER if scope == gate.LEGACY_SCOPE else gate.MARKER
+            lines += ['=== RUN   ' + name, '    dnssd_legacy_native_test.go:31: ' + marker + json.dumps(value, separators=(',', ':')),
+                      ('--- SKIP: ' if value['status'] == 'unavailable' else '--- PASS: ') + name + ' (0.00s)']
+        lines += ['PASS']
+        converted = subprocess.run([tool, 'tool', 'test2json', '-p', gate.PACKAGE],
+            input=('\n'.join(lines) + '\n').encode(), capture_output=True, check=True, timeout=10, env=env).stdout
+        chunks = [json.loads(line) for line in converted.splitlines()]
+        marker_chunk = next(row['Output'] for row in chunks if gate.LEGACY_MARKER in row.get('Output', ''))
+        self.assertEqual(len(marker_chunk.encode()), 1024)
+        self.assertFalse(marker_chunk.endswith('\n'))
+        self.assertEqual(gate.test_events(converted, 0), (records, True))
+        observed = gate.collector_observation(('\n'.join(lines) + '\n').encode(), b'', 'completed', 0, converted)
+        self.assertEqual(observed['eventScanStatus'], 'scanned')
+        self.assertEqual(observed['rawStreams']['stdout']['markerTokenCounts'], {'standard': 4, 'legacy': 1})
+        self.assertTrue(all(count == 1 for count in observed['completeMarkerLineCounts'].values()))
+        self.assertEqual(observed['incompleteMarkerLines'], 0)
+
+    def test_collector_fixed_counts_do_not_replace_acceptance(self):
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        rows = events(records)
+        source = b''.join(b'\x16=== RUN   ' + name.encode() + b'\n' for name in gate.CASES)
+        source += b''.join(b'--- PASS: ' + name.encode() + b' (0.00s)\n' for name in gate.CASES)
+        source += gate.MARKER.encode() + b'synthetic-private\n\x16PASS\n'
+        data = raw(rows)
+        observed = gate.collector_observation(source, source, 'completed', 0, data, b'synthetic-private')
+        self.assertEqual(observed['nativeStdoutBytes'], len(source))
+        self.assertEqual(observed['nativeStderrBytes'], len(source))
+        self.assertEqual(observed['rawStreams']['stdout'], observed['rawStreams']['stderr'])
+        self.assertEqual(observed['converterStderrClass'], 'unclassified')
+        self.assertEqual(observed['converterStdoutBytes'], len(data))
+        self.assertEqual(observed['converterState'], 'completed')
+        self.assertEqual(observed['converterExitCode'], 0)
+        self.assertEqual(observed['eventScanStatus'], 'scanned')
+        self.assertEqual(observed['eventCount'], 17)
+        self.assertEqual(observed['outputEventCount'], 5)
+        self.assertTrue(observed['rawStreams']['stdout']['passTokenSeen'])
+        self.assertFalse(observed['rawStreams']['stdout']['noTestsTokenSeen'])
+        self.assertTrue(all(count == 1 for count in observed['rawStreams']['stdout']['runTokenCounts'].values()))
+        self.assertEqual(observed['packageLifecycleCounts'], {'start': 1, 'pass': 1, 'skip': 0, 'fail': 0, 'other': 0})
+        for name in gate.CASES:
+            self.assertEqual(observed['rawStreams']['stdout']['terminalTokenCounts'][name], {'pass': 1, 'skip': 0, 'fail': 0})
+            self.assertEqual(observed['testLifecycleCounts'][name], {'run': 1, 'pass': 1, 'skip': 0, 'fail': 0, 'other': 0})
+            self.assertEqual(observed['completeMarkerLineCounts'][name], 1)
+        self.assertEqual(observed['acceptanceStatus'], 'not_run')
+        self.assertNotIn('synthetic-private', json.dumps(observed))
+        self.assertEqual(gate.test_events(data, 0), (records, True))
+        # Explanatory counts can stay positive when the independent validator
+        # rejects the JSON receipt. No scanner result is a capability proof.
+        rows[2]['Output'] = gate.MARKER + 'synthetic-private\n'
+        self.assertEqual(gate.collector_observation(b'', b'', 'completed', 0, raw(rows))['completeMarkerLineCounts'][rows[2]['Test']], 1)
+        with self.assertRaises(ValueError):
+            gate.test_events(raw(rows), 0)
+
+    def test_collector_fragments_require_complete_same_owner_lines(self):
+        name, other = list(gate.CASES)[:2]
+        base = {'Action': 'output', 'Package': gate.PACKAGE, 'Test': name}
+        for boundary in ('complete', 'eof', 'owner', 'lifecycle'):
+            rows = [dict(base, Output=gate.MARKER[:5]), dict(base, Output=gate.MARKER[5:] + 'synthetic-private')]
+            if boundary == 'complete':
+                rows.append(dict(base, Output='\n'))
+            elif boundary == 'owner':
+                rows.append(dict(base, Test=other, Output='\n'))
+            elif boundary == 'lifecycle':
+                rows.append(dict(base, Action='pass'))
+            observed = gate.collector_observation(gate.MARKER.encode(), b'', 'completed', 0, raw(rows))
+            self.assertEqual(observed['rawStreams']['stdout']['markerTokenCounts']['standard'], 1)
+            self.assertEqual(observed['rawStreams']['stdout']['completeMarkerLineCounts']['standard'], 0)
+            self.assertEqual(observed['completeMarkerLineCounts'][name], int(boundary == 'complete'))
+            self.assertEqual(observed['incompleteMarkerLines'], int(boundary != 'complete'))
+            self.assertEqual(observed['eventScanStatus'], 'scanned' if boundary == 'complete' else 'incomplete_lines')
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+
+    def test_collector_preserves_converter_failure_and_no_test_evidence(self):
+        source = b'testing: warning: no tests to run\nPASS\n'
+        for state, code in (('not_run', None), ('timeout', -9), ('output_limit', -9),
+                            ('launch_failed', None), ('capture_failed', None), ('nonzero', 2)):
+            observed = gate.collector_observation(source, b'', state, code, b'synthetic-private', b'synthetic-private')
+            self.assertEqual((observed['converterState'], observed['converterExitCode']), (state, code))
+            self.assertEqual(observed['eventScanStatus'], 'not_run')
+            self.assertEqual(observed['eventCount'], 0)
+            self.assertEqual(observed['acceptanceStatus'], 'not_run')
+            self.assertTrue(observed['rawStreams']['stdout']['noTestsTokenSeen'])
+            self.assertTrue(observed['rawStreams']['stdout']['passTokenSeen'])
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+        for error, category in ((b'', 'empty'), (b'usage: go tool test2json synthetic-private', 'usage'),
+                (b'go: synthetic-private', 'go_tool_error'), (b'panic: synthetic-private', 'panic'),
+                (b'synthetic-private', 'unclassified')):
+            observed = gate.collector_observation(b'', b'', 'nonzero', 2, error=error)
+            self.assertEqual(observed['converterStderrClass'], category)
+            self.assertEqual(observed['converterStderrBytes'], len(error))
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+        observed = gate.collector_observation(b'', b'', 'completed', 0)
+        self.assertEqual(observed['eventScanStatus'], 'scanned')
+        self.assertEqual(observed['nativeStdoutBytes'], 0)
+        self.assertEqual(observed['eventCount'], 0)
+        self.assertEqual(gate.test_events(b'', 0), ({scope: None for scope in gate.CASES.values()}, False))
+
+    def test_collector_strict_event_inventory_and_bounded_counts(self):
+        base = {'Action': 'output', 'Package': gate.PACKAGE, 'Test': next(iter(gate.CASES)), 'Output': 'synthetic-private\n'}
+        for data, status in ((b'synthetic-private', 'invalid_event'), (b'\xff', 'invalid_event'),
+                (b'[' * 1500 + b']' * 1500, 'invalid_event'),
+                (b'{"Action":"start","Action":"pass","Package":"synthetic-private"}', 'invalid_event'),
+                (raw([dict(base, Test='synthetic-private')]), 'unexpected_inventory'),
+                (raw([dict(base, Package='synthetic-private')]), 'unexpected_inventory'),
+                (raw([dict(base, Output=3)]), 'invalid_event')):
+            observed = gate.collector_observation(b'', b'', 'completed', 0, data)
+            self.assertEqual(observed['eventScanStatus'], status)
+            self.assertNotIn('synthetic-private', json.dumps(observed))
+        parser, load = gate.module('ci-go-test'), gate.module
+        with patch.object(parser, 'parse_event', side_effect=RuntimeError('synthetic-private')), \
+                patch.object(gate, 'module', side_effect=lambda name: parser if name == 'ci-go-test' else load(name)):
+            observed = gate.collector_observation(b'', b'', 'completed', 0, raw([base]))
+        self.assertEqual(observed['eventScanStatus'], 'scanner_failed')
+        self.assertNotIn('synthetic-private', json.dumps(observed))
+        source = (b'=== RUN   ' + base['Test'].encode() + b'\n') * 17 + (gate.MARKER.encode() + b'\n') * 17
+        observed = gate.collector_observation(source, b'', 'completed', 0,
+            raw([dict(base, Output=gate.MARKER + '\n')] * 17))
+        self.assertTrue(observed['countsCapped'])
+        self.assertEqual(observed['rawStreams']['stdout']['runTokenCounts'][base['Test']], 16)
+        self.assertEqual(observed['rawStreams']['stdout']['markerTokenCounts']['standard'], 16)
+        self.assertEqual(observed['completeMarkerLineCounts'][base['Test']], 16)
+        for kwargs in ({'stdout': b'x' * (64 * 1024 + 1)}, {'stderr': b'x' * (64 * 1024 + 1)},
+                       {'data': b'x' * (128 * 1024 + 1)}, {'error': b'x' * (128 * 1024 + 1)},
+                       {'stdout': 'synthetic-private'}, {'code': True}, {'code': 256}, {'state': 'synthetic-private'}):
+            with self.assertRaises(ValueError):
+                gate.collector_observation(**dict({'stdout': b'', 'stderr': b''}, **kwargs))
 
     def test_receive_counters_are_bounded_closed_and_retained_on_failure(self):
         observed = {'receivedPackets': 2, 'receivedBytes': 99, 'metadataAccepted': 1,
@@ -211,15 +396,18 @@ class DNSSDDiagnosticTests(unittest.TestCase):
             if reason == 'native_api_unavailable':
                 stage, kind = 'callback', 'name_conflict'
             elif reason.startswith('legacy_'):
-                stage, kind = reason.removesuffix('_unavailable'), 'unavailable'
+                stage = reason.removesuffix('_unavailable')
+                kind = 'other' if stage in {'legacy_deadline', 'legacy_send'} else 'unavailable'
             value = record(gate.LEGACY_SCOPE, 'unavailable', reason=reason,
-                           failureStage=stage, failureKind=kind)
+                           failureStage=stage, failureKind=kind,
+                           apiRecordsReady=stage == 'legacy_readback',
+                           socketReadback={key: 'unavailable' for key in gate.READBACK_KEYS} if stage == 'legacy_readback' else None)
             self.assertEqual(gate.legacy_capability(value), value)
             current = dict(records, **{gate.LEGACY_SCOPE: value})
             got, accepted = gate.test_events(raw(events(current)), 0)
             self.assertTrue(accepted)
             self.assertEqual(got[gate.LEGACY_SCOPE], value)
-        for reason in gate.LEGACY_FAILED:
+        for reason in gate.LEGACY_FAILED - {'socket_readback_mismatch'}:
             value = record(gate.LEGACY_SCOPE, 'failed', reason=reason,
                            apiRecordsReady=True, failureStage='legacy_send', failureKind='short_payload')
             self.assertEqual(gate.legacy_capability(value), value)
@@ -227,7 +415,8 @@ class DNSSDDiagnosticTests(unittest.TestCase):
             got, accepted = gate.test_events(raw(events(current)), 1)
             self.assertFalse(accepted)
             self.assertEqual(got[gate.LEGACY_SCOPE], value)
-        partial = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True, oneQuerySent=True,
+        partial = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True, oneQuerySent=True, nativeSendAttempted=True,
+                         socketReadback=record(gate.LEGACY_SCOPE)['socketReadback'], routeLookup=record(gate.LEGACY_SCOPE)['routeLookup'],
                          receivePath='local_loopback', receiveCounters=dict(counters(True), matchingRecordKinds=3))
         self.assertEqual(gate.legacy_capability(partial), partial)
         for changes in ({'reason': 'deadline'}, {'failureStage': 'legacy_send', 'failureKind': 'short_payload'},
@@ -244,6 +433,56 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 parse(record(scope, 'unavailable', receiveCounters=None))
             with self.assertRaises(ValueError):
                 parse(record(scope, 'verified', receiveCounters=dict(counters(True), matchingRecordKinds=7)))
+
+    def test_legacy_deadline_and_send_error_classes_are_separate(self):
+        for stage, kinds in gate.LEGACY_STAGE_KINDS.items():
+            for kind in kinds - {'mismatch'}:
+                value = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True,
+                               reason=stage + '_unavailable', failureStage=stage, failureKind=kind,
+                               socketReadback={key: 'unavailable' for key in gate.READBACK_KEYS} if stage == 'legacy_readback' else None)
+                self.assertEqual(gate.legacy_capability(value), value)
+                self.assertFalse(value['oneQuerySent'])
+                self.assertFalse(value['legacySerializationVerified'])
+                self.assertFalse(value['rawPacketVerified'])
+                for bad_kind in (gate.KINDS | gate.LEGACY_SEND_KINDS) - kinds:
+                    with self.subTest(stage=stage, kind=bad_kind), self.assertRaises(ValueError):
+                        gate.legacy_capability(dict(value, failureKind=bad_kind))
+        # Old collapsed send classification must not pass as a new exact-source
+        # result; API callbacks cannot acquire socket-only errno categories.
+        for stage, kind in (('legacy_send', 'unavailable'), ('legacy_deadline', 'short_payload'),
+                            ('query', 'source_unavailable'), ('query', 'other')):
+            with self.subTest(stage=stage, kind=kind), self.assertRaises(ValueError):
+                gate.legacy_capability(record(gate.LEGACY_SCOPE, 'unavailable',
+                    reason='native_api_unavailable' if stage == 'query' else stage + '_unavailable',
+                    apiRecordsReady=True, failureStage=stage, failureKind=kind))
+
+    def test_native_readback_route_and_send_boundaries(self):
+        good = record(gate.LEGACY_SCOPE)
+        for key in gate.READBACK_KEYS:
+            for state in ('unavailable', 'mismatch'):
+                changed = dict(good, socketReadback=dict(good['socketReadback'], **{key: state}))
+                if key == 'multicastAddress' and state == 'mismatch':
+                    self.assertEqual(gate.legacy_capability(changed), changed)
+                else:
+                    with self.assertRaises(ValueError): gate.legacy_capability(changed)
+        for value in (dict(good['socketReadback'], localAddress='synthetic-private'), {}, [], {'boundEndpoint': 1}):
+            with self.assertRaises(ValueError): gate.socket_readback(value)
+        mismatch = record(gate.LEGACY_SCOPE, 'failed', reason='socket_readback_mismatch', apiRecordsReady=True,
+                          failureStage='legacy_readback', failureKind='mismatch',
+                          socketReadback=dict(good['socketReadback'], nonblocking='mismatch'))
+        self.assertEqual(gate.legacy_capability(mismatch), mismatch)
+        for status in gate.ROUTE_STATUSES - {'observed'}:
+            route = dict(status=status, **{key: key == 'ownerJoined' for key in gate.ROUTE_FLAGS})
+            # A missing ordinary route is contextual; it cannot invalidate the
+            # independently verified selected-interface multicast socket.
+            value = dict(good, routeLookup=route)
+            self.assertEqual(gate.legacy_capability(value), value)
+        for route in (None, dict(good['routeLookup'], ownerJoined=False),
+                      dict(good['routeLookup'], gateway='synthetic-private')):
+            with self.assertRaises(ValueError): gate.legacy_capability(dict(good, routeLookup=route))
+        for changes in ({'sendPrimitive':'go_sendto'}, {'nativeSendAttempted':False},
+                        {'socketReadback':None}, {'routeLookup':None}):
+            with self.assertRaises(ValueError): gate.legacy_capability(dict(good, **changes))
 
     def test_marker_types_and_lifecycles_cannot_be_cross_wired(self):
         records = {scope: record(scope) for scope in gate.CASES.values()}
@@ -300,7 +539,8 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                      'sdk-version': 'sdk_version_format', 'sdk-build': 'sdk_build_format',
                      'sdk-files': 'sdk_file_missing', 'source-policy': 'source_policy_missing',
                      'clang-discovery': 'command_failed'}
-        for failure in (None, 'c-compile', 'c-link', 'go-compile', 'unavailable', 'runtime-failed', *preflight):
+        for failure in (None, 'c-compile', 'c-link', 'go-compile', 'unavailable', 'runtime-failed',
+                        'converter-timeout', 'converter-empty', 'converter-invalid', *preflight):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 provider = root / 'internal/nearby/provider_darwin.go'
@@ -320,8 +560,20 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     'repository': {'full_name': 'webkaz-labs/sobalink', 'private': False}}))
                 native = gate.module('ci-nearby-native')
                 real_module = gate.module
+                terminal = real_module('ci-dnssd-terminal')
+                def terminal_capture(binary, *, env, private):
+                    state, code, out, err = native.capture(terminal.native_command(binary), env=env, timeout=75, limit=native.RUNTIME_BYTES)
+                    launch = terminal.empty_receipt()
+                    from test_ci_dnssd_terminal import native_observation
+                    launch['nativeOriginObservation'] = native_observation()
+                    launch['nativeOriginVerified'] = True
+                    launch.update(status='observed', reason='observed', nativeProcessStatus=state, nativeExitCode=code, **{key: True for key in (
+                        'availabilityVerified', 'openCompleted', 'markerVerified', 'markerOwnerJoined',
+                        'terminalAncestorObserved', 'nativeStartObserved', 'nativeOwnerJoined', 'supervisorTerminationObserved')})
+                    return state, code, out, err, terminal.receipt(launch)
+                terminal.capture = terminal_capture
                 def module(name):
-                    return native if name == 'ci-nearby-native' else real_module(name)
+                    return native if name == 'ci-nearby-native' else terminal if name == 'ci-dnssd-terminal' else real_module(name)
                 def checked(command, **kwargs):
                     if command == ['git', 'rev-parse', 'HEAD']: return sha.encode()
                     if command == ['git', 'rev-parse', 'HEAD^{tree}']: return tree.encode()
@@ -350,6 +602,12 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                             return 'nonzero', 1, b'', b'synthetic-private: too few arguments'
                         Path(command[command.index('-o') + 1]).write_bytes(b'synthetic object')
                     elif command[:3] == ['go', 'tool', 'test2json']:
+                        if failure == 'converter-timeout':
+                            return 'timeout', -9, b'', b'synthetic-private'
+                        if failure == 'converter-empty':
+                            return 'completed', 0, b'', b''
+                        if failure == 'converter-invalid':
+                            return 'completed', 0, b'synthetic-private', b''
                         return 'completed', 0, raw(events(records)), b'synthetic-private'
                     else:
                         return ('nonzero', 1, b'synthetic-private', b'') if failure == 'runtime-failed' else ('completed', 0, b'synthetic-private', b'')
@@ -397,7 +655,19 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     self.assertEqual(provenance['stage'], failure)
                     self.assertEqual(result['compileFailureKind'], 'argument_count')
                 else:
-                    self.assertEqual(result['capabilities'], records)
+                    collector = result['collector']
+                    if failure and failure.startswith('converter-'):
+                        self.assertEqual(result['capabilities'], {scope: None for scope in gate.CASES.values()})
+                        self.assertFalse(result['eventsAccepted'])
+                        self.assertFalse(result['diagnosticPassed'])
+                        expected = {'converter-timeout': ('timeout', 'not_run', 'not_run'),
+                                    'converter-empty': ('completed', 'scanned', 'unaccepted'),
+                                    'converter-invalid': ('completed', 'invalid_event', 'validation_failed')}[failure]
+                        self.assertEqual(tuple(collector[key] for key in ('converterState', 'eventScanStatus', 'acceptanceStatus')), expected)
+                    else:
+                        self.assertEqual(result['capabilities'], records)
+                        self.assertEqual(collector['acceptanceStatus'], 'accepted' if failure != 'runtime-failed' else 'unaccepted')
+                    self.assertEqual(collector['nativeStdoutBytes'], len(b'synthetic-private'))
                     self.assertTrue(result['cLinkPassed'])
                     self.assertEqual(provenance['sdkFiles']['libdns_sd.tbd'], 'missing')
                     self.assertEqual(provenance['sdkFiles']['libSystem.tbd'], 'available')
@@ -410,6 +680,11 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     self.assertEqual(runtime[0][1:], ['-test.v=test2json', '-test.run=' + gate.SELECTOR, '-test.count=1', '-test.timeout=60s'])
                     self.assertEqual(runtime[1]['timeout'], 75)
                     self.assertTrue(all(runtime[1]['env'][key] == '1' for key in gate.OPT_INS))
+                    converter = next((command, kwargs) for command, kwargs in commands if command[:3] == ['go', 'tool', 'test2json'])
+                    self.assertEqual(converter[0], ['go', 'tool', 'test2json', '-p', gate.PACKAGE])
+                    self.assertEqual(converter[1]['timeout'], 15)
+                    self.assertEqual(converter[1]['limit'], 2 * native.RUNTIME_BYTES)
+                    self.assertEqual(converter[1]['stdin'], b'synthetic-private')
 
     def test_compiler_location_is_first_error_in_exact_tracked_bridge_only(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -501,7 +776,8 @@ class DNSSDDiagnosticTests(unittest.TestCase):
             self.assertNotIn(forbidden, artifact)
         source = SCRIPT.read_text()
         self.assertIn("native.identities('darwin-arm64', versions)", source)
-        self.assertIn('before != native.source_inventory()', source)
+        self.assertIn('before != inventory()', source)
+        self.assertIn('inventory = required.source_inventory if required else native.source_inventory', source)
         self.assertIn("'-race', '-p=1', '-c'", source)
         self.assertNotIn('str(exc)', source)
 

@@ -13,3 +13,13 @@ func observeForegroundWeb(url string) {
 		observeForegroundWebURL(url)
 	}
 }
+
+// Installed once by the explicitly opted-in fixture before it launches children.
+// This reports an actual completed parent wait, never a readiness observation.
+var observeBackgroundProcessExit func(int, *os.ProcessState, error)
+
+func observeBackgroundExit(pid int, state *os.ProcessState, err error) {
+	if os.Getenv("SOBA_PRODUCT_ACTIVATION_ACCEPTANCE") == "1" && observeBackgroundProcessExit != nil {
+		observeBackgroundProcessExit(pid, state, err)
+	}
+}

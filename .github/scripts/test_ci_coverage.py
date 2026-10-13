@@ -35,7 +35,9 @@ def jobs(scope="full"):
             if target in coverage.MACOS_NEARBY_TARGETS:
                 steps += coverage.MACOS_NEARBY_STEPS
             if target == "windows-amd64":
-                steps += ("Verify Windows receive-retirement directory barriers",) + coverage.WINDOWS_PACKAGE_STEPS
+                steps += ("Verify Windows receive-retirement directory barriers",)
+            if target in coverage.NATIVE_PACKAGE_TARGETS:
+                steps += coverage.NATIVE_PACKAGE_STEPS
             result.append(job(name, steps))
             if scope == "native-short":
                 for item in result[-1]["steps"]:
@@ -58,12 +60,11 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
-    def test_windows_package_execution_and_receipt_are_required_only_on_windows(self):
-        self.assertEqual(coverage.WINDOWS_PACKAGE_STEPS, ('Verify isolated Windows whole-package race coverage',
-                                                        'Preserve Windows whole-package race receipt'))
+    def test_native_package_execution_and_receipt_are_required_on_both_targets(self):
+        self.assertEqual(coverage.NATIVE_PACKAGE_STEPS, ('Collect required whole-Core race evidence', 'Verify remaining native package race coverage', 'Preserve required native package proof'))
         for scope in ('native-short', 'full'):
             coverage.evaluate_jobs(jobs(scope), scope)
-            for gate in coverage.WINDOWS_PACKAGE_STEPS:
+            for gate in coverage.NATIVE_PACKAGE_STEPS:
                 for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
                     data = jobs(scope)
                     selected = next(j for j in data if j['name'] == coverage.TARGETS['windows-amd64'])
@@ -85,7 +86,7 @@ class ActualCoverageTests(unittest.TestCase):
 
     def test_macos_discovery_is_mandatory_only_on_qualified_native_target(self):
         self.assertEqual(coverage.MACOS_NEARBY_TARGETS, ('darwin-arm64',))
-        self.assertEqual(coverage.MACOS_NEARBY_STEPS, ('Verify macOS selected-interface discovery without skips',))
+        self.assertEqual(coverage.MACOS_NEARBY_STEPS, ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof'))
         gate = coverage.MACOS_NEARBY_STEPS[0]
         self.assertNotIn(gate, coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
                          + coverage.LINUX_NEARBY_STEPS)
@@ -457,12 +458,21 @@ class PlanAndReceiptTests(unittest.TestCase):
         with patch.object(coverage, "read_plan", return_value=plan("docs")), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "classify", return_value=plan("docs")), patch.object(coverage, "api", side_effect=AssertionError("must not query old runs")):
             self.assertEqual(coverage.verified_plan("plan"), plan("docs"))
 
+    def test_missing_macos_artifact_blocks_full_and_short_aggregate(self):
+        for scope in ('full', 'native-short'):
+            with tempfile.TemporaryDirectory() as temporary:
+                output = pathlib.Path(temporary) / 'receipt.json'
+                with patch.object(coverage, 'verified_plan', return_value=plan(scope)), patch.object(coverage, 'current_jobs', return_value=jobs(scope)), patch.object(coverage, 'audit_macos_discovery', side_effect=ValueError('missing required artifact')) as audit:
+                    with self.assertRaises(ValueError): coverage.finalize('plan', output)
+                    audit.assert_called_once_with()
+                self.assertFalse(output.exists())
+
     def test_receipts_distinguish_not_run_from_success(self):
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), tempfile.TemporaryDirectory() as directory:
                 output = pathlib.Path(directory) / "receipt.json"
                 env = {"GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_STEP_SUMMARY": str(pathlib.Path(directory) / "summary")}
-                with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan(scope)), patch.object(coverage, "current_jobs", return_value=jobs(scope)), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
+                with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan(scope)), patch.object(coverage, "current_jobs", return_value=jobs(scope)), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY), patch.object(coverage, "audit_macos_discovery", return_value={"synthetic": True}), patch.object(coverage, "audit_native_packages", return_value={"synthetic": True}):
                     coverage.finalize("plan", output)
                 result = json.loads(output.read_text())
                 self.assertEqual(result["schema_version"], 3)
@@ -485,7 +495,7 @@ class PlanAndReceiptTests(unittest.TestCase):
             output = pathlib.Path(directory) / "receipt.json"
             data = jobs() + [job("ci-required", ("Require every check selected for this change",))] + [job(name, steps) for name, steps in coverage.SCHEDULE_ACCEPTANCE.items()]
             env = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1"}
-            with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan("full")), patch.object(coverage, "current_jobs", return_value=data), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
+            with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan("full")), patch.object(coverage, "current_jobs", return_value=data), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY), patch.object(coverage, "audit_macos_discovery", return_value={"synthetic": True}), patch.object(coverage, "audit_native_packages", return_value={"synthetic": True}):
                 coverage.finalize("plan", output, scheduled=True)
                 result = json.loads(output.read_text())
                 self.assertTrue(result["full_native"])

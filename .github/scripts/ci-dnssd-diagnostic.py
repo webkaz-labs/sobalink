@@ -29,6 +29,9 @@ OPT_INS = ('SOBALINK_DNSSD_LOCAL_ONLY', 'SOBALINK_DNSSD_SELECTED_LOOPBACK',
            'SOBALINK_DNSSD_LEGACY_SERIALIZATION')
 MARKER = 'NEARBY_DNSSD_CAPABILITY '
 LEGACY_MARKER = 'NEARBY_DNSSD_LEGACY_CAPABILITY '
+# Go test2json splits Output events at 1024 bytes. Reassemble one bounded
+# logical line, never across a test owner or lifecycle boundary.
+MAX_OUTPUT_LINE_BYTES = 4096
 FLAGS = {'reciprocalRecords', 'reciprocalCandidates', 'withdrawalObserved', 'ownersJoined',
          'rawPacketVerified', 'networkMulticastVerified'}
 KEYS = FLAGS | {'status', 'reason', 'scope', 'failureStage', 'failureKind', 'receiveCounters'}
@@ -36,15 +39,22 @@ COUNTERS = {'receivedPackets', 'receivedBytes', 'metadataAccepted', 'metadataRej
             'decodedPackets', 'decodeRejected', 'rateLimitedPackets', 'matchingRecordKinds'}
 STAGES = {'none', 'allocation', 'unknown', 'create_connection', 'schedule', 'registration', 'query', 'callback', 'admission'}
 KINDS = {'none', 'unavailable', 'permission_denied', 'name_conflict', 'invalid_argument', 'unsupported'}
-LEGACY_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined',
+LEGACY_FLAGS = {'nativeSendAttempted', 'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined',
                 'rawPacketVerified', 'networkMulticastVerified'}
-LEGACY_PROOF_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined'}
-LEGACY_KEYS = LEGACY_FLAGS | {'status', 'reason', 'scope', 'receivePath', 'failureStage', 'failureKind', 'receiveCounters'}
-LEGACY_SOCKET_STAGES = {'legacy_socket', 'legacy_send', 'legacy_receive'}
+LEGACY_PROOF_FLAGS = {'nativeSendAttempted', 'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined'}
+LEGACY_KEYS = LEGACY_FLAGS | {'status', 'reason', 'scope', 'receivePath', 'failureStage', 'failureKind', 'receiveCounters', 'sendPrimitive', 'socketReadback', 'routeLookup'}
+READBACK_KEYS = {'boundEndpoint', 'boundInterface', 'multicastInterface', 'multicastAddress', 'multicastTTL', 'multicastLoopback', 'nonblocking'}
+ROUTE_FLAGS = {'destinationMatched', 'interfaceMatched', 'up', 'multicast', 'scoped', 'reject', 'blackhole', 'ownerJoined'}
+ROUTE_STATUSES = {'observed', 'unavailable', 'timeout', 'output_limit', 'invalid'}
+LEGACY_SOCKET_STAGES = {'legacy_socket', 'legacy_readback', 'legacy_deadline', 'legacy_send', 'legacy_receive'}
+LEGACY_SEND_KINDS = {'invalid_argument', 'source_unavailable', 'network_unreachable',
+    'host_unreachable', 'permission_denied', 'unsupported', 'timeout', 'other', 'short_payload'}
+LEGACY_STAGE_KINDS = {'legacy_readback': {'unavailable', 'mismatch'}, 'legacy_socket': {'unavailable'}, 'legacy_receive': {'unavailable'},
+    'legacy_deadline': LEGACY_SEND_KINDS - {'short_payload'}, 'legacy_send': LEGACY_SEND_KINDS}
 LEGACY_UNAVAILABLE = {'readiness_deadline', 'reply_deadline', 'private_scope_unavailable',
     'loopback_scope_unavailable', 'selected_binding_changed', 'native_api_unavailable',
-    'legacy_socket_unavailable', 'legacy_send_unavailable', 'legacy_receive_unavailable'}
-LEGACY_FAILED = {'fixture_unavailable', 'provider_invariant', 'receive_budget',
+    'legacy_socket_unavailable', 'legacy_readback_unavailable', 'legacy_deadline_unavailable', 'legacy_send_unavailable', 'legacy_receive_unavailable'}
+LEGACY_FAILED = {'socket_readback_mismatch', 'fixture_unavailable', 'provider_invariant', 'receive_budget',
                  'cleanup_uncertain', 'owners_not_joined', 'owners_missing'}
 UNAVAILABLE = {'deadline', 'loopback_scope_unavailable', 'private_scope_unavailable', 'native_api_unavailable',
                'selected_binding_changed', 'raw_receiver_unavailable', 'raw_receive_unavailable'}
@@ -83,12 +93,16 @@ class PreflightError(ValueError):
 
 POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/ci-diagnostic.py',
     '.github/scripts/ci-dnssd-diagnostic.py', '.github/scripts/test_ci_dnssd_diagnostic.py',
+    '.github/scripts/ci-dnssd-terminal.py', '.github/scripts/test_ci_dnssd_terminal.py',
+    '.github/scripts/test_ci_dnssd_terminal_origin.py', '.github/scripts/test_ci_dnssd_terminal_marker.py',
     '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-diagnostic.py',
     '.github/scripts/ci-go-test.py', 'internal/nearby/provider_darwin.go',
     'internal/nearby/dnssd_bridge_darwin.c', 'internal/nearby/dnssd_bridge_darwin.h',
     'internal/nearby/dnssd_native_acceptance_test.go', 'internal/nearby/dnssd_raw_receive_test.go',
     'internal/nearby/dnssd_capability_test.go', 'internal/nearby/dnssd_wire_evidence_test.go',
-    'internal/nearby/dnssd_legacy_native_test.go',
+    'internal/nearby/dnssd_legacy_native_test.go', 'internal/nearby/dnssd_legacy_send_unix_test.go',
+    'internal/nearby/dnssd_socket_diagnostic_test.go', 'internal/nearby/dnssd_socket_native_test.go',
+    'internal/nearby/dnssdprobe/probe_darwin.go',
     'go.mod', 'go.sum')
 
 
@@ -161,22 +175,58 @@ def capability(value, scope):
     return {key: counts if key == 'receiveCounters' else value[key] for key in sorted(KEYS)}
 
 
+def socket_readback(value):
+    if value is None:
+        return None
+    if type(value) is not dict or set(value) != READBACK_KEYS or any(type(item) is not str or item not in {'matched', 'mismatch', 'unavailable'} for item in value.values()):
+        raise ValueError('invalid closed socket readback')
+    return {key: value[key] for key in sorted(READBACK_KEYS)}
+
+
+def readback_state(value):
+    if value is None or 'unavailable' in value.values():
+        return 'unavailable'
+    return 'matched' if all(value[key] == 'matched' for key in READBACK_KEYS - {'multicastAddress'}) else 'mismatch'
+
+
+def route_lookup(value):
+    if value is None:
+        return None
+    if (type(value) is not dict or set(value) != ROUTE_FLAGS | {'status'}
+            or any(type(value[key]) is not bool for key in ROUTE_FLAGS)
+            or type(value['status']) is not str or value['status'] not in ROUTE_STATUSES
+            or value['status'] != 'observed' and any(value[key] for key in ROUTE_FLAGS - {'ownerJoined'})):
+        raise ValueError('invalid closed route snapshot')
+    return {key: value[key] for key in sorted(value)}
+
+
 def legacy_capability(value):
     # Legacy unicast DNS serialization has a different envelope and admission
     # contract. It cannot enter the four original capability/proof definitions.
     if (type(value) is not dict or set(value) != LEGACY_KEYS
             or any(type(value[key]) is not bool for key in LEGACY_FLAGS)
-            or any(type(value[key]) is not str for key in LEGACY_KEYS - LEGACY_FLAGS - {'receiveCounters'})
+            or any(type(value[key]) is not str for key in LEGACY_KEYS - LEGACY_FLAGS - {'receiveCounters', 'socketReadback', 'routeLookup'})
+            or value['sendPrimitive'] != 'native_c_sendto'
             or value['scope'] != LEGACY_SCOPE or value['receivePath'] not in {'none', 'selected_interface', 'local_loopback'}
             or value['failureStage'] not in STAGES | LEGACY_SOCKET_STAGES
-            or value['failureKind'] not in KINDS | {'short_payload'}
+            or value['failureKind'] not in KINDS | LEGACY_SEND_KINDS | {'mismatch'}
             or value['rawPacketVerified'] or value['networkMulticastVerified']):
         raise ValueError('invalid closed legacy DNS receipt')
     counts = receive_counters(value['receiveCounters'])
+    options = socket_readback(value['socketReadback'])
+    route = route_lookup(value['routeLookup'])
+    if ((options is not None or route is not None) and not value['apiRecordsReady']
+            or value['nativeSendAttempted'] and (not value['apiRecordsReady'] or readback_state(options) != 'matched'
+            or route is None or not route['ownerJoined'])
+            or value['oneQuerySent'] and not value['nativeSendAttempted']
+            or route is not None and not route['ownerJoined'] and value['status'] != 'failed'):
+        raise ValueError('native send escaped verified socket ownership')
     stage, kind, status, reason = (value[key] for key in ('failureStage', 'failureKind', 'status', 'reason'))
     if ((stage == 'none') != (kind == 'none')
+            or stage == 'legacy_readback' and options is None
             or kind == 'short_payload' and stage != 'legacy_send'
-            or stage in LEGACY_SOCKET_STAGES and kind not in {'unavailable', 'short_payload'}
+            or stage in LEGACY_SOCKET_STAGES and kind not in LEGACY_STAGE_KINDS[stage]
+            or stage in STAGES and kind not in KINDS
             or (counts is None) != (status == 'not_run')
             or value['oneQuerySent'] and not value['apiRecordsReady']):
         raise ValueError('inconsistent legacy DNS classification')
@@ -192,7 +242,7 @@ def legacy_capability(value):
             if stage not in STAGES - {'none'}:
                 raise ValueError('missing native API classification')
         elif reason in {item + '_unavailable' for item in LEGACY_SOCKET_STAGES}:
-            if stage != reason.removesuffix('_unavailable'):
+            if stage != reason.removesuffix('_unavailable') or stage == 'legacy_readback' and (kind != 'unavailable' or readback_state(options) != 'unavailable'):
                 raise ValueError('incorrect legacy socket classification')
         elif stage != 'none':
             raise ValueError('unexpected legacy failure classification')
@@ -200,8 +250,10 @@ def legacy_capability(value):
         # Cleanup failure can retain the originating fixed API/socket category.
         if reason not in LEGACY_FAILED:
             raise ValueError('unknown legacy DNS invariant failure')
+        if reason == 'socket_readback_mismatch' and (stage != 'legacy_readback' or kind != 'mismatch' or readback_state(options) != 'mismatch'):
+            raise ValueError('invalid socket mismatch evidence')
     elif status == 'not_run':
-        if (reason != 'opt_in_required' or stage != 'none' or value['receivePath'] != 'none'
+        if (reason != 'opt_in_required' or stage != 'none' or value['receivePath'] != 'none' or options is not None or route is not None
                 or any(value[key] for key in LEGACY_FLAGS)):
             raise ValueError('invalid legacy opt-in receipt')
     else:
@@ -211,7 +263,7 @@ def legacy_capability(value):
     if counts is not None and ((value['receivePath'] != 'none') != (counts['decodedPackets'] > 0)
             or counts['decodedPackets'] > 0 and not value['oneQuerySent']):
         raise ValueError('incomplete legacy receive route')
-    return {key: counts if key == 'receiveCounters' else value[key] for key in sorted(LEGACY_KEYS)}
+    return {key: counts if key == 'receiveCounters' else options if key == 'socketReadback' else route if key == 'routeLookup' else value[key] for key in sorted(LEGACY_KEYS)}
 
 
 def test_events(raw, returncode):
@@ -221,12 +273,30 @@ def test_events(raw, returncode):
     lifecycles = {name: [] for name in CASES}
     markers = {name: [] for name in CASES}
     package, active, order_valid = [], None, True
+    pending, pending_owner, pending_bytes = '', None, 0
+
+    def accept_line(output, name):
+        present = [marker for marker in (MARKER, LEGACY_MARKER) if marker in output]
+        if not present:
+            return
+        expected = LEGACY_MARKER if name == 'TestDNSServiceLegacySerializationCapability' else MARKER
+        if (name not in CASES or present != [expected] or output.count(expected) != 1
+                or active != name or markers[name]):
+            raise ValueError('invalid DNS-SD marker owner or multiplicity')
+        value = shared.parse_json(output.split(expected, 1)[1].strip())
+        markers[name].append(legacy_capability(value) if expected == LEGACY_MARKER
+                             else capability(value, CASES[name]))
+
     for line in raw.splitlines():
         event = parser.parse_event(line)
         name, action = event.get('Test'), event['Action']
         if event.get('Package') != PACKAGE or name is not None and name not in CASES:
             raise ValueError('unexpected executed DNS-SD test')
         if action != 'output':
+            if pending:
+                raise ValueError('unfinished DNS-SD output before lifecycle boundary')
+            if any(marker in event.get('Output', '') for marker in (MARKER, LEGACY_MARKER)):
+                raise ValueError('DNS-SD marker outside output action')
             if name is None:
                 package.append(action)
             else:
@@ -239,16 +309,29 @@ def test_events(raw, returncode):
                     active = None
                 else:
                     order_valid = False
-        output = event.get('Output', '')
-        present = [marker for marker in (MARKER, LEGACY_MARKER) if marker in output]
-        if present:
-            expected = LEGACY_MARKER if name == 'TestDNSServiceLegacySerializationCapability' else MARKER
-            if (action != 'output' or name not in CASES or present != [expected] or output.count(expected) != 1
-                    or active != name):
-                raise ValueError('invalid DNS-SD marker owner')
-            value = shared.parse_json(output.split(expected, 1)[1].strip())
-            markers[name].append(legacy_capability(value) if expected == LEGACY_MARKER
-                                 else capability(value, CASES[name]))
+            continue
+        if pending and name != pending_owner or name is not None and name != active:
+            raise ValueError('DNS-SD output owner changed mid-line')
+        # A single Output event can contain several complete lines or only a
+        # fragment. Count UTF-8 bytes, including the newline, before appending.
+        parts = event['Output'].split('\n')
+        for index, part in enumerate(parts):
+            complete = index < len(parts) - 1
+            fragment = part + ('\n' if complete else '')
+            if not fragment:
+                continue
+            size = len(fragment.encode('utf-8'))
+            if pending_bytes + size > MAX_OUTPUT_LINE_BYTES:
+                raise ValueError('DNS-SD logical output line exceeds bound')
+            if not pending:
+                pending_owner = name
+            pending += fragment
+            pending_bytes += size
+            if complete:
+                accept_line(pending, pending_owner)
+                pending, pending_owner, pending_bytes = '', None, 0
+    if pending:
+        raise ValueError('unfinished DNS-SD output at capture end')
     result, accepted = {}, order_valid and active is None and returncode == 0 and package == ['start', 'pass']
     for name, scope in CASES.items():
         record = markers[name][0] if len(markers[name]) == 1 else None
@@ -256,6 +339,93 @@ def test_events(raw, returncode):
         terminal = {'verified': 'pass', 'unavailable': 'skip'}.get(record['status']) if record else None
         accepted &= terminal is not None and lifecycles[name] == ['run', terminal]
     return result, bool(accepted)
+
+
+def collector_observation(stdout, stderr, state='not_run', code=None, data=b'', error=b''):
+    """Closed explanatory counts only; never used by capability acceptance."""
+    native, parser = module('ci-nearby-native'), module('ci-go-test')
+    if (any(type(value) is not bytes for value in (stdout, stderr, data, error))
+            or max(len(stdout), len(stderr)) > native.RUNTIME_BYTES
+            or max(len(data), len(error)) > 2 * native.RUNTIME_BYTES
+            or state not in native.PROCESS_STATES
+            or code is not None and (type(code) is not int or not -127 <= code <= 255)):
+        raise ValueError('invalid bounded collector observation')
+    result = {'nativeStdoutBytes': len(stdout), 'nativeStderrBytes': len(stderr),
+        'rawStreams': {},
+        'converterState': state, 'converterExitCode': code,
+        'converterStdoutBytes': len(data), 'converterStderrBytes': len(error),
+        'converterStderrClass': ('empty' if not error else 'usage' if error.startswith(b'usage: go tool test2json ')
+            else 'go_tool_error' if error.startswith(b'go: ') else 'panic' if error.startswith(b'panic: ') else 'unclassified'),
+        'eventScanStatus': 'not_run' if state != 'completed' else 'scanned',
+        'eventCount': 0, 'outputEventCount': 0, 'countsCapped': False,
+        'packageLifecycleCounts': {name: 0 for name in ('start', 'pass', 'skip', 'fail', 'other')},
+        'testLifecycleCounts': {name: {action: 0 for action in ('run', 'pass', 'skip', 'fail', 'other')} for name in CASES},
+        'completeMarkerLineCounts': {name: 0 for name in CASES},
+        'incompleteOutputLines': 0, 'incompleteMarkerLines': 0, 'acceptanceStatus': 'not_run'}
+    def bounded(value, maximum=16):
+        if value > maximum:
+            result['countsCapped'] = True
+        return min(value, maximum)
+    for stream, value in (('stdout', stdout), ('stderr', stderr)):
+        observed = {'runTokenCounts': {}, 'terminalTokenCounts': {}, 'markerTokenCounts': {},
+            'completeMarkerLineCounts': {},
+            'passTokenSeen': bool(re.search(rb'(?m)^\x16?PASS\r?\n', value)),
+            'failTokenSeen': bool(re.search(rb'(?m)^\x16?FAIL\r?\n', value)),
+            'noTestsTokenSeen': b'testing: warning: no tests to run' in value}
+        for name in CASES:
+            observed['runTokenCounts'][name] = bounded(len(re.findall(
+                rb'(?m)^\x16?=== RUN   ' + re.escape(name.encode()) + rb'\r?\n', value)))
+            observed['terminalTokenCounts'][name] = {action: bounded(len(re.findall(
+                rb'(?m)^\x16?--- ' + action.upper().encode() + rb': ' + re.escape(name.encode())
+                + rb' \([0-9]+(?:\.[0-9]+)?s\)\r?\n', value))) for action in ('pass', 'skip', 'fail')}
+        for kind, marker in (('standard', MARKER.encode()), ('legacy', LEGACY_MARKER.encode())):
+            observed['markerTokenCounts'][kind] = bounded(value.count(marker))
+            observed['completeMarkerLineCounts'][kind] = bounded(sum(marker in line and line.endswith(b'\n')
+                for line in value.splitlines(keepends=True)))
+        result['rawStreams'][stream] = observed
+    if state != 'completed':
+        return result
+    pending, pending_owner = '', None
+    def unfinished():
+        if pending:
+            result['incompleteOutputLines'] = bounded(result['incompleteOutputLines'] + 1)
+            result['incompleteMarkerLines'] = bounded(result['incompleteMarkerLines'] + int(MARKER in pending or LEGACY_MARKER in pending))
+    try:
+        for line in data.splitlines():
+            event = parser.parse_event(line)
+            result['eventCount'] = bounded(result['eventCount'] + 1, 4096)
+            name, action = event.get('Test'), event['Action']
+            if event.get('Package') != PACKAGE or name is not None and name not in CASES:
+                result['eventScanStatus'] = 'unexpected_inventory'
+                break
+            if action != 'output':
+                unfinished()
+                pending, pending_owner = '', None
+                counts = result['packageLifecycleCounts'] if name is None else result['testLifecycleCounts'][name]
+                key = action if action in counts else 'other'
+                counts[key] = bounded(counts[key] + 1)
+                continue
+            result['outputEventCount'] = bounded(result['outputEventCount'] + 1, 4096)
+            if pending and pending_owner != name:
+                unfinished()
+                pending = ''
+            pending_owner = name
+            # Only join adjacent fragments for the same owner. A token in an
+            # unfinished line never counts as a complete logical marker line.
+            parts = (pending + event['Output']).split('\n')
+            pending = parts.pop()
+            if name in CASES:
+                marker = LEGACY_MARKER if name == 'TestDNSServiceLegacySerializationCapability' else MARKER
+                result['completeMarkerLineCounts'][name] = bounded(
+                    result['completeMarkerLineCounts'][name] + sum(marker in part for part in parts))
+        unfinished()
+        if result['eventScanStatus'] == 'scanned' and result['incompleteOutputLines']:
+            result['eventScanStatus'] = 'incomplete_lines'
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+        result['eventScanStatus'] = 'invalid_event'
+    except Exception:
+        result['eventScanStatus'] = 'scanner_failed'
+    return result
 
 
 def compiler_kind(stderr, state):
@@ -354,6 +524,7 @@ def sdk_file_inventory(sdk):
 def empty_result():
     return {'schema': 1, 'diagnosticPassed': False, 'cCompilePassed': False, 'cLinkPassed': False, 'goCompilePassed': False,
             'compileFailureKind': None, 'compileFailureLocation': None, 'preflightFailureKind': None, 'processStatus': 'not_run', 'eventsAccepted': False,
+            'terminalLaunch': None, 'collector': None,
             'capabilities': {scope: None for scope in CASES.values()}, 'selectedInterfaceVerified': False,
             'rawReceiveVerified': False, 'legacySerializationVerified': False, 'legacyReceivePath': 'none',
             'networkMulticastVerified': False, 'physicalLANVerified': False,
@@ -374,7 +545,7 @@ def summarize_scope_proofs(report):
             report['legacyReceivePath'] = legacy['receivePath']
 
 
-def main(argv=None):
+def main(argv=None, *, required=None):
     if (sys.argv[1:] if argv is None else argv) or sys.platform != 'darwin' or os.environ.get('GITHUB_ACTIONS') != 'true':
         print('FAIL: fixed hosted Darwin diagnostic entry required.')
         return 1
@@ -382,7 +553,7 @@ def main(argv=None):
     export_ready, private = False, None
     try:
         os.umask(0o077)
-        export = Path(os.environ['RUNNER_TEMP']) / 'soba-dnssd-sanitized'
+        export = Path(os.environ['RUNNER_TEMP']) / ('soba-dnssd-required' if required else 'soba-dnssd-sanitized')
         export.mkdir(mode=0o700, exist_ok=False)
         export_ready = True
         private = Path(tempfile.mkdtemp(prefix='soba-dnssd-', dir=os.environ['RUNNER_TEMP']))
@@ -407,11 +578,16 @@ def main(argv=None):
         if event_path.stat().st_size > native.CAPTURE_BYTES:
             raise ValueError('event size exceeded')
         event = shared.parse_json(event_path.read_text(encoding='utf-8'))
-        if selector.select(os.environ['GITHUB_EVENT_NAME'], event, os.environ['GITHUB_REPOSITORY'],
+        if required:
+            provenance['ciIdentity'] = required.ci_identity(event, commit, tree)
+        elif selector.select(os.environ['GITHUB_EVENT_NAME'], event, os.environ['GITHUB_REPOSITORY'],
                 os.environ['GITHUB_REF'], os.environ['GITHUB_SHA'], commit) != 'dnssd':
             raise ValueError('wrong diagnostic suite or source')
         provenance['stage'], failure_kind = 'source-inventory', 'invalid_source_inventory'
-        before = native.source_inventory()
+        inventory = required.source_inventory if required else native.source_inventory
+        before = inventory()
+        if required:
+            provenance.update(sourceFiles=len(before), sourceRechecked=False, toolchainRechecked=False, privateCleanupVerified=False)
         provenance['sourceSha256'] = hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
         provenance['stage'], failure_kind = 'go-identity', 'native_identity_mismatch'
         versions = shared.parse_json(checked(['go', 'env', '-json', 'GOVERSION', 'GOHOSTOS', 'GOHOSTARCH', 'GOOS', 'GOARCH', 'CGO_ENABLED']))
@@ -465,7 +641,7 @@ def main(argv=None):
                           'sdk': {key: native.digest(path) for key, path in sdk_files.items()}}
         provenance['toolchainSha256'] = compiler_hashes
         provenance['stage'], failure_kind = 'source-policy', 'source_policy_missing'
-        provenance.update(tests=dict(CASES), policySha256={name: before[name] for name in POLICY_FILES}, modules=list(native.MODULES))
+        provenance.update(tests=dict(CASES), policySha256={name: before[name] for name in (required.POLICY_FILES if required else POLICY_FILES)}, modules=list(native.MODULES))
         # Use the actual selected SDK without changing xcode-select or any host
         # setting. No identifiers or absolute tool/SDK paths enter the receipt.
         env = dict(os.environ, GOTOOLCHAIN='local', GOWORK='off', GOTELEMETRY='off',
@@ -504,7 +680,8 @@ def main(argv=None):
         provenance['linkage'] = 'implicit-system-umbrella'
         provenance['cLinkLibraries'] = linked_libraries(native.checked(['otool', '-L', str(linked)], env=env))
         provenance['stage'] = 'dependencies'
-        native.checked(['go', 'mod', 'download', *native.MODULES], env=env, timeout=120)
+        if not required:
+            native.checked(['go', 'mod', 'download', *native.MODULES], env=env, timeout=120)
         env.update(GOPROXY='off', GOSUMDB='off')
         provenance['stage'] = 'go-compile'
         binary = private / 'dnssd.test'
@@ -517,20 +694,37 @@ def main(argv=None):
         provenance['testSha256'] = native.digest(binary)
         env.update({key: '1' for key in OPT_INS})
         provenance['stage'] = 'runtime'
-        state, code, stdout, _ = native.capture([str(binary), '-test.v=test2json', '-test.run=' + SELECTOR,
-            '-test.count=1', '-test.timeout=60s'], env=env, timeout=75, limit=native.RUNTIME_BYTES)
+        provenance['launchMethod'] = 'ordinary_terminal_command'
+        provenance['originVerification'] = 'exact-four-hop-kernel-path-with-final-recheck'
+        provenance['testDriverDenialFence'] = True
+        state, code, stdout, stderr, report['terminalLaunch'] = module('ci-dnssd-terminal').capture(
+            binary, env=env, private=private)
         report['processStatus'] = state
         if state in ('completed', 'nonzero'):
-            converted, _, data, _ = native.capture(['go', 'tool', 'test2json', '-p', PACKAGE],
+            # Failed launch/ownership paths intentionally withhold raw streams.
+            # Absence of a collector must not misreport those streams as empty.
+            report['collector'] = collector_observation(stdout, stderr)
+            converted, converted_code, data, converted_error = native.capture(['go', 'tool', 'test2json', '-p', PACKAGE],
                 env=env, timeout=15, limit=2 * native.RUNTIME_BYTES, stdin=stdout)
+            report['collector'] = collector_observation(stdout, stderr, converted, converted_code, data, converted_error)
             if converted == 'completed':
-                report['capabilities'], report['eventsAccepted'] = test_events(data, code)
+                try:
+                    report['capabilities'], report['eventsAccepted'] = test_events(data, code)
+                    report['collector']['acceptanceStatus'] = 'accepted' if report['eventsAccepted'] else 'unaccepted'
+                except Exception:
+                    report['collector']['acceptanceStatus'] = 'validation_failed'
+                    raise
         provenance['stage'] = 'verify-source'
-        if (before != native.source_inventory() or provenance['testSha256'] != native.digest(binary)
+        if (before != inventory() or commit != read(['git', 'rev-parse', 'HEAD'])
+                or tree != read(['git', 'rev-parse', 'HEAD^{tree}'])
+                or provenance['testSha256'] != native.digest(binary)
                 or compiler_hashes != {'clang': native.digest(clang), 'go': native.digest(tool),
                     'sdk': {key: native.digest(path) for key, path in sdk_files.items()}}):
             raise ValueError('source or toolchain changed')
-        report['diagnosticPassed'] = report['eventsAccepted'] and state == 'completed'
+        if required:
+            provenance.update(sourceRechecked=True, toolchainRechecked=True)
+        report['diagnosticPassed'] = (report['eventsAccepted'] and state == 'completed'
+            and report['terminalLaunch']['status'] == 'observed')
         provenance['stage'] = 'passed' if report['diagnosticPassed'] else 'runtime-failed'
     except Exception as error:
         if provenance['stage'] in PREFLIGHT_STAGES:
@@ -540,21 +734,27 @@ def main(argv=None):
         if private is not None:
             try:
                 shutil.rmtree(private)
+                if required:
+                    provenance['privateCleanupVerified'] = True
             except OSError:
                 report['diagnosticPassed'] = False
     summarize_scope_proofs(report)
     try:
         if not export_ready:
             raise ValueError('export unavailable')
-        (export / 'result.json').write_text(json.dumps(report, sort_keys=True) + '\n', encoding='utf-8')
-        (export / 'provenance.json').write_text(json.dumps(provenance, sort_keys=True) + '\n', encoding='utf-8')
+        if required:
+            required.write_receipt(export, report, provenance)
+        else:
+            (export / 'result.json').write_text(json.dumps(report, sort_keys=True) + '\n', encoding='utf-8')
+            (export / 'provenance.json').write_text(json.dumps(provenance, sort_keys=True) + '\n', encoding='utf-8')
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
             output.write('sanitized_ready=true\n')
     except Exception as error:
         if provenance['stage'] in PREFLIGHT_STAGES:
             report['preflightFailureKind'] = error.kind if isinstance(error, PreflightError) else locals().get('failure_kind', 'unexpected_preflight_failure')
         report['diagnosticPassed'] = False
-    print('CLASSIFIED: DNS-SD API scopes recorded separately; network multicast remains unverified.' if report['diagnosticPassed'] else
+    print(('PASS: all five required DNS-SD scopes and cleanup verified.' if required else
+           'CLASSIFIED: DNS-SD API scopes recorded separately; network multicast remains unverified.') if report['diagnosticPassed'] else
           'FAIL: DNS-SD compile or capability diagnostic incomplete; private details withheld.')
     return 0 if report['diagnosticPassed'] else 1
 

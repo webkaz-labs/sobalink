@@ -36,7 +36,7 @@ test('cleanup observations accept only fixed failure and role-exit categories', 
 })
 
 test('native files have exact closed shapes and unavailable is distinct from failed', () => {
-  const valid = { schema: 1, stage: 'owner-status', failed: false, ownerStatus: 'network-started', peerStatus: 'exchanging' }
+  const valid = { schema: 1, stage: 'owner-status', failed: false, foregroundFailed: false, monitorFailed: false, peerCloseFailed: false, lockCloseFailed: false, ownerStatus: 'network-started', peerStatus: 'exchanging' }
   assert.deepEqual(readNativeObservation(valid), { available: true, invalid: false, ...Object.fromEntries(Object.entries(valid).filter(([key]) => key !== 'schema')) })
   for (const patch of [{ schema: true }, { token: 'SYNTHETIC-PRIVATE' }, { stage: '/private/file' }, { ownerStatus: 'secret' }, { peerStatus: 1 }, { failed: 'false' }]) assert.throws(() => readNativeObservation({ ...valid, ...patch }))
   for (const key of Object.keys(valid)) { const value = { ...valid }; delete value[key]; assert.throws(() => readNativeObservation(value)) }
@@ -159,4 +159,22 @@ test('unknown selections and duplicate or oversized annotations remain bounded',
     items.forEach(item => complete(reporter, item, 'failed', lifecycle()))
   })
   assert.equal(duplicate.result.diagnostics.cases[0].diagnosticRejected, true)
+})
+
+
+test('final owner failure components survive reconstruction and remain closed', () => {
+  for (const key of ['foregroundFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed']) {
+    const value = { schema: 1, ...nativeObservation(), stage: 'proof-written', failed: true, [key]: true }
+    delete value.available; delete value.invalid
+    const observation = readNativeObservation(value)
+    const life = lifecycle(); life.native.successor = observation
+    assert.equal(validateLifecycle(life).native.successor[key], true)
+    for (const invalid of [0, 1, 'synthetic-private-detail', null, {}]) {
+      assert.throws(() => readNativeObservation({ ...value, [key]: invalid }))
+      life.native.successor[key] = invalid
+      assert.throws(() => validateLifecycle(life))
+    }
+    const missing = lifecycle(); missing.native.successor[key] = true
+    assert.throws(() => validateLifecycle(missing))
+  }
 })

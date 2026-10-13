@@ -125,6 +125,30 @@ class ProductActivationPolicyTests(unittest.TestCase):
         value['native']['old']['invalid'] = True
         self.assertTrue(gate.validate_lifecycle(value)['native']['old']['invalid'])
 
+    def test_exact_race_binary_runs_status_ownership_regressions_before_browser(self):
+        source = Path(gate.__file__).read_text()
+        regression = source.index("run_command([str(binary), '-test.run=' + FIXTURE_REGRESSIONS")
+        self.assertEqual(gate.FIXTURE_REGRESSIONS, '^TestProduct(ParentWait|MissingParentWait|WaitRejects|LauncherWait|FinalOwner|CleanupDiagnostic|EvidenceWriters)')
+        self.assertIn("'fixtureRegressions': FIXTURE_REGRESSIONS, 'fixtureRegressionsPassed': False", source)
+        self.assertLess(regression, source.index("provenance['fixtureRegressionsPassed'] = True"))
+        self.assertLess(source.index("provenance['fixtureSha256'] = digest(binary)"), regression)
+        self.assertLess(regression, source.index("provenance['stage'] = 'runtime'"))
+        self.assertIn("log, env=dict(env, GORACE='halt_on_error=1 exitcode=66 atexit_sleep_ms=0'), timeout=60)", source)
+
+    def test_owner_final_failure_components_survive_reconstruction(self):
+        for key in ('foregroundFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'):
+            value = gate.empty_lifecycle()
+            value['native']['successor'].update(available=True, failed=True, stage='proof-written', **{key: True})
+            self.assertTrue(gate.validate_lifecycle(value)['native']['successor'][key])
+            for invalid in (0, 1, 'synthetic-private-detail', None, {}):
+                value['native']['successor'][key] = invalid
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    gate.validate_lifecycle(value)
+            value = gate.empty_lifecycle()
+            value['native']['successor'][key] = True
+            with self.assertRaises(ValueError):
+                gate.validate_lifecycle(value)
+
     def test_work_and_cleanup_failures_stay_separate_and_evidence_only(self):
         value = self.passing()
         # Missing diagnostics and independently observed states cannot invent

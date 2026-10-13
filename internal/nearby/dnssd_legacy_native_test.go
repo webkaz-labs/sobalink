@@ -21,6 +21,7 @@ import (
 )
 
 func TestDNSServiceLegacySerializationCapability(t *testing.T) {
+	requireDNSServiceBatchPermission(t)
 	result := dnssdLegacyDefault()
 	if os.Getenv("SOBALINK_DNSSD_LEGACY_SERIALIZATION") == "1" {
 		result = runDNSServiceLegacySerialization()
@@ -29,6 +30,7 @@ func TestDNSServiceLegacySerializationCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dnssdNativeDiagnosticBatch.observe(result.FailureKind)
 	t.Log("NEARBY_DNSSD_LEGACY_CAPABILITY " + string(data))
 	if result.Status == "not_run" || result.Status == "unavailable" {
 		t.Skip("legacy DNS serialization not verified: " + result.Reason)
@@ -153,6 +155,7 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 	deadline, _ := ctx.Deadline()
 	var ownedSocket Transport
 	var api *dnssdCapabilityPeer
+	var routeOwner *dnssdRouteOwner
 	apiErr := make(chan error, 2)
 	apiReady := make(chan struct{}, 1)
 	readDone, watchDone := make(chan struct{}), make(chan struct{})
@@ -160,6 +163,9 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 	failure := func(err error) { dnssdLegacyError(&result, err) }
 	defer func() {
 		cancel()
+		if routeOwner != nil {
+			routeOwner.cancel()
+		}
 		closed := make(chan error, 2)
 		count := 0
 		if ownedSocket != nil {
@@ -210,6 +216,20 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 				return
 			}
 		}
+		if routeOwner != nil {
+			select {
+			case <-routeOwner.done:
+				result.RouteLookup = &routeOwner.result
+				if !routeOwner.result.OwnerJoined {
+					badCleanup("owners_not_joined")
+					return
+				}
+			case <-timer.C:
+				badCleanup("owners_not_joined")
+				return
+			}
+		}
+
 		for {
 			select {
 			case e := <-apiErr:
@@ -376,18 +396,44 @@ func runDNSServiceLegacySerialization() (result dnssdLegacyResult) {
 			if ctx.Err() != nil {
 				return
 			}
-			if e := socket.packet.SetWriteDeadline(minTime(deadline, time.Now().Add(time.Second))); e != nil {
-				result.Reason = "legacy_send_unavailable"
-				result.FailureStage, result.FailureKind = "legacy_send", "unavailable"
+			result.SocketReadback = dnsServiceSocketReadback(socket, scope)
+			if dnsServiceReadbackFailure(&result) {
 				return
 			}
-			n, e := socket.packet.WriteTo(query, sourceOnlySendControl(scope), &net.UDPAddr{IP: net.IP(multicast4.AsSlice()), Port: mdnsPort})
-			if e != nil || n != len(query) {
-				result.Reason = "legacy_send_unavailable"
-				result.FailureStage, result.FailureKind = "legacy_send", "unavailable"
-				if e == nil {
-					result.FailureKind = "short_payload"
+			routeOwner = startDNSServiceRouteOwner(ctx, func(routeCtx context.Context) dnssdRouteResult {
+				return runDNSServiceRouteLookup(routeCtx, original.Name)
+			})
+			select {
+			case <-routeOwner.done:
+				result.RouteLookup = &routeOwner.result
+				if !routeOwner.result.OwnerJoined {
+					result.Status, result.Reason = "failed", "owners_not_joined"
+					return
 				}
+			case <-ctx.Done():
+				return
+			}
+			if e := binding(); e != nil {
+				failure(e)
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			// One C-only attempt on this existing descriptor, compared with
+			// the retained historical Go result. Route is context, not a gate.
+			writer := &dnssdNativeCWriter{socket: socket, scope: scope, ctx: ctx, deadline: deadline, binding: binding, result: &result}
+			stage, kind := writeDNSServiceLegacyQuery(writer, query, deadline, time.Now())
+			if writer.scopeError != nil {
+				failure(writer.scopeError)
+				return
+			}
+			if dnsServiceReadbackFailure(&result) {
+				return
+			}
+			if stage != "none" {
+				result.Reason = stage + "_unavailable"
+				result.FailureStage, result.FailureKind = stage, kind
 				return
 			}
 			result.OneQuerySent = true

@@ -102,6 +102,12 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - name: Collect required whole-Core race evidence
+        id: native-core
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py core
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
@@ -225,13 +231,23 @@ jobs:
       - name: Verify Windows receive-retirement directory barriers
         if: matrix.goos == 'windows'
         run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer
-      - name: Verify isolated Windows whole-package race coverage
-        if: matrix.goos == 'windows'
-        run: python -B .github/scripts/ci-windows-packages.py
+      - name: Verify remaining native package race coverage
+        if: always() && !cancelled() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py remaining
+      - name: Preserve required native package proof
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-required-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-native-core-required/receipt.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail
-          if [[ '${{ matrix.goos }}' != 'windows' ]]; then
+          if [[ '${{ matrix.goos }}' == 'linux' ]]; then
             python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
           fi
           # Enforce offline route-revocation recovery using the real protected fixture.
@@ -357,15 +373,22 @@ jobs:
         run: |
           set -euo pipefail
           python -B .github/scripts/ci-metrics.py run --suite nearby-native-linux -- python -B .github/scripts/ci-nearby-required.py
-      - name: Verify macOS selected-interface discovery without skips
+      - name: Verify macOS five-scope discovery without skips
         if: matrix.goos == 'darwin'
-        timeout-minutes: 6
+        timeout-minutes: 10
         env:
           CGO_ENABLED: '1'
-          SOBALINK_DNSSD_SELECTED_INTERFACE: '1'
         run: |
           set -euo pipefail
-          python -B .github/scripts/ci-metrics.py run --suite nearby-selected-interface-macos -- python -B .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/nearby:TestDNSServiceSelectedInterfaceCapability -- go test -race -p=1 -count=1 -timeout=60s ./internal/nearby -run '^TestDNSServiceSelectedInterfaceCapability$'
+          python -B .github/scripts/ci-metrics.py run --suite nearby-five-scope-macos -- python -B .github/scripts/ci-dnssd-required.py
+      - name: Preserve required macOS discovery proof
+        if: always() && matrix.goos == 'darwin'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-dnssd-required-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-dnssd-required/receipt.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify direct LAN synthetic expiry and rekey
         timeout-minutes: 3
         run: |
@@ -700,14 +723,6 @@ jobs:
       - name: Summarize measured native suites
         if: always()
         run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/ci-suite-metrics.json"
-      - name: Preserve Windows whole-package race receipt
-        if: always() && matrix.goos == 'windows'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: windows-package-race
-          path: ${{ runner.temp }}/windows-package-race.json
-          if-no-files-found: error
-          retention-days: 14
       - name: Preserve native suite timings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

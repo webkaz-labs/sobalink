@@ -155,13 +155,15 @@ The new route tests must additionally exercise two independent processes with ac
 The prerelease workflow starts only through an explicit manual `workflow_dispatch` with a candidate version and exact tested commit. It requires that commit to be the current main with an explicit successful `Cross-platform CI` manual run using `force_full=true`. The exact-source proof audits current effective jobs, including four native targets, all real-time checks, the separate native resource inspection/management/fixed-group catalog gates and both activation suites; ordinary short CI success is insufficient. See [full-validation selection and retry rules](CI_EFFICIENCY.en.md#exact-source-full-validation-before-release) ([日本語](CI_EFFICIENCY.ja.md#リリース前の正確な同一ソース全件検証)). Publication must:
 
 1. Select a new explicit prerelease version and exact reviewed main commit, then establish its explicit full-CI proof with `force_full=true`
-2. Execute the four native race/vet/package jobs and the actual Go-backed local-browser acceptance job; record failures and unperformed real-network tests accurately
+2. Execute the four native race/vet/package jobs and the actual Go-backed local-browser acceptance job. Require the exact-source macOS five-scope DNS-SD receipt/artifact, including all RUN/PASS proofs, native/converter zero exits, source/toolchain rechecks and owner joins; an optional diagnostic or unavailable scope cannot substitute. Record failures and unperformed real-network tests accurately
 3. Reproduce locked frontend assets, build every package twice, compare digests, and execute the packaged CLI with Japanese/English, native locale fallback and stable JSON checks
 4. Include build metadata, complete runtime dependency/SBOM/notice inventories, checksums and verified GitHub artifact provenance
 5. Sign the Packslip bundle using the constrained release workflow identity and short-lived OIDC, verify issuer, workflow identity, artifact digests and transparency evidence, and attest the bundle itself
 6. Recheck the source and CI before creating a tag and unpublished prerelease; never replace a published version or move an existing tag
 7. Verify every staged digest, publish only as a prerelease, independently retrieve public bytes without download authentication, and verify their signatures and provenance
 8. Install that exact published version through mise on all four native targets with signature, identity and digest checks enabled; execute the actual installed binary and verify its source metadata
+
+The [DNS-SD boundary](../internal/nearby/DNSSD.en.md) ([日本語](../internal/nearby/DNSSD.ja.md)) records the same-host OS-publication → production raw-parser direction and the separate test-only legacy response. This gate does not prove reverse raw-send → OS-resolver discovery, physical/two-OS peers, automatic Core/browser discovery or TCC attribution. 日本語: macOS の五範囲すべての必須 receipt と正確な artifact を要求し、skip/unavailable や任意診断で代替しません。同一ホスト内の OS 公開 → 製品 raw parser とテスト専用 legacy 応答に限定し、逆方向・実機／異なる OS・Core/browser 自動発見・TCC の原因は別途未検証です。
 
 A release must have the signed `packslip.sigstore.json` and all matching assets; a tag or archive alone is insufficient. Ordinary CI's disposable offline signing fixture is not a release and must not be accepted as production identity.
 

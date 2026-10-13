@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import unittest
+import test_ci_dnssd_required as dnssd_fixture
+import test_ci_native_core_required as core_fixture
 
 SPEC = importlib.util.spec_from_file_location('full_validation', Path(__file__).with_name('ci_full_validation.py'))
 full = importlib.util.module_from_spec(SPEC)
@@ -35,8 +37,19 @@ class FullProofTests(unittest.TestCase):
             self.jobs.append(dict(id=number, name=name, run_id=10, run_attempt=1, head_sha=SHA,
                                   labels=labels, status='completed', conclusion='success',
                                   started_at='2026-01-01T00:00:01Z', completed_at='2026-01-01T00:01:00Z',
-                                  steps=[dict(name=s, status='completed', conclusion='success') for s in steps]))
+                                  steps=[dict(name=s, status='completed', conclusion='success', started_at='2026-01-01T00:00:30Z' if s == dnssd_fixture.gate.STEPS[1] else '2026-01-01T00:00:05Z', completed_at='2026-01-01T00:00:50Z' if s == dnssd_fixture.gate.STEPS[1] else '2026-01-01T00:00:29Z') for s in steps]))
+        for target in core_fixture.gate.TARGETS:
+            native = next(j for j in self.jobs if j['name'] == full.TARGETS[target][0])
+            phases = core_fixture.job(target)['steps']
+            for step in native['steps']:
+                match = next((phase for phase in phases if phase['name'] == step['name']), None)
+                if match:
+                    step.update(match)
+        self.core_artifacts = {target: core_fixture.artifact(target, identifier=301+i)
+                               for i, target in enumerate(core_fixture.gate.TARGETS)}
         self.hook = None
+        self.producing_jobs = copy.deepcopy(self.jobs)
+        self.artifact, self.archive = dnssd_fixture.artifact()
 
     def api(self, path):
         self.calls.append(path)
@@ -57,8 +70,16 @@ class FullProofTests(unittest.TestCase):
             return dict(type='file', path=name, encoding='base64', content=base64.b64encode(data).decode(), size=len(data), sha=blob)
         if path.startswith('actions/workflows/'):
             return {'total_count': len(self.runs), 'workflow_runs': copy.deepcopy(self.runs)}
+        for meta, _ in self.core_artifacts.values():
+            if path == 'actions/artifacts/' + str(meta['id']):
+                return copy.deepcopy(meta)
+        if path == 'actions/artifacts/300':
+            return copy.deepcopy(self.artifact)
+        if path.endswith('/artifacts?per_page=100&page=1'):
+            return {'total_count': 3, 'artifacts': [copy.deepcopy(self.artifact), *[copy.deepcopy(meta) for meta, _ in self.core_artifacts.values()]]}
         if path.endswith('/jobs?per_page=100&page=1'):
-            return {'total_count': len(self.jobs), 'jobs': copy.deepcopy(self.jobs)}
+            selected = self.producing_jobs if '/attempts/1/' in path and self.runs[0]['run_attempt'] > 1 else self.jobs
+            return {'total_count': len(selected), 'jobs': copy.deepcopy(selected)}
         if '/attempts/' in path:
             return copy.deepcopy(self.previous[path])
         if path.startswith('actions/runs/'):
@@ -66,16 +87,16 @@ class FullProofTests(unittest.TestCase):
         self.fail('unexpected API route: ' + path)
 
     def audit(self, **kwargs):
-        return full.audit(self.api, SHA, **kwargs)
+        return full.audit(self.api, SHA, artifact_download=lambda identifier: self.archive if identifier == 300 else next(data for meta, data in self.core_artifacts.values() if meta['id'] == identifier), **kwargs)
 
-    def test_windows_package_gate_and_receipt_require_unique_actual_success(self):
-        steps = ('Verify isolated Windows whole-package race coverage', 'Preserve Windows whole-package race receipt')
+    def test_native_package_gate_and_receipt_require_unique_actual_success(self):
+        steps = core_fixture.gate.STEPS
         self.assertIn(full.WINDOWS_PACKAGES_HELPER, full.SOURCES)
         self.assertIn('.github/scripts/ci-metrics.py', full.SOURCES)
         original = copy.deepcopy(self.jobs)
         for gate in steps:
             for target, (name, _) in full.TARGETS.items():
-                self.assertEqual(gate in self.required[name], target == 'windows-amd64')
+                self.assertEqual(gate in self.required[name], target in core_fixture.gate.TARGETS)
             for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
                 self.jobs = copy.deepcopy(original)
                 job = next(j for j in self.jobs if j['name'] == full.TARGETS['windows-amd64'][0])
@@ -93,36 +114,39 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(gate=gate, mode=mode), self.assertRaises(ValueError):
                     self.audit()
 
-    def test_windows_literal_policy_preserves_complement_vet_and_failure_handling(self):
+    def test_native_literal_policy_preserves_complement_vet_and_failure_handling(self):
+        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+            original = self.sources[path]
+            for old, new in ((b"if: matrix.goos == 'windows' || matrix.goos == 'darwin'", b'if: false'),
+                    (b"== 'linux'", b"== 'windows'"),
+                    (b'ci-native-core-required.py core', b'ci-native-core.py'),
+                    (b'ci-native-core-required.py remaining', b'ci-native-core-required.py core'),
+                    (b'run: python -B .github/scripts/ci-native-core-required.py core',
+                     b'continue-on-error: true\n        run: python -B .github/scripts/ci-native-core-required.py core'),
+                    (b'-race -count=1 -timeout=10m ./...', b'-race -count=1 -timeout=20m ./...'),
+                    (b"steps.native-core.outputs.remaining_safe == 'true'", b'true'),
+                    (b'soba-native-core-required/receipt.json', b'soba-native-core-required/core.json'),
+                    (b'-timeout=10m ./...', b'-timeout=10m ./... || true')):
+                self.assertIn(old, original)
+                self.sources[path] = original.replace(old, new, 1)
+                with self.subTest(path=path, old=old), self.assertRaises(ValueError):
+                    self.audit()
+            self.sources[path] = original
         original = self.sources[full.WORKFLOW]
-        marker = b'      - name: Verify isolated Windows whole-package race coverage\n'
-        start = original.index(marker)
-        end = original.index(b'      - name: Verify adapted engine admission', start)
-        block = original[start:end]
-        mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1)]
-        for old, new in ((b"if: matrix.goos == 'windows'", b'if: false'),
-                (b"if: matrix.goos == 'windows'", b"if: matrix.goos == 'linux'"),
-                (b"!= 'windows'", b"== 'windows'"), (b'python -B .github/scripts/ci-windows-packages.py', b'true'),
-                (b'run: python -B', b'continue-on-error: true\n        run: python -B'),
-                (b'-race -count=1 -timeout=10m ./...', b'-race -count=1 -timeout=20m ./...'),
-                (b'-- go vet ./...', b'-- go vet ./internal/core'),
-                (b'--suite native-vet', b'--suite native-vet-skipped'),
-                (b'-timeout=10m ./...', b'-timeout=10m ./... || true')):
-            self.assertIn(old, block)
-            mutations.append(original.replace(block, block.replace(old, new), 1))
-        receipt_start = original.index(b'      - name: Preserve Windows whole-package race receipt\n')
-        receipt_end = original.index(b'      - name: Preserve native suite timings', receipt_start)
-        receipt = original[receipt_start:receipt_end]
-        for old, new in ((b"always() && matrix.goos == 'windows'", b'false'),
-                         (b'if-no-files-found: error', b'if-no-files-found: ignore'),
-                         (b'windows-package-race.json', b'other.json')):
-            mutations.append(original.replace(receipt, receipt.replace(old, new), 1))
-        mutations.append(original.replace(receipt, b'', 1))
-        for changed in mutations:
-            self.sources[full.WORKFLOW] = changed
-            with self.assertRaises(ValueError):
-                self.audit()
+        self.sources[full.WORKFLOW] = original.replace(b'-- go vet ./...', b'-- go vet ./internal/core')
+        with self.assertRaises(ValueError): self.audit()
         self.sources[full.WORKFLOW] = original
+
+    def test_early_core_placement_rejects_inserted_work_or_cache_before_collection(self):
+        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+            original = self.sources[path]
+            marker = b'      - name: Collect required whole-Core race evidence\n'
+            for inserted in (b'      - name: Unrelated workload\n        run: echo synthetic\n',
+                             b'      - uses: actions/cache/restore@synthetic\n'):
+                self.sources[path] = original.replace(marker, inserted + marker, 1)
+                with self.subTest(path=path, inserted=inserted), self.assertRaises(ValueError):
+                    full.required_jobs(self.sources)
+            self.sources[path] = original
 
     def test_windows_helper_policy_rejects_altered_flags_missing_phase_or_union(self):
         original = self.sources[full.WINDOWS_PACKAGES_HELPER]
@@ -138,8 +162,8 @@ class FullProofTests(unittest.TestCase):
                 self.audit()
         self.sources[full.WINDOWS_PACKAGES_HELPER] = original
         self.sources['.github/scripts/ci-coverage.py'] = self.sources['.github/scripts/ci-coverage.py'].replace(
-            b"'Verify isolated Windows whole-package race coverage', 'Preserve Windows whole-package race receipt'",
-            b"'Verify isolated Windows whole-package race coverage'")
+            b"'Collect required whole-Core race evidence', 'Verify remaining native package race coverage', 'Preserve required native package proof'",
+            b"'Collect required whole-Core race evidence'")
         with self.assertRaises(ValueError):
             self.audit()
 
@@ -167,7 +191,7 @@ class FullProofTests(unittest.TestCase):
                     self.audit()
 
     def test_macos_nearby_exact_step_and_target_are_required(self):
-        step = 'Verify macOS selected-interface discovery without skips'
+        step = 'Verify macOS five-scope discovery without skips'
         for target, (name, _) in full.TARGETS.items():
             self.assertEqual(step in self.required[name], target == 'darwin-arm64')
         original = copy.deepcopy(self.jobs)
@@ -190,25 +214,16 @@ class FullProofTests(unittest.TestCase):
 
     def test_macos_nearby_literal_admission_rejects_weakened_commands_and_scope(self):
         original = self.sources[full.WORKFLOW]
-        marker = b'      - name: Verify macOS selected-interface discovery without skips\n'
+        marker = b'      - name: Verify macOS five-scope discovery without skips\n'
         start = original.index(marker)
         end = original.index(b'      - ', start + len(marker))
         block = original[start:end]
         changes = ((b"if: matrix.goos == 'darwin'", b'if: false'),
                    (b"if: matrix.goos == 'darwin'", b"if: matrix.goos == 'linux'"),
-                   (b"if: matrix.goos == 'darwin'", b"if: matrix.goos == 'darwin' && steps.ci-plan.outputs.long_required != 'false'"),
-                   (b'timeout-minutes: 6', b'timeout-minutes: 60'),
+                   (b'timeout-minutes: 10', b'timeout-minutes: 60'),
                    (b"CGO_ENABLED: '1'", b"CGO_ENABLED: '0'"),
-                   (b"SOBALINK_DNSSD_SELECTED_INTERFACE: '1'", b"SOBALINK_DNSSD_SELECTED_INTERFACE: '0'"),
-                   (b'SOBALINK_DNSSD_SELECTED_INTERFACE', b'SOBALINK_DNSSD_SELECTED_LOOPBACK'),
-                   (b' --exact', b''),
-                   (b' --expect ', b' --allow-skip --expect '),
-                   (b' -race ', b' '), (b' -p=1 ', b' -p=8 '),
-                   (b'-count=1', b'-count=2'), (b'-timeout=60s', b'-timeout=10m'),
-                   (b"-run '^TestDNSServiceSelectedInterfaceCapability$'", b"-run '^TestDNSService'"),
-                   (b'TestDNSServiceSelectedInterfaceCapability', b'TestDNSServiceSelectedLoopbackCapability'),
-                   (b'TestDNSServiceSelectedInterfaceCapability', b'TestDNSServiceRawReceiveCapability'),
-                   (b"$'\n", b"$' || true\n"),
+                   (b'ci-dnssd-required.py', b'ci-dnssd-diagnostic.py'),
+                   (b'ci-dnssd-required.py\n', b'ci-dnssd-required.py || true\n'),
                    (marker, marker + b'        continue-on-error: true\n'),
                    (b'        env:\n', b'        env:\n          SOBALINK_DNSSD_RAW_RECEIVE: \'1\'\n'))
         mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1),
@@ -228,14 +243,14 @@ class FullProofTests(unittest.TestCase):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
         target = b"MACOS_NEARBY_TARGETS = ('darwin-arm64',)"
-        steps = b"MACOS_NEARBY_STEPS = ('Verify macOS selected-interface discovery without skips',)"
+        steps = b"MACOS_NEARBY_STEPS = ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof')"
         mutations = [original.replace(target, b''), original.replace(steps, b''),
                      original.replace(target, b"MACOS_NEARBY_TARGETS = ('linux-amd64',)"),
                      original.replace(target, b"MACOS_NEARBY_TARGETS = ('darwin-arm64', 'windows-amd64')"),
                      original.replace(steps, b"MACOS_NEARBY_STEPS = ('Other gate',)"),
                      original.replace(steps, b'MACOS_NEARBY_STEPS = ()'),
                      original.replace(steps, steps + b'\n' + steps),
-                     original.replace(b'FAST_STEPS = (', b'FAST_STEPS = ("Verify macOS selected-interface discovery without skips",'),
+                     original.replace(b'FAST_STEPS = (', b'FAST_STEPS = ("Verify macOS five-scope discovery without skips",'),
                      original + b'\nMACOS_NEARBY_STEPS += ("Other gate",)\n']
         for index, source in enumerate(mutations):
             sources = dict(self.sources, **{path: source})
@@ -608,7 +623,8 @@ class FullProofTests(unittest.TestCase):
             # still contain successful steps under new current-attempt IDs.
         proof = self.audit()
         self.assertTrue(all(j['effective_attempt'] == 2 for j in proof['jobs']))
-        self.assertFalse(any('/attempts/1/jobs' in p for p in self.calls))
+        self.assertTrue(any('/attempts/1/jobs' in p for p in self.calls))
+        self.assertEqual(proof['macos_discovery_proof']['producingAttempt'], 1)
 
     def test_new_quick_success_preserves_exact_source_full_proof(self):
         original = self.audit()
@@ -647,6 +663,18 @@ class FullProofTests(unittest.TestCase):
         self.runs.append(run(11, '2026-01-01T00:10:00Z'))
         for job in self.jobs:
             job['run_id'] = 11
+        value = dnssd_fixture.fixture()
+        value['provenance']['ciIdentity']['runId'] = 11
+        self.artifact, self.archive = dnssd_fixture.artifact(value)
+        self.artifact['name'] = dnssd_fixture.gate.ARTIFACT + '-11-1'
+        self.artifact['workflow_run']['id'] = 11
+        for target in core_fixture.gate.TARGETS:
+            value = core_fixture.fixture(target)
+            value['provenance']['ciIdentity']['runId'] = 11
+            meta, data = core_fixture.artifact(target, value=value, identifier=self.core_artifacts[target][0]['id'])
+            meta['name'] = meta['name'].replace('-10-1', '-11-1')
+            meta['workflow_run']['id'] = 11
+            self.core_artifacts[target] = (meta, data)
         result = self.audit(previous_proof=proof)
         self.assertEqual(result['full_validation']['id'], 11)
 

@@ -466,19 +466,23 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
-    def test_windows_packages_are_exhaustive_and_do_not_skip_later_policy_gates(self):
-        isolated = self.step('ci', 'native', 'name: Verify isolated Windows whole-package race coverage')
-        self.assertIn("        if: matrix.goos == 'windows'\n", isolated)
-        self.assertIn('run: python -B .github/scripts/ci-windows-packages.py', isolated)
-        ordinary = self.step('ci', 'native', 'name: Local and mock tests, race detector, and vet')
-        self.assertIn("if [[ '${{ matrix.goos }}' != 'windows' ]]; then", ordinary)
-        self.assertIn('go test -race -count=1 -timeout=10m ./...', ordinary)
-        self.assertIn('go vet ./...', ordinary)
-        self.assertLess(ordinary.index('          fi\n'), ordinary.index('go vet ./...'))
-        self.assertNotIn('ci-windows-packages.py', self.workflow('prerelease'))
+    def test_native_packages_are_exhaustive_and_keep_later_policy_gates(self):
         for name in ('ci', 'prerelease'):
-            self.assertIn('./internal/backendworker ./internal/connectionroute', self.job(name, 'native'))
-            self.assertIn("./internal/core -run '^TestMixed'", self.job(name, 'native'))
+            early = self.step(name, 'native', 'name: Collect required whole-Core race evidence')
+            self.assertIn("        if: matrix.goos == 'windows' || matrix.goos == 'darwin'\n", early)
+            self.assertIn('run: python -B .github/scripts/ci-native-core-required.py core', early)
+            remaining = self.step(name, 'native', 'name: Verify remaining native package race coverage')
+            self.assertIn("steps.native-core.outputs.remaining_safe == 'true'", remaining)
+            self.assertIn('run: python -B .github/scripts/ci-native-core-required.py remaining', remaining)
+            native = self.job(name, 'native')
+            self.assertIn("if [[ '${{ matrix.goos }}' == 'linux' ]]; then", native)
+            self.assertIn('go test -race -count=1 -timeout=10m ./...', native)
+            self.assertIn('go vet ./...', native)
+            self.assertIn('./internal/backendworker ./internal/connectionroute', native)
+            self.assertIn("./internal/core -run '^TestMixed'", native)
+            self.assertLess(native.index('name: Collect required whole-Core'), native.index('name: Test and reproduce locked frontend'))
+        ordinary = self.step('ci', 'native', 'name: Local and mock tests, race detector, and vet')
+        self.assertLess(ordinary.index('          fi\n'), ordinary.index('go vet ./...'))
 
     def test_development_cache_keeps_existing_triggers_and_browser_gates(self):
         workflow = self.workflow("ci")

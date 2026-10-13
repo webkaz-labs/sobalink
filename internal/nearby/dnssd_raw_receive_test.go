@@ -81,6 +81,7 @@ func newDNSServiceReceiveOnly(scope Scope) (Transport, error) {
 	return owner, nil
 }
 func TestDNSServiceRawReceiveCapability(t *testing.T) {
+	requireDNSServiceBatchPermission(t)
 	result := dnssdCapability("selected_private_interface_raw_receive")
 	if os.Getenv("SOBALINK_DNSSD_RAW_RECEIVE") != "1" {
 		result.Status, result.Reason = "not_run", "opt_in_required"
