@@ -36,6 +36,60 @@ jobs:
           python -m unittest discover -s .github/scripts -p test_ci_diagnostic.py -v
           python .github/scripts/ci-diagnostic.py
 
+
+  # One exact native regression, at most three fresh fixtures. The first failure
+  # stops the job with its closed test diagnostics; this cannot qualify a release.
+  diagnostic-activation-capture:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'activation-capture'
+    runs-on: macos-26
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify exact bounded capture diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_managed_activation.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_go_test.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_metrics.py' -v
+      - name: Prepare locked native dependencies
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go list -mod=readonly -deps -test -tags=directlan_activation_native,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Observe three exact capture cases and stop at first failure
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            python -B .github/scripts/ci-metrics.py run --suite "activation-capture-${attempt}" -- python -B .github/scripts/ci-managed-activation.py activation-capture
+          done
+      - name: Summarize content-free capture timings
+        if: always()
+        run: python -B .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/activation-capture-metrics.json"
+      - name: Preserve only content-free capture timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-activation-capture-metrics
+          path: ${{ runner.temp }}/activation-capture-metrics.json
+          if-no-files-found: error
+          retention-days: 14
+
+
   diagnostic-product-activation:
     needs: diagnostic-selection
     if: needs.diagnostic-selection.outputs.suite == 'product' || needs.diagnostic-selection.outputs.suite == 'activation'

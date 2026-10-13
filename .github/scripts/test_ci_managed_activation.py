@@ -59,8 +59,10 @@ class ManagedActivationPolicyTests(unittest.TestCase):
             expected = ['github.com/webkaz-labs/sobalink/' + package + ':' + name + suffix
                         for name, children in cases.items()
                         for suffix in ('', *('/' + child for child in children))]
-            self.assertEqual(cmd[2:cut:2], ['--expect'] * len(expected))
-            self.assertEqual(cmd[3:cut:2], expected)
+            expect_end = cut - 1 if suite == 'activation-capture' else cut
+            self.assertEqual(cmd[2:expect_end:2], ['--expect'] * len(expected))
+            self.assertEqual(cmd[3:expect_end:2], expected)
+            self.assertEqual(cmd.count('--exact'), int(suite == 'activation-capture'))
             self.assertEqual(len(expected), len(set(expected)))
             self.assertEqual(cmd[cut+1:], ['go', 'test', '-race', '-count=1', '-v', '-timeout=' + timeout,
                                           '-tags=' + tag + ',' + gate.PRODUCT_TAGS,
@@ -69,6 +71,26 @@ class ManagedActivationPolicyTests(unittest.TestCase):
                 self.assertTrue(re.fullmatch(cmd[-2][5:], name))
                 self.assertIsNone(re.search(cmd[-2][5:], name + 'Extra'))
             self.assertNotIn('TestManagedRestartChildFixture', cmd[-2])
+
+    def test_capture_diagnostic_selects_one_existing_case(self):
+        package, tag, timeout, cases = gate.SUITES['activation-capture']
+        self.assertEqual((package, tag, timeout), gate.SUITES['activation'][:3])
+        self.assertEqual(cases, {'TestActivationNativePendingStatusRearmsDuplicatePrepare': ()})
+        self.assertTrue(set(cases) <= set(gate.SUITES['activation'][3]))
+
+    def test_capture_failure_observed_before_cleanup_without_budget_changes(self):
+        source = (ROOT / FILES['activation']).read_text()
+        body = source.split('func TestActivationNativePendingStatusRearmsDuplicatePrepare', 1)[1].split('\nfunc ', 1)[0]
+        failure = body.split('captureFinished := time.Now()', 1)[1].split('attempts++', 1)[0]
+        self.assertLess(failure.index('activationDiagnosticCaptureFailureLocked'), failure.index('stop()\n'))
+        self.assertLess(failure.index('left.op.Unlock()'), failure.index('stop()\n'))
+        self.assertIn('diagnostics.Records[:diagnostics.Count]', failure)
+        self.assertEqual(body.count('time.Now().Add(2 * time.Second)'), 1)
+        self.assertIn('for reply := 0; reply < 2; reply++', body)
+        self.assertIn('for time.Now().Before(until)', body)
+        self.assertIn('candidate != previous', body)
+        self.assertEqual(body.count('left.exchangeContext(run, outbound)'), 1)
+        self.assertNotIn('armContextInboundLocked(run, responder', body)
 
     def test_driver_environment_and_private_temp(self):
         for suite in gate.SUITES:
@@ -87,7 +109,7 @@ class ManagedActivationPolicyTests(unittest.TestCase):
                     self.assertEqual(env[key], 'off')
                 self.assertEqual(env['GOTOOLCHAIN'], 'local')
                 self.assertFalse(any(k.upper().startswith('TS_') or k.upper() in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY') for k in env))
-                if suite == 'activation':
+                if suite in ('activation', 'activation-capture'):
                     self.assertEqual(env['SOBALINK_RUN_ACTIVATION_NATIVE'], '1')
                 cleanup.assert_called_once_with('/synthetic/sa-fixture')
             self.assertEqual(dict(os.environ), before)

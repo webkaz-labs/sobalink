@@ -20,7 +20,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
                     sha=sha, checkout_sha=sha)
 
     def test_exact_closed_suites(self):
-        for suite in ('web', 'product', 'activation', 'nearby', 'text', 'dnssd'):
+        for suite in ('web', 'product', 'activation', 'activation-capture', 'nearby', 'text', 'dnssd'):
             self.assertEqual(gate.select(**self.args(suite)), suite)
 
     def test_rejects_other_events_refs_and_heads(self):
@@ -64,17 +64,35 @@ class DiagnosticPolicyTests(unittest.TestCase):
         spec.loader.exec_module(coverage)
         jobs = [dict(name=name, status='completed', conclusion='success', steps=[])
                 for name in ('diagnostic-selection', 'diagnostic-web-activation',
-                             'diagnostic-product-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd')]
+                             'diagnostic-product-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd', 'diagnostic-activation-capture')]
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs, scope)
+
+    def test_capture_diagnostic_is_bounded_mac_only_and_fail_fast(self):
+        source = self.workflow('activation-diagnostic')
+        body = self.body(source, 'diagnostic-activation-capture')
+        self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'activation-capture'", source)
+        self.assertIn('runs-on: macos-26', body)
+        self.assertIn('timeout-minutes: 15', body)
+        self.assertIn('timeout-minutes: 10', body)
+        self.assertIn('set -euo pipefail', body)
+        self.assertIn('for attempt in 1 2 3; do', body)
+        self.assertIn('ci-metrics.py run --suite "activation-capture-${attempt}"', body)
+        self.assertIn('ci-managed-activation.py activation-capture', body)
+        self.assertNotIn('continue-on-error', body)
+        self.assertNotIn('strategy:', body)
+        self.assertNotIn('ci-managed-activation.py activation\n', body)
+        self.assertIn('if: always()', body)
+        self.assertIn('path: ${{ runner.temp }}/activation-capture-metrics.json', body)
+        self.assertNotIn('*.log', body)
 
     def test_only_create_and_distinct_jobs_without_release_credit(self):
         text = self.workflow('activation-diagnostic')
         trigger = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
         self.assertEqual(trigger.strip(), 'create:')
         self.assertEqual(re.findall(r'^  ([a-z][a-z0-9-]*):$', text.split('\njobs:\n')[1], re.M),
-                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd'])
+                         ['diagnostic-selection', 'diagnostic-activation-capture', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd'])
         for forbidden in ('continue-on-error:', 'actions/cache', 'secrets.', 'workflow_dispatch:',
                           'ci-coverage.py', 'ci-required:', 'package-tool', 'id-token: write', 'contents: write'):
             self.assertNotIn(forbidden, text)
