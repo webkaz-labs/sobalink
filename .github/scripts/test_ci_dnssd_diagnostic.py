@@ -127,16 +127,24 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                                (b'/private/file: undefined symbols', 'link_failed')):
             self.assertEqual(gate.compiler_kind(text, 'nonzero'), expected)
         self.assertEqual(gate.compiler_kind(b'synthetic-private', 'timeout'), 'timeout')
+        self.assertEqual(gate.compiler_kind(b'dnssd_bridge_darwin.c:1:1: error: incompatible pointer\n/private/header:2:1: error: file not found', 'nonzero'), 'type_mismatch')
 
     def test_mocked_compile_and_batch_exports_only_reconstructed_receipts(self):
-        for failure in (None, 'c-compile', 'go-compile', 'unavailable', 'runtime-failed'):
+        preflight = {'source-event': 'invalid_source_event', 'source-inventory': 'invalid_source_inventory',
+                     'go-identity': 'native_identity_mismatch', 'clang-identity': 'compiler_identity_format',
+                     'sdk-version': 'sdk_version_format', 'sdk-build': 'sdk_build_format',
+                     'sdk-files': 'sdk_file_missing', 'source-policy': 'source_policy_missing',
+                     'clang-discovery': 'command_failed'}
+        for failure in (None, 'c-compile', 'go-compile', 'unavailable', 'runtime-failed', *preflight):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 clang, go = root / 'clang', root / 'go'
                 clang.write_bytes(b'synthetic clang'); go.write_bytes(b'synthetic go')
                 sdk = root / 'SDK'
                 for relative in ('usr/include/dns_sd.h', 'SDKSettings.json', 'usr/lib/libdns_sd.tbd'):
-                    path = sdk / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'synthetic SDK')
+                    path = sdk / relative; path.parent.mkdir(parents=True, exist_ok=True)
+                    if failure != 'sdk-files' or relative != 'usr/lib/libdns_sd.tbd':
+                        path.write_bytes(b'synthetic SDK')
                 sha, tree = 'a' * 40, 'b' * 40
                 branch = 'diagnostic/dnssd/' + sha[:12] + '-synthetic'
                 event, output = root / 'event', root / 'output'
@@ -150,11 +158,11 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     if command == ['git', 'rev-parse', 'HEAD']: return sha.encode()
                     if command == ['git', 'rev-parse', 'HEAD^{tree}']: return tree.encode()
                     if command[:2] == ['go', 'env']: return b'{}'
-                    if command[-1] == '--version': return b'Apple clang version 17.0.0 (clang-1700.3.19.1)'
+                    if command[-1] == '--version': return b'synthetic-private' if failure == 'clang-identity' else b'Apple clang version 17.0.0 (clang-1700.3.19.1)'
                     if command[-1] == 'clang': return str(clang).encode()
                     if command[-1] == '--show-sdk-path': return str(sdk).encode()
-                    if command[-1] == '--show-sdk-version': return b'26.0'
-                    if command[-1] == '--show-sdk-build-version': return b'25A354'
+                    if command[-1] == '--show-sdk-version': return b'synthetic-private' if failure == 'sdk-version' else b'26.0'
+                    if command[-1] == '--show-sdk-build-version': return b'synthetic-private' if failure == 'sdk-build' else b'25A354'
                     if command[:3] == ['go', 'mod', 'download']: return b''
                     raise AssertionError('unexpected command')
                 records = {scope: record(scope, 'unavailable' if failure == 'unavailable' else 'verified') for scope in gate.PROOFS}
@@ -162,6 +170,10 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     records['os_local_only'] = record('os_local_only', 'failed', reason='cleanup_uncertain')
                 commands = []
                 def capture(command, **kwargs):
+                    if command[:3] != ['go', 'test', '-race'] and command[:3] != ['go', 'tool', 'test2json'] and '-c' not in command and not command[0].endswith('dnssd.test'):
+                        if failure == 'clang-discovery' and command[-1] == 'clang':
+                            return 'nonzero', 1, b'', b'synthetic-private'
+                        return 'completed', 0, checked(command), b''
                     commands.append((command, kwargs))
                     if command[0] == str(clang) or command[:3] == ['go', 'test', '-race']:
                         stage = 'c-compile' if command[0] == str(clang) else 'go-compile'
@@ -176,13 +188,13 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 with ExitStack() as stack:
                     stack.enter_context(patch.dict(os.environ, GITHUB_ACTIONS='true', RUNNER_TEMP=temporary,
                         GITHUB_EVENT_PATH=str(event), GITHUB_OUTPUT=str(output), GITHUB_EVENT_NAME='create',
-                        GITHUB_REPOSITORY='webkaz-labs/sobalink', GITHUB_SHA=sha, GITHUB_REF='refs/heads/' + branch))
+                        GITHUB_REPOSITORY='webkaz-labs/sobalink', GITHUB_SHA=('c' * 40 if failure == 'source-event' else sha), GITHUB_REF='refs/heads/' + branch))
                     stack.enter_context(patch.object(gate.sys, 'platform', 'darwin'))
                     stack.enter_context(patch.object(gate, 'module', side_effect=module))
                     stack.enter_context(patch.object(native, 'checked', side_effect=checked))
                     stack.enter_context(patch.object(native, 'capture', side_effect=capture))
-                    stack.enter_context(patch.object(native, 'identities', return_value={'go': 'go1.27.1', 'goos': 'darwin', 'goarch': 'arm64', 'runner': 'macos-26', 'race': True}))
-                    stack.enter_context(patch.object(native, 'source_inventory', return_value={name: '0' * 64 for name in gate.POLICY_FILES}))
+                    stack.enter_context(patch.object(native, 'identities', side_effect=ValueError('synthetic-private') if failure == 'go-identity' else None, return_value={'go': 'go1.27.1', 'goos': 'darwin', 'goarch': 'arm64', 'runner': 'macos-26', 'race': True}))
+                    stack.enter_context(patch.object(native, 'source_inventory', side_effect=ValueError('synthetic-private') if failure == 'source-inventory' else None, return_value={name: '0' * 64 for name in gate.POLICY_FILES if failure != 'source-policy' or name != 'go.sum'}))
                     stack.enter_context(patch.object(gate.shutil, 'which', return_value=str(go)))
                     printed = stack.enter_context(patch('sys.stdout', new_callable=io.StringIO))
                     self.assertEqual(gate.main([]), 0 if failure in (None, 'unavailable') else 1)
@@ -195,11 +207,19 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 self.assertFalse(result['networkMulticastVerified'])
                 self.assertEqual(provenance['commit'], sha)
                 self.assertEqual(provenance['tree'], tree)
-                self.assertIn('compiler', provenance)
+                if failure not in preflight or failure in ('sdk-files', 'source-policy'):
+                    self.assertIn('compiler', provenance)
                 self.assertEqual(output.read_text(), 'sanitized_ready=true\n')
                 for text in (result_text, provenance_text, printed.getvalue()):
                     self.assertNotIn('synthetic-private', text)
                     self.assertNotIn(temporary, text)
+                if failure in preflight:
+                    self.assertEqual(provenance['stage'], failure)
+                    self.assertEqual(result['preflightFailureKind'], preflight[failure])
+                    self.assertFalse(commands)
+                    if failure == 'sdk-files':
+                        self.assertEqual(provenance['sdkFiles']['libdns_sd.tbd'], 'missing')
+                    continue
                 self.assertEqual(commands[0][0][0], str(clang))
                 if failure in ('c-compile', 'go-compile'):
                     self.assertEqual(provenance['stage'], failure)
@@ -210,6 +230,61 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     self.assertEqual(runtime[0][1:], ['-test.v=test2json', '-test.run=' + gate.SELECTOR, '-test.count=1', '-test.timeout=60s'])
                     self.assertEqual(runtime[1]['timeout'], 75)
                     self.assertTrue(all(runtime[1]['env'][key] == '1' for key in gate.OPT_INS))
+
+    def test_compiler_location_is_first_error_in_exact_tracked_bridge_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / 'internal/nearby'
+            directory.mkdir(parents=True)
+            for name in ('dnssd_bridge_darwin.c', 'dnssd_bridge_darwin.h'):
+                (directory / name).write_bytes(b'first line\nsecond line\n')
+            with patch.object(gate, 'ROOT', root):
+                for name in ('dnssd_bridge_darwin.c', 'dnssd_bridge_darwin.h'):
+                    for spelling in (str(directory / name), 'internal/nearby/' + name, name):
+                        diagnostic = (spelling + ':2:4: error: synthetic-private-symbol\n').encode()
+                        self.assertEqual(gate.compiler_location(diagnostic), {'file': name, 'line': 2, 'column': 4})
+                valid = b'dnssd_bridge_darwin.c:1:1: error: synthetic-private'
+                for diagnostic in (b'/private/other/dnssd_bridge_darwin.c:1:1: error: private',
+                        b'../dnssd_bridge_darwin.c:1:1: error: private',
+                        b'dnssd_bridge_darwin.c:0:1: error: private',
+                        b'dnssd_bridge_darwin.c:3:1: error: private',
+                        b'dnssd_bridge_darwin.c:1:0: error: private',
+                        b'dnssd_bridge_darwin.c:1:9000: error: private',
+                        b'dnssd_bridge_darwin.c:1:99: error: private',
+                        b'dnssd_bridge_darwin.c:1:1: warning: private',
+                        b'\x1b[31mdnssd_bridge_darwin.c:1:1: error: private',
+                        b'/private/SDK/header.h:1:1: error: private\n' + valid,
+                        b'x' * (64 * 1024) + b'\n' + valid,
+                        b'no error\n' * 512 + valid):
+                    self.assertIsNone(gate.compiler_location(diagnostic))
+                self.assertEqual(gate.compiler_location(valid + b'\n' + b'dnssd_bridge_darwin.h:2:2: error: private'),
+                                 {'file': 'dnssd_bridge_darwin.c', 'line': 1, 'column': 1})
+
+    def test_sdk_aliases_must_resolve_inside_selected_sdk(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sdk = root / 'SDK'
+            sdk.mkdir()
+            actual = sdk / 'actual'
+            actual.write_bytes(b'synthetic')
+            for relative in gate.SDK_FILES.values():
+                path = sdk / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.symlink_to(actual)
+            files, states = gate.sdk_file_inventory(sdk)
+            self.assertEqual(set(files), set(gate.SDK_FILES))
+            self.assertEqual(set(states.values()), {'available'})
+            external = root / 'external'
+            external.write_bytes(b'synthetic')
+            alias = sdk / 'usr/lib/libdns_sd.tbd'
+            alias.unlink()
+            alias.symlink_to(external)
+            files, states = gate.sdk_file_inventory(sdk)
+            self.assertEqual(states['libdns_sd.tbd'], 'outside_selected_sdk')
+            self.assertNotIn('libdns_sd.tbd', files)
+        observed = gate.compiler_observation(b'Apple clang version 17.0.0 (clang-1700.3.19.1) unexpected-private-suffix')
+        self.assertEqual(observed, {'vendor': 'apple-clang', 'version': '17.0.0', 'build': '1700.3.19.1'})
+        self.assertEqual(gate.compiler_observation(b'private-path'), {'vendor': 'unknown', 'version': None, 'build': None})
 
     def test_workflow_is_one_native_only_job_with_literal_safe_artifacts(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()

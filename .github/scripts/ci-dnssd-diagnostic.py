@@ -39,6 +39,27 @@ PROOFS = {
     'selected_private_interface_os': ('native_scoped_api_observed', {'reciprocalCandidates', 'ownersJoined'}),
     'selected_private_interface_raw_receive': ('native_raw_receive_observed', {'rawPacketVerified', 'ownersJoined'}),
 }
+PREFLIGHT_STAGES = {'preflight', 'source-identity', 'source-event', 'source-inventory',
+    'go-identity', 'clang-discovery', 'sdk-discovery', 'clang-identity', 'sdk-version',
+    'sdk-build', 'sdk-files', 'toolchain-hash', 'source-policy'}
+PREFLIGHT_FAILURES = {'none', 'command_failed', 'command_timeout', 'command_output_limit',
+    'command_launch_failed', 'command_capture_failed', 'invalid_source_identity',
+    'invalid_source_event', 'invalid_source_inventory', 'native_identity_mismatch',
+    'clang_unavailable', 'sdk_unavailable', 'compiler_identity_format', 'sdk_version_format',
+    'sdk_build_format', 'sdk_file_missing', 'sdk_file_outside_selected_sdk',
+    'toolchain_file_unreadable', 'source_policy_missing', 'unexpected_preflight_failure'}
+SDK_FILES = {'dns_sd.h': 'usr/include/dns_sd.h', 'SDKSettings.json': 'SDKSettings.json',
+             'libdns_sd.tbd': 'usr/lib/libdns_sd.tbd'}
+
+
+class PreflightError(ValueError):
+    def __init__(self, kind):
+        if kind not in PREFLIGHT_FAILURES:
+            raise ValueError('unknown preflight category')
+        self.kind = kind
+        super().__init__('fixed preflight failure')
+
+
 POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/ci-diagnostic.py',
     '.github/scripts/ci-dnssd-diagnostic.py', '.github/scripts/test_ci_dnssd_diagnostic.py',
     '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -131,7 +152,8 @@ def test_events(raw, returncode):
 def compiler_kind(stderr, state):
     if state in ('timeout', 'output_limit', 'launch_failed', 'capture_failed'):
         return state
-    text = stderr.lower()
+    first = first_compiler_error(stderr)
+    text = (first if first is not None else stderr[:64 * 1024]).lower()
     for kind, needles in (
             ('missing_header', (b'file not found', b'no such file or directory')),
             ('missing_declaration', (b'undeclared function', b'undeclared identifier', b'implicit declaration')),
@@ -145,15 +167,67 @@ def compiler_kind(stderr, state):
 
 def compiler_identity(raw, sdk_version, sdk_build):
     first = raw.decode('utf-8').splitlines()[0]
-    match = re.fullmatch(r'Apple clang version ([0-9]+(?:\.[0-9]+){1,3}) \(clang-([0-9]+(?:\.[0-9]+){0,5})\)', first)
-    if not match or not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,3}', sdk_version) or not re.fullmatch(r'[0-9]{1,3}[A-Z][0-9]{1,6}[a-z]?', sdk_build):
+    match = re.fullmatch(r'Apple clang version ([0-9]{1,4}(?:\.[0-9]{1,6}){1,3}) \(clang-([0-9]{1,6}(?:\.[0-9]{1,6}){0,5})\)', first)
+    if not match or not re.fullmatch(r'[0-9]{1,4}(?:\.[0-9]{1,6}){1,3}', sdk_version) or not re.fullmatch(r'[0-9]{1,3}[A-Z][0-9]{1,6}[a-z]?', sdk_build):
         raise ValueError('unrecognized native compiler identity')
     return {'vendor': 'apple-clang', 'version': match[1], 'build': match[2], 'sdkVersion': sdk_version, 'sdkBuild': sdk_build}
 
 
+def first_compiler_error(stderr):
+    return next((line for line in stderr[:64 * 1024].splitlines()[:512]
+                 if re.search(rb': (?:fatal )?error:', line)), None)
+
+
+def compiler_location(stderr):
+    """First compiler error only; publish a fixed source enum and bounded point."""
+    files = ('dnssd_bridge_darwin.c', 'dnssd_bridge_darwin.h')
+    # Do not inspect unbounded diagnostic data or skip an earlier external error
+    # in order to manufacture an apparently actionable product-source location.
+    first = first_compiler_error(stderr)
+    for line in (() if first is None else (first,)):
+        for name in files:
+            relative = 'internal/nearby/' + name
+            spellings = (str(ROOT / relative), relative, name)
+            pattern = rb'^(?:' + b'|'.join(re.escape(path.encode()) for path in spellings) + rb'):([0-9]{1,6}):([0-9]{1,5}): (?:fatal )?error:'
+            match = re.match(pattern, line)
+            if not match:
+                continue
+            row, column = int(match[1]), int(match[2])
+            source = (ROOT / relative).read_bytes().splitlines()
+            if (1 <= row <= len(source) and 1 <= column <= 8192
+                    and column <= len(source[row - 1].expandtabs(8)) + 1):
+                return {'file': name, 'line': row, 'column': column}
+        return None
+    return None
+
+
+def compiler_observation(raw):
+    # Keep only bounded numeric identity parts even when the full format fails.
+    first = raw.decode('utf-8', errors='replace').splitlines()[0] if raw else ''
+    version = re.match(r'Apple clang version ([0-9]{1,4}(?:\.[0-9]{1,6}){1,3})(?: |$)', first)
+    build = re.search(r'\(clang-([0-9]{1,6}(?:\.[0-9]{1,6}){0,5})\)', first)
+    return {'vendor': 'apple-clang' if version else 'unknown',
+            'version': version[1] if version else None, 'build': build[1] if build else None}
+
+
+def sdk_file_inventory(sdk):
+    files, states = {}, {}
+    root = sdk.resolve(strict=True)
+    for name, relative in SDK_FILES.items():
+        path = sdk / relative
+        if not path.is_file():
+            states[name] = 'missing'
+        elif not path.resolve(strict=True).is_relative_to(root):
+            states[name] = 'outside_selected_sdk'
+        else:
+            states[name] = 'available'
+            files[name] = path
+    return files, states
+
+
 def empty_result():
     return {'schema': 1, 'diagnosticPassed': False, 'cCompilePassed': False, 'goCompilePassed': False,
-            'compileFailureKind': None, 'processStatus': 'not_run', 'eventsAccepted': False,
+            'compileFailureKind': None, 'compileFailureLocation': None, 'preflightFailureKind': None, 'processStatus': 'not_run', 'eventsAccepted': False,
             'capabilities': {scope: None for scope in CASES.values()}, 'selectedInterfaceVerified': False,
             'rawReceiveVerified': False, 'networkMulticastVerified': False, 'physicalLANVerified': False,
             'automaticCoreBrowserVerified': False, 'releaseValidation': False}
@@ -172,35 +246,85 @@ def main(argv=None):
         export_ready = True
         private = Path(tempfile.mkdtemp(prefix='soba-dnssd-', dir=os.environ['RUNNER_TEMP']))
         native, shared, selector = module('ci-nearby-native'), module('ci-nearby-diagnostic'), module('ci-diagnostic')
-        read = lambda command: native.checked(command).decode().strip()
+        failure_kind = 'unexpected_preflight_failure'
+        def checked(command):
+            state, _, stdout, _ = native.capture(command)
+            if state != 'completed':
+                kind = {'nonzero': 'command_failed', 'timeout': 'command_timeout',
+                        'output_limit': 'command_output_limit', 'launch_failed': 'command_launch_failed',
+                        'capture_failed': 'command_capture_failed'}.get(state, 'command_failed')
+                raise PreflightError(kind)
+            return stdout
+        read = lambda command: checked(command).decode().strip()
+        provenance['stage'], failure_kind = 'source-identity', 'invalid_source_identity'
         commit, tree = read(['git', 'rev-parse', 'HEAD']), read(['git', 'rev-parse', 'HEAD^{tree}'])
+        if not all(re.fullmatch('[0-9a-f]{40}', value) for value in (commit, tree)):
+            raise ValueError('invalid source identity')
+        provenance.update(commit=commit, tree=tree)
+        provenance['stage'], failure_kind = 'source-event', 'invalid_source_event'
         event_path = Path(os.environ['GITHUB_EVENT_PATH'])
         if event_path.stat().st_size > native.CAPTURE_BYTES:
             raise ValueError('event size exceeded')
         event = shared.parse_json(event_path.read_text(encoding='utf-8'))
-        if (selector.select(os.environ['GITHUB_EVENT_NAME'], event, os.environ['GITHUB_REPOSITORY'],
-                os.environ['GITHUB_REF'], os.environ['GITHUB_SHA'], commit) != 'dnssd'
-                or not re.fullmatch('[0-9a-f]{40}', tree)):
+        if selector.select(os.environ['GITHUB_EVENT_NAME'], event, os.environ['GITHUB_REPOSITORY'],
+                os.environ['GITHUB_REF'], os.environ['GITHUB_SHA'], commit) != 'dnssd':
             raise ValueError('wrong diagnostic suite or source')
+        provenance['stage'], failure_kind = 'source-inventory', 'invalid_source_inventory'
         before = native.source_inventory()
-        versions = shared.parse_json(native.checked(['go', 'env', '-json', 'GOVERSION', 'GOHOSTOS', 'GOHOSTARCH', 'GOOS', 'GOARCH', 'CGO_ENABLED']))
-        identity = native.identities('darwin-arm64', versions)
+        provenance['sourceSha256'] = hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
+        provenance['stage'], failure_kind = 'go-identity', 'native_identity_mismatch'
+        versions = shared.parse_json(checked(['go', 'env', '-json', 'GOVERSION', 'GOHOSTOS', 'GOHOSTARCH', 'GOOS', 'GOARCH', 'CGO_ENABLED']))
+        known = {'GOVERSION': ('go1.27.1',), 'GOHOSTOS': ('linux', 'darwin', 'windows'),
+                 'GOOS': ('linux', 'darwin', 'windows'), 'GOHOSTARCH': ('amd64', 'arm64'),
+                 'GOARCH': ('amd64', 'arm64'), 'CGO_ENABLED': ('0', '1')}
+        provenance['goObserved'] = {key: versions.get(key) if versions.get(key) in values else 'unknown'
+                                    for key, values in known.items()} if type(versions) is dict else None
+        provenance['runnerObserved'] = {
+            'os': os.environ.get('RUNNER_OS') if os.environ.get('RUNNER_OS') in ('Linux', 'macOS', 'Windows') else 'unknown',
+            'arch': os.environ.get('RUNNER_ARCH') if os.environ.get('RUNNER_ARCH') in ('X64', 'ARM64') else 'unknown',
+            'pythonArch': native.platform.machine().lower() if native.platform.machine().lower() in ('arm64', 'aarch64', 'amd64', 'x86_64') else 'unknown'}
+        provenance['toolchain'] = native.identities('darwin-arm64', versions)
+        provenance['platform'] = 'darwin-arm64'
+        provenance['stage'], failure_kind = 'clang-discovery', 'clang_unavailable'
         clang = Path(read(['xcrun', '--sdk', 'macosx', '--find', 'clang']))
+        if not clang.is_absolute() or not clang.is_file():
+            raise ValueError('native compiler unavailable')
+        provenance['stage'], failure_kind = 'sdk-discovery', 'sdk_unavailable'
         sdk = Path(read(['xcrun', '--sdk', 'macosx', '--show-sdk-path']))
-        if not clang.is_absolute() or not clang.is_file() or not sdk.is_absolute() or not sdk.is_dir():
+        if not sdk.is_absolute() or not sdk.is_dir():
             raise ValueError('native SDK unavailable')
-        compiler = compiler_identity(native.checked([str(clang), '--version']),
-            read(['xcrun', '--sdk', 'macosx', '--show-sdk-version']),
-            read(['xcrun', '--sdk', 'macosx', '--show-sdk-build-version']))
-        sdk_files = {'dns_sd.h': sdk / 'usr/include/dns_sd.h', 'SDKSettings.json': sdk / 'SDKSettings.json',
-                     'libdns_sd.tbd': sdk / 'usr/lib/libdns_sd.tbd'}
+        provenance['stage'], failure_kind = 'clang-identity', 'compiler_identity_format'
+        clang_version = checked([str(clang), '--version'])
+        provenance['compilerObserved'] = compiler_observation(clang_version)
+        # Preserve the same strict Apple compiler format check, independently
+        # of SDK version discovery so a failed assumption is identifiable.
+        compiler_identity(clang_version, '1.0', '1A1')
+        provenance['stage'], failure_kind = 'sdk-version', 'sdk_version_format'
+        sdk_version = read(['xcrun', '--sdk', 'macosx', '--show-sdk-version'])
+        valid_version = re.fullmatch(r'[0-9]{1,4}(?:\.[0-9]{1,6}){1,3}', sdk_version)
+        provenance['sdkVersionObserved'] = sdk_version if valid_version and len(sdk_version) <= 24 else None
+        if not valid_version or len(sdk_version) > 24:
+            raise ValueError('invalid SDK version')
+        provenance['stage'], failure_kind = 'sdk-build', 'sdk_build_format'
+        sdk_build = read(['xcrun', '--sdk', 'macosx', '--show-sdk-build-version'])
+        valid_build = re.fullmatch(r'[0-9]{1,3}[A-Z][0-9]{1,6}[a-z]?', sdk_build)
+        provenance['sdkBuildObserved'] = sdk_build if valid_build else None
+        if not valid_build:
+            raise ValueError('invalid SDK build')
+        provenance['compiler'] = compiler_identity(clang_version, sdk_version, sdk_build)
+        provenance['stage'], failure_kind = 'sdk-files', 'sdk_file_missing'
+        sdk_files, provenance['sdkFiles'] = sdk_file_inventory(sdk)
+        if 'outside_selected_sdk' in provenance['sdkFiles'].values():
+            raise PreflightError('sdk_file_outside_selected_sdk')
+        if len(sdk_files) != len(SDK_FILES):
+            raise PreflightError('sdk_file_missing')
+        provenance['stage'], failure_kind = 'toolchain-hash', 'toolchain_file_unreadable'
         tool = Path(shutil.which('go'))
         compiler_hashes = {'clang': native.digest(clang), 'go': native.digest(tool),
                           'sdk': {key: native.digest(path) for key, path in sdk_files.items()}}
-        provenance.update(commit=commit, tree=tree, platform='darwin-arm64', toolchain=identity,
-            compiler=compiler, toolchainSha256=compiler_hashes, tests=dict(CASES),
-            sourceSha256=hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest(),
-            policySha256={name: before[name] for name in POLICY_FILES}, modules=list(native.MODULES))
+        provenance['toolchainSha256'] = compiler_hashes
+        provenance['stage'], failure_kind = 'source-policy', 'source_policy_missing'
+        provenance.update(tests=dict(CASES), policySha256={name: before[name] for name in POLICY_FILES}, modules=list(native.MODULES))
         # Use the actual selected SDK without changing xcode-select or any host
         # setting. No identifiers or absolute tool/SDK paths enter the receipt.
         env = dict(os.environ, GOTOOLCHAIN='local', GOWORK='off', GOTELEMETRY='off',
@@ -213,6 +337,7 @@ def main(argv=None):
             '-o', str(private / 'dnssd-bridge.o')], env=env, timeout=60)
         if state != 'completed':
             report['compileFailureKind'] = compiler_kind(stderr, state)
+            report['compileFailureLocation'] = compiler_location(stderr)
             raise ValueError('native C API compilation failed')
         report['cCompilePassed'] = True
         provenance['cObjectSha256'] = native.digest(private / 'dnssd-bridge.o')
@@ -224,6 +349,7 @@ def main(argv=None):
         state, _, _, stderr = native.capture(['go', 'test', '-race', '-p=1', '-c', '-o', str(binary), './internal/nearby'], env=env, timeout=300)
         if state != 'completed':
             report['compileFailureKind'] = compiler_kind(stderr, state)
+            report['compileFailureLocation'] = compiler_location(stderr)
             raise ValueError('native Go API compilation failed')
         report['goCompilePassed'] = True
         provenance['testSha256'] = native.digest(binary)
@@ -247,7 +373,9 @@ def main(argv=None):
             report['selectedInterfaceVerified'] = report['capabilities']['selected_private_interface_os']['status'] == 'verified'
             report['rawReceiveVerified'] = report['capabilities']['selected_private_interface_raw_receive']['status'] == 'verified'
         provenance['stage'] = 'passed' if report['diagnosticPassed'] else 'runtime-failed'
-    except Exception:
+    except Exception as error:
+        if provenance['stage'] in PREFLIGHT_STAGES:
+            report['preflightFailureKind'] = error.kind if isinstance(error, PreflightError) else locals().get('failure_kind', 'unexpected_preflight_failure')
         report['diagnosticPassed'] = False
         report['selectedInterfaceVerified'] = report['rawReceiveVerified'] = False
     finally:
@@ -263,7 +391,9 @@ def main(argv=None):
         (export / 'provenance.json').write_text(json.dumps(provenance, sort_keys=True) + '\n', encoding='utf-8')
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
             output.write('sanitized_ready=true\n')
-    except Exception:
+    except Exception as error:
+        if provenance['stage'] in PREFLIGHT_STAGES:
+            report['preflightFailureKind'] = error.kind if isinstance(error, PreflightError) else locals().get('failure_kind', 'unexpected_preflight_failure')
         report['diagnosticPassed'] = False
     print('CLASSIFIED: DNS-SD API scopes recorded separately; network multicast remains unverified.' if report['diagnosticPassed'] else
           'FAIL: DNS-SD compile or capability diagnostic incomplete; private details withheld.')
