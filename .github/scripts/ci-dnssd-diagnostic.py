@@ -49,7 +49,11 @@ PREFLIGHT_FAILURES = {'none', 'command_failed', 'command_timeout', 'command_outp
     'sdk_build_format', 'sdk_file_missing', 'sdk_file_outside_selected_sdk',
     'toolchain_file_unreadable', 'source_policy_missing', 'unexpected_preflight_failure'}
 SDK_FILES = {'dns_sd.h': 'usr/include/dns_sd.h', 'SDKSettings.json': 'SDKSettings.json',
-             'libdns_sd.tbd': 'usr/lib/libdns_sd.tbd'}
+             'libdns_sd.tbd': 'usr/lib/libdns_sd.tbd', 'libSystem.tbd': 'usr/lib/libSystem.tbd'}
+REQUIRED_SDK_FILES = {'dns_sd.h', 'SDKSettings.json', 'libSystem.tbd'}
+LINK_LIBRARIES = {'/usr/lib/libSystem.B.dylib': 'libSystem.B.dylib',
+                  '/usr/lib/libdns_sd.dylib': 'libdns_sd.dylib',
+                  '/usr/lib/system/libsystem_dnssd.dylib': 'libsystem_dnssd.dylib'}
 
 
 class PreflightError(ValueError):
@@ -210,6 +214,23 @@ def compiler_observation(raw):
             'version': version[1] if version else None, 'build': build[1] if build else None}
 
 
+def linked_libraries(raw):
+    if len(raw) > 16384:
+        raise ValueError('link inventory exceeded')
+    lines = raw.decode('utf-8').splitlines()
+    if not lines or not lines[0].endswith(':'):
+        raise ValueError('invalid link inventory')
+    found = []
+    for line in lines[1:]:
+        match = re.fullmatch(r'\s+([^ ]+) \(compatibility version [0-9.]+, current version [0-9.]+\)', line)
+        if not match or match[1] not in LINK_LIBRARIES or LINK_LIBRARIES[match[1]] in found:
+            raise ValueError('unreviewed linked library')
+        found.append(LINK_LIBRARIES[match[1]])
+    if 'libSystem.B.dylib' not in found:
+        raise ValueError('required system umbrella missing')
+    return sorted(found)
+
+
 def sdk_file_inventory(sdk):
     files, states = {}, {}
     root = sdk.resolve(strict=True)
@@ -226,7 +247,7 @@ def sdk_file_inventory(sdk):
 
 
 def empty_result():
-    return {'schema': 1, 'diagnosticPassed': False, 'cCompilePassed': False, 'goCompilePassed': False,
+    return {'schema': 1, 'diagnosticPassed': False, 'cCompilePassed': False, 'cLinkPassed': False, 'goCompilePassed': False,
             'compileFailureKind': None, 'compileFailureLocation': None, 'preflightFailureKind': None, 'processStatus': 'not_run', 'eventsAccepted': False,
             'capabilities': {scope: None for scope in CASES.values()}, 'selectedInterfaceVerified': False,
             'rawReceiveVerified': False, 'networkMulticastVerified': False, 'physicalLANVerified': False,
@@ -316,7 +337,7 @@ def main(argv=None):
         sdk_files, provenance['sdkFiles'] = sdk_file_inventory(sdk)
         if 'outside_selected_sdk' in provenance['sdkFiles'].values():
             raise PreflightError('sdk_file_outside_selected_sdk')
-        if len(sdk_files) != len(SDK_FILES):
+        if not REQUIRED_SDK_FILES.issubset(sdk_files):
             raise PreflightError('sdk_file_missing')
         provenance['stage'], failure_kind = 'toolchain-hash', 'toolchain_file_unreadable'
         tool = Path(shutil.which('go'))
@@ -341,6 +362,27 @@ def main(argv=None):
             raise ValueError('native C API compilation failed')
         report['cCompilePassed'] = True
         provenance['cObjectSha256'] = native.digest(private / 'dnssd-bridge.o')
+        provenance['stage'] = 'c-link'
+        # Apple libSystem is implicitly linked and reexports system_dnssd.
+        # Test that supported production contract with the actual selected SDK;
+        # the absent historical per-library stub remains an honest observation.
+        # https://github.com/apple-oss-distributions/Libsystem/blob/main/requiredlibs
+        # https://github.com/apple-oss-distributions/Libsystem/blob/main/xcodescripts/linker_arguments.sh
+        provider = (ROOT / 'internal/nearby/provider_darwin.go').read_text(encoding='utf-8')
+        if re.search(r'^\s*#cgo\b[^\n]*\bLDFLAGS:', provider, re.M):
+            raise ValueError('production link policy changed')
+        linked = private / 'dnssd-link'
+        state, _, _, stderr = native.capture([str(clang), '-arch', 'arm64', '-isysroot', str(sdk),
+            str(private / 'dnssd-bridge.o'), '-x', 'c', '-', '-o', str(linked)],
+            env=env, timeout=60, stdin=b'int main(void) { return 0; }\n')
+        if state != 'completed':
+            report['compileFailureKind'] = compiler_kind(stderr, state)
+            report['compileFailureLocation'] = compiler_location(stderr)
+            raise ValueError('native C API link failed')
+        report['cLinkPassed'] = True
+        provenance['cLinkedSha256'] = native.digest(linked)
+        provenance['linkage'] = 'implicit-system-umbrella'
+        provenance['cLinkLibraries'] = linked_libraries(native.checked(['otool', '-L', str(linked)], env=env))
         provenance['stage'] = 'dependencies'
         native.checked(['go', 'mod', 'download', *native.MODULES], env=env, timeout=120)
         env.update(GOPROXY='off', GOSUMDB='off')

@@ -4,7 +4,6 @@ package nearby
 
 /*
 #cgo CFLAGS: -std=c11
-#cgo LDFLAGS: -ldns_sd
 #include <stdlib.h>
 #include "dnssd_bridge_darwin.h"
 */

@@ -135,15 +135,18 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                      'sdk-version': 'sdk_version_format', 'sdk-build': 'sdk_build_format',
                      'sdk-files': 'sdk_file_missing', 'source-policy': 'source_policy_missing',
                      'clang-discovery': 'command_failed'}
-        for failure in (None, 'c-compile', 'go-compile', 'unavailable', 'runtime-failed', *preflight):
+        for failure in (None, 'c-compile', 'c-link', 'go-compile', 'unavailable', 'runtime-failed', *preflight):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
+                provider = root / 'internal/nearby/provider_darwin.go'
+                provider.parent.mkdir(parents=True)
+                provider.write_text('#cgo CFLAGS: -std=c11\n')
                 clang, go = root / 'clang', root / 'go'
                 clang.write_bytes(b'synthetic clang'); go.write_bytes(b'synthetic go')
                 sdk = root / 'SDK'
-                for relative in ('usr/include/dns_sd.h', 'SDKSettings.json', 'usr/lib/libdns_sd.tbd'):
+                for relative in ('usr/include/dns_sd.h', 'SDKSettings.json', 'usr/lib/libSystem.tbd'):
                     path = sdk / relative; path.parent.mkdir(parents=True, exist_ok=True)
-                    if failure != 'sdk-files' or relative != 'usr/lib/libdns_sd.tbd':
+                    if failure != 'sdk-files' or relative != 'usr/include/dns_sd.h':
                         path.write_bytes(b'synthetic SDK')
                 sha, tree = 'a' * 40, 'b' * 40
                 branch = 'diagnostic/dnssd/' + sha[:12] + '-synthetic'
@@ -158,6 +161,7 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     if command == ['git', 'rev-parse', 'HEAD']: return sha.encode()
                     if command == ['git', 'rev-parse', 'HEAD^{tree}']: return tree.encode()
                     if command[:2] == ['go', 'env']: return b'{}'
+                    if command[:2] == ['otool', '-L']: return b'private-binary:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n'
                     if command[-1] == '--version': return b'synthetic-private' if failure == 'clang-identity' else b'Apple clang version 17.0.0 (clang-1700.3.19.1)'
                     if command[-1] == 'clang': return str(clang).encode()
                     if command[-1] == '--show-sdk-path': return str(sdk).encode()
@@ -170,13 +174,13 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     records['os_local_only'] = record('os_local_only', 'failed', reason='cleanup_uncertain')
                 commands = []
                 def capture(command, **kwargs):
-                    if command[:3] != ['go', 'test', '-race'] and command[:3] != ['go', 'tool', 'test2json'] and '-c' not in command and not command[0].endswith('dnssd.test'):
+                    if command[:3] != ['go', 'test', '-race'] and command[:3] != ['go', 'tool', 'test2json'] and '-c' not in command and '-x' not in command and not command[0].endswith('dnssd.test'):
                         if failure == 'clang-discovery' and command[-1] == 'clang':
                             return 'nonzero', 1, b'', b'synthetic-private'
                         return 'completed', 0, checked(command), b''
                     commands.append((command, kwargs))
                     if command[0] == str(clang) or command[:3] == ['go', 'test', '-race']:
-                        stage = 'c-compile' if command[0] == str(clang) else 'go-compile'
+                        stage = ('c-link' if '-x' in command else 'c-compile') if command[0] == str(clang) else 'go-compile'
                         if failure == stage:
                             return 'nonzero', 1, b'', b'synthetic-private: too few arguments'
                         Path(command[command.index('-o') + 1]).write_bytes(b'synthetic object')
@@ -190,6 +194,7 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                         GITHUB_EVENT_PATH=str(event), GITHUB_OUTPUT=str(output), GITHUB_EVENT_NAME='create',
                         GITHUB_REPOSITORY='webkaz-labs/sobalink', GITHUB_SHA=('c' * 40 if failure == 'source-event' else sha), GITHUB_REF='refs/heads/' + branch))
                     stack.enter_context(patch.object(gate.sys, 'platform', 'darwin'))
+                    stack.enter_context(patch.object(gate, 'ROOT', root))
                     stack.enter_context(patch.object(gate, 'module', side_effect=module))
                     stack.enter_context(patch.object(native, 'checked', side_effect=checked))
                     stack.enter_context(patch.object(native, 'capture', side_effect=capture))
@@ -218,14 +223,22 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     self.assertEqual(result['preflightFailureKind'], preflight[failure])
                     self.assertFalse(commands)
                     if failure == 'sdk-files':
-                        self.assertEqual(provenance['sdkFiles']['libdns_sd.tbd'], 'missing')
+                        self.assertEqual(provenance['sdkFiles']['dns_sd.h'], 'missing')
                     continue
                 self.assertEqual(commands[0][0][0], str(clang))
-                if failure in ('c-compile', 'go-compile'):
+                if failure in ('c-compile', 'c-link', 'go-compile'):
                     self.assertEqual(provenance['stage'], failure)
                     self.assertEqual(result['compileFailureKind'], 'argument_count')
                 else:
                     self.assertEqual(result['capabilities'], records)
+                    self.assertTrue(result['cLinkPassed'])
+                    self.assertEqual(provenance['sdkFiles']['libdns_sd.tbd'], 'missing')
+                    self.assertEqual(provenance['sdkFiles']['libSystem.tbd'], 'available')
+                    self.assertEqual(provenance['cLinkLibraries'], ['libSystem.B.dylib'])
+                    self.assertEqual(provenance['linkage'], 'implicit-system-umbrella')
+                    link = next(command for command, _ in commands if '-x' in command)
+                    self.assertNotIn('-ldns_sd', link)
+                    self.assertNotIn('-lSystem', link)
                     runtime = next((command, kwargs) for command, kwargs in commands if command[0].endswith('dnssd.test'))
                     self.assertEqual(runtime[0][1:], ['-test.v=test2json', '-test.run=' + gate.SELECTOR, '-test.count=1', '-test.timeout=60s'])
                     self.assertEqual(runtime[1]['timeout'], 75)
@@ -285,6 +298,17 @@ class DNSSDDiagnosticTests(unittest.TestCase):
         observed = gate.compiler_observation(b'Apple clang version 17.0.0 (clang-1700.3.19.1) unexpected-private-suffix')
         self.assertEqual(observed, {'vendor': 'apple-clang', 'version': '17.0.0', 'build': '1700.3.19.1'})
         self.assertEqual(gate.compiler_observation(b'private-path'), {'vendor': 'unknown', 'version': None, 'build': None})
+
+    def test_link_inventory_exports_only_fixed_system_library_names(self):
+        valid = b'private-path:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n'
+        self.assertEqual(gate.linked_libraries(valid), ['libSystem.B.dylib'])
+        for bad in (valid.replace(b'/usr/lib/libSystem.B.dylib', b'/private/libSystem.B.dylib'),
+                    valid + valid.split(b'\n', 1)[1], b'private-path:\n',
+                    valid.replace(b'(compatibility', b'(private'), b'x' * 16385):
+            with self.assertRaises(ValueError):
+                gate.linked_libraries(bad)
+        self.assertEqual(gate.REQUIRED_SDK_FILES, {'dns_sd.h', 'SDKSettings.json', 'libSystem.tbd'})
+        self.assertEqual(gate.SDK_FILES['libSystem.tbd'], 'usr/lib/libSystem.tbd')
 
     def test_workflow_is_one_native_only_job_with_literal_safe_artifacts(self):
         workflow = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
