@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import sys
 
@@ -96,7 +97,31 @@ def reconstruct(case, status, directory, destination=None):
     return accepted
 
 
+def initial_illustrations(root, *, accepted):
+    """Optional images follow acceptance and private cleanup, never supply it."""
+    private = root / 'soba-setup-browser-illustrations'
+    output = root / 'soba-setup-ui-sanitized'
+    ready = False
+    try:
+        if accepted is True:
+            ready = nearby.module('ci-nearby-screenshots').export_initial_screenshots(
+                private, output, verified=True)
+    except (OSError, ValueError, TypeError):
+        ready = False
+    finally:
+        try:
+            if private.is_symlink():
+                private.unlink()
+                ready = False
+            elif private.exists():
+                shutil.rmtree(private)
+        except OSError:
+            ready = False
+    return ready
+
+
 def main():
+    root, case = None, None
     try:
         if len(sys.argv) != 3:
             raise ValueError('invalid fixed summary arguments')
@@ -106,6 +131,14 @@ def main():
         accepted = reconstruct(case, status, directory, root / 'soba-playwright-screenshots')
     except (OSError, ValueError, KeyError, TypeError):
         accepted = False
+    if case == 'setup' and root is not None:
+        ready = initial_illustrations(root, accepted=accepted)
+        if ready and 'GITHUB_OUTPUT' in os.environ:
+            try:
+                with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+                    output.write('screenshots_ready=true\n')
+            except OSError:
+                pass  # Illustrations cannot turn accepted evidence into failure.
     print('Fixed browser summary accepted' if accepted else 'Fixed browser evidence incomplete or failed')
     return 0 if accepted else 1
 

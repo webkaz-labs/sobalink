@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fixedLayout } from './text-native-layout.mjs'
 import TransferNativeReporter from './transfer-native-reporter.mjs'
 import { ERROR_KINDS, errorKind } from './nearby-native-diagnostics.mjs'
 
@@ -11,16 +12,18 @@ export const PHASES = Object.freeze([
   'outbox-open-ja', 'outbox-status-ja', 'outbox-receipt-ja', 'outbox-fit-ja',
   'command-counts', 'runtime-counts', 'result-write', 'body-complete', 'fixture-cleanup', 'unavailable',
 ])
-export function failureRecord(phase, kind) {
+export const FIT_PHASES = Object.freeze(['review-fit', 'detail-fit-en', 'outbox-fit-ja'])
+export function failureRecord(phase, kind, layout) {
   if (!PHASES.includes(phase) || !ERROR_KINDS.includes(kind)) throw Error('Invalid fixed text failure classification')
-  return { schema: 1, phase, errorKind: kind }
+  if (layout !== undefined && (!FIT_PHASES.includes(phase) || kind !== 'assertion')) throw Error('Layout evidence outside fit failure')
+  return { schema: 1, phase, errorKind: kind, ...(layout === undefined ? {} : { layout: fixedLayout(layout) }) }
 }
 export async function textPhase(test, phase) {
   failureRecord(phase, 'unexpected')
   await test.step(`text:${phase}`, async () => {})
 }
-export function recordFirstFailure(path, phase, kind) {
-  const record = failureRecord(phase, kind)
+export function recordFirstFailure(path, phase, kind, layout) {
+  const record = failureRecord(phase, kind, layout)
   try { writeFileSync(path, JSON.stringify(record) + '\n', { mode: 0o600, flag: 'wx' }) }
   catch (error) { if (error.code !== 'EEXIST') throw error }
 }

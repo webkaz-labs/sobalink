@@ -87,3 +87,61 @@ test('the complete case has distinct late body and cleanup boundaries', () => {
   assert.ok(config.includes("reporter: './browser/text-native-reporter.mjs'"))
   assert.ok(!config.includes('timeout') && !config.includes('launchOptions') && !config.includes('chromiumSandbox'))
 })
+
+test('layout evidence allows only ordered static regions and bounded integer geometry', async () => {
+  const { fixedLayout, LAYOUT_ROLES } = await import('./text-native-layout.mjs')
+  const good = () => ({ viewportWidth: 320, regions: LAYOUT_ROLES.map(role => ({ role, clientWidth: 300, scrollWidth: 340, leftOverflow: 0, rightOverflow: 20 })) })
+  const value = good()
+  assert.deepEqual(fixedLayout(value), value)
+  assert.notEqual(fixedLayout(value).regions[0], value.regions[0])
+  assert.deepEqual(failureRecord('outbox-fit-ja', 'assertion', value).layout, value)
+  for (const bad of [null, { ...value, text: 'synthetic-private' }, { ...value, regions: [] }, { ...value, viewportWidth: true }, { ...value, viewportWidth: Infinity }]) assert.throws(() => fixedLayout(bad))
+  for (const key of ['clientWidth', 'scrollWidth', 'leftOverflow', 'rightOverflow']) for (const bad of [-1, 8193, 1.5, NaN, Infinity, true, '320']) {
+    const changed = good(); changed.regions[0][key] = bad; assert.throws(() => fixedLayout(changed))
+  }
+  for (const mutate of [v => { v.regions[0].role = 'synthetic-private' }, v => { v.regions[1].role = v.regions[0].role }, v => { v.regions[0].body = 'synthetic-private' }, v => { v.regions.reverse() }]) {
+    const changed = good(); mutate(changed); assert.throws(() => fixedLayout(changed))
+  }
+  assert.throws(() => failureRecord('detail-exact', 'assertion', value))
+  assert.throws(() => failureRecord('outbox-fit-ja', 'timeout', value))
+  await isolated(dir => {
+    const file = join(dir, 'text-native-failure.json')
+    recordFirstFailure(file, 'outbox-fit-ja', 'assertion', value)
+    recordFirstFailure(file, 'fixture-cleanup', 'timeout')
+    assert.deepEqual(JSON.parse(readFileSync(file)), failureRecord('outbox-fit-ja', 'assertion', value))
+    assert.ok(statSync(file).size < 8192)
+  })
+})
+
+test('geometry collection accesses only literal selectors and numeric dimensions', async () => {
+  const { measureTextLayout, LAYOUT_SELECTORS } = await import('./text-native-layout.mjs')
+  const oldDocument = globalThis.document, oldWidth = globalThis.innerWidth, seen = []
+  globalThis.innerWidth = 320
+  const element = { clientWidth: 301, scrollWidth: 9000, getBoundingClientRect: () => ({ left: -2.2, right: 341.1 }), get textContent() { throw Error('Text must not be read') }, get attributes() { throw Error('Attributes must not be read') } }
+  const page = { evaluate: async (fn, args) => fn(args) }
+  try {
+    globalThis.document = { querySelectorAll: selector => { seen.push(selector); return [element] } }
+    const value = await measureTextLayout(page)
+    assert.deepEqual(seen, LAYOUT_SELECTORS.map(([, selector]) => selector))
+    assert.deepEqual(value.regions[0], { role: 'document', clientWidth: 301, scrollWidth: 8192, leftOverflow: 3, rightOverflow: 22 })
+    globalThis.document = { querySelectorAll: () => [] }
+    assert.equal((await measureTextLayout(page)).regions.every(row => row.scrollWidth === 0), true)
+    globalThis.document = { querySelectorAll: () => Array(65).fill(element) }
+    await assert.rejects(measureTextLayout(page))
+    globalThis.document = { querySelectorAll: () => [{ ...element, scrollWidth: NaN }] }
+    await assert.rejects(measureTextLayout(page))
+  } finally {
+    if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument
+    if (oldWidth === undefined) delete globalThis.innerWidth; else globalThis.innerWidth = oldWidth
+  }
+})
+
+test('fit diagnostics keep original checks and export only on assertion failure', () => {
+  const source = readFileSync(new URL('./text-outbox-native.acceptance.mjs', import.meta.url), 'utf8')
+  assert.ok(source.includes('document.documentElement.scrollWidth <= innerWidth + 1'))
+  assert.ok(source.includes('element.scrollWidth <= element.clientWidth + 1'))
+  assert.ok(source.indexOf('layout = await measureTextLayout(page)') < source.indexOf('document.documentElement.scrollWidth'))
+  assert.ok(source.includes("if (error.code === 'ERR_ASSERTION' && layout)"))
+  assert.ok(source.includes("phase, 'assertion', layout) } catch {}"))
+  assert.ok(source.includes('throw error'))
+})

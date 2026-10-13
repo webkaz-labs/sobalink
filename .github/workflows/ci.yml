@@ -352,6 +352,15 @@ jobs:
         run: |
           set -euo pipefail
           python -B .github/scripts/ci-metrics.py run --suite nearby-native-linux -- python -B .github/scripts/ci-nearby-required.py
+      - name: Verify macOS selected-interface discovery without skips
+        if: matrix.goos == 'darwin'
+        timeout-minutes: 6
+        env:
+          CGO_ENABLED: '1'
+          SOBALINK_DNSSD_SELECTED_INTERFACE: '1'
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-metrics.py run --suite nearby-selected-interface-macos -- python -B .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/nearby:TestDNSServiceSelectedInterfaceCapability -- go test -race -p=1 -count=1 -timeout=60s ./internal/nearby -run '^TestDNSServiceSelectedInterfaceCapability$'
       - name: Verify direct LAN synthetic expiry and rekey
         timeout-minutes: 3
         run: |
@@ -978,12 +987,14 @@ jobs:
           set -euo pipefail
           python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxThreeProcessBrowser$' -count=1 -timeout=4m
       - name: Verify nearby setup with separate agents and actual browser
+        id: setup-browser
         timeout-minutes: 8
         env:
           SOBALINK_RUN_LAN_INTEGRATION: '1'
           SOBALINK_RUN_SETUP_BROWSER_NATIVE: '1'
           SOBA_SETUP_BROWSER_SUMMARY: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-summary.json
           SOBA_SETUP_BROWSER_FAILURE: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-failure.json
+          SOBA_SETUP_BROWSER_SCREENSHOTS: ${{ runner.temp }}/soba-setup-browser-illustrations
         run: |
           set -euo pipefail
           mkdir -m 700 "$RUNNER_TEMP/soba-setup-browser-evidence"
@@ -1008,6 +1019,17 @@ jobs:
           python -B .github/scripts/ci-browser-summary.py text "$status" || summary_status=$?
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           exit "$summary_status"
+      - name: Preserve optional sanitized nearby setup illustrations
+        if: always() && steps.setup-browser.outputs.screenshots_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-nearby-ui-sanitized
+          path: |
+            ${{ runner.temp }}/soba-setup-ui-sanitized/nearby-initial-en-375.png
+            ${{ runner.temp }}/soba-setup-ui-sanitized/nearby-initial-ja-320.png
+            ${{ runner.temp }}/soba-setup-ui-sanitized/screenshots.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve sanitized UI screenshots and typography measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

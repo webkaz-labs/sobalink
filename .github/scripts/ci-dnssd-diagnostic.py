@@ -14,21 +14,38 @@ import tempfile
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = 'github.com/webkaz-labs/sobalink/internal/nearby'
+RAW_SCOPE = 'selected_private_interface_raw_receive'
+LEGACY_SCOPE = 'selected_private_interface_legacy_dns'
 CASES = {
     'TestDNSServiceLocalOnlyCapability': 'os_local_only',
     'TestDNSServiceSelectedLoopbackCapability': 'selected_loopback_os',
     'TestDNSServiceSelectedInterfaceCapability': 'selected_private_interface_os',
-    'TestDNSServiceRawReceiveCapability': 'selected_private_interface_raw_receive',
+    'TestDNSServiceRawReceiveCapability': RAW_SCOPE,
+    'TestDNSServiceLegacySerializationCapability': LEGACY_SCOPE,
 }
-SELECTOR = '^TestDNSService(LocalOnly|SelectedLoopback|SelectedInterface|RawReceive)Capability$'
+SELECTOR = '^TestDNSService(LocalOnly|SelectedLoopback|SelectedInterface|RawReceive|LegacySerialization)Capability$'
 OPT_INS = ('SOBALINK_DNSSD_LOCAL_ONLY', 'SOBALINK_DNSSD_SELECTED_LOOPBACK',
-           'SOBALINK_DNSSD_SELECTED_INTERFACE', 'SOBALINK_DNSSD_RAW_RECEIVE')
+           'SOBALINK_DNSSD_SELECTED_INTERFACE', 'SOBALINK_DNSSD_RAW_RECEIVE',
+           'SOBALINK_DNSSD_LEGACY_SERIALIZATION')
 MARKER = 'NEARBY_DNSSD_CAPABILITY '
+LEGACY_MARKER = 'NEARBY_DNSSD_LEGACY_CAPABILITY '
 FLAGS = {'reciprocalRecords', 'reciprocalCandidates', 'withdrawalObserved', 'ownersJoined',
          'rawPacketVerified', 'networkMulticastVerified'}
-KEYS = FLAGS | {'status', 'reason', 'scope', 'failureStage', 'failureKind'}
+KEYS = FLAGS | {'status', 'reason', 'scope', 'failureStage', 'failureKind', 'receiveCounters'}
+COUNTERS = {'receivedPackets', 'receivedBytes', 'metadataAccepted', 'metadataRejected',
+            'decodedPackets', 'decodeRejected', 'rateLimitedPackets', 'matchingRecordKinds'}
 STAGES = {'none', 'allocation', 'unknown', 'create_connection', 'schedule', 'registration', 'query', 'callback', 'admission'}
 KINDS = {'none', 'unavailable', 'permission_denied', 'name_conflict', 'invalid_argument', 'unsupported'}
+LEGACY_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined',
+                'rawPacketVerified', 'networkMulticastVerified'}
+LEGACY_PROOF_FLAGS = {'apiRecordsReady', 'oneQuerySent', 'legacySerializationVerified', 'ownersJoined'}
+LEGACY_KEYS = LEGACY_FLAGS | {'status', 'reason', 'scope', 'receivePath', 'failureStage', 'failureKind', 'receiveCounters'}
+LEGACY_SOCKET_STAGES = {'legacy_socket', 'legacy_send', 'legacy_receive'}
+LEGACY_UNAVAILABLE = {'readiness_deadline', 'reply_deadline', 'private_scope_unavailable',
+    'loopback_scope_unavailable', 'selected_binding_changed', 'native_api_unavailable',
+    'legacy_socket_unavailable', 'legacy_send_unavailable', 'legacy_receive_unavailable'}
+LEGACY_FAILED = {'fixture_unavailable', 'provider_invariant', 'receive_budget',
+                 'cleanup_uncertain', 'owners_not_joined', 'owners_missing'}
 UNAVAILABLE = {'deadline', 'loopback_scope_unavailable', 'private_scope_unavailable', 'native_api_unavailable',
                'selected_binding_changed', 'raw_receiver_unavailable', 'raw_receive_unavailable'}
 FAILED = {'fixture_unavailable', 'owners_not_joined', 'cleanup_uncertain', 'owners_missing',
@@ -70,6 +87,8 @@ POLICY_FILES = ('.github/workflows/activation-diagnostic.yml', '.github/scripts/
     '.github/scripts/ci-go-test.py', 'internal/nearby/provider_darwin.go',
     'internal/nearby/dnssd_bridge_darwin.c', 'internal/nearby/dnssd_bridge_darwin.h',
     'internal/nearby/dnssd_native_acceptance_test.go', 'internal/nearby/dnssd_raw_receive_test.go',
+    'internal/nearby/dnssd_capability_test.go', 'internal/nearby/dnssd_wire_evidence_test.go',
+    'internal/nearby/dnssd_legacy_native_test.go',
     'go.mod', 'go.sum')
 
 
@@ -81,13 +100,38 @@ def module(name):
     return value
 
 
+def receive_counters(value):
+    if value is None:
+        return None
+    if (type(value) is not dict or set(value) != COUNTERS
+            or any(type(count) is not int for count in value.values())):
+        raise ValueError('invalid closed receive counters')
+    for key, count in value.items():
+        limit = 512 * 1201 if key == 'receivedBytes' else 15 if key == 'matchingRecordKinds' else 512
+        if not 0 <= count <= limit:
+            raise ValueError('receive counter outside bound')
+    # receivedBytes measures bytes copied into the bounded receive buffer,
+    # including truncated observations; it is not a full wire-byte count.
+    if (value['receivedBytes'] > value['receivedPackets'] * 1201
+            or value['receivedBytes'] < 12 * value['metadataAccepted']
+            or value['metadataAccepted'] + value['metadataRejected'] + value['rateLimitedPackets'] > value['receivedPackets']
+            or value['decodedPackets'] + value['decodeRejected'] > value['metadataAccepted']
+            or value['matchingRecordKinds'] and not value['decodedPackets']):
+        raise ValueError('inconsistent receive counters')
+    return {key: value[key] for key in sorted(COUNTERS)}
+
+
 def capability(value, scope):
     if (type(value) is not dict or set(value) != KEYS or value['scope'] != scope or scope not in PROOFS
             or any(type(value[key]) is not bool for key in FLAGS)
-            or any(type(value[key]) is not str for key in KEYS - FLAGS)
+            or any(type(value[key]) is not str for key in KEYS - FLAGS - {'receiveCounters'})
             or value['failureStage'] not in STAGES or value['failureKind'] not in KINDS
             or value['networkMulticastVerified']):
         raise ValueError('invalid closed DNS-SD receipt')
+    counts = receive_counters(value['receiveCounters'])
+    if (scope != RAW_SCOPE and counts is not None or scope == RAW_SCOPE
+            and (counts is None) != (value['status'] == 'not_run')):
+        raise ValueError('invalid scope-specific receive counters')
     stage, kind, status, reason = (value[key] for key in ('failureStage', 'failureKind', 'status', 'reason'))
     if (stage == 'none') != (kind == 'none'):
         raise ValueError('incomplete API failure classification')
@@ -95,6 +139,8 @@ def capability(value, scope):
         expected_reason, expected_flags = PROOFS[scope]
         if reason != expected_reason or stage != 'none' or {key for key in FLAGS if value[key]} != expected_flags:
             raise ValueError('incomplete scope-specific proof')
+        if scope == RAW_SCOPE and counts['matchingRecordKinds'] != 15:
+            raise ValueError('incomplete raw receive evidence')
     elif status == 'unavailable':
         if reason not in UNAVAILABLE or (reason == 'native_api_unavailable') != (stage != 'none'):
             raise ValueError('invalid unavailable classification')
@@ -104,7 +150,7 @@ def capability(value, scope):
         if reason not in FAILED:
             raise ValueError('unknown invariant failure')
     elif status == 'not_run':
-        if reason != 'opt_in_required' or stage != 'none' or any(value[key] for key in FLAGS):
+        if reason != 'opt_in_required' or stage != 'none' or counts is not None or any(value[key] for key in FLAGS):
             raise ValueError('invalid opt-in receipt')
     else:
         raise ValueError('unknown DNS-SD status')
@@ -112,7 +158,60 @@ def capability(value, scope):
     # unrelated scope proofs that the native fixture cannot produce.
     if any(value[key] for key in FLAGS - PROOFS[scope][1]):
         raise ValueError('proof escaped diagnostic scope')
-    return {key: value[key] for key in sorted(KEYS)}
+    return {key: counts if key == 'receiveCounters' else value[key] for key in sorted(KEYS)}
+
+
+def legacy_capability(value):
+    # Legacy unicast DNS serialization has a different envelope and admission
+    # contract. It cannot enter the four original capability/proof definitions.
+    if (type(value) is not dict or set(value) != LEGACY_KEYS
+            or any(type(value[key]) is not bool for key in LEGACY_FLAGS)
+            or any(type(value[key]) is not str for key in LEGACY_KEYS - LEGACY_FLAGS - {'receiveCounters'})
+            or value['scope'] != LEGACY_SCOPE or value['receivePath'] not in {'none', 'selected_interface', 'local_loopback'}
+            or value['failureStage'] not in STAGES | LEGACY_SOCKET_STAGES
+            or value['failureKind'] not in KINDS | {'short_payload'}
+            or value['rawPacketVerified'] or value['networkMulticastVerified']):
+        raise ValueError('invalid closed legacy DNS receipt')
+    counts = receive_counters(value['receiveCounters'])
+    stage, kind, status, reason = (value[key] for key in ('failureStage', 'failureKind', 'status', 'reason'))
+    if ((stage == 'none') != (kind == 'none')
+            or kind == 'short_payload' and stage != 'legacy_send'
+            or stage in LEGACY_SOCKET_STAGES and kind not in {'unavailable', 'short_payload'}
+            or (counts is None) != (status == 'not_run')
+            or value['oneQuerySent'] and not value['apiRecordsReady']):
+        raise ValueError('inconsistent legacy DNS classification')
+    if status == 'verified':
+        if (reason != 'native_legacy_serialization_observed' or stage != 'none'
+                or {key for key in LEGACY_FLAGS if value[key]} != LEGACY_PROOF_FLAGS
+                or value['receivePath'] == 'none' or counts['matchingRecordKinds'] != 15):
+            raise ValueError('incomplete legacy DNS serialization proof')
+    elif status == 'unavailable':
+        if reason not in LEGACY_UNAVAILABLE:
+            raise ValueError('unknown legacy DNS unavailability')
+        if reason == 'native_api_unavailable':
+            if stage not in STAGES - {'none'}:
+                raise ValueError('missing native API classification')
+        elif reason in {item + '_unavailable' for item in LEGACY_SOCKET_STAGES}:
+            if stage != reason.removesuffix('_unavailable'):
+                raise ValueError('incorrect legacy socket classification')
+        elif stage != 'none':
+            raise ValueError('unexpected legacy failure classification')
+    elif status == 'failed':
+        # Cleanup failure can retain the originating fixed API/socket category.
+        if reason not in LEGACY_FAILED:
+            raise ValueError('unknown legacy DNS invariant failure')
+    elif status == 'not_run':
+        if (reason != 'opt_in_required' or stage != 'none' or value['receivePath'] != 'none'
+                or any(value[key] for key in LEGACY_FLAGS)):
+            raise ValueError('invalid legacy opt-in receipt')
+    else:
+        raise ValueError('unknown legacy DNS status')
+    if status != 'verified' and value['legacySerializationVerified']:
+        raise ValueError('unverified legacy serialization proof')
+    if counts is not None and ((value['receivePath'] != 'none') != (counts['decodedPackets'] > 0)
+            or counts['decodedPackets'] > 0 and not value['oneQuerySent']):
+        raise ValueError('incomplete legacy receive route')
+    return {key: counts if key == 'receiveCounters' else value[key] for key in sorted(LEGACY_KEYS)}
 
 
 def test_events(raw, returncode):
@@ -140,10 +239,16 @@ def test_events(raw, returncode):
                     active = None
                 else:
                     order_valid = False
-        if MARKER in event.get('Output', ''):
-            if name not in CASES or event['Output'].count(MARKER) != 1 or active != name:
+        output = event.get('Output', '')
+        present = [marker for marker in (MARKER, LEGACY_MARKER) if marker in output]
+        if present:
+            expected = LEGACY_MARKER if name == 'TestDNSServiceLegacySerializationCapability' else MARKER
+            if (action != 'output' or name not in CASES or present != [expected] or output.count(expected) != 1
+                    or active != name):
                 raise ValueError('invalid DNS-SD marker owner')
-            markers[name].append(capability(shared.parse_json(event['Output'].split(MARKER, 1)[1].strip()), CASES[name]))
+            value = shared.parse_json(output.split(expected, 1)[1].strip())
+            markers[name].append(legacy_capability(value) if expected == LEGACY_MARKER
+                                 else capability(value, CASES[name]))
     result, accepted = {}, order_valid and active is None and returncode == 0 and package == ['start', 'pass']
     for name, scope in CASES.items():
         record = markers[name][0] if len(markers[name]) == 1 else None
@@ -250,8 +355,23 @@ def empty_result():
     return {'schema': 1, 'diagnosticPassed': False, 'cCompilePassed': False, 'cLinkPassed': False, 'goCompilePassed': False,
             'compileFailureKind': None, 'compileFailureLocation': None, 'preflightFailureKind': None, 'processStatus': 'not_run', 'eventsAccepted': False,
             'capabilities': {scope: None for scope in CASES.values()}, 'selectedInterfaceVerified': False,
-            'rawReceiveVerified': False, 'networkMulticastVerified': False, 'physicalLANVerified': False,
+            'rawReceiveVerified': False, 'legacySerializationVerified': False, 'legacyReceivePath': 'none',
+            'networkMulticastVerified': False, 'physicalLANVerified': False,
             'automaticCoreBrowserVerified': False, 'releaseValidation': False}
+
+
+def summarize_scope_proofs(report):
+    # A legacy unicast observation never upgrades the original passive raw
+    # scope, even when the OS returned it on the selected interface.
+    report['selectedInterfaceVerified'] = report['rawReceiveVerified'] = False
+    report['legacySerializationVerified'], report['legacyReceivePath'] = False, 'none'
+    if report['diagnosticPassed']:
+        report['selectedInterfaceVerified'] = report['capabilities']['selected_private_interface_os']['status'] == 'verified'
+        report['rawReceiveVerified'] = report['capabilities'][RAW_SCOPE]['status'] == 'verified'
+        legacy = report['capabilities'][LEGACY_SCOPE]
+        report['legacySerializationVerified'] = legacy['status'] == 'verified'
+        if report['legacySerializationVerified']:
+            report['legacyReceivePath'] = legacy['receivePath']
 
 
 def main(argv=None):
@@ -411,21 +531,18 @@ def main(argv=None):
                     'sdk': {key: native.digest(path) for key, path in sdk_files.items()}}):
             raise ValueError('source or toolchain changed')
         report['diagnosticPassed'] = report['eventsAccepted'] and state == 'completed'
-        if report['diagnosticPassed']:
-            report['selectedInterfaceVerified'] = report['capabilities']['selected_private_interface_os']['status'] == 'verified'
-            report['rawReceiveVerified'] = report['capabilities']['selected_private_interface_raw_receive']['status'] == 'verified'
         provenance['stage'] = 'passed' if report['diagnosticPassed'] else 'runtime-failed'
     except Exception as error:
         if provenance['stage'] in PREFLIGHT_STAGES:
             report['preflightFailureKind'] = error.kind if isinstance(error, PreflightError) else locals().get('failure_kind', 'unexpected_preflight_failure')
         report['diagnosticPassed'] = False
-        report['selectedInterfaceVerified'] = report['rawReceiveVerified'] = False
     finally:
         if private is not None:
             try:
                 shutil.rmtree(private)
             except OSError:
                 report['diagnosticPassed'] = False
+    summarize_scope_proofs(report)
     try:
         if not export_ready:
             raise ValueError('export unavailable')

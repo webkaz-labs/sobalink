@@ -16,11 +16,27 @@ gate = importlib.util.module_from_spec(SPEC)
 exec(compile(SCRIPT.read_bytes(), str(SCRIPT), 'exec'), gate.__dict__)
 
 
+def counters(verified=False):
+    return {'receivedPackets': 1 if verified else 0, 'receivedBytes': 100 if verified else 0,
+            'metadataAccepted': 1 if verified else 0, 'metadataRejected': 0,
+            'decodedPackets': 1 if verified else 0, 'decodeRejected': 0,
+            'rateLimitedPackets': 0, 'matchingRecordKinds': 15 if verified else 0}
+
+
 def record(scope, status='verified', **changes):
-    reason, flags = gate.PROOFS[scope]
-    value = {'scope': scope, 'status': status, 'reason': reason if status == 'verified' else 'deadline',
-             'failureStage': 'none', 'failureKind': 'none',
-             **{flag: status == 'verified' and flag in flags for flag in gate.FLAGS}}
+    if scope == gate.LEGACY_SCOPE:
+        value = {'scope': scope, 'status': status,
+                 'reason': 'native_legacy_serialization_observed' if status == 'verified' else 'reply_deadline',
+                 'failureStage': 'none', 'failureKind': 'none',
+                 'receivePath': 'selected_interface' if status == 'verified' else 'none',
+                 'receiveCounters': counters(status == 'verified'),
+                 **{flag: status == 'verified' and flag in gate.LEGACY_PROOF_FLAGS for flag in gate.LEGACY_FLAGS}}
+    else:
+        reason, flags = gate.PROOFS[scope]
+        value = {'scope': scope, 'status': status, 'reason': reason if status == 'verified' else 'deadline',
+                 'failureStage': 'none', 'failureKind': 'none',
+                 'receiveCounters': counters(status == 'verified') if scope == gate.RAW_SCOPE else None,
+                 **{flag: status == 'verified' and flag in flags for flag in gate.FLAGS}}
     value.update(changes)
     return value
 
@@ -33,7 +49,7 @@ def events(records):
         base = {'Package': gate.PACKAGE, 'Test': name}
         terminal = {'verified': 'pass', 'unavailable': 'skip', 'not_run': 'skip', 'failed': 'fail'}[value['status']]
         failed |= terminal == 'fail'
-        rows += [dict(base, Action='run'), dict(base, Action='output', Output=gate.MARKER + json.dumps(value)),
+        rows += [dict(base, Action='run'), dict(base, Action='output', Output=(gate.LEGACY_MARKER if scope == gate.LEGACY_SCOPE else gate.MARKER) + json.dumps(value)),
                  dict(base, Action=terminal)]
     rows.append({'Action': 'fail' if failed else 'pass', 'Package': gate.PACKAGE})
     return rows
@@ -79,10 +95,10 @@ class DNSSDDiagnosticTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gate.capability(record(scope, **changes), scope)
 
-    def test_exact_batch_requires_four_runs_and_matching_terminals(self):
-        records = {scope: record(scope) for scope in gate.PROOFS}
+    def test_exact_batch_requires_five_runs_and_matching_terminals(self):
+        records = {scope: record(scope) for scope in gate.CASES.values()}
         self.assertEqual(gate.test_events(raw(events(records)), 0), (records, True))
-        unavailable = {scope: record(scope, 'unavailable') for scope in gate.PROOFS}
+        unavailable = {scope: record(scope, 'unavailable') for scope in gate.CASES.values()}
         self.assertEqual(gate.test_events(raw(events(unavailable)), 0), (unavailable, True))
         for kind in ('missing', 'duplicate', 'skip', 'wrong-test', 'wrong-scope', 'opt-out', 'nonzero'):
             rows = events(records)
@@ -111,6 +127,155 @@ class DNSSDDiagnosticTests(unittest.TestCase):
         got, accepted = gate.test_events(raw(events(failed)), 1)
         self.assertEqual(got, failed)
         self.assertFalse(accepted)
+
+    def test_receive_counters_are_bounded_closed_and_retained_on_failure(self):
+        observed = {'receivedPackets': 2, 'receivedBytes': 99, 'metadataAccepted': 1,
+                    'metadataRejected': 1, 'decodedPackets': 0, 'decodeRejected': 1,
+                    'rateLimitedPackets': 0, 'matchingRecordKinds': 0}
+        for status, reason in (('unavailable', 'deadline'), ('failed', 'cleanup_uncertain')):
+            value = record(gate.RAW_SCOPE, status, reason=reason, receiveCounters=observed)
+            self.assertEqual(gate.capability(value, gate.RAW_SCOPE), value)
+        for key in gate.COUNTERS:
+            for count in (-1, True, 1.5, 'synthetic-private', None,
+                          512 * 1201 + 1 if key == 'receivedBytes' else 16 if key == 'matchingRecordKinds' else 513):
+                with self.subTest(key=key, count=count), self.assertRaises(ValueError):
+                    gate.receive_counters(dict(observed, **{key: count}))
+            missing = dict(observed)
+            del missing[key]
+            with self.assertRaises(ValueError):
+                gate.receive_counters(missing)
+        for bad in ([], 'synthetic-private', dict(observed, address='synthetic-private'),
+                    dict(observed, receivedBytes=2 * 1201 + 1), dict(observed, receivedBytes=11),
+                    dict(observed, metadataAccepted=2), dict(observed, decodedPackets=1),
+                    dict(observed, matchingRecordKinds=1)):
+            with self.assertRaises(ValueError):
+                gate.receive_counters(bad)
+        self.assertEqual(gate.receive_counters(counters()), counters())
+        minimum = dict(counters(True), receivedBytes=12)
+        self.assertEqual(gate.receive_counters(minimum), minimum)
+        for scope in (gate.RAW_SCOPE, gate.LEGACY_SCOPE):
+            value = record(scope, receiveCounters=dict(counters(True), receivedBytes=0))
+            with self.assertRaises(ValueError):
+                gate.legacy_capability(value) if scope == gate.LEGACY_SCOPE else gate.capability(value, scope)
+        self.assertIsNone(gate.receive_counters(None))
+        for scope in gate.PROOFS.keys() - {gate.RAW_SCOPE}:
+            with self.assertRaises(ValueError):
+                gate.capability(record(scope, receiveCounters=counters()), scope)
+
+    def test_legacy_serialization_is_separate_from_all_original_scope_proofs(self):
+        for route in ('selected_interface', 'local_loopback'):
+            value = record(gate.LEGACY_SCOPE, receivePath=route)
+            self.assertEqual(gate.legacy_capability(value), value)
+            with self.assertRaises(ValueError):
+                gate.capability(value, gate.RAW_SCOPE)
+            for key in gate.LEGACY_FLAGS:
+                with self.subTest(route=route, key=key), self.assertRaises(ValueError):
+                    gate.legacy_capability(dict(value, **{key: not value[key]}))
+            records = {scope: record(scope, 'unavailable') for scope in gate.CASES.values()}
+            records[gate.LEGACY_SCOPE] = value
+            got, accepted = gate.test_events(raw(events(records)), 0)
+            self.assertTrue(accepted)
+            report = gate.empty_result()
+            report.update(capabilities=got, diagnosticPassed=True)
+            gate.summarize_scope_proofs(report)
+            self.assertTrue(report['legacySerializationVerified'])
+            self.assertEqual(report['legacyReceivePath'], route)
+            for flag in ('selectedInterfaceVerified', 'rawReceiveVerified', 'networkMulticastVerified',
+                         'physicalLANVerified', 'automaticCoreBrowserVerified', 'releaseValidation'):
+                self.assertFalse(report[flag], flag)
+            report['diagnosticPassed'] = False
+            gate.summarize_scope_proofs(report)
+            self.assertFalse(report['legacySerializationVerified'])
+            self.assertEqual(report['legacyReceivePath'], 'none')
+        value = record(gate.LEGACY_SCOPE)
+        for key in gate.LEGACY_KEYS:
+            missing = dict(value)
+            del missing[key]
+            with self.assertRaises(ValueError):
+                gate.legacy_capability(missing)
+        for changes in ({'scope': gate.RAW_SCOPE}, {'receivePath': 'none'},
+                        {'receivePath': 'synthetic-private'}, {'receiveCounters': None},
+                        {'receiveCounters': counters()}, {'reason': 'native_raw_receive_observed'},
+                        {'reason': 'synthetic-private'}, {'failureStage': 'synthetic-private'},
+                        {'failureKind': 'synthetic-private'}, {'secret': 'synthetic-private'},
+                        {'oneQuerySent': 1}):
+            with self.assertRaises(ValueError):
+                gate.legacy_capability(dict(value, **changes))
+        with self.assertRaises(ValueError):
+            gate.legacy_capability(record(gate.RAW_SCOPE))
+
+    def test_legacy_failure_observations_are_closed_and_never_proof(self):
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        for reason in gate.LEGACY_UNAVAILABLE:
+            stage, kind = 'none', 'none'
+            if reason == 'native_api_unavailable':
+                stage, kind = 'callback', 'name_conflict'
+            elif reason.startswith('legacy_'):
+                stage, kind = reason.removesuffix('_unavailable'), 'unavailable'
+            value = record(gate.LEGACY_SCOPE, 'unavailable', reason=reason,
+                           failureStage=stage, failureKind=kind)
+            self.assertEqual(gate.legacy_capability(value), value)
+            current = dict(records, **{gate.LEGACY_SCOPE: value})
+            got, accepted = gate.test_events(raw(events(current)), 0)
+            self.assertTrue(accepted)
+            self.assertEqual(got[gate.LEGACY_SCOPE], value)
+        for reason in gate.LEGACY_FAILED:
+            value = record(gate.LEGACY_SCOPE, 'failed', reason=reason,
+                           apiRecordsReady=True, failureStage='legacy_send', failureKind='short_payload')
+            self.assertEqual(gate.legacy_capability(value), value)
+            current = dict(records, **{gate.LEGACY_SCOPE: value})
+            got, accepted = gate.test_events(raw(events(current)), 1)
+            self.assertFalse(accepted)
+            self.assertEqual(got[gate.LEGACY_SCOPE], value)
+        partial = record(gate.LEGACY_SCOPE, 'unavailable', apiRecordsReady=True, oneQuerySent=True,
+                         receivePath='local_loopback', receiveCounters=dict(counters(True), matchingRecordKinds=3))
+        self.assertEqual(gate.legacy_capability(partial), partial)
+        for changes in ({'reason': 'deadline'}, {'failureStage': 'legacy_send', 'failureKind': 'short_payload'},
+                        {'failureStage': 'none', 'failureKind': 'unavailable'},
+                        {'failureStage': 'query', 'failureKind': 'short_payload'},
+                        {'reason': 'legacy_socket_unavailable', 'failureStage': 'legacy_receive', 'failureKind': 'unavailable'},
+                        {'oneQuerySent': True}, {'legacySerializationVerified': True},
+                        {'receiveCounters': None}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                gate.legacy_capability(record(gate.LEGACY_SCOPE, 'unavailable', **changes))
+        for scope in (gate.RAW_SCOPE, gate.LEGACY_SCOPE):
+            parse = gate.legacy_capability if scope == gate.LEGACY_SCOPE else lambda value: gate.capability(value, scope)
+            with self.assertRaises(ValueError):
+                parse(record(scope, 'unavailable', receiveCounters=None))
+            with self.assertRaises(ValueError):
+                parse(record(scope, 'verified', receiveCounters=dict(counters(True), matchingRecordKinds=7)))
+
+    def test_marker_types_and_lifecycles_cannot_be_cross_wired(self):
+        records = {scope: record(scope) for scope in gate.CASES.values()}
+        for wrong in ('original-marker', 'legacy-marker', 'mixed-marker', 'run-marker',
+                      'missing-legacy', 'duplicate-legacy', 'legacy-skip', 'legacy-opt-out'):
+            rows = events(records)
+            legacy = next(index for index, row in enumerate(rows)
+                          if row.get('Test') == 'TestDNSServiceLegacySerializationCapability' and row['Action'] == 'output')
+            if wrong == 'original-marker':
+                rows[legacy]['Output'] = gate.MARKER + json.dumps(records[gate.LEGACY_SCOPE])
+            elif wrong == 'legacy-marker':
+                rows[2]['Output'] = gate.LEGACY_MARKER + json.dumps(records[gate.LEGACY_SCOPE])
+            elif wrong == 'mixed-marker':
+                rows[legacy]['Output'] += gate.MARKER
+            elif wrong == 'run-marker':
+                rows[legacy - 1]['Output'] = rows[legacy]['Output']
+                del rows[legacy]
+            elif wrong == 'missing-legacy':
+                del rows[legacy - 1:legacy + 2]
+            elif wrong == 'duplicate-legacy':
+                rows.insert(legacy, copy.deepcopy(rows[legacy]))
+            elif wrong == 'legacy-skip':
+                rows[legacy + 1]['Action'] = 'skip'
+            else:
+                records[gate.LEGACY_SCOPE] = record(gate.LEGACY_SCOPE, 'not_run', reason='opt_in_required', receiveCounters=None)
+                rows = events(records)
+            with self.subTest(wrong=wrong):
+                try:
+                    _, accepted = gate.test_events(raw(rows), 0)
+                except ValueError:
+                    accepted = False
+                self.assertFalse(accepted)
 
     def test_compiler_identity_and_failure_categories_never_return_raw_text(self):
         got = gate.compiler_identity(b'Apple clang version 17.0.0 (clang-1700.3.19.1)\nTarget: private-host', '26.0', '25A354')
@@ -169,7 +334,7 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                     if command[-1] == '--show-sdk-build-version': return b'synthetic-private' if failure == 'sdk-build' else b'25A354'
                     if command[:3] == ['go', 'mod', 'download']: return b''
                     raise AssertionError('unexpected command')
-                records = {scope: record(scope, 'unavailable' if failure == 'unavailable' else 'verified') for scope in gate.PROOFS}
+                records = {scope: record(scope, 'unavailable' if failure == 'unavailable' else 'verified') for scope in gate.CASES.values()}
                 if failure == 'runtime-failed':
                     records['os_local_only'] = record('os_local_only', 'failed', reason='cleanup_uncertain')
                 commands = []
@@ -209,6 +374,8 @@ class DNSSDDiagnosticTests(unittest.TestCase):
                 self.assertEqual(set(result), set(gate.empty_result()))
                 self.assertEqual(result['selectedInterfaceVerified'], failure is None)
                 self.assertEqual(result['rawReceiveVerified'], failure is None)
+                self.assertEqual(result['legacySerializationVerified'], failure is None)
+                self.assertEqual(result['legacyReceivePath'], 'selected_interface' if failure is None else 'none')
                 self.assertFalse(result['networkMulticastVerified'])
                 self.assertEqual(provenance['commit'], sha)
                 self.assertEqual(provenance['tree'], tree)

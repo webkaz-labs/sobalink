@@ -6,17 +6,50 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
 
 	"golang.org/x/net/ipv4"
+	"golang.org/x/sys/unix"
 )
 
 // This is a receive-only test owner. It cannot announce/query or exercise the
 // known-unavailable raw Darwin local sender. The production bind is unchanged.
 type dnssdReceiveOnly struct{ *nativeTransport }
 
+// Preserve bounded copied-byte evidence even when truncation/control metadata
+// is invalid. Such a packet has no admitted metadata and is never decoded.
+func dnssdReadDiagnosticPacket(conn *net.UDPConn) (Packet, error) {
+	data := make([]byte, MaxDatagramBytes+1)
+	control := ipv4.NewControlMessage(ipv4.FlagTTL | ipv4.FlagDst | ipv4.FlagInterface)
+	n, on, flags, source, err := conn.ReadMsgUDP(data, control)
+	if err != nil {
+		return Packet{}, err
+	}
+	p := Packet{Data: data[:min(n, len(data))]}
+	if n > MaxDatagramBytes || on > len(control) || flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || source == nil {
+		return p, nil
+	}
+	var cm ipv4.ControlMessage
+	if cm.Parse(control[:on]) != nil {
+		return p, nil
+	}
+	destination, ok := netip.AddrFromSlice(cm.Dst)
+	if !ok {
+		return p, nil
+	}
+	p.Source, p.Destination, p.InterfaceIndex, p.HopLimit = source.AddrPort(), destination.Unmap(), cm.IfIndex, cm.TTL
+	return p, nil
+}
+func (r *dnssdReceiveOnly) ReadPacket() (Packet, error) {
+	p, err := dnssdReadDiagnosticPacket(r.conn)
+	if err == nil {
+		_, err = currentBindingWithPolicy(r.scope, &r.ifi, r.policy)
+	}
+	return p, err
+}
 func (*dnssdReceiveOnly) WritePacket([]byte) error { return ErrUnsupported }
 func newDNSServiceReceiveOnly(scope Scope) (Transport, error) {
 	ifi, err := currentBinding(scope, nil)
@@ -58,6 +91,7 @@ func TestDNSServiceRawReceiveCapability(t *testing.T) {
 }
 func runDNSServiceRawReceiveCapability() (result dnssdCapabilityResult) {
 	result = dnssdCapability("selected_private_interface_raw_receive")
+	result.ReceiveCounters = &dnssdReceiveCounters{}
 	scope, err := dnssdSinglePrivateScope()
 	if err != nil {
 		result.Reason = "private_scope_unavailable"
@@ -231,7 +265,7 @@ func runDNSServiceRawReceiveCapability() (result dnssdCapabilityResult) {
 	store := newStore(scope)
 	store.generation = cfgs[1].Advertisement.SessionID
 	window := time.Now()
-	parsed, receivedCount := 0, 0
+	parsed := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -241,11 +275,18 @@ func runDNSServiceRawReceiveCapability() (result dnssdCapabilityResult) {
 			return
 		case got := <-packets:
 			if got.err != nil {
-				result.Reason = "raw_receive_unavailable"
+				if len(got.packet.Data) > 0 {
+					result.ReceiveCounters.received(got.packet)
+				}
+				if errors.Is(got.err, ErrScopeChanged) {
+					dnssdCapabilityError(&result, got.err)
+				} else {
+					result.Reason = "raw_receive_unavailable"
+				}
 				return
 			}
-			receivedCount++
-			if receivedCount >= MaxReceivedDatagrams {
+			result.ReceiveCounters.received(got.packet)
+			if result.ReceiveCounters.exhausted() {
 				result.Status, result.Reason = "failed", "provider_invariant"
 				return
 			}
@@ -255,16 +296,22 @@ func runDNSServiceRawReceiveCapability() (result dnssdCapabilityResult) {
 				parsed = 0
 			}
 			if parsed >= MaxParsedPerSecond {
+				result.ReceiveCounters.RateLimitedPackets++
 				continue
 			}
 			parsed++
 			if !validatePacket(scope, got.packet) {
+				result.ReceiveCounters.MetadataRejected++
 				continue
 			}
+			result.ReceiveCounters.MetadataAccepted++
 			records, _, e := decodeRecordPacket(got.packet.Data, cfgs[1].Advertisement)
 			if e != nil {
+				result.ReceiveCounters.DecodeRejected++
 				continue
 			}
+			result.ReceiveCounters.DecodedPackets++
+			result.ReceiveCounters.match(records, cfgs[0].Advertisement)
 			observation := recordObservation{Kind: rawPacketObservation, InterfaceIndex: got.packet.InterfaceIndex, Source: got.packet.Source, Records: records}
 			if e = assembler.observe(observation, now, &store); e != nil {
 				result.Status, result.Reason = "failed", "provider_invariant"

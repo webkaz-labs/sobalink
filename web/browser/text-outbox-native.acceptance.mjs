@@ -4,7 +4,8 @@ import { readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test, expect } from './transfer-native-fixtures.mjs'
-import { textPhase } from './text-native-reporter.mjs'
+import { measureTextLayout } from './text-native-layout.mjs'
+import { textPhase, recordFirstFailure } from './text-native-reporter.mjs'
 
 // Every record comes from the actual authenticated Core. Only one successful
 // local commit response is lost, after the server has accepted the request.
@@ -34,10 +35,21 @@ test('text-native-exact-review-lost-commit-original-status-en-ja', async ({ page
       await delay(25)
     }
   }
-  const fits = async () => {
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true)
-    for (const region of [page.getByRole('dialog'), page.locator('.outbox-preparation')]) {
-      if (await region.count()) assert.equal(await region.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true)
+  const fits = async phase => {
+    // Capture fixed geometry immediately before the original fit checks; keep
+    // it private unless one fails. Diagnostics never replace that failure.
+    let layout
+    try { layout = await measureTextLayout(page) } catch {}
+    try {
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true)
+      for (const region of [page.getByRole('dialog'), page.locator('.outbox-preparation')]) {
+        if (await region.count()) assert.equal(await region.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true)
+      }
+    } catch (error) {
+      if (error.code === 'ERR_ASSERTION' && layout) {
+        try { recordFirstFailure(process.env.SOBA_TEXT_BROWSER_FAILURE || join(root, 'text-native-failure.json'), phase, 'assertion', layout) } catch {}
+      }
+      throw error
     }
   }
   await page.route('**/api/command', async route => {
@@ -103,7 +115,7 @@ test('text-native-exact-review-lost-commit-original-status-en-ja', async ({ page
   await expect(consent).not.toBeChecked(); await expect(commit).toBeDisabled()
   await expect(page.locator('.composer textarea')).toBeDisabled()
   assert.deepEqual([prepares, commits, checks], [1, 0, 0])
-  await phase('review-fit'); await fits()
+  await phase('review-fit'); await fits('review-fit')
   await phase('review-checkpoint'); await checkpoint('review', { prepared })
   await phase('commit')
   await consent.check(); await expect(commit).toBeEnabled(); await commit.click()
@@ -134,7 +146,7 @@ test('text-native-exact-review-lost-commit-original-status-en-ja', async ({ page
   assert.equal(await card.locator('.text-queue-body').textContent(), body)
   await phase('detail-receipt-en')
   await expect(card).toContainText('A receiver-saved receipt confirms storage on the selected device. It is not a read receipt.')
-  await phase('detail-fit-en'); await fits()
+  await phase('detail-fit-en'); await fits('detail-fit-en')
   await phase('escape'); await page.keyboard.press('Escape')
   await phase('locale-ja')
   await page.locator('.locale-toggle').click(); await page.setViewportSize({ width: 320, height: 844 })
@@ -145,7 +157,7 @@ test('text-native-exact-review-lost-commit-original-status-en-ja', async ({ page
   await expect(card).toContainText('処理状況: 相手側で本文を保存済み · 到着の記録: 受信側の保存を確認済み')
   await phase('outbox-receipt-ja')
   await expect(card).toContainText('受信保存の確認は、選んだ相手の端末に保存されたことを示します。既読を示すものではありません。')
-  await phase('outbox-fit-ja'); await fits()
+  await phase('outbox-fit-ja'); await fits('outbox-fit-ja')
   await phase('command-counts')
   assert.deepEqual([prepares, commits, drops, checks], [1, 1, 1, 2])
   await phase('runtime-counts')

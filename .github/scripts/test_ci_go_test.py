@@ -49,6 +49,30 @@ class CIGoTestTests(unittest.TestCase):
             ["go", "test", "-json", "-race", "-count=1", "./pkg"],
             stdout=subprocess.PIPE, stderr=None, shell=False)
 
+    def test_macos_selected_interface_requires_exact_pass_not_unavailable_or_skip(self):
+        package = 'github.com/webkaz-labs/sobalink/internal/nearby'
+        test = 'TestDNSServiceSelectedInterfaceCapability'
+        expected = ((package, test),)
+        events = [event('start', None, package=package), event('run', test, package=package),
+                  event('pass', test, package=package), event('pass', None, package=package)]
+        command = ['go', 'test', '-race', '-p=1', '-count=1', '-timeout=60s',
+                   './internal/nearby', '-run', '^' + test + '$']
+        self.assertEqual(self.invoke(events, expected, command=command, exact=True)[0], 0)
+        for status in ('unavailable', 'not_run', 'failed'):
+            rejected = [*events[:2], event('output', test, package=package,
+                Output='NEARBY_DNSSD_CAPABILITY ' + json.dumps({'status': status}) + '\n'),
+                event('skip' if status != 'failed' else 'fail', test, package=package), events[-1]]
+            with self.subTest(status=status):
+                self.assertEqual(self.invoke(rejected, expected, command=command, exact=True)[0], 1)
+        for other in ('TestDNSServiceSelectedLoopbackCapability', 'TestDNSServiceLocalOnlyCapability',
+                      'TestDNSServiceRawReceiveCapability'):
+            wrong = [{**item, 'Test': other} if 'Test' in item else item for item in events]
+            with self.subTest(other=other):
+                self.assertEqual(self.invoke(wrong, expected, command=command, exact=True)[0], 1)
+        for code in (1, -15):
+            with self.subTest(code=code):
+                self.assertNotEqual(self.invoke(events, expected, code=code, command=command, exact=True)[0], 0)
+
     def test_missing_test_and_zero_matching_tests_fail(self):
         for events in ([], [event("pass", None)], [event("pass", "TestOther")],
                        [event("run"), event("pass", None)]):

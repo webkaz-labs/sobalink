@@ -181,3 +181,29 @@ it.each(['en', 'ja'] as const)('does not display receiver-saved confirmation wit
   expect(within(region).queryByText(textQueueText(locale, 'confirmed'), { exact: false })).not.toBeInTheDocument()
   expect(h.requests.some(r => r.name === 'message.queue.commit')).toBe(false)
 })
+
+it.each(['en', 'ja'] as const)('retains the underlying queue controls and exact long text through outbox close/reopen (%s)', async locale => {
+  const h = setup(locale), { container } = render(<App />)
+  const body = '  synthetic-' + 'x'.repeat(256) + '\n合成テキスト\n'
+  await openPeer(locale); await enterQueue(locale, body); await prepare(locale)
+  expect(container.querySelector('.text-queue-body')?.textContent).toBe(body)
+  await commit(locale); await screen.findByText(textQueueText(locale, 'localOnly'))
+  const id = h.rows()[0].requestId
+  const open = () => userEvent.click(within(container.querySelector('.primary-nav') as HTMLElement).getByRole('button', { name: locale === 'en' ? /^Outbox/ : /^送信待ち/ }))
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await open()
+    const dialog = await screen.findByRole('dialog')
+    const card = await within(dialog).findByRole('article', { name: `${textQueueText(locale, 'title')}: Device A` })
+    expect(card).toHaveAttribute('data-text-request-id', id)
+    await userEvent.click(within(card).getByRole('button', { name: textQueueText(locale, 'details') }))
+    await waitFor(() => expect(card.querySelector('.text-queue-body')?.textContent).toBe(body))
+    const tools = container.querySelector('.composer-tools') as HTMLElement
+    expect(tools.querySelectorAll('.icon-button')).toHaveLength(2)
+    expect(within(tools).getByRole('button', { name: textQueueText(locale, 'review') })).toBeDisabled()
+    expect(container.querySelector('.message-meta .button')?.textContent).toBe(textQueueText(locale, 'view'))
+    fireEvent(dialog, new Event('cancel', { bubbles: false, cancelable: true }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  }
+  expect(h.requests.filter(r => r.name === 'message.queue.prepare')).toHaveLength(1)
+  expect(h.requests.filter(r => r.name === 'message.queue.commit')).toHaveLength(1)
+})

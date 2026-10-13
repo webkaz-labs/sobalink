@@ -128,6 +128,46 @@ class TextDiagnosticTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             gate.fixed_result(report)
 
+    def test_layout_evidence_has_exact_closed_regions_and_bounded_numbers(self):
+        source = (gate.ROOT / 'web/browser/text-native-layout.mjs').read_text().split('].map(pair', 1)[0]
+        self.assertEqual(tuple(re.findall(r"\['([^']+)',", source)), gate.LAYOUT_ROLES)
+        def layout():
+            return {'viewportWidth': 320, 'regions': [dict(role=role, clientWidth=300, scrollWidth=341,
+                leftOverflow=0, rightOverflow=21) for role in gate.LAYOUT_ROLES]}
+        def failure():
+            return {'schema': 1, 'phase': 'outbox-fit-ja', 'errorKind': 'assertion', 'layout': layout()}
+        value = failure()
+        self.assertEqual(gate.browser_failure(value), value)
+        self.assertIsNot(gate.browser_failure(value)['layout']['regions'][0], value['layout']['regions'][0])
+        for bad in (True, -1, 8193, 1.5, float('inf'), float('nan'), '320', None):
+            for field in ('clientWidth', 'scrollWidth', 'leftOverflow', 'rightOverflow'):
+                changed = failure()
+                changed['layout']['regions'][0][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ValueError):
+                    gate.browser_failure(changed)
+            changed = failure()
+            changed['layout']['viewportWidth'] = bad
+            with self.assertRaises(ValueError):
+                gate.browser_failure(changed)
+        changes = [lambda v: v.update(phase='detail-exact'), lambda v: v.update(errorKind='timeout'),
+                   lambda v: v['layout'].update(text='synthetic-private'),
+                   lambda v: v['layout'].update(regions=[]),
+                   lambda v: v['layout']['regions'][0].update(role='synthetic-private'),
+                   lambda v: v['layout']['regions'][1].update(role=gate.LAYOUT_ROLES[0]),
+                   lambda v: v['layout']['regions'][0].update(body='synthetic-private'),
+                   lambda v: v['layout']['regions'].reverse()]
+        for change in changes:
+            changed = failure()
+            change(changed)
+            with self.assertRaises(ValueError):
+                gate.browser_failure(changed)
+        code, exported, _, _ = self.simulate(failure='browser-process', browser_failure_payload=value)
+        self.assertEqual(code, 1)
+        self.assertEqual(exported['browserFailure'], value)
+        code, exported, _, _ = self.simulate(failure='browser-process', source_drift=True, browser_failure_payload=value)
+        self.assertEqual(code, 1)
+        self.assertIsNone(exported['browserFailure'])
+
     def test_receipt_and_hash_inputs_reject_unsafe_file_types(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -369,10 +409,10 @@ class TextDiagnosticTests(unittest.TestCase):
                 gate.browser_failure(value)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'failure.json'
-            for raw in (b'{"schema":1,"schema":1}', b'{', b'x' * 1025):
+            for raw in (b'{"schema":1,"schema":1}', b'{', b'x' * 8193):
                 path.write_bytes(raw)
                 with self.assertRaises(ValueError):
-                    gate.browser_failure(gate.summary.read_fixed(path, 1024))
+                    gate.browser_failure(gate.summary.read_fixed(path, 8192))
 
     def test_first_browser_failure_is_retained_without_receipt_or_exit_override(self):
         record = {'schema': 1, 'phase': 'detail-exact', 'errorKind': 'locator_missing'}

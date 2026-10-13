@@ -91,6 +91,98 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(target=target, mode=mode), self.assertRaises(ValueError):
                     self.audit()
 
+    def test_macos_nearby_exact_step_and_target_are_required(self):
+        step = 'Verify macOS selected-interface discovery without skips'
+        for target, (name, _) in full.TARGETS.items():
+            self.assertEqual(step in self.required[name], target == 'darwin-arm64')
+        original = copy.deepcopy(self.jobs)
+        for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
+            self.jobs = copy.deepcopy(original)
+            job = next(j for j in self.jobs if j['name'] == full.TARGETS['darwin-arm64'][0])
+            record = next(s for s in job['steps'] if s['name'] == step)
+            if mode in ('missing', 'wrong-target'):
+                job['steps'].remove(record)
+                if mode == 'wrong-target':
+                    next(j for j in self.jobs if j['name'] == full.TARGETS['linux-amd64'][0])['steps'].append(record)
+            elif mode == 'duplicate':
+                job['steps'].append(copy.deepcopy(record))
+            elif mode == 'pending':
+                record['status'] = 'in_progress'
+            else:
+                record['conclusion'] = mode
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                self.audit()
+
+    def test_macos_nearby_literal_admission_rejects_weakened_commands_and_scope(self):
+        original = self.sources[full.WORKFLOW]
+        marker = b'      - name: Verify macOS selected-interface discovery without skips\n'
+        start = original.index(marker)
+        end = original.index(b'      - ', start + len(marker))
+        block = original[start:end]
+        changes = ((b"if: matrix.goos == 'darwin'", b'if: false'),
+                   (b"if: matrix.goos == 'darwin'", b"if: matrix.goos == 'linux'"),
+                   (b"if: matrix.goos == 'darwin'", b"if: matrix.goos == 'darwin' && steps.ci-plan.outputs.long_required != 'false'"),
+                   (b'timeout-minutes: 6', b'timeout-minutes: 60'),
+                   (b"CGO_ENABLED: '1'", b"CGO_ENABLED: '0'"),
+                   (b"SOBALINK_DNSSD_SELECTED_INTERFACE: '1'", b"SOBALINK_DNSSD_SELECTED_INTERFACE: '0'"),
+                   (b'SOBALINK_DNSSD_SELECTED_INTERFACE', b'SOBALINK_DNSSD_SELECTED_LOOPBACK'),
+                   (b' --exact', b''),
+                   (b' --expect ', b' --allow-skip --expect '),
+                   (b' -race ', b' '), (b' -p=1 ', b' -p=8 '),
+                   (b'-count=1', b'-count=2'), (b'-timeout=60s', b'-timeout=10m'),
+                   (b"-run '^TestDNSServiceSelectedInterfaceCapability$'", b"-run '^TestDNSService'"),
+                   (b'TestDNSServiceSelectedInterfaceCapability', b'TestDNSServiceSelectedLoopbackCapability'),
+                   (b'TestDNSServiceSelectedInterfaceCapability', b'TestDNSServiceRawReceiveCapability'),
+                   (b"$'\n", b"$' || true\n"),
+                   (marker, marker + b'        continue-on-error: true\n'),
+                   (b'        env:\n', b'        env:\n          SOBALINK_DNSSD_RAW_RECEIVE: \'1\'\n'))
+        mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1),
+                     original.replace(block, block + b'        continue-on-error: true\n', 1),
+                     original.replace(b'env:\n', b'env:\n  SOBALINK_DNSSD_SELECTED_INTERFACE: \'1\'\n', 1)]
+        for before, after in changes:
+            self.assertIn(before, block)
+            mutations.append(original.replace(block, block.replace(before, after), 1))
+        moved = original.replace(block, b'', 1)
+        insert = moved.index(b'      - ', moved.index(b'  browser:\n'))
+        mutations.append(moved[:insert] + block + moved[insert:])
+        for index, value in enumerate(mutations):
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.validate_macos_nearby_workflow(value)
+
+    def test_macos_nearby_literal_coverage_policy_cannot_reclassify_the_gate(self):
+        path = '.github/scripts/ci-coverage.py'
+        original = self.sources[path]
+        target = b"MACOS_NEARBY_TARGETS = ('darwin-arm64',)"
+        steps = b"MACOS_NEARBY_STEPS = ('Verify macOS selected-interface discovery without skips',)"
+        mutations = [original.replace(target, b''), original.replace(steps, b''),
+                     original.replace(target, b"MACOS_NEARBY_TARGETS = ('linux-amd64',)"),
+                     original.replace(target, b"MACOS_NEARBY_TARGETS = ('darwin-arm64', 'windows-amd64')"),
+                     original.replace(steps, b"MACOS_NEARBY_STEPS = ('Other gate',)"),
+                     original.replace(steps, b'MACOS_NEARBY_STEPS = ()'),
+                     original.replace(steps, steps + b'\n' + steps),
+                     original.replace(b'FAST_STEPS = (', b'FAST_STEPS = ("Verify macOS selected-interface discovery without skips",'),
+                     original + b'\nMACOS_NEARBY_STEPS += ("Other gate",)\n']
+        for index, source in enumerate(mutations):
+            sources = dict(self.sources, **{path: source})
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.required_jobs(sources)
+
+    def test_macos_nearby_wrapper_and_capability_sources_are_bound_to_proof(self):
+        proof = self.audit()
+        paths = (full.WORKFLOW, '.github/scripts/ci_full_validation.py', '.github/scripts/ci-coverage.py',
+                 '.github/scripts/ci-go-test.py', 'internal/nearby/dnssd_native_acceptance_test.go',
+                 'internal/nearby/dnssd_capability_test.go')
+        for path in paths:
+            self.assertIn(path, full.SOURCES)
+            self.assertEqual(proof['source_sha256'][path], hashlib.sha256(self.sources[path]).hexdigest())
+            original = self.sources[path]
+            self.sources[path] = original + b'\n// synthetic changed protected source\n'
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.audit(previous_proof=proof)
+            with self.subTest(path=path, checkout=True), self.assertRaises(ValueError):
+                self.audit(local_root=ROOT)
+            self.sources[path] = original
+
     def test_linux_nearby_literal_admission_rejects_weakened_commands_and_scope(self):
         original = self.sources[full.WORKFLOW]
         marker = b'      - name: Verify Linux nearby native discovery without skips\n'

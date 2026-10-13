@@ -188,13 +188,39 @@ def verify_source(before, asset_hashes, binary_hash, binary):
         raise ValueError('source or executable changed')
 
 
+LAYOUT_ROLES = ('document', 'dialog', 'modal-body', 'outbox', 'text-outbox', 'card', 'review', 'body',
+    'identifier', 'actions', 'header', 'navigation', 'conversation-slot', 'conversation', 'timeline',
+    'message-meta', 'composer-area', 'composer', 'composer-tools', 'send', 'mode', 'preparation')
+
+
+def fixed_layout(value):
+    width = lambda v: type(v) is int and 0 <= v <= 8192
+    fields = {'role', 'clientWidth', 'scrollWidth', 'leftOverflow', 'rightOverflow'}
+    if (type(value) is not dict or set(value) != {'viewportWidth', 'regions'}
+            or not width(value['viewportWidth']) or type(value['regions']) is not list
+            or len(value['regions']) != len(LAYOUT_ROLES)):
+        raise ValueError('invalid fixed text layout')
+    regions = []
+    for role, row in zip(LAYOUT_ROLES, value['regions']):
+        if (type(row) is not dict or set(row) != fields or row['role'] != role
+                or any(not width(row[field]) for field in fields - {'role'})):
+            raise ValueError('invalid fixed text layout region')
+        regions.append({field: row[field] for field in sorted(fields)})
+    return {'viewportWidth': value['viewportWidth'], 'regions': regions}
+
+
 def browser_failure(value):
-    if (type(value) is not dict or set(value) != {'schema', 'phase', 'errorKind'}
+    if (type(value) is not dict or set(value) not in ({'schema', 'phase', 'errorKind'}, {'schema', 'phase', 'errorKind', 'layout'})
             or type(value['schema']) is not int or value['schema'] != 1
             or type(value['phase']) is not str or value['phase'] not in BROWSER_PHASES
             or type(value['errorKind']) is not str or value['errorKind'] not in summary.nearby.BROWSER_ERROR_KINDS):
         raise ValueError('invalid fixed text browser failure')
-    return {'schema': 1, 'phase': value['phase'], 'errorKind': value['errorKind']}
+    record = {'schema': 1, 'phase': value['phase'], 'errorKind': value['errorKind']}
+    if 'layout' in value:
+        if value['phase'] not in ('review-fit', 'detail-fit-en', 'outbox-fit-ja') or value['errorKind'] != 'assertion':
+            raise ValueError('layout outside fit failure')
+        record['layout'] = fixed_layout(value['layout'])
+    return record
 
 
 def empty_result():
@@ -307,7 +333,7 @@ def main(argv=None):
                 fail(report, phase)
             if case == 'browser' and os.path.lexists(private / 'text-native-failure.json'):
                 try:
-                    report['browserFailure'] = browser_failure(summary.read_fixed(private / 'text-native-failure.json', 1024))
+                    report['browserFailure'] = browser_failure(summary.read_fixed(private / 'text-native-failure.json', 8192))
                 except Exception:
                     report['browserFailure'] = {'schema': 1, 'phase': 'unavailable', 'errorKind': 'evidence_unavailable'}
                 fail(report, 'browser-evidence')

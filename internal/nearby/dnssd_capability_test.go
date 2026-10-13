@@ -9,17 +9,18 @@ import (
 // API observations are separate from the raw native capability marker. Even a
 // selected-interface callback does not attest an original network datagram.
 type dnssdCapabilityResult struct {
-	Status                   string `json:"status"`
-	Reason                   string `json:"reason"`
-	Scope                    string `json:"scope"`
-	ReciprocalRecords        bool   `json:"reciprocalRecords"`
-	ReciprocalCandidates     bool   `json:"reciprocalCandidates"`
-	WithdrawalObserved       bool   `json:"withdrawalObserved"`
-	OwnersJoined             bool   `json:"ownersJoined"`
-	FailureStage             string `json:"failureStage"`
-	FailureKind              string `json:"failureKind"`
-	RawPacketVerified        bool   `json:"rawPacketVerified"`
-	NetworkMulticastVerified bool   `json:"networkMulticastVerified"`
+	Status                   string                `json:"status"`
+	Reason                   string                `json:"reason"`
+	Scope                    string                `json:"scope"`
+	ReciprocalRecords        bool                  `json:"reciprocalRecords"`
+	ReciprocalCandidates     bool                  `json:"reciprocalCandidates"`
+	WithdrawalObserved       bool                  `json:"withdrawalObserved"`
+	OwnersJoined             bool                  `json:"ownersJoined"`
+	FailureStage             string                `json:"failureStage"`
+	FailureKind              string                `json:"failureKind"`
+	RawPacketVerified        bool                  `json:"rawPacketVerified"`
+	NetworkMulticastVerified bool                  `json:"networkMulticastVerified"`
+	ReceiveCounters          *dnssdReceiveCounters `json:"receiveCounters"`
 }
 
 func dnssdCapability(scope string) dnssdCapabilityResult {

@@ -32,6 +32,8 @@ def jobs(scope="full"):
             steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
             if target in coverage.LINUX_NEARBY_TARGETS:
                 steps += coverage.LINUX_NEARBY_STEPS
+            if target in coverage.MACOS_NEARBY_TARGETS:
+                steps += coverage.MACOS_NEARBY_STEPS
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             result.append(job(name, steps))
@@ -56,6 +58,36 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_macos_discovery_is_mandatory_only_on_qualified_native_target(self):
+        self.assertEqual(coverage.MACOS_NEARBY_TARGETS, ('darwin-arm64',))
+        self.assertEqual(coverage.MACOS_NEARBY_STEPS, ('Verify macOS selected-interface discovery without skips',))
+        gate = coverage.MACOS_NEARBY_STEPS[0]
+        self.assertNotIn(gate, coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
+                         + coverage.LINUX_NEARBY_STEPS)
+        for scope in ('native-short', 'full'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+            for target, name in coverage.TARGETS.items():
+                selected = next(j for j in jobs(scope) if j['name'] == name)
+                self.assertEqual(gate in [s['name'] for s in selected['steps']], target == 'darwin-arm64')
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
+                data = jobs(scope)
+                selected = next(j for j in data if j['name'] == coverage.TARGETS['darwin-arm64'])
+                record = next(s for s in selected['steps'] if s['name'] == gate)
+                if mode in ('missing', 'wrong-target'):
+                    selected['steps'].remove(record)
+                    if mode == 'wrong-target':
+                        next(j for j in data if j['name'] == coverage.TARGETS['linux-amd64'])['steps'].append(record)
+                elif mode == 'duplicate':
+                    selected['steps'].append(copy.deepcopy(record))
+                elif mode == 'pending':
+                    record['status'] = 'in_progress'
+                else:
+                    record['conclusion'] = mode
+                with self.subTest(scope=scope, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, scope)
+        for scope in ('docs', 'frontend', 'go'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+
     def test_linux_nearby_is_mandatory_only_on_qualified_native_targets(self):
         self.assertEqual(coverage.LINUX_NEARBY_TARGETS, ('linux-amd64', 'linux-arm64'))
         self.assertEqual(coverage.LINUX_NEARBY_STEPS, ('Verify Linux nearby native discovery without skips',))

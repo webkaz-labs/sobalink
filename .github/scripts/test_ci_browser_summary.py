@@ -1,10 +1,12 @@
 """Synthetic fixed-summary validation; no browsers, sockets or external writes."""
 import copy
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 SOURCE = Path(__file__).with_name('ci-browser-summary.py')
 SPEC = importlib.util.spec_from_file_location('fixed_browser_summary', SOURCE)
@@ -13,6 +15,72 @@ SPEC.loader.exec_module(summary)
 
 
 class FixedBrowserSummaryTests(unittest.TestCase):
+    def test_optional_output_flag_failure_preserves_accepted_result_without_raw_error(self):
+        with mock.patch.object(summary.sys, 'argv', ['ci-browser-summary.py', 'setup', '0']), \
+                mock.patch.dict(summary.os.environ, {'RUNNER_TEMP': '/synthetic', 'GITHUB_OUTPUT': '/synthetic/output'}), \
+                mock.patch.object(summary, 'reconstruct', return_value=True), \
+                mock.patch.object(summary, 'initial_illustrations', return_value=True), \
+                mock.patch('builtins.open', side_effect=OSError('synthetic private path')), \
+                mock.patch.object(summary.sys, 'stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(summary.main(), 0)
+            self.assertEqual(output.getvalue(), 'Fixed browser summary accepted\n')
+
+    def test_initial_illustrations_require_accepted_receipt_and_joined_cleanup(self):
+        for accepted in (False, True):
+            with self.subTest(accepted=accepted), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                private = root / 'soba-setup-browser-illustrations'
+                private.mkdir()
+                (private / 'synthetic-private').write_text('synthetic')
+                exporter = mock.Mock()
+                exporter.export_initial_screenshots.return_value = True
+                with mock.patch.object(summary.nearby, 'module', return_value=exporter) as loader:
+                    self.assertEqual(summary.initial_illustrations(root, accepted=accepted), accepted)
+                self.assertFalse(private.exists())
+                if accepted:
+                    loader.assert_called_once_with('ci-nearby-screenshots')
+                    exporter.export_initial_screenshots.assert_called_once_with(
+                        private, root / 'soba-setup-ui-sanitized', verified=True)
+                else:
+                    loader.assert_not_called()
+
+    def test_initial_illustrations_cleanup_failure_cannot_publish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            private = root / 'soba-setup-browser-illustrations'
+            private.mkdir()
+            exporter = mock.Mock()
+            exporter.export_initial_screenshots.return_value = True
+            with mock.patch.object(summary.nearby, 'module', return_value=exporter), \
+                    mock.patch.object(summary.shutil, 'rmtree', side_effect=OSError('synthetic')):
+                self.assertFalse(summary.initial_illustrations(root, accepted=True))
+
+    def test_initial_illustrations_failed_export_is_optional_and_cleans_private_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            private = root / 'soba-setup-browser-illustrations'
+            private.mkdir()
+            exporter = mock.Mock()
+            exporter.export_initial_screenshots.return_value = False
+            with mock.patch.object(summary.nearby, 'module', return_value=exporter):
+                self.assertFalse(summary.initial_illustrations(root, accepted=True))
+            self.assertFalse(private.exists())
+
+    def test_initial_illustrations_symlink_does_not_remove_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / 'synthetic-target'
+            target.mkdir()
+            (target / 'preserved').write_text('synthetic')
+            private = root / 'soba-setup-browser-illustrations'
+            try:
+                private.symlink_to(target, target_is_directory=True)
+            except OSError:
+                self.skipTest('symlink creation unavailable')
+            self.assertFalse(summary.initial_illustrations(root, accepted=True))
+            self.assertFalse(private.is_symlink())
+            self.assertEqual((target / 'preserved').read_text(), 'synthetic')
+
     def test_exact_success_is_reconstructed_for_each_case(self):
         for case, value in (('setup', summary.nearby.BROWSER_EXPECTED), ('text', summary.TEXT_EXPECTED)):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:

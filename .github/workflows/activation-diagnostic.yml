@@ -345,7 +345,7 @@ jobs:
         run: |
           python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
           python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_diagnostic.py' -v
-      - name: Compile native SDK API and classify four bounded scopes
+      - name: Compile native SDK API and classify five bounded scopes
         id: dnssd
         timeout-minutes: 10
         run: python -B .github/scripts/ci-dnssd-diagnostic.py
