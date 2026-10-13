@@ -29,9 +29,17 @@ type dispatchProcessTransfer struct {
 	CompletedBytes int64  `json:"completedBytes"`
 }
 
+// Keep diagnostic-only fields outside the original assertion DTO so adding
+// observations cannot widen the successful-sibling equality assertion.
+type dispatchProcessTransferObservation struct {
+	dispatchProcessTransfer
+	RetryBlockedReason string `json:"retryBlockedReason"`
+	TotalBytes         int64  `json:"totalBytes"`
+}
+
 type dispatchProcessSnapshot struct {
-	ProcessID string                    `json:"resourceCatalogProcessId"`
-	Transfers []dispatchProcessTransfer `json:"transfers"`
+	ProcessID string                               `json:"resourceCatalogProcessId"`
+	Transfers []dispatchProcessTransferObservation `json:"transfers"`
 }
 
 // Three independent Core processes use unchanged native peer HTTP and real
@@ -48,26 +56,47 @@ func TestTransferDispatchThreeProcessPartialRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	dirs, peers, keys := startDispatchProcessPeers(t, ctx)
+	var diagnostics dispatchProcessDiagnostic
 	snapshot := func(p *routeCoreProcess) dispatchProcessSnapshot {
-		return catalogProcessDecode[dispatchProcessSnapshot](t, p.invoke(t, "fixture.snapshot", struct{}{}))
+		value := catalogProcessDecode[dispatchProcessSnapshot](t, p.invoke(t, "fixture.snapshot", struct{}{}))
+		for i, peer := range peers {
+			if p == peer {
+				diagnostics.capture(i, value)
+			}
+		}
+		return value
 	}
 	wait := func(p *routeCoreProcess, id, status string) dispatchProcessTransfer {
 		deadline := time.Now().Add(25 * time.Second)
+		var observations dispatchDiagnosticObservations
+		logFailure := func() {
+			for i, peer := range peers {
+				if p == peer {
+					for _, line := range diagnostics.failureLines(i, id, status, observations) {
+						t.Log(line)
+					}
+				}
+			}
+		}
 		for {
-			for _, row := range snapshot(p).Transfers {
+			current := snapshot(p)
+			observations.observe(current.Transfers, id)
+			for _, row := range current.Transfers {
 				if row.ID != id {
 					continue
 				}
 				// Failed is visible before physical owner join; retry is admitted
 				// only when its retryable projection also becomes true.
 				if row.Status == status && (status != "failed" || row.Retryable) {
-					return row
+					return row.dispatchProcessTransfer
 				}
 				if row.Status == "failed" && status != "failed" {
+					logFailure()
 					t.Fatal("actual dispatch failed before expected state", status)
 				}
 			}
 			if time.Now().After(deadline) || ctx.Err() != nil {
+				logFailure()
 				t.Fatal("actual dispatch state did not arrive", status)
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -124,6 +153,8 @@ func TestTransferDispatchThreeProcessPartialRetry(t *testing.T) {
 	if receipt.Version != 1 || receipt.ProcessID != process || receipt.PreparationID != review.PreparationID || receipt.DispatchID != review.PreparationID || receipt.Status != "committed" || len(receipt.Children) != 2 || receipt.Children[0].TransferID == "" || receipt.Children[1].TransferID == "" || receipt.Children[0].TransferID == receipt.Children[1].TransferID {
 		t.Fatal("actual dispatch receipt contract mismatch")
 	}
+	diagnostics.childIDs = [2]string{receipt.Children[0].TransferID, receipt.Children[1].TransferID}
+	diagnostics.phase = dispatchDiagnosticOffers
 	checkReceipt := func() {
 		t.Helper()
 		for _, command := range []string{"transfer.dispatch.status", "transfer.dispatch.commit"} {
@@ -153,6 +184,8 @@ func TestTransferDispatchThreeProcessPartialRetry(t *testing.T) {
 	}
 	firstID, failedID := receipt.Children[0].TransferID, receipt.Children[1].TransferID
 	accepted := catalogProcessDecode[transfer.Batch](t, peers[1].invoke(t, "transfer.accept", map[string]any{"transferId": firstID, "destination": t.TempDir()}))
+	diagnostics.phase = dispatchDiagnosticFirstAccepted
+	diagnostics.accept(0, accepted)
 	firstCompleted := wait(peers[0], firstID, "completed")
 	wait(peers[1], firstID, "completed")
 	readOriginal := func(path string) os.FileInfo {
@@ -169,13 +202,17 @@ func TestTransferDispatchThreeProcessPartialRetry(t *testing.T) {
 	}
 	firstPaths := []string{filepath.Join(accepted.Destination, "first.txt"), filepath.Join(accepted.Destination, "second.txt")}
 	firstInfo := []os.FileInfo{readOriginal(firstPaths[0]), readOriginal(firstPaths[1])}
+	diagnostics.phase = dispatchDiagnosticFirstSaved
 	if _, err := os.Stat(spool); err != nil {
 		t.Fatal("successful sibling prematurely removed shared payload")
 	}
 	if err := os.Remove(missing); err != nil {
 		t.Fatal("synthetic staged entry damage failed")
 	}
+	diagnostics.phase = dispatchDiagnosticStagedEntryRemoved
 	partial := catalogProcessDecode[transfer.Batch](t, peers[2].invoke(t, "transfer.accept", map[string]any{"transferId": failedID, "destination": t.TempDir()}))
+	diagnostics.phase = dispatchDiagnosticSecondAccepted
+	diagnostics.accept(1, partial)
 	failed := wait(peers[0], failedID, "failed")
 	if failed.CompletedBytes != int64(len(original)) || firstCompleted.CompletedBytes != 2*int64(len(original)) {
 		t.Fatal("partial success byte counts were not independent")
@@ -190,11 +227,13 @@ func TestTransferDispatchThreeProcessPartialRetry(t *testing.T) {
 	}
 	expected := transferRetryExpectation{ProcessID: process, PeerID: keys[2], Direction: "outgoing"}
 	peers[0].invoke(t, "transfer.retry", map[string]any{"transferId": failedID, "expected": expected})
+	diagnostics.phase = dispatchDiagnosticRetryInvoked
 	completed := wait(peers[0], failedID, "completed")
 	wait(peers[2], failedID, "completed")
 	if completed.Retryable || completed.CompletedBytes != 2*int64(len(original)) {
 		t.Fatal("selected retry did not finish exact failed child")
 	}
+	diagnostics.phase = dispatchDiagnosticCompleted
 	for i, path := range firstPaths {
 		now := readOriginal(path)
 		if !os.SameFile(firstInfo[i], now) || firstInfo[i].ModTime() != now.ModTime() {
