@@ -8,11 +8,43 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
+
+func outboxProcessCommitDiagnosticCode(code string) string {
+	if code == "" {
+		return ""
+	}
+	value, ok := strings.CutPrefix(code, "outbox.commit: ")
+	if !ok || value == "" {
+		return "other"
+	}
+	return outboxDiagnosticToken(value)
+}
+
+func TestOutboxProcessCommitDiagnosticCode(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"", ""},
+		{"outbox.commit: outbox_storage_busy", "outbox_storage_busy"},
+		{"outbox.commit: outbox_storage_uncertain", "outbox_storage_uncertain"},
+		{"outbox.commit: outbox_stale", "outbox_stale"},
+		{"outbox.cancel: outbox_storage_busy", "other"},
+		{"outbox_storage_busy", "other"},
+		{"outbox.commit: ", "other"},
+		{"outbox.commit: outbox_storage_busy extra", "other"},
+		{"outbox.commit: outbox_storage_busy\nsynthetic detail", "other"},
+		{"synthetic detail outbox.commit: outbox_storage_busy", "other"},
+		{"outbox.commit: /synthetic/profile", "other"},
+	} {
+		if outboxProcessCommitDiagnosticCode(tc.input) != tc.want {
+			t.Fatal("commit diagnostic accepted a noncanonical value or lost a closed code")
+		}
+	}
+}
 
 // Sender and receiver reopen their real profile and ledger after graceful
 // process stops. Every offer, acceptance and saved receipt uses the production
@@ -31,6 +63,20 @@ func TestOutboxProcessRestart(t *testing.T) {
 		return catalogProcessDecode[browserOutboxSnapshot](t, p.invoke(t, "fixture.snapshot", struct{}{}))
 	}
 	oldProcess := snapshot(peers[0]).ProcessID
+	// Initial admission and restart replay use the same bounded, exact-busy
+	// retry. Keep the original review payload fixed across every attempt.
+	commit := func(review browserOutboxRecord, phase string) browserOutboxRecord {
+		t.Helper()
+		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
+		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
+			reply := peers[0].invokeResult(t, "outbox.commit", payload)
+			return reply.Value, reply.Error
+		})
+		if err != nil || code != "" {
+			t.Fatalf("original outbox commit failed: phase=%s retry_stopped=%t command=%q; runtime diagnostics:\n%s", phase, err != nil, outboxProcessCommitDiagnosticCode(code), peers[0].diagnostics.safeSummary())
+		}
+		return catalogProcessDecode[browserOutboxRecord](t, reply)
+	}
 	peers[1].stop(t)
 	_ = peers[0].invokeResult(t, "discovery.refresh", map[string]string{"peerId": keys[1]})
 	source := t.TempDir()
@@ -45,7 +91,7 @@ func TestOutboxProcessRestart(t *testing.T) {
 		if review.Admission != "prepared" || review.Status != "prepared" || review.RequestID != review.OutboxID || len(review.Children) != 1 || len(review.Entries) != 1 {
 			t.Fatal("native outbox preparation invalid")
 		}
-		record := catalogProcessDecode[browserOutboxRecord](t, peers[0].invoke(t, "outbox.commit", map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}))
+		record := commit(review, "initial")
 		if record.Admission != "enqueued" || record.Children[0].DeliveryID != review.Children[0].DeliveryID || record.DeliveryOutcome != "not_attempted" {
 			t.Fatal("native outbox commit changed review or fabricated delivery")
 		}
@@ -67,15 +113,7 @@ func TestOutboxProcessRestart(t *testing.T) {
 	stable := func(review browserOutboxRecord) browserOutboxRecord {
 		t.Helper()
 		status := catalogProcessDecode[browserOutboxRecord](t, peers[0].invoke(t, "outbox.status", map[string]string{"requestId": review.RequestID}))
-		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
-		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
-			reply := peers[0].invokeResult(t, "outbox.commit", payload)
-			return reply.Value, reply.Error
-		})
-		if err != nil || code != "" {
-			t.Fatalf("original outbox commit replay failed: retry=%v command=%q; runtime diagnostics:\n%s", err, code, peers[0].diagnostics.safeSummary())
-		}
-		repeated := catalogProcessDecode[browserOutboxRecord](t, reply)
+		repeated := commit(review, "replay")
 		for _, record := range []browserOutboxRecord{status, repeated} {
 			if record.Admission != "enqueued" || record.OutboxID != review.OutboxID || record.RequestID != review.RequestID || record.ReviewRevision != review.ReviewRevision || !record.ExpiresAt.Equal(review.ExpiresAt) || !reflect.DeepEqual(record.PeerIDs, review.PeerIDs) || !reflect.DeepEqual(record.Entries, review.Entries) || len(record.Children) != 1 || record.Children[0].DeliveryID != review.Children[0].DeliveryID {
 				t.Fatal("restart/repeated commands changed original immutable delivery")
