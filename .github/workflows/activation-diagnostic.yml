@@ -359,3 +359,41 @@ jobs:
             ${{ runner.temp }}/soba-dnssd-sanitized/provenance.json
           if-no-files-found: error
           retention-days: 14
+
+  diagnostic-windows-core:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'windows-core'
+    runs-on: windows-2025
+    # Separate compile-only preflight and three unchanged 10m package bounds.
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify closed Windows timing diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_windows_core.py' -v
+      - name: Time separate controls and exhaustive unchanged Core suite privately
+        id: windows-core
+        timeout-minutes: 72
+        run: python -B .github/scripts/ci-windows-core.py
+      - name: Preserve only reconstructed exact-source Core timing evidence
+        if: always() && steps.windows-core.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-windows-core-sanitized
+          path: |
+            ${{ runner.temp }}/soba-windows-core-sanitized/result.json
+            ${{ runner.temp }}/soba-windows-core-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14

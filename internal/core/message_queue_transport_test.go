@@ -1,15 +1,21 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/webkaz-labs/sobalink/internal/transfer"
 )
 
 func runMessageQueueAttempt(t *testing.T, c *Core, id string) error {
@@ -138,7 +144,7 @@ func TestMessageQueuePersistedLeaseUnknownNeverReoffersOrDowngrades(t *testing.T
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
-		reply(w, http.StatusConflict, map[string]string{"code": "message_unknown_lease"})
+		replyMessageQueueUnknownLease(t, w, r, lease)
 	}))
 	if err := runMessageQueueAttempt(t, c, view.OutboxID); networkErrorCode(err) != "message_unknown_lease" {
 		t.Fatalf("lost lease was not fail closed: %v", err)
@@ -154,6 +160,113 @@ func TestMessageQueuePersistedLeaseUnknownNeverReoffersOrDowngrades(t *testing.T
 		t.Fatal("missing remote lease was cleared or granted send authority")
 	}
 }
+
+// Match the production receiver: inspect the complete exact status request
+// before rejecting its retained lease. Replying with an unread POST body can
+// close the in-memory stream while its writer is still finishing, which tests
+// transport interruption instead of the intended coded lease rejection.
+func replyMessageQueueUnknownLease(t *testing.T, w http.ResponseWriter, r *http.Request, expected transfer.DurableLease) {
+	t.Helper()
+	var actual transfer.DurableLease
+	if r.Method != http.MethodPost || r.URL.Path != DurableTextStatusPath || readJSON(r, 8192, &actual) != nil || !sameTextLease(actual, expected) {
+		t.Error("unknown-lease fixture received a different or incomplete status request")
+		http.Error(w, "invalid synthetic status request", http.StatusBadRequest)
+		return
+	}
+	reply(w, http.StatusConflict, map[string]string{"code": "message_unknown_lease"})
+}
+
+type messageQueueGatedLeaseBody struct {
+	*bytes.Reader
+	release, started chan struct{}
+	startOnce        sync.Once
+	eof              atomic.Bool
+}
+
+func (b *messageQueueGatedLeaseBody) Read(p []byte) (int, error) {
+	b.startOnce.Do(func() { close(b.started) })
+	<-b.release
+	n, err := b.Reader.Read(p)
+	if err == io.EOF {
+		b.eof.Store(true)
+	}
+	return n, err
+}
+func (*messageQueueGatedLeaseBody) Close() error { return nil }
+
+type messageQueueLeaseResponse struct {
+	*httptest.ResponseRecorder
+	body      *messageQueueGatedLeaseBody
+	beforeEOF atomic.Bool
+}
+
+func (w *messageQueueLeaseResponse) WriteHeader(code int) {
+	if !w.body.eof.Load() {
+		w.beforeEOF.Store(true)
+	}
+	w.ResponseRecorder.WriteHeader(code)
+}
+
+// The old and corrected response order is deterministic, without depending on
+// which side wins the net.Pipe close race or on a real-time scheduling delay.
+func TestMessageQueueUnknownLeaseFixtureReadsBeforeReply(t *testing.T) {
+	for _, decoded := range []bool{false, true} {
+		name := "unread-control"
+		if decoded {
+			name = "exact-request-and-eof"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				lease := transfer.DurableLease{Version: DurableTextVersion, DeliveryID: "synthetic-delivery", RecipientID: "synthetic-peer", Token: "synthetic-token"}
+				raw, err := json.Marshal(lease)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := &messageQueueGatedLeaseBody{Reader: bytes.NewReader(raw), release: make(chan struct{}), started: make(chan struct{})}
+				request := httptest.NewRequest(http.MethodPost, DurableTextStatusPath, body)
+				request.Header.Set("Content-Type", "application/json")
+				response := &messageQueueLeaseResponse{ResponseRecorder: httptest.NewRecorder(), body: body}
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					if decoded {
+						replyMessageQueueUnknownLease(t, response, request, lease)
+					} else {
+						reply(response, http.StatusConflict, map[string]string{"code": "message_unknown_lease"})
+					}
+				}()
+				synctest.Wait()
+				responded, reading := channelClosed(done), channelClosed(body.started)
+				// Always release the reader before reporting a failed assertion.
+				close(body.release)
+				synctest.Wait()
+				<-done
+				if decoded && (responded || !reading || !body.eof.Load()) || !decoded && (!responded || reading || body.eof.Load()) {
+					t.Fatal("fixture response order did not distinguish unread and complete requests")
+				}
+				if response.beforeEOF.Load() == decoded {
+					t.Fatal("fixture reply crossed the wrong request EOF boundary")
+				}
+				var problem map[string]string
+				if response.Code != http.StatusConflict || json.Unmarshal(response.Body.Bytes(), &problem) != nil || problem["code"] != "message_unknown_lease" {
+					t.Fatal("fixture changed the exact unknown-lease rejection")
+				}
+				if !decoded {
+					// Later draining and a duplicate header cannot erase the original
+					// observation that this response was emitted before request EOF.
+					if _, err := io.Copy(io.Discard, io.LimitReader(body, int64(len(raw))+1)); err != nil || !body.eof.Load() {
+						t.Fatal("unread control did not subsequently reach EOF", err)
+					}
+					response.WriteHeader(http.StatusConflict)
+					if !response.beforeEOF.Load() {
+						t.Fatal("late header erased the early-response observation")
+					}
+				}
+			})
+		})
+	}
+}
+
 func TestMessageQueueDecodedReceiptSurvivesCancelAndPhysicalRelease(t *testing.T) {
 	c := messageQueueFixture(t)
 	view := messageQueueCommitFixture(t, c, messageQueuePrepareFixture(t, c, "peer-b", "synthetic physical completion text"))

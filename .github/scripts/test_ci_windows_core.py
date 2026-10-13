@@ -1,0 +1,457 @@
+"""Deterministic Windows timing policy/ownership models; no Go execution."""
+import contextlib
+import ctypes
+from datetime import datetime, timedelta, timezone
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+
+SCRIPT = Path(__file__).with_name('ci-windows-core.py')
+SPEC = importlib.util.spec_from_file_location('ci_windows_core', SCRIPT)
+gate = importlib.util.module_from_spec(SPEC)
+exec(compile(SCRIPT.read_bytes(), str(SCRIPT), 'exec'), gate.__dict__)
+
+
+def event(action, second=0, test=None, **fields):
+    value = {'Action': action, 'Package': gate.PACKAGE,
+             'Time': (datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=second)).isoformat().replace('+00:00', 'Z')}
+    if test is not None:
+        value['Test'] = test
+    value.update(fields)
+    return value
+
+
+def raw(rows):
+    return b''.join(json.dumps(row).encode() + b'\n' for row in rows)
+
+
+def process(**changes):
+    return dict({'process': 'completed', 'returncode': 0, 'ownersJoined': True, 'wallSeconds': 2.0}, **changes)
+
+
+def success(names=('TestAlpha', 'TestBeta')):
+    rows = [event('start')]
+    for i, name in enumerate(names):
+        rows += [event('run', i, name), event('output', i, name, Output='synthetic-private-path-identity-body\n'),
+                 event('pass', i + 1, name, Elapsed=1)]
+    return rows + [event('pass', len(names), Elapsed=len(names))]
+
+
+class TimingTests(unittest.TestCase):
+    def test_complete_exhaustive_accounting_and_no_raw_output(self):
+        report = gate.timing(raw(success()), ['TestAlpha', 'TestBeta'], process())
+        self.assertTrue(report['accountingComplete'])
+        self.assertTrue(report['allTestsPassed'])
+        self.assertEqual((report['startedCount'], report['terminalCount'], report['passedCount']), (2, 2, 2))
+        self.assertEqual(report['tests'][1]['startedSeconds'], 1)
+        self.assertEqual(report['tests'][1]['finishedSeconds'], 2)
+        self.assertNotIn('synthetic-private', json.dumps(report))
+        self.assertNotIn('2026-01-01', json.dumps(report))
+
+    def test_observed_skips_are_complete_but_never_pass_claims(self):
+        rows = success()
+        rows[3]['Action'] = 'skip'
+        report = gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())
+        self.assertTrue(report['accountingComplete'])
+        self.assertFalse(report['allTestsPassed'])
+        self.assertEqual(report['skippedCount'], 1)
+        self.assertEqual(report['notRunCount'], 0)
+        self.assertEqual(report['returncode'], 0)
+
+    def test_parallel_lifecycle_and_subtests_are_separate_and_closed(self):
+        rows = [event('start'), event('run', 0, 'TestAlpha'), event('pause', 0, 'TestAlpha'),
+                event('run', 0, 'TestBeta'), event('pass', 1, 'TestBeta', Elapsed=1),
+                event('cont', 1, 'TestAlpha'), event('run', 1, 'TestAlpha/private-subtest-value'),
+                event('skip', 2, 'TestAlpha/private-subtest-value', Elapsed=1),
+                event('pass', 2, 'TestAlpha', Elapsed=1), event('pass', 2, Elapsed=2)]
+        report = gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())
+        self.assertTrue(report['accountingComplete'])
+        self.assertFalse(report['allTestsPassed'])
+        self.assertEqual(report['subtestSkipped'], 1)
+        self.assertNotIn('private-subtest-value', json.dumps(report))
+        self.assertEqual(report['tests'][0]['pauseCount'], 1)
+        self.assertEqual(report['tests'][0]['continueCount'], 1)
+
+    def test_timeout_preserves_prior_progress_running_and_not_run(self):
+        rows = [event('start'), event('run', 0, 'TestAlpha'), event('pass', 4, 'TestAlpha', Elapsed=4),
+                event('run', 599, 'TestBeta'), event('output', 600, Output='panic: test timed out after 10m0s\n'),
+                event('output', 600, Output='synthetic private stack path\n'), event('fail', 600.301, Elapsed=600.301)]
+        report = gate.timing(raw(rows), ['TestAlpha', 'TestBeta', 'TestGamma'], process(process='nonzero', returncode=1))
+        self.assertTrue(report['eventStreamValid'])
+        self.assertFalse(report['accountingComplete'])
+        self.assertTrue(report['packageTimeoutObserved'])
+        self.assertEqual((report['passedCount'], report['runningCount'], report['notRunCount']), (1, 1, 1))
+        self.assertEqual(report['progress'][0], {'throughSeconds': 30, 'started': 1, 'terminal': 1})
+        self.assertEqual(report['progress'][-1]['started'], 2)
+        self.assertNotIn('private stack', json.dumps(report))
+
+    def test_duplicate_missing_unexpected_and_unordered_events_fail_closed(self):
+        good = success()
+        candidates = [[], good[1:], good[:-1], good + good,
+            good[:2] + [good[1]] + good[2:], [good[1], good[0], *good[2:]],
+            good[:-1] + [event('run', 2, 'TestUnexpected'), good[-1]],
+            good[:2] + [event('cont', 0, 'TestAlpha')] + good[2:],
+            good[:2] + [event('run', 0, 'TestBeta/sub')] + good[2:],
+            good[:-1] + [dict(good[-1], Package='synthetic-private-package')]]
+        for rows in candidates:
+            with self.subTest(rows=rows):
+                report = gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())
+                self.assertFalse(report['allTestsPassed'])
+                self.assertFalse(report['accountingComplete'])
+
+    def test_malformed_truncated_duplicate_fields_and_clock_fail_closed(self):
+        good = raw(success())
+        candidates = [good[:-1], good + b'{\n', good + b'\xff\n', b'[]\n',
+            good.replace(b'"Action": "run"', b'"Action": "run", "Action": "pass"', 1),
+            good.replace(b'"Elapsed": 1', b'"Elapsed": NaN', 1),
+            good.replace(b'2026-01-01T00:00:01Z', b'2025-01-01T00:00:01Z', 1),
+            good.replace(b'2026-01-01T00:00:01Z', b'private-time', 1)]
+        for candidate in candidates:
+            report = gate.timing(candidate, ['TestAlpha', 'TestBeta'], process())
+            self.assertFalse(report['allTestsPassed'])
+            self.assertFalse(report['eventStreamValid'])
+        with patch.object(gate, 'CAPTURE_BYTES', 8):
+            self.assertFalse(gate.timing(good, ['TestAlpha', 'TestBeta'], process())['eventStreamValid'])
+
+    def test_zero_exit_cannot_override_failures_cleanup_or_incomplete_subtests(self):
+        for change in ({'ownersJoined': False}, {'returncode': 1}, {'process': 'watchdog_timeout'}):
+            report = gate.timing(raw(success()), ['TestAlpha', 'TestBeta'], process(**change))
+            self.assertFalse(report['allTestsPassed'])
+        rows = success()
+        rows[3]['Action'] = 'fail'
+        self.assertFalse(gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())['allTestsPassed'])
+        rows = success()
+        rows.insert(2, event('run', 0, 'TestAlpha/sub'))
+        self.assertFalse(gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())['accountingComplete'])
+
+    def test_complete_inventory_includes_every_default_entrypoint_once(self):
+        names = [gate.LEASE, gate.LEASE_PROOF, gate.MIXED, 'ExampleValue', 'FuzzValue', 'TestCoreReceiveCrashChild']
+        rows = [event('start')] + [event('output', Output=name + '\n') for name in names]
+        rows += [event('output', Output='ok  \t' + gate.PACKAGE + '\t0.001s\n'), event('pass', Elapsed=.001)]
+        self.assertEqual(gate.inventory(raw(rows)), names)
+        for bad in (rows[:-1], rows + rows, rows[:2] + [rows[1]] + rows[2:],
+                    rows[:1] + [event('output', Output='synthetic-private-value\n')] + rows[1:],
+                    rows[:1] + [event('run', test=gate.LEASE)] + rows[1:]):
+            with self.assertRaises(ValueError):
+                gate.inventory(raw(bad))
+
+    def test_preparation_then_both_controls_then_full_suite_even_on_control_failure(self):
+        calls = []
+        def capture(phase, env):
+            calls.append(phase)
+            if phase == 'lease':
+                return process(process='nonzero', returncode=1), raw(success([gate.LEASE, gate.LEASE_PROOF]))
+            return process(), b''
+        result = {'preparation': {}, 'runs': {}, 'metrics': []}
+        with patch.object(gate, 'capture', side_effect=capture), patch.object(gate, 'inventory', return_value=[gate.LEASE, gate.LEASE_PROOF, gate.MIXED]), \
+                patch.object(gate.metrics, 'append_record'):
+            gate.run_diagnostic({}, result)
+        self.assertEqual(calls, ['prepare', 'verify', 'modules', 'compile-core', 'compile-stubs', 'inventory', 'lease', 'mixed', 'suite'])
+        self.assertFalse(result['runs']['lease']['allTestsPassed'])
+        self.assertEqual([row['suite'] for row in result['metrics']], ['windows-core-lease', 'windows-core-mixed', 'windows-core-suite'])
+
+    def test_contradictory_failure_events_cannot_complete_timing(self):
+        rows = success()
+        rows[3]['Action'] = 'fail'
+        report = gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())
+        self.assertTrue(report['accountingComplete'])
+        self.assertFalse(gate.execution_complete(report))
+        rows[3]['Action'] = 'skip'
+        report = gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())
+        self.assertTrue(gate.execution_complete(report))
+        rows = [event('start'), event('run', 0, 'TestAlpha'), event('run', 0, 'TestAlpha/sub'),
+                event('fail', 1, 'TestAlpha/sub', Elapsed=1), event('pass', 1, 'TestAlpha', Elapsed=1),
+                event('pass', 1, Elapsed=1)]
+        self.assertFalse(gate.execution_complete(gate.timing(raw(rows), ['TestAlpha'], process())))
+
+    def test_zero_exit_capture_failures_produce_failed_metrics(self):
+        for state in ('output_limit', 'capture_failed', 'cleanup_unresolved'):
+            def capture(phase, env):
+                if phase == 'lease':
+                    return process(process=state), raw(success([gate.LEASE, gate.LEASE_PROOF]))
+                return process(), b''
+            result = {'preparation': {}, 'runs': {}, 'metrics': []}
+            with patch.object(gate, 'capture', side_effect=capture), patch.object(gate, 'inventory', return_value=[gate.LEASE, gate.LEASE_PROOF, gate.MIXED]), patch.object(gate.metrics, 'append_record'):
+                gate.run_diagnostic({}, result)
+            self.assertEqual(result['metrics'][0]['status'], 'failed')
+            self.assertEqual(result['metrics'][0]['returncode'], 1)
+            self.assertEqual(result['runs']['lease']['returncode'], 0)
+
+    def test_every_terminal_requires_present_bounded_numeric_elapsed(self):
+        for index in (3, -1):
+            for value in (None, 721, 1e100, True, -1, float('inf')):
+                rows = success()
+                if value is None:
+                    rows[index].pop('Elapsed')
+                else:
+                    rows[index]['Elapsed'] = value
+                report = gate.timing(raw(rows), ['TestAlpha', 'TestBeta'], process())
+                self.assertFalse(report['eventStreamValid'])
+                self.assertFalse(report['accountingComplete'])
+                self.assertFalse(report['allTestsPassed'])
+
+    def test_example_and_fuzz_seed_execution_is_fully_accounted(self):
+        names = ['ExampleValue', 'FuzzValue']
+        rows = [event('start'), event('run', 0, names[0]), event('pass', 1, names[0], Elapsed=1),
+                event('run', 1, names[1]), event('run', 1, names[1] + '/seed#0'),
+                event('pass', 2, names[1] + '/seed#0', Elapsed=1), event('pass', 2, names[1], Elapsed=1), event('pass', 2, Elapsed=2)]
+        report = gate.timing(raw(rows), names, process())
+        self.assertTrue(report['allTestsPassed'])
+        self.assertEqual(report['subtestTerminal'], 1)
+
+    def test_unjoined_process_stops_following_commands(self):
+        result = {'preparation': {}, 'runs': {}, 'metrics': []}
+        with patch.object(gate, 'capture', return_value=(process(ownersJoined=False), b'')) as capture:
+            with self.assertRaises(ValueError):
+                gate.run_diagnostic({}, result)
+        self.assertEqual(capture.call_count, 1)
+
+
+class OwnershipTests(unittest.TestCase):
+    def setup_capture(self, *, fail_assign=False, running=False, active=0, output=b''):
+        calls = []
+        job = Mock()
+        job.assign.side_effect = lambda p: calls.append('assign')
+        if fail_assign:
+            def denied(p):
+                calls.append('assign-denied')
+                raise OSError('synthetic private error')
+            job.assign.side_effect = denied
+        job.active.return_value = active
+        job.terminate.side_effect = lambda: (calls.append('terminate'), setattr(job.active, 'return_value', 0))
+        job.close.side_effect = lambda: calls.append('close')
+        class Input(io.BytesIO):
+            def write(self, value):
+                calls.append('gate')
+                return super().write(value)
+        child = Mock(stdin=Input(), stdout=io.BytesIO(output), stderr=io.BytesIO())
+        child.poll.return_value = None if running or fail_assign else 0
+        child.wait.side_effect = lambda **kw: (calls.append('wait'), 1 if running or fail_assign else 0)[1]
+        child.kill.side_effect = lambda: (calls.append('kill'), setattr(child.poll, 'return_value', 1))
+        return calls, job, child
+
+    def test_x64_windows_abi_sizes_offsets_and_no_breakaway(self):
+        self.assertEqual(ctypes.sizeof(gate.DWORD), 4)
+        if ctypes.sizeof(gate.SIZE_T) == 8:
+            self.assertEqual(ctypes.sizeof(gate.BasicLimits), 64)
+            self.assertEqual(ctypes.sizeof(gate.ExtendedLimits), 144)
+            self.assertEqual(ctypes.sizeof(gate.Accounting), 48)
+            self.assertEqual(gate.Accounting.ActiveProcesses.offset, 40)
+            self.assertEqual(gate.BasicLimits.LimitFlags.offset, 16)
+        source = SCRIPT.read_text()
+        self.assertIn("LimitFlags = 0x2000", source)
+        self.assertNotIn('CREATE_BREAKAWAY_FROM_JOB', source)
+
+    def test_assignment_precedes_gate_and_isolated_launcher_is_joined(self):
+        calls, job, child = self.setup_capture()
+        with patch.object(gate, 'OwnedJob', return_value=job), patch.object(gate.subprocess, 'Popen', return_value=child) as start:
+            result, output = gate.capture('suite', {})
+        self.assertTrue(result['ownersJoined'])
+        self.assertEqual(result['process'], 'completed')
+        self.assertLess(calls.index('assign'), calls.index('gate'))
+        self.assertLess(calls.index('wait'), calls.index('close'))
+        self.assertEqual(start.call_args.args[0][1:3], ['-I', '-B'])
+        self.assertFalse(start.call_args.kwargs['shell'])
+
+    def test_assignment_failure_never_releases_gate_and_joins_child(self):
+        calls, job, child = self.setup_capture(fail_assign=True)
+        with patch.object(gate, 'OwnedJob', return_value=job), patch.object(gate.subprocess, 'Popen', return_value=child):
+            result, _ = gate.capture('suite', {})
+        self.assertNotIn('gate', calls)
+        self.assertIn('kill', calls)
+        self.assertIn('wait', calls)
+        self.assertTrue(result['ownersJoined'])
+        self.assertEqual(result['process'], 'capture_failed')
+
+    def test_timeout_terminates_owned_descendants_and_joins(self):
+        calls, job, child = self.setup_capture(running=True, active=2)
+        with patch.object(gate, 'OwnedJob', return_value=job), patch.object(gate.subprocess, 'Popen', return_value=child), \
+                patch.dict(gate.BOUNDS, {'suite': 0}):
+            result, _ = gate.capture('suite', {})
+        self.assertEqual(result['process'], 'watchdog_timeout')
+        self.assertTrue(result['ownersJoined'])
+        self.assertIn('terminate', calls)
+        self.assertIn('wait', calls)
+
+    def test_output_limit_remains_private_and_bounded(self):
+        calls, job, child = self.setup_capture(output=b'private-output' * 100)
+        with patch.object(gate, 'OwnedJob', return_value=job), patch.object(gate.subprocess, 'Popen', return_value=child), \
+                patch.object(gate, 'CAPTURE_BYTES', 20):
+            result, output = gate.capture('suite', {})
+        self.assertEqual(len(output), 20)
+        self.assertEqual(result['process'], 'output_limit')
+        self.assertNotIn('private-output', json.dumps(result))
+
+    def test_query_termination_and_wait_failure_are_never_join_proof(self):
+        for failure in ('query', 'terminate', 'wait', 'close'):
+            calls, job, child = self.setup_capture(running=True, active=2)
+            if failure == 'query':
+                job.active.side_effect = OSError('private')
+            elif failure == 'terminate':
+                job.terminate.side_effect = OSError('private')
+            elif failure == 'wait':
+                child.wait.side_effect = subprocess.TimeoutExpired('private-command', 10)
+            else:
+                job.close.side_effect = OSError('private')
+            with patch.object(gate, 'OwnedJob', return_value=job), patch.object(gate.subprocess, 'Popen', return_value=child), \
+                    patch.dict(gate.BOUNDS, {'suite': 0}):
+                result, _ = gate.capture('suite', {})
+            self.assertFalse(result['ownersJoined'])
+            self.assertEqual(result['process'], 'cleanup_unresolved')
+
+    def test_compile_only_outputs_are_owned_and_never_executed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for phase, package in (('compile-core', './internal/core'), ('compile-stubs', './internal/resourceacceptance')):
+                with patch.object(gate.sys, 'platform', 'win32'), patch.object(gate.sys, 'stdin', Mock(buffer=io.BytesIO(b'G'))), patch.dict(os.environ, {'TMP': directory}), patch.object(gate.subprocess, 'run', return_value=Mock(returncode=0)) as run:
+                    self.assertEqual(gate.owned_child(phase), 0)
+                    command = run.call_args.args[0]
+                    self.assertEqual(command[:4], ['go', 'test', '-c', '-p=1'])
+                    self.assertEqual(Path(command[command.index('-o') + 1]).parent, Path(directory))
+                    self.assertEqual(command[-1], package)
+
+    def test_owned_child_accepts_only_fixed_phase_after_exact_gate(self):
+        for phase, data in (('arbitrary', b'G'), ('suite', b''), ('suite', b'X')):
+            with patch.object(gate.sys, 'platform', 'win32'), patch.object(gate.sys, 'stdin', Mock(buffer=io.BytesIO(data))), \
+                    patch.object(gate.subprocess, 'run') as run:
+                self.assertEqual(gate.owned_child(phase), 126)
+                run.assert_not_called()
+        with patch.object(gate.sys, 'platform', 'win32'), patch.object(gate.sys, 'stdin', Mock(buffer=io.BytesIO(b'G'))), \
+                patch.object(gate.subprocess, 'run', return_value=Mock(returncode=7)) as run:
+            self.assertEqual(gate.owned_child('suite'), 7)
+            self.assertEqual(run.call_args.args[0], gate.COMMANDS['suite'])
+
+
+class MainReceiptTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def fixture(self):
+        # Model hosted metadata only. Filesystem behavior remains the current
+        # host's real pathlib/tempfile behavior, never a forged WindowsPath.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event_path, output_path = root / 'event.json', root / 'outputs.txt'
+            sha = 'a' * 40
+            ref = 'diagnostic/windows-core/' + sha[:12] + '-attempt1'
+            event_path.write_text(json.dumps({'ref_type': 'branch', 'ref': ref,
+                'repository': {'full_name': 'webkaz-labs/sobalink', 'private': False}}))
+            env = {'RUNNER_TEMP': directory, 'GITHUB_ACTIONS': 'true', 'GITHUB_EVENT_NAME': 'create',
+                'GITHUB_EVENT_PATH': str(event_path), 'GITHUB_OUTPUT': str(output_path),
+                'GITHUB_REPOSITORY': 'webkaz-labs/sobalink', 'GITHUB_REF': 'refs/heads/' + ref,
+                'GITHUB_SHA': sha, 'GOTOOLCHAIN': 'local', 'GOWORK': 'off', 'GOFLAGS': gate.GOFLAGS}
+            def checked(command):
+                if command == ['git', 'rev-parse', 'HEAD']:
+                    return sha.encode()
+                if command == ['git', 'rev-parse', 'HEAD^{tree}']:
+                    return ('b' * 40).encode()
+                return b'{}'
+            with patch.dict(os.environ, env, clear=True), patch.object(gate.sys, 'platform', 'win32'), patch.object(gate, 'checked', side_effect=checked), patch.object(gate.native, 'identities'), patch.object(gate, 'source_inventory', return_value={'fixture': 'c' * 64}) as source, contextlib.redirect_stdout(io.StringIO()):
+                yield root, output_path, source
+
+    @staticmethod
+    def completed(env, result):
+        result['inventorySha256'] = 'd' * 64
+        result['preparation'] = {'compile-core': process(), 'compile-stubs': process()}
+        for phase, names in (('lease', [gate.LEASE, gate.LEASE_PROOF]), ('mixed', [gate.MIXED]), ('suite', [gate.LEASE, gate.LEASE_PROOF, gate.MIXED])):
+            result['runs'][phase] = gate.timing(raw(success(names)), names, process())
+
+    def test_success_receipt_is_source_verified_cleaned_and_not_release_credit(self):
+        with self.fixture() as (root, output, source), patch.object(gate, 'run_diagnostic', side_effect=self.completed):
+            self.assertEqual(gate.main([]), 0)
+            report = json.loads((root / 'soba-windows-core-sanitized/result.json').read_text())
+            self.assertTrue(report['sourceVerified'])
+            self.assertTrue(report['cleanupComplete'])
+            self.assertTrue(report['timingComplete'])
+            self.assertFalse(report['releaseValidation'])
+            self.assertEqual(output.read_text(), 'sanitized_ready=true\n')
+            self.assertEqual(list(root.glob('soba-windows-core-private-*')), [])
+            self.assertNotIn(str(root), json.dumps(report))
+
+    def test_preflight_failure_never_claims_source_or_runtime_proof(self):
+        with self.fixture() as (root, output, source), patch.object(gate, 'run_diagnostic', side_effect=ValueError('synthetic-private-exception')):
+            self.assertEqual(gate.main([]), 1)
+            report = json.loads((root / 'soba-windows-core-sanitized/result.json').read_text())
+            self.assertFalse(report['sourceVerified'])
+            self.assertFalse(report['timingComplete'])
+            self.assertEqual(report['runs'], {})
+            self.assertNotIn('synthetic-private-exception', json.dumps(report))
+
+    def test_source_drift_unjoined_owners_and_contradictions_cannot_complete(self):
+        for mode in ('source', 'join', 'failure'):
+            with self.fixture() as (root, output, source):
+                def run(env, result):
+                    self.completed(env, result)
+                    if mode == 'join':
+                        result['runs']['suite']['ownersJoined'] = False
+                    if mode == 'failure':
+                        result['runs']['suite']['failedCount'] = 1
+                if mode == 'source':
+                    source.side_effect = [{'fixture': 'c' * 64}, {'fixture': 'e' * 64}]
+                with patch.object(gate, 'run_diagnostic', side_effect=run):
+                    self.assertEqual(gate.main([]), 1)
+                report = json.loads((root / 'soba-windows-core-sanitized/result.json').read_text())
+                self.assertFalse(report['timingComplete'])
+                if mode == 'source':
+                    self.assertFalse(report['sourceVerified'])
+                if mode == 'join':
+                    self.assertFalse(report['cleanupComplete'])
+                    self.assertTrue(list(root.glob('soba-windows-core-private-*')))
+
+    def test_capture_exception_retains_unknown_ownership_and_stops_cleanup(self):
+        with self.fixture() as (root, output, source), patch.object(gate, 'capture', side_effect=RuntimeError('synthetic-private-capture-failure')) as capture:
+            self.assertEqual(gate.main([]), 1)
+            capture.assert_called_once()
+            report = json.loads((root / 'soba-windows-core-sanitized/result.json').read_text())
+            self.assertEqual(report['ownersState'], 'in_flight')
+            self.assertFalse(report['sourceVerified'])
+            self.assertFalse(report['cleanupComplete'])
+            self.assertFalse(report['timingComplete'])
+            self.assertEqual(report['preparation'], {})
+            self.assertTrue(list(root.glob('soba-windows-core-private-*')))
+            self.assertNotIn('synthetic-private-capture-failure', json.dumps(report))
+
+    def test_existing_export_directory_is_never_overwritten(self):
+        with self.fixture() as (root, output, source):
+            export = root / 'soba-windows-core-sanitized'
+            export.mkdir()
+            target = export / 'result.json'
+            target.write_text('existing')
+            self.assertEqual(gate.main([]), 1)
+            self.assertEqual(target.read_text(), 'existing')
+            self.assertFalse(output.exists())
+
+
+class WorkflowPolicyTests(unittest.TestCase):
+    def test_exact_ordinary_windows_environment_and_no_suite_selection_change(self):
+        normal = (gate.ROOT / '.github/workflows/ci.yml').read_text()
+        diagnostic = (gate.ROOT / '.github/workflows/activation-diagnostic.yml').read_text()
+        job = diagnostic.split('  diagnostic-windows-core:\n', 1)[1]
+        self.assertIn('runs-on: windows-2025', job)
+        self.assertIn("go-version: '1.27.1'", job)
+        self.assertIn("suite == 'windows-core'", job)
+        self.assertIn('contents: read', job)
+        self.assertIn('GOFLAGS: ' + gate.GOFLAGS, normal)
+        self.assertIn('GOFLAGS: ' + gate.GOFLAGS, diagnostic)
+        self.assertEqual(gate.COMMANDS['suite'], ['go', 'test', '-race', '-count=1', '-json', '-timeout=10m', './internal/core'])
+        for phase in ('lease', 'mixed', 'suite', 'inventory'):
+            self.assertIn('-race', gate.COMMANDS[phase])
+            self.assertIn('-count=1', gate.COMMANDS[phase])
+            self.assertIn('-timeout=10m', gate.COMMANDS[phase])
+            for forbidden in ('-short', '-parallel', '-p=', '-skip', '-shuffle'):
+                self.assertFalse(any(value.startswith(forbidden) for value in gate.COMMANDS[phase]))
+        for forbidden in ('actions/cache', 'secrets.', 'continue-on-error:', 'contents: write', 'CGO_ENABLED:', 'GOMAXPROCS:'):
+            self.assertNotIn(forbidden, job)
+        paths = job.split('          path: |\n')[1].split('          if-no-files-found:')[0]
+        self.assertEqual(len(paths.strip().splitlines()), 2)
+        self.assertNotIn('*', paths)
+        self.assertIn('result.json', paths)
+        self.assertIn('provenance.json', paths)
+
+
+if __name__ == '__main__':
+    unittest.main()

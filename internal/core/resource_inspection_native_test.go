@@ -143,7 +143,7 @@ func newResourceNativeOwnedPairWithPolicy(t *testing.T, alignPolicy bool) *resou
 		// The activation helper changes this profile only in memory. Persist the
 		// exact synthetic network choice using the owned production writer so a
 		// later normal Open cannot silently restart as network:none.
-		err = owner.WithOwnership(c.dir, func() error { return c.saveProfile(c.profileCopy()) })
+		err := owner.WithOwnership(c.dir, func() error { return c.saveProfile(c.profileCopy()) })
 		c.op.Unlock()
 		if !valid || err != nil {
 			t.Fatal("owned resource initialization or synthetic profile save failed")
