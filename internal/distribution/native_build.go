@@ -227,11 +227,21 @@ var darwinPolicyImporters = []string{"tailscale.com/client/web", "tailscale.com/
 func darwinNativeInventory(packages []goPackage) ([]NativePackage, []Notice, error) {
 	byName := map[string]goPackage{}
 	var cgoNames, importers []string
+	var policy []Notice
 	for _, p := range packages {
 		if _, ok := byName[p.ImportPath]; ok {
 			return nil, nil, errors.New("duplicate native package")
 		}
 		byName[p.ImportPath] = p
+		reviewedRoutecat := false
+		if p.ImportPath == routecatPackage {
+			inputs, err := darwinRoutecatPolicyInventory(p)
+			if err != nil {
+				return nil, nil, err
+			}
+			policy = append(policy, inputs...)
+			reviewedRoutecat = true
+		}
 		if len(p.CgoFiles) > 0 {
 			cgoNames = append(cgoNames, p.ImportPath)
 		}
@@ -247,6 +257,11 @@ func darwinNativeInventory(packages []goPackage) ([]NativePackage, []Notice, err
 				importers = append(importers, p.ImportPath)
 			}
 			if p.Module != nil && p.Module.Main && (imp == certstoreModule || imp == "tailscale.com/tsd" || strings.HasPrefix(imp, "tailscale.com/util/syspolicy")) {
+				// Only the exact reviewed adapted source can use the zero-value
+				// subsystem container. This never permits a policy/store import.
+				if reviewedRoutecat && imp == "tailscale.com/tsd" {
+					continue
+				}
 				return nil, nil, errors.New("application must not configure platform policy or credentials")
 			}
 		}
@@ -260,7 +275,6 @@ func darwinNativeInventory(packages []goPackage) ([]NativePackage, []Notice, err
 	if cert.Module == nil || cert.Module.Path != certstoreModule || cert.Module.Version != certstoreVersion || cert.Module.Sum != certstoreSum || cert.Module.Replace != nil {
 		return nil, nil, errors.New("unreviewed certificate store source")
 	}
-	var policy []Notice
 	for path, want := range darwinPolicyInputs {
 		pkg, name := filepath.ToSlash(filepath.Dir(path)), filepath.Base(path)
 		p, ok := byName[pkg]

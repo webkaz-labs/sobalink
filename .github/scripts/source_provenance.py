@@ -295,12 +295,29 @@ DARWIN_SDK_INPUTS = (
     'usr/include/dispatch/dispatch.h', 'usr/include/dns_sd.h',
     'usr/lib/libSystem.tbd', 'usr/lib/libresolv.9.tbd',
 )
+DARWIN_ROUTECAT_PACKAGE = 'github.com/webkaz-labs/sobalink/internal/routecat'
+DARWIN_ROUTECAT_PATH = 'internal/routecat'
+# Keep these compiled-source pins identical to native_routecat.go. Archive
+# metadata is bound to the same review; this does not claim source redistribution.
+DARWIN_ROUTECAT_INPUTS = {
+    'disco.go': 'dc8c1e122ab92a046917289ec2dbffb9499cfbccda8bcebe251ff17f2a1d1a93',
+    'listen.go': '8de4853cfb91199686d1f3451fa929f67ad7a185440b28a5c941d2c384353ae9',
+    'regions.go': '36156c657a106fbe28d974557a6d8859ca779f4d3cc9b717aff7ccd54fab8ef6',
+    'relay_failure.go': '832a2b47a70d05aae1fbb72e6a97873c11f6c11784a527616233cba670c4e633',
+    'relay_failure_other.go': 'd5c96b35476ec68958671677a2f8bcb76eed14067ab9d00130bce492771b599a',
+    'relay_resources.go': 'a5f5b30b450622575c5b31af55fb924762c1d9d26db5a99fa94da3a49b6abc6e',
+    'tailcat.go': '2b1220b8833f438cd3d84350dff4f19e0b62c37dabe06c5bf11470b55694b9fb',
+    'underlay_policy.go': '88c29c156ff423aa9ebbde6d709e909757a77c0bf576edc53b7bc0a3afc14621',
+    'wan_candidates.go': '9f9037784c9d80a9e9b7ec6675f91cd23d4545f02def89490c876676e8eb75f0',
+    'wire.go': 'cb7d714cc51c77dd90ea0602109788742d94e9b96be37505a2bcf988aa78e31b',
+}
 DARWIN_POLICY_INPUTS = {
     'tailscale.com/control/controlclient/sign_supported.go': '2319d740882481d8cf4f1dfd1f1ac853b678971928fd176ecfe5be1ffda9082b',
     'tailscale.com/util/syspolicy/policyclient/policyclient.go': 'e7fa6ea83699de60241f0f96c018c66ec1fb1061860435c7a325097ce5ebbaba',
     'tailscale.com/tsd/tsd.go': '255dee50953d2a19b3dd8e57a21d9bc2c3d10095a4828fb6d1126776a645383d',
     'github.com/tailscale/certstore/certstore.go': '4c63ea6a06aeac9f027de208d1113997867b1ad77bf75d91f12740ba3df5b977',
     'github.com/tailscale/certstore/certstore_darwin.go': '4e2698e090e5cec688c4d7d3d5178d4233b070c47c60fbb9e73cf1430179c117',
+    **{DARWIN_ROUTECAT_PACKAGE + '/' + name: sha for name, sha in DARWIN_ROUTECAT_INPUTS.items()},
 }
 DARWIN_PACKAGES = ('github.com/tailscale/certstore',
                    'github.com/webkaz-labs/sobalink/internal/nearby', 'runtime/cgo')
@@ -352,6 +369,15 @@ def verify_native(build, notices, bom, binary=None):
     assert list(record_hashes(native['sdk_inputs'])) == list(DARWIN_SDK_INPUTS), 'SDK input inventory differs'
     assert record_hashes(native['policy_inputs']) == DARWIN_POLICY_INPUTS, 'credential boundary is not reviewed'
     assert native['policy_inputs'] == sorted(native['policy_inputs'], key=lambda x: x['path']), 'unsorted policy inventory'
+    sources = notices.get('source_components', [])
+    assert sources == build.get('source_components', []), 'source metadata differs'
+    routecat = [s for s in sources if s.get('package') == DARWIN_ROUTECAT_PACKAGE]
+    assert len(routecat) == 1 and routecat[0].get('source_path') == DARWIN_ROUTECAT_PATH, 'reviewed policy-container source is required'
+    source_inputs = record_hashes(routecat[0]['build_inputs'])
+    metadata_inputs = {'go.mod', 'go.sum', *(DARWIN_ROUTECAT_PATH + '/' + name for name in ('LICENSE', 'UPSTREAM.json', 'UPSTREAM.md'))}
+    runtime_inputs = {path: sha for path, sha in source_inputs.items() if path not in metadata_inputs}
+    assert runtime_inputs == {DARWIN_ROUTECAT_PATH + '/' + name: sha for name, sha in DARWIN_ROUTECAT_INPUTS.items()}, 'policy-container source inventory differs from review'
+    assert metadata_inputs <= set(source_inputs), 'policy-container metadata inputs are missing'
     cert_name = DARWIN_PACKAGES[0]
     cert_version = 'v0.1.1-0.20260409135935-3638fb84b77d'
     cert_sum = 'h1:JcGKBZAL7ePLwOhUdN8qGQZlP5GueEiIZwY7R62pejE='

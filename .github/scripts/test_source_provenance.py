@@ -2,6 +2,7 @@
 import copy
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -404,7 +405,8 @@ if __name__ == "__main__":
 def add_native_fixture(build, notices, bom, target='darwin-arm64'):
     """Coherent synthetic metadata only; never invokes native credential APIs."""
     from source_provenance import (DARWIN_CFLAGS, DARWIN_LDFLAGS, DARWIN_LIBRARIES,
-        DARWIN_PACKAGES, DARWIN_POLICY_INPUTS, DARWIN_SDK_INPUTS, native_digest)
+        DARWIN_PACKAGES, DARWIN_POLICY_INPUTS, DARWIN_SDK_INPUTS, native_digest,
+        DARWIN_ROUTECAT_PACKAGE, DARWIN_ROUTECAT_PATH, DARWIN_ROUTECAT_INPUTS)
     darwin = target == 'darwin-arm64'
     build.update(target=target, cgo_enabled=darwin, go_version='go1.27.1', trimpath=True,
                  buildvcs=False, source_commit='a' * 40)
@@ -415,6 +417,11 @@ def add_native_fixture(build, notices, bom, target='darwin-arm64'):
     bom.setdefault('components', [])
     bom.setdefault('dependencies', [])
     if darwin:
+        source_inputs = {DARWIN_ROUTECAT_PATH + '/' + name: sha for name, sha in DARWIN_ROUTECAT_INPUTS.items()}
+        source_inputs.update({path: 'd' * 64 for path in ('go.mod', 'go.sum', *(DARWIN_ROUTECAT_PATH + '/' + name for name in ('LICENSE', 'UPSTREAM.json', 'UPSTREAM.md')))})
+        notices.setdefault('source_components', []).append({'package': DARWIN_ROUTECAT_PACKAGE,
+            'source_path': DARWIN_ROUTECAT_PATH, 'build_inputs': [{'path': path, 'sha256': sha} for path, sha in sorted(source_inputs.items())]})
+        build['source_components'] = copy.deepcopy(notices['source_components'])
         packages = []
         for name in DARWIN_PACKAGES:
             files, cflags, ldflags = {'cgo.go': '1' * 64}, ['-Wall', '-Werror', '-fno-stack-protector', '-Wdeclaration-after-statement', '-std=gnu90'], []
@@ -470,6 +477,60 @@ class NativeProvenanceTests(unittest.TestCase):
                 values[0]['cgo_enabled'] = not values[0]['cgo_enabled']
                 with self.assertRaises(AssertionError):
                     verify_native(*values)
+
+    def test_routecat_policy_pins_match_go_and_actual_sources(self):
+        from source_provenance import DARWIN_ROUTECAT_INPUTS, DARWIN_ROUTECAT_PATH
+        source = (REPOSITORY / 'internal/distribution/native_routecat.go').read_text()
+        literal = source.split('var darwinRoutecatPolicyInputs = map[string]string{', 1)[1].split('\n}', 1)[0]
+        go_pins = dict(re.findall(r'"([a-z_]+\.go)":\s*"([0-9a-f]{64})"', literal))
+        self.assertEqual(go_pins, DARWIN_ROUTECAT_INPUTS)
+        self.assertEqual(len(go_pins), 10)
+        for name, sha in go_pins.items():
+            with self.subTest(source=name):
+                self.assertEqual(digest((REPOSITORY / DARWIN_ROUTECAT_PATH / name).read_bytes()), sha)
+
+    def test_routecat_native_policy_inventory_fails_closed(self):
+        from source_provenance import DARWIN_ROUTECAT_PACKAGE, native_digest, verify_native
+        for kind in ('old-five-only', 'missing', 'extra', 'duplicate', 'changed'):
+            with self.subTest(kind=kind):
+                build, notices, bom = self.fixture()
+                native = build['native_build']
+                inputs = native['policy_inputs']
+                selected = next(i for i in inputs if i['path'].startswith(DARWIN_ROUTECAT_PACKAGE + '/'))
+                if kind == 'old-five-only':
+                    native['policy_inputs'] = [i for i in inputs if not i['path'].startswith(DARWIN_ROUTECAT_PACKAGE + '/')]
+                elif kind == 'missing': inputs.remove(selected)
+                elif kind == 'extra': inputs.append({'path': DARWIN_ROUTECAT_PACKAGE + '/extra.go', 'sha256': 'f' * 64})
+                elif kind == 'duplicate': inputs.append(copy.deepcopy(selected))
+                elif kind == 'changed': selected['sha256'] = 'f' * 64
+                native['policy_inputs'].sort(key=lambda i: i['path'])
+                notices['native_build'] = copy.deepcopy(native)
+                for prop in bom['metadata']['properties']:
+                    if prop['name'] == 'build:native:sha256': prop['value'] = native_digest(native)
+                with self.assertRaises(AssertionError):
+                    verify_native(build, notices, bom)
+
+    def test_routecat_archived_source_inventory_binding_fails_closed(self):
+        from source_provenance import DARWIN_ROUTECAT_PATH, verify_native
+        for kind in ('missing-component', 'duplicate-component', 'wrong-source-path', 'missing', 'extra', 'duplicate', 'changed', 'missing-metadata'):
+            with self.subTest(kind=kind):
+                build, notices, bom = self.fixture()
+                sources = notices['source_components']
+                source = sources[0]
+                inputs = source['build_inputs']
+                selected = next(i for i in inputs if i['path'] == DARWIN_ROUTECAT_PATH + '/tailcat.go')
+                if kind == 'missing-component': sources.clear()
+                elif kind == 'duplicate-component': sources.append(copy.deepcopy(source))
+                elif kind == 'wrong-source-path': source['source_path'] = 'internal/other'
+                elif kind == 'missing': inputs.remove(selected)
+                elif kind == 'extra': inputs.append({'path': DARWIN_ROUTECAT_PATH + '/extra.go', 'sha256': 'f' * 64})
+                elif kind == 'duplicate': inputs.append(copy.deepcopy(selected))
+                elif kind == 'changed': selected['sha256'] = 'f' * 64
+                elif kind == 'missing-metadata': inputs[:] = [i for i in inputs if i['path'] != 'go.mod']
+                inputs.sort(key=lambda i: i['path'])
+                build['source_components'] = copy.deepcopy(sources)
+                with self.assertRaises(AssertionError):
+                    verify_native(build, notices, bom)
 
     def test_darwin_native_mutations_fail_closed(self):
         from source_provenance import native_digest, verify_native
