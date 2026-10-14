@@ -9,7 +9,7 @@ list/connect over genuine transports within one test process and independent chi
 processes. Linux CI verifies the actual browser workflow against those child
 processes; use the exact commit's CI result as acceptance evidence. Historical catalog rows remain
 stale and viewing does not authorize a connection.
-No release version is assigned.
+Release and exact-source acceptance status belong to the [verification record](VERIFICATION.en.md).
 
 ## Exact selection and coexistence
 
@@ -30,8 +30,8 @@ settings inspection or management action can be represented in this model.
 
 `MatchesSelection` narrows eligibility only: it rejects another relationship,
 pair binding, activation ID, revoked/expired state and an invalid lifetime.
-It is not a transport admission gate. The future owned coordinator must retain
-monotonic expiry, check current ownership and relationship, and perform bounded
+It is not a transport admission gate. The owning coordinator retains
+monotonic expiry, checks current ownership and relationship, and performs bounded
 final disclosure under the original publication origin and current view grant.
 Connection still uses the existing independent service permission.
 
@@ -42,8 +42,8 @@ publishing its result under the existing publication permit. Cache deletion and
 backend reset clear that origin too. DirectLAN catalog reads use the retained
 origin; they cannot reconstruct it by capturing today's peer. Missing, stopped
 or replaced origins reject the captured source. Multiple-route attribution is
-unsupported. Historical catalog rows remain `stale` until explicit catalog grant
-admission and the provenance association are integrated; changing a timestamp
+unsupported. Historical local-catalog rows remain `stale`. The separate catalog-view exchange
+uses explicit grant admission and retained provenance; changing a timestamp
 cannot make a historical advertisement current.
 
 ## Local control and list exchange
@@ -95,21 +95,21 @@ prevents concurrent repeated submissions and ignores late canceled results.
 Save-only stores ordinary connection configuration, without catalog authority
 or a durable share-generation review; it explains that another list is required.
 
-## Remaining acceptance steps
+## Test coverage and acceptance boundaries
 
-1. Exercise the implemented approval, independent persistence and list exchange
-   through real managed DirectLAN processes, including startup and revoke races.
-2. Exercise the implemented connection review and Japanese/English Web/CLI
-   flows with real processes, including saved-but-start-failed recovery.
-3. Verify browser cancellation, back/forward navigation, empty/error states and refresh.
-4. Verify cancellation, expiry, re-pair and stale-selection races with real
-   processes and browser tests, then verify actual service use and regressions.
+Data/storage and in-process integration tests cover consent/revoke, failed save,
+prepared disclosure versus revocation, legacy-grant preservation, retained-origin
+rejection, view-only denial, fresh review, actual HTTP forwarding and review reuse.
+Web component/navigation tests use fixtures and remain distinct from real-browser tests.
 
-The current tests cover the data contract, owned storage, local consent/revoke,
-failed save, prepared disclosure versus revocation, legacy grant preservation and
-retained-origin rejection. Native integration additionally covers real managed
-pairing, view-only denial, revoke, saved-but-start-failed recovery, fresh review,
-actual HTTP forwarding and review reuse rejection within one test process.
-Web component/navigation tests use fixtures. These do not establish separate-process,
-browser or real-device workflow acceptance. Existing
-browser sandbox behavior and CI conditions are unchanged.
+The [three-process integration tests](../internal/core/resource_catalog_view_process_integration_test.go)
+exercise managed DirectLAN list/connect and a separately selected actual-browser
+workflow. The [CI workflow](../.github/workflows/ci.yml) runs the browser case against
+independent agents. This supersedes the earlier fixture-only development description;
+it does not make every race or physical scenario verified. Use the exact source's
+recorded results rather than test existence as evidence of a pass.
+
+Physical devices, actual LAN/VPN transitions and OS lifecycle acceptance remain
+separate. Final-source regression and signed distribution retain their own gates;
+see [verification](VERIFICATION.en.md). Existing browser sandbox protections and CI
+requirements are unchanged.

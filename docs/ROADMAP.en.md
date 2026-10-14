@@ -11,11 +11,13 @@ The published baseline is [0.4.0-alpha.4](https://github.com/webkaz-labs/sobalin
 | Devices and services | Tailnet, explicitly paired Tailcat, scoped TCP/UDP, stable local service listeners, presets | Physical enrollment, app authentication/TLS/host keys and actual LAN/WAN/NAT behavior |
 | Prepared routes and relay operations | Alpha.4 recovery, encrypted pair-bound offers, explicit lifetimes, chosen-host setup and certificate operations | Physical network movement, sleep/wake and operator recovery remain unverified; candidate metadata has no fixed four-item permission ceiling |
 | LAN destination admission | Explicit private prefixes, exact pinned relay TCP, UDP guard and auxiliary-diagnostic restrictions | Physical multi-NIC/VPN behavior remains unverified; destination admission is not physical-interface or host-wide isolation |
-| Relayless LAN | Mutually authenticated pairing/control plus userspace WireGuard TCP/UDP | Fixed same-family numeric endpoints must be reachable over TCP and UDP; no discovery or automatic endpoint rebinding; physical networks remain unverified |
+| Relayless LAN | Mutually authenticated pairing/control plus userspace WireGuard TCP/UDP | Same-family numeric endpoints need TCP and UDP reachability. Authenticated endpoint updates use the [explicit endpoint controls](GENERIC.en.md); nearby discovery belongs to a separate LAN-backend setup flow. Physical networks remain unverified |
 | WAN candidates | Explicit numeric STUN and/or IPv6 discovery through the trusted-relay backend | Pinned relay still required for bootstrap; physical NAT/IPv6 reachability remains unverified; no universal NAT or relayless WAN promise |
 | Mixed connections | Separate selected engines, signed same-peer binding and separately approved application access | Physical network transitions and application reconnect remain unverified; no byte replay or existing-stream migration |
 | Files and stored state | Explicit send, batch consent, optional exact-peer autosave, no overwrite, bounded staging/accounting, uncertain-save recovery | Active-transfer interruption, real filesystems, ordinary-user Windows process behavior and physical power-loss durability |
-| Durable queues | Released explicit file queue; unreleased single-recipient text prepare/review/commit, original IDs/deadlines and exact save evidence | New-source ACK-loss/restart/history-cleanup and cancellation tests; physical power-loss/OS-lifecycle proof remains separate |
+| Durable queues | Released explicit file queue; unreleased single-recipient text prepare/review/commit, original IDs/deadlines and exact save evidence | Final-source results for ACK loss, restart, history cleanup and cancellation are recorded separately from physical power-loss/OS-lifecycle acceptance |
+| Nearby connection setup | [Scoped request-and-accept pairing](CONNECTION_SETUP.en.md), receiving and outbound-only modes, explicit first-use key acceptance (TOFU) or independent full-fingerprint verification, and exact-key re-enrollment | TOFU does not independently verify first-use identity. Exact-source native/browser results remain separate from physical two-device/two-OS discovery and discovery-to-browser acceptance |
+| Shared-service access | [Separate catalog-view consent, peer list exchange and fresh connection review](CATALOG_VIEW_CONTRACT.en.md), alongside local catalog observations | Exact-source process/browser results and physical-device acceptance are distinct; historical cached observations remain stale |
 | Human interfaces | Japanese/English guided CLI, local UI, services, graph, route review, private sign-in | Physical phone QR, actual native IME/fonts and terminal input remain unverified |
 | Lifecycle | Explicit startup approvals, offline suppression, saved settings and per-user OS startup | Actual OS sign-in and suspend/wake, real proxy/application reconnect |
 | Distribution | Existing reproducible packages, signing/provenance, public retrieval and four-target mise checks | Published results are source-specific; unreleased text queueing still needs its own final native/browser/distribution gates |
@@ -38,32 +40,25 @@ A clearly labeled prerelease can be published for physical-device testing after 
 
 Initial backend selection and cross-transport peer binding stay explicit. Automatic choice is limited to already configured, authenticated and approved routes for new flows, with positively classified unavailability; authorization, pin, unknown-state and unclassified failures stay terminal. Outward application traffic remains in the selected userspace stack. Route recovery cannot renew service lifetimes, widen peers/ports, restore revoked trust or restart canceled files. Immediate files retain in-process whole-item retry. Explicit durable file requests recover after restart with original IDs and deadlines; unreleased durable text has its own save/deduplication contract. None adds byte-offset resume. Existing TCP preservation, arbitrary transaction replay and remote-job completion are not promised.
 
-The normal direct-enabled single executable remains. `local` classifies a relay, and direct peer paths may be public. The implemented optional LAN policy admits specified destinations; it does not promise physical-NIC/VPN binding or whole-process/host zero egress. Administrator privileges, OS route/firewall or LAN-router changes are not prerequisites. Additional resource administration, remote management APIs, remote filesystem browsing, broadcast and synchronization remain separate work. Explicit durable file queueing already exists; unreleased durable text queueing is the next implemented scope.
+The normal direct-enabled single executable remains. `local` classifies a relay, and direct peer paths may be public. The implemented optional LAN policy admits specified destinations; it does not promise physical-NIC/VPN binding or whole-process/host zero egress. Administrator privileges, OS route/firewall or LAN-router changes are not prerequisites. Scoped [remote settings management](RESOURCE_MANAGEMENT.en.md), [shared-service listing and connection review](CATALOG_VIEW_CONTRACT.en.md), and selected-recipient [file delivery](GENERIC.en.md) already exist. Broader administration and synchronization remain separate work. Explicit durable file queueing already exists; durable text queueing is implemented in the development source.
 
 The earlier 0.3-series CI optimization plan is historical. Any further CI changes need their own review and checks; queue implementation does not waive the existing native/browser/distribution gates.
 
-### Historical convenience plan
+### Remaining feature scope and historical plans
 
-This earlier plan is retained for context; it is not a claim that every listed item remains unimplemented. Current queue scope is described above and in the linked guides.
+The [0.3-series convenience plan](CONVENIENCE_PLAN.en.md) is historical; its then-unimplemented items are not a current backlog. In particular, [nearby setup](CONNECTION_SETUP.en.md) provides request, receive and outbound-only roles, with explicit permission for the receiver to relay. Legacy full-fingerprint setup retains QR/text exchange and selection of a permitted reachable relay role. Neither workflow deploys software to another host or provides general unattended relay election/operation.
 
-The supported outside-LAN recommendation is Tailscale. Building or deploying an external relay, including a separate public relay daemon, is out of scope for now. Existing opt-in WAN candidate controls remain an advanced capability requiring an already reachable compatible pinned relay; they are not a supplied public-relay deployment workflow. The next relay setup improvements focus on LAN hosts.
+The following remain outside the current implementation scope, without a promised release date:
 
-The following ten areas are adopted for the patch after the current integration release. Each needs CLI/Web, Japanese/English and permission/failure acceptance:
+- Persistent shared folders and synchronization, automatic clipboard synchronization, and remote filesystem browsing. Explicit file/text delivery is separate from continuous access or synchronization.
+- Remote management across connection backends. The implemented [management contract](RESOURCE_MANAGEMENT.en.md) is limited to a managed DirectLAN peer and exact settings; it is not general remote execution.
+- Byte-offset transfer resume and additional TUI/native interfaces. Durable queue restart recovery already exists and must not be listed as an entirely deferred feature.
+- Public-relay deployment and a dedicated public-relay daemon. Tailscale remains the normal outside-LAN recommendation; optional WAN controls require an already reachable compatible pinned relay.
+- MCP and agent-tool execution, discussed below. Their architecture and acceptance are separate from this release's connection and queue work.
 
-1. Easier authenticated first pairing and endpoint exchange. Existing recipient-bound invitation QR display is a starting point, not automatic discovery.
-2. Stable-key LAN endpoint tracking and automatic selection among approved routes. Current fixed endpoints and new-flow routing do not yet provide endpoint migration.
-3. Easier LAN relay placement and operation. Chosen-host setup exists; safe host election remains feasibility work and is not fulfilled by manual setup.
-4. Actionable diagnosis and recovery guidance for connection failures.
-5. Browse advertised services and launch them. Build on existing service listings and explicit access approval.
-6. Favorites and multi-service start/stop sets, building on current presets without widening permissions.
-7. Retain offline configuration and reconnect when an approved peer returns; distinguish this from a durable file-transfer outbox.
-8. Suggest alternate ports when a local port conflicts, while preserving explicit fixed-port choices.
-9. Guided local service sharing and reusable permission presets with a review of the resulting scope.
-10. Compact actionable state with details on demand, including the actual route and why switching is unavailable.
+Physical-device discovery, network transitions, suspend/wake and power-loss acceptance remain verification work for implemented behavior, not evidence that the corresponding features were removed. Profile-format incompatibility and the absence of migration are explicit current boundaries, not a promise to add migration later.
 
-Automatic LAN relay-host selection remains an unresolved desired capability. No remote deployment, new host authority or permission expansion is implied by these usability goals.
-
-Keep all examples and published evidence generic. See [capacity](CAPACITY.en.md), [security](../SECURITY.md) and the [route contract](ROUTE_RECOVERY_DESIGN.en.md) for the authoritative boundaries rather than duplicating detailed checklists here.
+Keep examples and published evidence generic. See [capacity](CAPACITY.en.md), [security](../SECURITY.md) and the [route contract](ROUTE_RECOVERY_DESIGN.en.md) for authoritative boundaries.
 
 ## CI latency and conditional real-time tests
 
@@ -73,4 +68,4 @@ Keep short safety/logic checks, four native targets and browser acceptance on ev
 
 The current product supplies scoped TCP/UDP connections, explicit sharing permissions, and a local CLI/API. It does not yet provide an MCP server or an end-to-end agent-tool execution layer. A later direction is to let an approved peer’s AI use selected remote tools through a simple sharing/review flow, while keeping connection identity, transport permission and application execution authorization distinct.
 
-Tailscale can already provide device connectivity and remains the normal outside-LAN path. If ordinary Tailscale and an existing application already meet the need, using them alone can be simpler; sobalink is optional. The proposed value is the combination of ordinary-user operation without router port-forwarding setup, easy service sharing, and exact peer/scope/lifetime review, rather than connectivity alone. Network reachability and each tool’s own authentication still apply. A small working tool-sharing demonstration and its security review must precede implementation claims; this direction does not add requirements to the ten-area alpha.6 scope.
+Tailscale can already provide device connectivity and remains the normal outside-LAN path. If ordinary Tailscale and an existing application already meet the need, using them alone can be simpler; sobalink is optional. The proposed value is the combination of ordinary-user operation without router port-forwarding setup, easy service sharing, and exact peer/scope/lifetime review, rather than connectivity alone. Network reachability and each tool’s own authentication still apply. A small working tool-sharing demonstration and its security review must precede implementation claims; this direction does not add requirements to the current connection-setup and durable-queue scope.

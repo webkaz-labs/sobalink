@@ -4,6 +4,8 @@
 
 `soba resource catalog` presents a bounded local composition of existing observations. It does not add a peer-wire catalog, remotely enumerate resources, grant permission or perform changes. This describes source behavior; tests, real devices, installed binaries and distribution require separate acceptance.
 
+The separate [shared-service catalog view](CATALOG_VIEW_CONTRACT.en.md) is implemented: it uses explicit peer-specific viewing consent, a bounded remote list and fresh connection review through `resource catalog view` and the Web services flow. The legacy-cache restrictions below apply to `resource catalog`, not to every service-listing capability.
+
 ## Start with the normal command
 
 Run `soba resource catalog` with the selected local agent running. It first resolves the local settings target through `resource.list`, then requests local settings, saved services and current-process transfer activity in one catalog command. If settings resolution fails, the command reports that category unresolved. It does not silently label a reduced selection complete. Retry `resource list`, or explicitly request the narrower `soba resource catalog --services --transfers`.
@@ -33,7 +35,7 @@ Persistent resource/service identities last with their saved records. Advertised
 
 ### Service-discovery limitation
 
-In this source slice, cached `remote_service` observations are returned stale and non-actionable, including recently observed or confirmed-empty caches. The existing cache does not retain sufficient original publication-origin evidence to establish a current catalog observation. An unknown or mixed backend may instead return unavailable. Running `discover --peer PEER_ID` explicitly refreshes the existing discovery workflow, but does not by itself lift this catalog gate. A separately reviewed provenance/current-connection bridge is still required before catalog navigation can offer a current advertised connection.
+In this source slice, cached `remote_service` observations are returned stale and non-actionable, including recently observed or confirmed-empty caches. Retained publication attribution alone does not authorize a current catalog observation or connection. An unknown or mixed backend may instead return unavailable. Running `discover --peer PEER_ID` explicitly refreshes the existing discovery workflow, but does not by itself lift this catalog gate. Use the separate [catalog-view workflow](CATALOG_VIEW_CONTRACT.en.md) for a currently authorized service list and fresh connection review; it does not promote these historical rows.
 
 ## Continue through existing workflows
 
@@ -60,4 +62,4 @@ Global `--dry-run` makes zero agent calls and writes no profile. If the local se
 
 `--json` validates the closed envelope, finite limits, exact source correspondence and the catalog aggregate digest before printing. The envelope contains `schemaVersion`, lower-camel-case `limits`, and `snapshot`. Fields and user-supplied values are not translated. Human output does not include raw provider errors, provider-private paths or arbitrary shell commands assembled from labels.
 
-A distinct remote catalog capability/schema, current advertised-service provenance and durable file-sharing semantics remain unresolved scope/design decisions. Nonempty real-transfer and saved-service browser navigation remain unproved; final-candidate full regression checks and signed distribution retain their own gates. The bounded results above do not settle a release version, defer the unresolved features or complete the original broader proposal.
+The B1 results above describe that historical local-catalog scope only. The separate implemented remote service-view capability and its process/browser tests are described in the [view contract](CATALOG_VIEW_CONTRACT.en.md). Arbitrary remote resource enumeration and persistent file sharing are not added by either workflow. Final-source regression, signed distribution and physical-device acceptance remain separate; consult [verification](VERIFICATION.en.md) for recorded outcomes.
