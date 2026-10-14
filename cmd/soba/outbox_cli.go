@@ -39,7 +39,10 @@ No fallback to immediate sending occurs. Immediate sending is a separate action.
 --json without --confirm prepares only, never prompts or authorizes sending.
 Use the returned processId, outboxId and reviewRevision for a later explicit commit.
 Prepared copies are process-bound. Enqueued show/cancel require no old process ID.
-A lost response is unconfirmed: check the original request, never create a replacement blindly.
+A lost or storage_busy response is unconfirmed: check the original request, never create a replacement blindly.
+If it is still prepared and the review is valid, retry the exact same commit without changing its deadline.
+Retained evidence has its own finite budget, separate from active work and physical staged bytes.
+History cleanup may not free evidence capacity; never erase uncertain evidence to admit a new send.
 Keep the returned ob1_ request ID unchanged when showing, committing, discarding or cancelling.
 New requests use the device clock; if admission rejects the clock, check it before any new review.
 Cancel stops further sends; files already saved on receiving devices remain.
@@ -66,7 +69,10 @@ const outboxHelpJA = `正確な宛先と固定の期限を指定してファイ�
 --confirm のない --json は準備だけを行い、質問も送信承認も行いません。
 後で確定するには、返された processId・outboxId・reviewRevision を正確に指定します。
 未確定の準備は現在の起動中のみ有効です。受付後の照会・停止に以前の起動 ID は不要です。
-応答を失った場合は結果未確認です。代わりの要求を作らず、元の要求を照会してください。
+応答消失・storage_busy は結果未確認です。代わりの要求を作らず、元の要求を照会してください。
+準備済みで確認内容がまだ有効なら、期限を変えず同じ commit を再試行してください。
+保持する到着の記録には、進行中の枠や実際のコピー容量とは別の有限予算があります。
+履歴整理で記録容量が空くとは限りません。新規送信のために結果不明の記録を消さないでください。
 照会・確定・破棄・停止では、返された ob1_ 要求 ID を変更せずに指定してください。
 新しい要求には端末の時計を使います。時刻が拒否された場合は、新しい確認の前に時計を確認してください。
 cancel は追加の送信を停止します。相手の端末に保存済みのファイルは残ります。
@@ -198,6 +204,8 @@ func outboxCLIControlError(ja bool, cause error) error {
 	}
 	message := text(ja, "Result not confirmed. Check the original outbox request; do not create a replacement send.", "結果を確認できません。代わりの送信を作らず、元の送信待ち要求を照会してください。")
 	switch code {
+	case "outbox_storage_busy", "outbox_evidence_capacity", "durable_evidence_capacity":
+		message = outboxCLIReason(ja, code)
 	case "outbox_invalid", "outbox_stale", "outbox_conflict":
 		message = text(ja, "The original review is invalid, changed or unavailable. Check the original request and exact recipients before any new review.", "元の確認内容が無効・変更済み・取得不能です。新たに確認する前に元の要求と正確な宛先を照会してください。")
 	case "outbox_retired":
@@ -734,6 +742,12 @@ func outboxCLIStatusLabel(ja bool, status string) string {
 func outboxCLIReason(ja bool, code string) string {
 	var en, jp string
 	switch code {
+	case "outbox_storage_busy":
+		en, jp = "Storage is busy. Check the original request status first; if it is still prepared and the confirmation remains valid, retry the exact same commit with its original process, revision and deadline. Do not create a replacement or assume nothing was sent.", "保存処理が使用中です。まず元の要求を照会し、まだ準備済みで確認が有効なら、元の起動 ID・リビジョン・期限を保って同じ commit を再試行してください。代わりの要求を作ったり、何も送られていないと決めつけないでください。"
+	case "outbox_evidence_capacity":
+		en, jp = "The sender's retained delivery-evidence budget is full. This is separate from active work and physical staged-file capacity. Check original requests; status and cancellation remain available. Visible history cleanup may not free this budget. Never erase uncertain evidence to admit a new send.", "送信側の保持する到着の記録の容量が満杯です。進行中の枠や実際の準備済みファイル容量とは別です。元の要求を確認してください。状態照会と停止は引き続き可能です。表示履歴の整理でこの容量が空くとは限りません。新しい送信のために結果不明の記録を消さないでください。"
+	case "durable_evidence_capacity":
+		en, jp = "The recipient's retained delivery-evidence budget is full. This is separate from active receives and physical file capacity. Keep the original request and check its status; receiver history cleanup may not free evidence capacity. Never erase uncertain evidence or create a replacement send to bypass this limit.", "受信側の保持する到着の記録の容量が満杯です。進行中の受信枠や実際のファイル容量とは別です。元の要求を保って状態を照会してください。受信履歴の整理で記録容量が空くとは限りません。結果不明の記録の消去や代わりの送信で、この制限を回避しないでください。"
 	case "outbox_capability_unknown":
 		en, jp = "Waiting to check compatibility.", "対応状況の確認待ちです。"
 	case "outbox_peer_upgrade_required", "outbox_blocked_peer_upgrade_required":

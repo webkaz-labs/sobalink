@@ -74,7 +74,7 @@ func TestServiceLifetimeRequiresExplicitOutboundNoExpiry(t *testing.T) {
 	if err := p.a.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: p.a.dir, SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.a.dir, LifecycleLock: p.a.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

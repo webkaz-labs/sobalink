@@ -2,33 +2,65 @@
 
 [English](README.en.md) · [概要](../README.md)
 
-公開済みの基準は [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5) です。準備済み経路の復旧、LAN送信先制限、選んだホストの中継運用、中継なしLAN、高度な任意WAN探索、接続方式の併用、調整可能な中継資源予算を含みます。同一ソースのnative／browser CIと署名付き公開の全15ゲートが合格しました。正確なソースとrunは[検証記録](VERIFICATION.md)を参照してください。実端末・アプリ・OSライフサイクルの受入は未完了です。目的に合う手順から始めてください。
+最初の操作は[利用ガイド](GENERIC.ja.md)から始めてください。公開版・開発ソース・実行済みの確認結果は[検証記録](VERIFICATION.md)を正本とします。各手順は対象版と未確認の条件を明記し、実機の受入を自動試験から推定しません。
 
-LAN外の接続にはTailscaleを使います。中継の起動と今後の配置改善はLAN内を対象にし、外部中継の配備は当面対象外です。任意の高度なWAN候補設定には、到達可能な互換中継と固定pinを既に用意している必要があります。
+この一覧は読む場所を案内します。操作は専用ガイド、保証・制約は契約、実行結果は検証記録、残る作業はロードマップに置き、同じ説明をここへ複製しません。日英版は同じ役割の対です。全体設計・配布・Web 受入提案は共通の英語文書を参照します。
 
-| 目的 | 手順 |
-| --- | --- |
-| まず使う | [GENERIC.ja.md](GENERIC.ja.md) |
-| 案内付きCLI・自動化 | [CLI_GUIDE.ja.md](CLI_GUIDE.ja.md) |
-| ローカル画面の操作 | [WEB_CONTROLS.ja.md](WEB_CONTROLS.ja.md) |
-| SSH/HTTP設定・RustDesk | [CLIENT_HELPERS.ja.md](CLIENT_HELPERS.ja.md) |
-| 非公開の認証と取消 | [SIGN_IN.ja.md](SIGN_IN.ja.md) |
-| 保存定義・グループ・タスク | [SAVED_SERVICES.ja.md](SAVED_SERVICES.ja.md) |
-| 起動・停止・ログアウト・OSサインイン | [LIFECYCLE.ja.md](LIFECYCLE.ja.md) |
-| 明示的な外向き起動時接続・非公開プロキシ設定 | [STARTUP.ja.md](STARTUP.ja.md) |
-| 範囲を限定したプロキシ・診断 | [PROXY_DIAGNOSTICS.ja.md](PROXY_DIAGNOSTICS.ja.md) |
-| 明示的な中継ペアリング・復旧 | [LAN.ja.md](LAN.ja.md) |
-| LAN送信先の制限 | [LAN送信先](LAN_DESTINATIONS.ja.md) |
-| 中継なしLAN | [Direct LAN](DIRECT_LAN.ja.md) |
-| 方式の併用・新しい接続の切替 | [接続方式の併用](MIXED_CONNECTIONS.ja.md) |
-| 準備した経路の実装と条件 | [経路復旧](ROUTE_RECOVERY_DESIGN.ja.md) |
-| 管理対象の相手1台を参照（ソース開発版） | [参照許可](RESOURCE_INSPECTION.ja.md) |
-| 容量・予算・履歴 | [CAPACITY.ja.md](CAPACITY.ja.md) |
-| 開発・使いやすさの基本方針 | [DEVELOPMENT_PRINCIPLES.ja.md](DEVELOPMENT_PRINCIPLES.ja.md) |
-| 機能対応と受入 | [FEATURE_PARITY.ja.md](FEATURE_PARITY.ja.md) |
-| ソースごとの検証 | [確認範囲](VERIFICATION.md) |
-| 資源使用量と通信量の観測 | [公開実行ファイルの資源](RESOURCE_MEASUREMENT.ja.md) · [隔離した中継通信](RELAY_TRAFFIC_MEASUREMENT.ja.md) |
-| 安全性の境界 | [安全性](SECURITY.ja.md) |
-| 設計と配布 | [設計](ARCHITECTURE.md) · [配布](DISTRIBUTION.md) |
-| 残る受入 | [ロードマップ](ROADMAP.ja.md) |
-| CIの実時間試験の条件・計測 | [変更内容に応じたCI](CI_EFFICIENCY.ja.md) |
+## 使い始める・日常の操作
+
+- [最初の起動から送信・停止まで](GENERIC.ja.md)
+- [案内付き CLI・自動化](CLI_GUIDE.ja.md)
+- [ローカル画面](WEB_CONTROLS.ja.md)
+- [非公開の認証・取消](SIGN_IN.ja.md)
+- [SSH/HTTP 設定・RustDesk](CLIENT_HELPERS.ja.md)
+- [保存定義・グループ・タスク](SAVED_SERVICES.ja.md)
+- [起動・停止・ログアウト・OS サインイン](LIFECYCLE.ja.md)
+- [明示的な起動時接続・非公開プロキシ設定](STARTUP.ja.md)
+- [ファイル・フォルダーの永続送信待ち](DURABLE_OUTBOX.ja.md)
+- [容量・予算・履歴](CAPACITY.ja.md)
+- [範囲を限定したプロキシ・診断](PROXY_DIAGNOSTICS.ja.md)
+- [用途例（日本語）](USE_CASES.ja.md)
+
+## ネットワークの操作
+
+- [明示した中継でのペアリング・復旧](LAN.ja.md)
+- [中継ホスト・証明書・資源予算](RELAY_OPERATIONS.ja.md)
+- [LAN 送信先の制限](LAN_DESTINATIONS.ja.md)
+- [中継なし LAN](DIRECT_LAN.ja.md)
+- [接続方式の併用](MIXED_CONNECTIONS.ja.md)
+- [端末カードの確認・交換](DEVICE_CARDS.ja.md)
+- [代替ポートの確認](PORT_PROPOSALS.ja.md)
+
+## 開発ソースの操作・制約
+
+以下はソースの機能を読むための入口です。一覧への掲載を公開版への収録や受入完了の意味にはしません。
+
+- [接続セットアップ（未公開）](CONNECTION_SETUP.ja.md)
+- [テキストの永続送信待ち（未公開）](DURABLE_TEXT.ja.md)
+- [リソース一覧](RESOURCE_CATALOG.ja.md)
+- [ローカルのリソース設定](RESOURCE_SETTINGS.ja.md)
+- [許可した相手の参照](RESOURCE_INSPECTION.ja.md)
+- [許可した相手の転送設定管理](RESOURCE_MANAGEMENT.ja.md)
+- [固定した相手グループの設定](RESOURCE_GROUP.ja.md)
+- [Web 操作の引継ぎと確認](WEB_ACTIVATION_HANDOFF.ja.md)
+
+## 設計・安全性・開発上の契約
+
+- [開発・使いやすさの基本方針](DEVELOPMENT_PRINCIPLES.ja.md)
+- [全体設計・通信境界](ARCHITECTURE.md)
+- [安全性の境界](SECURITY.ja.md)
+- [経路復旧の契約](ROUTE_RECOVERY_DESIGN.ja.md)
+- [カタログ表示の契約](CATALOG_VIEW_CONTRACT.ja.md)
+- [導入・ビルド・署名付き配布](DISTRIBUTION.md)
+- [変更内容に応じた CI](CI_EFFICIENCY.ja.md)
+
+## 検証記録・残る受入・履歴
+
+- [公開基準・正確なソースごとの実行結果](VERIFICATION.md)
+- [実装と残る受入](ROADMAP.ja.md)
+- [一括送信の受入条件](BATCH_SEND_ACCEPTANCE.ja.md)
+- [公開バイナリの資源観測](RESOURCE_MEASUREMENT.ja.md)
+- [隔離した中継の通信量観測](RELAY_TRAFFIC_MEASUREMENT.ja.md)
+- [0.3 系列の機能対応履歴](FEATURE_PARITY.ja.md)
+- [0.3 系列の利便性計画・検証履歴](CONVENIENCE_PLAN.ja.md)
+- [Web 受入の設計・ソース別履歴](WEB_ACTIVATION_ACCEPTANCE_PROPOSAL.md)

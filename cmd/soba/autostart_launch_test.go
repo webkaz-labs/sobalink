@@ -19,7 +19,7 @@ func TestAutostartReviewBindsExplicitLaunchScopeWithoutPrivateCredentials(t *tes
 	root := t.TempDir()
 	dir := filepath.Join(root, "state")
 	service := core.ServiceSpec{ID: "saved-api", Name: "api", Backend: "tailnet", Direction: "forward", PeerID: "peer-example", Network: "tcp", Ports: "8080", LocalPort: 18080, LoopbackHost: "127.0.0.1", Lifetime: "until-stopped", Purpose: "web"}
-	profile := core.Profile{Version: 2, DurableFiles: syntheticDurableProfile(), Settings: core.Settings{Network: "tailnet", Hostname: "example-node", Locale: "auto", Theme: "system"}, Peers: []core.Trust{}, Services: []core.ServiceSpec{service}}
+	profile := core.Profile{Version: 3, DurableFiles: syntheticDurableProfile(), Settings: core.Settings{Network: "tailnet", Hostname: "example-node", Locale: "auto", Theme: "system"}, Peers: []core.Trust{}, Services: []core.ServiceSpec{service}}
 	if err := config.WriteJSON(filepath.Join(dir, "sobalink.json"), profile); err != nil {
 		t.Fatal(err)
 	}

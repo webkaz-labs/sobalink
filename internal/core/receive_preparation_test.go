@@ -48,7 +48,7 @@ func TestCoreReceivePreparationChild(t *testing.T) {
 		}
 		return 1 << 40, nil
 	})
-	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestCoreReceivePreparationReopenAllDestinations(t *testing.T) {
 				if err != nil || state.Preparation == nil {
 					t.Fatalf("durable preparation %+v %v", state, err)
 				}
-				c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+				c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 				if err != nil {
 					t.Fatal("blocked receive stopped Core", err)
 				}
@@ -227,7 +227,7 @@ func testCorePreparationBlocksReceiveKeepsSendAvailable(t *testing.T, guardMode 
 		}
 	}
 	nb := &pipeNode{hub: p.hub, ip: p.nb.ip, who: map[netip.Addr]string{p.na.ip: "peer-a"}, state: p.nb.state}
-	c, err := Open(context.Background(), Options{Directory: p.b.dir, NodeFactory: func(string, string) (NetworkBackend, error) { return nb, nil }})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.b.dir, LifecycleLock: p.b.resourceLock, NodeFactory: func(string, string) (NetworkBackend, error) { return nb, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

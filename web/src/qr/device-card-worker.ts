@@ -1,3 +1,4 @@
+import { MAX_QR_PAYLOAD_BYTES } from './payload-policy'
 import { prepareZXingModule, readBarcodes } from '../../vendor/zxing-wasm-3.1.5/reader/index.js'
 import { preflightStaticPng } from './png-preflight'
 import { preflightBudget, READER_WASM_BYTES, validPngPolicy } from './png-policy'
@@ -48,7 +49,7 @@ async function decode(data: unknown) {
       return 'unavailable:local-reader'
     }, print: () => {}, printErr: () => {} }, fireImmediately: true })
     if (elapsed() >= budget.deadlineMs) return fail('deadlineExceeded')
-    const result = readerCardBytes(await readBarcodes(pixels, { formats: ['QRCode'], tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: false, tryDenoise: false, isPure: false, maxNumberOfSymbols: 2, textMode: 'Plain', returnErrors: false }))
+    const result = readerCardBytes(await readBarcodes(pixels, { formats: ['QRCode'], tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: false, tryDenoise: false, isPure: false, maxNumberOfSymbols: 2, textMode: 'Plain', returnErrors: false }), MAX_QR_PAYLOAD_BYTES)
     if (elapsed() >= budget.deadlineMs) return fail('deadlineExceeded')
     if (typeof result === 'string') return fail(result)
     scope.postMessage({ schema: 1, generation, status: 'decoded', bytes: result }, [result.buffer])

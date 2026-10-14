@@ -2,10 +2,19 @@
 
 package main
 
-import "os/exec"
+import (
+	"errors"
+	"os/exec"
+)
 
 func runProductActivationDispatch(string) int                                       { return 97 }
 func prepareProductSupervisor(string, *exec.Cmd) (activationSupervisorExtra, error) { return nil, nil }
 func productSelfOriginAllowed(*activationChild) bool                                { return false }
 
 func runProductBrowserScope() int { return 97 }
+
+func (s *activationSupervisor) recordProductWaitLocked(activationRegistration) (any, error) {
+	return nil, errors.New("product wait observation disabled")
+}
+
+func productMode() bool { return false }

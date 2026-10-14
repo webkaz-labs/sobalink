@@ -16,6 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from source_provenance import read_json, verify_native
 
 _FULL_SPEC = importlib.util.spec_from_file_location("ci_full_validation", pathlib.Path(__file__).with_name("ci_full_validation.py"))
 full_validation = importlib.util.module_from_spec(_FULL_SPEC)
@@ -154,17 +155,21 @@ def check_assets(root, version, commit, bundle=False):
         require(sha256(root / name) == digest, "checksum mismatch: " + name)
     for target in TARGETS:
         stem = "sobalink-" + version + "-" + target
-        meta = json.loads((root / (stem + ".build.json")).read_text(encoding="utf-8"))
+        meta = read_json((root / (stem + ".build.json")).read_bytes())
         require(meta["product"] == "sobalink" and meta["project"] == PROJECT and meta["version"] == version and meta["source_commit"] == commit and meta["target"] == target, "incorrect build identity: " + target)
         require(meta["build_tags"] == "ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy", "unexpected network build tags")
-        require(meta["go_version"] == "go1.27.1" and meta["cgo_enabled"] is False and meta["trimpath"] is True and meta["buildvcs"] is False, "unexpected build settings")
+        require(meta["go_version"] == "go1.27.1" and meta["trimpath"] is True and meta["buildvcs"] is False, "unexpected build settings")
         require(meta["frontend"]["node_version"] == "24.19.0" and meta["frontend"]["npm_version"] == "11.9.0", "unexpected frontend toolchain")
         require(re.fullmatch(r"[0-9a-f]{64}", meta["frontend"]["lock_sha256"]) is not None, "missing frontend lock digest")
         require(bool(meta["frontend"]["assets"]), "missing embedded frontend inventory")
-        bom = json.loads((root / (stem + ".cdx.json")).read_text(encoding="utf-8"))
+        bom = read_json((root / (stem + ".cdx.json")).read_bytes())
         require(bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.5", "invalid SBOM")
-        notices = json.loads((root / (stem + ".notices.json")).read_text(encoding="utf-8"))
+        notices = read_json((root / (stem + ".notices.json")).read_bytes())
         require(bool(notices["modules"]) and bool(notices["frontend_modules"]), "empty dependency notices")
+        try:
+            verify_native(meta, notices, bom)
+        except (AssertionError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError("invalid native package provenance: " + target) from exc
         for module in notices["modules"] + notices["frontend_modules"] + [notices["go_standard_library"]]:
             require(bool(module["notices"]), "missing module license notices")
     print("Verified four native targets, source identity, SBOMs, notices, and all distribution checksums")

@@ -34,23 +34,48 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 	if os.Getenv("SOBALINK_ROUTE_PROCESS_HELPER") != "1" {
 		t.Skip("parent-owned native fixture")
 	}
+	termination := routeChildFixtureEvidence{Schema: 1, CoreClose: "not_run", LockClose: "not_run"}
+	defer func() { termination.TestFailed = t.Failed(); emitRouteChildFixture(termination) }()
 	dir := os.Getenv("SOBALINK_ROUTE_PROCESS_DIR")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	opts := Options{Directory: dir, Version: "process-fixture", SkipNetworkStart: os.Getenv("SOBALINK_ROUTE_PROCESS_OFFLINE") == "1"}
-	if os.Getenv("SOBALINK_ROUTE_PROCESS_CATALOG") == "1" {
-		lock, err := config.AcquireLock(dir)
+	lock, err := config.AcquireLock(dir)
+	if err != nil {
+		t.Fatal("open owned process lock")
+	}
+	defer func() {
+		termination.LockClose = "running"
+		err := lock.Close()
+		termination.LockErrors = routeCloseErrors(err)
+		termination.LockClose = "passed"
 		if err != nil {
-			t.Fatal("open owned catalog process lock")
+			termination.LockClose = "failed"
+			t.Error("close owned process lock")
 		}
-		defer lock.Close()
-		opts.LifecycleLock, opts.EnableResourceInspection, opts.EnableCatalogView = lock, true, true
+	}()
+	opts.LifecycleLock = lock
+	if os.Getenv("SOBALINK_ROUTE_PROCESS_CATALOG") == "1" {
+		opts.EnableResourceInspection, opts.EnableCatalogView = true, true
 	}
 	c, err := Open(ctx, opts)
 	if err != nil {
 		t.Fatal("open isolated subprocess Core")
 	}
-	defer c.Close()
+	defer func() {
+		termination.CoreClose = "running"
+		err := c.Close()
+		termination.CoreErrors = routeCloseErrors(err)
+		termination.CoreClose = "passed"
+		if err != nil {
+			termination.CoreClose = "failed"
+			t.Error("close isolated subprocess Core")
+		}
+	}()
+	textFixture := &durableTextProcessFixture{core: c}
+	if os.Getenv("SOBALINK_ROUTE_PROCESS_SETUP") == "1" {
+		installBrowserSetupScope(c)
+	}
 	var closers []io.Closer
 	defer func() {
 		for _, v := range closers {
@@ -60,8 +85,9 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 	decoder, encoder := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
 	for {
 		var request struct {
-			Name    string
-			Payload json.RawMessage
+			Name      string
+			Payload   json.RawMessage
+			RequestID string
 		}
 		if decoder.Decode(&request) != nil {
 			return
@@ -69,6 +95,8 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		var value any
 		var callErr error
 		switch request.Name {
+		case "fixture.text-fault", "fixture.text-evidence", "fixture.text-wire":
+			value, callErr = textFixture.command(ctx, request.Name, request.Payload)
 		case "fixture.send-paths":
 			var in struct {
 				PeerID string   `json:"peerId"`
@@ -86,6 +114,10 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 			if callErr == nil {
 				value, callErr = c.transfers.Get(in.TransferID)
 			}
+		case "fixture.setup-evidence":
+			value = browserSetupEvidence(c)
+		case "fixture.setup-hello":
+			value = browserSetupHello(ctx, c)
 		case "fixture.snapshot":
 			value, callErr = c.Snapshot(ctx)
 		case "fixture.catalog-local":
@@ -107,7 +139,8 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 				value = map[string]any{"schema": 1, "url": address, "code": code}
 			}
 		case "fixture.exit":
-			encoder.Encode(processReply{Value: json.RawMessage(`true`)})
+			termination.ExitRequested = true
+			termination.ReplyWritten = encoder.Encode(processReply{Value: json.RawMessage(`true`)}) == nil
 			return
 		case "fixture.selection":
 			value = c.lanStoreCopy().copy().Selection
@@ -247,9 +280,14 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 			}
 		default:
 			call, stop := context.WithTimeout(ctx, 30*time.Second)
-			requestID := randomID()
-			if request.Name == "outbox.prepare" {
-				requestID = newOutboxRequestID(time.Now())
+			requestID := request.RequestID
+			if requestID == "" {
+				requestID = randomID()
+				if request.Name == "outbox.prepare" {
+					requestID = newOutboxRequestID(time.Now())
+				} else if request.Name == "message.queue.prepare" {
+					requestID = newTextRequestID(time.Now())
+				}
 			}
 			value, callErr = c.Command(call, webui.Command{RequestID: requestID, Name: request.Name, Payload: request.Payload})
 			stop()
@@ -278,6 +316,7 @@ type routeCoreProcess struct {
 	output      *json.Decoder
 	done        chan error
 	stopped     bool
+	waitKind    string
 	diagnostics *routeProcessDiagnostics
 }
 
@@ -341,11 +380,17 @@ func (p *routeCoreProcess) invoke(t *testing.T, name string, payload any) json.R
 
 func (p *routeCoreProcess) invokeResult(t *testing.T, name string, payload any) processReply {
 	t.Helper()
+	return p.invokeResultID(t, name, "", payload)
+}
+
+func (p *routeCoreProcess) invokeResultID(t *testing.T, name, requestID string, payload any) processReply {
+	t.Helper()
 	raw, _ := json.Marshal(payload)
 	if json.NewEncoder(p.input).Encode(struct {
-		Name    string
-		Payload json.RawMessage
-	}{name, raw}) != nil {
+		Name      string
+		Payload   json.RawMessage
+		RequestID string
+	}{name, raw, requestID}) != nil {
 		t.Fatalf("subprocess command write %s; %s; runtime diagnostics:\n%s", name, p.exitSummary(), p.diagnostics.safeSummary())
 	}
 	ch := make(chan processReply, 1)
@@ -367,15 +412,34 @@ func (p *routeCoreProcess) invokeResult(t *testing.T, name string, payload any) 
 }
 func (p *routeCoreProcess) stop(t *testing.T) {
 	t.Helper()
+	p.stopObserved(t, nil)
+}
+
+// Optional fixed stages for the nearby cleanup receipt; all original process
+// shutdown commands, ownership, errors and deadlines remain unchanged.
+func (p *routeCoreProcess) stopObserved(t *testing.T, observe func(string)) {
+	t.Helper()
+	record := func(stage string) {
+		if observe != nil {
+			observe(stage)
+		}
+	}
+	record("requesting")
 	p.invoke(t, "fixture.exit", nil)
+	record("replied")
 	p.input.Close()
 	select {
 	case err := <-p.done:
+		p.waitKind = routeChildWaitKind(err)
 		p.stopped = true
 		if err != nil {
+			record("exit_failed")
 			t.Fatal("Core child did not shut down cleanly")
 		}
+		record("joined")
 	case <-time.After(10 * time.Second):
+		p.waitKind = "shutdown_timeout"
+		record("timeout")
 		p.cmd.Process.Kill()
 		t.Fatal("Core child shutdown timed out")
 	}
@@ -614,14 +678,19 @@ func routeFixtureListener() (net.Listener, error) {
 // This is a synthetic fixture, but still do not publish arbitrary error strings
 // or captured protocol frames. Keep only runtime categories and source locations.
 type routeProcessDiagnostics struct {
-	mu   sync.Mutex
-	data []byte
+	mu         sync.Mutex
+	data       []byte
+	line       []byte
+	dropLine   bool
+	markerSeen bool
+	fixed      routeChildTerminationEvidence
 }
 
 func (d *routeProcessDiagnostics) Write(p []byte) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := len(p)
+	d.observeTermination(p)
 	remaining := (64 << 10) - len(d.data)
 	if remaining > 0 {
 		if len(p) > remaining {
@@ -632,40 +701,28 @@ func (d *routeProcessDiagnostics) Write(p []byte) (int, error) {
 	return n, nil
 }
 func (d *routeProcessDiagnostics) safeSummary() string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	var out []string
-	for _, line := range strings.Split(string(d.data), "\n") {
-		trim := strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(trim, "panic:"):
-			out = append(out, "panic reported (payload omitted)")
-		case strings.HasPrefix(trim, "fatal error:"):
-			out = append(out, "fatal runtime error (payload omitted)")
-		case strings.Contains(line, "WARNING: DATA RACE"):
-			out = append(out, "WARNING: DATA RACE")
-		case strings.Contains(line, ".go:"):
-			// Stack source locations contain neither argument values nor frames.
-			fields := strings.Fields(trim)
-			if len(fields) > 0 {
-				out = append(out, fields[0])
-			}
-		case strings.HasPrefix(trim, "goroutine "):
-			out = append(out, trim)
-		}
+	// Reconstruct from the same fixed schema as the artifact. Arbitrary stack
+	// paths, goroutine lines, arguments and errors never leave the private stream.
+	raw, err := json.Marshal(d.termination("not_observed"))
+	if err != nil {
+		return "child diagnostics unavailable"
 	}
-	if len(out) == 0 {
-		return "no runtime panic/race/source-location diagnostics"
-	}
-	return strings.Join(out, "\n")
+	return string(raw)
 }
 
 func TestRouteProcessDiagnosticsRemainBoundedAndPrivate(t *testing.T) {
 	d := new(routeProcessDiagnostics)
-	d.Write([]byte("private-frame-value\npanic: private-frame-value\n\tfixture.go:123 +0x42\ngoroutine 7 [running]:\nWARNING: DATA RACE\n"))
+	d.Write([]byte("private-frame-value\npanic: private-frame-value\n\t/private-path/internal/core/peers.go:123 +0x42\ngoroutine 7 [private-argument]:\nWARNING: DATA RACE\n"))
 	summary := d.safeSummary()
-	if strings.Contains(summary, "private-frame-value") || !strings.Contains(summary, "fixture.go:123") || !strings.Contains(summary, "panic reported") {
-		t.Fatal("unsafe or missing runtime classifications")
+	for _, private := range []string{"private-frame-value", "private-path", "private-argument", ".go:", "goroutine 7", "+0x42"} {
+		if strings.Contains(summary, private) {
+			t.Fatal("private child stream escaped fixed summary")
+		}
+	}
+	for _, fixed := range []string{`"panic":true`, `"race":true`, `"peerAPI":true`} {
+		if !strings.Contains(summary, fixed) {
+			t.Fatal("missing fixed runtime classification")
+		}
 	}
 	d.Write([]byte(strings.Repeat("x", 128<<10)))
 	if len(d.data) != 64<<10 {
@@ -676,11 +733,13 @@ func TestRouteProcessDiagnosticsRemainBoundedAndPrivate(t *testing.T) {
 func (p *routeCoreProcess) exitSummary() string {
 	select {
 	case err := <-p.done:
+		p.waitKind = routeChildWaitKind(err)
 		p.stopped = true
+		_ = p.diagnostics.termination(p.waitKind)
 		if err == nil {
 			return "child exited successfully"
 		}
-		return "child " + err.Error()
+		return "child " + p.waitKind
 	case <-time.After(time.Second):
 		return "child termination unconfirmed"
 	}

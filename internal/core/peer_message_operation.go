@@ -38,6 +38,21 @@ func (c *Core) commitIncomingPeerMessage(ctx context.Context, trust Trust, peer,
 		return refused(http.StatusForbidden)
 	}
 	defer release()
+	// An uncertain incoming publication retains its original locator separately
+	// from the certified projection. Exact replay may certify only that snapshot.
+	if c.messageStore != nil && c.messageStore.candidate != nil {
+		for _, message := range c.messageStore.candidate.Immediate {
+			if message.ID == id && message.PeerID == peer && message.Direction == "incoming" {
+				if message.Text != text {
+					return refused(http.StatusConflict)
+				}
+				if err := c.reconcileMessageStoreLocked(); err != nil {
+					return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, true).Error()}
+				}
+				return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}
+			}
+		}
+	}
 	for _, message := range c.messages {
 		if message.ID != id || message.PeerID != peer || message.Direction != "incoming" {
 			continue
@@ -45,13 +60,12 @@ func (c *Core) commitIncomingPeerMessage(ctx context.Context, trust Trust, peer,
 		if message.Text != text {
 			return refused(http.StatusConflict)
 		}
-		if c.messageHistoryUncertain {
-			if err := c.saveMessageHistoryLocked(c.messages); err != nil {
-				return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, true).Error()}
-			}
+		if c.messageStore != nil && c.messageStore.frozen != "" {
+			return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(messageStoreError(c.messageStore.frozen), true).Error()}
 		}
 		return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}
 	}
+
 	message := Message{ID: id, PeerID: peer, Text: text, Direction: "incoming", CreatedAt: time.Now().UTC(), Status: "received"}
 	if err := c.appendMessageLocked(message); err != nil {
 		return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, errors.Is(err, config.ErrAtomicCommitted)).Error()}

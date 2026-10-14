@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
+	"github.com/webkaz-labs/sobalink/internal/identity"
 	"github.com/webkaz-labs/sobalink/internal/lanlink"
 	"github.com/webkaz-labs/sobalink/internal/lanpolicy"
 	"github.com/webkaz-labs/sobalink/internal/resourceacceptance"
@@ -86,6 +87,9 @@ func (c *Core) stopApplication() map[string]string {
 }
 
 func (c *Core) startNetwork(ctx context.Context) error {
+	if err := c.peerListenerFailure(); err != nil {
+		return err
+	}
 	c.mu.RLock()
 	removal, cleanupPending := c.managedRemoval, c.managedCleanupPending
 	c.mu.RUnlock()
@@ -229,25 +233,13 @@ func (c *Core) maintain() {
 				c.networkError = ""
 				c.networkErrorCode = ""
 			}
-			ps := c.peerServer
 			c.mu.Unlock()
 			if c.endpointReplacementOwnedLocked() {
 				c.mu.Lock()
 				c.networkState, c.networkError, c.networkErrorCode = "reconnecting", "", ""
 				c.mu.Unlock()
 			} else if e == nil && st.Snapshot.Running {
-				if ps == nil {
-					if err := c.startPeerServer(st.IPs); err != nil {
-						c.mu.Lock()
-						c.networkError = "Peer listener unavailable: " + err.Error()
-						c.mu.Unlock()
-					}
-				}
-				c.revalidateServices(st)
-				_ = c.syncWorkerTCPScopes()
-				c.revalidateProxies(st)
-				c.refreshPeers(st)
-				c.runStartup(c.ctx)
+				c.maintainPeerApplicationsLocked(st)
 			} else {
 				c.suspendServices()
 				c.suspendSavedProxies()
@@ -263,9 +255,43 @@ func (c *Core) maintain() {
 		}
 		// Complete local lifecycle-owned maintenance before dispatching workers
 		// that need the same owner to admit their first durable network attempt.
+		c.mu.Lock()
+		_ = c.maintainDurableTextReceiverLocked(time.Now())
+		c.mu.Unlock()
 		c.pumpOutbox()
+		c.pumpMessageQueue()
 		resourceacceptance.MaintenancePassed(c)
 	}
+}
+
+// maintainPeerApplicationsLocked requires c.op. A healthy backend snapshot was
+// read before peer startup, so it cannot authorize application recovery after
+// that startup fails or leaves a retained, uncertain listener owner.
+func (c *Core) maintainPeerApplicationsLocked(st identity.State) {
+	c.mu.RLock()
+	ps := c.peerServer
+	c.mu.RUnlock()
+	var err error
+	if ps == nil {
+		err = c.startPeerServer(st.IPs)
+	} else {
+		err = ps.startFailure
+	}
+	if err != nil {
+		c.networkReady.Store(false)
+		c.mu.Lock()
+		c.networkError = "Peer listener unavailable: " + err.Error()
+		c.mu.Unlock()
+		c.suspendServices()
+		c.suspendSavedProxies()
+		c.stopAllProxies()
+		return
+	}
+	c.revalidateServices(st)
+	_ = c.syncWorkerTCPScopes()
+	c.revalidateProxies(st)
+	c.refreshPeers(st)
+	c.runStartup(c.ctx)
 }
 
 func (c *Core) Snapshot(ctx context.Context) (map[string]any, error) {
@@ -403,6 +429,8 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	}
 	resourceacceptance.ProcessLocalCommand(c, cmd.Name, cmd.RequestID)
 	switch cmd.Name {
+	case "message.queue.prepare", "message.queue.commit", "message.queue.status", "message.queue.list", "message.queue.cancel", "message.queue.discard":
+		return c.messageQueueCommand(ctx, cmd.Name, cmd.RequestID, cmd.Payload)
 	case "outbox.prepare", "outbox.commit", "outbox.status", "outbox.list", "outbox.cancel", "outbox.discard":
 		return c.outboxCommand(ctx, cmd.Name, cmd.RequestID, cmd.Payload)
 	case "transfer.dispatch.prepare", "transfer.dispatch.commit", "transfer.dispatch.status", "transfer.dispatch.discard":
@@ -444,7 +472,7 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	// card must reflect the current component identity/configuration on retry.
 	// Port availability is an observation, not a reservation; never retain large
 	// raised-budget proposal results or replay stale bind observations.
-	if strings.HasPrefix(cmd.Name, "resource.") || cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" || cmd.Name == "direct-lan.migration.review" {
+	if strings.HasPrefix(cmd.Name, "resource.") || cmd.Name == "setup.status" || cmd.Name == "setup.scopes" || cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" || cmd.Name == "direct-lan.migration.review" {
 		return c.executeCommand(ctx, cmd)
 	}
 	// Endpoint proof bytes are never request-history results. Every release
@@ -565,6 +593,7 @@ func (c *Core) executeCommand(ctx context.Context, cmd webui.Command) (any, erro
 }
 
 func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
+	c.invalidateSetupAuthority(cmd.Name)
 	switch cmd.Name {
 	case "device-card.export", "device-card.inspect":
 		return c.deviceCardCommand(cmd.Name, cmd.Payload)
@@ -631,6 +660,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
 	case "direct-lan.endpoint.export.preview", "direct-lan.endpoint.export", "direct-lan.endpoint.reexport.preview", "direct-lan.endpoint.reexport":
 		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
+	case "setup.scopes", "setup.start", "setup.status", "setup.select", "setup.manual", "setup.approve", "setup.cancel":
+		return c.setupCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
 		return c.lanCommand(ctx, cmd.Name, cmd.Payload)
 	case "application.stop":
@@ -770,14 +801,20 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, errors.New("peer approval generation is exhausted")
 		}
 		c.trustGeneration++
-		p.Peers = append(p.Peers, Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: c.trustGeneration, RevocationEpoch: c.reviewPeerEpochs([]string{peer.ID})[peer.ID]})
+		trust := Trust{ID: peer.ID, Name: peer.DNSName, Network: p.Settings.Network, Generation: c.trustGeneration}
 		// General trust does not create, restore, or expand a separate inspect grant.
-		trust := p.Peers[len(p.Peers)-1]
 		if err := c.transfers.ValidatePeerBinding(transfer.Peer{ID: trust.ID, Generation: trust.Generation}); err != nil {
 			return nil, err
 		}
+		trust.RevocationEpoch, err = c.certifyPeerApprovalEpoch(peer.ID)
+		if err != nil {
+			return nil, err
+		}
+		p.Peers = append(p.Peers, trust)
 		saveErr := c.saveProfile(p)
-		if !atomicPublished(saveErr) {
+		if saveErr != nil {
+			// A published but uncertain approval remains inactive in this process.
+			// Explicit retry or owned reopen must certify it before new work.
 			return nil, saveErr
 		}
 		c.mu.Lock()
@@ -835,21 +872,25 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, err
 		}
 		if next.Paused {
-			_ = c.discardPreparedForPeer(t.ID)
-			c.mu.RLock()
+			c.mu.Lock()
 			ps := c.peerServer
+			messageJoins := c.stopMessageQueuePeerLocked(t.ID)
 			var outgoing []*outgoingBatch
 			for _, b := range c.outgoing {
 				if b.PeerID == t.ID {
 					outgoing = append(outgoing, b)
 				}
 			}
-			c.mu.RUnlock()
+			c.mu.Unlock()
 			if ps != nil {
 				ps.revoke(t.ID)
 			}
 			for _, b := range outgoing {
 				b.stop()
+			}
+			_ = c.discardPreparedForPeer(t.ID)
+			for _, joined := range messageJoins {
+				<-joined
 			}
 		}
 		return nil, saveErr
@@ -935,9 +976,10 @@ func (c *Core) revokePeerWithFailure(id string, failure *peerScopeFailure) error
 // receive-policy/profile cleanup. The coordinator performs full revocation only
 // after the sole evidence writer confirms durability.
 func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, pauseOnly bool) error {
-	c.mu.RLock()
+	c.mu.Lock()
 	retries := c.peerRefreshRetries
-	c.mu.RUnlock()
+	messageJoins := c.stopMessageQueuePeerLocked(id)
+	c.mu.Unlock()
 	if retries != nil {
 		retries.forget(id)
 	}
@@ -974,6 +1016,9 @@ func (c *Core) reducePeerWorkWithFailure(id string, failure *peerScopeFailure, p
 		ps.revoke(id)
 	}
 	_ = c.discardPreparedForPeer(id)
+	for _, joined := range messageJoins {
+		<-joined
+	}
 	if transferErr != nil && !errors.Is(err, transferErr) {
 		err = errors.Join(transferErr, err)
 	}

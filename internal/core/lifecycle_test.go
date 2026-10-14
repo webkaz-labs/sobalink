@@ -123,7 +123,7 @@ func TestStartupRestoresSavedReceiversButNeverServiceGrants(t *testing.T) {
 	}
 	for _, offline := range []bool{false, true} {
 		attempts := 0
-		c, err := Open(context.Background(), Options{Directory: p.a.dir, SkipNetworkStart: offline, NodeFactory: func(string, string) (NetworkBackend, error) {
+		c, err := openOwnedTestCore(t, context.Background(), Options{Directory: p.a.dir, LifecycleLock: p.a.resourceLock, SkipNetworkStart: offline, NodeFactory: func(string, string) (NetworkBackend, error) {
 			attempts++
 			return nil, errors.New("injected unavailable backend")
 		}})
@@ -228,7 +228,7 @@ func TestLogoutBoundsEveryServiceDrainAndStillCancelsOtherTraffic(t *testing.T) 
 }
 
 func TestLogoutRejectsInactiveNetworkAndMalformedPayloadWithoutStopping(t *testing.T) {
-	c, err := Open(context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -64,6 +64,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			err = localizeResourceError(japanese(locale), localizeListenerError(japanese(locale), localizeFavoritesError(japanese(locale), err)))
 			err = localizeLANSetupError(japanese(locale), localizeRouteRecoveryError(japanese(locale), localizeDiskSpaceError(japanese(locale), err)))
 			err = localizeDurableProfileError(japanese(locale), err)
+			err = localizeSavedApprovalError(japanese(locale), err)
 		}
 	}()
 	var dir string
@@ -115,13 +116,16 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" && command != "outbox" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" && command != "outbox" && command != "nearby" && command != "message" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
 		}
 		fmt.Fprintln(out, text(ja, "Usage: soba ", "使い方: soba ")+usage)
 		return nil
+	}
+	if command == "nearby" {
+		return nearbyCLICommand(ctx, args, dir, ja, jsonErrors, *dryRun, *offlineDefinitions, out, stdin, client)
 	}
 	if command == "card" {
 		return deviceCardCLI(ctx, args, dir, ja, jsonErrors, *dryRun, *offlineDefinitions, out, stdin, client)
@@ -285,6 +289,12 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		}
 		return request("peer.trust", map[string]any{"peerId": args[0], "trusted": command == "trust"})
 	case "message":
+		if len(args) > 0 && args[0] == "queue" {
+			return textQueueCommandCLI(ctx, args[1:], dir, ja, *dryRun, out, client)
+		}
+		if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+			return textQueueSendCLI(ctx, args, dir, ja, *dryRun, out, stdin, client)
+		}
 		if len(args) != 2 {
 			return usageError(ja, "message PEER_ID TEXT")
 		}
@@ -381,7 +391,7 @@ var commandUsage = map[string]string{
 	"receive-dir": "receive-dir [DIRECTORY | --clear]", "autosave": "autosave PEER_ID --on [--directory DIR] | autosave PEER_ID --off",
 	"pause": "pause PEER_ID", "resume": "resume PEER_ID", "reconnect": "reconnect PEER_ID",
 	"login": "login [--qr|--link|--browser] [--wait] [--refresh] [--timeout 5m]", "logout": "logout", "trust": "trust PEER_ID", "revoke": "revoke PEER_ID",
-	"message": "message PEER_ID TEXT", "send": "send PEER_ID PATH...",
+	"message": "message PEER_ID TEXT | message --queue --peer PEER_ID [OPTIONS] TEXT | message queue --help", "send": "send PEER_ID PATH...",
 	"accept": "accept TRANSFER_ID DIRECTORY", "cancel": "cancel TRANSFER_ID",
 	"retry": "retry TRANSFER_ID [--peer PEER_ID --process PROCESS_ID --direction incoming|outgoing]", "forget": "forget TRANSFER_ID",
 	"transfers": "transfers [--peer PEER_ID] [--json]",
@@ -526,11 +536,13 @@ const helpEN = `sobalink — Close, even from afar.
   soba start --offline         Open settings without starting the saved network
   soba ui                      Get the local URL and a fresh one-time code
   soba status                  Show current state (--json for machines)
+  soba nearby                 Connect to a nearby device with explicit review
   soba setup --network tailnet Activate the existing Tailscale connection
   soba login                   Request an official interactive sign-in link
   soba logout                  Stop traffic, log out of Tailnet and exit
   soba trust PEER_ID            Allow messages and batch offers from this identity
-  soba message PEER_ID TEXT     Send text explicitly
+  soba message PEER_ID TEXT     Send text immediately
+  soba message --help          Review explicit durable text queueing
   soba send PEER_ID PATH...     Offer files or folders as one batch
   soba send --help             Review explicit multiple-peer sends
   soba outbox --help           Queue files until a fixed deadline; inspect or stop sends
@@ -586,11 +598,13 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba start --offline         保存済みネットワークを開始せず設定画面を開く
   soba ui                      画面URLと新しい一回用コードを表示
   soba status                  現在の状態を表示（機械向けは --json）
+  soba nearby                 確認と承認で近くの端末へ接続
   soba setup --network tailnet 既存のTailscale接続を有効化
   soba login                   公式の対話型ログインを開始
   soba logout                  通信を停止し、Tailnet からログアウトして終了
   soba trust PEER_ID            この端末からのメッセージ・転送申込みを許可
-  soba message PEER_ID TEXT     文字を明示的に送信
+  soba message PEER_ID TEXT     文字を今すぐ送信
+  soba message --help          明示的なテキスト送信予約を確認
   soba send PEER_ID PATH...     ファイル・フォルダーを一括で送信
   soba send --help             明示した複数相手への送信を確認
   soba outbox --help           期限付き送信予約・状態確認・追加送信の停止

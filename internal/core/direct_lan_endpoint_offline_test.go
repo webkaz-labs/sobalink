@@ -109,7 +109,7 @@ func newOfflineEndpointFixture(t *testing.T, edit func(*directLANState)) *offlin
 
 func openOfflineEndpointCore(t *testing.T, dir string) *Core {
 	t.Helper()
-	c, err := Open(context.Background(), Options{Directory: dir, Version: "offline-metadata-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, Version: "offline-metadata-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
 		t.Fatal("offline endpoint metadata test reached NodeFactory")
 		return nil, errors.New("network forbidden")
 	}})
@@ -340,10 +340,26 @@ func TestOfflineEndpointReviewBindsInputFileProcessAndStoreRevision(t *testing.T
 					t.Fatal(err)
 				}
 			case "process":
+				old := f.core
 				if err := f.core.Close(); err != nil {
 					t.Fatal(err)
 				}
-				f.core = openOfflineEndpointCore(t, f.core.dir)
+				// Core joins its workers but does not release its caller's native
+				// lifecycle lock. Model process replacement by releasing that owner
+				// before the new fixture acquires its own lock and process nonce.
+				if err := old.resourceLock.WithOwnership(old.dir, func() error { return nil }); err != nil {
+					t.Fatal("Core released its caller's lifecycle lock", err)
+				}
+				if err := old.resourceLock.Close(); err != nil {
+					t.Fatal(err)
+				}
+				f.core = openOfflineEndpointCore(t, old.dir)
+				if f.core.resourceLock == old.resourceLock || f.core.resourceNonce == old.resourceNonce {
+					t.Fatal("replacement reused the original lifecycle owner or process nonce")
+				}
+				if err := f.core.resourceLock.WithOwnership(old.dir, func() error { return nil }); err != nil {
+					t.Fatal("replacement does not own the profile", err)
+				}
 				f.store = f.core.directLANStoreCopy()
 			case "store-revision":
 				// A whole-file publication can preserve semantic authority while

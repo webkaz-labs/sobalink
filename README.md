@@ -10,34 +10,11 @@
 
 ## まず使う
 
-### 署名付き公開版を使う
+### 導入する
 
-最新の公開済みプレリリースは [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5)、ソースは `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6` です。[公開 workflow](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236) の全15ゲートが合格し、署名・provenance・公開取得・4ネイティブ対象の実導入を確認しました。LAN送信先制限、選んだホストの中継運用、中継なしLAN、高度な任意WAN探索、接続方式の併用、調整可能な中継資源予算を含みます。[同一ソースCI](https://github.com/webkaz-labs/sobalink/actions/runs/37421937582) も全6ジョブが合格しました。実端末の認証、アプリ互換性、OSサインイン・休止復帰の受入は未完了です。[資材と対応環境](docs/DISTRIBUTION.md#install-a-signed-prerelease)
+[署名付き公開版の導入](docs/DISTRIBUTION.md#install-a-signed-prerelease)で、版を固定して起動します。正確な公開版・ソース・確認済みの範囲は[検証記録](docs/VERIFICATION.md#現在の統合と公開済みの基準)を正本とします。ソースから使う場合は[ビルド手順](docs/DISTRIBUTION.md#build-this-checkout)を参照してください。実行に Node は不要です。
 
-LAN外の接続にはTailscaleを使います。中継の起動と今後の配置改善はLAN内を対象にし、外部中継の配備は当面対象外です。任意の高度なWAN候補設定には、到達可能な互換中継と固定pinを既に用意している必要があります。
-
-mise **2026.9.18** を用意した環境で実行します。`mise use -g` は通常使う版を設定します。
-
-```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
-mise exec -- soba version
-mise exec -- soba
-```
-
-### ソースからビルドする
-
-このチェックアウトをビルドする場合は Go **1.27.1**、Node **24.19.0**、npm **11.9.0** を使います。画面の依存関係はロックファイルに固定しています。
-
-```sh
-npm --prefix web ci --no-audit --no-fund
-npm --prefix web run build
-go run ./cmd/prepare-engine
-go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba ./cmd/soba
-./bin/soba
-```
-
-Windows のビルドは `go build -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -trimpath -o bin/soba.exe ./cmd/soba`、起動は `./bin/soba.exe` です。導入後の実行に Node は不要です。
+公開版と開発ソースの機能は同じとは限りません。[利用ガイド](docs/GENERIC.ja.md)の対象版とプロフィール互換性を先に確認してください。開発ソースの接続セットアップとテキスト送信待ちは未公開で、古いプロフィールの移行・消去は行いません。
 
 ### 起動後の操作
 
@@ -60,7 +37,8 @@ Windows のビルドは `go build -tags ts_omit_portmapper,ts_omit_captiveportal
 | 容量 | 論理制限は既定・有限・無制限から選択。調整できる有限の資源予算は別に管理 |
 | 文字・画像・ファイル・フォルダー | 明示して送信。複数項目を一括確認。文字のコピーも手動 |
 | 受信 | 一括承認が既定。保存先を固定した相手別の自動保存は希望制 |
-| 再試行 | 同じ起動中の未完了ファイルを先頭から再送。途中バイト・再起動後の再開はしない |
+| 即時送信の再試行 | 同じ起動中の未完了ファイルを先頭から再送。途中バイト・再起動後の再開はしない |
+| 明示的な送信待ち | [ファイル・フォルダー](docs/DURABLE_OUTBOX.ja.md)は公開済み。[テキスト](docs/DURABLE_TEXT.ja.md)は未公開。元の ID・期限・保存記録を保って復旧し、ローカル受付と配達完了を区別する |
 | ローカル操作 | 正確な `127.0.0.1` の一時ポート、一回用コード、セッション・Origin・CSRF の検査 |
 
 受信ファイルを自動で開く・実行する・既存ファイルを上書きすることはありません。フォルダーの実行属性やリンクは引き継ぎません。ブラウザーからの空フォルダー選択にはブラウザー API の制限があるため、完全なフォルダー構成が必要なら CLI でも確認してください。
@@ -69,19 +47,11 @@ TCP の広い共有範囲は、許可期間中にその範囲で新しく起動�
 
 Direct・Relay は暗号化された通信の経路、再接続は通信を作り直す状態です。経路が不明なら不明と表示し、遅延から推測しません。単一方式の設定では選択したネットワークを変更しません。併用モードでは、認証済みの同じ相手に明示許可した経路について、利用不能が確認できた場合に限り新しい接続で別経路を選べます。許可拒否や状態不明では切り替えず、既存 TCP の移行・再送は行いません。Tailcat に任意の公開中継先への自動フォールバックはありません。[ネットワークと設計](docs/ARCHITECTURE.md)
 
-## 準備した経路で復旧する
+## 接続方法を選ぶ
 
-同じ Tailcat のペアを保ったまま、LAN 内と外部の正確な中継候補を準備します。ネットワークを移る前に両端で候補を設定し、認証された経路情報を非公開で交換して、それぞれの端末で使う候補を許可します。複数中継の経路復旧を扱う CLI とローカル画面は alpha.4 に含まれます。[短い設定手順](docs/LAN.ja.md#別の経路を準備する)
+LAN 外には通常 Tailscale を使います。LAN 内は[明示した中継でのペアリング・経路準備](docs/LAN.ja.md)、[中継なし LAN](docs/DIRECT_LAN.ja.md)、[接続方式の併用](docs/MIXED_CONNECTIONS.ja.md)を参照してください。任意の WAN 候補には、到達可能な互換中継と固定 pin が必要です。新しい[接続セットアップ](docs/CONNECTION_SETUP.ja.md)は未公開の開発ソース向けです。
 
-```mermaid
-flowchart LR
-    A[アプリが再接続] --> L[同じローカルサービス入口]
-    L --> P[同じペアの端末]
-    P --> R[許可済みのLAN内中継]
-    P --> E[許可済みの外部中継]
-```
-
-図は許可済みの復旧関係を表し、あらゆるネットワークでの到達性を保証しません。native試験の証拠と残る実機確認はソースごとの記録を参照してください。local は中継アドレスの区分で、通常の中継方式は公開経路を使う可能性のある相手への直接通信を維持します。[LAN送信先制限](docs/LAN_DESTINATIONS.ja.md)は明示的に宛先を許可する機能で、プロセス全体の外部通信ゼロや物理NIC・VPNの隔離を保証しません。既存 TCP は切れる場合があり、アプリで再接続します。ファイル再試行は同じ起動中の未完了項目全体だけです。[証拠と限界](docs/VERIFICATION.md#経路復旧の条件)
+経路準備は既存 TCP の無停止移行や物理 NIC の隔離を保証しません。アプリの再接続と、即時ファイルの再試行・明示的な送信待ちは別に扱います。[経路の契約](docs/ROUTE_RECOVERY_DESIGN.ja.md) · [検証と限界](docs/VERIFICATION.md#経路復旧の条件)
 
 ## CLI の短い例
 
@@ -103,7 +73,7 @@ soba stop
 
 ローカル画面または[案内付き CLI](docs/CLI_GUIDE.ja.md)でサービスを選択・編集・確認でき、明示した CLI オプションで自動処理も行えます。LAN のホスト／中継設定、招待のファイル入力、受信先、自動保存、サービスの保存・確認・コピー・再開始も JSON 編集なしで操作できます。[ブラウザー・リンク・QRによる認証](docs/SIGN_IN.ja.md)、[保存サービス・グループ・タスク](docs/SAVED_SERVICES.ja.md)、[起動・ログアウト](docs/LIFECYCLE.ja.md)も参照できます。`soba help examples`、`soba lan --help`、`soba service --help` を参照してください。`--dry-run` は適用前の入力確認で、到達性や空きポートの試験ではありません。言語は自動選択し、`soba --locale ja ...` / `en` で切り替えます。`status`・`peers`・グループ・サービス操作は日英の人向け表示を用意し、機械向け出力には `--json` を使います。詳細な型付き操作は構造化結果を返します。明示した認証表示では非公開の人向け案内を出します。`--json-errors` 指定時の失敗は標準エラーの `{code,error}` です。[詳しい CLI 手順](docs/GENERIC.ja.md#言語自動処理困ったとき)
 
-任意の[認証付き TCP プロキシと診断](docs/PROXY_DIAGNOSTICS.ja.md)も用意しています。ブロードキャスト、永続的なオフライン送信箱、遠隔管理・遠隔ファイル一覧は現在の機能に含めません。
+任意の[認証付き TCP プロキシと診断](docs/PROXY_DIAGNOSTICS.ja.md)も用意しています。開発ソースの[明示的に許可した転送設定の管理](docs/RESOURCE_MANAGEMENT.ja.md)は限定した別機能です。ブロードキャスト送信や遠隔ファイル一覧は含みません。
 
 [明示的な起動時接続・非公開プロキシ設定](docs/STARTUP.ja.md) · [アプリ設定・RustDesk](docs/CLIENT_HELPERS.ja.md) · [ローカル画面の操作](docs/WEB_CONTROLS.ja.md) · [機能対応と受入](docs/FEATURE_PARITY.ja.md) · [文書一覧](docs/README.md)
 

@@ -32,6 +32,10 @@ func helpTopic(topic string, ja bool) (string, bool) {
 		return help, true
 	}
 	switch topic {
+	case "message":
+		return text(ja, textQueueHelpEN, textQueueHelpJA), true
+	case "nearby":
+		return text(ja, nearbyHelpEN, nearbyHelpJA), true
 	case "resource":
 		return text(ja, resourceHelpEN, resourceHelpJA), true
 	case "receive":

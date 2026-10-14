@@ -14,13 +14,13 @@ func outboxCompletionCode(err error) string {
 	code := networkErrorCode(err)
 	switch code {
 	case "outbox_storage_busy", "outbox_permission_changed", "outbox_identity_changed",
-		"outbox_peer_upgrade_required", "outbox_peer_offline", "outbox_capacity",
+		"outbox_peer_upgrade_required", "outbox_peer_offline", "outbox_capacity", "outbox_evidence_capacity",
 		"outbox_disabled", "outbox_expired", "outbox_recovery_required",
 		"outbox_storage_uncertain", "outbox_clock_rollback", "outbox_payload_missing",
 		"outbox_payload_recovery_required", "durable_unknown_lease", "durable_recovery_required",
 		"durable_conflict", "outbox_receipt_mismatch", "outbox_receipt_regressed",
 		"outbox_payload_corrupt", "outbox_clock_skew", "outbox_receiver_declined",
-		"outbox_receiver_approval", "outbox_receipt_pending", "durable_capacity",
+		"outbox_receiver_approval", "outbox_receipt_pending", "durable_capacity", "durable_evidence_capacity",
 		"durable_clock", "durable_expired", "durable_permission", "durable_unsupported_storage", "busy":
 		return code
 	default:
@@ -118,5 +118,6 @@ func (o *outboxCoordinator) drainCompletionLocked(id string) error {
 	}
 	delete(o.completions, id)
 	delete(o.runs, id)
+	o.updateAccountingLocked()
 	return o.cleanupPayloadLocked(o.state.Payloads[row.PayloadID])
 }

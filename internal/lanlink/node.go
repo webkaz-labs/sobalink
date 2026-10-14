@@ -282,10 +282,7 @@ func (n *Node) ListenPeer(ctx context.Context, network string, port uint16) (net
 		ln.Close()
 		return nil, net.ErrClosed
 	}
-	wrapped := &peerListener{Listener: ln, node: n}
-	stop := context.AfterFunc(ctx, func() { ln.Close() })
-	wrapped.stop = stop
-	return wrapped, nil
+	return newPeerListener(ctx, n, ln), nil
 }
 func (n *Node) resolveRole(role string) (string, uint64, bool) {
 	n.mu.Lock()
@@ -442,15 +439,32 @@ func (n *Node) Close() error {
 
 type peerListener struct {
 	net.Listener
-	node *Node
-	stop func() bool
+	node     *Node
+	stop     func() bool
+	once     sync.Once
+	closeErr error
+}
+
+func newPeerListener(ctx context.Context, node *Node, ln net.Listener) *peerListener {
+	wrapped := &peerListener{Listener: ln, node: node}
+	// The callback may run before stop is assigned for an already-canceled
+	// context. It shares physical ownership without reading the stop field.
+	wrapped.stop = context.AfterFunc(ctx, func() { _ = wrapped.closeOwned() })
+	return wrapped
 }
 
 func (l *peerListener) Close() error {
 	if l.stop != nil {
 		l.stop()
 	}
-	return l.Listener.Close()
+	return l.closeOwned()
+}
+func (l *peerListener) closeOwned() error {
+	// Context cancellation and explicit shutdown join the same physical close,
+	// including its first genuine error. Do not normalize errors.Is(ErrClosed):
+	// it can also match a joined failure that must remain visible to the owner.
+	l.once.Do(func() { l.closeErr = l.Listener.Close() })
+	return l.closeErr
 }
 func (l *peerListener) Accept() (net.Conn, error) {
 	for {

@@ -25,7 +25,8 @@ type contextControlOwner struct {
 	cancel             context.CancelFunc
 	started            chan struct{}
 	stopping           atomic.Bool
-	responseContention atomic.Uint64 // diagnostic only; never admission authority
+	responseContention atomic.Uint64  // diagnostic only; never admission authority
+	diagnosticRefresh  *atomic.Uint64 // test-owned; immutable after owner publication, nil ordinarily
 	closeOnce          sync.Once
 	closeErr           error
 	// Core.op owns associations. Pointer identity, not serialized inputs or a
@@ -80,11 +81,117 @@ func (o *contextControlOwner) close() error {
 	return o.closeErr
 }
 
+// Caller-owned, write-only observations are never admission authority. Only
+// the scoped diagnostic fixture supplies one; production callers pass nil.
+type contextCompletionSite string
+
+type contextCompletionObservation struct {
+	Site, Owner    contextCompletionSite
+	Claim          directlan.ContextClaimObservation
+	RefreshOverlap bool
+}
+
+func (o *contextCompletionObservation) record(site contextCompletionSite) {
+	if o != nil {
+		o.Site = site
+	}
+}
+
 func (c *Core) currentContextOwnerLocked(o *contextControlOwner) error {
+	return c.currentContextOwnerObservedLocked(o, nil)
+}
+
+func (c *Core) currentContextOwnerObservedLocked(o *contextControlOwner, observation *contextCompletionObservation) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if o == nil || o.node == nil || o.store == nil || o.ctx == nil || o.process == "" || c.contextControl != o || c.directLAN != o.store || c.lanStartNonce != o.process ||
-		c.node != nil || c.attemptedNetwork != "" || c.closing || c.ctx == nil || c.ctx.Err() != nil || o.ctx.Err() != nil || o.stopping.Load() {
+	if o == nil {
+		if observation != nil {
+			observation.Owner = "owner-missing"
+		}
+		return directlan.ErrUnavailable
+	}
+	if o.node == nil {
+		if observation != nil {
+			observation.Owner = "owner-node-missing"
+		}
+		return directlan.ErrUnavailable
+	}
+	if o.store == nil {
+		if observation != nil {
+			observation.Owner = "owner-store-missing"
+		}
+		return directlan.ErrUnavailable
+	}
+	if o.ctx == nil {
+		if observation != nil {
+			observation.Owner = "owner-context-missing"
+		}
+		return directlan.ErrUnavailable
+	}
+	if o.process == "" {
+		if observation != nil {
+			observation.Owner = "owner-process-missing"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.contextControl != o {
+		if observation != nil {
+			observation.Owner = "owner-identity"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.directLAN != o.store {
+		if observation != nil {
+			observation.Owner = "store-identity"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.lanStartNonce != o.process {
+		if observation != nil {
+			observation.Owner = "process-identity"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.node != nil {
+		if observation != nil {
+			observation.Owner = "ordinary-node"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.attemptedNetwork != "" {
+		if observation != nil {
+			observation.Owner = "network-attempted"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.closing {
+		if observation != nil {
+			observation.Owner = "core-closing"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.ctx == nil {
+		if observation != nil {
+			observation.Owner = "core-context-missing"
+		}
+		return directlan.ErrUnavailable
+	}
+	if c.ctx.Err() != nil {
+		if observation != nil {
+			observation.Owner = "core-context-ended"
+		}
+		return directlan.ErrUnavailable
+	}
+	if o.ctx.Err() != nil {
+		if observation != nil {
+			observation.Owner = "owner-context-ended"
+		}
+		return directlan.ErrUnavailable
+	}
+	if o.stopping.Load() {
+		if observation != nil {
+			observation.Owner = "owner-stopping"
+		}
 		return directlan.ErrUnavailable
 	}
 	return nil
@@ -567,24 +674,42 @@ func contextExchangeData(operation *contextExchangeOperation, verified directlan
 }
 
 func (c *Core) completeContextExchange(ctx context.Context, owner *contextControlOwner, attempt *directlan.ContextAttempt, verified directlan.VerifiedContextExchange) (directlan.ContextResponse, error) {
+	return c.completeContextExchangeObserved(ctx, owner, attempt, verified, nil)
+}
+
+func (c *Core) completeContextExchangeObserved(ctx context.Context, owner *contextControlOwner, attempt *directlan.ContextAttempt, verified directlan.VerifiedContextExchange, observation *contextCompletionObservation) (directlan.ContextResponse, error) {
 	if attempt == nil {
+		observation.record("attempt-missing")
 		return directlan.ContextResponse{}, endpointmeta.ErrInvalid
 	}
+	var refreshBefore uint64
+	if observation != nil && owner != nil && owner.diagnosticRefresh != nil {
+		refreshBefore = owner.diagnosticRefresh.Load()
+	}
 	if !c.op.TryLock() {
+		observation.record("core-lock")
+		if observation != nil && owner != nil && owner.diagnosticRefresh != nil {
+			// The same odd sequence brackets the failed lock attempt. False is
+			// inconclusive; the diagnostic never retries or changes admission.
+			observation.RefreshOverlap = refreshBefore%2 == 1 && owner.diagnosticRefresh.Load() == refreshBefore
+		}
 		attempt.Cancel()
 		return directlan.ContextResponse{}, directlan.ErrUnavailable
 	}
 	defer c.op.Unlock()
-	if err := c.currentContextOwnerLocked(owner); err != nil {
+	if err := c.currentContextOwnerObservedLocked(owner, observation); err != nil {
+		observation.record("owner")
 		attempt.Cancel()
 		return directlan.ContextResponse{}, err
 	}
 	operation := owner.operations[attempt]
 	if operation == nil || operation.owner != owner || operation.attempt != attempt {
+		observation.record("association")
 		attempt.Cancel()
 		return directlan.ContextResponse{}, endpointmeta.ErrReview
 	}
 	if operation.responseEpoch != nil {
+		observation.record("retained-response")
 		// A retained response owner is lifecycle bookkeeping, not a second claim.
 		delete(owner.operations, attempt)
 		attempt.Cancel()
@@ -601,15 +726,22 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 	// Removing it here would let polling replace/cancel its still-unsent reply.
 	// Claim before store.mu. The transport's Node/generation locks have been
 	// released when this returns, including rejection on TryLock contention.
-	evidence, err := verified.TryClaimFor(attempt)
+	var claimObservation *directlan.ContextClaimObservation
+	if observation != nil {
+		claimObservation = &observation.Claim
+	}
+	evidence, err := verified.TryClaimForObserved(attempt, claimObservation)
 	if err != nil {
+		observation.record("claim")
 		return directlan.ContextResponse{}, err
 	}
 	transcript, err := contextExchangeData(operation, evidence)
 	if err != nil {
+		observation.record("transcript")
 		return directlan.ContextResponse{}, err
 	}
 	if err := ctx.Err(); err != nil {
+		observation.record("context-before-save")
 		return directlan.ContextResponse{}, err
 	}
 	s := owner.store
@@ -622,36 +754,43 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 		}
 	}()
 	if !operation.epoch.Valid() || s.contextEpoch != operation.epoch {
+		observation.record("store-epoch")
 		return directlan.ContextResponse{}, endpointmeta.ErrReview
 	}
 	live := &contextSaveLiveness{ctx: ctx, owner: owner, attempt: attempt}
 	before := cloneDirectLANState(s.state)
 	if owner.configuration != contextConfigurationDigest(before) {
+		observation.record("configuration")
 		return directlan.ContextResponse{}, endpointmeta.ErrReview
 	}
 	result, err := s.saveContextTransitionWithLivenessLocked(ctx, owner.process, operation.admission, transcript, time.Now(), live)
 	if err != nil {
+		observation.record("save")
 		closeOwner = s.recovery || result.published
 		return directlan.ContextResponse{}, err
 	}
 	if result.durable {
 		if err := c.refreshContextConfigurationLocked(owner, before, operation.admission.inputs, result, live); err != nil {
+			observation.record("refresh")
 			closeOwner = true
 			return directlan.ContextResponse{}, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
+		observation.record("context-after-save")
 		return directlan.ContextResponse{}, err
 	}
 	if operation.direction == directlan.ContextOutbound {
+		observation.record("outbound-success")
 		return directlan.ContextResponse{}, nil
 	}
 	reply, err := s.contextReplyLocked(owner.process, operation.admission.inputs, transcript, time.Now())
 	if err != nil {
+		observation.record("reply")
 		return directlan.ContextResponse{}, err
 	}
-	deadline, bounded := ctx.Deadline()
-	if !bounded || !time.Now().Before(deadline) || ctx.Err() != nil {
+	deadline, current := contextResponseDeadlineObserved(ctx, observation)
+	if !current {
 		return directlan.ContextResponse{}, directlan.ErrUnavailable
 	}
 	epoch := s.contextEpochLocked()
@@ -659,7 +798,26 @@ func (c *Core) completeContextExchange(ctx context.Context, owner *contextContro
 	retainResponse = true
 	slot := &contextResponseSlot{owner: owner, attempt: attempt, store: s, process: owner.process, receipt: s.contextPublication,
 		epoch: epoch, writeRevision: s.reviewRevision, replyDigest: privateRevision(reply), deadline: deadline}
+	observation.record("inbound-success")
 	return directlan.ContextResponse{Reply: reply, Epoch: epoch, Admit: func() bool { return c.admitContextResponse(ctx, slot, attempt, reply) }}, nil
+}
+
+// This gate reads the original deadline/time/context predicates once, in order.
+func contextResponseDeadlineObserved(ctx context.Context, observation *contextCompletionObservation) (time.Time, bool) {
+	deadline, bounded := ctx.Deadline()
+	if !bounded {
+		observation.record("response-unbounded")
+		return deadline, false
+	}
+	if !time.Now().Before(deadline) {
+		observation.record("response-deadline")
+		return deadline, false
+	}
+	if ctx.Err() != nil {
+		observation.record("response-context-ended")
+		return deadline, false
+	}
+	return deadline, true
 }
 
 // This gate is one synchronous send admission, not a reusable handle. It does

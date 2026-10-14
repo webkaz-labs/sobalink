@@ -27,7 +27,8 @@ func TestDurableProfileGuardShapes(t *testing.T) {
 	}
 	for _, mutate := range []func(*Profile){
 		func(p *Profile) { p.Version = 1 },
-		func(p *Profile) { p.Version = 3 },
+		func(p *Profile) { p.Version = 2 },
+		func(p *Profile) { p.Version = currentProfileVersion + 1 },
 		func(p *Profile) { p.DurableFiles = nil },
 		func(p *Profile) { p.DurableFiles.Version = 2 },
 		func(p *Profile) { p.DurableFiles.Epoch = "0123456789ABCDEF0123456789ABCDEF" },
@@ -135,7 +136,7 @@ func TestDurableProfilePublishedBarrierFailureNeverGrantsReady(t *testing.T) {
 				}
 				memory := c.profileCopy()
 				saved, readErr := ReadProfile(filepath.Join(dir, "sobalink.json"))
-				if readErr != nil || memory.Version != 2 || saved.Version != 2 || memory.DurableFiles.Phase != phase || saved.DurableFiles.Phase != phase {
+				if readErr != nil || memory.Version != currentProfileVersion || saved.Version != currentProfileVersion || memory.DurableFiles.Phase != phase || saved.DurableFiles.Phase != phase {
 					t.Fatal("published guard was rolled back", readErr)
 				}
 			})
@@ -182,18 +183,13 @@ func TestDurableProfileWriteRequiresOriginalLifecycleOwner(t *testing.T) {
 func TestDurableProfileWithoutLifecycleOwnerCannotInitialize(t *testing.T) {
 	dir := t.TempDir()
 	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := c.Close(); err != nil {
-			t.Error(err)
+	if err == nil || c != nil {
+		if c != nil {
+			_ = c.Close()
 		}
-	}()
-	if c.durableProfileReady() || c.profileCopy().DurableFiles.Phase != "initializing" {
-		t.Fatal("unowned Core granted durable authority")
+		t.Fatal("unowned Core opened without a mandatory owned message store")
 	}
-	for _, name := range []string{"durable-v1", "durable-outbox-v1"} {
+	for _, name := range []string{"durable-v1", "durable-outbox-v1", "messages.json"} {
 		if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("unowned Core initialized durable store", err)
 		}

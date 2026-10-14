@@ -102,6 +102,12 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - name: Collect required whole-Core race evidence
+        id: native-core
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py core
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
@@ -222,13 +228,44 @@ jobs:
           go run ./cmd/prepare-engine --verify
           go mod verify
           python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Verify macOS five-scope discovery without skips
+        if: matrix.goos == 'darwin'
+        timeout-minutes: 10
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-metrics.py run --suite nearby-five-scope-macos -- python -B .github/scripts/ci-dnssd-required.py
+      - name: Preserve required macOS discovery proof
+        if: always() && matrix.goos == 'darwin'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-dnssd-required-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-dnssd-required/receipt.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Verify Windows receive-retirement directory barriers
         if: matrix.goos == 'windows'
         run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer
+      - name: Verify remaining native package race coverage
+        if: always() && !cancelled() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py remaining
+      - name: Preserve required native package proof
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-required-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-native-core-required/receipt.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Local and mock tests, race detector, and vet
         run: |
           set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
+          if [[ '${{ matrix.goos }}' == 'linux' ]]; then
+            python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
+          fi
           # Enforce offline route-revocation recovery using the real protected fixture.
           python .github/scripts/ci-metrics.py run --suite offline-route-race -- go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
           python .github/scripts/ci-metrics.py run --suite backend-route-race -- go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
@@ -330,6 +367,28 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite outbox-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessRestart -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxProcessRestart$'
+      - name: Verify durable text restart and lost ACK across Core processes
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite durable-text-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'
+      - name: Verify manual nearby setup across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-manual-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreNearbySetupManualIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreNearbySetupManualIntegration$'
+      - name: Verify Linux nearby native discovery without skips
+        if: matrix.goos == 'linux'
+        timeout-minutes: 8
+        env:
+          SOBALINK_NEARBY_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-metrics.py run --suite nearby-native-linux -- python -B .github/scripts/ci-nearby-required.py
       - name: Verify direct LAN synthetic expiry and rekey
         timeout-minutes: 3
         run: |
@@ -613,8 +672,23 @@ jobs:
           version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
           commit="$(git rev-parse HEAD)"
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          if [[ '${{ matrix.goos }}' == darwin ]]; then
+            clean_packages="$(mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX")"
+            trap 'rm -rf "$clean_packages"' EXIT
+            export GOCACHEPROG=
+            export GOCACHE="$clean_packages/first-cache" GOTMPDIR="$clean_packages/first-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+          fi
           go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
           go run ./cmd/package-tool checksums
+          if [[ '${{ matrix.goos }}' == darwin ]]; then
+            cp dist/SHA256SUMS "$clean_packages/first-SHA256SUMS"
+            export GOCACHE="$clean_packages/second-cache" GOTMPDIR="$clean_packages/second-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+            go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
+            go run ./cmd/package-tool checksums
+            cmp "$clean_packages/first-SHA256SUMS" dist/SHA256SUMS
+          fi
           if [[ '${{ matrix.goos }}' == windows ]]; then
             extension=zip
           else
@@ -646,6 +720,16 @@ jobs:
             ${{ steps.go-cache-info.outputs.gocache }}
           key: ${{ steps.development-go-cache.outputs.cache-primary-key }}
 
+      - name: Preserve bounded Core failure context
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.failure_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-failure-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/soba-native-core-failure/failure.json
+            ${{ runner.temp }}/soba-native-core-failure/partial-core.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Summarize measured native suites
         if: always()
         run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/ci-suite-metrics.json"
@@ -901,6 +985,7 @@ jobs:
           go mod verify
           go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
           npm --prefix web run test:browser:safety
+          node --test web/browser/nearby-native-selectors.test.mjs web/browser/nearby-native-diagnostics.test.mjs web/browser/text-native-contract.test.mjs
           screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
           mkdir -m 700 "$screenshots"
           SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
@@ -939,6 +1024,56 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxThreeProcessBrowser$' -count=1 -timeout=4m
+      - name: Verify nearby setup with separate agents and actual browser
+        id: setup-browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+          SOBALINK_RUN_SETUP_BROWSER_NATIVE: '1'
+          SOBA_SETUP_BROWSER_SUMMARY: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-summary.json
+          SOBA_SETUP_BROWSER_FAILURE: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-failure.json
+          SOBA_SETUP_BROWSER_SCREENSHOTS: ${{ runner.temp }}/soba-setup-browser-illustrations
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-setup-browser-evidence"
+          export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=0
+          if mkdir -m 700 "$SOBA_SETUP_BROWSER_SCREENSHOTS" 2>/dev/null; then
+            export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=1
+          else
+            unset SOBA_SETUP_BROWSER_SCREENSHOTS
+          fi
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestNearbySetupTwoProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestNearbySetupTwoProcessBrowser$' -count=1 -timeout=3m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py setup "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
+      - name: Verify durable text recovery with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+          SOBALINK_RUN_TRANSFER_BROWSER_NATIVE: '1'
+          SOBA_TEXT_BROWSER_SUMMARY: ${{ runner.temp }}/soba-text-browser-evidence/text-native-summary.json
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-text-browser-evidence"
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextThreeProcessBrowser$' -count=1 -timeout=4m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py text "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
+      - name: Preserve optional sanitized nearby setup illustrations
+        if: always() && steps.setup-browser.outputs.screenshots_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-nearby-ui-sanitized
+          path: |
+            ${{ runner.temp }}/soba-setup-ui-sanitized/nearby-initial-en-375.png
+            ${{ runner.temp }}/soba-setup-ui-sanitized/nearby-initial-ja-320.png
+            ${{ runner.temp }}/soba-setup-ui-sanitized/screenshots.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve sanitized UI screenshots and typography measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -951,6 +1086,9 @@ jobs:
             ${{ runner.temp }}/soba-playwright-screenshots/transfer-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-failure.json
+            ${{ runner.temp }}/soba-playwright-screenshots/text-native-summary.json
           if-no-files-found: warn
           retention-days: 14
 

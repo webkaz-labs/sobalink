@@ -124,7 +124,7 @@ func TestOutgoingReceiverDecisionReleasesStaging(t *testing.T) {
 func interceptTransferPeer(t *testing.T, p corePair, intercept func(http.ResponseWriter, *http.Request, http.Handler)) {
 	t.Helper()
 	original := p.b.peerServer.http
-	owned := *p.b.peerServer.listeners[0].(*peerIncomingListener)
+	owned := *p.b.peerServer.listeners[0].Listener.(*peerIncomingListener)
 	if err := p.b.peerServer.Close(); err != nil {
 		t.Fatal(err)
 	}

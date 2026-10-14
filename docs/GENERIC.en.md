@@ -2,20 +2,20 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-This guide covers `soba` in published [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5). Its [15 release gates](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236), including signed public retrieval and four-target mise installation, passed for the exact source recorded in [verification](VERIFICATION.en.md#current-integration-and-published-baseline). Real-device enrollment, application compatibility, native IME, ordinary-user Windows process behavior, OS sign-in/suspend and actual power-loss recovery remain separate checks.
+The published baseline is [0.4.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.4.0-alpha.4). This guide covers `soba` workflows and explicitly labeled development-source additions. The [durable file queue](DURABLE_OUTBOX.en.md) is in that published baseline; the [durable text queue](DURABLE_TEXT.en.md) is implemented and unreleased. Development builds containing it use profile format 3, incompatible with alpha.4 and older profiles. Keep existing state and select a separate empty `--state-dir`; there is no migration or wipe. [Verification](VERIFICATION.en.md#current-integration-and-published-baseline) separates source-specific results. Real-device enrollment, application compatibility, native IME, ordinary-user Windows processes, OS-login/suspend and power-loss recovery remain separate acceptance.
 
 The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
 [Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
-Source-build addition: [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and is not part of the published alpha.5 acceptance above. It uses the existing authenticated local IPC and local Web command dispatcher, with no new Web UI controls. See [the local operation workflow](#local-transfer-settings-operations-source-build).
+The [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and uses existing authenticated local IPC and the local Web command dispatcher. See [the local operation workflow](#local-transfer-settings-operations-source-build).
 
 ## Start and open the local UI
 
-Use mise **2026.9.18** to select the published alpha.5 prerelease, verify the version, then start it. Keep signature verification enabled:
+Use mise **2026.9.18** to select the published 0.4.0-alpha.4 prerelease, verify the version, then start it. Keep signature verification enabled:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -40,7 +40,7 @@ soba --state-dir ./sample-state
 soba --state-dir ./sample-state status
 ```
 
-A fresh profile starts with no network selected. UI preferences, trust and service definitions are saved. Ordinary saved definitions remain stopped after a process restart; transfer progress never resumes. Separately reviewed [outbound startup and private proxy profiles](STARTUP.en.md) can opt into a future online launch. Inbound shares remain manual.
+A fresh profile starts with no network selected. UI preferences, trust and service definitions are saved. Ordinary saved definitions remain stopped after a process restart; immediate transfer progress does not resume. Explicit durable file requests, and unreleased durable text requests, have a separate original-ID/deadline/evidence recovery contract. Separately reviewed [outbound startup and private proxy profiles](STARTUP.en.md) can opt into a future online launch. Inbound shares remain manual.
 
 ## Choose one network
 
@@ -198,9 +198,22 @@ Type or paste text, review it, then press Send. The Copy action copies selected 
 soba message PEER_ID "Hello from sample-node"
 ```
 
-If message history cannot be saved, the receiver may already have the text. The Web UI keeps the editable draft and warns you to check the receiver and storage. It blocks the same text to the same peer for the current page session, even after a refresh or another successful message. This protection is not persistent across page reloads or application restarts; check the outcome before resending. [Delivery uncertainty and its memory budget](CAPACITY.en.md#web-delivery-uncertainty)
+For immediate text, if message history cannot be saved, the receiver may already have the text. The Web UI keeps the editable draft and warns you to check the receiver and storage. It blocks the same text to the same peer for the current page session, even after a refresh or another successful message. This protection is not persistent across page reloads or application restarts; check the outcome before resending. [Delivery uncertainty and its memory budget](CAPACITY.en.md#web-delivery-uncertainty)
 
 A pasted image enters the same reviewable file batch flow as a chosen image file. It is not sent merely because it was pasted. Images are transferred as files; received payloads are not automatically opened or executed.
+
+### Queue text explicitly (unreleased development build)
+
+Choose **Queue text** in the existing composer, then review and approve one recipient, exact text, absolute deadline and local retention. Immediate sending never switches modes silently. In the CLI:
+
+```sh
+soba message --queue --peer PEER_ID --expires-in 24h 'A synthetic reminder'
+soba message queue list --json
+soba message queue show OUTBOX_ID --json
+soba message queue cancel OUTBOX_ID --json
+```
+
+The default lifetime is 24 hours; CLI durations range from one minute to seven days. `--json` alone prepares without prompts or sending; `--confirm` or the human confirmation grants sending authority. The recipient may be offline, but the local backend must run with a known identity. Local acceptance is not receiver-save completion, and cancellation cannot recall saved text. Text has no files or receive folder. After a lost reply, show the original ID; do not create a replacement ID, body or deadline. Deduplication evidence survives conversation-history cleanup. See [durable text](DURABLE_TEXT.en.md) for process-bound preparations, busy recovery, stable JSON and limits.
 
 ### Several files or a folder
 
@@ -213,6 +226,17 @@ soba send PEER_ID ./image.png ./notes.txt ./sample-folder
 The CLI resolves paths relative to its current working directory. It rejects links and unsafe or unsupported entries instead of following them into other paths. Folder contents use relative paths; unrelated source paths are not exposed to the receiver.
 
 Initial logical defaults are 256 manifest entries, including directories, and 1 GiB per file and per batch. Each can be set to a custom positive limit or explicitly unlimited; separately adjustable finite metadata, staging inventory, pending-offer, stream and byte budgets still constrain actual work. Local staging defaults to 600 seconds and can also use a custom duration or no total policy deadline. Browser upload requests also have a rolling 30-second no-progress read deadline, refreshed only when bytes arrive. The total staging deadline starts after reservation and is not extended by normal progress; unlimited staging removes only that total deadline. [Capacity and history](CAPACITY.en.md) explains the distinct choices. Large files stream through bounded buffers. Browser uploads first stage into the local agent: **100% local upload is not remote delivery**. Wait for receiver acceptance and the remote saved/completed state.
+
+### Queue files explicitly
+
+For delivery after reconnection or sender restart, opt into the released [durable file queue](DURABLE_OUTBOX.en.md). Review exact recipients, staged contents and the absolute deadline before confirming.
+
+```sh
+soba send --queue --peer PEER_ID --expires-in 24h ./notes.txt
+soba outbox show OUTBOX_ID --json
+```
+
+Keep the original request/delivery IDs and deadline after an ambiguous response. Local acceptance is not receiver-save completion; cancellation does not recall saved files.
 
 ### Receive a batch
 
@@ -240,7 +264,7 @@ Recipients, trust and contents are checked again before commitment. A changed se
 
 Preparation is local storage. Upload completion and request acceptance are not delivery completion. If a reply is uncertain, use **Check this request** for the original request rather than creating another send. `send --help` describes status, commit and discard using the original preparation and process IDs. A failure before commitment has no child transfers. Check original delivery results before closing an uncertain draft.
 
-The shared sending copy is charged once; per-recipient records and concurrent sends use separate finite budgets. Completing one recipient does not delete another recipient's retry data. Automatic audience selection, group text messages, synchronization, a durable outbox and delivery resumption after restart are excluded. This describes source behavior, not published-binary or physical-device acceptance.
+The shared sending copy is charged once; per-recipient records and concurrent sends use separate finite budgets. Completing one recipient does not delete another recipient's retry data. This immediate batch flow does not add automatic recipient selection, message broadcasting, synchronization or restart delivery resume. Durable file queueing is separately explicit through `soba send --queue`. This describes source behavior, not published-binary or physical-device acceptance.
 
 See [reproducible dispatch checks and acceptance boundaries](BATCH_SEND_ACCEPTANCE.en.md).
 
@@ -289,9 +313,9 @@ soba forget TRANSFER_ID
 
 Retry sends unfinished files from their beginning while both agents retain the same batch state. Successfully acknowledged files are not rewritten. After a lost acknowledgement, a repeated file request returns the existing saved acknowledgement. This is per-file retry, not byte-level resume.
 
-Batch progress and acknowledgements are process-local. After either agent restarts, send a new batch and review what was already saved. A new batch can create a uniquely named copy. Forget removes terminal history and any retained sender staging copies, so that batch can no longer be retried. Original source files and files already saved by the receiver stay in place.
+Immediate batch progress and acknowledgements are process-local. After either agent restarts, review what was already saved before deciding on a new batch. The [durable file queue](DURABLE_OUTBOX.en.md) is separate: preserve its original request/delivery IDs and deadlines after restart and inspect that original record. A new batch can create a uniquely named copy. Forget removes terminal history and any retained sender staging copies, so that batch can no longer be retried. Original source files and files already saved by the receiver stay in place.
 
-**Known crash-recovery limitation:** after an unexpected process exit, old sending copies in the private state directory’s `outgoing` subdirectory are inventoried and still count against the finite staging budget. The application does not automatically delete these orphan copies, and CLI/Web history clearing cannot remove batches from a previous process. Repeated interruptions can therefore exhaust the budget and block new sends even though growth remains bounded. Stop the matching instance, review and remove only confirmed orphan staging inside that `outgoing` directory, then restart so usage is inventoried again. Keep uncertain copies private; do not remove the identity/configuration files, original source files or received files. This is separate from a retryable batch retained by the currently running instance. A visible, reviewed orphan-cleanup control remains a usability follow-up.
+**Immediate-file crash-recovery limitation:** after an unexpected process exit, old sending copies in the private state directory’s `outgoing` subdirectory are inventoried and still count against the finite staging budget. The application does not automatically delete these orphan copies, and CLI/Web history clearing cannot remove batches from a previous process. Repeated interruptions can therefore exhaust the budget and block new sends even though growth remains bounded. Stop the matching instance, review and remove only confirmed orphan staging inside that `outgoing` directory, then restart so usage is inventoried again. Keep uncertain copies private; do not remove the identity/configuration files, original source files or received files. This is separate from a retryable batch retained by the currently running instance. A visible, reviewed orphan-cleanup control remains a usability follow-up.
 
 Receiver-owned unfinished staging is restored into the receive quota through its private index and bounded startup inventory. Missing legacy records require an explicit review; damaged records, changed bindings or uncertain persistence keep receiving blocked. Sending and local management remain available. See [capacity and recovery](CAPACITY.en.md#receiver-recovery). Recovery never claims ambiguous roots, scans arbitrary folders, deletes saved output, or resumes a transfer. The [transfer free-space reserve](CAPACITY.en.md#transfer-free-space-margin) checks actual available disk space separately; it does not replace receive quota recovery.
 
@@ -307,15 +331,15 @@ soba stop
 
 Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust and any inspection permission; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
-Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the alpha.5 release's signed assets and successful verification before using this pin; do not assume prerelease state is compatible with every upgrade or downgrade:
+Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the 0.4.0-alpha.4 release's signed assets and successful verification before using this pin. Moving to unreleased profile format 3 requires separate empty state, with no migration or wipe; do not assume prerelease state is compatible with every upgrade or downgrade:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.3.0-alpha.5"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
 mise exec -- soba version
 mise exec -- soba start --offline
 ```
 
-Inspect retained settings and startup approvals in the local UI. A profile from alpha.1 without a receive recovery index blocks new file reception until you review its prior receive locations, unfinished staging and saved files. Open [Preferences → File receiving → Review receiving](WEB_CONTROLS.en.md#review-blocked-file-receiving), or use `soba receive recovery confirm` with local management running. Confirm the review in the UI, or add CLI `--reviewed`, only after completing the [legacy receive review](CAPACITY.en.md#receiver-recovery). It initializes a missing index, does not repair damaged records and does not delete saved files or resume transfers.
+Inspect retained settings and startup approvals in the local UI. If an older profile format is rejected, preserve it rather than treating it as migrated. `receive recovery confirm` is a narrowly scoped receive-index review, not profile-format migration, damaged-state repair, deletion of saved files or replacement of queue records. Review the [receive recovery boundary](CAPACITY.en.md#receiver-recovery).
 
 Stop this offline instance before starting normally. Explicit outbound startup approvals may run again; inbound shares require a separate start. Keep the same `--state-dir` in every command when using a custom directory. Source-build users can rebuild the frontend and executable from a reviewed source instead. Use `soba help upgrade` for a short reminder and the signed-install instructions above for a published prerelease.
 
@@ -349,7 +373,7 @@ Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For in
 | Local sign-in fails | Use the exact printed URL, run `soba ui`, and enter its new code |
 | No peers | Check the selected network and complete its enrollment or pairing |
 | Transfer waits | Have the receiving peer inspect and accept its batch or review its autosave policy |
-| Partial transfer | Keep both agents running and retry the unfinished files; after a restart, create a new batch |
+| Partial transfer | For immediate sends, keep both agents running and retry unfinished files; after restart, review prior saves before deciding on a new batch. For a durable queue, check the original request and preserve its IDs/deadline |
 | Service not discovered | Check explicit share scope, active lifetime and current peer contact, or connect manually to a known service |
 | `response_too_large` | Inspect current data and the relevant finite page/storage budget in the local UI; review a larger budget or explicit terminal-history cleanup, then retry. Cleanup does not delete received files |
 | Local port conflict or listener budget | Stop unused work, narrow the ports, review the finite capacity budget, or explicitly select another local starting port |

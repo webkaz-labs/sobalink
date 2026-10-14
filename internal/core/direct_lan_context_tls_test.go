@@ -41,12 +41,13 @@ type contextTLSObservation struct {
 }
 
 type contextTLSRound struct {
-	f      *localContextFixture
-	owner  *contextControlOwner
-	bridge *directlan.ContextFixtureBridge
-	seen   contextTLSObservation
-	before func(context.Context, *directlan.ContextAttempt)
-	after  func(context.Context, *directlan.ContextAttempt, directlan.VerifiedContextExchange, directlan.ContextResponse, error)
+	f                     *localContextFixture
+	owner                 *contextControlOwner
+	bridge                *directlan.ContextFixtureBridge
+	seen                  contextTLSObservation
+	completionObservation *contextCompletionObservation
+	before                func(context.Context, *directlan.ContextAttempt)
+	after                 func(context.Context, *directlan.ContextAttempt, directlan.VerifiedContextExchange, directlan.ContextResponse, error)
 }
 
 func newContextTLSLocalReview(t *testing.T) *localContextFixture {
@@ -84,7 +85,7 @@ func newContextTLSRound(t *testing.T, f *localContextFixture, gate *directlan.Co
 			r.before(ctx, attempt)
 		}
 		r.seen.writesBefore = f.writes
-		response, err := f.core.completeContextExchange(ctx, o, attempt, verified)
+		response, err := f.core.completeContextExchangeObserved(ctx, o, attempt, verified, r.completionObservation)
 		r.seen.completionErr, r.seen.writesAfter = err, f.writes
 		r.seen.hasResponse = response.Reply != nil && response.Epoch != nil && response.Admit != nil
 		if err == nil {
@@ -698,7 +699,7 @@ func TestContextTLSFixtureExcludedFromProductBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 	const fixtureTag = "directlan_context_fixture"
-	files := []string{"internal/directlan/context_fixture_bridge.go", "internal/core/direct_lan_context_tls_test.go"}
+	files := []string{"internal/directlan/context_fixture_bridge.go", "internal/core/direct_lan_context_tls_test.go", "internal/core/direct_lan_upgrade_refresh_tls_test.go"}
 	for _, name := range files {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 		if err != nil {

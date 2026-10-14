@@ -19,7 +19,7 @@ import (
 func mixedCorePair(t *testing.T, decorate ...func(string, *pipeNode) NetworkBackend) (*Core, *Core, *mixedBackend, *mixedBackend) {
 	t.Helper()
 	open := func() (*Core, *mixedBackend) {
-		c, e := Open(context.Background(), Options{Directory: t.TempDir(), Version: "test", SkipNetworkStart: true})
+		c, e := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), Version: "test", SkipNetworkStart: true})
 		if e != nil {
 			t.Fatal(e)
 		}

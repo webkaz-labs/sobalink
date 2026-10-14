@@ -231,11 +231,24 @@ func mockTool(t *testing.T) (*Tool, *int) {
 	goRoot := filepath.Join(root, "toolchain")
 	writeFixture(t, filepath.Join(goRoot, "LICENSE"), "Go license")
 	builds := new(int)
+	tool.nativeProbe = nativeProbeFixture(t)
+	tool.nativeInventory = func([]goPackage) ([]NativePackage, []Notice, error) { return []NativePackage{}, []Notice{}, nil }
+	tool.nativeLinks = func(string) ([]string, error) { return append([]string{}, darwinSystemLibraries...), nil }
 	tool.run = func(env []string, args ...string) ([]byte, error) {
-		for _, want := range []string{"GOTOOLCHAIN=local", "GOWORK=off", "GOENV=off", "CGO_ENABLED=0", "GOFLAGS=", "GOEXPERIMENT=", "GOFIPS140=off"} {
+		for _, want := range []string{"GOTOOLCHAIN=local", "GOWORK=off", "GOENV=off", "GOFLAGS=", "GOEXPERIMENT=", "GOFIPS140=off"} {
 			if !strings.Contains(strings.Join(env, "\n"), want) {
 				t.Fatalf("missing reproducible env %s", want)
 			}
+		}
+		cgo := "CGO_ENABLED=0"
+		if strings.Contains(strings.Join(env, "\n"), "GOOS=darwin") {
+			cgo = "CGO_ENABLED=1"
+		}
+		if !strings.Contains(strings.Join(env, "\n"), cgo) {
+			t.Fatal("incorrect target cgo policy")
+		}
+		if reflect.DeepEqual(args, []string{"env", "GOHOSTOS", "GOHOSTARCH"}) {
+			return []byte("darwin\narm64\n"), nil
 		}
 		if reflect.DeepEqual(args, []string{"env", "GOVERSION"}) {
 			return []byte(GoVersion), nil

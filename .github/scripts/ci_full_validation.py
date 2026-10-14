@@ -3,15 +3,87 @@ import ast
 import base64
 import datetime
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
 
 REPOSITORY = 'webkaz-labs/sobalink'
 WORKFLOW = '.github/workflows/ci.yml'
-SOURCES = (WORKFLOW, '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
+WINDOWS_PACKAGES_HELPER = '.github/scripts/ci-windows-packages.py'
+WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb731c4f42070'
+SOURCES = (WORKFLOW, WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
-           '.github/scripts/release-validation.py')
+           '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
+           '.github/scripts/ci-nearby-screenshots.py',
+           '.github/scripts/ci-nearby-native.py', '.github/scripts/ci-nearby-required.py',
+           'internal/nearby/dnssd_native_acceptance_test.go', 'internal/nearby/dnssd_capability_test.go',
+           '.github/scripts/release-validation.py', '.github/scripts/source_provenance.py')
+DNSSD_SOURCES = (
+    '.github/workflows/activation-diagnostic.yml',
+    '.github/scripts/ci-diagnostic.py',
+    '.github/scripts/ci-dnssd-diagnostic.py',
+    '.github/scripts/test_ci_dnssd_diagnostic.py',
+    '.github/scripts/ci-dnssd-terminal.py',
+    '.github/scripts/test_ci_dnssd_terminal.py',
+    '.github/scripts/test_ci_dnssd_terminal_origin.py',
+    '.github/scripts/test_ci_dnssd_terminal_marker.py',
+    '.github/scripts/ci-nearby-native.py',
+    '.github/scripts/ci-nearby-diagnostic.py',
+    '.github/scripts/ci-go-test.py',
+    'internal/nearby/provider_darwin.go',
+    'internal/nearby/dnssd_bridge_darwin.c',
+    'internal/nearby/dnssd_bridge_darwin.h',
+    'internal/nearby/dnssd_native_acceptance_test.go',
+    'internal/nearby/dnssd_raw_receive_test.go',
+    'internal/nearby/dnssd_capability_test.go',
+    'internal/nearby/dnssd_wire_evidence_test.go',
+    'internal/nearby/dnssd_legacy_native_test.go',
+    'internal/nearby/dnssd_legacy_send_unix_test.go',
+    'internal/nearby/dnssd_socket_diagnostic_test.go',
+    'internal/nearby/dnssd_socket_native_test.go',
+    'internal/nearby/dnssdprobe/probe_darwin.go',
+    'go.mod',
+    'go.sum',
+    '.github/workflows/ci.yml',
+    '.github/workflows/prerelease.yml',
+    '.github/scripts/ci-dnssd-required.py',
+    '.github/scripts/ci-dnssd-terminal-marker.py',
+    '.github/scripts/test_ci_dnssd_required.py',
+    '.github/scripts/ci-coverage.py',
+    '.github/scripts/ci_full_validation.py',
+    '.github/scripts/ci-metrics.py',
+    '.github/scripts/check-frontend.py',
+    'cmd/prepare-engine/main.go',
+    'internal/nearby/provider_raw.go',
+    'internal/nearby/records.go',
+)
+CORE_SOURCES = (
+    '.github/workflows/activation-diagnostic.yml',
+    '.github/scripts/ci-native-core.py',
+    '.github/scripts/test_ci_native_core.py',
+    '.github/scripts/ci-diagnostic.py',
+    '.github/scripts/test_ci_diagnostic.py',
+    '.github/scripts/ci-go-test.py',
+    '.github/scripts/ci-metrics.py',
+    '.github/scripts/ci-nearby-native.py',
+    '.github/scripts/ci-nearby-diagnostic.py',
+    'go.mod',
+    'go.sum',
+    '.github/workflows/ci.yml',
+    '.github/scripts/ci-windows-packages.py',
+    '.github/workflows/prerelease.yml',
+    '.github/scripts/ci-native-core-required.py',
+    '.github/scripts/test_ci_native_core_required.py',
+    '.github/scripts/ci-dnssd-required.py',
+    '.github/scripts/ci-dnssd-diagnostic.py',
+    '.github/scripts/ci-dnssd-terminal.py',
+    '.github/scripts/ci-coverage.py',
+    '.github/scripts/ci_full_validation.py',
+    '.github/scripts/check-frontend.py',
+    'cmd/prepare-engine/main.go',
+)
+SOURCES = tuple(dict.fromkeys((*SOURCES, *DNSSD_SOURCES, *CORE_SOURCES)))
 TARGETS = {
     'linux-amd64': ('native (ubuntu-24.04, linux, amd64)', 'ubuntu-24.04'),
     'linux-arm64': ('native (ubuntu-24.04-arm, linux, arm64)', 'ubuntu-24.04-arm'),
@@ -133,9 +205,12 @@ def source_bytes(api, commit, local_root=None):
         if local_root is not None:
             require((Path(local_root) / path).read_bytes() == data, 'checkout policy differs from exact source')
         sources[path] = data
-    # Publication consumes these two scripts from the gate artifact, not a new
-    # checkout. Verify both loaded tools still match the immutable source.
-    for name in ('ci_full_validation.py', 'release-validation.py'):
+    # Publication consumes these scripts from the gate artifact, not a new
+    # checkout. Verify all loaded tools still match the immutable source.
+    for name in ('ci_full_validation.py', 'release-validation.py', 'source_provenance.py',
+                 'ci-dnssd-required.py', 'ci-dnssd-diagnostic.py', 'ci-dnssd-terminal.py',
+                 'ci-nearby-native.py', 'ci-nearby-diagnostic.py', 'ci-go-test.py',
+                 'ci-native-core-required.py', 'ci-native-core.py', 'ci-windows-packages.py', 'ci-metrics.py'):
         require(Path(__file__).with_name(name).read_bytes() == sources['.github/scripts/' + name],
                 'loaded release tool differs from exact source')
     return sources
@@ -426,13 +501,330 @@ def validate_outbox_workflow(workflow_bytes):
         require(following.startswith('      - '), 'invalid durable outbox step boundary')
 
 
+def validate_durable_text_workflow(workflow_bytes):
+    """Require one exact no-skip text recovery gate in the common native job."""
+    workflow = workflow_bytes.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    expected = """      - name: Verify durable text restart and lost ACK across Core processes
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite durable-text-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'
+"""
+    marker = expected.splitlines(keepends=True)[0]
+    require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
+            'invalid durable text execution policy')
+    start = workflow.index(marker)
+    require(workflow[start + len(expected):].startswith('      - '),
+            'invalid durable text step boundary')
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    native = [offset for offset, key in jobs if key == 'native']
+    require(len(native) == 1, 'missing durable text native job')
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    require(native[0] < start < end, 'durable text gate must run in the common native job')
+
+
+def validate_setup_and_text_browser_workflow(workflow_bytes):
+    """Bind manual setup and actual-browser gates, exits and fixed exports."""
+    workflow = workflow_bytes.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    expected = (
+        ('native', """      - name: Verify manual nearby setup across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-manual-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreNearbySetupManualIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreNearbySetupManualIntegration$'
+"""),
+        ('browser', """      - name: Verify nearby setup with separate agents and actual browser
+        id: setup-browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+          SOBALINK_RUN_SETUP_BROWSER_NATIVE: '1'
+          SOBA_SETUP_BROWSER_SUMMARY: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-summary.json
+          SOBA_SETUP_BROWSER_FAILURE: ${{ runner.temp }}/soba-setup-browser-evidence/setup-native-failure.json
+          SOBA_SETUP_BROWSER_SCREENSHOTS: ${{ runner.temp }}/soba-setup-browser-illustrations
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-setup-browser-evidence"
+          export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=0
+          if mkdir -m 700 "$SOBA_SETUP_BROWSER_SCREENSHOTS" 2>/dev/null; then
+            export SOBA_SETUP_BROWSER_SCREENSHOTS_PREPARED=1
+          else
+            unset SOBA_SETUP_BROWSER_SCREENSHOTS
+          fi
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestNearbySetupTwoProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestNearbySetupTwoProcessBrowser$' -count=1 -timeout=3m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py setup "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
+"""),
+        ('browser', """      - name: Verify durable text recovery with separate agents and actual browser
+        timeout-minutes: 8
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+          SOBALINK_RUN_TRANSFER_BROWSER_NATIVE: '1'
+          SOBA_TEXT_BROWSER_SUMMARY: ${{ runner.temp }}/soba-text-browser-evidence/text-native-summary.json
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/soba-text-browser-evidence"
+          status=0
+          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextThreeProcessBrowser$' -count=1 -timeout=4m || status=$?
+          summary_status=0
+          python -B .github/scripts/ci-browser-summary.py text "$status" || summary_status=$?
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          exit "$summary_status"
+"""),
+    )
+    for job, block in expected:
+        marker = block.splitlines(keepends=True)[0]
+        require(workflow.count(marker) == 1 and workflow.count(block) == 1,
+                'invalid setup or text browser execution policy')
+        start = workflow.index(marker)
+        require(workflow[start + len(block):].startswith('      - '),
+                'invalid setup or text browser step boundary')
+        positions = [offset for offset, key in jobs if key == job]
+        require(len(positions) == 1, 'missing setup or text browser job')
+        end = next((offset for offset, _ in jobs if offset > positions[0]), len(workflow))
+        require(positions[0] < start < end, 'setup or text browser gate is in the wrong job')
+    artifact = """      - name: Preserve sanitized UI screenshots and typography measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-browser-screenshots
+          path: |
+            ${{ runner.temp }}/soba-playwright-screenshots/*.png
+            ${{ runner.temp }}/soba-playwright-screenshots/typography-*.json
+            ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
+            ${{ runner.temp }}/soba-playwright-screenshots/transfer-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-summary.json
+            ${{ runner.temp }}/soba-playwright-screenshots/setup-native-failure.json
+            ${{ runner.temp }}/soba-playwright-screenshots/text-native-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+"""
+    require(workflow.count(artifact) == 1, 'invalid fixed browser summary export policy')
+    require(workflow.count('soba-setup-browser-evidence') == 3
+            and workflow.count('soba-text-browser-evidence') == 2,
+            'private browser evidence must not be exported')
+
+
+def validate_linux_nearby_workflow(workflow_bytes):
+    """Bind the one qualified Linux no-skip gate; preserve diagnostic semantics."""
+    workflow = workflow_bytes.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    expected = """      - name: Verify Linux nearby native discovery without skips
+        if: matrix.goos == 'linux'
+        timeout-minutes: 8
+        env:
+          SOBALINK_NEARBY_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-metrics.py run --suite nearby-native-linux -- python -B .github/scripts/ci-nearby-required.py
+"""
+    marker = expected.splitlines(keepends=True)[0]
+    require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
+            'invalid Linux nearby execution policy')
+    start = workflow.index(marker)
+    require(workflow[start + len(expected):].startswith('      - '),
+            'invalid Linux nearby step boundary')
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    native = [offset for offset, key in jobs if key == 'native']
+    require(len(native) == 1, 'missing Linux nearby native job')
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    require(native[0] < start < end, 'Linux nearby must run in the native job')
+    require('SOBALINK_NEARBY_NATIVE_PLATFORM' not in workflow[:start] + workflow[start + len(expected):],
+            'Linux nearby opt-in escaped its step')
+
+
+def validate_macos_nearby_workflow(workflow_bytes):
+    """One required five-scope Terminal run and its mandatory closed artifact."""
+    workflow = workflow_bytes.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    preparation = """      - name: Check exact toolchain and native target
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = '${{ matrix.goos }}'
+          test "$(go env GOARCH)" = '${{ matrix.goarch }}'
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+          python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+"""
+    expected = """      - name: Verify macOS five-scope discovery without skips
+        if: matrix.goos == 'darwin'
+        timeout-minutes: 10
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-metrics.py run --suite nearby-five-scope-macos -- python -B .github/scripts/ci-dnssd-required.py
+      - name: Preserve required macOS discovery proof
+        if: always() && matrix.goos == 'darwin'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-dnssd-required-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-dnssd-required/receipt.json
+          if-no-files-found: error
+          retention-days: 90
+"""
+    marker = expected.splitlines(keepends=True)[0]
+    require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
+            'invalid macOS nearby execution/export policy')
+    start = workflow.index(marker)
+    require(workflow[start + len(expected):].startswith('      - '), 'invalid macOS nearby step boundary')
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    native = [offset for offset, key in jobs if key == 'native']
+    require(len(native) == 1, 'missing macOS nearby native job')
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    require(native[0] < start < end, 'macOS nearby must run in the native job')
+    region = workflow[native[0]:end]
+    require(region.count(preparation + expected) == 1,
+            'macOS nearby must immediately follow successful exact preparation')
+    require(region.index('      - name: Test and reproduce locked frontend assets\n')
+            < region.index(preparation) < region.index(expected)
+            < region.index('      - name: Verify remaining native package race coverage\n'),
+            'macOS nearby must precede unrelated native gates after preparation')
+    outside = workflow[:start] + workflow[start + len(expected):]
+    require('ci-dnssd-required.py' not in outside and 'soba-dnssd-required' not in outside
+            and 'SOBALINK_DNSSD_' not in workflow and 'TestDNSService' not in workflow
+            and 'nearby-selected-interface-macos' not in workflow,
+            'duplicate or fallback macOS discovery gate')
+
+
+def validate_native_packages_workflow(sources):
+    """Require the reviewed collector, disjoint complement, and both routes."""
+    require(digest(sources[WINDOWS_PACKAGES_HELPER]) == WINDOWS_PACKAGES_SHA256,
+            'package partition runner differs from reviewed policy')
+    require(digest(sources['.github/scripts/ci-native-core.py']) == 'd5e6b47a41cfd608e3d4f34a9f9949a351b07ac60299243ca1d68d677b881389',
+            'native Core collector differs from reviewed policy')
+    require(digest(sources['.github/scripts/ci-native-core-required.py']) == 'b11baba01eaa6f438dad17eb12d596b12ec16c04bb52917f11db3122e4ccb0fc',
+            'required native Core runner differs from reviewed policy')
+    early = """      - name: Collect required whole-Core race evidence
+        id: native-core
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py core
+"""
+    later = """      - name: Verify remaining native package race coverage
+        if: always() && !cancelled() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py remaining
+      - name: Preserve required native package proof
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-required-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-native-core-required/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+"""
+    failure = """      - name: Preserve bounded Core failure context
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.failure_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-failure-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/soba-native-core-failure/failure.json
+            ${{ runner.temp }}/soba-native-core-failure/partial-core.json
+          if-no-files-found: error
+          retention-days: 14
+"""
+    ordinary = """      - name: Local and mock tests, race detector, and vet
+        run: |
+          set -euo pipefail
+          if [[ '${{ matrix.goos }}' == 'linux' ]]; then
+            python .github/scripts/ci-metrics.py run --suite local-race -- go test -race -count=1 -timeout=10m ./...
+          fi
+          # Enforce offline route-revocation recovery using the real protected fixture.
+          python .github/scripts/ci-metrics.py run --suite offline-route-race -- go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
+          python .github/scripts/ci-metrics.py run --suite backend-route-race -- go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
+          python .github/scripts/ci-metrics.py run --suite mixed-core-race -- go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
+          # Repeat real native IPC cleanup; exact timer policy is tested virtually.
+          python .github/scripts/ci-metrics.py run --suite ipc-repeat-race -- go test -race -count=5 -timeout=2m ./internal/control
+          python .github/scripts/ci-metrics.py run --suite native-vet -- go vet ./...
+          unformatted="$(gofmt -l cmd internal web)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Go files need gofmt (check checkout line endings):\\n%s\\n' "$unformatted" >&2
+            exit 1
+          fi
+"""
+    release = """      - name: Native race tests (local and mocked services only)
+        run: |
+          set -euo pipefail
+          if [[ '${{ matrix.goos }}' == 'linux' ]]; then
+            go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
+          fi
+          # Enforce offline route-revocation recovery using the real protected fixture.
+          go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core 2>&1 | tee -a logs/race-tests.txt
+          go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
+          go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
+          # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
+          go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
+"""
+    setup_go = """      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+"""
+    setup_node = """      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+"""
+    for path, tail in ((WORKFLOW, ordinary), ('.github/workflows/prerelease.yml', release)):
+        workflow = sources[path].decode('utf-8')
+        metadata = workflow_metadata(workflow)
+        jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+        native = [offset for offset, key in jobs if key == 'native']
+        require(len(native) == 1, 'missing native package job')
+        end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+        for block in (early, later + tail, failure):
+            marker = block.splitlines(keepends=True)[0]
+            require(workflow.count(marker) == workflow.count(block) == 1,
+                    'invalid native package execution or receipt policy')
+            start = workflow.index(marker)
+            require(native[0] < start < end and workflow[start + len(block):].startswith('      - '),
+                    'invalid native package step boundary')
+        region = workflow[native[0]:end]
+        require(region.count(setup_go + early + setup_node) == 1,
+                'Core must immediately follow exact Go setup before other work or cache restore')
+        require(region.index('      - uses: actions/setup-go@') < region.index(early)
+                < region.index('      - uses: actions/setup-node@')
+                < region.index('      - name: Test and reproduce locked frontend assets\n')
+                < region.index(later), 'early Core setup ordering differs')
+        require(workflow.count('python -B .github/scripts/ci-native-core-required.py core') == 1
+                and workflow.count('python -B .github/scripts/ci-native-core-required.py remaining') == 1
+                and 'python -B .github/scripts/ci-windows-packages.py' not in workflow
+                and 'GOMAXPROCS' not in workflow and 'GOTRACEBACK' not in workflow,
+                'native package runner escaped its exact steps')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
+    validate_native_packages_workflow(sources)
     validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
+    validate_durable_text_workflow(sources[WORKFLOW])
+    validate_linux_nearby_workflow(sources[WORKFLOW])
+    validate_macos_nearby_workflow(sources[WORKFLOW])
+    validate_setup_and_text_browser_workflow(sources[WORKFLOW])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
-    names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS'}
+    names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
+             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS'}
     values = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -452,13 +844,39 @@ def required_jobs(sources):
     require(values['FAST_STEPS'].count('Verify durable outbox restart across Core processes') == 1
             and values['BROWSER_STEPS'].count('Verify durable outbox recovery with separate agents and actual browser') == 1,
             'missing durable outbox required gates')
+    require(values['FAST_STEPS'].count('Verify durable text restart and lost ACK across Core processes') == 1,
+            'missing durable text required gate')
+    require(values['FAST_STEPS'].count('Verify manual nearby setup across native Core peers') == 1
+            and values['BROWSER_STEPS'].count('Verify nearby setup with separate agents and actual browser') == 1
+            and values['BROWSER_STEPS'].count('Verify durable text recovery with separate agents and actual browser') == 1,
+            'missing setup or text browser required gates')
     require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',
                                          'Verify native remote resource management',
                                          'Verify native fixed-group resource catalog'),
             'unexpected full-only gate policy')
+    require(values['LINUX_NEARBY_TARGETS'] == ('linux-amd64', 'linux-arm64')
+            and values['LINUX_NEARBY_STEPS'] == ('Verify Linux nearby native discovery without skips',),
+            'unexpected qualified Linux nearby policy')
+    require(values['MACOS_NEARBY_TARGETS'] == ('darwin-arm64',)
+            and values['MACOS_NEARBY_STEPS'] == ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof'),
+            'unexpected qualified macOS nearby policy')
     native_steps = values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
     require(len(set(native_steps)) == len(native_steps), 'overlapping required native gates')
     result = {name: native_steps for name, _ in TARGETS.values()}
+    require(not set(native_steps).intersection(values['LINUX_NEARBY_STEPS']), 'overlapping Linux nearby gate')
+    for target in values['LINUX_NEARBY_TARGETS']:
+        result[TARGETS[target][0]] += values['LINUX_NEARBY_STEPS']
+    require(not set(native_steps + values['LINUX_NEARBY_STEPS']).intersection(values['MACOS_NEARBY_STEPS']),
+            'overlapping macOS nearby gate')
+    for target in values['MACOS_NEARBY_TARGETS']:
+        result[TARGETS[target][0]] += values['MACOS_NEARBY_STEPS']
+    require(values['NATIVE_PACKAGE_TARGETS'] == ('windows-amd64', 'darwin-arm64')
+            and values['NATIVE_PACKAGE_STEPS'] == ('Collect required whole-Core race evidence',
+                'Verify remaining native package race coverage', 'Preserve required native package proof'),
+            'unexpected native package coverage policy')
+    require(not set(native_steps).intersection(values['NATIVE_PACKAGE_STEPS']), 'overlapping native package gate')
+    for target in values['NATIVE_PACKAGE_TARGETS']:
+        result[TARGETS[target][0]] += values['NATIVE_PACKAGE_STEPS']
     result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
     result.update({
         'impact': ('Select minimum CI scope',),
@@ -510,7 +928,7 @@ def fingerprint(run):
     return result
 
 
-def audit(api, commit, latest=None, local_root=None, previous_proof=None):
+def audit(api, commit, latest=None, local_root=None, previous_proof=None, artifact_download=None):
     repository = api('')
     require(repository.get('full_name') == REPOSITORY and repository.get('private') is False
             and repository.get('default_branch') == 'main', 'canonical release repository changed')
@@ -528,19 +946,33 @@ def audit(api, commit, latest=None, local_root=None, previous_proof=None):
     hashes = {path: digest(data) for path, data in sources.items()}
     if previous_proof is not None:
         require(set(previous_proof) == {'schema', 'repository', 'head_sha', 'head_tree', 'source_sha256',
-                                        'full_validation', 'jobs', 'required_jobs_sha256'}
+                                        'full_validation', 'jobs', 'required_jobs_sha256', 'macos_discovery_proof', 'native_package_proof'}
                 and type(previous_proof.get('schema')) is int and previous_proof['schema'] == 1 and previous_proof.get('repository') == REPOSITORY
                 and previous_proof.get('head_sha') == commit and previous_proof.get('head_tree') == tree
                 and previous_proof.get('source_sha256') == hashes, 'stored full-CI proof source mismatch')
     required = required_jobs(sources)
     jobs = audit_jobs(api, run, required)
+    path = Path(__file__).with_name('ci-dnssd-required.py')
+    spec = importlib.util.spec_from_file_location('ci_dnssd_required', path)
+    dnssd = importlib.util.module_from_spec(spec)
+    exec(compile(path.read_bytes(), str(path), 'exec'), dnssd.__dict__)
+    require(tuple(dnssd.POLICY_FILES) == DNSSD_SOURCES, 'DNS-SD policy source inventory differs')
+    macos_proof = dnssd.audit_artifact(api, run, commit, tree, download=artifact_download,
+        policy_hashes={name: hashes[name] for name in DNSSD_SOURCES})
+    path = Path(__file__).with_name('ci-native-core-required.py')
+    spec = importlib.util.spec_from_file_location('ci_native_core_required', path)
+    core = importlib.util.module_from_spec(spec)
+    exec(compile(path.read_bytes(), str(path), 'exec'), core.__dict__)
+    require(tuple(core.POLICY_FILES) == CORE_SOURCES, 'native Core policy source inventory differs')
+    package_proof = {platform: core.audit_artifact(api, run, commit, tree, platform, download=artifact_download,
+        policy_hashes={name: hashes[name] for name in CORE_SOURCES}) for platform in core.TARGETS}
     current = select_candidate(api, commit)
     require(fingerprint(current) == fingerprint(run), 'full-CI selection changed during audit')
     require(fingerprint(api(f"actions/runs/{run['id']}")) == fingerprint(run), 'full-CI attempt changed during audit')
     require(api('git/ref/heads/main').get('object', {}).get('sha') == commit, 'main moved during full-CI audit')
     proof = {'schema': 1, 'repository': REPOSITORY, 'head_sha': commit, 'head_tree': tree,
              'source_sha256': hashes, 'full_validation': fingerprint(run), 'jobs': jobs,
-             'required_jobs_sha256': digest(encoded(required))}
+             'required_jobs_sha256': digest(encoded(required)), 'macos_discovery_proof': macos_proof, 'native_package_proof': package_proof}
     if previous_proof is not None:
         proof['gate_proof_sha256'] = digest(encoded(previous_proof))
     return proof

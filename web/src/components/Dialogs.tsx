@@ -1,3 +1,5 @@
+import { NearbySetup, type NearbySetupHandle } from './NearbySetup'
+import { nearbyText } from '../nearby-i18n'
 import { DiscoveryObservation } from './DiscoveryObservation'
 import { ReceiveRecoveryNotice } from './ReceiveRecovery'
 import { recoveryText } from '../receive-recovery-i18n'
@@ -33,8 +35,14 @@ export function Preferences({ t, onClose, locale, theme, setLocale, setTheme, se
     {server.auth === 'ready' && <fieldset className="form-section settings-section settings-links"><legend>{t('managementPreferences')}</legend>{onResourceSettings && resourceSettingsLabel && <Button className="full-width" onClick={onResourceSettings}>{resourceSettingsLabel}<Icon name="chevron" /></Button>}<Button className="full-width" onClick={onPolicy}>{policyLabel}<Icon name="chevron" /></Button><Button className="full-width" onClick={onAdvancedConnections}>{advancedConnectionsLabel}<Icon name="chevron" /></Button><Button className="full-width" onClick={onStartup}>{startupLabel}<Icon name="chevron" /></Button>{server.state?.shares.some(service => ['active', 'reconnecting'].includes(service.status)) && <Button className="full-width" variant="danger" onClick={onStopSharing}>{stopSharingLabel}</Button>}</fieldset>}
   </Modal>
 }
-export function NetworkDialog({ t, onClose, server, locale, lanDraft, setLanDraft, directLanDraft, setDirectLanDraft, onViewPeer }: Base & { locale: Locale; directLanDraft: DirectLanDraft; setDirectLanDraft: Dispatch<SetStateAction<DirectLanDraft>>; lanDraft: LanDraft; setLanDraft: Dispatch<SetStateAction<LanDraft>>; onViewPeer: (id: string) => void }) {
+export function NetworkDialog({ t, onClose, server, locale, lanDraft, setLanDraft, directLanDraft, setDirectLanDraft, onViewPeer, navigationGuard }: Base & { navigationGuard?: { current: (() => Promise<boolean>) | undefined }; locale: Locale; directLanDraft: DirectLanDraft; setDirectLanDraft: Dispatch<SetStateAction<DirectLanDraft>>; lanDraft: LanDraft; setLanDraft: Dispatch<SetStateAction<LanDraft>>; onViewPeer: (id: string) => void }) {
   const lt = lanTranslator(locale)
+  const [view, setView] = useState<'options' | 'nearby' | 'advanced'>('options')
+  const nearby = useRef<NearbySetupHandle>(null)
+  const canClose = async () => view !== 'nearby' || !nearby.current || await nearby.current.close()
+  const close = async () => { if (await canClose()) onClose() }
+  const back = async () => { if (await canClose()) setView('options') }
+  useEffect(() => { if (navigationGuard) navigationGuard.current = canClose; return () => { if (navigationGuard?.current === canClose) navigationGuard.current = undefined } })
   const [hostname, updateHostname] = useState(lanDraft.hostname ?? server.state?.self.name ?? 'sobalink')
   const setHostname = (value: string) => { updateHostname(value); setLanDraft(current => ({ ...current, hostname: value })) }
   const [networkStopping, setNetworkStopping] = useState(false)
@@ -44,7 +52,10 @@ export function NetworkDialog({ t, onClose, server, locale, lanDraft, setLanDraf
   const engineActive = !['idle', 'offline', 'none', 'stopped', ''].includes((server.state?.self.status || '').toLowerCase())
   const switchingActive = Boolean(engineActive && activeMode && activeMode !== 'none' && activeMode !== mode)
   const configure = async (event: FormEvent) => { event.preventDefault(); if (blocked) return; await server.run('network.configure', { mode, hostname: hostname.trim() }) }
-  return <Modal title={t('chooseNetwork')} t={t} onClose={onClose}><p className="muted">{t('networkHint')}</p>
+  return <Modal title={t('chooseNetwork')} t={t} onClose={() => void close()}>
+    {view === 'options' ? <div className="nearby-entry"><p className="muted">{nearbyText(locale, 'intro')}</p><Button variant="primary" onClick={() => setView('nearby')}>{nearbyText(locale, 'open')}</Button><Button onClick={() => setView('advanced')}>{nearbyText(locale, 'advanced')}</Button></div> : <Button variant="ghost" onClick={() => void back()}>{nearbyText(locale, 'back')}</Button>}
+    {view === 'nearby' && <NearbySetup ref={nearby} server={server} locale={locale} disabled={blocked} />}
+    {view === 'advanced' && <><p className="muted">{t('networkHint')}</p>
     {server.state && <div className="network-current"><span>{t(server.state.settings?.network === 'mixed' ? 'mixed' : server.state.settings?.network === 'direct-lan' ? 'direct-lan' : server.state.settings?.network === 'lan' ? 'lan' : server.state.settings?.network === 'tailnet' ? 'tailnet' : 'disabledNetwork')}</span><Badge>{networkLabel(server.state.self.status, t)}</Badge>{server.state.self.error && <div className="error-copy field-error"><p>{server.state.self.errorCode ? errorText({ code: server.state.self.errorCode }, t) : t('networkProblem')}</p><details><summary>{t('technicalDetails')}</summary><p>{server.state.self.error}</p></details></div>}</div>}
     {server.error != null && <ErrorBanner message={errorText(server.error, t)} detail={errorDetail(server.error, t)} t={t} />}
       <div className="network-options">{(['direct-lan', 'tailnet', 'lan', 'mixed'] as const).map(value => <label key={value} className={`network-option ${mode === value ? 'selected' : ''}`}><input type="radio" name="network" disabled={blocked} value={value} checked={mode === value} onChange={() => setMode(value)} /><Icon name={value === 'tailnet' ? 'globe' : 'wifi'} size={23} /><span><strong>{t(value)}</strong><small>{t(value === 'mixed' ? 'mixedHint' : value === 'direct-lan' ? 'directLANHint' : value === 'tailnet' ? 'tailnetHint' : 'lanHint')}</small></span></label>)}</div>
@@ -58,6 +69,7 @@ export function NetworkDialog({ t, onClose, server, locale, lanDraft, setLanDraf
     {mode === 'lan' && !switchingActive && server.state && <LanSetup server={server} state={server.state} t={t} locale={locale} hostname={hostname} setHostname={setHostname} draft={lanDraft} setDraft={setLanDraft} onViewPeer={onViewPeer} showStopControl={false} applicationStopping={networkStopping} />}
     {mode === 'lan' && !switchingActive && <WanCandidates server={server} locale={locale} t={t} blocked={blocked} />}
     {mode === 'tailnet' && !switchingActive && <TailnetLogin server={server} locale={locale} t={t} disabled={blocked || activeMode !== 'tailnet' || !engineActive} />}
+    </>}
     {server.state && <div className="network-restart"><LogoutControl server={server} locale={locale} t={t} blocked={blocked} onStopping={setNetworkStopping} />{activeMode && activeMode !== 'none' && <p className="small muted">{t('networkRestart')}</p>}<StopApplication server={server} state={server.state} t={t} locale={locale} blocked={blocked} onStopping={() => setNetworkStopping(true)} />{networkStopping && <p className="scope-note" role="status">{lt('stopping')}</p>}</div>}
   </Modal>
 }

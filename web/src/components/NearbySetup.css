@@ -1,0 +1,13 @@
+.nearby-setup { min-width: 0; }
+.nearby-setup .code-value { overflow-wrap: anywhere; word-break: break-word; }
+.nearby-setup dl { display: grid; gap: .35rem; }
+.nearby-setup dd { margin: 0 0 .65rem; min-width: 0; }
+.nearby-setup details > .form-stack { margin-top: .8rem; }
+.nearby-setup textarea { width: 100%; min-width: 0; }
+.nearby-qr { width: min(100%, 20rem); margin: .5rem auto; padding: .5rem; background: #fff; }
+.nearby-qr svg { display: block; width: 100%; height: auto; }
+.nearby-candidates { list-style: none; padding: 0; display: grid; gap: .75rem; }
+.nearby-candidates li { min-width: 0; display: grid; gap: .35rem; }
+.nearby-entry { display: grid; gap: .8rem; margin-bottom: 1rem; }
+
+.nearby-host-choice { display: grid; gap: .65rem; min-width: 0; border: 1px solid currentColor; border-radius: .5rem; padding: .8rem; }

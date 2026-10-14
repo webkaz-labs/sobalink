@@ -44,7 +44,7 @@ func TestSavedHostBrowserFixtureUsesProductionReviewWithoutNetwork(t *testing.T)
 	if !bytes.Equal(before, after) {
 		t.Fatal("rejected fixture rewrote state")
 	}
-	c, err := Open(context.Background(), Options{Directory: dir, Version: "fixture-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, Version: "fixture-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
 		t.Error("fixture started a backend")
 		return nil, errors.New("forbidden")
 	}})
