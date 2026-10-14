@@ -338,3 +338,39 @@ it('hides the previous failed plan when deliberately opening a fresh review', as
   expect(screen.queryByText(v.c('failed'))).not.toBeInTheDocument()
   expect(v.mutations).not.toHaveBeenCalled()
 })
+
+// A DOM observer selects the file at commit, before React's passive effects.
+// This makes the initial-input race deterministic without sleeps or retries.
+it.each(['complete', 'cancel'] as const)('keeps immediate PNG input active until %s', async boundary => {
+  const s = reviewSetup(), pending = deferred<DecodeResult>()
+  png.start.mockReturnValueOnce(pending.promise)
+  const selected = new File(['synthetic'], 'fixture.png')
+  let fired = false
+  const observer = new MutationObserver(() => {
+    const input = screen.queryByLabelText(nearbyText('en', 'fingerprintPNG'))
+    if (fired || !input) return
+    fired = true
+    fireEvent.change(input, { target: { files: [selected] } })
+  })
+  observer.observe(document.body, { childList: true, subtree: true })
+  const v = setup(s)
+  try {
+    await v.ready()
+    expect(fired).toBe(true)
+    expect(png.start).toHaveBeenCalledExactlyOnceWith(selected, 'setup-fingerprint', expect.any(Object))
+    expect(png.cancel).not.toHaveBeenCalled()
+    const cancel = screen.getByRole('button', { name: v.c('pngCancel') })
+    if (boundary === 'cancel') {
+      fireEvent.click(cancel)
+      expect(png.cancel).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('button', { name: v.c('pngCancel') })).not.toBeInTheDocument()
+    }
+    await act(async () => pending.resolve({ ok: true, text: s.plan!.verificationText }))
+    expect(screen.getByLabelText(v.c('peerFingerprint'))).toHaveValue(boundary === 'complete' ? s.plan!.verificationText : '')
+    expect(screen.queryByRole('button', { name: v.c('pngCancel') })).not.toBeInTheDocument()
+    expect(v.mutations).not.toHaveBeenCalled()
+  } finally {
+    observer.disconnect()
+    await act(async () => pending.resolve({ ok: false, error: 'cancelled' }))
+  }
+})

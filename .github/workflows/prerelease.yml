@@ -641,7 +641,9 @@ jobs:
           python .github/scripts/release-validation.py gate --proof "$RUNNER_TEMP/stage-ci-full-proof.json"
           python tools/release-validation.py assets
           python - <<'PY'
-          import importlib.util, json, os, subprocess
+          import importlib.util, json, os, pathlib, subprocess, sys
+          # The inline loader needs the verified artifact's sibling modules.
+          sys.path.insert(0, str(pathlib.Path("tools").resolve()))
           spec = importlib.util.spec_from_file_location("checks", "tools/release-validation.py")
           checks = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(checks)
