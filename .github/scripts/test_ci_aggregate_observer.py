@@ -87,12 +87,12 @@ class ObserverTests(unittest.TestCase):
                 returned=fetch_scope['download_job_log']()
             self.assertIs(returned,capture_scope['answer'])
             expected=status if type(status) is str and status in observer.CAPTURE_STATES else 'unknown'
-            self.assertEqual(record.last,{'fetch':'job_log_capture','status':expected})
+            self.assertEqual(record.last,dict({'fetch':'job_log_capture','status':expected}, **({'error':'unknown'} if expected == 'nonzero' else {})))
             self.assertIsNone(record.active)
             self.assertNotIn('synthetic-secret',json.dumps(record.last))
             with record.enabled():
                 capture_scope['capture']()
-            self.assertEqual(record.last,{'fetch':'job_log_capture','status':expected})
+            self.assertEqual(record.last,dict({'fetch':'job_log_capture','status':expected}, **({'error':'unknown'} if expected == 'nonzero' else {})))
 
     def test_unexpected_capture_shape_is_closed_unknown(self):
         root=Path('/synthetic/baseline');record=observer.CaptureObserver(root)
@@ -123,6 +123,7 @@ class ObserverTests(unittest.TestCase):
         stack.enter_context(patch.object(observer, 'PLAN_SIZE', len(raw)))
         stack.enter_context(patch.object(observer, 'PLAN_DIGEST', hashlib.sha256(raw).hexdigest()))
         stack.enter_context(patch.object(observer, 'verify_source'))
+        stack.enter_context(patch.object(observer, 'closed_cli_version', return_value='2.102.0'))
         stack.enter_context(patch.object(observer, 'load', side_effect=[coverage,native]))
         self.addCleanup(stack.close)
         return coverage, native
@@ -207,6 +208,31 @@ class ObserverTests(unittest.TestCase):
                 with self.assertRaises(ValueError):observer.observer_identity(env)
         with patch.object(Path,'read_text',return_value=json.dumps(correct)),patch.object(observer,'git',return_value='b'*40):
             with self.assertRaises(ValueError):observer.observer_identity(env)
+
+    def test_closed_cli_refusal_never_echoes_unrecognized_stderr(self):
+        for prefix in (b'', b'gh: '):
+            self.assertEqual(observer.closed_capture_error(prefix + observer.ESCAPE_REFUSAL + b'\n'),
+                             'escape_sequence_refused')
+        for value in (b'synthetic-secret', b'HTTP 403 synthetic-secret',
+                      observer.ESCAPE_REFUSAL + b' synthetic-secret\n', b'x'*1025, [], None):
+            self.assertEqual(observer.closed_capture_error(value), 'unknown')
+
+    def test_refusal_callback_retains_only_fixed_error(self):
+        from types import SimpleNamespace
+        root = Path('/synthetic/baseline'); record = observer.CaptureObserver(root)
+        frame = SimpleNamespace(f_code=SimpleNamespace(co_filename=str(root/'.github/scripts/ci-nearby-native.py'), co_name='capture'))
+        record.active = 'job_log_capture'
+        value = ('nonzero', 1, b'synthetic-secret', observer.ESCAPE_REFUSAL + b'\n')
+        record.observe(frame, 'return', value)
+        self.assertEqual(record.last, {'fetch':'job_log_capture', 'status':'nonzero', 'error':'escape_sequence_refused'})
+        self.assertNotIn('synthetic-secret', json.dumps(record.last))
+
+    def test_cli_version_is_only_bounded_numeric_release(self):
+        with patch.object(observer.subprocess, 'run', return_value=Mock(stdout=b'gh version 2.102.0 (date)\nsynthetic-secret\n')):
+            self.assertEqual(observer.closed_cli_version(), '2.102.0')
+        for value in (b'gh version synthetic-secret', b'gh version 1.2.3-synthetic-secret', b'x'*1025):
+            with patch.object(observer.subprocess, 'run', return_value=Mock(stdout=value)):
+                with self.assertRaises(ValueError): observer.closed_cli_version()
 
     def test_workflow_has_no_upload_no_matrix_and_fixed_baseline(self):
         text=SCRIPT.parents[1].joinpath('workflows/aggregate-observer.yml').read_text()

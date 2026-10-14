@@ -146,6 +146,25 @@ def closed_failure(error, root, fallback):
     return {'stage': stage, 'class': error_class(error), 'frames': frames[-12:]}
 
 
+ESCAPE_REFUSAL = b'the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway'
+
+
+def closed_capture_error(value):
+    # Compare only exact documented CLI errors. Never retain or emit stderr.
+    if type(value) is bytes and len(value) <= 1024:
+        if value in (ESCAPE_REFUSAL + b'\n', b'gh: ' + ESCAPE_REFUSAL + b'\n'):
+            return 'escape_sequence_refused'
+    return 'unknown'
+
+
+def closed_cli_version():
+    result = subprocess.run(['gh', '--version'], check=True, capture_output=True, timeout=10)
+    require(type(result.stdout) is bytes and len(result.stdout) <= 1024)
+    match = re.match(rb'gh version ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(?:[ \r\n]|$)', result.stdout)
+    require(match is not None)
+    return match[1].decode('ascii')
+
+
 CAPTURE_STATES = frozenset(('completed', 'nonzero', 'timeout', 'output_limit',
     'capture_failed', 'launch_failed'))
 
@@ -153,7 +172,8 @@ CAPTURE_STATES = frozenset(('completed', 'nonzero', 'timeout', 'output_limit',
 class CaptureObserver:
     """Read only the closed status field from the verified capture return.
 
-    Never inspect the remaining tuple elements, locals, command, or buffers.
+    Inspect stderr only by exact closed refusal comparison; never retain it.
+    Never inspect stdout, locals, command, or other buffers.
     The callback cannot change the original return or validator decision.
     """
     def __init__(self, root):
@@ -177,6 +197,8 @@ class CaptureObserver:
             if type(value) is tuple and len(value) == 4 and type(value[0]) is str and value[0] in CAPTURE_STATES:
                 status = value[0]
             self.last = {'fetch': self.active, 'status': status}
+            if status == 'nonzero':
+                self.last['error'] = closed_capture_error(value[3])
 
     @contextlib.contextmanager
     def enabled(self):
@@ -219,6 +241,7 @@ def run_observation(root, observation):
         with silence_process_output(), tempfile.TemporaryDirectory(prefix='aggregate-observation-') as private:
             private_path = Path(private)
             verify_source(root)
+            report['githubCliVersion'] = closed_cli_version()
             coverage = load(root / '.github/scripts/ci-coverage.py', 'observed_original_coverage')
             native = load(root / '.github/scripts/ci-nearby-native.py', 'observed_original_capture')
             stage = 'target_identity'
@@ -271,6 +294,8 @@ def run_observation(root, observation):
         captured = capture_observer.last
         if captured is not None and report['stage'] == captured['fetch']:
             report['captureStatus'] = captured['status']
+            if 'error' in captured:
+                report['captureError'] = captured['error']
     finally:
         os.environ.clear(); os.environ.update(original_env)
         report['privateOutputDeleted'] = private_path is None or not private_path.exists()
