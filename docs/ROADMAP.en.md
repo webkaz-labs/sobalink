@@ -16,7 +16,7 @@ The published baseline is [0.4.0-alpha.4](https://github.com/webkaz-labs/sobalin
 | Mixed connections | Separate selected engines, signed same-peer binding and separately approved application access | Physical network transitions and application reconnect remain unverified; no byte replay or existing-stream migration |
 | Files and stored state | Explicit send, batch consent, optional exact-peer autosave, no overwrite, bounded staging/accounting, uncertain-save recovery | Active-transfer interruption, real filesystems, ordinary-user Windows process behavior and physical power-loss durability |
 | Durable queues | Released explicit file queue; unreleased single-recipient text prepare/review/commit, original IDs/deadlines and exact save evidence | Final-source results for ACK loss, restart, history cleanup and cancellation are recorded separately from physical power-loss/OS-lifecycle acceptance |
-| Nearby connection setup | [Short-lived scoped discovery and two-sided review](CONNECTION_SETUP.en.md), QR/text fallback and selection of an explicitly permitted reachable relay role | Physical two-device/two-OS discovery and discovery-to-browser end-to-end acceptance remain separate from same-host native and manual-contact browser evidence |
+| Nearby connection setup | [Scoped request-and-accept pairing](CONNECTION_SETUP.en.md), receiving and outbound-only modes, explicit first-use key acceptance (TOFU) or independent full-fingerprint verification, and exact-key re-enrollment | TOFU does not independently verify first-use identity. Exact-source native/browser results remain separate from physical two-device/two-OS discovery and discovery-to-browser acceptance |
 | Shared-service access | [Separate catalog-view consent, peer list exchange and fresh connection review](CATALOG_VIEW_CONTRACT.en.md), alongside local catalog observations | Exact-source process/browser results and physical-device acceptance are distinct; historical cached observations remain stale |
 | Human interfaces | Japanese/English guided CLI, local UI, services, graph, route review, private sign-in | Physical phone QR, actual native IME/fonts and terminal input remain unverified |
 | Lifecycle | Explicit startup approvals, offline suppression, saved settings and per-user OS startup | Actual OS sign-in and suspend/wake, real proxy/application reconnect |
@@ -46,7 +46,7 @@ The earlier 0.3-series CI optimization plan is historical. Any further CI change
 
 ### Remaining feature scope and historical plans
 
-The [0.3-series convenience plan](CONVENIENCE_PLAN.en.md) is historical; its then-unimplemented items are not a current backlog. In particular, [nearby setup](CONNECTION_SETUP.en.md) now selects a reachable, explicitly permitted relay role between the participants. It does not deploy software to another host or provide general unattended relay election/operation.
+The [0.3-series convenience plan](CONVENIENCE_PLAN.en.md) is historical; its then-unimplemented items are not a current backlog. In particular, [nearby setup](CONNECTION_SETUP.en.md) provides request, receive and outbound-only roles, with explicit permission for the receiver to relay. Legacy full-fingerprint setup retains QR/text exchange and selection of a permitted reachable relay role. Neither workflow deploys software to another host or provides general unattended relay election/operation.
 
 The following remain outside the current implementation scope, without a promised release date:
 
