@@ -36,6 +36,118 @@ jobs:
           python -m unittest discover -s .github/scripts -p test_ci_diagnostic.py -v
           python .github/scripts/ci-diagnostic.py
 
+  diagnostic-outbox-accept:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'outbox-accept'
+    runs-on: windows-2025
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify closed Windows acceptance diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_go_test.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_metrics.py' -v
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Prepare exact pinned dependencies and compile without execution
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = windows
+          test "$(go env GOARCH)" = amd64
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go mod verify
+          git diff --exit-code -- go.mod go.sum
+          go test -race -c -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -o "$RUNNER_TEMP/outbox-accept-core.test.exe"
+      - name: Verify exact durable acceptance contract regressions
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite outbox-accept-contract -- python .github/scripts/ci-go-test.py --exact \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestReceiveSpaceFailureBeforeAcceptancePreservesDestination \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptLifecycleBusyPreservesConsent \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptLifecycleBusyPreservesConsent/file/admission \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptLifecycleBusyPreservesConsent/file/save-check \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptLifecycleBusyPreservesConsent/file/save-owner \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptLifecycleBusyPreservesConsent/directory/admission \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptLifecycleBusyPreservesConsent/directory/save-check \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptLifecycleBusyPreservesConsent/directory/save-owner \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableAcceptUncertainPublicationIsNotBusy \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableLifecycleBusyIsTransientAndPreservesLockOrder \
+            --expect github.com/webkaz-labs/sobalink/internal/transfer:TestDurableBusyCandidateNeverBecomesLocalReceipt \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessAcceptRetryOnlyExactTypedBusy \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessAcceptRetryKeepsOriginalBudget \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/success \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/busy \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/wrapped-busy \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/recovery \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/recovery-with-busy \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/uncertain-with-busy \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/permission \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/peer \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/paused \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/expired \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/clock \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/state \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/missing \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/space \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/space-unknown \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/storage \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/unsafe \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/raw \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/path \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/missing-path \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/existing-path \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/uncertain-raw \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/uncertain-raw-with-busy \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/permission-with-busy \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/canceled \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/deadline \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestRouteProcessAcceptErrorClassification/coded \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferAcceptBusyCacheAndExplicitRetry \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferAcceptExplicitRetryRechecksAuthority \
+            --expect github.com/webkaz-labs/sobalink/internal/core:TestTransferAcceptErrorBoundaryExcludesUncertainty \
+            --expect github.com/webkaz-labs/sobalink/cmd/soba:TestDiskSpaceErrorsLocalizeHumanOutputAndKeepJSONStable \
+            --expect github.com/webkaz-labs/sobalink/cmd/soba:TestTransferAcceptCLIExplicitRetryKeepsSelection \
+            --expect github.com/webkaz-labs/sobalink/cmd/soba:TestTransferAcceptCLIUnconfirmedNeverPromisesRetry \
+            --expect github.com/webkaz-labs/sobalink/cmd/soba:TestTransferAcceptCLIJSONErrorsRemainStable \
+            -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/transfer ./internal/core ./cmd/soba -run '^(TestReceiveSpaceFailureBeforeAcceptancePreservesDestination|TestDurableAcceptLifecycleBusyPreservesConsent|TestDurableAcceptUncertainPublicationIsNotBusy|TestDurableLifecycleBusyIsTransientAndPreservesLockOrder|TestDurableBusyCandidateNeverBecomesLocalReceipt|TestOutboxProcessAcceptRetryOnlyExactTypedBusy|TestOutboxProcessAcceptRetryKeepsOriginalBudget|TestRouteProcessAcceptErrorClassification|TestTransferAcceptBusyCacheAndExplicitRetry|TestTransferAcceptExplicitRetryRechecksAuthority|TestTransferAcceptErrorBoundaryExcludesUncertainty|TestDiskSpaceErrorsLocalizeHumanOutputAndKeepJSONStable|TestTransferAcceptCLIExplicitRetryKeepsSelection|TestTransferAcceptCLIUnconfirmedNeverPromisesRetry|TestTransferAcceptCLIJSONErrorsRemainStable)$'
+      - name: Observe one original durable outbox restart acceptance
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite outbox-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessRestart -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxProcessRestart$'
+      - name: Preserve bounded diagnostic metrics
+        if: always()
+        run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/outbox-accept-metrics.json"
+      - name: Upload diagnostic metrics only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-outbox-accept-metrics
+          path: ${{ runner.temp }}/outbox-accept-metrics.json
+          if-no-files-found: error
+          retention-days: 14
+
+
   diagnostic-product-activation:
     needs: diagnostic-selection
     if: needs.diagnostic-selection.outputs.suite == 'product' || needs.diagnostic-selection.outputs.suite == 'activation'

@@ -20,7 +20,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
                     sha=sha, checkout_sha=sha)
 
     def test_exact_closed_suites(self):
-        for suite in ('web', 'product', 'activation', 'nearby', 'text', 'dnssd'):
+        for suite in ('web', 'product', 'activation', 'nearby', 'text', 'dnssd', 'outbox-accept'):
             self.assertEqual(gate.select(**self.args(suite)), suite)
 
     def test_rejects_other_events_refs_and_heads(self):
@@ -64,7 +64,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         spec.loader.exec_module(coverage)
         jobs = [dict(name=name, status='completed', conclusion='success', steps=[])
                 for name in ('diagnostic-selection', 'diagnostic-web-activation',
-                             'diagnostic-product-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd')]
+                             'diagnostic-product-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd', 'diagnostic-outbox-accept')]
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs, scope)
@@ -74,7 +74,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
         trigger = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
         self.assertEqual(trigger.strip(), 'create:')
         self.assertEqual(re.findall(r'^  ([a-z][a-z0-9-]*):$', text.split('\njobs:\n')[1], re.M),
-                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd'])
+                         ['diagnostic-selection', 'diagnostic-outbox-accept', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd'])
         for forbidden in ('continue-on-error:', 'actions/cache', 'secrets.', 'workflow_dispatch:',
                           'ci-coverage.py', 'ci-required:', 'package-tool', 'id-token: write', 'contents: write'):
             self.assertNotIn(forbidden, text)
@@ -89,6 +89,40 @@ class DiagnosticPolicyTests(unittest.TestCase):
         self.assertIn('cancel-in-progress: false', text)
         self.assertIn('not release validation', text)
         self.assertIn('push:\n    branches: [main]', self.workflow('ci'))
+
+
+
+    def test_outbox_accept_preserves_exact_original_command(self):
+        diagnostic = self.body(self.workflow('activation-diagnostic'), 'diagnostic-outbox-accept')
+        original = self.workflow('ci')
+        command = next(line.strip() for line in original.splitlines()
+                       if 'ci-metrics.py run --suite outbox-process-restart ' in line)
+        self.assertEqual(diagnostic.count(command), 1)
+        self.assertIn('runs-on: windows-2025', diagnostic)
+        for check in ('test "$(go env GOVERSION)" = go1.27.1',
+                      'test "$(go env GOOS)" = windows',
+                      'test "$(go env GOARCH)" = amd64'):
+            self.assertIn(check, diagnostic)
+        self.assertNotIn('matrix:', diagnostic)
+        self.assertIn('timeout-minutes: 6', diagnostic)
+        self.assertIn("SOBALINK_RUN_DIRECT_INTEGRATION: '1'", diagnostic)
+        self.assertIn('go test -race -c -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -o "$RUNNER_TEMP/outbox-accept-core.test.exe"', diagnostic)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', diagnostic)
+        self.assertIn('ref: ${{ github.sha }}', diagnostic)
+        self.assertIn("if: needs.diagnostic-selection.outputs.suite == 'outbox-accept'", self.workflow('activation-diagnostic'))
+        self.assertIn('name: diagnostic-outbox-accept-metrics', diagnostic)
+        self.assertNotIn('rerun', diagnostic)
+        focused = diagnostic.split('name: Verify exact durable acceptance contract regressions', 1)[1].split('name: Observe one original', 1)[0]
+        self.assertIn('timeout-minutes: 4', focused)
+        self.assertIn('ci-go-test.py --exact', focused)
+        expected = re.findall(r'--expect (github.com/webkaz-labs/sobalink/[^ :]+):(Test[^ \\]+)', focused)
+        self.assertEqual(len(expected), 48)
+        self.assertEqual(len(set(expected)), 48)
+        self.assertEqual(sum('/' not in test for _, test in expected), 15)
+        self.assertEqual({pkg for pkg, _ in expected}, {'github.com/webkaz-labs/sobalink/internal/transfer', 'github.com/webkaz-labs/sobalink/internal/core', 'github.com/webkaz-labs/sobalink/cmd/soba'})
+        self.assertIn('go test -race -count=1 -timeout=3m', focused)
+        self.assertIn('run --suite outbox-accept-contract', focused)
+        self.assertNotIn('SOBALINK_RUN_DIRECT_INTEGRATION', focused)
 
 
 if __name__ == '__main__':
