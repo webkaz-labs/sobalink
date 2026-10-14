@@ -74,7 +74,7 @@ type Tool struct {
 	run             func(env []string, args ...string) ([]byte, error)
 	nativeProbe     func() (*NativeBuild, []string, error)
 	nativeInventory func([]goPackage) ([]NativePackage, []Notice, error)
-	nativeLinks     func(string) ([]string, error)
+	nativeLinks     func(string, string) ([]string, error)
 }
 
 func New(root string) (*Tool, error) {
@@ -209,9 +209,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		return err
 	}
 	flags := "-s -w -buildid= -X main.version=" + version
-	if native != nil {
-		flags += " -linkmode=external -B=none"
-	}
+	var expectedUUID string
 	packagesJSON, err := t.run(env, "list", "-tags", BuildTags, "-mod=readonly", "-buildvcs=false", "-deps", "-json", "./cmd/soba")
 	if err != nil {
 		return err
@@ -225,6 +223,8 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		if err != nil {
 			return err
 		}
+		expectedUUID = darwinBuildUUID(commit, version, darwinUUIDNativeDigest(native))
+		flags += " -linkmode=external -B=0x" + expectedUUID
 	}
 	goRoot, err := t.run(env, "env", "GOROOT")
 	if err != nil {
@@ -283,7 +283,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		if !reflect.DeepEqual(native, verified) {
 			return errors.New("native toolchain or source inputs changed during package build")
 		}
-		native.Libraries, err = t.nativeLinks(bin)
+		native.Libraries, err = t.nativeLinks(bin, expectedUUID)
 		if err != nil {
 			return err
 		}

@@ -3,6 +3,7 @@ package distribution
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -256,6 +257,9 @@ func TestNativeOutputCaptureIsBounded(t *testing.T) {
 		t.Fatal("unbounded native tool output")
 	}
 }
+
+const darwinUUIDFixture = "2e6dad755e7b82b2969ea347a6757472"
+
 func writeMachOFixture(t *testing.T, path string, libraries []string, minimum uint32, extra uint32) {
 	t.Helper()
 	var commands bytes.Buffer
@@ -265,7 +269,10 @@ func writeMachOFixture(t *testing.T, path string, libraries []string, minimum ui
 		}
 	}
 	appendWords(0x32, 24, 1, minimum<<16, 26<<16, 0)
-	count := uint32(1)
+	uuid, _ := hex.DecodeString(darwinUUIDFixture)
+	appendWords(0x1b, 24)
+	commands.Write(uuid)
+	count := uint32(2)
 	for _, name := range libraries {
 		raw := append([]byte(name), 0)
 		size := (24 + len(raw) + 7) / 8 * 8
@@ -289,7 +296,7 @@ func writeMachOFixture(t *testing.T, path string, libraries []string, minimum ui
 func TestDarwinBinaryInspectionRejectsChangedLinkageAndMinimum(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "synthetic-macho")
 	writeMachOFixture(t, path, darwinSystemLibraries, 13, 0)
-	got, err := inspectDarwinLibraries(path)
+	got, err := inspectDarwinLibraries(path, darwinUUIDFixture)
 	if err != nil || !reflect.DeepEqual(got, darwinSystemLibraries) {
 		t.Fatalf("valid native inspection failed: %v", err)
 	}
@@ -303,7 +310,7 @@ func TestDarwinBinaryInspectionRejectsChangedLinkageAndMinimum(t *testing.T) {
 		{darwinSystemLibraries[:len(darwinSystemLibraries)-1], 13, 0},
 	} {
 		writeMachOFixture(t, path, change.libraries, change.minimum, change.extra)
-		if _, err := inspectDarwinLibraries(path); err == nil {
+		if _, err := inspectDarwinLibraries(path, darwinUUIDFixture); err == nil {
 			t.Fatal("accepted unreviewed Mach-O boundary")
 		}
 	}
@@ -326,7 +333,7 @@ func TestDarwinBinaryInspectionIncludesWeakLibraries(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inspectDarwinLibraries(path); err == nil {
+	if _, err := inspectDarwinLibraries(path, darwinUUIDFixture); err == nil {
 		t.Fatal("ignored an unreviewed weak library")
 	}
 }
@@ -396,5 +403,113 @@ func TestDarwinSDKRequiresUmbrellaWithoutStandaloneDNSStub(t *testing.T) {
 	}
 	if _, _, err := probe(); err == nil {
 		t.Fatal("accepted missing system umbrella")
+	}
+}
+
+func TestDarwinUUIDFixedVectorAndNativeNormalization(t *testing.T) {
+	commit, version, native := strings.Repeat("a", 40), "1.2.3", strings.Repeat("1", 64)
+	if got := darwinBuildUUID(commit, version, native); got != darwinUUIDFixture {
+		t.Fatalf("cross-language UUID vector differs: %s", got)
+	}
+	for _, identity := range [][3]string{{strings.Repeat("b", 40), version, native}, {commit, "1.2.4", native}, {commit, version, strings.Repeat("2", 64)}} {
+		got := darwinBuildUUID(identity[0], identity[1], identity[2])
+		if got == darwinUUIDFixture || !darwinUUIDPattern.MatchString(got) {
+			t.Fatal("UUID did not bind public build inputs")
+		}
+	}
+	n := &NativeBuild{}
+	const want = "62fe8fdfd20854cda760466679b09c7cd6152a3d36d9744f8dfa9aa3a4951f03"
+	if got := darwinUUIDNativeDigest(n); got != want || n.Libraries != nil {
+		t.Fatal("cross-language native digest or non-mutating normalization differs")
+	}
+	n.Libraries = append([]string{}, darwinSystemLibraries...)
+	if nativeDigest(n) != want {
+		t.Fatal("prelink identity differs from verified final inventory")
+	}
+	for _, change := range []func(*NativeBuild){
+		func(n *NativeBuild) { n.CompilerSHA256 = strings.Repeat("2", 64) },
+		func(n *NativeBuild) { n.SDKBuild = "25A2" },
+		func(n *NativeBuild) { n.SDKInputs = []Notice{{"SDKSettings.json", strings.Repeat("3", 64)}} },
+		func(n *NativeBuild) { n.Packages = []NativePackage{{Package: nearbyPackage}} },
+		func(n *NativeBuild) { n.PolicyInputs = []Notice{{"synthetic.go", strings.Repeat("4", 64)}} },
+	} {
+		copy := *n
+		change(&copy)
+		if darwinUUIDNativeDigest(&copy) == want {
+			t.Fatal("native input change did not alter UUID identity")
+		}
+	}
+}
+
+func TestDarwinMachOCommandsFailClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "synthetic-macho")
+	writeMachOFixture(t, path, darwinSystemLibraries, 13, 0)
+	valid := readFixture(t, path)
+	word := binary.LittleEndian.PutUint32
+	replace := func(raw []byte, start int, block []byte) []byte {
+		old := int(binary.LittleEndian.Uint32(raw[start+4 : start+8]))
+		out := append(append(append([]byte{}, raw[:start]...), block...), raw[start+old:]...)
+		word(out[20:24], uint32(len(out)-32))
+		return out
+	}
+	add := func(raw, block []byte) []byte {
+		out := append(raw, block...)
+		word(out[16:20], binary.LittleEndian.Uint32(out[16:20])+1)
+		word(out[20:24], uint32(len(out)-32))
+		return out
+	}
+	cases := map[string]func([]byte) []byte{
+		"missing UUID":   func(b []byte) []byte { b = replace(b, 56, nil); word(b[16:20], 5); return b },
+		"duplicate UUID": func(b []byte) []byte { return add(b, valid[56:80]) },
+		"zero UUID":      func(b []byte) []byte { clear(b[64:80]); return b },
+		"wrong UUID":     func(b []byte) []byte { b[64] ^= 1; return b },
+		"short UUID": func(b []byte) []byte {
+			block := append([]byte{}, b[56:72]...)
+			word(block[4:8], 16)
+			return replace(b, 56, block)
+		},
+		"long UUID": func(b []byte) []byte {
+			block := append(append([]byte{}, b[56:80]...), make([]byte, 8)...)
+			word(block[4:8], 32)
+			return replace(b, 56, block)
+		},
+		"duplicate deployment":       func(b []byte) []byte { return add(b, valid[32:56]) },
+		"missing deployment":         func(b []byte) []byte { word(b[32:36], 0); return b },
+		"legacy deployment":          func(b []byte) []byte { word(b[32:36], 0x24); return b },
+		"malformed deployment tools": func(b []byte) []byte { word(b[52:56], 1); return b },
+		"duplicate library": func(b []byte) []byte {
+			end := 80 + int(binary.LittleEndian.Uint32(b[84:88]))
+			return add(b, valid[80:end])
+		},
+		"unaligned command":       func(b []byte) []byte { word(b[36:40], 23); return b },
+		"zero command":            func(b []byte) []byte { word(b[36:40], 0); return b },
+		"short command":           func(b []byte) []byte { word(b[36:40], 4); return b },
+		"oversized command":       func(b []byte) []byte { word(b[36:40], 0xfffffff8); return b },
+		"trailing command bytes":  func(b []byte) []byte { b = append(b, make([]byte, 8)...); word(b[20:24], uint32(len(b)-32)); return b },
+		"truncated header":        func(b []byte) []byte { return b[:31] },
+		"truncated commands":      func(b []byte) []byte { return b[:len(b)-1] },
+		"zero commands":           func(b []byte) []byte { word(b[16:20], 0); return b },
+		"too many commands":       func(b []byte) []byte { word(b[16:20], 1025); return b },
+		"count exceeds bytes":     func(b []byte) []byte { word(b[16:20], 1024); return b },
+		"zero command bytes":      func(b []byte) []byte { word(b[20:24], 0); return b },
+		"unbounded command bytes": func(b []byte) []byte { word(b[20:24], 1024*1024+1); return b },
+		"wrong target":            func(b []byte) []byte { word(b[4:8], 0x1000007); return b },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(path, mutate(append([]byte{}, valid...)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := inspectDarwinLibraries(path, darwinUUIDFixture); err == nil {
+				t.Fatal("accepted malformed Mach-O inventory")
+			} else if strings.Contains(err.Error(), path) || strings.Contains(err.Error(), darwinUUIDFixture) {
+				t.Fatal("inspection error leaked input details")
+			}
+		})
+	}
+	for _, expected := range []string{"", strings.Repeat("0", 32), strings.ToUpper(darwinUUIDFixture), "synthetic/private/path"} {
+		if _, err := inspectDarwinLibraries(path, expected); err == nil || strings.Contains(err.Error(), "synthetic/private/path") {
+			t.Fatal("invalid expected UUID was accepted or exposed")
+		}
 	}
 }

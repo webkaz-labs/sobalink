@@ -334,6 +334,25 @@ def native_digest(native):
     return digest(json.dumps(native, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
 
 
+DARWIN_GO_VERSION = 'go1.27.1'
+DARWIN_BUILD_TAGS = 'ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy'
+
+
+def darwin_build_uuid(source_commit, version, native_identity):
+    """Public UUIDv8 build identity; full content SHA256 is verified separately."""
+    assert isinstance(source_commit, str) and re.fullmatch(r'[0-9a-f]{40}', source_commit), 'invalid UUID source commit'
+    assert isinstance(version, str) and re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?', version), 'invalid UUID version'
+    if '-' in version:
+        assert all(not (len(part) > 1 and part[0] == '0' and part.isdecimal()) for part in version.split('-', 1)[1].split('.')), 'invalid UUID prerelease version'
+    assert isinstance(native_identity, str) and re.fullmatch(r'[0-9a-f]{64}', native_identity), 'invalid UUID native identity'
+    identity = ('sobalink-darwin-uuid-v1\n' + source_commit + '\n' + version +
+                '\ndarwin-arm64\n' + DARWIN_GO_VERSION + '\n' + DARWIN_BUILD_TAGS + '\n' + native_identity + '\n')
+    uuid = bytearray(hashlib.sha256(identity.encode('ascii')).digest()[:16])
+    uuid[6] = (uuid[6] & 0x0f) | 0x80
+    uuid[8] = (uuid[8] & 0x3f) | 0x80
+    return uuid.hex()
+
+
 def verify_native(build, notices, bom, binary=None):
     """The same target-aware admission in assets, archive smoke and installation."""
     target = build.get('target')
@@ -343,8 +362,9 @@ def verify_native(build, notices, bom, binary=None):
     assert build.get('go_version') == 'go1.27.1' and build.get('trimpath') is True and build.get('buildvcs') is False, 'unexpected native build settings'
     expected_flags = '-s -w -buildid= -X main.version=' + build['version']
     if darwin:
-        expected_flags += ' -linkmode=external -B=none'
-    assert build.get('ldflags') == expected_flags, 'unexpected linker flags'
+        assert build.get('build_tags') == DARWIN_BUILD_TAGS, 'unexpected Darwin build tags'
+    else:
+        assert build.get('ldflags') == expected_flags, 'unexpected linker flags'
     props = source_properties(bom['metadata'])
     assert props.get('build:target') == target and props.get('source:commit') == build['source_commit'], 'SBOM build identity differs'
     assert props.get('build:cgo') == ('1' if darwin else '0'), 'SBOM cgo policy differs'
@@ -355,6 +375,9 @@ def verify_native(build, notices, bom, binary=None):
         return
     native = build.get('native_build')
     assert type(native) is dict and set(native) == NATIVE_KEYS and native == notices.get('native_build'), 'native provenance missing or inconsistent'
+    expected_uuid = darwin_build_uuid(build['source_commit'], build['version'], native_digest(native))
+    expected_flags += ' -linkmode=external -B=0x' + expected_uuid
+    assert build.get('ldflags') == expected_flags, 'unexpected linker flags'
     assert type(native['schema']) is int and native['schema'] == 1, 'invalid native schema'
     assert native['host_os'] == 'darwin' and native['host_arch'] == 'arm64', 'non-native Darwin compiler'
     assert native['deployment_target'] == '13.0', 'unexpected deployment target'
@@ -415,27 +438,32 @@ def verify_native(build, notices, bom, binary=None):
     assert len(root_edges) == 1 and {'system:' + p for p in libraries} <= set(root_edges[0]['dependsOn']), 'system dependency edges missing'
     assert props.get('build:native:sha256') == native_digest(native), 'native SBOM digest differs'
     if binary is not None:
-        assert read_macho_libraries(binary) == libraries, 'installed native linkage differs'
+        assert read_macho_libraries(binary, expected_uuid) == libraries, 'installed native linkage differs'
 
 
-def read_macho_libraries(path):
+def read_macho_libraries(path, expected_uuid):
     """Bounded direct Mach-O inspection; no compiler or credential API invoked."""
     import struct
+    assert isinstance(expected_uuid, str) and re.fullmatch(r'[0-9a-f]{12}8[0-9a-f]{3}[89ab][0-9a-f]{15}', expected_uuid), 'invalid expected Darwin UUID'
+    uuid = bytes.fromhex(expected_uuid)
     with pathlib.Path(path).open('rb') as stream:
         header = stream.read(32)
         assert len(header) == 32, 'incomplete Mach-O header'
         magic, cpu, subtype, filetype, count, size, flags, reserved = struct.unpack('<8I', header)
         assert magic == 0xfeedfacf and cpu == 0x100000c and filetype == 2, 'wrong installed Mach-O target'
-        assert 0 < count <= 1024 and 0 < size <= 1024 * 1024, 'unbounded Mach-O commands'
+        assert 0 < count <= 1024 and count * 8 <= size <= 1024 * 1024, 'unbounded Mach-O commands'
         raw = stream.read(size)
         assert len(raw) == size, 'incomplete Mach-O commands'
-    libraries, offset, deployment = [], 0, False
+    libraries, offset, deployment, found_uuid = [], 0, False, False
     for _ in range(count):
         assert offset + 8 <= len(raw), 'short Mach-O command'
         command, length = struct.unpack_from('<2I', raw, offset)
         assert length >= 8 and length % 8 == 0 and offset + length <= len(raw), 'invalid Mach-O command length'
         block = raw[offset:offset + length]
-        assert command not in (0x8000001c, 0x1b), 'unreviewed Mach-O runtime search path or UUID'
+        assert command != 0x8000001c, 'unreviewed Mach-O runtime search path'
+        if command == 0x1b:
+            assert not found_uuid and length == 24 and block[8:] == uuid, 'invalid or unexpected Darwin UUID'
+            found_uuid = True
         if command in (0xc, 0x80000018, 0x8000001f, 0x20, 0x80000023):
             assert length >= 24, 'short Mach-O library command'
             start = struct.unpack_from('<I', block, 8)[0]
@@ -443,8 +471,10 @@ def read_macho_libraries(path):
             libraries.append(block[start:].split(b'\0', 1)[0].decode('ascii'))
         if command == 0x32:
             assert not deployment and length >= 24, 'invalid Mach-O deployment command'
+            assert struct.unpack_from('<I', block, 20)[0] * 8 + 24 == length, 'invalid Mach-O deployment tools'
             assert struct.unpack_from('<2I', block, 8) == (1, 13 << 16), 'wrong installed macOS deployment target'
             deployment = True
+        assert command not in (0x24, 0x25, 0x2f, 0x30), 'unreviewed Mach-O deployment command'
         offset += length
-    assert offset == size and deployment and len(set(libraries)) == len(libraries), 'invalid Mach-O inventory'
+    assert offset == size and deployment and found_uuid and sorted(libraries) == list(DARWIN_LIBRARIES), 'invalid Mach-O inventory'
     return sorted(libraries)
