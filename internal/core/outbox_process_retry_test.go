@@ -245,7 +245,11 @@ func TestOutboxProcessCommitObservation(t *testing.T) {
 		deadline    bool
 	}{
 		{"single-delayed-busy", 2100 * time.Millisecond, 1, 1, 2100 * time.Millisecond, true},
-		{"repeated-quick-busy", 0, 100, 100, 2 * time.Second, true},
+		// With 1ms commands, call 96 ends at 1996ms and its retry timer
+		// falls at 2016ms. The 2s deadline has no competing retry timer.
+		// Zero-duration commands instead tie both timers at 2s, where
+		// scheduler order can admit call 101 before cancellation runs.
+		{"repeated-quick-busy", time.Millisecond, 96, 96, 2 * time.Second, true},
 		{"busy-then-success", 5 * time.Millisecond, 2, 3, 55 * time.Millisecond, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -264,7 +268,7 @@ func TestOutboxProcessCommitObservation(t *testing.T) {
 					})
 				})
 				if calls != tc.wantCalls || observation.attempts != calls || observation.busyReplies != tc.busyCalls || observation.maxCommand != tc.delay || time.Since(start) != tc.wantElapsed || errors.Is(err, context.DeadlineExceeded) != tc.deadline {
-					t.Fatal("commit observation changed or misreported bounded retry behavior")
+					t.Fatalf("commit observation mismatch: calls=%d want_calls=%d attempts=%d busy_replies=%d want_busy=%d max_command_ns=%d want_command_ns=%d elapsed_ns=%d want_elapsed_ns=%d deadline=%t want_deadline=%t", calls, tc.wantCalls, observation.attempts, observation.busyReplies, tc.busyCalls, observation.maxCommand.Nanoseconds(), tc.delay.Nanoseconds(), time.Since(start).Nanoseconds(), tc.wantElapsed.Nanoseconds(), errors.Is(err, context.DeadlineExceeded), tc.deadline)
 				}
 				if tc.deadline {
 					if reply != nil || code != "outbox.commit: outbox_storage_busy" {
