@@ -362,3 +362,39 @@ jobs:
             ${{ runner.temp }}/soba-dnssd-sanitized/provenance.json
           if-no-files-found: error
           retention-days: 14
+
+  diagnostic-revocation:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'revocation'
+    runs-on: macos-26
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify exact-head and closed revocation evidence policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_revocation_diagnostic.py' -v
+      - name: Observe one original isolated-loopback revocation case
+        id: revocation
+        timeout-minutes: 30
+        run: python -B .github/scripts/ci-revocation-diagnostic.py
+      - name: Preserve only reconstructed revocation evidence
+        if: always() && steps.revocation.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-revocation-sanitized
+          path: |
+            ${{ runner.temp }}/soba-revocation-sanitized/result.json
+            ${{ runner.temp }}/soba-revocation-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -198,36 +199,104 @@ func TestLANCorePeerApplicationsIntegration(t *testing.T) {
 	if _, err := io.ReadFull(stream, response); err != nil || string(response) != "echo" {
 		t.Fatal("real shared application response failed")
 	}
+	// Capture the existing engine, without adding work to the revocation window.
+	// A failure snapshot reports only closed categories and aggregate counts.
+	host.mu.RLock()
+	observedRanges := host.rangeState
+	host.mu.RUnlock()
+	logRevocationFailure := func(stage string, n int, readErr error, freshMessage, receiverMessage string) {
+		targetReleased := false
+		select {
+		case <-targetDone:
+			targetReleased = true
+		default:
+		}
+		host.mu.RLock()
+		grants := len(host.active)
+		host.mu.RUnlock()
+		_, trusted := host.trust(guestKey)
+		policies, flows := -1, -1
+		if observedRanges != nil {
+			stats := observedRanges.engine.Stats()
+			policies, flows = stats.Policies, stats.Active
+		}
+		paired := len(host.lanStoreCopy().copy().Trust.Peers)
+		t.Logf("revocation_observation_v1 stage=%s read_bytes=%d read_result=%s target_released=%t app_trusted=%t core_grants=%d range_policies=%d range_flows=%d durable_pairs=%d fresh_message=%s receiver_message_observed_at_snapshot=%s", stage, n, revocationReadResult(readErr), targetReleased, trusted, grants, policies, flows, paired, freshMessage, receiverMessage)
+	}
 	must(host, "lan.revoke", map[string]any{"peerId": guestKey})
 	if _, trusted := host.trust(guestKey); trusted {
-		t.Fatal("revocation retained application trust")
+		t.Error("revocation retained application trust")
 	}
 	host.mu.RLock()
 	activeShares := len(host.active)
 	host.mu.RUnlock()
 	if activeShares != 0 {
-		t.Fatal("revocation retained active Core service grants")
+		t.Error("revocation retained active Core service grants")
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if n, err := stream.Read(make([]byte, 1)); n != 0 || err == nil {
-		t.Fatal("revocation left an authenticated application stream usable")
-	} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-		t.Fatal("revocation did not close the active application stream promptly")
+	// Keep the first failure sticky while reaching the existing bounded checks.
+	n, readErr := stream.Read(make([]byte, 1))
+	if n != 0 || readErr == nil {
+		logRevocationFailure("stream", n, readErr, "not_run", "not_run")
+		t.Error("revocation left an authenticated application stream usable")
+	} else if timeout, ok := readErr.(net.Error); ok && timeout.Timeout() {
+		logRevocationFailure("stream", n, readErr, "not_run", "not_run")
+		t.Error("revocation did not close the active application stream promptly")
 	}
 	select {
 	case <-targetDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("revocation did not release the application target connection")
+		t.Error("revocation did not release the application target connection")
 	}
 	call, stop = context.WithTimeout(ctx, 5*time.Second)
 	err = guest.peerJSON(call, hostKey, "POST", "/v1/messages", map[string]string{"id": "after-revoke", "text": "must fail"}, nil)
 	stop()
+	freshMessage := "not_acknowledged"
 	if err == nil {
-		t.Fatal("revoked peer sent another real message")
+		freshMessage = "acknowledged"
+		t.Error("revoked peer sent another real message")
+	}
+	// An error can mean transport loss, not an authorization rejection. Inspect
+	// only the fixed fixture ID, without printing it or any stored message.
+	// Absence is evidence at this snapshot, not a promise about later delivery.
+	host.mu.RLock()
+	receiverMessageObservedAtSnapshot := false
+	for _, received := range host.messages {
+		if received.ID == "after-revoke" {
+			receiverMessageObservedAtSnapshot = true
+			break
+		}
+	}
+	host.mu.RUnlock()
+	receiverMessage := "absent"
+	if receiverMessageObservedAtSnapshot {
+		receiverMessage = "present"
+		t.Error("revoked peer message was present at the receiver snapshot")
 	}
 	state, err := host.current(ctx)
 	if err != nil || len(state.Snapshot.Peers) != 0 || len(host.lanStoreCopy().copy().Trust.Peers) != 0 {
-		t.Fatal("revocation did not remove the durable canonical pairing")
+		t.Error("revocation did not remove the durable canonical pairing")
+	}
+	if t.Failed() {
+		logRevocationFailure("complete", n, readErr, freshMessage, receiverMessage)
 	}
 	cleanup()
+}
+
+// Never format an error: transport errors can contain addresses or private data.
+func revocationReadResult(err error) string {
+	if err == nil {
+		return "none"
+	}
+	if errors.Is(err, io.EOF) {
+		return "eof"
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return "closed"
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return "timeout"
+	}
+	return "other"
 }
