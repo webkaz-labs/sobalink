@@ -15,7 +15,7 @@ export const test = base.extend({
       assert.ok(session.schema === 1 && viewer.schema === 1 && url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.port && url.pathname === '/' && !url.search && !url.hash)
       assert.ok(typeof viewer.code === 'string' && /^[A-Za-z0-9_-]{32}$/.test(viewer.code))
       assert.ok(bounded(session.peerName) && bounded(session.peerId) && /^[a-f0-9]{64}$/.test(session.processId))
-      if (session.dispatch === true || session.outbox === true) {
+      if (session.dispatch === true || session.outbox === true || session.textOutbox === true) {
         assert.ok(Array.isArray(session.recipients) && session.recipients.length === 2)
         for (const peer of session.recipients) assert.ok(bounded(peer.id) && bounded(peer.name))
         assert.equal(session.recipients[0].id, session.peerId)

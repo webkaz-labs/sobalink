@@ -7,6 +7,7 @@ success or a cached test result. Release validation is independent of this file.
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -50,6 +51,8 @@ FAST_STEPS = (
     'Verify managed restart acceptance',
     "Verify direct LAN WireGuard and Core native applications",
     "Verify durable outbox restart across Core processes",
+    "Verify durable text restart and lost ACK across Core processes",
+    "Verify manual nearby setup across native Core peers",
     "Verify direct LAN synthetic expiry and rekey",
     "Verify explicit WAN discovery with isolated native STUN",
     "Verify guarded production direct and relay underlays",
@@ -58,12 +61,20 @@ FAST_STEPS = (
     "Wait for real-time lifecycle and lease checks",
     "Build native package and smoke archive contents",
 )
+LINUX_NEARBY_TARGETS = ('linux-amd64', 'linux-arm64')
+LINUX_NEARBY_STEPS = ('Verify Linux nearby native discovery without skips',)
+NATIVE_PACKAGE_TARGETS = ('windows-amd64', 'darwin-arm64')
+NATIVE_PACKAGE_STEPS = ('Collect required whole-Core race evidence', 'Verify remaining native package race coverage', 'Preserve required native package proof')
+MACOS_NEARBY_TARGETS = ('darwin-arm64',)
+MACOS_NEARBY_STEPS = ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof')
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 SCOPES = {"docs", "frontend", "go", "native-short", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Verify actual UI workflows with isolated Playwright fixtures",
-                 "Verify durable outbox recovery with separate agents and actual browser")
+                 "Verify durable outbox recovery with separate agents and actual browser",
+                 "Verify nearby setup with separate agents and actual browser",
+                 "Verify durable text recovery with separate agents and actual browser")
 GO_STEPS = ("Validate scoped Go selection", "Check exact toolchain and module graph",
             "Test affected Go packages and reverse dependencies")
 SCHEDULE_ACCEPTANCE = {
@@ -178,8 +189,14 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     if scope in ("native-short", "full"):
         for target, name in TARGETS.items():
             steps = FAST_STEPS + (LONG_STEPS + FULL_ONLY_STEPS if scope == "full" else ())
+            if target in LINUX_NEARBY_TARGETS:
+                steps += LINUX_NEARBY_STEPS
+            if target in MACOS_NEARBY_TARGETS:
+                steps += MACOS_NEARBY_STEPS
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
+            if target in NATIVE_PACKAGE_TARGETS:
+                steps += NATIVE_PACKAGE_STEPS
             passed(name, steps)
             if scope == "native-short":
                 for full_step in LONG_STEPS + FULL_ONLY_STEPS:
@@ -239,7 +256,7 @@ def job_timings(jobs):
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
     names = {*TARGETS.values(), "impact", "browser", "go-unit", "manifest-smoke"}
-    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS,
+    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}
@@ -249,6 +266,31 @@ def job_timings(jobs):
             for j in jobs if j.get("name") in names]
 
 
+def audit_macos_discovery():
+    path = ROOT / '.github/scripts/ci-dnssd-required.py'
+    spec = importlib.util.spec_from_file_location('ci_dnssd_required', path)
+    required = importlib.util.module_from_spec(spec)
+    exec(compile(path.read_bytes(), str(path), 'exec'), required.__dict__)
+    run = api('actions/runs/' + os.environ['GITHUB_RUN_ID'])
+    require(type(run.get('id')) is int and run['id'] == int(os.environ['GITHUB_RUN_ID'])
+            and type(run.get('run_attempt')) is int and run['run_attempt'] == int(os.environ['GITHUB_RUN_ATTEMPT']),
+            'current CI attempt changed')
+    return required.audit_artifact(api, run, head(), git('rev-parse', 'HEAD^{tree}').decode().strip())
+
+
+def audit_native_packages():
+    path = ROOT / '.github/scripts/ci-native-core-required.py'
+    spec = importlib.util.spec_from_file_location('ci_native_core_required', path)
+    required = importlib.util.module_from_spec(spec)
+    exec(compile(path.read_bytes(), str(path), 'exec'), required.__dict__)
+    run = api('actions/runs/' + os.environ['GITHUB_RUN_ID'])
+    require(type(run.get('id')) is int and run['id'] == int(os.environ['GITHUB_RUN_ID'])
+            and type(run.get('run_attempt')) is int and run['run_attempt'] == int(os.environ['GITHUB_RUN_ATTEMPT']),
+            'current CI attempt changed')
+    return {platform: required.audit_artifact(api, run, head(), git('rev-parse', 'HEAD^{tree}').decode().strip(), platform)
+            for platform in NATIVE_PACKAGE_TARGETS}
+
+
 def finalize(input_path, output, *, scheduled=False):
     require(not scheduled or os.environ.get("GITHUB_EVENT_NAME") == "schedule",
             "nightly aggregate requires a schedule event")
@@ -256,6 +298,10 @@ def finalize(input_path, output, *, scheduled=False):
     scope = plan["scope"]
     jobs = current_jobs()
     full = evaluate_jobs(jobs, scope, scheduled=scheduled)
+    macos_proof, package_proof = None, None
+    if scope in ('native-short', 'full'):
+        macos_proof = audit_macos_discovery()
+        package_proof = audit_native_packages()
     receipt = {"schema_version": 3, "repository": REPOSITORY,
                "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
                "head_sha": head(), "head_tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
@@ -266,7 +312,7 @@ def finalize(input_path, output, *, scheduled=False):
                "browser": "success" if scope in ("frontend", "native-short", "full") else "not_run",
                "manifest": "success" if scope in ("native-short", "full") else "not_run",
                "go_unit": "success" if scope == "go" else "not_run",
-               "selection": plan, "timings": job_timings(jobs)}
+               "selection": plan, "timings": job_timings(jobs), "macos_discovery_proof": macos_proof, "native_package_proof": package_proof}
     if scheduled:
         receipt["scheduled_acceptance"] = {name: "success" for name in SCHEDULE_ACCEPTANCE}
     pathlib.Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")

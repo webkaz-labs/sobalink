@@ -284,7 +284,7 @@ func (o *outboxCoordinator) cleanupPayloadOwnedLocked(p *outboxPayload) error {
 		}
 	}
 	for _, prep := range o.prepared {
-		if prep.intent.PayloadID == p.ID && !prep.discarded {
+		if prep.intent.PayloadID == p.ID && (prep.staging || !prep.discarded) {
 			return nil
 		}
 	}

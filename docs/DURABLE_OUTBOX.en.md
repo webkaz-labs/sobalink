@@ -2,22 +2,22 @@
 
 [日本語](DURABLE_OUTBOX.ja.md) · [CLI](CLI_GUIDE.en.md) · [Web controls](WEB_CONTROLS.en.md)
 
-This source adds an opt-in file/folder outbox. A successful queue operation means **accepted on this sending device**, not delivered. Only durable receiver evidence confirms a save. Source tests and synthetic checks do not establish release-package, physical-device, power-loss, enrollment or OS-login acceptance.
+The published 0.4.0-alpha.4 baseline includes an opt-in file/folder outbox. A successful queue operation means **accepted on this sending device**, not delivered. Only durable receiver evidence confirms a save. Source tests and synthetic checks do not establish release-package, physical-device, power-loss, enrollment or OS-login acceptance.
 
 ## Fresh profile format
 
-This version uses profile format 2 and initializes its sender and receiver stores automatically under the agent's lifecycle lock. There is no migration or feature-enable wizard. Earlier profiles are rejected without being rewritten or erased: preserve them and choose a fresh profile directory. Normal receiving approvals remain in force; each queued send still needs explicit review and consent.
+Published 0.4.0-alpha.4 uses profile format 2. The current unreleased checkout uses format 3, which also requires the message store for the [durable text queue](DURABLE_TEXT.en.md). Both initialize their required stores under the agent's lifecycle lock. Format 3 rejects alpha.4 and older profiles; preserve them and select a separate empty directory. There is no migration or feature-enable wizard. Earlier profiles are rejected without being rewritten or erased: preserve them and choose a fresh profile directory. Normal receiving approvals remain in force; each queued send still needs explicit review and consent.
 
 An interrupted first initialization may remain blocked if empty-state ownership cannot be certified. A ready profile never recreates missing delivery ledgers. Process-restart recovery excludes restored/rolled-back private snapshots, manual state replacement/deletion, and concurrent private-namespace modification by another actor with the same filesystem access. Detected substitution or unknown inventory fails closed; filesystem checks are not inode-conditional deletion or protection against an adversarial simultaneous rename. Do not delete private evidence to clear a recovery warning.
 
 ## Shortest path
 
-1. In a device conversation, keep **Send now** for an ordinary immediate send, or explicitly choose **Queue for later**. Trusted offline recipients may be eligible for the queue while the ordinary message composer remains disabled.
+1. In a device conversation, keep **Send now** for an ordinary immediate send, or explicitly choose **Queue for later**. Trusted offline recipients may be eligible for the file queue while immediate text is unavailable. The unreleased development build separately offers explicit [text queueing](DURABLE_TEXT.en.md).
 2. Use the existing file/folder picker and select each exact recipient. Choose a deadline, then **Prepare queue review**. Review the returned files, identities, local staged-copy use and absolute deadline with timezone. Preparation alone authorizes no delivery.
 3. Choose **Queue until {time}**. The exact immutable content and recipients may be attempted automatically, including after an application restart, only until that deadline. Both devices must run Sobalink and become reachable. Browser closure after confirmed enqueue is safe while the sender agent remains running.
 4. Open **Outbox** from the persistent navigation or conversation to check each recipient. It fetches authoritative server records after reopening or reconnecting.
 
-The default deadline is 24 hours and the maximum is 7 days. The Web picker also offers 1 hour; CLI accepts durations from 1 minute through 168 hours. The absolute reviewed deadline is stored and never extended by a restart. A changed payload, recipient or deadline needs a new explicit review. Text-message queues and scheduled start times are outside this feature.
+The default deadline is 24 hours and the maximum is 7 days. The Web picker also offers 1 hour; CLI accepts durations from 1 minute through 168 hours. The absolute reviewed deadline is stored and never extended by a restart. A changed payload, recipient or deadline needs a new explicit review. Text-message queueing is a separate, unreleased [feature](DURABLE_TEXT.en.md). Scheduled start times remain outside both queue modes.
 
 ## CLI
 
@@ -86,3 +86,11 @@ The case requires the final integrated Web assets and Core, `SOBALINK_RUN_DIRECT
 `TestDurableAbruptDeathPublicationBoundaries` exercises four real subprocess exits using the existing private test seam: before final link, after link, after final-directory synchronization, and after durable saved evidence but before the file call returns. The parent requires the dedicated exit code and exact cut marker, reopens the original lease and ledger, and verifies the same native file identity, original bytes, one output, and stable saved evidence across another reopen. These are process-death checks on each executing platform, not power-loss proof or an end-to-end lost-network-acknowledgement case.
 
 `TestOutboxCLIProtectedIPC` sends real CLI requests over the protected local control socket or pipe into Core. It checks immutable staging, reviewed admission, repeated command identities, status/list and cancellation with synthetic offline peers and no peer traffic. The separately named `TestOutboxCLIInProcessCoreContract` does not cross the local IPC boundary and never substitutes for the protected test. Neither establishes remote delivery or unauthorized-caller rejection.
+
+## Busy storage and retained evidence
+
+`outbox_storage_busy` is an unconfirmed result: check the original request first. If it is still prepared and the original confirmation is valid, retry the same commit with its original process/revision and deadline. Do not create a replacement or infer that nothing was sent.
+
+For receiving, `transfer_accept_busy` means this attempt saved no new acceptance; earlier consent may still exist and destination checks may already have run. Wait briefly, then explicitly accept the same transfer into the same resolved directory and profile. The Web keeps that directory for the retry; CLI users must keep the same explicit directory. A new explicit invocation uses a new command ID because the original busy response stays cached. `transfer_accept_unconfirmed`, a lost response or an unknown error instead requires checking the original transfer and receiver storage state before another action; do not infer non-acceptance or blindly retry. Existing disk-space errors retain their specific guidance.
+
+`outbox_evidence_capacity` identifies sender evidence exhaustion; `durable_evidence_capacity` identifies receiver evidence exhaustion. These retained-evidence quotas are separate from active work and physical staged/file bytes. Existing status, exact reconciliation and cancellation remain available. Visible-history cleanup may not free evidence capacity. Keep uncertain evidence rather than erasing it to admit new work.

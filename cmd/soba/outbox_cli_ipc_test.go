@@ -23,12 +23,13 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
-// Only the peer inventory and transport are synthetic. Real local control,
+// Only peer inventory, listeners and transport are synthetic. Real local control,
 // Core staging, reviewed admission and cancellation are exercised below. Offline
 // peers and a non-network dial stub prevent any claim of remote delivery.
 type outboxIPCBackend struct {
 	dispatchIPCBackend
-	dials outboxIPCDialLog
+	dials     outboxIPCDialLog
+	listeners outboxIPCListenerLog
 }
 
 func (b *outboxIPCBackend) State(ctx context.Context) (identity.State, error) {
@@ -112,7 +113,10 @@ func testOutboxCLIContract(t *testing.T, setup func(*testing.T, context.Context,
 			backend.dials.changed = make(chan struct{}, 1)
 			// Registered before setup so the final observation follows Core.Close,
 			// including any worker that was still joining at the last CLI reply.
-			t.Cleanup(func() { backend.dials.requireDiscoveryOnly(t) })
+			t.Cleanup(func() {
+				backend.dials.requireDiscoveryOnly(t)
+				backend.listeners.requireClosed(t)
+			})
 			dir, actualCall := setup(t, ctx, backend)
 			state, err := backend.State(ctx)
 			if err != nil || !state.Snapshot.Running || len(state.Snapshot.Peers) != 2 {

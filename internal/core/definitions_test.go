@@ -15,7 +15,7 @@ import (
 
 func offlineDefinitionCore(t *testing.T) *Core {
 	t.Helper()
-	c, err := Open(context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
 		t.Fatal("offline definition activated a network")
 		return nil, nil
 	}})
@@ -56,7 +56,7 @@ func TestDefinitionsSaveOfflineReopenAndReplaceRevision(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

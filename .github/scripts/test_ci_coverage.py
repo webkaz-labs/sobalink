@@ -30,8 +30,14 @@ def jobs(scope="full"):
     if scope in ("native-short", "full"):
         for target, name in coverage.TARGETS.items():
             steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
+            if target in coverage.LINUX_NEARBY_TARGETS:
+                steps += coverage.LINUX_NEARBY_STEPS
+            if target in coverage.MACOS_NEARBY_TARGETS:
+                steps += coverage.MACOS_NEARBY_STEPS
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
+            if target in coverage.NATIVE_PACKAGE_TARGETS:
+                steps += coverage.NATIVE_PACKAGE_STEPS
             result.append(job(name, steps))
             if scope == "native-short":
                 for item in result[-1]["steps"]:
@@ -54,6 +60,133 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_native_package_execution_and_receipt_are_required_on_both_targets(self):
+        self.assertEqual(coverage.NATIVE_PACKAGE_STEPS, ('Collect required whole-Core race evidence', 'Verify remaining native package race coverage', 'Preserve required native package proof'))
+        for scope in ('native-short', 'full'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+            for gate in coverage.NATIVE_PACKAGE_STEPS:
+                for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j['name'] == coverage.TARGETS['windows-amd64'])
+                    record = next(s for s in selected['steps'] if s['name'] == gate)
+                    if mode in ('missing', 'wrong-target'):
+                        selected['steps'].remove(record)
+                        if mode == 'wrong-target':
+                            next(j for j in data if j['name'] == coverage.TARGETS['linux-amd64'])['steps'].append(record)
+                    elif mode == 'duplicate':
+                        selected['steps'].append(copy.deepcopy(record))
+                    elif mode == 'pending':
+                        record['status'] = 'in_progress'
+                    else:
+                        record['conclusion'] = mode
+                    with self.subTest(scope=scope, gate=gate, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+        for scope in ('docs', 'frontend', 'go'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+
+    def test_macos_discovery_is_mandatory_only_on_qualified_native_target(self):
+        self.assertEqual(coverage.MACOS_NEARBY_TARGETS, ('darwin-arm64',))
+        self.assertEqual(coverage.MACOS_NEARBY_STEPS, ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof'))
+        gate = coverage.MACOS_NEARBY_STEPS[0]
+        self.assertNotIn(gate, coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
+                         + coverage.LINUX_NEARBY_STEPS)
+        for scope in ('native-short', 'full'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+            for target, name in coverage.TARGETS.items():
+                selected = next(j for j in jobs(scope) if j['name'] == name)
+                self.assertEqual(gate in [s['name'] for s in selected['steps']], target == 'darwin-arm64')
+            for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
+                data = jobs(scope)
+                selected = next(j for j in data if j['name'] == coverage.TARGETS['darwin-arm64'])
+                record = next(s for s in selected['steps'] if s['name'] == gate)
+                if mode in ('missing', 'wrong-target'):
+                    selected['steps'].remove(record)
+                    if mode == 'wrong-target':
+                        next(j for j in data if j['name'] == coverage.TARGETS['linux-amd64'])['steps'].append(record)
+                elif mode == 'duplicate':
+                    selected['steps'].append(copy.deepcopy(record))
+                elif mode == 'pending':
+                    record['status'] = 'in_progress'
+                else:
+                    record['conclusion'] = mode
+                with self.subTest(scope=scope, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, scope)
+        for scope in ('docs', 'frontend', 'go'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+
+    def test_linux_nearby_is_mandatory_only_on_qualified_native_targets(self):
+        self.assertEqual(coverage.LINUX_NEARBY_TARGETS, ('linux-amd64', 'linux-arm64'))
+        self.assertEqual(coverage.LINUX_NEARBY_STEPS, ('Verify Linux nearby native discovery without skips',))
+        gate = coverage.LINUX_NEARBY_STEPS[0]
+        self.assertNotIn(gate, coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS)
+        for scope in ('native-short', 'full'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+            for target in coverage.LINUX_NEARBY_TARGETS:
+                for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j['name'] == coverage.TARGETS[target])
+                    record = next(s for s in selected['steps'] if s['name'] == gate)
+                    if mode == 'missing':
+                        selected['steps'].remove(record)
+                    elif mode == 'duplicate':
+                        selected['steps'].append(copy.deepcopy(record))
+                    elif mode == 'pending':
+                        record['status'] = 'in_progress'
+                    else:
+                        record['conclusion'] = mode
+                    with self.subTest(scope=scope, target=target, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+        for scope in ('docs', 'frontend', 'go'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+
+    def test_setup_and_text_browser_gates_are_required_in_every_applicable_scope(self):
+        native = 'Verify manual nearby setup across native Core peers'
+        browser = ('Verify nearby setup with separate agents and actual browser',
+                   'Verify durable text recovery with separate agents and actual browser')
+        self.assertEqual(coverage.FAST_STEPS.count(native), 1)
+        for gate in browser:
+            self.assertEqual(coverage.BROWSER_STEPS.count(gate), 1)
+        for scope in ('frontend', 'native-short', 'full'):
+            required = [('browser', gate) for gate in browser]
+            if scope != 'frontend':
+                required += [(target, native) for target in coverage.TARGETS.values()]
+            for target, gate in required:
+                for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j['name'] == target)
+                    step = next(s for s in selected['steps'] if s['name'] == gate)
+                    if mode == 'missing':
+                        selected['steps'].remove(step)
+                    elif mode == 'duplicate':
+                        selected['steps'].append(copy.deepcopy(step))
+                    elif mode == 'pending':
+                        step['status'] = 'in_progress'
+                    else:
+                        step['conclusion'] = mode
+                    with self.subTest(scope=scope, target=target, gate=gate, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
+    def test_durable_text_is_mandatory_on_every_native_scope_and_target(self):
+        gate = "Verify durable text restart and lost ACK across Core processes"
+        self.assertEqual(coverage.FAST_STEPS.count(gate), 1)
+        self.assertNotIn(gate, coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS)
+        for scope in ("native-short", "full"):
+            for name in coverage.TARGETS.values():
+                for mode in ("missing", "duplicate", "skipped", "failure", "cancelled", None, "pending"):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j["name"] == name)
+                    record = next(s for s in selected["steps"] if s["name"] == gate)
+                    if mode == "missing":
+                        selected["steps"].remove(record)
+                    elif mode == "duplicate":
+                        selected["steps"].append(copy.deepcopy(record))
+                    elif mode == "pending":
+                        record["status"] = "in_progress"
+                    else:
+                        record["conclusion"] = mode
+                    with self.subTest(scope=scope, target=name, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
     def test_native_resource_gates_are_full_only_and_unambiguous_on_every_target(self):
         gates = ("Verify native remote resource inspection", "Verify native remote resource management",
                  "Verify native fixed-group resource catalog")
@@ -325,12 +458,21 @@ class PlanAndReceiptTests(unittest.TestCase):
         with patch.object(coverage, "read_plan", return_value=plan("docs")), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "classify", return_value=plan("docs")), patch.object(coverage, "api", side_effect=AssertionError("must not query old runs")):
             self.assertEqual(coverage.verified_plan("plan"), plan("docs"))
 
+    def test_missing_macos_artifact_blocks_full_and_short_aggregate(self):
+        for scope in ('full', 'native-short'):
+            with tempfile.TemporaryDirectory() as temporary:
+                output = pathlib.Path(temporary) / 'receipt.json'
+                with patch.object(coverage, 'verified_plan', return_value=plan(scope)), patch.object(coverage, 'current_jobs', return_value=jobs(scope)), patch.object(coverage, 'audit_macos_discovery', side_effect=ValueError('missing required artifact')) as audit:
+                    with self.assertRaises(ValueError): coverage.finalize('plan', output)
+                    audit.assert_called_once_with()
+                self.assertFalse(output.exists())
+
     def test_receipts_distinguish_not_run_from_success(self):
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), tempfile.TemporaryDirectory() as directory:
                 output = pathlib.Path(directory) / "receipt.json"
                 env = {"GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_STEP_SUMMARY": str(pathlib.Path(directory) / "summary")}
-                with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan(scope)), patch.object(coverage, "current_jobs", return_value=jobs(scope)), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
+                with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan(scope)), patch.object(coverage, "current_jobs", return_value=jobs(scope)), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY), patch.object(coverage, "audit_macos_discovery", return_value={"synthetic": True}), patch.object(coverage, "audit_native_packages", return_value={"synthetic": True}):
                     coverage.finalize("plan", output)
                 result = json.loads(output.read_text())
                 self.assertEqual(result["schema_version"], 3)
@@ -353,7 +495,7 @@ class PlanAndReceiptTests(unittest.TestCase):
             output = pathlib.Path(directory) / "receipt.json"
             data = jobs() + [job("ci-required", ("Require every check selected for this change",))] + [job(name, steps) for name, steps in coverage.SCHEDULE_ACCEPTANCE.items()]
             env = {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1"}
-            with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan("full")), patch.object(coverage, "current_jobs", return_value=data), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
+            with patch.dict(os.environ, env, clear=True), patch.object(coverage, "verified_plan", return_value=plan("full")), patch.object(coverage, "current_jobs", return_value=data), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY), patch.object(coverage, "audit_macos_discovery", return_value={"synthetic": True}), patch.object(coverage, "audit_native_packages", return_value={"synthetic": True}):
                 coverage.finalize("plan", output, scheduled=True)
                 result = json.loads(output.read_text())
                 self.assertTrue(result["full_native"])

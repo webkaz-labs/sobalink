@@ -88,6 +88,10 @@ warmの最長Windowsジョブは11分46秒で、そのうち通常・native試�
 
 全native検証ではrace検出、vet、Windows retirement barrier、IPC反復、合成時刻による鍵の試験、engineの負例、native discovery、direct/relay復旧、元の実時間lifecycle/lease待機を維持します。範囲判定のために製品タイマー、payload、アサーション、試験timeoutを短縮しません。
 
+Cross-platform CI と prerelease 検証では、Windows/macOS の Core 全体を Go セットアップ直後、フロント・方針テスト・キャッシュ復元より前に1回実行します。既存 collector が依存を準備し、正確な race 対象一覧のビルドで準備した後、非公開の一時領域と上限付き JSON 収集を使います。パッケージの制限時間は600秒のままです。後段では同一の `go list -race ./...` 一覧にある Core 以外の全パッケージを実行し、Core を再実行しません。両段階と公式 artifact の内容を、実際の commit/tree・生成 attempt に結び付け、正当に引き継いだ成功も検証します。既存の子プロセス helper・OS 固有 skip は明示したままとし、欠落・失敗・未完了・予期しない最上位 skip は資格確認を通しません。Linux、別枠のタグ付き・反復テスト、フロント、vet、ブラウザー、配布物の検証は維持します。これは実行準備の変更であり、過去の timeout の原因は未確定です。diagnostic の成功を必須検証の代わりにはしません。
+
+必須の DNS-SD・native package artifact は、元の生成ジョブの公式ログにある、commit 固定の upload action の完了記録1件と照合し、API の名前・ID・ZIP digest・サイズを一致させます。アップロード記録が欠落・途切れ・曖昧な場合は不合格です。これは確認済みジョブログによる関連付けであり、工程の暗号学的な同一性証明ではありません。既存のソース・attempt・native 結果・API 再確認の条件も引き続き必須です。
+
 TCPとUDPに同じendpointが必要なfixtureは、正確なloopbackアドレスで両方を予約し、回数を限定した実bindと後片付けを行います。helperはテストからだけimportします。ブラウザー終了時は処理中のinterceptを完了してからfixtureを停止し、失敗は伝播します。必要なtargetや工程が失敗すれば `ci-required` も失敗します。
 
 自動CIの結果は、実機でのenrollment、ネットワーク、OS-login、suspendの確認とは分けて扱います。

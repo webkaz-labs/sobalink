@@ -426,12 +426,43 @@ func upgradeExchangePlan(local string, r endpointmeta.PeerRecord) (directlan.Con
 // Polling must not cancel an in-flight inbound TLS exchange merely because a
 // slow peer has not completed within one UI/controller polling interval.
 func (c *Core) armUpgradeInboundLocked(ctx context.Context, owner *contextControlOwner, key string, op directlan.ContextOperation) (*contextExchangeOperation, error) {
-	for attempt, existing := range owner.operations {
-		if existing.direction == directlan.ContextInbound && existing.operation == op && existing.admission.inputs.PeerKey == key && (existing.epoch.Valid() || existing.responseEpoch.Valid()) && !attempt.Cancelled() {
-			return existing, nil
-		}
+	if existing := upgradeInboundArmedLocked(owner, key, op); existing != nil {
+		return existing, nil
 	}
 	return c.armContextInboundLocked(ctx, owner, key, op)
+}
+
+// Core.op owns associations. A retained response is still owned until its
+// transport finishes; it must not be replaced merely because its arm epoch
+// was invalidated by its own publication.
+func upgradeInboundArmedLocked(owner *contextControlOwner, key string, op directlan.ContextOperation) *contextExchangeOperation {
+	for attempt, existing := range owner.operations {
+		if existing != nil && existing.owner == owner && existing.attempt == attempt && existing.direction == directlan.ContextInbound && existing.operation == op && existing.admission.inputs.PeerKey == key && (existing.epoch.Valid() || existing.responseEpoch.Valid()) && !attempt.Cancelled() {
+			return existing
+		}
+	}
+	return nil
+}
+
+// A pending bound exchange always needs its opposite operation and duplicate
+// PREPARE. If both exact arms remain owned, maintenance has nothing to change.
+// This is not an admission: completion and response still recheck the protected
+// file, exact epochs, owner, cancellation and one-shot authenticated evidence.
+func upgradeInboundMaintenanceIdleLocked(owner *contextControlOwner, outbound *contextExchangeOperation) bool {
+	if outbound == nil || outbound.owner != owner || outbound.direction != directlan.ContextOutbound || outbound.attempt == nil || owner.operations[outbound.attempt] != outbound {
+		return false
+	}
+	var opposite directlan.ContextOperation
+	switch outbound.operation {
+	case directlan.ContextCommit:
+		opposite = directlan.ContextStatus
+	case directlan.ContextStatus:
+		opposite = directlan.ContextCommit
+	default:
+		return false
+	}
+	key := outbound.admission.inputs.PeerKey
+	return upgradeInboundArmedLocked(owner, key, opposite) != nil && upgradeInboundArmedLocked(owner, key, directlan.ContextPrepare) != nil
 }
 
 // CancelManagedUpgrade cancels only the exact locally reviewed workflow. It is
@@ -478,11 +509,23 @@ func (c *Core) refreshUpgradeInbound(run context.Context, owner *contextControlO
 		return nil
 	}
 	defer c.op.Unlock()
+	if owner != nil && owner.diagnosticRefresh != nil {
+		owner.diagnosticRefresh.Add(1)
+		defer owner.diagnosticRefresh.Add(1) // mark exit before releasing Core.op
+	}
 	if policy != c.upgradePolicyDigest() {
 		return endpointmeta.ErrReview
 	}
 	if err := c.currentContextOwnerLocked(owner); err != nil {
 		return err
+	}
+	if err := run.Err(); err != nil {
+		return err
+	}
+	// Do not hold Core.op across repeated file validation for an inert tick.
+	// Missing, consumed or invalidated arms still take the full fresh path.
+	if upgradeInboundMaintenanceIdleLocked(owner, outbound) {
+		return nil
 	}
 	owner.store.mu.Lock()
 	model, err := owner.store.endpointModelLocked(time.Now(), false)

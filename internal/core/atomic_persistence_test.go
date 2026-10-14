@@ -147,30 +147,46 @@ func TestAtomicCommittedStartupStoreAndRevocationDoNotRetry(t *testing.T) {
 }
 
 func TestAtomicCommittedMessageHistoryReconcilesAppendAndCleanup(t *testing.T) {
-	c := offlineDefinitionCore(t)
+	c := messageStoreFixture(t)
 	var calls atomic.Int64
-	c.atomicWrite = committedWriter(&calls)
+	c.messageStore.afterWrite = func() error { calls.Add(1); return config.ErrAtomicCommitted }
 	m := Message{ID: "old-message", PeerID: "peer-a", Direction: "incoming", Text: "retained", CreatedAt: time.Now().Add(-400 * 24 * time.Hour), Status: "received"}
 	c.mu.Lock()
 	err := c.appendMessageLocked(m)
 	c.mu.Unlock()
-	if !errors.Is(err, config.ErrAtomicCommitted) || len(c.messages) != 1 {
-		t.Fatal("committed append hidden", err)
+	if !errors.Is(err, config.ErrAtomicCommitted) || len(c.messages) != 0 || c.messageStore.candidate == nil {
+		t.Fatal("uncertain append lost candidate or certified early", err)
 	}
 	var history []Message
-	if err := readMessageHistory(filepath.Join(c.dir, "messages.json"), c.limit("resources", "messageStorageBytes"), &history); err != nil || !jsonEqual(history, c.messages) {
-		t.Fatal("message disk/runtime differ", err)
+	if err := readMessageHistory(filepath.Join(c.dir, "messages.json"), messageStoreHardBytes, &history); err != nil || len(history) != 1 {
+		t.Fatal("uncertain candidate not actually published", err)
 	}
-	preview := mustCommand(t, c, "message.history.preview", map[string]any{}).(historyCleanup)
-	if preview.Remove != 1 {
-		t.Fatal("fixture did not select cleanup", preview)
+	c.messageStore.afterWrite = nil
+	c.mu.Lock()
+	err = c.reconcileMessageStoreLocked()
+	c.mu.Unlock()
+	if err != nil || len(c.messages) != 1 {
+		t.Fatal("exact append reconciliation failed", err)
 	}
-	_, err = command(c, randomID(), "message.history.cleanup", map[string]any{"expectedRevision": preview.Revision})
-	if !errors.Is(err, config.ErrAtomicCommitted) || len(c.messages) != 0 || calls.Load() != 2 {
-		t.Fatal("committed cleanup hidden/retried", calls.Load(), err)
+	preview, err := c.messageHistoryCommand("message.history.preview", json.RawMessage(`{}`))
+	if err != nil || preview.(historyCleanup).Remove != 1 {
+		t.Fatal("fixture did not select cleanup", preview, err)
 	}
-	if err := readMessageHistory(filepath.Join(c.dir, "messages.json"), c.limit("resources", "messageStorageBytes"), &history); err != nil || len(history) != 0 {
-		t.Fatal("cleanup not published", history, err)
+	raw, _ := json.Marshal(map[string]string{"expectedRevision": preview.(historyCleanup).Revision})
+	c.messageStore.afterWrite = func() error { calls.Add(1); return config.ErrAtomicCommitted }
+	_, err = c.messageHistoryCommand("message.history.cleanup", raw)
+	if !errors.Is(err, config.ErrAtomicCommitted) || len(c.messages) != 1 || calls.Load() != 2 {
+		t.Fatal("uncertain cleanup certified early/retried", calls.Load(), err)
+	}
+	if err := readMessageHistory(filepath.Join(c.dir, "messages.json"), messageStoreHardBytes, &history); err != nil || len(history) != 0 {
+		t.Fatal("cleanup candidate not published", history, err)
+	}
+	c.messageStore.afterWrite = nil
+	c.mu.Lock()
+	err = c.reconcileMessageStoreLocked()
+	c.mu.Unlock()
+	if err != nil || len(c.messages) != 0 {
+		t.Fatal("exact cleanup reconciliation failed", err)
 	}
 }
 

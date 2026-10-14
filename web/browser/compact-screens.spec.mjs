@@ -120,6 +120,7 @@ for (const locale of ['en', 'ja']) {
 
     await page.setViewportSize({ width: 1180, height: 960 })
     await page.locator('.sidebar-title button').click()
+    await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
     await assertDialogLayout(page)
     await page.keyboard.press('Escape')
     for (const command of ['service.connect', 'service.share', 'service.save', 'services.start', 'network.configure', 'network.logout', 'application.stop', 'policy.apply', 'startup.save', 'proxy.start']) {

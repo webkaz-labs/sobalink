@@ -24,6 +24,10 @@ The wizard shows the peer, purpose, complete port scope, local entry or applicat
 
 On supported terminals, Up/Down selects choices and Left/Right edits text. Numbers, names and comma-separated values also work. Redirected output and `TERM=dumb` use plain prompts. `--interactive` explicitly enables the guided flow for supplied input; `--json` never prompts and cannot be combined with interactive mode. Guided input refuses `TEA_TRACE`, stores no input history, rejects invalid UTF-8/control sequences, and restores terminal modes after exit.
 
+## Nearby LAN setup
+
+For a nearby-device connection, start with `soba init`, `soba start --offline --background`, then `soba nearby` on both devices. Choose a relay role explicitly on each device and permit at least one to relay. Review [nearby setup, port corrections and stop behavior](CONNECTION_SETUP.en.md#short-cli-path-and-corrections) before using an existing profile; receiving trust remains separate.
+
 ## Explicit agent commands
 
 ```sh

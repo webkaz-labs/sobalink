@@ -122,6 +122,7 @@ type outboxCoordinator struct {
 	next              map[string]time.Time
 	certified         map[string]OutboxRecord
 	capabilities      map[string]bool
+	cleanupCursor     string // process-local fair scan; grants no deletion authority
 	orphanBytes       int64
 	now               func() time.Time
 	write             func(string, []byte) error
@@ -159,11 +160,17 @@ func (o *outboxCoordinator) clockLocked() error {
 	now := o.now().UTC()
 	if now.Before(o.state.HighWater) {
 		o.frozen = "outbox_clock_rollback"
+		o.updateAccountingLocked()
 		return outboxError(o.frozen)
 	}
 	return nil
 }
 func (o *outboxCoordinator) saveLocked() error {
+	defer func() {
+		if o.frozen != "" {
+			o.updateAccountingLocked()
+		}
+	}()
 	if err := o.checkLocked(); err != nil {
 		return err
 	}
@@ -186,8 +193,8 @@ func (o *outboxCoordinator) saveLocked() error {
 		}
 	}
 	if reserved > outboxMaxMetadata {
-		o.frozen = "outbox_capacity"
-		return outboxError("outbox_capacity")
+		o.frozen = "outbox_evidence_capacity"
+		return outboxError(o.frozen)
 	}
 	var publishedIdentity string
 	err = o.withOwnedInfoLocked(func(profile, lock os.FileInfo) (result error) {
@@ -321,8 +328,25 @@ func (o *outboxCoordinator) saveLocked() error {
 	o.updateAccountingLocked()
 	return nil
 }
+
+// A terminal candidate cannot release admission until its exact child has a
+// certified terminal fence and every physical run has joined. Receipt-only
+// queries re-enter the active budget while their run is retained.
+func (o *outboxCoordinator) childActiveLocked(row *outboxIntent, index int) bool {
+	child := row.View.Children[index]
+	if o.frozen != "" || !outboxTerminalStatus(child.Status) || o.runs[child.DeliveryID] != nil {
+		return true
+	}
+	certified, ok := o.certified[row.View.OutboxID]
+	return !ok || index >= len(certified.Children) || certified.Children[index].DeliveryID != child.DeliveryID || !outboxTerminalStatus(certified.Children[index].Status)
+}
+
+func outboxTerminalStatus(status string) bool {
+	return status == "completed" || status == "cancelled" || status == "expired"
+}
+
 func (o *outboxCoordinator) updateAccountingLocked() {
-	var bytes, children, metadata int64
+	var bytes, children, metadata, activeChildren, activeMetadata int64
 	for _, p := range o.state.Payloads {
 		// Marker reservation is released only when its namespace row is durably retired.
 		bytes += outboxMarkerBytes
@@ -331,18 +355,44 @@ func (o *outboxCoordinator) updateAccountingLocked() {
 		}
 	}
 	for _, v := range o.state.Intents {
+		entryMetadata := transfer.ManifestMetadataBytes(transfer.Manifest{Entries: v.View.Entries})
 		children += int64(len(v.Deliveries))
-		metadata += transfer.ManifestMetadataBytes(transfer.Manifest{Entries: v.View.Entries})*int64(len(v.Deliveries)) + 1024
+		metadata += entryMetadata*int64(len(v.Deliveries)) + 1024
+		var active int64
+		for i := range v.Deliveries {
+			if o.childActiveLocked(v, i) {
+				active++
+			}
+		}
+		activeChildren += active
+		if active > 0 {
+			activeMetadata += entryMetadata*active + 1024
+		}
 	}
 	for _, p := range o.prepared {
-		if !p.discarded {
-			children += int64(len(p.intent.Deliveries))
+		n := int64(len(p.intent.Deliveries))
+		retainedMetadata := transfer.ManifestMetadataBytes(transfer.Manifest{Entries: p.intent.View.Entries})*n + 1024
+		children += n
+		metadata += retainedMetadata
+		if o.frozen != "" || !p.discarded || p.staging {
+			activeChildren += n
+			activeMetadata += retainedMetadata
 		}
-		metadata += transfer.ManifestMetadataBytes(transfer.Manifest{Entries: p.intent.View.Entries})*int64(len(p.intent.Deliveries)) + 1024
 	}
-	o.core.outboxReserved.Store(bytes + o.orphanBytes)
+	bytes += o.orphanBytes
+	if o.frozen != "" {
+		// A failed save can leave a tentative release/removal in memory. Keep
+		// the previous charge until a new process certifies retained storage.
+		bytes = max(bytes, o.core.outboxReserved.Load())
+		children = max(children, o.core.outboxChildren.Load())
+		metadata = max(metadata, o.core.outboxMetadata.Load())
+		activeChildren, activeMetadata = children, metadata
+	}
+	o.core.outboxReserved.Store(bytes)
 	o.core.outboxChildren.Store(children)
 	o.core.outboxMetadata.Store(metadata)
+	o.core.outboxActiveChildren.Store(activeChildren)
+	o.core.outboxActiveMetadata.Store(activeMetadata)
 }
 func (c *Core) initializeOutbox(initialize bool) error {
 	// Startup owns exactly one coordinator. Replacing it could lose the retained
@@ -352,7 +402,7 @@ func (c *Core) initializeOutbox(initialize bool) error {
 		return outboxError("outbox_recovery_required")
 	}
 	o := &outboxCoordinator{core: c, prepared: map[string]*outboxPreparation{}, runs: map[string]*outgoingBatch{}, completions: map[string]outboxCompletion{}, next: map[string]time.Time{}, certified: map[string]OutboxRecord{}, capabilities: map[string]bool{}, now: time.Now}
-	defer func() { c.mu.Lock(); c.outbox = o; c.mu.Unlock() }()
+	defer func() { o.updateAccountingLocked(); c.mu.Lock(); c.outbox = o; c.mu.Unlock() }()
 	if c.resourceLock == nil || c.resourceIdentity == "" {
 		o.frozen = "outbox_recovery_required"
 		return outboxError(o.frozen)
@@ -583,7 +633,7 @@ func (o *outboxCoordinator) validateLocked() error {
 			if row.PayloadID != payload.ID {
 				continue
 			}
-			if payload.NamespaceRemoval && (row.View.DeliveryOutcome != "confirmed" && row.View.DeliveryOutcome != "not_attempted") {
+			if payload.NamespaceRemoval && !outboxKnownChildOutcomes(row) {
 				return outboxError("outbox_recovery_required")
 			}
 			for _, child := range row.View.Children {

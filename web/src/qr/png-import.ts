@@ -1,7 +1,6 @@
 import workerURL from './device-card-worker.ts?worker&url'
 import wasmURL from '../../vendor/zxing-wasm-3.1.5/reader/zxing_reader.wasm?url'
-import type { DeviceCardMode } from '../device-cards'
-import { DecodeJobController, type DecodeResult, type DecodeWorker } from './decode-job'
+import { DecodeJobController, type DecodeResult, type DecodeWorker, type QRPayloadKind } from './decode-job'
 import { preflightBudget, validPngPolicy, READER_WASM_BYTES, READER_WASM_SHA256, type PngPolicy } from './png-policy'
 
 function readFile(file: File, signal: AbortSignal): Promise<ArrayBuffer> {
@@ -47,7 +46,7 @@ export class PngCardImporter {
   })
   cancel() { this.jobs.cancel() }
   dispose() { this.jobs.dispose() }
-  start(file: File, mode: DeviceCardMode, budget: PngPolicy): Promise<DecodeResult> {
+  start(file: File, mode: QRPayloadKind, budget: PngPolicy): Promise<DecodeResult> {
     this.cancel()
     if (!validPngPolicy(budget)) return Promise.resolve({ ok: false, error: 'invalidBudget' })
     if (!Number.isSafeInteger(file.size) || file.size <= 0 || file.size > budget.maxEncodedBytes) return Promise.resolve({ ok: false, error: 'imageBudget' })

@@ -6,6 +6,7 @@ test.describe('direct LAN and mixed reviewed setup', () => {
     test(`${locale}: exact direct scope and mixed order remain review-only on desktop and narrow layout`, async ({ page, app }) => {
       await app.appearance(locale, locale === 'ja' ? 'dark' : 'light')
       await page.locator('.sidebar-title button').click()
+      await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
       await page.locator('dialog input[value="direct-lan"]').check()
       const direct = page.locator('.direct-lan-setup')
       await direct.getByRole('textbox', { name: locale === 'ja' ? /^この端末の数値LAN接続先/ : /^This device’s numeric LAN endpoint/ }).fill('192.168.50.10:48444')

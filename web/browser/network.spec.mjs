@@ -26,6 +26,7 @@ test.describe('offline setup', () => {
       await expect(page.locator('.relay-stop-review')).toHaveCount(0)
       expect(await app.count('application.stop')).toBe(0)
       expect(await app.count('network.configure')).toBe(0)
+      await page.getByRole('dialog').getByRole('button', { name: locale === 'ja' ? 'ネットワークの詳細設定' : 'Advanced network setup', exact: true }).click()
       await page.locator('dialog input[value=lan]').check()
       const host = page.locator('.relay-host')
       await expect(host).toBeVisible()
@@ -119,6 +120,7 @@ test.describe('whole-application shutdown', () => {
 test('checking a connected Tailnet shows status without generating sign-in details', async ({ page, app }) => {
   await app.appearance('en', 'light')
   await page.locator('.sidebar-title button').click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Advanced network setup', exact: true }).click()
   expect(await app.count('network.login')).toBe(0)
   expect(await app.count('network.login.status')).toBe(0)
   await page.getByRole('button', { name: 'Check sign-in status', exact: true }).click()
@@ -130,6 +132,7 @@ test('checking a connected Tailnet shows status without generating sign-in detai
   await app.capture('connected-tailnet-status-en-light')
   await page.keyboard.press('Escape')
   await page.locator('.sidebar-title button').click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Advanced network setup', exact: true }).click()
   await expect(page.locator('.signin-link, .auth-qr')).toHaveCount(0)
   expect(await app.count('network.login.status')).toBe(1)
 })

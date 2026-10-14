@@ -26,12 +26,16 @@ type activationSupervisorExtra interface {
 type activationRegistration struct {
 	Kind, Role, Origin string
 	PID, Parent        int
+	WaitStatus         *int `json:",omitempty"`
 }
 type activationChild struct {
-	role     string
-	observer upgradeProcessObserver
-	exited   bool
-	done     chan struct{}
+	role       string
+	parent     int
+	exitKnown  bool
+	exitStatus unix.WaitStatus
+	observer   upgradeProcessObserver
+	exited     bool
+	done       chan struct{}
 }
 type activationSupervisor struct {
 	mu              sync.Mutex
@@ -122,6 +126,9 @@ func (s *activationSupervisor) handle(_ context.Context, raw string) (any, error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	child := s.children[in.PID]
+	if in.Kind == "wait" {
+		return s.recordProductWaitLocked(in)
+	}
 	if in.Kind == "register" {
 		if in.Role == "old" {
 			if in.PID != s.old || in.Parent != os.Getpid() || child == nil {
@@ -147,6 +154,7 @@ func (s *activationSupervisor) handle(_ context.Context, raw string) (any, error
 		if err := s.observeLocked(in.PID, in.Role); err != nil {
 			return nil, err
 		}
+		s.children[in.PID].parent = in.Parent
 		return map[string]bool{"registered": true}, nil
 	}
 	if in.Kind != "origin" || !validUpgradeUIURL(in.Origin) {
@@ -291,12 +299,7 @@ func runActivationSupervisor(dir string) error {
 			s.reaped++
 			s.reapedOK[pid] = status.Exited() && status.ExitStatus() == 0
 			if child := s.children[pid]; child != nil {
-				if child.role == "helper" && s.helperExit == "not-observed" {
-					s.helperExit = activationExitCategory(status)
-				}
-				if child.role == "successor" && s.successorExit == "not-observed" {
-					s.successorExit = activationExitCategory(status)
-				}
+				s.recordExitLocked(child, status)
 			}
 			if pid == s.old {
 				s.oldExited = true
@@ -392,7 +395,11 @@ finished:
 			successorRegistered = true
 		}
 	}
-	proof := map[string]any{"supervisorFailure": s.failure, "resourceFailure": s.resourceFailure, "helperExit": s.helperExit, "successorExit": s.successorExit, "oldExit": s.oldExit, "registeredChildren": len(s.children), "observedExits": observedExits, "stopRequested": stopRequested, "supervisorDeadlineExpired": supervisorDeadlineExpired, "noWaitableChildren": noWaitableChildren, "successorRegistered": successorRegistered, "allDescendantsReaped": complete, "registeredNativeExits": complete, "reaped": s.reaped, "success": complete && !s.failed}
+	registeredNativeExits := complete
+	if productMode() {
+		registeredNativeExits = s.requireRegisteredExitsLocked(complete)
+	}
+	proof := map[string]any{"supervisorFailure": s.failure, "resourceFailure": s.resourceFailure, "helperExit": s.helperExit, "successorExit": s.successorExit, "oldExit": s.oldExit, "registeredChildren": len(s.children), "observedExits": observedExits, "stopRequested": stopRequested, "supervisorDeadlineExpired": supervisorDeadlineExpired, "noWaitableChildren": noWaitableChildren, "successorRegistered": successorRegistered, "allDescendantsReaped": complete, "registeredNativeExits": registeredNativeExits, "reaped": s.reaped, "success": complete && !s.failed}
 	if e := config.WriteJSON(filepath.Join(activationEvidenceDir(dir, "supervisor"), "exit-proof.json"), proof); e != nil {
 		return e
 	}
@@ -400,4 +407,42 @@ finished:
 		return errors.New("fixture descendant exit proof failed")
 	}
 	return nil
+}
+
+// Termination and successful exit are separate facts. A child reaped by its
+// still-living parent is not returned by the subreaper's Wait4.
+func (s *activationSupervisor) recordExitLocked(child *activationChild, status unix.WaitStatus) {
+	if child.exitKnown {
+		s.failLocked("exit-status-conflict")
+		return
+	}
+	child.exitKnown, child.exitStatus = true, status
+	category := activationExitCategory(status)
+	switch child.role {
+	case "old":
+		s.oldExit = category
+	case "helper":
+		s.helperExit = category
+	case "successor":
+		s.successorExit = category
+	}
+	if !status.Exited() || status.ExitStatus() != 0 {
+		s.failLocked("child-exit")
+	}
+}
+func (s *activationSupervisor) registeredExitsKnownLocked() bool {
+	for _, child := range s.children {
+		if !child.exitKnown {
+			return false
+		}
+	}
+	return len(s.children) > 0
+}
+
+func (s *activationSupervisor) requireRegisteredExitsLocked(complete bool) bool {
+	known := complete && s.registeredExitsKnownLocked()
+	if complete && !known {
+		s.failLocked("exit-status-missing")
+	}
+	return known
 }

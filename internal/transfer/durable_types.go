@@ -24,14 +24,15 @@ const (
 )
 
 var (
-	ErrDurableConflict     = errors.New("durable identity conflicts")
-	ErrDurableUnknownLease = errors.New("durable lease is unknown")
-	ErrDurableRecovery     = errors.New("durable receive recovery is required")
-	ErrDurableExpired      = errors.New("durable transmission deadline passed")
-	ErrDurableClock        = errors.New("durable clock needs repair")
-	ErrDurableCapacity     = errors.New("durable receive capacity reached")
-	ErrDurableStorage      = errors.New("durable storage is unsupported")
-	ErrDurablePermission   = errors.New("durable permission changed")
+	ErrDurableConflict         = errors.New("durable identity conflicts")
+	ErrDurableUnknownLease     = errors.New("durable lease is unknown")
+	ErrDurableRecovery         = errors.New("durable receive recovery is required")
+	ErrDurableExpired          = errors.New("durable transmission deadline passed")
+	ErrDurableClock            = errors.New("durable clock needs repair")
+	ErrDurableCapacity         = errors.New("durable receive capacity reached")
+	ErrDurableEvidenceCapacity = errors.New("durable receive evidence capacity reached")
+	ErrDurableStorage          = errors.New("durable storage is unsupported")
+	ErrDurablePermission       = errors.New("durable permission changed")
 )
 
 type DurableOffer struct {
@@ -101,6 +102,7 @@ func DurableErrorCode(err error) string {
 		{ErrDurableConflict, "durable_conflict"}, {ErrDurableUnknownLease, "durable_unknown_lease"},
 		{ErrDurableExpired, "durable_expired"},
 		{ErrDurableClock, "durable_clock"}, {ErrDurableCapacity, "durable_capacity"},
+		{ErrDurableEvidenceCapacity, "durable_evidence_capacity"},
 		{ErrDurableStorage, "durable_unsupported_storage"}, {ErrDurablePermission, "durable_permission"},
 		{ErrDurableRecovery, "durable_recovery_required"},
 	} {

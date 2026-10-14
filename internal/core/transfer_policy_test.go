@@ -189,7 +189,7 @@ func TestStartupInventoriesRetainedStagingWithoutFollowingLinks(t *testing.T) {
 }
 
 func TestMessageRetentionRequiresSeparateFreshCleanup(t *testing.T) {
-	c := &Core{dir: t.TempDir(), capacity: capacity.Defaults()}
+	c := messageStoreFixture(t)
 	now := time.Now().UTC()
 	message := func(id string) Message {
 		return Message{ID: id, PeerID: "peer", Direction: "incoming", Text: "saved", Status: "received", CreatedAt: now}
@@ -236,7 +236,7 @@ func TestMessageRetentionRequiresSeparateFreshCleanup(t *testing.T) {
 }
 
 func TestMessageStorageFullPreservesSavedRecords(t *testing.T) {
-	c := &Core{dir: t.TempDir(), capacity: capacity.Defaults()}
+	c := messageStoreFixture(t)
 	m := Message{ID: "first", PeerID: "peer", Text: "saved", Direction: "incoming", Status: "received", CreatedAt: time.Now().UTC()}
 	if err := c.appendMessageLocked(m); err != nil {
 		t.Fatal(err)

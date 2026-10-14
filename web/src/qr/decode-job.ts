@@ -1,4 +1,6 @@
+import { MAX_QR_PAYLOAD_BYTES } from './payload-policy'
 import { validPngPolicy, READER_WASM_BYTES, type PngPolicy } from './png-policy'
+import { readSetupContact, readSetupFingerprint } from '../nearby-setup'
 import { MAX_CARD_BYTES, readCardInput, type DeviceCardMode } from '../device-cards'
 
 /** Preparatory parent-side boundary; not yet connected to a decoder or UI. */
@@ -12,11 +14,12 @@ export interface DecodeWorker {
   terminate(): void
 }
 export interface DecodeInput { image: ArrayBuffer; wasm: ArrayBuffer; budget: PngPolicy }
+export type QRPayloadKind = DeviceCardMode | 'setup-contact' | 'setup-fingerprint'
 interface Job {
   generation: number
   started: number
   deadline: number
-  mode: DeviceCardMode
+  mode: QRPayloadKind
   abort: AbortController
   worker?: DecodeWorker
   timer?: ReturnType<typeof setTimeout>
@@ -44,7 +47,7 @@ export class DecodeJobController {
   }
   dispose(): void { this.disposed = true; this.cancel() }
 
-  start(mode: DeviceCardMode, deadlineMs: number, prepare: (signal: AbortSignal) => Promise<DecodeInput>): Promise<DecodeResult> {
+  start(mode: QRPayloadKind, deadlineMs: number, prepare: (signal: AbortSignal) => Promise<DecodeInput>): Promise<DecodeResult> {
     // Reserve ownership before cleanup: abort/terminate callbacks may start a
     // newer job synchronously. An older invocation must never overwrite it.
     const generation = ++this.generation
@@ -101,13 +104,16 @@ export class DecodeJobController {
       if (value.status === 'error' && ownKeys(value, ['schema', 'generation', 'status', 'error']) && typeof value.error === 'string' && workerErrors.has(value.error)) {
         return this.finish(job, { ok: false, error: value.error as DecodeError })
       }
-      if (value.status !== 'decoded' || !ownKeys(value, ['schema', 'generation', 'status', 'bytes']) || !(value.bytes instanceof Uint8Array) || !(value.bytes.buffer instanceof ArrayBuffer) || value.bytes.byteLength === 0 || value.bytes.byteLength > MAX_CARD_BYTES || value.bytes.buffer.byteLength > MAX_CARD_BYTES) throw new Error()
+      const maxBytes = job.mode.startsWith('setup-') ? MAX_QR_PAYLOAD_BYTES : MAX_CARD_BYTES
+      if (value.status !== 'decoded' || !ownKeys(value, ['schema', 'generation', 'status', 'bytes']) || !(value.bytes instanceof Uint8Array) || !(value.bytes.buffer instanceof ArrayBuffer) || value.bytes.byteLength === 0 || value.bytes.byteLength > maxBytes || value.bytes.buffer.byteLength > maxBytes) throw new Error()
       // Require exact wire bytes: no Unicode replacement, whitespace trimming or
       // decoded-text substitution. Core inspection remains a separate user action.
       if (value.bytes.some(byte => byte > 127)) throw new Error()
       const text = new TextDecoder('utf-8', { fatal: true }).decode(value.bytes)
-      const parsed = readCardInput(text, job.mode)
-      if (typeof parsed === 'string' || parsed.text !== text) return this.finish(job, { ok: false, error: 'invalidCard' })
+      const valid = job.mode === 'setup-contact' ? Boolean(readSetupContact(text))
+        : job.mode === 'setup-fingerprint' ? Boolean(readSetupFingerprint(text))
+        : (() => { const parsed = readCardInput(text, job.mode); return typeof parsed !== 'string' && parsed.text === text })()
+      if (!valid) return this.finish(job, { ok: false, error: 'invalidCard' })
       this.finish(job, { ok: true, text })
     } catch { this.finish(job, { ok: false, error: 'invalidResult' }) }
   }

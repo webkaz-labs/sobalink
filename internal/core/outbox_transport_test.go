@@ -117,3 +117,21 @@ func TestOutboxPolicyReductionQueriesRetainedLeaseButRefusesNewExposure(t *testi
 		})
 	}
 }
+
+func TestOutboxEvidenceCapacitySurvivesPeerTransport(t *testing.T) {
+	for _, code := range []string{"durable_capacity", "durable_evidence_capacity"} {
+		t.Run(code, func(t *testing.T) {
+			c := outboxFixture(t)
+			outboxPipePeer(t, c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reply(w, http.StatusInsufficientStorage, map[string]string{"code": code})
+			}))
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			var result map[string]any
+			err := c.peerRequest(ctx, "peer-b", "POST", transfer.DurableStatusPath, nil, "application/json", &result)
+			if got := networkErrorCode(err); got != code {
+				t.Fatalf("bounded capacity reason lost: got %q, want %q", got, code)
+			}
+		})
+	}
+}

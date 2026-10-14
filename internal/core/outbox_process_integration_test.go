@@ -155,7 +155,23 @@ func TestOutboxProcessRestart(t *testing.T) {
 	peers[0].stop(t)
 	for _, review := range reviews {
 		parent := t.TempDir()
-		accepted := catalogProcessDecode[transfer.Batch](t, peers[1].invoke(t, "transfer.accept", map[string]any{"transferId": review.Children[0].DeliveryID, "destination": parent}))
+		payload := map[string]any{"transferId": review.Children[0].DeliveryID, "destination": parent}
+		var cause string
+		value, code, acceptErr := retryOutboxProcessAccept(ctx, func(attempt context.Context) (json.RawMessage, string) {
+			// A fresh invocation is necessary because the original busy result is
+			// cached. The delivery and resolved destination never change.
+			reply := peers[1].invokeResultIDContext(t, attempt, "transfer.accept", randomID(), payload)
+			cause = routeProcessAcceptCauseToken(reply.AcceptCause)
+			return reply.Value, reply.Error
+		})
+		if code != "" || acceptErr != nil {
+			kind := "file"
+			if review.Entries[0].Kind == transfer.Directory {
+				kind = "empty-directory"
+			}
+			t.Fatalf("subprocess command transfer.accept: %s; cause=%s retry_stopped=%t phase=sender-stopped-before-start entry=%s; %s; runtime diagnostics:\n%s", code, cause, acceptErr != nil, kind, peers[1].exitSummary(), peers[1].diagnostics.safeSummary())
+		}
+		accepted := catalogProcessDecode[transfer.Batch](t, value)
 		if accepted.ID != review.Children[0].DeliveryID || accepted.State != transfer.Accepted || accepted.Destination != parent {
 			t.Fatal("durable acceptance published or retargeted before lease start")
 		}

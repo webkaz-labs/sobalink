@@ -317,6 +317,9 @@ func runTransferGroupProcessBrowser(t *testing.T, ctx context.Context, sender *r
 func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map[string]any, dispatch bool, whileRunning ...func(string)) string {
 	t.Helper()
 	private := t.TempDir()
+	if descriptor["nearby"] == true {
+		defer exportNearbyBrowserFailure(t, private)
+	}
 	raw, err := json.Marshal(descriptor)
 	if err != nil {
 		t.Fatal("private transfer browser descriptor encoding failed")
@@ -339,7 +342,14 @@ func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map
 	}
 	call, cancel := context.WithTimeout(ctx, 75*time.Second)
 	defer cancel()
-	command := exec.CommandContext(call, node, filepath.Join(webDir, "node_modules", "@playwright", "test", "cli.js"), "test", "--config", filepath.Join(webDir, "playwright.transfer-native.config.mjs"), "--workers", "1", "--retries", "0")
+	configuration := "playwright.transfer-native.config.mjs"
+	if descriptor["textOutbox"] == true {
+		configuration = "playwright.text-native.config.mjs"
+	}
+	if descriptor["nearby"] == true {
+		configuration = "playwright.nearby-native.config.mjs"
+	}
+	command := exec.CommandContext(call, node, filepath.Join(webDir, "node_modules", "@playwright", "test", "cli.js"), "test", "--config", filepath.Join(webDir, configuration), "--workers", "1", "--retries", "0")
 	command.Dir = webDir
 	command.Env = append(os.Environ(), "SOBA_TRANSFER_BROWSER_SESSION="+path)
 	if descriptor["outbox"] == true {
@@ -377,7 +387,7 @@ func runTransferProcessBrowser(t *testing.T, ctx context.Context, descriptor map
 		err := command.Wait()
 		joined = true
 		if err != nil {
-			t.Fatal("real outbox process/browser acceptance failed; private selectors withheld")
+			t.Fatal("real native process/browser acceptance failed; private selectors withheld")
 		}
 	}
 	result, err := os.ReadFile(filepath.Join(private, "transfer-browser-result.json"))

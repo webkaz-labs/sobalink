@@ -37,6 +37,7 @@ test.describe('explicit WAN candidate settings', () => {
         const button = name => wan.getByRole('button', { name, exact: true })
         const openWAN = async () => {
           await page.locator('.sidebar-title button').click()
+          await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
           await page.locator('dialog input[value="lan"]').check()
           await expect(wan).not.toHaveAttribute('open')
           await openDetailsSection(wan)

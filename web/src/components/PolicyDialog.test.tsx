@@ -88,6 +88,7 @@ describe('reviewed policy controls', () => {
     expect(review).toHaveTextContent('Messages to remove2')
     expect(review).toHaveTextContent('Messages to keep3')
     expect(review).toHaveTextContent('cannot be undone')
+    expect(screen.getByText('Clearing visible message history does not erase retained delivery or duplicate-prevention evidence, or cancel queued text.')).toBeVisible()
     await userEvent.click(within(review).getByRole('button', { name: 'Cancel' }))
     expect(requests.some(item => item.name === 'message.history.cleanup')).toBe(false)
     await userEvent.click(screen.getByRole('button', { name: 'Review history cleanup' }))

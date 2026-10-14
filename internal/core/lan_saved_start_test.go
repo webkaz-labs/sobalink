@@ -329,7 +329,7 @@ func TestSavedLANStartRejectsMissingStateAndAnotherProcess(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: dir, Version: "test", SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, Version: "test", SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

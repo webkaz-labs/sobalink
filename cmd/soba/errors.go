@@ -110,3 +110,22 @@ func localizeDurableProfileError(ja bool, err error) error {
 	}
 	return &localizedDiskSpaceError{cause: err, message: message}
 }
+
+// App trust and saved startup/proxy scopes are separate approvals. A changed
+// peer epoch must remain a request for a fresh review, never a silent rewrite.
+func localizeSavedApprovalError(ja bool, err error) error {
+	var coded interface{ ErrorCode() string }
+	if !errors.As(err, &coded) {
+		return err
+	}
+	var message string
+	switch coded.ErrorCode() {
+	case "startup_revision_conflict":
+		message = text(ja, "The saved startup selection, peer approval or private settings changed. Run startup list and startup preview, review the exact outbound scope, then explicitly save the new review. App trust does not renew this separate approval.", "保存済みの起動対象・相手の承認・非公開設定が変わりました。startup list と startup preview で正確な外向きの範囲を確認し、新しい確認内容を明示的に保存してください。アプリの信頼承認だけでは、この別の許可を更新しません。")
+	case "proxy_saved_revision_conflict":
+		message = text(ja, "The saved proxy, peer approval or network identity changed. Run proxy saved and proxy preview, then review and explicitly save the exact scope again. App trust does not renew this separate approval or authorize a replacement automatically.", "保存済みのプロキシ・相手の承認・ネットワークの識別情報が変わりました。proxy saved と proxy preview で正確な範囲を再確認し、明示的に保存してください。アプリの信頼承認だけで、この別の許可を更新したり置換を自動承認したりしません。")
+	default:
+		return err
+	}
+	return &localizedDiskSpaceError{cause: err, message: message}
+}

@@ -847,7 +847,8 @@ func (c *Core) transferCommand(ctx context.Context, name string, raw json.RawMes
 		if v.Destination == "" {
 			return nil, errors.New("choose a receive directory before accepting this batch")
 		}
-		return c.transfers.Accept(v.TransferID, v.Destination)
+		batch, err := c.transfers.Accept(v.TransferID, v.Destination)
+		return batch, transferAcceptCommandError(err)
 	case "transfer.decline":
 		return c.transfers.Reject(v.TransferID)
 	case "transfer.cancel":

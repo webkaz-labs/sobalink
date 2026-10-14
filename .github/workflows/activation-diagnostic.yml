@@ -143,3 +143,222 @@ jobs:
             ${{ runner.temp }}/soba-web-activation-sanitized/provenance.json
           if-no-files-found: error
           retention-days: 14
+
+  diagnostic-nearby:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'nearby'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Prepare locked dependencies and official Chromium
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go list -mod=readonly -deps -test -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core ./internal/nearby >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify exact nearby diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_screenshots.py' -v
+          node --test web/browser/nearby-native-diagnostics.test.mjs web/browser/nearby-native-selectors.test.mjs web/browser/nearby-native-screenshots.test.mjs
+          node --check web/browser/nearby-native-fixtures.mjs
+          node --check web/browser/nearby-setup-native.acceptance.mjs
+      - name: Verify manual setup and browser with separate discovery capability
+        id: nearby
+        timeout-minutes: 18
+        run: python -B .github/scripts/ci-nearby-diagnostic.py
+      - name: Preserve only reconstructed sanitized nearby evidence
+        if: always() && steps.nearby.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-nearby-sanitized
+          path: |
+            ${{ runner.temp }}/soba-nearby-sanitized/result.json
+            ${{ runner.temp }}/soba-nearby-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve verified-flow initial UI illustrations separately
+        if: success() && steps.nearby.outputs.screenshots_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-nearby-ui-sanitized
+          path: |
+            ${{ runner.temp }}/soba-nearby-ui-sanitized/screenshots.json
+            ${{ runner.temp }}/soba-nearby-ui-sanitized/nearby-initial-en-375.png
+            ${{ runner.temp }}/soba-nearby-ui-sanitized/nearby-initial-ja-320.png
+          if-no-files-found: error
+          retention-days: 14
+
+  # Four native platforms share this exact diagnostic branch source. Linux x64
+  # is already covered by diagnostic-nearby's separate native capability result;
+  # these three lanes add no duplicate Core/browser or native x64 execution.
+  diagnostic-nearby-native:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'nearby'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+          - runner: macos-26
+            platform: darwin-arm64
+          - runner: windows-2025
+            platform: windows-amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify closed native-only diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_nearby_native.py' -v
+      - name: Classify one isolated-loopback native capability
+        id: native-nearby
+        timeout-minutes: 10
+        env:
+          SOBALINK_NEARBY_NATIVE_PLATFORM: ${{ matrix.platform }}
+        run: python -B .github/scripts/ci-nearby-native.py
+      - name: Preserve only reconstructed native capability evidence
+        if: always() && steps.native-nearby.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-nearby-native-${{ matrix.platform }}-sanitized
+          path: |
+            ${{ runner.temp }}/soba-nearby-native-sanitized/result.json
+            ${{ runner.temp }}/soba-nearby-native-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+  diagnostic-text:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'text'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Prepare locked dependencies and official Chromium
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go list -mod=readonly -deps -test -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify exact text diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_text_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_browser_summary.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_go_test.py' -v
+          node --test web/browser/text-native-contract.test.mjs web/browser/text-native-diagnostics.test.mjs
+          node --check web/browser/text-outbox-native.acceptance.mjs
+      - name: Verify exact existing text restart and browser cases privately
+        id: text
+        timeout-minutes: 22
+        run: python -B .github/scripts/ci-text-diagnostic.py
+      - name: Preserve only reconstructed sanitized text evidence
+        if: always() && steps.text.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-text-sanitized
+          path: |
+            ${{ runner.temp }}/soba-text-sanitized/result.json
+            ${{ runner.temp }}/soba-text-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+  diagnostic-dnssd:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'dnssd'
+    runs-on: macos-26
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    env:
+      CGO_ENABLED: '1'
+      GOMAXPROCS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify closed Darwin API diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal_marker.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_dnssd_terminal_origin.py' -v
+      - name: Compile native SDK API and compare five Terminal-launched scopes
+        id: dnssd
+        timeout-minutes: 10
+        run: python -B .github/scripts/ci-dnssd-diagnostic.py
+      - name: Preserve only reconstructed DNS-SD capability evidence
+        if: always() && steps.dnssd.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: diagnostic-soba-dnssd-sanitized
+          path: |
+            ${{ runner.temp }}/soba-dnssd-sanitized/result.json
+            ${{ runner.temp }}/soba-dnssd-sanitized/provenance.json
+          if-no-files-found: error
+          retention-days: 14

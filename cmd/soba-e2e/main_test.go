@@ -155,7 +155,8 @@ func TestReceiveRecoveryFixturesUsePersistedCoreAccounting(t *testing.T) {
 			}
 			netw := &network{listeners: map[netip.AddrPort]*listener{}}
 			n := &node{network: netw, ip: netip.MustParseAddr("100.64.0.1"), remoteIP: netip.MustParseAddr("100.64.0.2"), id: "fixture-notebook", remoteID: "fixture-studio", remoteName: "Studio"}
-			app, err := core.Open(context.Background(), core.Options{Directory: directory, SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) { return n, nil }})
+			owner := e2eFixtureLifecycleOwner(t, directory)
+			app, err := core.Open(context.Background(), core.Options{Directory: directory, LifecycleLock: owner, SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) { return n, nil }})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +232,7 @@ func TestReceiveRecoveryFixturesUsePersistedCoreAccounting(t *testing.T) {
 			if err := app.Close(); err != nil {
 				t.Fatal(err)
 			}
-			app, err = core.Open(context.Background(), core.Options{Directory: directory, SkipNetworkStart: true})
+			app, err = core.Open(context.Background(), core.Options{Directory: directory, LifecycleLock: owner, SkipNetworkStart: true})
 			if err != nil {
 				t.Fatal("reviewed fixture could not reopen", err)
 			}
@@ -264,7 +265,7 @@ func TestReceiveRecoveryFixturesUsePersistedCoreAccounting(t *testing.T) {
 func TestOfflineFixtureKeepsIdleEmptyState(t *testing.T) {
 	dir := t.TempDir()
 	var factoryCalls atomic.Int32
-	app, err := core.Open(context.Background(), core.Options{Directory: dir, Version: "test", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
+	app, err := core.Open(context.Background(), core.Options{Directory: dir, LifecycleLock: e2eFixtureLifecycleOwner(t, dir), Version: "test", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
 		factoryCalls.Add(1)
 		return nil, errors.New("no network permitted")
 	}})
@@ -343,7 +344,8 @@ func TestServiceReservationReleasedOnlyForMatchingConnect(t *testing.T) {
 func TestSyntheticServiceShareLifecycleUsesCoreWithoutSockets(t *testing.T) {
 	netw := &network{listeners: map[netip.AddrPort]*listener{}}
 	n := &node{network: netw, ip: netip.MustParseAddr("100.64.0.1"), remoteIP: netip.MustParseAddr("100.64.0.2"), id: "fixture-notebook", remoteID: "fixture-studio", remoteName: "Studio"}
-	app, err := core.Open(context.Background(), core.Options{Directory: t.TempDir(), Version: "test", NodeFactory: func(string, string) (core.NetworkBackend, error) { return n, nil }})
+	directory := t.TempDir()
+	app, err := core.Open(context.Background(), core.Options{Directory: directory, LifecycleLock: e2eFixtureLifecycleOwner(t, directory), Version: "test", NodeFactory: func(string, string) (core.NetworkBackend, error) { return n, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +398,8 @@ func TestLANHostReviewUsesOnlyFixedPrivateFixtureChoices(t *testing.T) {
 }
 
 func TestApplicationStopSignalsFixtureOwnerAndPreservesIdleConfiguration(t *testing.T) {
-	app, err := core.Open(context.Background(), core.Options{Directory: t.TempDir(), Version: "test", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
+	directory := t.TempDir()
+	app, err := core.Open(context.Background(), core.Options{Directory: directory, LifecycleLock: e2eFixtureLifecycleOwner(t, directory), Version: "test", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
 		t.Fatal("stop must not activate networking")
 		return nil, nil
 	}})

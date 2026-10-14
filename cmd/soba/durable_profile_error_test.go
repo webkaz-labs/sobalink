@@ -20,8 +20,9 @@ func TestDurableProfileErrorsLocalizeNormalCLIPaths(t *testing.T) {
 		name, code string
 		version    int
 	}{
-		{"unsupported-format", "profile_format_unsupported", 1},
-		{"missing-state-guard", "outbox_recovery_required", 2},
+		{"unsupported-format-v1", "profile_format_unsupported", 1},
+		{"unsupported-format-v2", "profile_format_unsupported", 2},
+		{"missing-state-guard", "outbox_recovery_required", 3},
 		{"orphaned-store", "outbox_recovery_required", 0},
 	} {
 		for _, command := range [][]string{{"start", "--offline"}, {"init"}, {"--offline", "profile", "export"}} {

@@ -26,6 +26,12 @@ type goPackage struct {
 	Dir          string
 	GoFiles      []string
 	CgoFiles     []string
+	CgoCFLAGS    []string
+	CgoCPPFLAGS  []string
+	CgoCXXFLAGS  []string
+	CgoFFLAGS    []string
+	CgoLDFLAGS   []string
+	CgoPkgConfig []string
 	CFiles       []string
 	CXXFiles     []string
 	MFiles       []string
@@ -84,6 +90,7 @@ type NoticeInventory struct {
 	Go              ModuleNotices     `json:"go_standard_library"`
 	Frontend        []FrontendModule  `json:"frontend_modules"`
 	Sources         []SourceComponent `json:"source_components"`
+	Native          *NativeBuild      `json:"native_build,omitempty"`
 }
 
 func noticeName(name string) bool {
@@ -278,12 +285,24 @@ func makeSBOM(packages []goPackage, notices NoticeInventory, version string, tar
 	for _, m := range notices.Frontend {
 		components = append(components, map[string]any{"type": "library", "bom-ref": "npm:" + moduleKey(m.Name, m.Version), "name": m.Name, "version": m.Version, "purl": npmPURL(m.Name, m.Version), "properties": []any{map[string]string{"name": "npm:integrity", "value": m.Integrity}}, "licenses": []any{map[string]any{"license": map[string]string{"name": "See third-party-notices.json for original notices (not classified)"}}}})
 	}
+	if notices.Native != nil {
+		for _, library := range notices.Native.Libraries {
+			components = append(components, map[string]any{"type": "library", "bom-ref": "system:" + library, "name": library, "properties": []any{map[string]string{"name": "distribution:provided-by", "value": "operating-system"}, map[string]string{"name": "distribution:redistributed", "value": "false"}}})
+		}
+	}
 	refs := map[string]string{}
 	edges := map[string]map[string]bool{root: {}, goRef: {}}
 	for _, m := range notices.Frontend {
 		ref := "npm:" + moduleKey(m.Name, m.Version)
 		edges[root][ref] = true
 		edges[ref] = map[string]bool{}
+	}
+	if notices.Native != nil {
+		for _, library := range notices.Native.Libraries {
+			ref := "system:" + library
+			edges[root][ref] = true
+			edges[ref] = map[string]bool{}
+		}
 	}
 	sourceRefs := map[string]string{}
 	for _, component := range notices.Sources {
@@ -325,5 +344,12 @@ func makeSBOM(packages []goPackage, notices NoticeInventory, version string, tar
 		sort.Strings(deps)
 		dependencies = append(dependencies, map[string]any{"ref": ref, "dependsOn": deps})
 	}
-	return map[string]any{"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1, "metadata": map[string]any{"component": map[string]any{"type": "application", "bom-ref": root, "name": Product, "version": version, "purl": purl(Project, "v"+version), "hashes": []any{map[string]string{"alg": "SHA-256", "content": binaryHash}}}, "properties": []any{map[string]string{"name": "inventory:scope", "value": notices.Scope}, map[string]string{"name": "build:target", "value": target.String()}, map[string]string{"name": "source:commit", "value": commit}, map[string]string{"name": "build:cgo", "value": "0"}}}, "components": components, "dependencies": dependencies}
+	cgo := "0"
+	properties := []any{map[string]string{"name": "inventory:scope", "value": notices.Scope}, map[string]string{"name": "build:target", "value": target.String()}, map[string]string{"name": "source:commit", "value": commit}}
+	if notices.Native != nil {
+		cgo = "1"
+		properties = append(properties, map[string]string{"name": "build:native:sha256", "value": nativeDigest(notices.Native)})
+	}
+	properties = append(properties, map[string]string{"name": "build:cgo", "value": cgo})
+	return map[string]any{"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1, "metadata": map[string]any{"component": map[string]any{"type": "application", "bom-ref": root, "name": Product, "version": version, "purl": purl(Project, "v"+version), "hashes": []any{map[string]string{"alg": "SHA-256", "content": binaryHash}}}, "properties": properties}, "components": components, "dependencies": dependencies}
 }

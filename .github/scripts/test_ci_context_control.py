@@ -16,8 +16,8 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 TAGS = {"core-tls": "directlan_context_fixture", "fixed-tcp": "directlan_context_tcp"}
 SOURCES = {
-    "core-tls": "internal/core/direct_lan_context_tls_test.go",
-    "fixed-tcp": "internal/directlan/context_fixed_tcp_test.go",
+    "core-tls": ("internal/core/direct_lan_context_tls_test.go", "internal/core/direct_lan_upgrade_refresh_tls_test.go"),
+    "fixed-tcp": ("internal/directlan/context_fixed_tcp_test.go",),
 }
 
 
@@ -28,8 +28,10 @@ class ContextControlGateTests(unittest.TestCase):
         Reject an unfamiliar subtest shape rather than silently omitting it.
         The exclusion case expands its four targets by seven build profiles.
         """
-        source = (ROOT / SOURCES[suite]).read_text(encoding="utf-8")
-        self.assertTrue(source.startswith("//go:build " + TAGS[suite] + "\n\n"))
+        sources = [(ROOT / path).read_text(encoding="utf-8") for path in SOURCES[suite]]
+        for source in sources:
+            self.assertTrue(source.startswith("//go:build " + TAGS[suite] + "\n\n"))
+        source = "\n".join(sources)
         functions = re.findall(
             r"^func (Test\w+)\(t \*testing.T\) \{\n(.*?)(?=^func |\Z)",
             source, re.MULTILINE | re.DOTALL)
@@ -63,7 +65,7 @@ class ContextControlGateTests(unittest.TestCase):
 
     def test_exact_frozen_inventory_matches_go_source(self):
         self.assertEqual(set(gate.SUITES), {"core-tls", "fixed-tcp"})
-        for suite, counts in (("core-tls", (9, 53)), ("fixed-tcp", (2, 0))):
+        for suite, counts in (("core-tls", (14, 73)), ("fixed-tcp", (2, 0))):
             with self.subTest(suite=suite):
                 cases = self.source_cases(suite)
                 self.assertEqual((len(cases), sum(map(len, cases.values()))), counts)
@@ -154,7 +156,7 @@ class ContextControlGateTests(unittest.TestCase):
                     continue
                 for tag in TAGS.values():
                     self.assertNotIn(tag.encode(), path.read_bytes(), path.relative_to(ROOT).as_posix())
-        source = (ROOT / SOURCES["core-tls"]).read_text(encoding="utf-8")
+        source = "\n".join((ROOT / path).read_text(encoding="utf-8") for path in SOURCES["core-tls"])
         exceptions = re.findall(r'allowed\["([^\"]+)"\] = true', source)
         self.assertEqual(set(exceptions), allowed)
         self.assertEqual(len(exceptions), len(allowed))

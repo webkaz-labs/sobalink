@@ -15,3 +15,10 @@ describe('exact single QR raw payload boundary', () => {
     expect(result).toEqual(Uint8Array.of(65, 66)); expect(result.buffer.byteLength).toBe(2)
   })
 })
+
+it('keeps a separate finite setup text ceiling without widening card callers', () => {
+  const text = 'A'.repeat(1200), value = { isValid: true, format: 'QRCode', sequenceSize: -1, sequenceIndex: -1, sequenceId: '', text, bytes: Uint8Array.from(text, char => char.charCodeAt(0)) }
+  expect(readerCardBytes([value])).toBe('invalidCard')
+  expect((readerCardBytes([value], 1536) as Uint8Array).length).toBe(1200)
+  expect(readerCardBytes([value], 1537)).toBe('invalidCard')
+})
