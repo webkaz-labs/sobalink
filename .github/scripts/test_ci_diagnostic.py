@@ -20,7 +20,7 @@ class DiagnosticPolicyTests(unittest.TestCase):
                     sha=sha, checkout_sha=sha)
 
     def test_exact_closed_suites(self):
-        for suite in ('web', 'product', 'activation', 'nearby', 'text', 'dnssd'):
+        for suite in ('web', 'product', 'activation', 'nearby', 'text', 'dnssd', 'outbox-busy'):
             self.assertEqual(gate.select(**self.args(suite)), suite)
 
     def test_rejects_other_events_refs_and_heads(self):
@@ -64,17 +64,30 @@ class DiagnosticPolicyTests(unittest.TestCase):
         spec.loader.exec_module(coverage)
         jobs = [dict(name=name, status='completed', conclusion='success', steps=[])
                 for name in ('diagnostic-selection', 'diagnostic-web-activation',
-                             'diagnostic-product-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd')]
+                             'diagnostic-product-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd', 'diagnostic-outbox-busy')]
         for scope in coverage.SCOPES:
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs, scope)
+
+    def test_outbox_busy_is_one_bounded_windows_observation(self):
+        body = self.body(self.workflow('activation-diagnostic'), 'diagnostic-outbox-busy')
+        self.assertIn('runs-on: windows-2025', body)
+        self.assertIn('timeout-minutes: 25', body)
+        self.assertIn("go-version: '1.27.1'", body)
+        self.assertIn('git rev-parse HEAD', body)
+        self.assertIn('go test -race -count=1 -timeout=4m', body)
+        self.assertIn("-run '^TestOutboxProcessRestart$'", body)
+        self.assertEqual(body.count("-run '^TestOutboxProcessRestart$'"), 1)
+        self.assertIn('diagnostic-outbox-busy-metrics', body)
+        self.assertNotIn('-count=2', body)
+        self.assertNotIn('continue-on-error', body)
 
     def test_only_create_and_distinct_jobs_without_release_credit(self):
         text = self.workflow('activation-diagnostic')
         trigger = text.split('on:\n', 1)[1].split('\npermissions:', 1)[0]
         self.assertEqual(trigger.strip(), 'create:')
         self.assertEqual(re.findall(r'^  ([a-z][a-z0-9-]*):$', text.split('\njobs:\n')[1], re.M),
-                         ['diagnostic-selection', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd'])
+                         ['diagnostic-selection', 'diagnostic-outbox-busy', 'diagnostic-product-activation', 'diagnostic-web-activation', 'diagnostic-nearby', 'diagnostic-nearby-native', 'diagnostic-text', 'diagnostic-dnssd'])
         for forbidden in ('continue-on-error:', 'actions/cache', 'secrets.', 'workflow_dispatch:',
                           'ci-coverage.py', 'ci-required:', 'package-tool', 'id-token: write', 'contents: write'):
             self.assertNotIn(forbidden, text)

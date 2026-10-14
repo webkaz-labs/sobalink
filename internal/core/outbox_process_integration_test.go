@@ -68,12 +68,20 @@ func TestOutboxProcessRestart(t *testing.T) {
 	commit := func(review browserOutboxRecord, phase string) browserOutboxRecord {
 		t.Helper()
 		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
+		var observation outboxProcessCommitObservation
+		started := time.Now()
 		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
-			reply := peers[0].invokeResult(t, "outbox.commit", payload)
-			return reply.Value, reply.Error
+			return observation.invoke(func() (json.RawMessage, string) {
+				reply := peers[0].invokeResult(t, "outbox.commit", payload)
+				return reply.Value, reply.Error
+			})
 		})
 		if err != nil || code != "" {
-			t.Fatalf("original outbox commit failed: phase=%s retry_stopped=%t command=%q; runtime diagnostics:\n%s", phase, err != nil, outboxProcessCommitDiagnosticCode(code), peers[0].diagnostics.safeSummary())
+			kind := "file"
+			if review.Entries[0].Kind == transfer.Directory {
+				kind = "empty-directory"
+			}
+			t.Fatalf("original outbox commit failed: phase=%s entry=%s retry_stopped=%t command=%q attempts=%d busy_replies=%d elapsed_ms=%d max_command_ms=%d; runtime diagnostics:\n%s", phase, kind, err != nil, outboxProcessCommitDiagnosticCode(code), observation.attempts, observation.busyReplies, time.Since(started).Milliseconds(), observation.maxCommand.Milliseconds(), peers[0].diagnostics.safeSummary())
 		}
 		return catalogProcessDecode[browserOutboxRecord](t, reply)
 	}

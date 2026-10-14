@@ -13,6 +13,27 @@ import (
 	"time"
 )
 
+// Test-only aggregate timings distinguish repeated quick refusals from one
+// command that consumed the admission budget. No payload or error text is kept.
+type outboxProcessCommitObservation struct {
+	attempts, busyReplies int
+	maxCommand            time.Duration
+}
+
+func (o *outboxProcessCommitObservation) invoke(call func() (json.RawMessage, string)) (json.RawMessage, string) {
+	start := time.Now()
+	reply, code := call()
+	elapsed := time.Since(start)
+	o.attempts++
+	if code == "outbox.commit: outbox_storage_busy" {
+		o.busyReplies++
+	}
+	if elapsed > o.maxCommand {
+		o.maxCommand = elapsed
+	}
+	return reply, code
+}
+
 // A lifecycle owner can refuse an initial or already-admitted commit before
 // entering its callback. Retry only that closed pre-admission code, through the same
 // serial command stream and immutable payload. This bounds retry admission;
@@ -208,6 +229,51 @@ func TestOutboxProcessCommitRetryStops(t *testing.T) {
 			if !errors.Is(err, context.Canceled) || calls != wantCalls {
 				t.Fatal("cancelled replay issued another command")
 			}
+		})
+	}
+}
+
+// A slow individual command can consume the unchanged two-second admission
+// budget. The failure must not be described as repeated two-second contention.
+func TestOutboxProcessCommitObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		delay       time.Duration
+		busyCalls   int
+		wantCalls   int
+		wantElapsed time.Duration
+		deadline    bool
+	}{
+		{"single-delayed-busy", 2100 * time.Millisecond, 1, 1, 2100 * time.Millisecond, true},
+		{"repeated-quick-busy", 0, 100, 100, 2 * time.Second, true},
+		{"busy-then-success", 5 * time.Millisecond, 2, 3, 55 * time.Millisecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var observation outboxProcessCommitObservation
+				start, calls := time.Now(), 0
+				want := json.RawMessage(`{"original":"synthetic-record"}`)
+				reply, code, err := retryOutboxProcessCommit(context.Background(), func() (json.RawMessage, string) {
+					return observation.invoke(func() (json.RawMessage, string) {
+						calls++
+						time.Sleep(tc.delay)
+						if calls <= tc.busyCalls {
+							return nil, "outbox.commit: outbox_storage_busy"
+						}
+						return want, ""
+					})
+				})
+				if calls != tc.wantCalls || observation.attempts != calls || observation.busyReplies != tc.busyCalls || observation.maxCommand != tc.delay || time.Since(start) != tc.wantElapsed || errors.Is(err, context.DeadlineExceeded) != tc.deadline {
+					t.Fatal("commit observation changed or misreported bounded retry behavior")
+				}
+				if tc.deadline {
+					if reply != nil || code != "outbox.commit: outbox_storage_busy" {
+						t.Fatal("commit observation changed busy result")
+					}
+				} else if err != nil || code != "" || !bytes.Equal(reply, want) {
+					t.Fatal("commit observation changed successful reply")
+				}
+			})
 		})
 	}
 }
