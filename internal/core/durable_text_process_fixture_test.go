@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -18,11 +19,12 @@ import (
 // Only the inherited private fixture pipe can select these test controls. No
 // production route, option, backend, persistence operation or receipt is faked.
 type durableTextProcessFixture struct {
-	core   *Core
-	mu     sync.Mutex
-	target string
-	drop   bool
-	fault  durableTextProcessFault
+	core            *Core
+	mu              sync.Mutex
+	target          string
+	drop            bool
+	fault           durableTextProcessFault
+	wireObservation textWireObservation
 }
 
 type durableTextProcessFault struct {
@@ -259,6 +261,7 @@ func (w *durableTextProcessResponse) Write(p []byte) (int, error) {
 // never direct receiver methods. Only the test pipe can request these adversarial
 // same-ID inputs; retained sender state supplies the original peer and lease.
 func (f *durableTextProcessFixture) wire(ctx context.Context, id, text, operation string) (DurableTextStatus, error) {
+	f.wireObservation = textWireObservation{Operation: textWireOperation(operation), Stage: "lease_lookup"}
 	var result DurableTextStatus
 	c := f.core
 	c.mu.RLock()
@@ -290,6 +293,51 @@ func (f *durableTextProcessFixture) wire(ctx context.Context, id, text, operatio
 	}
 	call, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	f.wireObservation.Stage = "peer_json"
 	err := c.peerJSON(call, row.View.PeerID, http.MethodPost, path, input, &result)
+	f.wireObservation.Stage = "peer_json_returned"
+	f.wireObservation.Category = textWireErrorCategory(err)
+	f.wireObservation.Context = textWireErrorCategory(call.Err())
 	return result, err
+}
+
+// Fixed diagnostics only: never serialize errors, addresses, IDs, text or leases.
+type textWireObservation struct{ Operation, Stage, Category, Context string }
+
+func textWireOperation(op string) string {
+	switch op {
+	case "status", "deliver", "offer", "wrong-epoch":
+		return op
+	}
+	return "other"
+}
+func textWireErrorCategory(err error) string {
+	if err == nil {
+		return "none"
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, io.EOF):
+		return "eof"
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return "unexpected_eof"
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return "network_timeout"
+	}
+	switch networkErrorCode(err) {
+	case "message_conflict":
+		return "message_conflict"
+	case "message_unknown_lease":
+		return "message_unknown_lease"
+	case "message_storage_busy":
+		return "message_storage_busy"
+	case "message_permission":
+		return "message_permission"
+	}
+	return "other"
 }

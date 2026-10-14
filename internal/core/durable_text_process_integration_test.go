@@ -202,7 +202,8 @@ func TestDurableTextProcessRestartACKLossAndHiddenReplay(t *testing.T) {
 	}
 	assertHidden()
 	t.Log("SOBA_TEXT_PHASE hidden-replay")
-	for _, operation := range []string{"status", "deliver", "offer", "status"} {
+	for index, operation := range []string{"status", "deliver", "offer", "status"} {
+		t.Logf("SOBA_TEXT_REPLAY index=%d operation=%s stage=begin", index, operation)
 		value := catalogProcessDecode[DurableTextStatus](t, peers[0].invoke(t, "fixture.text-wire", map[string]string{"messageId": id, "text": body, "operation": operation}))
 		if value.State != "received" || value.Receipt == nil || !sameTextLease(value.Lease, receipt.Lease) || !reflect.DeepEqual(receipt, *value.Receipt) {
 			t.Fatal("native original-lease replay lost retained receipt")

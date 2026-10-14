@@ -1,0 +1,41 @@
+name: Hidden replay diagnostic (not release validation)
+on:
+  create:
+permissions:
+  contents: read
+jobs:
+  hidden-replay:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.ref_type == 'branch' && startsWith(github.ref, 'refs/heads/text-wire-diagnostic/')
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Prepare pinned engine and dependencies
+        run: |
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          go mod verify
+          git diff --exit-code -- go.mod go.sum
+      - name: Verify private output capture
+        run: python .github/scripts/test_ci_text_wire_diagnostic.py
+      - name: Verify fixed diagnostic categories
+        run: go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration ./internal/core -run '^TestTextWireDiagnosticCategories$'
+      - name: Run one original hidden replay case with fixed diagnostics
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          python .github/scripts/ci-text-wire-diagnostic.py

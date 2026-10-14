@@ -294,6 +294,10 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		}
 		raw, _ := json.Marshal(value)
 		reply := processReply{Value: raw}
+		if request.Name == "fixture.text-wire" {
+			observation := textFixture.wireObservation
+			reply.TextWireObservation = &observation
+		}
 		if callErr != nil {
 			reply.Error = request.Name + ": " + routeProcessCommandErrorCode(request.Name, callErr)
 			if request.Name == "transfer.accept" {
@@ -310,9 +314,10 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 }
 
 type processReply struct {
-	Value       json.RawMessage
-	Error       string
-	AcceptCause string `json:",omitempty"`
+	TextWireObservation *textWireObservation `json:",omitempty"`
+	Value               json.RawMessage
+	Error               string
+	AcceptCause         string `json:",omitempty"`
 }
 type routeCoreProcess struct {
 	cmd         *exec.Cmd
@@ -417,6 +422,9 @@ func (p *routeCoreProcess) invokeResultIDContext(t *testing.T, ctx context.Conte
 	}()
 	select {
 	case reply := <-ch:
+		if reply.TextWireObservation != nil {
+			t.Logf("SOBA_TEXT_WIRE operation=%s stage=%s category=%s context=%s", reply.TextWireObservation.Operation, reply.TextWireObservation.Stage, reply.TextWireObservation.Category, reply.TextWireObservation.Context)
+		}
 		return reply
 	case <-ctx.Done():
 		p.cmd.Process.Kill()
