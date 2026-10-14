@@ -360,6 +360,27 @@ jobs:
               "-timeout=5m", "./internal/lanlink", "./internal/core", "./internal/routecat",
           ], env=env, check=True, timeout=9 * 60)
           PY
+      - name: Verify TOFU request approval across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-request-tofu-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestTOFUIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestTOFUIntegration$'
+      - name: Verify full verification request approval across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-request-full-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestFullVerificationIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestFullVerificationIntegration$'
+      - name: Verify request rejection and cancellation across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-request-reject-cancel-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestRejectCancelIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestRejectCancelIntegration$'
       - name: Verify recovery with the ordinary direct-enabled transport
         timeout-minutes: 9
         run: |

@@ -46,7 +46,25 @@ type invitation struct {
 	peer    Peer
 	expires time.Time
 	relay   netip.AddrPort
+	consent context.Context
 }
+
+func (v invitation) active(now time.Time) bool {
+	if !deadline.Active(now, v.expires) {
+		return false
+	}
+	if v.consent != nil {
+		if v.consent.Err() != nil {
+			return false
+		}
+		// A context timer alone cannot enforce wall-time expiry after suspend.
+		if until, ok := v.consent.Deadline(); ok && !deadline.Active(now, until) {
+			return false
+		}
+	}
+	return true
+}
+
 type Book struct {
 	mu         sync.Mutex
 	peers      map[string]*approval
@@ -118,18 +136,21 @@ func (b *Book) Issue(ctx context.Context, p Peer, relay RelayConfig, now time.Ti
 	if !validPeer(p) || relay.Validate() != nil || ttl <= 0 || ttl > 10*time.Minute {
 		return "", ErrInvite
 	}
-	return b.issue(ctx, p, relay.Listen, now, ttl)
+	return b.issue(ctx, nil, p, relay.Listen, now, ttl)
 }
 func (b *Book) IssueTrusted(ctx context.Context, p Peer, relay TrustedRelay, now time.Time, ttl time.Duration) (string, error) {
+	return b.issueTrusted(ctx, nil, p, relay, now, ttl)
+}
+func (b *Book) issueTrusted(ctx, consent context.Context, p Peer, relay TrustedRelay, now time.Time, ttl time.Duration) (string, error) {
 	if e := ctx.Err(); e != nil {
 		return "", e
 	}
 	if !validPeer(p) || relay.Validate() != nil || ttl <= 0 || ttl > 10*time.Minute {
 		return "", ErrInvite
 	}
-	return b.issue(ctx, p, relay.Address, now, ttl)
+	return b.issue(ctx, consent, p, relay.Address, now, ttl)
 }
-func (b *Book) issue(ctx context.Context, p Peer, relay netip.AddrPort, now time.Time, ttl time.Duration) (string, error) {
+func (b *Book) issue(ctx, consent context.Context, p Peer, relay netip.AddrPort, now time.Time, ttl time.Duration) (string, error) {
 	var raw [32]byte
 	if _, e := rand.Read(raw[:]); e != nil {
 		return "", e
@@ -146,15 +167,19 @@ func (b *Book) issue(ctx context.Context, p Peer, relay netip.AddrPort, now time
 			return "", err
 		}
 	}
+	inv := invitation{peer: p, expires: now.Add(ttl), relay: relay, consent: consent}
+	if consent != nil && !inv.active(time.Now()) {
+		return "", ErrInvite
+	}
 	for k, v := range b.invites {
-		if !deadline.Active(now, v.expires) {
+		if !v.active(now) {
 			delete(b.invites, k)
 		}
 	}
 	if len(b.invites) >= 32 {
 		return "", errors.New("too many pending invitations")
 	}
-	b.invites[h] = invitation{p, now.Add(ttl), relay}
+	b.invites[h] = inv
 	return token, nil
 }
 func (b *Book) CancelInvite(token string) {
@@ -180,7 +205,7 @@ func (b *Book) Redeem(ctx context.Context, token, authenticatedKey string, conta
 		return e
 	}
 	v, ok := b.invites[h]
-	if !ok || !deadline.Active(now, v.expires) || v.peer.Key != authenticatedKey || v.relay != contactedRelay {
+	if !ok || !v.active(now) || v.peer.Key != authenticatedKey || v.relay != contactedRelay {
 		return ErrInvite
 	}
 	delete(b.invites, h)
@@ -297,7 +322,7 @@ func (b *Book) pending(key string) bool {
 	defer b.mu.Unlock()
 	now := time.Now()
 	for _, v := range b.invites {
-		if v.peer.Key == key && deadline.Active(now, v.expires) {
+		if v.peer.Key == key && v.active(now) {
 			return true
 		}
 	}
@@ -308,7 +333,7 @@ func (b *Book) invitedPeer(token, key string, relay netip.AddrPort, now time.Tim
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	v, ok := b.invites[h]
-	if !ok || !deadline.Active(now, v.expires) || v.peer.Key != key || v.relay != relay {
+	if !ok || !v.active(now) || v.peer.Key != key || v.relay != relay {
 		return Peer{}, ErrInvite
 	}
 	return v.peer, nil
@@ -338,7 +363,7 @@ func (b *Book) anyPending() bool {
 	defer b.mu.Unlock()
 	now := time.Now()
 	for _, v := range b.invites {
-		if deadline.Active(now, v.expires) {
+		if v.active(now) {
 			return true
 		}
 	}

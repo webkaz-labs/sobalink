@@ -381,6 +381,27 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite nearby-manual-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreNearbySetupManualIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreNearbySetupManualIntegration$'
+      - name: Verify TOFU request approval across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-request-tofu-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestTOFUIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestTOFUIntegration$'
+      - name: Verify full verification request approval across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-request-full-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestFullVerificationIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestFullVerificationIntegration$'
+      - name: Verify request rejection and cancellation across native Core peers
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite nearby-request-reject-cancel-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestRejectCancelIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestRejectCancelIntegration$'
       - name: Verify Linux nearby native discovery without skips
         if: matrix.goos == 'linux'
         timeout-minutes: 8
@@ -989,6 +1010,11 @@ jobs:
           screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
           mkdir -m 700 "$screenshots"
           SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
+      - name: Verify synthetic request pairing UI without skips
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-pairing-ui.py
       - name: Verify catalog view with separate agents and actual browser
         timeout-minutes: 8
         env:

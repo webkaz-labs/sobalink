@@ -24,6 +24,11 @@ type SetupScopesView struct {
 }
 
 type SetupStartInput struct {
+	// Empty mode preserves the independently selected v1 full-fingerprint flow.
+	Mode             string `json:"mode,omitempty"`             // request, receive, outbound
+	Verification     string `json:"verification,omitempty"`     // tofu, full-sha256
+	ExpiresInSeconds int    `json:"expiresInSeconds,omitempty"` // 120..1200; default 120
+
 	Alias         string `json:"alias"`
 	ScopeID       string `json:"scopeId"`
 	BootstrapPort uint16 `json:"bootstrapPort"`
@@ -78,6 +83,13 @@ type SetupDiscoveryView struct {
 // SetupSnapshot never contains an invitation/token/private identity. Paired,
 // mutually reachable and application-trusted are deliberately separate facts.
 type SetupSnapshot struct {
+	Alias        string            `json:"alias,omitempty"`
+	Mode         string            `json:"mode,omitempty"`
+	Verification string            `json:"verification,omitempty"`
+	RequestID    string            `json:"requestId,omitempty"`
+	Request      *SetupRequestView `json:"request,omitempty"`
+	Target       *SetupTargetView  `json:"target,omitempty"`
+
 	Kind           string             `json:"kind"` // sobalink-setup
 	Version        int                `json:"version"`
 	SessionID      string             `json:"sessionId,omitempty"`
@@ -112,6 +124,9 @@ type SetupManualInput struct {
 }
 
 type SetupApproveInput struct {
+	RequestID        string `json:"requestId,omitempty"`
+	TOFUAcknowledged bool   `json:"tofuAcknowledged,omitempty"`
+
 	SessionID   string `json:"sessionId"`
 	Revision    uint64 `json:"revision"`
 	Fingerprint string `json:"fingerprint"`
@@ -120,4 +135,50 @@ type SetupApproveInput struct {
 
 type SetupSessionInput struct {
 	SessionID string `json:"sessionId,omitempty"`
+}
+
+// SetupTargetView is an ephemeral, key-pinned preflight result. Its display name
+// and address are not identity proof; the exact key/session must be repeated by
+// setup.request. A changed target requires another explicit request.
+type SetupTargetView struct {
+	Revision               uint64    `json:"revision"`
+	RelayAddress           string    `json:"relayAddress"`
+	RelayCertificateSHA256 string    `json:"relayCertificateSHA256"`
+	ScopePrefix            string    `json:"scopePrefix"`
+	SessionID              string    `json:"sessionId"`
+	PeerKey                string    `json:"peerKey"`
+	Alias                  string    `json:"alias"`
+	Address                string    `json:"address"`
+	ExpiresAt              time.Time `json:"expiresAt"`
+	Verification           string    `json:"verification"`
+	KeyStatus              string    `json:"keyStatus"` // new, saved, revoked
+}
+
+type SetupRequestView struct {
+	RequestID    string    `json:"requestId"`
+	PeerKey      string    `json:"peerKey"`
+	Alias        string    `json:"alias"`
+	Address      string    `json:"address"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	Verification string    `json:"verification"`
+	KeyStatus    string    `json:"keyStatus"`
+}
+
+type SetupInspectTargetInput struct {
+	SessionID   string `json:"sessionId"`
+	Address     string `json:"address,omitempty"`
+	CandidateID string `json:"candidateId,omitempty"`
+}
+
+type SetupRequestInput struct {
+	TargetRevision   uint64 `json:"targetRevision"`
+	SessionID        string `json:"sessionId"`
+	TargetSessionID  string `json:"targetSessionId"`
+	ExpectedPeerKey  string `json:"expectedPeerKey"`
+	TOFUAcknowledged bool   `json:"tofuAcknowledged"`
+}
+
+type SetupRejectInput struct {
+	SessionID string `json:"sessionId"`
+	RequestID string `json:"requestId"`
 }

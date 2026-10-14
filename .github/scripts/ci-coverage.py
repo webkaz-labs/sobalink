@@ -53,6 +53,9 @@ FAST_STEPS = (
     "Verify durable outbox restart across Core processes",
     "Verify durable text restart and lost ACK across Core processes",
     "Verify manual nearby setup across native Core peers",
+    "Verify TOFU request approval across native Core peers",
+    "Verify full verification request approval across native Core peers",
+    "Verify request rejection and cancellation across native Core peers",
     "Verify direct LAN synthetic expiry and rekey",
     "Verify explicit WAN discovery with isolated native STUN",
     "Verify guarded production direct and relay underlays",
@@ -72,6 +75,7 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 SCOPES = {"docs", "frontend", "go", "native-short", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Verify actual UI workflows with isolated Playwright fixtures",
+                 "Verify synthetic request pairing UI without skips",
                  "Verify durable outbox recovery with separate agents and actual browser",
                  "Verify nearby setup with separate agents and actual browser",
                  "Verify durable text recovery with separate agents and actual browser")

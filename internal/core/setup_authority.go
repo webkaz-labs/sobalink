@@ -50,6 +50,11 @@ func (s *setupSession) checkAuthority(node lanNetworkBackend) error {
 	profile := c.setupProfileReview()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.peer != nil {
+		if e := s.verifySavedBasis(s.peer.Key); e != nil {
+			return e
+		}
+	}
 	if profile != s.authorityProfile {
 		return setupError("setup_authority_changed", "local permissions changed during setup")
 	}

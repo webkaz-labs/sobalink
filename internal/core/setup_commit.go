@@ -18,7 +18,7 @@ import (
 // configuration, but cannot issue an invitation before both local approvals.
 func (s *setupSession) advanceCommit() {
 	s.mu.Lock()
-	ready := s.plan != nil && s.peerPlan && s.localApproved && s.remoteApproved && s.ctx.Err() == nil
+	ready := s.plan != nil && s.plan.Validate(time.Now()) == nil && s.peerPlan && s.localApproved && s.remoteApproved && s.ctx.Err() == nil
 	if !ready || s.connected || s.state == "recovery_required" || s.state == "failed" {
 		s.mu.Unlock()
 		return
@@ -70,14 +70,6 @@ func (s *setupSession) advanceCommit() {
 		s.markPaired()
 	}
 	if !paired && plan.HostKey == s.local.Key && !haveInvitation {
-		remaining := time.Until(plan.Expires) / time.Second
-		if remaining < 1 {
-			s.failCommit(lanlink.ErrSetup)
-			return
-		}
-		if remaining > 120 {
-			remaining = 120
-		}
 		s.core.op.Lock()
 		if e := s.checkAuthority(node); e != nil {
 			s.core.op.Unlock()
@@ -85,7 +77,7 @@ func (s *setupSession) advanceCommit() {
 			return
 		}
 		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-		inv, e := node.IssueInvitation(ctx, lanlink.Peer{Key: peer.Key, Name: peer.Alias}, s.local.Alias, remaining*time.Second)
+		inv, e := node.IssueSetupInvitation(ctx, s.ctx, lanlink.Peer{Key: peer.Key, Name: peer.Alias}, s.local.Alias, plan.Expires)
 		cancel()
 		s.core.op.Unlock()
 		if e != nil {
@@ -115,12 +107,27 @@ func (s *setupSession) advanceCommit() {
 		s.state = "connecting"
 		s.mu.Unlock()
 	} else if !paired && plan.HostKey == peer.Key && haveInvitation && !attempted {
+		// Local cancellation/revocation orders before the attempt reservation.
+		// The session lock alone is insufficient because commands own c.op.
+		s.core.op.Lock()
+		if e := s.checkAuthority(node); e != nil {
+			s.core.op.Unlock()
+			s.failCommit(e)
+			return
+		}
 		s.mu.Lock()
+		if s.ctx.Err() != nil || s.plan == nil || s.plan.Validate(time.Now()) != nil || !s.localApproved || !s.remoteApproved || s.invitation == nil || s.pairingAttempted {
+			s.mu.Unlock()
+			s.core.op.Unlock()
+			return
+		}
 		inv := *s.invitation
 		s.pairingAttempted = true
 		s.state = "connecting"
+		deadline := minSetupDeadline(s.plan.Expires, time.Now().Add(30*time.Second))
+		ctx, cancel := context.WithDeadline(s.ctx, deadline)
 		s.mu.Unlock()
-		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+		s.core.op.Unlock()
 		e := node.PairInvitation(ctx, inv)
 		cancel()
 		if e != nil {
@@ -152,6 +159,14 @@ func (s *setupSession) prepareBackend() error {
 		return setupError("setup_state_changed", "saved identity or permission changed before activation; review a fresh setup")
 	}
 	s.mu.Lock()
+	if s.peer == nil {
+		s.mu.Unlock()
+		return lanlink.ErrSetup
+	}
+	if e := s.verifySavedBasis(s.peer.Key); e != nil {
+		s.mu.Unlock()
+		return e
+	}
 	plan := *s.plan
 	borrowed := s.borrowedNode
 	s.mu.Unlock()
@@ -169,12 +184,28 @@ func (s *setupSession) prepareBackend() error {
 		if c.nodeCopy() != borrowed || borrowed.PublicKey() != s.local.Key {
 			return setupError("setup_state_changed", "active LAN owner changed")
 		}
+		next := store.copy()
+		if e := rememberSetupTrust(&next, s.peer.Key, setupVerification(s.local)); e != nil {
+			return e
+		}
+		if !reflect.DeepEqual(next, store.copy()) {
+			if e := store.save(next); e != nil {
+				return e
+			}
+			s.mu.Lock()
+			s.authority = store.copy()
+			s.review = c.setupReview()
+			s.mu.Unlock()
+		}
 		return nil
 	}
 	if c.nodeCopy() != nil {
 		return setupError("setup_state_changed", "a network started during connection setup")
 	}
 	next := store.copy()
+	if e := rememberSetupTrust(&next, s.peer.Key, setupVerification(s.local)); e != nil {
+		return e
+	}
 	if len(next.Remotes) != 0 || len(next.RouteCandidates) != 0 {
 		return setupError("setup_existing_anchor_conflict", "existing LAN pairs or prepared routes require separate review")
 	}
@@ -231,7 +262,7 @@ func (s *setupSession) prepareBackend() error {
 func (s *setupSession) markPaired() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.plan == nil || s.paired || s.ctx.Err() != nil {
+	if s.plan == nil || s.plan.Validate(time.Now()) != nil || s.peer == nil || s.paired || s.ctx.Err() != nil || s.verifySavedBasis(s.peer.Key) != nil {
 		return
 	}
 	frame, e := lanlink.SealSetupMessage(s.identity, *s.plan, lanlink.SetupActionPaired, nil, time.Now())
@@ -250,7 +281,7 @@ func (s *setupSession) markPaired() {
 }
 func (s *setupSession) checkConnected() {
 	s.mu.Lock()
-	if !s.paired || !s.remotePaired || s.ctx.Err() != nil || s.plan == nil {
+	if !s.paired || !s.remotePaired || s.ctx.Err() != nil || s.plan == nil || s.plan.Validate(time.Now()) != nil {
 		s.mu.Unlock()
 		return
 	}
@@ -295,7 +326,7 @@ func (s *setupSession) checkConnected() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.localConnected && s.remoteConnected && s.ctx.Err() == nil {
+	if s.localConnected && s.remoteConnected && s.ctx.Err() == nil && s.peer != nil && s.plan != nil && s.plan.Validate(time.Now()) == nil && s.verifySavedBasis(s.peer.Key) == nil {
 		s.connected = true
 		s.promoted = true
 		s.state = "connected"
@@ -435,4 +466,11 @@ func (s *setupSession) cleanup() {
 		c.networkState = "offline"
 	}
 	c.mu.Unlock()
+}
+
+func minSetupDeadline(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }

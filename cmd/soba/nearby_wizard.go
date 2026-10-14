@@ -367,7 +367,12 @@ func (c *nearbyCLI) wizardAnotherDevice(p *prompts, original nearbySnapshot) (ne
 	if err != nil {
 		return current, false, c.uncertain(original.SessionID, err)
 	}
-	input, err := c.wizardStart(p)
+	var input any
+	if original.Version == 2 {
+		input, err = c.requestWizardStart(p)
+	} else {
+		input, err = c.wizardStart(p)
+	}
 	if errors.Is(err, errPromptCanceled) {
 		return current, false, nil
 	}
@@ -379,6 +384,9 @@ func (c *nearbyCLI) wizardAnotherDevice(p *prompts, original nearbySnapshot) (ne
 		// A fresh start has a new, not-yet-known session locator. Inspect the current
 		// session instead of accidentally querying only the closed historical one.
 		return current, false, c.uncertain("", err)
+	}
+	if original.Version == 2 && !nearbyV2StartMatches(next, input.(map[string]any)) {
+		return next, false, c.uncertain(next.SessionID, nearbyError(c.ja, "setup_invalid_response"))
 	}
 	return next, true, nil
 }

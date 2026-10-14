@@ -290,14 +290,14 @@ func TestLANPairStateIsDurableBeforePublicationAndContainsNoAppTrust(t *testing.
 	remotes := []lanlink.RemotePeer{{Peer: peer, Address: tailcat.Addr("private-pair-capability"), ClientPrivate: lanlink.GenerateIdentity().Key, IncomingClientKey: strings.Repeat("c", 64)}}
 	path := store.path
 	store.path = t.TempDir()
-	if err := store.persist(trust, remotes); err == nil {
+	if err := store.persistAt(store.copy().SetupPersistenceEpoch)(trust, remotes); err == nil {
 		t.Fatal("failed pairing persistence reported success")
 	}
 	if len(store.copy().Trust.Peers) != 0 {
 		t.Fatal("failed pairing persistence published a peer")
 	}
 	store.path = path
-	if err := store.persist(trust, remotes); err != nil {
+	if err := store.persistAt(store.copy().SetupPersistenceEpoch)(trust, remotes); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := readLANStore(path)
@@ -463,10 +463,10 @@ func TestLANRevocationProfileFailureCannotRestoreAutosave(t *testing.T) {
 	_ = b.Start()
 	id := fake.peers[0].Key
 	paired := lanlink.Peer{Key: id, Name: "Peer B"}
-	if err := store.persist(lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{paired}}, []lanlink.RemotePeer{{Peer: paired, Address: tailcat.Addr("private-capability")}}); err != nil {
+	if err := store.persistAt(store.copy().SetupPersistenceEpoch)(lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{paired}}, []lanlink.RemotePeer{{Peer: paired, Address: tailcat.Addr("private-capability")}}); err != nil {
 		t.Fatal(err)
 	}
-	fake.persist = store.persist
+	fake.persist = store.persistAt(store.copy().SetupPersistenceEpoch)
 	p := c.profileCopy()
 	p.Peers = []Trust{{ID: id, Name: "Peer B", Network: "lan", Generation: 9, Autosave: true, Directory: t.TempDir()}}
 	p.Settings.Network = "lan"
@@ -543,7 +543,7 @@ func TestOfflineStartupCanRevokeSavedPairsAndChooseNewRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer := lanlink.Peer{Key: strings.Repeat("b", 64), Name: "saved peer"}
-	if err := c.lanStoreCopy().persist(lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{peer}}, []lanlink.RemotePeer{{Peer: peer, Address: tailcat.Addr("private-capability")}}); err != nil {
+	if err := c.lanStoreCopy().persistAt(c.lanStoreCopy().copy().SetupPersistenceEpoch)(lanlink.Snapshot{Version: 1, Peers: []lanlink.Peer{peer}}, []lanlink.RemotePeer{{Peer: peer, Address: tailcat.Addr("private-capability")}}); err != nil {
 		t.Fatal(err)
 	}
 	p := c.profileCopy()

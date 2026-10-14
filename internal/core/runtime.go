@@ -472,7 +472,7 @@ func (c *Core) Command(ctx context.Context, cmd webui.Command) (any, error) {
 	// card must reflect the current component identity/configuration on retry.
 	// Port availability is an observation, not a reservation; never retain large
 	// raised-budget proposal results or replay stale bind observations.
-	if strings.HasPrefix(cmd.Name, "resource.") || cmd.Name == "setup.status" || cmd.Name == "setup.scopes" || cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" || cmd.Name == "direct-lan.migration.review" {
+	if strings.HasPrefix(cmd.Name, "resource.") || cmd.Name == "setup.status" || cmd.Name == "setup.revoked" || cmd.Name == "setup.reenroll" || cmd.Name == "setup.scopes" || cmd.Name == "proxy.reveal" || cmd.Name == "device-card.export" || cmd.Name == "device-card.inspect" || cmd.Name == "service.ports" || cmd.Name == "direct-lan.migration.review" {
 		return c.executeCommand(ctx, cmd)
 	}
 	// Endpoint proof bytes are never request-history results. Every release
@@ -660,7 +660,7 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
 	case "direct-lan.endpoint.export.preview", "direct-lan.endpoint.export", "direct-lan.endpoint.reexport.preview", "direct-lan.endpoint.reexport":
 		return c.directLANCommand(ctx, cmd.Name, cmd.Payload)
-	case "setup.scopes", "setup.start", "setup.status", "setup.select", "setup.manual", "setup.approve", "setup.cancel":
+	case "setup.revoked", "setup.reenroll", "setup.scopes", "setup.start", "setup.status", "setup.select", "setup.manual", "setup.approve", "setup.cancel", "setup.inspect-target", "setup.request", "setup.reject":
 		return c.setupCommand(ctx, cmd.Name, cmd.Payload)
 	case "lan.addresses", "lan.inspect", "lan.identity", "lan.invite", "lan.cancel", "lan.join", "lan.revoke":
 		return c.lanCommand(ctx, cmd.Name, cmd.Payload)

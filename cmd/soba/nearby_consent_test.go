@@ -91,7 +91,7 @@ func TestNearbyWizardCleanFailedRetryRequiresFreshConsent(t *testing.T) {
 					return json.Unmarshal(value, target)
 				}
 				input := "y\nNew alias\n" + text(allow, "n", "y") + "\ny\nx\n"
-				if err := runWith(context.Background(), []string{"--locale", locale, "nearby", "--interactive"}, &out, strings.NewReader(input), client); err != nil {
+				if err := runWith(context.Background(), []string{"--locale", locale, "nearby", "--legacy-interactive"}, &out, strings.NewReader(input), client); err != nil {
 					t.Fatal(err)
 				}
 				if len(calls) != 3 || calls[0].Name != "setup.status" || calls[1].Name != "setup.scopes" || calls[2].Name != "setup.start" {
@@ -121,7 +121,7 @@ func TestNearbyWizardDoesNotRetryUnsafeOrDeclinedFailure(t *testing.T) {
 		s.ReasonCode, s.NextAction, s.Process.State, s.Paired = tc.reason, tc.action, tc.process, tc.paired
 		var calls []webui.Command
 		var out bytes.Buffer
-		if err := runWith(context.Background(), []string{"nearby", "--interactive"}, &out, strings.NewReader("n\n"), nearbyFixtureClient(t, &calls, nil, s)); err != nil {
+		if err := runWith(context.Background(), []string{"nearby", "--legacy-interactive"}, &out, strings.NewReader("n\n"), nearbyFixtureClient(t, &calls, nil, s)); err != nil {
 			t.Fatal(err)
 		}
 		if len(calls) != 1 || calls[0].Name != "setup.status" {
@@ -147,7 +147,7 @@ func TestNearbyWizardRetryLostStartNeverReplays(t *testing.T) {
 		}
 		return fixture(ctx, dir, raw, target)
 	}
-	err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--interactive"}, &out, strings.NewReader("y\nNew alias\ny\ny\ny\n"), client)
+	err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--legacy-interactive"}, &out, strings.NewReader("y\nNew alias\ny\ny\ny\n"), client)
 	if err == nil || len(calls) != 3 || calls[2].Name != "setup.start" {
 		t.Fatal(err, calls)
 	}

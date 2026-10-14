@@ -14,12 +14,15 @@ import (
 // Connection setup is a transport-independent, short-lived exchange. None of
 // these types or functions opens a socket, saves state, or grants local consent.
 const (
-	SetupVersion     = 1
-	MaxSetupLifetime = 120 * time.Second
-	MaxSetupPayload  = 16 << 10
+	SetupVersion            = 1
+	SetupRequestVersion     = 2
+	MaxSetupRequestLifetime = 20 * time.Minute
+	MaxSetupLifetime        = 120 * time.Second
+	MaxSetupPayload         = 16 << 10
 
 	SetupActionHelloProof       = "hello-proof"
 	SetupActionApprove          = "approve"
+	SetupActionReject           = "reject"
 	SetupActionInvitation       = "invitation"
 	SetupActionPaired           = "paired"
 	SetupActionCancel           = "cancel"
@@ -63,6 +66,10 @@ func setupLocalAddress(a netip.Addr) bool {
 // Alias is user-chosen display text, never identity. Relay is an exact candidate
 // offered by this participant; it does not authorize hosting or relay use.
 type SetupParticipant struct {
+	Protocol     int    `json:"protocol,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	Verification string `json:"verification,omitempty"`
+
 	SessionID    string         `json:"session_id"`
 	Key          string         `json:"key"`
 	Alias        string         `json:"alias"`
@@ -85,7 +92,21 @@ func NewSetupSessionID() (string, error) {
 }
 
 func (p SetupParticipant) validate() error {
-	if !validKey(p.SessionID) || !validSetupAlias(p.Key, p.Alias) || p.Scope.Validate() != nil || p.Expires.IsZero() || !p.Bootstrap.IsValid() || !setupPort(p.Bootstrap.Port()) || p.Bootstrap.Addr() != p.Scope.LocalAddress {
+	if p.Protocol == 0 {
+		if p.Mode != "" || p.Verification != "" {
+			return ErrSetup
+		}
+	} else if p.Protocol != SetupRequestVersion || (p.Mode != "request" && p.Mode != "receive" && p.Mode != "outbound") || (p.Verification != "tofu" && p.Verification != "full-sha256") {
+		return ErrSetup
+	}
+	if p.Mode == "outbound" && (p.Bootstrap.Port() != 0 || p.AllowHost || p.ExistingHost || p.Relay != nil) {
+		return ErrSetup
+	}
+	if p.Protocol == SetupRequestVersion && p.Mode != "receive" && p.AllowHost {
+		return ErrSetup
+	}
+
+	if !validKey(p.SessionID) || !validSetupAlias(p.Key, p.Alias) || p.Scope.Validate() != nil || p.Expires.IsZero() || !p.Bootstrap.IsValid() || (!setupPort(p.Bootstrap.Port()) && !(p.Protocol == SetupRequestVersion && p.Mode == "outbound" && p.Bootstrap.Port() == 0)) || p.Bootstrap.Addr() != p.Scope.LocalAddress {
 		return ErrSetup
 	}
 	if p.Relay != nil && (p.Relay.Validate() != nil || !setupPort(p.Relay.Address.Port()) || p.Relay.Address.Addr() != p.Scope.LocalAddress || p.Relay.Address == p.Bootstrap) {
@@ -112,10 +133,30 @@ func setupPort(port uint16) bool {
 }
 
 func (p SetupParticipant) Validate(now time.Time) error {
-	if p.validate() != nil || now.IsZero() || !p.Expires.After(now) || p.Expires.After(now.Add(MaxSetupLifetime)) {
+	if p.validate() != nil || now.IsZero() || !p.Expires.After(now) || p.Expires.After(now.Add(p.maxLifetime())) {
 		return ErrSetup
 	}
 	return nil
+}
+
+func (p SetupParticipant) maxLifetime() time.Duration {
+	if p.Protocol == SetupRequestVersion {
+		return MaxSetupRequestLifetime
+	}
+	return MaxSetupLifetime
+}
+
+func setupTranscriptVersion(participants [2]SetupParticipant) int {
+	if participants[0].Protocol == SetupRequestVersion {
+		return SetupRequestVersion
+	}
+	return SetupVersion
+}
+func setupDomain(v int, v1 string) string {
+	if v == SetupRequestVersion {
+		return v1[:len(v1)-1] + "2"
+	}
+	return v1
 }
 
 func cloneSetupParticipant(p SetupParticipant) SetupParticipant {
@@ -129,7 +170,10 @@ func cloneSetupParticipant(p SetupParticipant) SetupParticipant {
 
 func validateSetupParticipants(participants [2]SetupParticipant) error {
 	a, b := participants[0], participants[1]
-	if a.validate() != nil || b.validate() != nil || a.Key >= b.Key || a.SessionID == b.SessionID {
+	if a.validate() != nil || b.validate() != nil || a.Key >= b.Key || a.SessionID == b.SessionID || a.Protocol != b.Protocol {
+		return ErrSetup
+	}
+	if a.Protocol == SetupRequestVersion && (a.Verification != b.Verification || (a.Mode == "receive") == (b.Mode == "receive")) {
 		return ErrSetup
 	}
 	for _, participant := range participants {
@@ -154,7 +198,8 @@ func NewSetupHello(a, b SetupParticipant) (SetupHello, error) {
 	if a.Key > b.Key {
 		a, b = b, a
 	}
-	h := SetupHello{Version: SetupVersion, Domain: setupHelloDomain, Backend: "lan", Participants: [2]SetupParticipant{a, b}}
+	v := setupTranscriptVersion([2]SetupParticipant{a, b})
+	h := SetupHello{Version: v, Domain: setupDomain(v, setupHelloDomain), Backend: "lan", Participants: [2]SetupParticipant{a, b}}
 	if h.validate() != nil {
 		return SetupHello{}, ErrSetup
 	}
@@ -162,7 +207,7 @@ func NewSetupHello(a, b SetupParticipant) (SetupHello, error) {
 }
 
 func (h SetupHello) validate() error {
-	if h.Version != SetupVersion || h.Domain != setupHelloDomain || h.Backend != "lan" || validateSetupParticipants(h.Participants) != nil {
+	if h.Version != setupTranscriptVersion(h.Participants) || h.Domain != setupDomain(h.Version, setupHelloDomain) || h.Backend != "lan" || validateSetupParticipants(h.Participants) != nil {
 		return ErrSetup
 	}
 	return nil
@@ -229,7 +274,7 @@ func setupHelloBinding(identity Identity, hello SetupHello, senderKey string, no
 		expires = recipient.Expires
 	}
 	return setupHelloProof{
-		Version: SetupVersion, Domain: setupHelloProofDomain, Action: SetupActionHelloProof,
+		Version: hello.Version, Domain: setupDomain(hello.Version, setupHelloProofDomain), Action: SetupActionHelloProof,
 		Sender: sender.Key, Recipient: recipient.Key,
 		SenderSessionID: sender.SessionID, RecipientSessionID: recipient.SessionID,
 		Fingerprint: fingerprint, Expires: expires.UTC(),
@@ -276,6 +321,9 @@ func OpenSetupHello(identity Identity, hello SetupHello, expectedSender string, 
 // their full public keys. Revision belongs to the caller's current session;
 // validation alone neither remembers earlier revisions nor prevents replay.
 type SetupPlan struct {
+	RequestID    string `json:"request_id,omitempty"`
+	Verification string `json:"verification,omitempty"`
+
 	Version      int                 `json:"version"`
 	Domain       string              `json:"domain"`
 	Backend      string              `json:"backend"`
@@ -292,10 +340,19 @@ func NewSetupPlan(a, b SetupParticipant, revision uint64, hostKey string, relay 
 	if a.Key > b.Key {
 		a, b = b, a
 	}
+	v := setupTranscriptVersion([2]SetupParticipant{a, b})
 	p := SetupPlan{
-		Version: SetupVersion, Domain: setupPlanDomain, Backend: "lan",
+		Version: v, Domain: setupDomain(v, setupPlanDomain), Backend: "lan",
 		Participants: [2]SetupParticipant{a, b}, Revision: revision,
 		Issued: issued.UTC(), Expires: expires.UTC(), HostKey: hostKey, Relay: relay,
+	}
+	if v == SetupRequestVersion {
+		p.Verification = a.Verification
+		requester := a
+		if requester.Mode == "receive" {
+			requester = b
+		}
+		p.RequestID = requester.SessionID
 	}
 	if p.Validate(issued) != nil {
 		return SetupPlan{}, ErrSetup
@@ -305,14 +362,26 @@ func NewSetupPlan(a, b SetupParticipant, revision uint64, hostKey string, relay 
 
 func (p SetupPlan) validate() error {
 	a, b := p.Participants[0], p.Participants[1]
-	if p.Version != SetupVersion || p.Domain != setupPlanDomain || p.Backend != "lan" || p.Revision == 0 || validateSetupParticipants(p.Participants) != nil {
+	if p.Version != setupTranscriptVersion(p.Participants) || p.Domain != setupDomain(p.Version, setupPlanDomain) || p.Backend != "lan" || p.Revision == 0 || validateSetupParticipants(p.Participants) != nil {
 		return ErrSetup
 	}
-	if !finiteRouteLifetime(p.Issued, p.Expires) || p.Expires.Sub(p.Issued) > MaxSetupLifetime || p.Expires.After(a.Expires) || p.Expires.After(b.Expires) || p.Relay.Validate() != nil {
+	if !finiteRouteLifetime(p.Issued, p.Expires) || p.Expires.Sub(p.Issued) > a.maxLifetime() || p.Expires.After(a.Expires) || p.Expires.After(b.Expires) || p.Relay.Validate() != nil {
 		return ErrSetup
+	}
+	if p.Version == SetupVersion && (p.RequestID != "" || p.Verification != "") {
+		return ErrSetup
+	}
+	if p.Version == SetupRequestVersion {
+		requester := a
+		if requester.Mode == "receive" {
+			requester = b
+		}
+		if p.RequestID != requester.SessionID || p.Verification != a.Verification {
+			return ErrSetup
+		}
 	}
 	host, ok := p.Participant(p.HostKey)
-	if !ok || !host.AllowHost || host.Relay == nil || *host.Relay != p.Relay {
+	if !ok || !host.AllowHost || host.Relay == nil || *host.Relay != p.Relay || p.Version == SetupRequestVersion && host.Mode != "receive" {
 		return ErrSetup
 	}
 	// Neither participant's explicitly selected prefix is expanded by a plan.
@@ -360,7 +429,9 @@ func (p SetupPlan) Canonical() ([]byte, error) {
 
 // Fingerprint is the full 256-bit SHA-256 of the canonical transcript, never a
 // short authentication string. Both users must compare the complete fingerprint
-// out of band, or scan the complete value in a trusted QR workflow. An in-band
+// out of band, or scan the complete value in a trusted QR workflow in v1 or
+// v2 full-sha256 mode. v2 tofu is explicitly weaker: this digest binds a plan,
+// and does not establish independent physical-peer authentication. An in-band
 // echo proves no independent agreement and must never grant local approval.
 func (p SetupPlan) Fingerprint() (string, error) {
 	raw, err := p.Canonical()
@@ -388,7 +459,7 @@ func validSetupPayload(action string, payload []byte) bool {
 	switch action {
 	case SetupActionInvitation:
 		return len(payload) > 0 && len(payload) <= MaxSetupPayload
-	case SetupActionHelloProof, SetupActionApprove, SetupActionPaired, SetupActionCancel, SetupActionConnectedReceipt:
+	case SetupActionHelloProof, SetupActionApprove, SetupActionPaired, SetupActionCancel, SetupActionConnectedReceipt, SetupActionReject:
 		return len(payload) == 0
 	default:
 		return false
@@ -396,7 +467,7 @@ func validSetupPayload(action string, payload []byte) bool {
 }
 
 func setupMessageBinding(identity Identity, plan SetupPlan, senderKey, action string, now time.Time) (setupMessage, error) {
-	if identity.Validate() != nil || plan.Validate(now) != nil || (!validSetupPayload(action, nil) && action != SetupActionInvitation) {
+	if identity.Validate() != nil || plan.Validate(now) != nil || action == SetupActionReject && plan.Version != SetupRequestVersion || (!validSetupPayload(action, nil) && action != SetupActionInvitation) {
 		return setupMessage{}, ErrSetup
 	}
 	sender, ok := plan.Participant(senderKey)
@@ -415,7 +486,7 @@ func setupMessageBinding(identity Identity, plan SetupPlan, senderKey, action st
 		return setupMessage{}, ErrSetup
 	}
 	return setupMessage{
-		Version: SetupVersion, Domain: setupMessageDomain, Action: action,
+		Version: plan.Version, Domain: setupDomain(plan.Version, setupMessageDomain), Action: action,
 		Sender: sender.Key, Recipient: recipient.Key,
 		SenderSessionID: sender.SessionID, RecipientSessionID: recipient.SessionID,
 		Revision: plan.Revision, Fingerprint: fingerprint, Expires: plan.Expires.UTC(),
@@ -467,4 +538,42 @@ func OpenSetupMessage(identity Identity, plan SetupPlan, expectedSender, expecte
 		return nil, ErrSetup
 	}
 	return bytes.Clone(m.Payload), nil
+}
+
+// A v2 pending cancellation is bound to both complete participants even before
+// a relay plan exists. It can discard an exact request, never create consent.
+func SealSetupCancellation(identity Identity, hello SetupHello, now time.Time) ([]byte, error) {
+	if hello.Version != SetupRequestVersion {
+		return nil, ErrSetup
+	}
+	m, err := setupHelloBinding(identity, hello, identity.PublicKey(), now)
+	if err != nil {
+		return nil, err
+	}
+	m.Action = SetupActionCancel
+	frame, _, err := sealMessage(identity, m.Recipient, m)
+	if err != nil {
+		return nil, ErrSetup
+	}
+	return frame, nil
+}
+func OpenSetupCancellation(identity Identity, hello SetupHello, expectedSender string, frame []byte, now time.Time) error {
+	if hello.Version != SetupRequestVersion {
+		return ErrSetup
+	}
+	want, err := setupHelloBinding(identity, hello, expectedSender, now)
+	if err != nil || want.Recipient != identity.PublicKey() || len(frame) == 0 || len(frame) > maxPairMessage {
+		return ErrSetup
+	}
+	want.Action = SetupActionCancel
+	var m setupHelloProof
+	plain, err := openMessage(identity, frame, expectedSender, &m)
+	if err != nil {
+		return ErrSetup
+	}
+	canonical, err := json.Marshal(want)
+	if err != nil || !bytes.Equal(plain, canonical) {
+		return ErrSetup
+	}
+	return nil
 }

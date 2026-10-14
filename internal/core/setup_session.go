@@ -19,6 +19,20 @@ import (
 // The owner is process-local: neither a restart nor a reused display name can
 // restore consent. c.op serializes local management; mu serializes wire state.
 type setupSession struct {
+	setupGenerations             map[string]uint64
+	targetRevision               uint64
+	invitationBinding            [32]byte
+	unselectedConnections        int
+	selectedConnections          int
+	selectedAdmissionWindowCount int
+	target                       *lanlink.SetupParticipant
+	requestID                    string
+	requestConsent               bool
+	rejected                     map[string]setupWire
+	sourceAdmissions             map[netip.Addr]int
+	admissionWindow              time.Time
+	admissionWindowCount         int
+
 	core                                        *Core
 	ctx                                         context.Context
 	cancel                                      context.CancelFunc
@@ -123,6 +137,18 @@ func (c *Core) setupCommand(ctx context.Context, name string, raw json.RawMessag
 			return nil, e
 		}
 		return SetupScopesView{Kind: "sobalink-setup-scopes", Version: 1, Scopes: scopes}, nil
+	case "setup.revoked":
+		var in struct{}
+		if e := decodePayload(raw, &in); e != nil {
+			return nil, e
+		}
+		return c.revokedSetupKeys(), nil
+	case "setup.reenroll":
+		var in SetupReenrollInput
+		if e := decodePayload(raw, &in); e != nil {
+			return nil, e
+		}
+		return c.reenrollSetupKey(in)
 	case "setup.start":
 		var in SetupStartInput
 		if e := decodePayload(raw, &in); e != nil {
@@ -151,6 +177,36 @@ func (c *Core) setupCommand(ctx context.Context, name string, raw json.RawMessag
 			return nil, setupError("setup_session_changed", "setup session changed; refresh the current session")
 		}
 		return s.snapshot(), nil
+	case "setup.inspect-target":
+		var in SetupInspectTargetInput
+		if e := decodePayload(raw, &in); e != nil {
+			return nil, e
+		}
+		s, e := c.requireSetup(in.SessionID)
+		if e != nil {
+			return nil, e
+		}
+		return s.inspectTarget(in)
+	case "setup.request":
+		var in SetupRequestInput
+		if e := decodePayload(raw, &in); e != nil {
+			return nil, e
+		}
+		s, e := c.requireSetup(in.SessionID)
+		if e != nil {
+			return nil, e
+		}
+		return s.requestPeer(in)
+	case "setup.reject":
+		var in SetupRejectInput
+		if e := decodePayload(raw, &in); e != nil {
+			return nil, e
+		}
+		s, e := c.requireSetup(in.SessionID)
+		if e != nil {
+			return nil, e
+		}
+		return s.rejectRequest(in)
 	case "setup.select":
 		var in SetupSelectInput
 		if e := decodePayload(raw, &in); e != nil {
@@ -203,10 +259,22 @@ func (c *Core) setupCommand(ctx context.Context, name string, raw json.RawMessag
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if s.peer != nil {
+			if e := s.verifySavedBasis(s.peer.Key); e != nil {
+				return nil, e
+			}
+		}
 		if !s.selectionCurrentLocked(time.Now()) {
 			return nil, setupError("setup_candidate_expired", "selected contact changed or expired; cancel and select it again")
 		}
-		if s.plan == nil || !s.peerPlan || !in.Verified || s.ctx.Err() != nil {
+		if s.local.Protocol == lanlink.SetupRequestVersion && (in.RequestID == "" || in.RequestID != s.requestID) {
+			return nil, setupError("setup_request_changed", "connection request changed; review the current request")
+		}
+		verified := in.Verified
+		if s.local.Protocol == lanlink.SetupRequestVersion && s.local.Verification == "tofu" {
+			verified = in.TOFUAcknowledged
+		}
+		if s.plan == nil || !s.peerPlan || !verified || s.ctx.Err() != nil {
 			return nil, setupError("setup_verification_required", "compare the complete setup fingerprint using the other device's QR or copied text before approving")
 		}
 		digest, _ := s.plan.Fingerprint()
@@ -234,7 +302,7 @@ func (c *Core) setupCommand(ctx context.Context, name string, raw json.RawMessag
 		if e != nil {
 			return nil, e
 		}
-		s.stop("cancelled", "", "try_again")
+		s.sendRequestCancellation()
 		return s.snapshot(), nil
 	}
 	return nil, setupError("setup_command_invalid", "unknown setup command")
@@ -265,9 +333,12 @@ func (c *Core) startSetup(in SetupStartInput) (SetupSnapshot, error) {
 	if e != nil {
 		return empty, e
 	}
+	if e := validateSetupMode(in); e != nil {
+		return empty, e
+	}
 	ip := netip.MustParseAddr(scope.LocalAddress)
 	endpoint := netip.AddrPortFrom(ip, in.BootstrapPort)
-	if _, e = setupEndpoint(endpoint.String()); e != nil {
+	if _, e = setupEndpoint(endpoint.String()); e != nil && in.Mode != "outbound" {
 		return empty, setupError("setup_port_invalid", "choose an unreserved high bootstrap port")
 	}
 	if in.AllowHost {
@@ -352,10 +423,23 @@ func (c *Core) startSetup(in SetupStartInput) (SetupSnapshot, error) {
 		return empty, setupError("setup_unavailable", "cannot create a setup consent revision")
 	}
 	now := time.Now().UTC()
-	expires := now.Add(setupLifetime)
+	lifetime := setupLifetime
+	if in.Mode != "" && in.ExpiresInSeconds != 0 {
+		lifetime = time.Duration(in.ExpiresInSeconds) * time.Second
+	}
+	expires := now.Add(lifetime)
 	ctx, cancel := context.WithDeadline(c.ctx, expires)
 	s := &setupSession{core: c, ctx: ctx, cancel: cancel, done: make(chan struct{}), scope: scope, identity: store.copy().Identity, state: "discovering", next: "select_peer", borrowedNode: borrowed}
 	s.local = lanlink.SetupParticipant{SessionID: id, Key: s.identity.PublicKey(), Alias: in.Alias, Bootstrap: endpoint, Scope: lanlink.SetupScope{LocalAddress: ip, Prefix: netip.MustParsePrefix(scope.Prefix), ConsentRevision: consentRevision}, AllowHost: in.AllowHost, ExistingHost: borrowed != nil && in.AllowHost, Expires: expires}
+	if in.Mode != "" {
+		s.local.Protocol, s.local.Mode, s.local.Verification = lanlink.SetupRequestVersion, in.Mode, in.Verification
+		s.rejected = map[string]setupWire{}
+		s.sourceAdmissions = map[netip.Addr]int{}
+		s.state, s.next = "selecting", "choose_target"
+		if in.Mode == "receive" {
+			s.state, s.next = "receiving", "wait_for_request"
+		}
+	}
 	if borrowed != nil {
 		s.borrowedAnchor, e = savedLANRelay(store.copy())
 		if e != nil {
@@ -383,6 +467,9 @@ func (c *Core) startSetup(in SetupStartInput) (SetupSnapshot, error) {
 		s.local.Relay = &relay
 	}
 	s.contact = SetupContact{Kind: "sobalink-setup-contact", Version: 1, SessionID: id, Alias: in.Alias, Bootstrap: endpoint.String(), ExpiresAt: expires}
+	if s.local.Protocol == lanlink.SetupRequestVersion {
+		s.contact.Version = 2
+	}
 	s.contactText, _ = EncodeSetupContact(s.contact)
 	if qr, e := qrcode.New(s.contactText, qrcode.Medium); e == nil {
 		s.contactQR = qr.Bitmap()
@@ -393,13 +480,19 @@ func (c *Core) startSetup(in SetupStartInput) (SetupSnapshot, error) {
 	}
 	s.review = c.setupReview()
 	s.authority = store.copy()
+	s.setupGenerations = setupGenerations(s.authority)
 	s.authorityProfile = c.setupProfileReview()
-	if e = s.startListener(); e != nil {
-		cancel()
-		return empty, e
+	if in.Mode != "outbound" {
+		if e = s.startListener(); e != nil {
+			cancel()
+			return empty, e
+		}
+		d, e := s.startDiscovery()
+		s.adoptDiscovery(d, e)
+	} else {
+		s.discoveryReason = "setup_outbound_only"
+		s.discoveryStopped = true
 	}
-	d, e := s.startDiscovery()
-	s.adoptDiscovery(d, e)
 	c.mu.Lock()
 	c.setup = s
 	c.mu.Unlock()
@@ -408,6 +501,9 @@ func (c *Core) startSetup(in SetupStartInput) (SetupSnapshot, error) {
 	return s.snapshot(), nil
 }
 func (s *setupSession) selectPeer(contact SetupContact, candidateID string, manual bool) (SetupSnapshot, error) {
+	if s.local.Protocol == lanlink.SetupRequestVersion {
+		return s.snapshot(), setupError("setup_version_mismatch", "use the request flow for this session; legacy full verification requires a fresh legacy session")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -466,6 +562,19 @@ func (s *setupSession) snapshotLocked() SetupSnapshot {
 	if s.core != nil {
 		v.Process = s.core.setupProcess()
 	}
+	if s.local.Protocol == lanlink.SetupRequestVersion {
+		v.Version = lanlink.SetupRequestVersion
+		v.Alias = s.local.Alias
+		v.Mode, v.Verification, v.RequestID = s.local.Mode, s.local.Verification, s.requestID
+		if s.target != nil {
+			target := s.targetViewLocked(*s.target)
+			v.Target = &target
+		}
+		if s.peer != nil && s.requestID != "" {
+			target := s.targetViewLocked(*s.peer)
+			v.Request = &SetupRequestView{RequestID: s.requestID, PeerKey: target.PeerKey, Alias: target.Alias, Address: target.Address, ExpiresAt: target.ExpiresAt, Verification: target.Verification, KeyStatus: target.KeyStatus}
+		}
+	}
 	v.SessionID = s.local.SessionID
 	v.ExpiresAt = s.local.Expires
 	v.State, v.ReasonCode, v.NextAction = s.state, s.reason, s.next
@@ -490,7 +599,9 @@ func (s *setupSession) snapshotLocked() SetupSnapshot {
 	scope := s.scope
 	v.Scope = &scope
 	contact := s.contact
-	v.Contact = &contact
+	if s.local.Mode != "outbound" {
+		v.Contact = &contact
+	}
 	v.ContactText = s.contactText
 	v.ContactQR = s.contactQR
 	v.LocalApproved = s.localApproved
@@ -502,6 +613,16 @@ func (s *setupSession) snapshotLocked() SetupSnapshot {
 		trust, ok := s.core.trust(s.peer.Key)
 		v.Trusted = ok && !trust.Paused
 	}
+	if s.peer != nil {
+		if err := s.verifySavedBasis(s.peer.Key); err != nil {
+			v.Paired, v.Connected, v.Trusted = false, false, false
+			v.LocalApproved, v.RemoteApproved = false, false
+			v.State, v.ReasonCode, v.NextAction = "cancelled", networkErrorCode(err), "start_new_setup"
+			if v.Process.State != "ready" {
+				v.State, v.NextAction = "recovery_required", "review_recovery"
+			}
+		}
+	}
 	if s.selected != nil {
 		selected := *s.selected
 		v.Selected = &selected
@@ -511,7 +632,10 @@ func (s *setupSession) snapshotLocked() SetupSnapshot {
 		v.Discovery.State = "active"
 		if s.discovery.Err() != nil {
 			v.Discovery.State = "unavailable"
-			v.Discovery.ReasonCode = "setup_discovery_unavailable"
+			v.Discovery.ReasonCode = setupDiscoveryFailureReason(s.discovery.Err())
+			if v.Discovery.ReasonCode == "setup_discovery_expired" {
+				v.Discovery.State = "stopped"
+			}
 		}
 	} else {
 		v.Discovery.State = "unavailable"
@@ -523,9 +647,16 @@ func (s *setupSession) snapshotLocked() SetupSnapshot {
 	if s.plan != nil && s.peerPlan {
 		fingerprint, _ := s.plan.Fingerprint()
 		text := setupVerificationPrefix + fingerprint
-		p := &SetupPlanView{Revision: s.plan.Revision, Fingerprint: fingerprint, Verification: "full-sha256", VerificationText: text, Backend: "lan", Participants: s.plan.Participants, HostKey: s.plan.HostKey, Relay: LANSelection{Kind: "relay", Address: s.plan.Relay.Address.String(), CertificateSHA256: s.plan.Relay.CertificateSHA256}, ExpiresAt: s.plan.Expires}
+		participants := s.plan.Participants
+		for i, participant := range participants {
+			participants[i], _ = s.plan.Participant(participant.Key)
+		}
+		p := &SetupPlanView{Revision: s.plan.Revision, Fingerprint: fingerprint, Verification: "full-sha256", VerificationText: text, Backend: "lan", Participants: participants, HostKey: s.plan.HostKey, Relay: LANSelection{Kind: "relay", Address: s.plan.Relay.Address.String(), CertificateSHA256: s.plan.Relay.CertificateSHA256}, ExpiresAt: s.plan.Expires}
 		if qr, e := qrcode.New(text, qrcode.Medium); e == nil {
 			p.VerificationQR = qr.Bitmap()
+		}
+		if s.local.Protocol == lanlink.SetupRequestVersion {
+			p.Verification = s.local.Verification
 		}
 		v.Plan = p
 	}

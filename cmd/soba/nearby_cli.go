@@ -46,11 +46,15 @@ type nearbyStartInput struct {
 }
 
 func nearbyCLICommand(ctx context.Context, args []string, dir string, ja, jsonErrors, dryRun, offline bool, out io.Writer, in io.Reader, client controlCaller) error {
-	help := func() error { _, err := fmt.Fprintln(out, text(ja, nearbyHelpEN, nearbyHelpJA)); return err }
+	help := func() error {
+		_, err := fmt.Fprintln(out, text(ja, nearbyV2HelpEN+"\n\nLegacy full-fingerprint commands (--legacy-interactive):\n"+nearbyHelpEN, nearbyV2HelpJA+"\n\n従来の全文照合コマンド（--legacy-interactive）:\n"+nearbyHelpJA))
+		return err
+	}
 	if len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		return help()
 	}
-	interactive := len(args) == 1 && args[0] == "--interactive"
+	legacyInteractive := len(args) == 1 && args[0] == "--legacy-interactive"
+	interactive := legacyInteractive || len(args) == 1 && args[0] == "--interactive"
 	if len(args) == 0 {
 		if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 			interactive = true
@@ -62,6 +66,9 @@ func nearbyCLICommand(ctx context.Context, args []string, dir string, ja, jsonEr
 	if offline {
 		return nearbyError(c.ja, "setup_offline_unavailable")
 	}
+	if !interactive && nearbyV2Command(args) {
+		return c.v2Command(args)
+	}
 	if interactive {
 		if dryRun {
 			return nearbyError(c.ja, "setup_scope_required")
@@ -69,7 +76,13 @@ func nearbyCLICommand(ctx context.Context, args []string, dir string, ja, jsonEr
 		if os.Getenv("TEA_TRACE") != "" {
 			return nearbyError(c.ja, "setup_invalid")
 		}
-		return c.wizard()
+		if f, ok := in.(*os.File); ok && !term.IsTerminal(int(f.Fd())) {
+			return nearbyError(c.ja, "setup_invalid")
+		}
+		if legacyInteractive {
+			return c.wizard()
+		}
+		return c.requestWizard()
 	}
 	if len(args) == 0 {
 		return help()
@@ -424,7 +437,7 @@ func nearbyHex(value string) bool {
 }
 func nearbyAlias(value string) bool {
 	return len(value) >= 1 && len(value) <= 80 && utf8.ValidString(value) && strings.TrimSpace(value) == value && !strings.ContainsFunc(value, func(r rune) bool {
-		return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || r == '\u2028' || r == '\u2029'
+		return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029'
 	})
 }
 func nearbyPort(port int) bool {
@@ -530,7 +543,7 @@ func nearbyWriteFile(path, value string, ja bool) error {
 func nearbyDecodeSnapshot(raw []byte, session string, ja bool) (nearbySnapshot, error) {
 	var s nearbySnapshot
 	bad := func() (nearbySnapshot, error) { return s, nearbyError(ja, "setup_invalid_response") }
-	if len(raw) > 256<<10 || json.Unmarshal(raw, &s) != nil || s.Kind != "sobalink-setup" || s.Version != 1 || s.Candidates == nil || len(s.Candidates) > 64 {
+	if len(raw) > 256<<10 || json.Unmarshal(raw, &s) != nil || s.Kind != "sobalink-setup" || (s.Version != 1 && s.Version != 2) || s.Candidates == nil || len(s.Candidates) > 64 {
 		return bad()
 	}
 	if !outboxCLIRequiredFields(raw, "localApproved", "remoteApproved", "paired", "connected", "trusted", "process", "discovery") {
@@ -540,7 +553,7 @@ func nearbyDecodeSnapshot(raw []byte, session string, ja bool) (nearbySnapshot, 
 		return bad()
 	}
 	switch s.State {
-	case "idle", "discovering", "selecting", "authenticating", "awaiting_approval", "preparing", "connecting", "connected", "recovery_required", "cancelling", "cancelled", "expired", "stop_required", "needs_restart", "failed":
+	case "receiving", "requesting", "request_received", "rejected", "idle", "discovering", "selecting", "authenticating", "awaiting_approval", "preparing", "connecting", "connected", "recovery_required", "cancelling", "cancelled", "expired", "stop_required", "needs_restart", "failed":
 	default:
 		return bad()
 	}
@@ -561,7 +574,11 @@ func nearbyDecodeSnapshot(raw []byte, session string, ja bool) (nearbySnapshot, 
 	if s.SessionID == "" && s.State != "idle" && s.State != "stop_required" && s.State != "needs_restart" {
 		return bad()
 	}
-	if s.Contact != nil {
+	if s.Version == 2 {
+		if !nearbyValidV2Snapshot(s) {
+			return bad()
+		}
+	} else if s.Contact != nil {
 		contact := *s.Contact
 		contact.ExpiresAt = contact.ExpiresAt.UTC()
 		encoded, _ := json.Marshal(contact)
@@ -587,7 +604,7 @@ func nearbyDecodeSnapshot(raw []byte, session string, ja bool) (nearbySnapshot, 
 	}
 	if s.Plan != nil {
 		p := s.Plan
-		if p.Revision == 0 || !nearbyHex(p.Fingerprint) || p.Verification != "full-sha256" || p.VerificationText != nearbyVerifyPrefix+p.Fingerprint || p.Backend != "lan" || !nearbyHex(p.HostKey) || !nearbyHex(p.Relay.CertificateSHA256) || p.ExpiresAt.IsZero() {
+		if p.Revision == 0 || !nearbyHex(p.Fingerprint) || (p.Verification != "full-sha256" && !(s.Version == 2 && p.Verification == "tofu")) || (s.Version == 2 && p.Verification != s.Verification) || p.VerificationText != nearbyVerifyPrefix+p.Fingerprint || p.Backend != "lan" || !nearbyHex(p.HostKey) || !nearbyHex(p.Relay.CertificateSHA256) || p.ExpiresAt.IsZero() {
 			return bad()
 		}
 		match := false

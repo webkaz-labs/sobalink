@@ -276,6 +276,20 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn('env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"', step)
             self.assertIn("ts_omit_udptransport", step)
 
+    def test_request_approval_cases_run_in_all_ci_and_release_native_lanes(self):
+        for workflow in ('ci', 'prerelease'):
+            full = checks.full_validation
+            full.validate_request_setup_workflow(self.workflow(workflow).encode())
+            native = self.job(workflow, 'native')
+            for name, suite, test in full.REQUEST_SETUP_CASES:
+                step = self.step(workflow, 'native', 'name: ' + name)
+                self.assertNotIn('        if:', step)
+                self.assertNotIn('continue-on-error', step)
+                self.assertIn('--exact --expect github.com/webkaz-labs/sobalink/internal/core:' + test, step)
+                self.assertIn('go test -race -count=1 -timeout=3m', step)
+                self.assertIn('--suite ' + suite, step)
+                self.assertEqual(native.count('name: ' + name), 1)
+
     def test_cache_keys_include_exact_runner_toolchain_manifests_and_source(self):
         prefix = "trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-"
         suffix = "-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-"

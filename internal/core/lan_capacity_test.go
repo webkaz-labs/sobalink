@@ -159,7 +159,7 @@ func TestLANPolicyApplySerializesWithPairPersistence(t *testing.T) {
 			peer := lanlink.Peer{Key: fmt.Sprintf("%064x", i), Name: "peer"}
 			next.Trust.Peers = append(next.Trust.Peers, peer)
 			next.Remotes = append(next.Remotes, lanlink.RemotePeer{Peer: peer})
-			_ = store.persist(next.Trust, next.Remotes)
+			_ = store.persistAt(store.copy().SetupPersistenceEpoch)(next.Trust, next.Remotes)
 		}
 	}()
 	for i := 0; i < 20; i++ {

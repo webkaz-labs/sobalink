@@ -2,11 +2,35 @@
 
 [日本語](CONNECTION_SETUP.ja.md) · [Security boundaries](../SECURITY.md)
 
-This source implementation provides a short-lived, explicitly scoped setup session for the LAN backend. Nearby discovery and QR/contact exchange are unverified hints. Pairing requires selection on both devices, comparison of the complete plan fingerprint through the other device's QR or copied text, and a separate local approval on each device. Pairing never enables message/file trust, autosave, service sharing or arbitrary port access.
+Nearby setup offers an explicitly scoped request-and-accept flow and an optional complete-fingerprint verification flow. Discovery names and addresses are hints, never identity proof. First-use key acceptance (TOFU) remembers the exact accepted key but does not prevent an active impersonator during the initial exchange. Application permissions remain separate.
 
 This is source-development work. Deterministic tests, isolated loopback acceptance, packaged-binary validation and real-device validation are separate gates; one does not stand in for another. This document does not claim real-device or released-binary acceptance.
 
-## Normal flow
+## Request and accept (v2)
+
+1. On the receiving device, choose **Receive requests**, one network scope, and explicit permission for the bootstrap and relay endpoints. Before starting, choose a review lifetime of 120–1200 seconds.
+2. On the requesting device, choose **Select and request** or **Start connections only**. The latter opens neither LAN listeners nor discovery sockets. Select the receiver, or enter the numeric private IP:port shown on its receiving screen.
+3. Review the exact recipient key, recipient scope, relay address/certificate, and effective deadline. Send the request explicitly. Both devices must use the same verification method.
+4. On the receiving device, review the immutable request and explicitly approve or decline. For independent full-fingerprint verification, both sides must compare the complete value before approval. TOFU does not require copying a code or PNG.
+5. Keep pairing persistence, confirmed connectivity, and application permissions separate. An uncertain result requires status inspection of the original session, not a replacement request.
+
+The earlier peer deadline wins. Discovery stops after 120 seconds even when review time is longer; an already pinned request continues until its effective deadline. Manual address inspection remains available while the session is live. Expiry requires a fresh request and new consent. Previously verified keys cannot silently downgrade to TOFU, and revoked keys cannot be restored by delayed requests.
+
+Run `soba nearby` for the guided flow. Explicit commands are listed in `soba nearby --help`; headless use requires exact session/request/revision identifiers and explicit consent. `--json` never prompts or auto-approves. `x` leaves the session running; `q` requests cancellation and checks cleanup. Closing a display is not a revocation.
+
+Manual addresses are limited to numeric private IPv4 or IPv6 ULA endpoints within the selected scope. DNS, redirects, link-local/zone addresses, public addresses and subnet scans are not fallback mechanisms. A discovered device may still be unreachable. If both devices cannot accept new inbound connections, direct LAN bootstrap cannot succeed; this flow does not create a relay account or alter firewall settings. Even outbound-only mode still needs the application's local control IPC; prohibiting all loopback listeners is a separate, unqualified environment.
+
+## Re-enrolling a removed key
+
+Removed keys do not become eligible merely by receiving another request. In the advanced **Removed devices** view, or CLI `nearby revoked`, review the exact key, generation, and previous verification basis. Explicit reenrollment requires an offline profile, no active network node or unfinished setup, and no remaining saved transport pair for that key. Stop and restart the same profile offline when instructed; this ends active transfers and connections.
+
+`nearby reenroll --peer-key KEY --generation N --consent` authorizes only a fresh pairing attempt for that exact removal generation. It does not restore the old pair, application trust, autosave, or services. Start a new request with new consent afterward. A previously independently verified key still requires full verification. Old sessions and old persistence callbacks cannot become valid again after reenrollment.
+
+If the response is lost, reread removed-key status before proceeding. Disappearance from that list alone is not proof of which operation completed. Never repeat blindly or edit private state to clear a removal fence. A duplicate display name does not identify the same device; a changed key in an already reviewed target invalidates that review.
+
+## Explicit legacy full-fingerprint flow (v1)
+
+The subsections below describe v1, including its fixed 120-second session limit. For v2, use the request-and-accept flow above: choose 120–1200 seconds before starting, with the earlier peer deadline taking precedence.
 
 1. Open connection setup on both devices. Choose an explicit display name and one current local network scope. Approve the short-lived advertisement and exact bootstrap listener. Choose explicitly whether this device may relay the connection or the other device must relay it; neither role is preselected. For a new connection, allow at least one device to relay, using a distinct high port. Host eligibility and reachability are checked afterward, not assumed from this choice. A device already connected through another host must keep that approved host.
 2. Select the other device on both sides. If multicast discovery is unavailable, copy or scan each device's current setup contact. Reading a contact does not approve it or start an arbitrary scan.
@@ -16,14 +40,14 @@ This is source-development work. Deterministic tests, isolated loopback acceptan
 
 A QR shown by an untrusted third party, or a comparison value merely echoed through the same unverified network exchange, does not authenticate the intended device. Use the other device's screen or a separately authenticated exchange.
 
-## Short CLI path and corrections
+### Short CLI path and corrections
 
 For a fresh profile, run on both devices:
 
 ```sh
 soba init
 soba start --offline --background
-soba nearby
+soba nearby --legacy-interactive
 ```
 
 If using another profile, keep the same `--state-dir DIR` on every command. If the profile is already running and requires an offline restart, explicitly stop it first; active transfers and connections will stop. Do not replace or clear the profile.
@@ -38,7 +62,7 @@ Web setup displays QR codes and reads QR text from a local PNG upload; it has no
 
 After both approvals, the saved LAN connection and chosen relay can continue beyond the 120-second setup. Use the Web network control “Stop sobalink” or `soba stop` for the same profile to stop current connections and listeners. This also stops active transfers and does not revoke saved pairs. Cancel setup only closes temporary setup resources.
 
-## Exact permission and lifecycle
+### Exact permission and lifecycle
 
 - One session lasts at most 120 seconds. Linux and Windows hints can refresh while matching packets remain current. macOS uses selected-interface system DNS-SD queries and may show cached hints while those exact queries remain active; they do not prove recent traffic or reachability. Removal, query failure, scope change, cancellation and expiry invalidate the original selection. No hint extends the setup deadline or revives an expired ID. After both approvals, only the exact verified transcript remains pinned until its original deadline. If the other device is no longer available, cancel the old setup, wait for confirmed cleanup and start again on both devices with fresh consent and comparison. See the [macOS API boundary](../internal/nearby/DNSSD.en.md) for the distinct observation guarantees.
 - Discovery advertises only the chosen alias, random session ID, protocol/capability and bootstrap endpoint. No permanent identity, invitation, filename, service list or OS hostname is advertised.
@@ -53,7 +77,7 @@ After both approvals, the saved LAN connection and chosen relay can continue bey
 - Connecting another device is a deliberate fresh action. Close any remaining setup receipt listener and wait for joined cleanup before `nextAction: start_new_setup`. The previous result and active LAN backend remain; the new form/session requires fresh scope, role and verification approvals.
 - A newly started LAN backend is owned by setup until mutual success. Cancelling it never closes an independently running backend that setup borrowed.
 
-## Existing connections and process restart
+### Existing connections and process restart
 
 Existing authenticated peer connections remain available through ordinary peer actions; opening setup is not required to use them. The wizard can borrow an already-running LAN host or relay client only when its strict single-prefix destination policy and exact existing relay anchor match the reviewed plan. A relay client must not request a new host role, and its selected peer must offer that same already-anchored local host. Two clients pointing to an external relay do not invent a new host.
 
@@ -61,7 +85,7 @@ Incompatible saved peers, prepared routes or unreviewed startup/application auth
 
 The product does not change OS firewall rules, routes, network security, router settings or privileged services. QR contact exchange does not bypass a network restriction. If a fresh host-role review still cannot establish a permitted, reachable relay, use an already-approved working connection or review advanced network setup without broadening permissions silently.
 
-## Local command contract
+### Local command contract
 
 Local Web and CLI commands share the Core contract:
 

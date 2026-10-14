@@ -16,3 +16,28 @@ export function reviewSetup(): SetupSnapshot {
     { session_id: peer.sessionId, key: '4'.repeat(64), alias: peer.alias, bootstrap: peer.bootstrap, scope: { local_address: '10.44.0.3', prefix: setupScope.prefix, consent_revision: '5'.repeat(64) }, allow_host: false, existing_host: false, relay: null, expires: peer.expiresAt },
   ], hostKey: '1'.repeat(64), relay: { kind: 'local', address: '10.44.0.2:48443', certificateSHA256: '3'.repeat(64) }, expiresAt: live.expiresAt! } }
 }
+
+export function liveRequestSetup(mode: 'request' | 'receive' | 'outbound' = 'request', verification: 'tofu' | 'full-sha256' = 'tofu'): SetupSnapshot {
+  const live = liveSetup()
+  delete live.contactText; delete live.contactQR
+  live.version = 2; live.alias = live.contact!.alias; live.mode = mode; live.verification = verification
+  live.state = mode === 'receive' ? 'receiving' : 'selecting'
+  live.contact!.version = 2; live.candidates.forEach(item => { item.contact.version = 2 })
+  if (mode === 'outbound') { delete live.contact; live.candidates = []; live.discovery = { state: 'unavailable', reasonCode: 'setup_outbound_only' } }
+  return live
+}
+export function inspectedRequestSetup(): SetupSnapshot {
+  const live = liveRequestSetup(), peer = live.candidates[0].contact
+  return { ...live, target: { revision: 1, sessionId: peer.sessionId, peerKey: '4'.repeat(64), alias: peer.alias, address: peer.bootstrap, expiresAt: peer.expiresAt, verification: 'tofu', keyStatus: 'new', scopePrefix: setupScope.prefix, relayAddress: '10.44.0.3:48443', relayCertificateSHA256: '3'.repeat(64) } }
+}
+export function reviewRequestSetup(mode: 'request' | 'receive' | 'outbound' = 'receive', verification: 'tofu' | 'full-sha256' = 'tofu'): SetupSnapshot {
+  const legacy = reviewSetup(), live = liveRequestSetup(mode, verification), peer = { ...legacy.selected!, version: 2 as const }, plan = legacy.plan!, requestId = '6'.repeat(64)
+  plan.verification = verification
+  plan.participants[0] = { ...plan.participants[0], protocol: 2, mode, verification, allow_host: mode === 'receive', relay: mode === 'receive' ? plan.participants[0].relay : null, bootstrap: mode === 'outbound' ? '10.44.0.2:0' : plan.participants[0].bootstrap }
+  plan.participants[1] = { ...plan.participants[1], protocol: 2, mode: mode === 'receive' ? 'outbound' : 'receive', verification, allow_host: mode !== 'receive', relay: mode !== 'receive' ? { address: '10.44.0.3:48443', certificate_sha256: '3'.repeat(64) } : null }
+  if (mode === 'receive') { peer.bootstrap = '10.44.0.3:0'; plan.participants[1].bootstrap = peer.bootstrap }
+  else { plan.hostKey = '4'.repeat(64); plan.relay.address = '10.44.0.3:48443' }
+  // One shared lifetime keeps the synthetic identity/plan binding exact.
+  live.expiresAt = legacy.expiresAt; if (live.contact) live.contact.expiresAt = legacy.expiresAt!
+  return { ...live, selected: peer, plan, state: 'awaiting_approval', requestId, request: { requestId, peerKey: '4'.repeat(64), alias: peer.alias, address: peer.bootstrap, expiresAt: peer.expiresAt, verification, keyStatus: 'new' }, ...(mode === 'receive' ? {} : { target: { revision: 1, sessionId: peer.sessionId, peerKey: '4'.repeat(64), alias: peer.alias, address: peer.bootstrap, expiresAt: peer.expiresAt, verification, keyStatus: 'new', relayAddress: plan.relay.address, relayCertificateSHA256: plan.relay.certificateSHA256, scopePrefix: setupScope.prefix } }) }
+}

@@ -53,7 +53,7 @@ func dnssdRegistrationFor(cfg Config, policy discoveryPolicy) (dnssdRegistration
 	binary.BigEndian.PutUint16(srv[4:], cfg.Advertisement.Bootstrap.Port())
 	srv = append(srv, dnssdEncodeName(host.String())...)
 	var txt []byte
-	for _, value := range []string{"v=1", "session=" + cfg.Advertisement.SessionID, "alias=" + cfg.Advertisement.Alias, "protocol=" + Protocol, "capability=" + Capability} {
+	for _, value := range []string{"v=1", "session=" + cfg.Advertisement.SessionID, "alias=" + cfg.Advertisement.Alias, "protocol=" + cfg.Advertisement.Protocol, "capability=" + cfg.Advertisement.Capability} {
 		if len(value) > 255 {
 			return dnssdRegistration{}, ErrInvalidAdvertisement
 		}

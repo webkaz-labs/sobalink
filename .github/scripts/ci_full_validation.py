@@ -87,7 +87,9 @@ CORE_SOURCES = (
     '.github/scripts/ci-upload-artifact.py',
     '.github/scripts/test_ci_upload_artifact.py',
 )
-SOURCES = tuple(dict.fromkeys((*SOURCES, *DNSSD_SOURCES, *CORE_SOURCES)))
+SOURCES = tuple(dict.fromkeys((*SOURCES, *DNSSD_SOURCES, *CORE_SOURCES,
+    '.github/scripts/ci-pairing-ui.py', 'web/playwright.pairing-ui.config.mjs',
+    'web/browser/pairing-v2.acceptance.mjs')))
 TARGETS = {
     'linux-amd64': ('native (ubuntu-24.04, linux, amd64)', 'ubuntu-24.04'),
     'linux-arm64': ('native (ubuntu-24.04-arm, linux, arm64)', 'ubuntu-24.04-arm'),
@@ -531,6 +533,56 @@ def validate_durable_text_workflow(workflow_bytes):
     require(native[0] < start < end, 'durable text gate must run in the common native job')
 
 
+REQUEST_SETUP_CASES = (
+    ('Verify TOFU request approval across native Core peers', 'nearby-request-tofu-core', 'TestLANCoreRequestTOFUIntegration'),
+    ('Verify full verification request approval across native Core peers', 'nearby-request-full-core', 'TestLANCoreRequestFullVerificationIntegration'),
+    ('Verify request rejection and cancellation across native Core peers', 'nearby-request-reject-cancel-core', 'TestLANCoreRequestRejectCancelIntegration'),
+)
+
+
+def validate_request_setup_workflow(workflow_bytes):
+    """Require all request-approval cases in every native CI/release lane."""
+    workflow = workflow_bytes.decode("utf-8")
+    jobs = [(offset, key) for offset, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    native = [offset for offset, key in jobs if key == "native"]
+    require(len(native) == 1, "missing request setup native job")
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    for name, suite, test in REQUEST_SETUP_CASES:
+        block = f"""      - name: {name}
+        timeout-minutes: 6
+        env:
+          SOBALINK_RUN_LAN_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite {suite} -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:{test} -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^{test}$'
+"""
+        marker = block.splitlines(keepends=True)[0]
+        require(workflow.count(marker) == 1 and workflow.count(block) == 1, "invalid request setup execution policy")
+        start = workflow.index(marker)
+        require(native[0] < start < end and workflow[start + len(block):].startswith("      - "),
+                "invalid request setup native step boundary")
+
+
+def validate_pairing_ui_workflow(workflow_bytes):
+    """Bind the synthetic UI gate separately from native acceptance."""
+    workflow = workflow_bytes.decode("utf-8")
+    block = """      - name: Verify synthetic request pairing UI without skips
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-pairing-ui.py
+"""
+    marker = block.splitlines(keepends=True)[0]
+    require(workflow.count(marker) == 1 and workflow.count(block) == 1, "invalid synthetic pairing UI gate")
+    jobs = [(offset, key) for offset, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    browser = [offset for offset, key in jobs if key == "browser"]
+    require(len(browser) == 1, "missing pairing UI browser job")
+    end = next((offset for offset, _ in jobs if offset > browser[0]), len(workflow))
+    start = workflow.index(marker)
+    require(browser[0] < start < end and workflow[start + len(block):].startswith("      - "),
+            "invalid pairing UI browser step boundary")
+
+
 def validate_setup_and_text_browser_workflow(workflow_bytes):
     """Bind manual setup and actual-browser gates, exits and fixed exports."""
     workflow = workflow_bytes.decode('utf-8')
@@ -826,6 +878,9 @@ def required_jobs(sources):
     validate_linux_nearby_workflow(sources[WORKFLOW])
     validate_macos_nearby_workflow(sources[WORKFLOW])
     validate_setup_and_text_browser_workflow(sources[WORKFLOW])
+    validate_request_setup_workflow(sources[WORKFLOW])
+    validate_pairing_ui_workflow(sources[WORKFLOW])
+    validate_request_setup_workflow(sources['.github/workflows/prerelease.yml'])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
@@ -851,6 +906,9 @@ def required_jobs(sources):
             'missing durable outbox required gates')
     require(values['FAST_STEPS'].count('Verify durable text restart and lost ACK across Core processes') == 1,
             'missing durable text required gate')
+    require(all(values['FAST_STEPS'].count(name) == 1 for name, _, _ in REQUEST_SETUP_CASES),
+            'missing request setup required gates')
+    require(values['BROWSER_STEPS'].count('Verify synthetic request pairing UI without skips') == 1, 'missing synthetic pairing UI gate')
     require(values['FAST_STEPS'].count('Verify manual nearby setup across native Core peers') == 1
             and values['BROWSER_STEPS'].count('Verify nearby setup with separate agents and actual browser') == 1
             and values['BROWSER_STEPS'].count('Verify durable text recovery with separate agents and actual browser') == 1,
