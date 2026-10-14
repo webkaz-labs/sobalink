@@ -33,12 +33,17 @@ func requestIntegrationScope() SetupScope {
 	scope.ScopeID = setupScopeID(scope)
 	return scope
 }
+func requestIntegrationOpen(f *nativeLANCoreFixture) *Core {
+	c := f.open()
+	scope := requestIntegrationScope()
+	// Install the immutable fixture provider before starting any setup owner.
+	// Reusing a live receiver must never rewrite a function its goroutine reads.
+	c.setupScopeRead = func() ([]SetupScope, error) { return []SetupScope{scope}, nil }
+	return c
+}
 func requestIntegrationStart(t *testing.T, f *nativeLANCoreFixture, a, b *Core, verification string) (SetupSnapshot, SetupSnapshot) {
 	t.Helper()
 	scope := requestIntegrationScope()
-	for _, c := range []*Core{a, b} {
-		c.setupScopeRead = func() ([]SetupScope, error) { return []SetupScope{scope}, nil }
-	}
 	av := f.must(a, "setup.start", SetupStartInput{Alias: "Synthetic requester", ScopeID: scope.ScopeID, Consent: true, Mode: "outbound", Verification: verification, ExpiresInSeconds: 1200}).(SetupSnapshot)
 	var bv SetupSnapshot
 	if b.setupCopy() == nil {
@@ -83,7 +88,7 @@ func requestIntegrationStart(t *testing.T, f *nativeLANCoreFixture, a, b *Core, 
 func runLANCoreRequestIntegration(t *testing.T, verification string) {
 	isolateRequestIntegration(t)
 	f := newNativeLANCoreFixture(t)
-	a, b := f.open(), f.open()
+	a, b := requestIntegrationOpen(f), requestIntegrationOpen(f)
 	type activationFailure struct {
 		stage string
 		err   error
@@ -180,7 +185,7 @@ func runLANCoreRequestIntegration(t *testing.T, verification string) {
 func TestLANCoreRequestRejectCancelIntegration(t *testing.T) {
 	isolateRequestIntegration(t)
 	f := newNativeLANCoreFixture(t)
-	a, b := f.open(), f.open()
+	a, b := requestIntegrationOpen(f), requestIntegrationOpen(f)
 	av, bv := requestIntegrationStart(t, f, a, b, "tofu")
 	oldID := bv.RequestID
 	f.must(b, "setup.reject", SetupRejectInput{SessionID: bv.SessionID, RequestID: bv.RequestID})
@@ -195,7 +200,7 @@ func TestLANCoreRequestRejectCancelIntegration(t *testing.T) {
 	if av.State != "rejected" {
 		t.Fatal("actual receiver rejection did not reach requester")
 	}
-	fresh := f.open()
+	fresh := requestIntegrationOpen(f)
 	fv, bv := requestIntegrationStart(t, f, fresh, b, "tofu")
 	if bv.RequestID == oldID || bv.LocalApproved || bv.Plan == nil {
 		t.Fatal("fresh request reused rejected approval")
