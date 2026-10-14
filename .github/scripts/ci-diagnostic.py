@@ -7,7 +7,7 @@ import re
 import subprocess
 
 REPOSITORY = 'webkaz-labs/sobalink'
-REF = re.compile(r'refs/heads/diagnostic/(web|product|activation|nearby|text|dnssd)/([0-9a-f]{12})-([a-z0-9][a-z0-9-]{0,31})\Z')
+REF = re.compile(r'refs/heads/diagnostic/(web|product|activation|nearby|text|dnssd|outbox-accept)/([0-9a-f]{12})-([a-z0-9][a-z0-9-]{0,31})\Z')
 
 
 def select(event_name, event, repository, ref, sha, checkout_sha):
