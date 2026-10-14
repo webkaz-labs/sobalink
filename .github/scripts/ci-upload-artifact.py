@@ -35,8 +35,11 @@ def download_job_log(identifier):
     native = importlib.util.module_from_spec(spec)
     exec(compile(path.read_bytes(), str(path), 'exec'), native.__dict__)
     # Existing read-only CI token only; no credential in argv or output.
+    # Actions logs include ANSI command formatting. Permit faithful bytes only
+    # inside bounded private PIPE capture; never render or echo this response.
     state, code, raw, _ = native.capture([
-        'gh', 'api', '--method', 'GET', 'repos/' + REPOSITORY + f'/actions/jobs/{identifier}/logs'],
+        'gh', 'api', '--method', 'GET', '--allow-escape-sequences',
+        'repos/' + REPOSITORY + f'/actions/jobs/{identifier}/logs'],
         timeout=60, limit=MAX_LOG_BYTES)
     require(state == 'completed' and code == 0 and type(raw) is bytes and 0 < len(raw) <= MAX_LOG_BYTES)
     return raw

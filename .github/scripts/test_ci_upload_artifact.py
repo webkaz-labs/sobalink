@@ -1,4 +1,6 @@
 """Synthetic official-upload association fixtures; no service or native proof."""
+import contextlib
+import io
 import importlib.util
 from pathlib import Path
 import unittest
@@ -147,7 +149,7 @@ class UploadBindingTests(unittest.TestCase):
         def execute(code, namespace): namespace['capture'] = capture
         with patch('builtins.exec', side_effect=execute):
             self.assertEqual(upload.download_job_log(100), self.raw)
-            capture.assert_called_with(['gh', 'api', '--method', 'GET',
+            capture.assert_called_with(['gh', 'api', '--method', 'GET', '--allow-escape-sequences',
                 'repos/' + upload.REPOSITORY + '/actions/jobs/100/logs'], timeout=60, limit=upload.MAX_LOG_BYTES)
             for result in (('output_limit', 0, self.raw, b''), ('timeout', 0, self.raw, b''),
                            ('completed', 1, self.raw, b''), ('completed', 0, b'', b'')):
@@ -155,6 +157,27 @@ class UploadBindingTests(unittest.TestCase):
                 with self.assertRaises(ValueError): upload.download_job_log(100)
         for identifier in (True, 0, -1, '100'):
             with self.assertRaises(ValueError): upload.download_job_log(identifier)
+
+    def test_private_capture_preserves_ansi_without_rendering_it(self):
+        raw = b'2026-01-01T00:00:01Z \x1b[36mprivate command\x1b[0m\n' + self.raw
+        capture = Mock(return_value=('completed', 0, raw, b'synthetic-secret'))
+        def execute(code, namespace): namespace['capture'] = capture
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch('builtins.exec', side_effect=execute), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(upload.download_job_log(100), raw)
+            self.validate(raw)
+            capture.return_value = ('nonzero', 1, raw, b'synthetic-secret')
+            with self.assertRaises(ValueError): upload.download_job_log(100)
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(stderr.getvalue(), '')
+        self.assertEqual(capture.call_args.kwargs, {'timeout':60, 'limit':upload.MAX_LOG_BYTES})
+        self.assertNotIn('env', capture.call_args.kwargs)
+
+    def test_ansi_cannot_disguise_required_upload_records(self):
+        for marker in (b'Uploading artifact:', b'SHA256 digest', b'Finalizing artifact upload',
+                       b'Artifact download URL:', b'  name:', b'##[group]Run '):
+            with self.subTest(marker=marker), self.assertRaises(ValueError):
+                self.validate(self.raw.replace(marker, b'\x1b[36m' + marker, 1))
 
     def test_errors_never_include_raw_log_paths_or_credentials(self):
         private = b'synthetic-secret-value /synthetic/private-path'
