@@ -155,7 +155,15 @@ func TestOutboxProcessRestart(t *testing.T) {
 	peers[0].stop(t)
 	for _, review := range reviews {
 		parent := t.TempDir()
-		accepted := catalogProcessDecode[transfer.Batch](t, peers[1].invoke(t, "transfer.accept", map[string]any{"transferId": review.Children[0].DeliveryID, "destination": parent}))
+		reply := peers[1].invokeResult(t, "transfer.accept", map[string]any{"transferId": review.Children[0].DeliveryID, "destination": parent})
+		if reply.Error != "" {
+			kind := "file"
+			if review.Entries[0].Kind == transfer.Directory {
+				kind = "empty-directory"
+			}
+			t.Fatalf("subprocess command transfer.accept: %s; phase=sender-stopped-before-start entry=%s; %s; runtime diagnostics:\n%s", reply.Error, kind, peers[1].exitSummary(), peers[1].diagnostics.safeSummary())
+		}
+		accepted := catalogProcessDecode[transfer.Batch](t, reply.Value)
 		if accepted.ID != review.Children[0].DeliveryID || accepted.State != transfer.Accepted || accepted.Destination != parent {
 			t.Fatal("durable acceptance published or retargeted before lease start")
 		}

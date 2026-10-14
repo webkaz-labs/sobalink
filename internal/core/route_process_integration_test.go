@@ -295,7 +295,7 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		raw, _ := json.Marshal(value)
 		reply := processReply{Value: raw}
 		if callErr != nil {
-			reply.Error = request.Name + ": " + networkErrorCode(callErr)
+			reply.Error = request.Name + ": " + routeProcessCommandErrorCode(request.Name, callErr)
 			if reply.Error == request.Name+": " {
 				reply.Error += "failed"
 			}
