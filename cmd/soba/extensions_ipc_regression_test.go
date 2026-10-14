@@ -10,7 +10,8 @@ import (
 )
 
 func TestReviewCLIUsesActualOfflineIPCShape(t *testing.T) {
-	c, err := core.Open(context.Background(), core.Options{Directory: t.TempDir(), SkipNetworkStart: true})
+	dir := t.TempDir()
+	c, err := core.Open(context.Background(), core.Options{Directory: dir, LifecycleLock: cliFixtureLifecycleOwner(t, dir), SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

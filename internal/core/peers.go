@@ -28,12 +28,28 @@ import (
 )
 
 type peerServer struct {
-	http        *http.Server
-	listeners   []net.Listener
-	mu          sync.Mutex
-	connections map[net.Conn]string
-	slots       chan struct{}
+	http         *http.Server
+	listeners    []*peerServerListener
+	mu           sync.Mutex
+	connections  map[net.Conn]string
+	slots        chan struct{}
+	startFailure error // immutable after retained partial-start publication
 }
+
+// Both partial-startup cleanup and net/http own a reference to each listener.
+// Share one physical Close and its original result across those references.
+// Never treat an arbitrary ErrClosed-containing error as successful cleanup.
+type peerServerListener struct {
+	net.Listener
+	once     sync.Once
+	closeErr error
+}
+
+func (l *peerServerListener) Close() error {
+	l.once.Do(func() { l.closeErr = l.Listener.Close() })
+	return l.closeErr
+}
+
 type connectionKey struct{}
 
 type verifiedBody struct {
@@ -60,7 +76,23 @@ func (b *verifiedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (c *Core) peerListenerFailure() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.peerServer != nil {
+		return c.peerServer.startFailure
+	}
+	return nil
+}
+
 func (c *Core) startPeerServer(ips []netip.Addr) error {
+	c.mu.RLock()
+	existing := c.peerServer
+	c.mu.RUnlock()
+	if existing != nil {
+		return existing.startFailure
+	}
+
 	n := c.nodeCopy()
 	if n == nil {
 		return errors.New("network unavailable")
@@ -96,10 +128,23 @@ func (c *Core) startPeerServer(ips []netip.Addr) error {
 	for _, port := range []int{PeerPort, DiscoveryPort} {
 		l, e := n.Listen("tcp", config.Address(ip.String(), port))
 		if e != nil {
-			_ = p.Close()
-			return e
+			cleanupErr := p.Close()
+			failure := errors.Join(e, cleanupErr)
+			if cleanupErr != nil {
+				// Keep the exact unresolved listener owner reachable through final Core
+				// shutdown. A healthy backend cannot authorize replacement or traffic.
+				p.startFailure = errors.Join(failure, &localCommandError{"network_restart_required", "peer listener cleanup was not confirmed; stop and restart the application"})
+				c.mu.Lock()
+				c.peerServer = p
+				c.networkState, c.networkFatal, c.networkErrorCode = "error", "network_restart_required", "network_restart_required"
+				c.networkError = "Peer listener cleanup was not confirmed; restart the application"
+				c.networkReady.Store(false)
+				c.mu.Unlock()
+				return p.startFailure
+			}
+			return failure
 		}
-		p.listeners = append(p.listeners, &peerIncomingListener{Listener: l, core: c, slots: gate, requireOrigin: requireOrigin})
+		p.listeners = append(p.listeners, &peerServerListener{Listener: &peerIncomingListener{Listener: l, core: c, slots: gate, requireOrigin: requireOrigin}})
 	}
 	c.mu.Lock()
 	c.peerServer = p
@@ -110,13 +155,14 @@ func (c *Core) startPeerServer(ips []netip.Addr) error {
 	return nil
 }
 func (p *peerServer) Close() error {
+	var errs []error
 	for _, l := range p.listeners {
-		_ = l.Close()
+		errs = append(errs, l.Close())
 	}
 	if p.http != nil {
-		return p.http.Close()
+		errs = append(errs, p.http.Close())
 	}
-	return nil
+	return errors.Join(errs...)
 }
 func (p *peerServer) revoke(id string) {
 	p.mu.Lock()
@@ -210,6 +256,11 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 		if c.durableProfileReady() && c.transfers.DurableAvailable() {
 			caps = append(caps, transfer.DurableCapability)
 		}
+		c.mu.RLock()
+		if c.messageStoreReadyLocked() == nil {
+			caps = append(caps, DurableTextCapability)
+		}
+		c.mu.RUnlock()
 		reply(w, 200, map[string]any{"protocol": 1, "product": "sobalink", "capabilities": caps})
 		return
 	}
@@ -220,6 +271,9 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 	t, ok := c.trust(peerID)
 	if !ok || t.Paused {
 		peerFailure(w, 403)
+		return
+	}
+	if c.serveDurableTextHTTP(w, r, t) {
 		return
 	}
 	peer := transfer.Peer{ID: t.ID, Generation: t.Generation}
@@ -242,7 +296,7 @@ func (c *Core) peerHTTP(p *peerServer, w http.ResponseWriter, r *http.Request) {
 			reply(w, http.StatusRequestEntityTooLarge, map[string]string{"code": "request_too_large", "error": "message request is too large; shorten the text or reduce JSON padding"})
 			return
 		}
-		if err != nil || !config.ValidPeerID(msg.ID) {
+		if err != nil || !config.ValidPeerID(msg.ID) || strings.HasPrefix(msg.ID, "mt1_") {
 			peerFailure(w, 400)
 			return
 		}
@@ -383,13 +437,24 @@ func (c *Core) peerRequest(ctx context.Context, id, method, path string, body io
 		return errors.New("peer did not respond; check its network and sobalink permissions")
 	}
 	if resp.StatusCode != 200 {
+		if path == DurableTextOfferPath || path == DurableTextDeliverPath || path == DurableTextStatusPath {
+			var problem struct {
+				Code string `json:"code"`
+			}
+			if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&problem) == nil {
+				switch problem.Code {
+				case "message_invalid", "message_conflict", "message_unknown_lease", "message_permission", "message_clock", "message_clock_rollback", "message_expired", "message_too_large", "message_active_capacity", "message_peer_capacity", "message_evidence_capacity", "message_storage_busy", "message_storage_uncertain", "message_store_recovery_required", "message_store_unavailable":
+					return messageStoreError(problem.Code)
+				}
+			}
+		}
 		if strings.HasPrefix(path, "/v1/durable-transfers/") {
 			var problem struct {
 				Code string `json:"code"`
 			}
 			if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&problem) == nil {
 				switch problem.Code {
-				case "busy", "durable_unknown_lease", "durable_conflict", "durable_recovery_required", "durable_expired", "durable_clock", "durable_capacity", "durable_permission", "durable_unsupported_storage":
+				case "busy", "durable_unknown_lease", "durable_conflict", "durable_recovery_required", "durable_expired", "durable_clock", "durable_capacity", "durable_evidence_capacity", "durable_permission", "durable_unsupported_storage":
 					return outboxError(problem.Code)
 				}
 			}
@@ -744,85 +809,45 @@ func validText(text string) bool {
 // storage uses the selected finite messageStorageBytes budget.
 const maxMessageHistoryBytes = max(64<<10, 6*messageframe.TextBytes+2*messageframe.IDBytes+len(`[{"id":"","peerId":"","direction":"outgoing","text":"","createdAt":"2006-01-02T15:04:05.999999999+00:00","status":"received"}]`)+1)
 
+// Read-only projection helper. Legacy array files are deliberately rejected;
+// production writes go exclusively through the lifecycle-owned message store.
 func readMessageHistory(path string, limit int64, history *[]Message) error {
-	info, err := os.Lstat(path)
-	if err != nil {
+	var state messageEnvelope
+	if err := readBoundedPrivateJSON(path, min(limit, int64(messageStoreHardBytes)), &state); err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("message history must be a regular file, not a symlink")
-	}
-	if info.Size() > limit {
-		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
-	}
-	f, err := (transfer.Source{LocalPath: path}).Open()
-	if err != nil {
+	validator := &Core{resourceIdentity: state.Identity, profile: Profile{DurableFiles: &DurableProfile{Epoch: state.Epoch}}}
+	if err := validator.validateMessageEnvelopeLocked(state); err != nil {
 		return err
 	}
-	defer f.Close()
-	limited := &io.LimitedReader{R: f, N: limit + 1}
-	d := json.NewDecoder(limited)
-	d.DisallowUnknownFields()
-	err = d.Decode(history)
-	if limited.N == 0 {
-		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
-	}
-	if err != nil {
-		return err
-	}
-	var extra any
-	err = d.Decode(&extra)
-	if limited.N == 0 {
-		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
-	}
-	if err != io.EOF {
-		return errors.New("unexpected data after message history")
-	}
+	*history = projectMessageEnvelope(state)
 	return nil
 }
 
-func writeMessageHistory(path string, limit int64, history []Message) error {
-	return writeMessageHistoryWith(config.AtomicWrite, path, limit, history)
-}
-
-func writeMessageHistoryWith(write func(string, []byte) error, path string, limit int64, history []Message) error {
-	b, err := json.Marshal(history)
-	if err != nil {
-		return err
-	}
-	if int64(len(b))+1 > limit {
-		return &localCommandError{"message_history_too_large", "message history exceeds the configured storage budget; raise messageStorageBytes or review explicit history cleanup"}
-	}
-	return write(path, append(b, '\n'))
-}
-
 func (c *Core) loadMessages() error {
-	var history []Message
-	if e := readMessageHistory(filepath.Join(c.dir, "messages.json"), c.limit("resources", "messageStorageBytes"), &history); e != nil {
-		if errors.Is(e, os.ErrNotExist) {
-			return nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.messageStore != nil {
+		if c.messageStore.frozen != "" {
+			return messageStoreError(c.messageStore.frozen)
 		}
-		return e
+		c.messages = c.messageProjectionLocked()
+		return nil
 	}
-	for _, m := range history {
-		if !validText(m.Text) || !config.ValidPeerID(m.PeerID) || !config.ValidPeerID(m.ID) ||
-			(m.Direction != "incoming" && m.Direction != "outgoing") ||
-			(m.Status != "pending" && m.Status != "received" && m.Status != "sent" && m.Status != "failed") {
-			return errors.New("invalid message history")
-		}
+	// Read-only inspection does not create a store or acquire write authority.
+	// A missing mandatory store is always an error, including a ready profile.
+	var history []Message
+	if err := readMessageHistory(filepath.Join(c.dir, "messages.json"), messageStoreHardBytes, &history); err != nil {
+		return errors.Join(messageStoreError("message_store_recovery_required"), err)
 	}
 	c.messages = history
 	return nil
 }
 func (c *Core) appendMessageLocked(m Message) error {
-	next := append(append([]Message(nil), c.messages...), m)
-	// Retention choices are cleanup recommendations, never permission to erase
-	// older records while accepting a message or applying a different policy.
-	saveErr := c.saveMessageHistoryLocked(next)
-	if atomicPublished(saveErr) {
-		c.messages = next
-	}
-	return saveErr
+	return c.mutateMessageStoreLocked(func(next *messageEnvelope) error {
+		next.Immediate = append(next.Immediate, m)
+		return nil
+	})
 }
 
 func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -842,6 +867,12 @@ func (c *Core) sendMessageCommand(ctx context.Context, raw json.RawMessage) (any
 	t, ok := c.trust(v.PeerID)
 	if !ok || t.Paused {
 		return nil, errors.New("approve this exact peer and resume communication first")
+	}
+	c.mu.RLock()
+	storeErr := c.messageStoreReadyLocked()
+	c.mu.RUnlock()
+	if storeErr != nil {
+		return nil, messageHistoryError(storeErr, false)
 	}
 	ctx, operation, err := c.beginPeerMessageOperation(ctx)
 	if err != nil {

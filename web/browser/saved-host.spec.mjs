@@ -23,6 +23,7 @@ test.describe('production-backed saved host review', () => {
       }, 'Production Core exposes an offline host with no pair or application grant')
       const commandCount = await page.evaluate(() => window.__sobaQA.commands.length)
       await page.locator('.sidebar-title button').click()
+      await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
       const reviewName = ja ? '保存済みホストを確認' : 'Review saved host'
       const regionName = ja ? 'この保存済みホストを起動しますか？' : 'Start this saved host?'
       const cancelName = ja ? 'キャンセル' : 'Cancel'
@@ -50,6 +51,7 @@ test.describe('production-backed saved host review', () => {
       await page.keyboard.press('Escape')
       await expect(page.getByRole('dialog')).toHaveCount(0)
       await page.locator('.sidebar-title button').click()
+      await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
       await expect(review).toHaveCount(0)
       await expect(page.getByRole('button', { name: reviewName, exact: true })).toBeVisible()
       expect(await page.evaluate(() => window.__sobaQA.commands.length), 'Review, Cancel, Close and reopen send no commands').toBe(commandCount)

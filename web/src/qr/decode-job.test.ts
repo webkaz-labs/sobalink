@@ -1,3 +1,4 @@
+import { liveSetup } from '../nearby-fixture'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { pngPolicy, READER_WASM_BYTES } from './png-policy'
 import { DecodeJobController, type DecodeInput, type DecodeWorker } from './decode-job'
@@ -37,6 +38,15 @@ describe('preparatory single decode job boundary', () => {
     expect(workers[0].terminate).toHaveBeenCalledTimes(1)
     expect(workers[0].onmessage).toBeNull()
     expect(vi.getTimerCount()).toBe(0)
+  })
+  it.each(['setup-contact', 'setup-fingerprint'] as const)('accepts only the bounded typed %s payload', async kind => {
+    const text = kind === 'setup-contact' ? liveSetup().contactText! : 'sobalink-setup-verify-v1:' + 'a'.repeat(64)
+    const result = controller.start(kind, 100, async () => input()); await flush()
+    reply(workers[0], { status: 'decoded', bytes: wireBytes(text) })
+    expect(await result).toEqual({ ok: true, text })
+    const wrong = controller.start(kind, 100, async () => input()); await flush()
+    reply(workers[1], { status: 'decoded', bytes: wireBytes(card()) })
+    expect(await wrong).toEqual({ ok: false, error: 'invalidCard' })
   })
   it('cancels preparation and never spawns on late completion', async () => {
     let complete!: (value: DecodeInput) => void

@@ -34,7 +34,13 @@ func (c *Core) logoutTailnet(ctx context.Context) (LogoutResult, error) {
 	c.closing = true
 	c.networkState = "logging-out"
 	ps := c.peerServer
-	c.peerServer = nil
+	var retainedPeerFailure error
+	if ps != nil {
+		retainedPeerFailure = ps.startFailure
+	}
+	if retainedPeerFailure == nil {
+		c.peerServer = nil
+	}
 	batches := make([]*outgoingBatch, 0, len(c.outgoing))
 	for _, batch := range c.outgoing {
 		batches = append(batches, batch)
@@ -105,7 +111,7 @@ func (c *Core) logoutTailnet(ctx context.Context) (LogoutResult, error) {
 	for _, task := range tasks {
 		go func() { results <- task() }()
 	}
-	var cleanupErr error
+	cleanupErr := retainedPeerFailure // never normalize a genuine retained owner failure
 	for range tasks {
 		select {
 		case err := <-results:

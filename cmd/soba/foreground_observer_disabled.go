@@ -2,4 +2,8 @@
 
 package main
 
+import "os"
+
 func observeForegroundWeb(string) {}
+
+func observeBackgroundExit(int, *os.ProcessState, error) {}

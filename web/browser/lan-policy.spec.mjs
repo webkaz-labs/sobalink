@@ -6,6 +6,7 @@ test.describe('explicit initial LAN destination policy', () => {
     test(`${locale}: select synthetic prefix, review before start, cancel and inspect narrow layout`, async ({ page, app }) => {
       await app.appearance(locale, locale === 'ja' ? 'dark' : 'light')
       await page.locator('.sidebar-title button').click()
+      await page.getByRole('dialog').getByRole('button', { name: /^(Advanced network setup|ネットワークの詳細設定)$/ }).click()
       await page.locator('dialog input[value=lan]').check()
       const policy = page.locator('.lan-policy')
       await expect(policy).not.toHaveAttribute('open')

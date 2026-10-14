@@ -275,3 +275,23 @@ it('retains saved state after failed refresh without continuing advertised disco
   expect(result.current.stale).toBe(false)
   expect(result.current.state).toEqual(saved)
 })
+
+it('uses fresh setup read and action IDs after uncertain responses; recovery belongs to the session', async () => {
+  const requests: { name: string; requestId: string }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/api/state') return new Response(JSON.stringify(messageState))
+    requests.push(JSON.parse(init!.body as string))
+    if (requests.length % 2) throw new TypeError('Synthetic interruption')
+    return new Response('{"ok":true}')
+  }))
+  const { result } = renderHook(() => useServer())
+  await waitFor(() => expect(result.current.auth).toBe('ready'))
+  await act(async () => {
+    await result.current.run('setup.status', { sessionId: 'a'.repeat(64) })
+    await result.current.run('setup.status', { sessionId: 'a'.repeat(64) })
+    const payload = { alias: 'Peer A', scopeId: 'b'.repeat(64), bootstrapPort: 48445, allowHost: false, relayPort: 0, consent: true as const }
+    await result.current.run('setup.start', payload, 'setup.mutation')
+    await result.current.run('setup.start', payload, 'setup.mutation')
+  })
+  expect(new Set(requests.map(request => request.requestId)).size).toBe(4)
+})

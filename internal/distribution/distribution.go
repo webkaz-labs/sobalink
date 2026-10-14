@@ -70,8 +70,11 @@ func ValidateVersion(version string) error {
 }
 
 type Tool struct {
-	Root string
-	run  func(env []string, args ...string) ([]byte, error)
+	Root            string
+	run             func(env []string, args ...string) ([]byte, error)
+	nativeProbe     func() (*NativeBuild, []string, error)
+	nativeInventory func([]goPackage) ([]NativePackage, []Notice, error)
+	nativeLinks     func(string, string) ([]string, error)
 }
 
 func New(root string) (*Tool, error) {
@@ -79,11 +82,11 @@ func New(root string) (*Tool, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &Tool{Root: root}
+	t := &Tool{Root: root, nativeProbe: probeDarwinToolchain, nativeInventory: darwinNativeInventory, nativeLinks: inspectDarwinLibraries}
 	t.run = func(env []string, args ...string) ([]byte, error) {
 		cmd := exec.Command("go", args...)
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = append(cleanBuildEnvironment(), env...)
 		cmd.Stderr = os.Stderr
 		data, err := cmd.Output()
 		if err != nil {
@@ -164,6 +167,24 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		return errors.New("source commit must be 40 lowercase hexadecimal characters")
 	}
 	env := []string{"GOTOOLCHAIN=local", "GOWORK=off", "GOENV=off", "GOFLAGS=", "GOEXPERIMENT=", "GOFIPS140=off", "CGO_ENABLED=0", "GOOS=" + target.OS, "GOARCH=" + target.Arch, "GOAMD64=v1", "GOARM64=v8.0"}
+	var native *NativeBuild
+	if target.OS == "darwin" {
+		identity, nativeEnv, err := t.nativeProbe()
+		if err != nil {
+			return err
+		}
+		native = identity
+		for i, value := range env {
+			if value == "CGO_ENABLED=0" {
+				env[i] = "CGO_ENABLED=1"
+			}
+		}
+		env = append(env, nativeEnv...)
+		host, err := t.run(env, "env", "GOHOSTOS", "GOHOSTARCH")
+		if err != nil || strings.TrimSpace(string(host)) != "darwin\narm64" {
+			return errors.New("Darwin package compiler must be native darwin-arm64")
+		}
+	}
 	gv, err := t.run(env, "env", "GOVERSION")
 	if err != nil {
 		return err
@@ -188,6 +209,7 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 		return err
 	}
 	flags := "-s -w -buildid= -X main.version=" + version
+	var expectedUUID string
 	packagesJSON, err := t.run(env, "list", "-tags", BuildTags, "-mod=readonly", "-buildvcs=false", "-deps", "-json", "./cmd/soba")
 	if err != nil {
 		return err
@@ -195,6 +217,14 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	packages, err := parsePackages(packagesJSON)
 	if err != nil {
 		return err
+	}
+	if native != nil {
+		native.Packages, native.PolicyInputs, err = t.nativeInventory(packages)
+		if err != nil {
+			return err
+		}
+		expectedUUID = darwinBuildUUID(commit, version, darwinUUIDNativeDigest(native))
+		flags += " -linkmode=external -B=0x" + expectedUUID
 	}
 	goRoot, err := t.run(env, "env", "GOROOT")
 	if err != nil {
@@ -241,6 +271,25 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if !reflect.DeepEqual(licenses.Sources, verifiedSources) {
 		return errors.New("adapted source inputs changed during package build")
 	}
+	if native != nil {
+		verified, _, err := t.nativeProbe()
+		if err != nil {
+			return err
+		}
+		verified.Packages, verified.PolicyInputs, err = t.nativeInventory(packages)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(native, verified) {
+			return errors.New("native toolchain or source inputs changed during package build")
+		}
+		native.Libraries, err = t.nativeLinks(bin, expectedUUID)
+		if err != nil {
+			return err
+		}
+		licenses.Native = native
+		licenses.Scope = strings.Replace(licenses.Scope, "CGO_ENABLED=0", "CGO_ENABLED=1", 1) + " Darwin uses the recorded OS-provided DNS-SD/libSystem, libresolv and CoreFoundation/Security APIs. System frameworks and SDK headers are not redistributed. The pinned certificate-store code is included, while the reviewed empty policy-client boundary prevents identity enumeration or signing."
+	}
 	frontend, assets, err := frontendInventory(t.Root, share)
 	if err != nil {
 		return err
@@ -280,7 +329,10 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
-	metadata := map[string]any{"project": Project, "product": Product, "version": version, "source_commit": commit, "target": target.String(), "go_version": GoVersion, "build_tags": BuildTags, "cgo_enabled": false, "trimpath": true, "buildvcs": false, "ldflags": flags, "go_sum_sha256": sumHash, "source_components": licenses.Sources, "frontend": map[string]any{"node_version": "24.19.0", "npm_version": "11.9.0", "lock_sha256": frontendLockHash, "assets": assets}, "binary": map[string]string{"path": "bin/" + target.Binary(), "sha256": binaryHash}}
+	metadata := map[string]any{"project": Project, "product": Product, "version": version, "source_commit": commit, "target": target.String(), "go_version": GoVersion, "build_tags": BuildTags, "cgo_enabled": native != nil, "trimpath": true, "buildvcs": false, "ldflags": flags, "go_sum_sha256": sumHash, "source_components": licenses.Sources, "frontend": map[string]any{"node_version": "24.19.0", "npm_version": "11.9.0", "lock_sha256": frontendLockHash, "assets": assets}, "binary": map[string]string{"path": "bin/" + target.Binary(), "sha256": binaryHash}}
+	if native != nil {
+		metadata["native_build"] = native
+	}
 	if err = writeJSON(filepath.Join(share, "build.json"), metadata); err != nil {
 		return err
 	}

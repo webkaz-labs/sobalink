@@ -116,7 +116,9 @@ Neither operation starts a listener now. Use saved-start to start explicitly.
 Only reveal returns credentials, directly into the chosen private file. Keep that
 file private. Ordinary status, exports and dry-run output contain no credentials.
 Deleting a saved entry also stops its session. Disable prevents future automatic
-starts. Saving/replacing a scope requires fresh review and private runtime input.`
+starts. Saving/replacing a scope requires fresh review and private runtime input.
+Peer approval changes can make a saved scope stale. Review it separately before explicitly
+saving again; app trust does not silently renew or replace saved proxy approval.`
 const savedProxyHelpJA = `任意の非公開 SOCKS 設定
 
   soba proxy saved
@@ -135,4 +137,6 @@ username、password、明示的な startOnLaunch:true|false です。generate �
 認証情報は reveal だけで、指定した非公開ファイルに直接保存します。
 このファイルは非公開で保管してください。通常の状態表示、書き出し、dry-run に
 認証情報は含まれません。削除するとその設定の接続も停止します。
-disable は次回以降の自動開始を無効にします。保存・置換には再確認が必要です。`
+disable は次回以降の自動開始を無効にします。保存・置換には再確認が必要です。
+相手の承認変更で保存済みの範囲が古くなった場合は、別途確認して明示的に保存し直します。
+アプリの信頼だけで保存済みプロキシの許可を暗黙に更新・置換しません。`

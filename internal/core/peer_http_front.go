@@ -245,7 +245,7 @@ func validatePeerHTTPRequest(method, path string, proof bool) (*url.URL, bool, e
 		switch u.Path {
 		case "/v1/hello", "/.well-known/sobalink/services/v2", discoveryV3Path:
 			allowed = method == "GET"
-		case "/v1/durable-transfers/offer", "/v1/durable-transfers/status", "/v1/durable-transfers/start":
+		case "/v1/durable-transfers/offer", "/v1/durable-transfers/status", "/v1/durable-transfers/start", DurableTextOfferPath, DurableTextDeliverPath, DurableTextStatusPath:
 			allowed = method == "POST"
 		case "/v1/durable-transfers/file":
 			allowed = method == "POST"

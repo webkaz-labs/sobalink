@@ -73,7 +73,7 @@ func TestFavoritesInertRevisionRestartAndMissingReferences(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestFavoritesRejectMalformedOversizedAndFutureStoreOnly(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "favorites.json"), []byte(data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+			c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 			if err != nil {
 				t.Fatal("preferences blocked startup", err)
 			}

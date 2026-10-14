@@ -57,6 +57,17 @@ jobs:
           path: |
             .github/scripts/release-validation.py
             .github/scripts/ci_full_validation.py
+            .github/scripts/ci-native-core-required.py
+            .github/scripts/ci-native-core.py
+            .github/scripts/ci-windows-packages.py
+            .github/scripts/ci-metrics.py
+            .github/scripts/ci-dnssd-required.py
+            .github/scripts/ci-upload-artifact.py
+            .github/scripts/ci-dnssd-diagnostic.py
+            .github/scripts/ci-dnssd-terminal.py
+            .github/scripts/ci-nearby-native.py
+            .github/scripts/ci-nearby-diagnostic.py
+            .github/scripts/ci-go-test.py
             .github/scripts/verify-installed.py
             .github/scripts/offline-smoke.py
             .github/scripts/source_provenance.py
@@ -109,6 +120,12 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      - name: Collect required whole-Core race evidence
+        id: native-core
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py core
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
@@ -156,10 +173,25 @@ jobs:
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           go mod verify 2>&1 | tee logs/dependencies.txt
+      - name: Verify remaining native package race coverage
+        if: always() && !cancelled() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py remaining
+      - name: Preserve required native package proof
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-required-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soba-native-core-required/receipt.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Native race tests (local and mocked services only)
         run: |
           set -euo pipefail
-          go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
+          if [[ '${{ matrix.goos }}' == 'linux' ]]; then
+            go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
+          fi
           # Enforce offline route-revocation recovery using the real protected fixture.
           go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core 2>&1 | tee -a logs/race-tests.txt
           go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
@@ -365,9 +397,20 @@ jobs:
         run: |
           set -euo pipefail
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          if [[ "$TARGET_OS" == darwin ]]; then
+            clean_packages="$(mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX")"
+            trap 'rm -rf "$clean_packages"' EXIT
+            export GOCACHEPROG=
+            export GOCACHE="$clean_packages/first-cache" GOTMPDIR="$clean_packages/first-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+          fi
           go run ./cmd/package-tool build "$RELEASE_VERSION" "$TARGET_OS" "$TARGET_ARCH" "$TESTED_COMMIT" 2>&1 | tee logs/first-build.txt
           go run ./cmd/package-tool checksums
           cp dist/SHA256SUMS "$RUNNER_TEMP/first-SHA256SUMS"
+          if [[ "$TARGET_OS" == darwin ]]; then
+            export GOCACHE="$clean_packages/second-cache" GOTMPDIR="$clean_packages/second-tmp"
+            mkdir -p "$GOCACHE" "$GOTMPDIR"
+          fi
           go run ./cmd/package-tool build "$RELEASE_VERSION" "$TARGET_OS" "$TARGET_ARCH" "$TESTED_COMMIT" 2>&1 | tee logs/second-build.txt
           go run ./cmd/package-tool checksums
           cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS
@@ -380,6 +423,16 @@ jobs:
         with:
           name: prerelease-native-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve bounded Core failure context
+        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.failure_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-native-core-failure-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/soba-native-core-failure/failure.json
+            ${{ runner.temp }}/soba-native-core-failure/partial-core.json
           if-no-files-found: error
           retention-days: 14
       - name: Preserve independent target logs even after failure

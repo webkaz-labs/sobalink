@@ -36,11 +36,12 @@ func TestWANCandidateBrowserFixturePersistsWithoutNetwork(t *testing.T) {
 	if _, err := core.PrepareRouteBrowserFixture(directory, filepath.Join(root, "route-update.json")); err != nil {
 		t.Fatal(err)
 	}
+	owner := e2eFixtureLifecycleOwner(t, directory)
 	var factoryCalls atomic.Int32
 	var current *core.Core
 	open := func() *fixtureBackend {
 		t.Helper()
-		app, err := core.Open(context.Background(), core.Options{Directory: directory, SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
+		app, err := core.Open(context.Background(), core.Options{Directory: directory, LifecycleLock: owner, SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
 			factoryCalls.Add(1)
 			return nil, errors.New("network activation is forbidden in this fixture")
 		}})

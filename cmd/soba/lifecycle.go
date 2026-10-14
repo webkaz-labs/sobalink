@@ -142,7 +142,14 @@ func launchBackground(executable string, args []string, log *os.File) (backgroun
 		return backgroundProcess{}, err
 	}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		// The normal-build observer is inert. Only the opted-in acceptance
+		// fixture records this parent-owned wait before its consumer can exit.
+		// The same error is still delivered once to the original buffered Done.
+		observeBackgroundExit(cmd.Process.Pid, cmd.ProcessState, err)
+		done <- err
+	}()
 	return backgroundProcess{PID: cmd.Process.Pid, Done: done}, nil
 }
 

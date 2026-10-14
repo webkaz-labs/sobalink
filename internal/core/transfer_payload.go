@@ -40,13 +40,22 @@ func (p *outgoingPayload) release() error {
 // retained manifest and receipt is charged independently. ignore replaces a
 // preparation with its children in the same atomic admission.
 func (c *Core) checkOutgoingCapacityLocked(lim transfer.Limits, manifest transfer.Manifest, count int, ignore *transferPreparation) error {
+	return c.checkOutgoingCapacityWithPayloadLocked(lim, manifest, count, ignore, true)
+}
+
+// Receipt-only queries reserve active descriptors without reserving payload bytes again.
+func (c *Core) checkOutgoingCapacityWithPayloadLocked(lim transfer.Limits, manifest transfer.Manifest, count int, ignore *transferPreparation, reservePayload bool) error {
 	if count < 1 || count > lim.MaxBatches {
 		return errOutgoingHistory
 	}
-	if c.orphanSpoolError != "" {
+	pending, _ := c.outgoingPendingLocked("", ignore)
+	if pending+count+int(c.outboxActiveChildren.Load()) > lim.MaxPendingBatches {
+		return errOutgoingHistory
+	}
+	if reservePayload && c.orphanSpoolError != "" {
 		return errors.New("retained staging could not be inventoried; inspect private staging before sending")
 	}
-	history, metadata, reserved := count+int(c.outboxChildren.Load()), c.outboxMetadata.Load(), c.orphanSpoolBytes+c.outboxReserved.Load()
+	history, metadata, reserved := count+int(c.outboxActiveChildren.Load()), c.outboxActiveMetadata.Load(), c.orphanSpoolBytes+c.outboxReserved.Load()
 	addMetadata := func(n int64) bool {
 		if n < 0 || n > lim.MaxMetadataBytes-metadata {
 			return false
@@ -65,6 +74,9 @@ func (c *Core) checkOutgoingCapacityLocked(lim transfer.Limits, manifest transfe
 		defer b.mu.Unlock()
 		if !addMetadata(transfer.ManifestMetadataBytes(b.Manifest)) {
 			return errOutgoingHistory
+		}
+		if !reservePayload {
+			return nil
 		}
 		n := b.reserved
 		if b.payload != nil {
@@ -106,6 +118,9 @@ func (c *Core) checkOutgoingCapacityLocked(lim transfer.Limits, manifest transfe
 	}
 	if history > lim.MaxBatches {
 		return errOutgoingHistory
+	}
+	if !reservePayload {
+		return nil
 	}
 	var total int64
 	for _, entry := range manifest.Entries {
@@ -229,6 +244,7 @@ func (c *Core) finishOutgoingRun(run *outgoingRun, application *peerHTTPApplicat
 	run.done()
 	if active {
 		c.pumpOutgoing()
+		c.pumpMessageQueue()
 	}
 }
 

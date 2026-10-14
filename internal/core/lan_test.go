@@ -27,7 +27,7 @@ import (
 
 func openLANTestCore(t *testing.T) *Core {
 	t.Helper()
-	c, err := Open(context.Background(), Options{Directory: t.TempDir(), Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) {
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), Version: "test", NodeFactory: func(string, string) (NetworkBackend, error) {
 		t.Error("test must never start a real network backend")
 		return nil, errors.New("network forbidden")
 	}})
@@ -360,7 +360,7 @@ func TestLANRestartPrunesStaleApplicationApproval(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test"})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, Version: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +499,7 @@ func TestLANRevocationProfileFailureCannotRestoreAutosave(t *testing.T) {
 	if err := os.WriteFile(profilePath, oldProfile, 0600); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test", SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, Version: "test", SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +553,7 @@ func TestOfflineStartupCanRevokeSavedPairsAndChooseNewRelay(t *testing.T) {
 	}
 	_ = c.Close()
 	factoryCalls := 0
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, Version: "test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
 		factoryCalls++
 		return &pipeNode{hub: &pipeNetwork{listeners: map[netip.AddrPort]*pipeListener{}}}, nil
 	}})
@@ -667,7 +667,7 @@ func TestLANEnvironmentRecoveryCodesAppearInStartupStatus(t *testing.T) {
 			}
 			_ = c.Close()
 			// Constructor environment checks fail before any Start or socket.
-			reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test"})
+			reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, Version: "test"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -696,7 +696,7 @@ func TestTrustGenerationSeedsFromSavedApprovalAndAdvancesAfterRevoke(t *testing.
 		t.Fatal(err)
 	}
 	_ = c.Close()
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test", SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, Version: "test", SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,7 +762,7 @@ func TestOfflineBackendSwitchDoesNotImportIdenticalPeerAutosave(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = c.Close()
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test", SkipNetworkStart: true})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, Version: "test", SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

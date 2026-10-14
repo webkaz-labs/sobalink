@@ -131,7 +131,10 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
     // Public-card reads have no effect to retry or retain. Keep this exact
     // allowlist separate from mutating commands and their uncertainty guards.
     const cardRead = name === 'device-card.export' || name === 'device-card.inspect'
-    const retainUncertain = !name.startsWith('favorites.') && !cardRead
+    // Setup recovers by its original session, never by blindly replaying a
+    // command response. Status must be a fresh read, including after a lost reply.
+    const setupCommand = name.startsWith('setup.')
+    const retainUncertain = !name.startsWith('favorites.') && !cardRead && !setupCommand
     try {
       if (name === 'message.send') {
         const message = payload as api.CommandPayloads['message.send']
@@ -166,7 +169,14 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
         if (live.current) setMessageGuardRevision(current => current + 1)
       }
       if (retainUncertain && requested && (!(value instanceof api.ApiError) || !['network_error', 'invalid_response'].includes(value.code))) uncertain.current.delete(key)
-      if (live.current && epoch === authEpoch.current) handleError(cardRead ? new api.ApiError(value instanceof api.ApiError ? value.code : 'request_failed', '') : value)
+      // Only Core's exact prepublication refusal permits same-target retry
+      // guidance; retain the distinct typed disk-space guidance. Keep the
+      // original API code/status and request-ID recovery above intact,
+      // including unknown/lost replies and older Core errors.
+      const presented = name === 'transfer.accept' ? Object.assign(value instanceof api.ApiError ? value : new api.ApiError('request_failed', value instanceof Error ? value.message : ''), {
+        displayCode: value instanceof api.ApiError && ['transfer_accept_busy', 'disk_space_low', 'disk_space_unknown'].includes(value.code) ? value.code : 'transfer_accept_unconfirmed',
+      }) : value
+      if (live.current && epoch === authEpoch.current) handleError(cardRead ? new api.ApiError(value instanceof api.ApiError ? value.code : 'request_failed', '') : presented)
       return undefined
     }
     finally {

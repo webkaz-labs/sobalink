@@ -50,7 +50,7 @@ func TestMessageBoundaryRoundTripsAndPersists(t *testing.T) {
 					t.Fatal("persisted message differs from delivered text")
 				}
 				info, err := os.Stat(filepath.Join(c.dir, "messages.json"))
-				if err != nil || info.Size() > int64(maxMessageHistoryBytes) {
+				if err != nil || info.Size() > messageStoreHardBytes {
 					t.Fatalf("invalid history file: %v", err)
 				}
 				if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
@@ -96,6 +96,9 @@ func TestMessagePersistenceFailureReportsDeliveryState(t *testing.T) {
 		if receiverBlocked {
 			blocked = p.b
 			wantCode = "message_peer_storage_unavailable"
+		}
+		if err := os.Remove(filepath.Join(blocked.dir, "messages.json")); err != nil {
+			t.Fatal(err)
 		}
 		if err := os.Mkdir(filepath.Join(blocked.dir, "messages.json"), 0700); err != nil {
 			t.Fatal(err)
@@ -200,12 +203,12 @@ func TestPeerJSONEnvelopeCountsTrailingWhitespace(t *testing.T) {
 	}
 }
 
-func TestMessageHistoryPreservesRetentionAndLegacyFiles(t *testing.T) {
+func TestMessageHistoryPreservesRetentionAndRejectsLegacyFiles(t *testing.T) {
 	newMessage := func(id, text string) Message {
 		return Message{ID: id, PeerID: "peer", Direction: "incoming", Status: "received", Text: text, CreatedAt: time.Now().UTC()}
 	}
 	t.Run("maximum metadata", func(t *testing.T) {
-		c := &Core{dir: t.TempDir()}
+		c := messageStoreFixture(t)
 		m := newMessage(strings.Repeat("i", messageframe.IDBytes), strings.Repeat("&", messageframe.TextBytes))
 		m.PeerID = strings.Repeat("p", messageframe.IDBytes)
 		m.CreatedAt = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.FixedZone("fixture", 9*60*60))
@@ -213,7 +216,7 @@ func TestMessageHistoryPreservesRetentionAndLegacyFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 		info, err := os.Stat(filepath.Join(c.dir, "messages.json"))
-		if err != nil || info.Size() != int64(maxMessageHistoryBytes) {
+		if err != nil || info.Size() > messageStoreHardBytes {
 			t.Fatalf("maximum metadata fixture size differs from bound: %v %v", info, err)
 		}
 		if err := c.loadMessages(); err != nil || len(c.messages) != 1 || c.messages[0].ID != m.ID || c.messages[0].Text != m.Text {
@@ -226,29 +229,44 @@ func TestMessageHistoryPreservesRetentionAndLegacyFiles(t *testing.T) {
 		if err := config.WriteJSON(filepath.Join(c.dir, "messages.json"), history); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.loadMessages(); err != nil || len(c.messages) != 1 || c.messages[0].Text != "saved" {
-			t.Fatalf("legacy history unreadable: %v", err)
+		before, _ := os.ReadFile(filepath.Join(c.dir, "messages.json"))
+		if err := c.loadMessages(); err == nil || len(c.messages) != 0 {
+			t.Fatal("legacy history was adopted")
+		}
+		after, _ := os.ReadFile(filepath.Join(c.dir, "messages.json"))
+		if !bytes.Equal(before, after) {
+			t.Fatal("legacy history was rewritten")
 		}
 	})
 	t.Run("count", func(t *testing.T) {
-		c := &Core{dir: t.TempDir()}
-		for range 128 {
-			c.messages = append(c.messages, newMessage(randomID(), "x"))
-		}
+		c := messageStoreFixture(t)
+		mutateStoredMessages(t, c, func(next *messageEnvelope) error {
+			for range 128 {
+				next.Immediate = append(next.Immediate, newMessage(randomID(), "x"))
+			}
+			return nil
+		})
 		old := c.messages[0].ID
 		if err := c.appendMessageLocked(newMessage("new", "x")); err != nil || len(c.messages) != 129 || c.messages[0].ID != old {
 			t.Fatalf("count retention changed: %d %v", len(c.messages), err)
 		}
 	})
 	t.Run("age", func(t *testing.T) {
-		c := &Core{dir: t.TempDir(), messages: []Message{newMessage("old", "old")}}
-		c.messages[0].CreatedAt = time.Now().Add(-31 * 24 * time.Hour)
+		c := messageStoreFixture(t)
+		old := newMessage("old", "old")
+		old.CreatedAt = time.Now().Add(-31 * 24 * time.Hour)
+		if err := c.appendMessageLocked(old); err != nil {
+			t.Fatal(err)
+		}
 		if err := c.appendMessageLocked(newMessage("new", "new")); err != nil || len(c.messages) != 2 || c.messages[0].ID != "old" {
 			t.Fatalf("age retention changed: %v", err)
 		}
 	})
 	t.Run("encoded target", func(t *testing.T) {
-		c := &Core{dir: t.TempDir(), messages: []Message{newMessage("old", "old")}}
+		c := messageStoreFixture(t)
+		if err := c.appendMessageLocked(newMessage("old", "old")); err != nil {
+			t.Fatal(err)
+		}
 		if err := c.appendMessageLocked(newMessage("large", strings.Repeat("&", messageframe.TextBytes))); err != nil || len(c.messages) != 2 || c.messages[0].ID != "old" {
 			t.Fatalf("single large message retention changed: %v", err)
 		}
@@ -276,7 +294,7 @@ func TestMessageHistoryRejectsMalformedOrUnboundedMetadata(t *testing.T) {
 				m.ID = "invalid/id"
 			}
 			c := &Core{dir: t.TempDir()}
-			b, _ := json.Marshal([]Message{m})
+			b, _ := json.Marshal(messageEnvelope{Version: messageStoreVersion, Identity: strings.Repeat("a", 32), Epoch: strings.Repeat("b", 32), HighWater: time.Now().UTC(), Immediate: []Message{m}, Outgoing: map[string]*messageOutgoing{}, Incoming: map[string]*messageIncoming{}})
 			if err := os.WriteFile(filepath.Join(c.dir, "messages.json"), b, 0600); err != nil {
 				t.Fatal(err)
 			}

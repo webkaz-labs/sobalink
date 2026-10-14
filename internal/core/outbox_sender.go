@@ -24,11 +24,13 @@ func (c *Core) pumpOutbox() {
 	var planned []*outgoingBatch
 	var contexts []context.Context
 	defer func() {
+		o.updateAccountingLocked()
 		o.mu.Unlock()
 		for i, b := range planned {
 			if err := c.runOutgoing(contexts[i], b); err != nil {
 				o.mu.Lock()
 				delete(o.runs, b.ID)
+				o.updateAccountingLocked()
 				o.mu.Unlock()
 				b.cancel()
 			}
@@ -47,6 +49,9 @@ func (c *Core) pumpOutbox() {
 				return
 			}
 			if o.drainCompletionsLocked() != nil {
+				return
+			}
+			if o.retryPendingCleanupLocked() != nil {
 				return
 			}
 			now := o.now().UTC()
@@ -134,9 +139,26 @@ func (c *Core) pumpOutbox() {
 						}
 						continue
 					}
+					// Terminal evidence may need a receipt query, but it must reacquire
+					// an active slot without reserving or exposing payload again.
+					if queryOnly {
+						c.mu.Lock()
+						lim := transferLimitsFor(c.capacity, "transferSpoolBytes")
+						lim.MaxMetadataBytes -= 1024 // conservative active-row overhead for this query
+						_, ordinary := c.outgoingPendingLocked(d.Trust.ID, nil)
+						admit := ordinary+o.activePeerCountLocked(d.Trust.ID) < lim.MaxPendingPerPeer && c.checkOutgoingCapacityWithPayloadLocked(lim, d.Offer.Manifest, 1, nil, false) == nil
+						if !admit {
+							c.mu.Unlock()
+							continue
+						}
+					}
 					life, cancel := context.WithTimeout(c.ctx, 45*time.Second)
 					b := &outgoingBatch{ID: d.Offer.DeliveryID, PeerID: d.Trust.ID, Network: d.Trust.Network, Generation: d.Trust.Generation, Manifest: d.Offer.Manifest, State: "queued", Created: row.View.CreatedAt, cancel: cancel, backend: backend, outboxID: row.View.OutboxID}
 					o.runs[b.ID] = b
+					if queryOnly {
+						o.updateAccountingLocked()
+						c.mu.Unlock()
+					}
 					o.next[b.ID] = now.Add(5 * time.Second)
 					planned = append(planned, b)
 					contexts = append(contexts, life)
@@ -459,6 +481,7 @@ func (c *Core) finishOutboxRun(run *outgoingRun, application *peerHTTPApplicatio
 	run.done()
 	if active {
 		c.pumpOutgoing()
+		c.pumpMessageQueue()
 	}
 }
 func (c *Core) outboxEligibility(id string) map[string]any {

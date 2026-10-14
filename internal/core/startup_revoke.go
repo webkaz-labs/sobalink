@@ -43,6 +43,52 @@ func (c *Core) peerEpochsValid(epochs map[string]string) bool {
 	defer c.mu.RUnlock()
 	return samePeerEpochs(epochs, c.startup.Revocations) && !deniedPeerEpochs(epochs, c.managedDenied)
 }
+
+// Explicit app approval is the only first-use epoch creation path. Pairing and
+// backend generations do not establish durable message/file authority. Core.op
+// serializes this with revocation and the following profile publication.
+func (c *Core) certifyPeerApprovalEpoch(id string) (string, error) {
+	if !config.ValidPeerID(id) {
+		return "", errors.New("select an exact peer identity to approve")
+	}
+	c.mu.RLock()
+	next := make(map[string]string, len(c.startup.Revocations)+1)
+	for peer, epoch := range c.startup.Revocations {
+		next[peer] = epoch
+	}
+	c.mu.RUnlock()
+	if next[id] == "" {
+		var err error
+		next[id], err = nextPeerRevocationEpoch("")
+		if err != nil {
+			return "", err
+		}
+	}
+	// Even a nonempty in-memory epoch may come from a failed revocation write.
+	// Re-certify the exact journal before granting trust. Keep attempted epochs
+	// on failure so explicit retry cannot mint a different uncertain token;
+	// no app Trust is published by this function, including on committed errors.
+	err := c.writePrivateSettings("startup-revocations.json", next)
+	c.mu.Lock()
+	c.startup.Revocations = next
+	c.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	return next[id], nil
+}
+
+func nextPeerRevocationEpoch(previous string) (string, error) {
+	counter := uint64(0)
+	if previous != "" {
+		counter, _ = strconv.ParseUint(strings.SplitN(previous, ":", 2)[0], 16, 64)
+	}
+	if counter == ^uint64(0) {
+		return "", &localCommandError{"startup_revocation_unconfirmed", "private revocation generation is exhausted; disable saved startup settings before continuing"}
+	}
+	return fmt.Sprintf("%016x:%s", counter+1, randomID()), nil
+}
+
 func (c *Core) revokeStartupPeer(id string) error {
 	return c.revokeStartupPeerWithFailure(id, nil)
 }
@@ -75,14 +121,11 @@ func (c *Core) revokeStartupPeerSettings(id string, failure *peerScopeFailure, t
 	}
 	c.mu.RUnlock()
 	if rotate {
-		counter := uint64(0)
-		if previous := next.Revocations[id]; previous != "" {
-			counter, _ = strconv.ParseUint(strings.SplitN(previous, ":", 2)[0], 16, 64)
+		var err error
+		next.Revocations[id], err = nextPeerRevocationEpoch(next.Revocations[id])
+		if err != nil {
+			return err
 		}
-		if counter == ^uint64(0) {
-			return &localCommandError{"startup_revocation_unconfirmed", "private revocation generation is exhausted; disable saved startup settings before continuing"}
-		}
-		next.Revocations[id] = fmt.Sprintf("%016x:%s", counter+1, randomID())
 	}
 	// The journal is authoritative on reopen and is written before app trust.
 	persistErr := c.writePrivateSettings("startup-revocations.json", next.Revocations)

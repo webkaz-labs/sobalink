@@ -304,7 +304,7 @@ func prepareReceiveRecoveryFixture(directory, receiveDirectory, scenario string)
 		return err
 	}
 	profile := core.Profile{
-		Version:      2,
+		Version:      3,
 		DurableFiles: &core.DurableProfile{Version: 1, Epoch: hex.EncodeToString(epoch[:]), Phase: "initializing"},
 		Settings:     core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "Notebook", ReceiveDirectory: receiveDirectory},
 		Peers:        []core.Trust{{ID: "fixture-studio", Name: "Studio", Network: "tailnet", Generation: 1, Autosave: true, Directory: receiveDirectory}},
@@ -388,7 +388,12 @@ func run() (runErr error) {
 	aIP, bIP := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.0.2")
 	aNode := &node{network: netw, ip: aIP, remoteIP: bIP, id: "fixture-notebook", remoteID: "fixture-studio", remoteName: "Studio", managementPort: managementPort}
 	bNode := &node{network: netw, ip: bIP, remoteIP: aIP, id: "fixture-studio", remoteID: "fixture-notebook", remoteName: "Notebook"}
-	a, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "notebook"), Version: "browser-acceptance", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
+	aOwner, e := config.AcquireLock(filepath.Join(dir, "notebook"))
+	if e != nil {
+		return e
+	}
+	defer func() { runErr = errors.Join(runErr, aOwner.Close()) }()
+	a, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "notebook"), LifecycleLock: aOwner, Version: "browser-acceptance", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
 		if offlineScenario(*scenario) {
 			return nil, errors.New("offline browser fixture cannot activate a network")
 		}
@@ -402,7 +407,12 @@ func run() (runErr error) {
 		return e
 	}
 	if !offlineScenario(*scenario) {
-		b, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "studio"), Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return bNode, nil }})
+		bOwner, e := config.AcquireLock(filepath.Join(dir, "studio"))
+		if e != nil {
+			return e
+		}
+		defer func() { runErr = errors.Join(runErr, bOwner.Close()) }()
+		b, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "studio"), LifecycleLock: bOwner, Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return bNode, nil }})
 		if e != nil {
 			return e
 		}

@@ -2,7 +2,7 @@
 
 [日本語](ROADMAP.ja.md) · [Overview](../README.en.md) · [Verification](VERIFICATION.en.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-The published baseline is [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalink/releases/tag/v0.3.0-alpha.5), source `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6`. LAN destination admission, chosen-host relay operations, relayless LAN, advanced opt-in WAN discovery, mixed connections and adjustable relay resources are included. Its exact-source native/browser CI and all 15 signed-release gates passed; see [verification](VERIFICATION.en.md). Implementation, automated/distribution acceptance and physical-device acceptance remain distinct. Physical-device acceptance is still pending.
+The published baseline is [0.4.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.4.0-alpha.4), source `e4f7f4ef0a38a032eef9776c5e4a5d0ea8cbf28f`, including the [durable file queue](DURABLE_OUTBOX.en.md). The [durable text queue](DURABLE_TEXT.en.md) is implemented in the current development source and is unreleased. It uses profile format 3 with no old-format compatibility, migration or deletion. New native/browser/distribution checks need their own results. Earlier [verification](VERIFICATION.en.md) does not transfer automatically, and physical-device acceptance remains separate.
 
 ## Current work
 
@@ -15,9 +15,10 @@ The published baseline is [0.3.0-alpha.5](https://github.com/webkaz-labs/sobalin
 | WAN candidates | Explicit numeric STUN and/or IPv6 discovery through the trusted-relay backend | Pinned relay still required for bootstrap; physical NAT/IPv6 reachability remains unverified; no universal NAT or relayless WAN promise |
 | Mixed connections | Separate selected engines, signed same-peer binding and separately approved application access | Physical network transitions and application reconnect remain unverified; no byte replay or existing-stream migration |
 | Files and stored state | Explicit send, batch consent, optional exact-peer autosave, no overwrite, bounded staging/accounting, uncertain-save recovery | Active-transfer interruption, real filesystems, ordinary-user Windows process behavior and physical power-loss durability |
+| Durable queues | Released explicit file queue; unreleased single-recipient text prepare/review/commit, original IDs/deadlines and exact save evidence | New-source ACK-loss/restart/history-cleanup and cancellation tests; physical power-loss/OS-lifecycle proof remains separate |
 | Human interfaces | Japanese/English guided CLI, local UI, services, graph, route review, private sign-in | Physical phone QR, actual native IME/fonts and terminal input remain unverified |
 | Lifecycle | Explicit startup approvals, offline suppression, saved settings and per-user OS startup | Actual OS sign-in and suspend/wake, real proxy/application reconnect |
-| Distribution | Existing reproducible packages, signing/provenance, public retrieval and four-target mise checks | Alpha.5 gates passed; any later release still needs its own exact-source gates |
+| Distribution | Existing reproducible packages, signing/provenance, public retrieval and four-target mise checks | Published results are source-specific; unreleased text queueing still needs its own final native/browser/distribution gates |
 
 [PR #8](https://github.com/webkaz-labs/sobalink/pull/8) was integrated before alpha.4, including independent Core-process restart/recovery evidence. That evidence does not automatically cover new connection modes. The [verification record](VERIFICATION.en.md#route-recovery-gate) preserves historical failures and exact-source outcomes.
 
@@ -35,13 +36,15 @@ A clearly labeled prerelease can be published for physical-device testing after 
 
 ## Fixed boundaries and later work
 
-Initial backend selection and cross-transport peer binding stay explicit. Automatic choice is limited to already configured, authenticated and approved routes for new flows, with positively classified unavailability; authorization, pin, unknown-state and unclassified failures stay terminal. Outward application traffic remains in the selected userspace stack. Route recovery cannot renew service lifetimes, widen peers/ports, restore revoked trust or restart canceled files. Files retain in-process whole-item retry only; no byte-offset or restart resume is added. Existing TCP preservation, arbitrary transaction replay and remote-job completion are not promised.
+Initial backend selection and cross-transport peer binding stay explicit. Automatic choice is limited to already configured, authenticated and approved routes for new flows, with positively classified unavailability; authorization, pin, unknown-state and unclassified failures stay terminal. Outward application traffic remains in the selected userspace stack. Route recovery cannot renew service lifetimes, widen peers/ports, restore revoked trust or restart canceled files. Immediate files retain in-process whole-item retry. Explicit durable file requests recover after restart with original IDs and deadlines; unreleased durable text has its own save/deduplication contract. None adds byte-offset resume. Existing TCP preservation, arbitrary transaction replay and remote-job completion are not promised.
 
-The normal direct-enabled single executable remains. `local` classifies a relay, and direct peer paths may be public. The implemented optional LAN policy admits specified destinations; it does not promise physical-NIC/VPN binding or whole-process/host zero egress. Administrator privileges, OS route/firewall or LAN-router changes are not prerequisites. Additional resource administration, remote management APIs, remote filesystem browsing, broadcast, synchronization and a durable offline outbox remain separate work.
+The normal direct-enabled single executable remains. `local` classifies a relay, and direct peer paths may be public. The implemented optional LAN policy admits specified destinations; it does not promise physical-NIC/VPN binding or whole-process/host zero egress. Administrator privileges, OS route/firewall or LAN-router changes are not prerequisites. Additional resource administration, remote management APIs, remote filesystem browsing, broadcast and synchronization remain separate work. Explicit durable file queueing already exists; unreleased durable text queueing is the next implemented scope.
 
-CI optimization is separate post-release work and is not included in alpha.5. Any unmerged optimization changes need their own review and CI before publication.
+The earlier 0.3-series CI optimization plan is historical. Any further CI changes need their own review and checks; queue implementation does not waive the existing native/browser/distribution gates.
 
-### Agreed convenience work after this release
+### Historical convenience plan
+
+This earlier plan is retained for context; it is not a claim that every listed item remains unimplemented. Current queue scope is described above and in the linked guides.
 
 The supported outside-LAN recommendation is Tailscale. Building or deploying an external relay, including a separate public relay daemon, is out of scope for now. Existing opt-in WAN candidate controls remain an advanced capability requiring an already reachable compatible pinned relay; they are not a supplied public-relay deployment workflow. The next relay setup improvements focus on LAN hosts.
 

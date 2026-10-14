@@ -69,7 +69,7 @@ func dispatchContractCore(t *testing.T, ctx context.Context, options ...dispatch
 		t.Fatal(err)
 	}
 	profile := core.Profile{
-		Version:      2,
+		Version:      3,
 		DurableFiles: syntheticDurableProfile(),
 		Settings:     core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "dispatch-fixture"},
 		Peers: []core.Trust{

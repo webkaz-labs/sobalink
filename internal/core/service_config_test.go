@@ -159,7 +159,7 @@ func TestSavedForwardConfigurationRetainsSourceAcrossOfflineReopen(t *testing.T)
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
 		t.Fatal("saved configuration read tried to activate a backend")
 		return nil, nil
 	}})

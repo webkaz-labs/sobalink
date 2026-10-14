@@ -177,7 +177,7 @@ func TestLANPolicyApplySerializesWithPairPersistence(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), Options{Directory: c.dir, Version: "test"})
+	reopened, err := openOwnedTestCore(t, context.Background(), Options{Directory: c.dir, LifecycleLock: c.resourceLock, Version: "test"})
 	if err != nil {
 		t.Fatal("private LAN restore failed after lowering policy", err)
 	}

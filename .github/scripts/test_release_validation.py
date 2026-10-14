@@ -14,6 +14,7 @@ import tempfile
 import textwrap
 import unittest
 from unittest.mock import patch
+from test_source_provenance import add_native_fixture
 
 spec = importlib.util.spec_from_file_location("release_checks", pathlib.Path(__file__).with_name("release-validation.py"))
 checks = importlib.util.module_from_spec(spec)
@@ -465,6 +466,24 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
+    def test_native_packages_are_exhaustive_and_keep_later_policy_gates(self):
+        for name in ('ci', 'prerelease'):
+            early = self.step(name, 'native', 'name: Collect required whole-Core race evidence')
+            self.assertIn("        if: matrix.goos == 'windows' || matrix.goos == 'darwin'\n", early)
+            self.assertIn('run: python -B .github/scripts/ci-native-core-required.py core', early)
+            remaining = self.step(name, 'native', 'name: Verify remaining native package race coverage')
+            self.assertIn("steps.native-core.outputs.remaining_safe == 'true'", remaining)
+            self.assertIn('run: python -B .github/scripts/ci-native-core-required.py remaining', remaining)
+            native = self.job(name, 'native')
+            self.assertIn("if [[ '${{ matrix.goos }}' == 'linux' ]]; then", native)
+            self.assertIn('go test -race -count=1 -timeout=10m ./...', native)
+            self.assertIn('go vet ./...', native)
+            self.assertIn('./internal/backendworker ./internal/connectionroute', native)
+            self.assertIn("./internal/core -run '^TestMixed'", native)
+            self.assertLess(native.index('name: Collect required whole-Core'), native.index('name: Test and reproduce locked frontend'))
+        ordinary = self.step('ci', 'native', 'name: Local and mock tests, race detector, and vet')
+        self.assertLess(ordinary.index('          fi\n'), ordinary.index('go vet ./...'))
+
     def test_development_cache_keeps_existing_triggers_and_browser_gates(self):
         workflow = self.workflow("ci")
         self.assertIn("on:\n  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:\n", workflow)
@@ -580,13 +599,23 @@ class WorkflowCachePolicy(unittest.TestCase):
                 self.assertNotIn("cache-hit", step)
         self.assertIn("tee logs/ipc-regression.txt", self.job("prerelease", "native"))
 
-    def test_ci_builds_once_and_prerelease_still_compares_two_builds(self):
-        for workflow, count in (("ci", 1), ("prerelease", 2)):
+    def test_darwin_packages_use_two_fresh_caches_without_widening_matrix(self):
+        for workflow in ("ci", "prerelease"):
             native = self.job(workflow, "native")
             with self.subTest(workflow=workflow):
-                self.assertEqual(native.count("go run ./cmd/package-tool build "), count)
-                self.assertEqual(native.count("go run ./cmd/package-tool checksums"), count)
-        self.assertNotIn("first-SHA256SUMS", self.job("ci", "native"))
+                self.assertEqual(native.count("go run ./cmd/package-tool build "), 2)
+                self.assertEqual(native.count("go run ./cmd/package-tool checksums"), 2)
+                self.assertEqual(native.count('export GOCACHE="$clean_packages/first-cache" GOTMPDIR="$clean_packages/first-tmp"'), 1)
+                self.assertEqual(native.count('export GOCACHE="$clean_packages/second-cache" GOTMPDIR="$clean_packages/second-tmp"'), 1)
+                self.assertEqual(native.count('mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX"'), 1)
+                self.assertEqual(native.count('mkdir -p "$GOCACHE" "$GOTMPDIR"'), 2)
+                self.assertNotIn('go clean', native)
+                self.assertEqual(native.count('goos: darwin'), 1)
+        ci = self.step("ci", "native", "name: Build native package and smoke archive contents")
+        self.assertEqual(ci.count("if [[ '${{ matrix.goos }}' == darwin ]]; then"), 2)
+        second = ci.split("if [[ '${{ matrix.goos }}' == darwin ]]; then", 2)[2].split("          fi", 1)[0]
+        self.assertIn("go run ./cmd/package-tool build", second)
+        self.assertIn('cmp "$clean_packages/first-SHA256SUMS" dist/SHA256SUMS', second)
         release = self.job("prerelease", "native")
         self.assertIn('cp dist/SHA256SUMS "$RUNNER_TEMP/first-SHA256SUMS"', release)
         self.assertIn('cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS', release)
@@ -859,6 +888,14 @@ class ArtifactGuards(unittest.TestCase):
             self.write(stem + ".build.json", {"project": checks.PROJECT, "product":"sobalink", "frontend":{"node_version":"24.19.0","npm_version":"11.9.0","lock_sha256":"f"*64,"assets":[{"path":"index.html","sha256":"e"*64}]}, "version": VERSION, "source_commit": COMMIT, "target": target, "go_version": "go1.27.1", "build_tags":"ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy", "cgo_enabled": False, "trimpath": True, "buildvcs": False})
             self.write(stem + ".cdx.json", {"bomFormat": "CycloneDX", "specVersion": "1.5"})
             self.write(stem + ".notices.json", {"frontend_modules":[{"notices":[{"path":"licenses/npm/example/LICENSE"}]}], "modules": [{"notices": [{"path": "licenses/example/LICENSE"}]}], "go_standard_library": {"notices": [{"path": "licenses/go/LICENSE"}]}})
+        for target in checks.TARGETS:
+            stem = "sobalink-" + VERSION + "-" + target
+            build = json.loads((self.root / (stem + ".build.json")).read_text())
+            notices = json.loads((self.root / (stem + ".notices.json")).read_text())
+            bom = json.loads((self.root / (stem + ".cdx.json")).read_text())
+            add_native_fixture(build, notices, bom, target)
+            for suffix, value in ((".build.json", build), (".notices.json", notices), (".cdx.json", bom)):
+                self.write(stem + suffix, value)
         self.checksums()
 
     def write(self, name, value):

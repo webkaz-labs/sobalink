@@ -17,6 +17,7 @@ async function openUpgradePanel(page, activation) {
   await page.locator('.sidebar-title').getByRole('button', { name: 'Set up network', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Choose how to connect', exact: true })
   await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Advanced network setup', exact: true }).click()
   await dialog.locator('input[type="radio"][value="direct-lan"]').check()
   const panel = dialog.getByRole('region', { name: 'Upgrade saved Direct LAN pair', exact: true })
   await expect(panel).toBeVisible()

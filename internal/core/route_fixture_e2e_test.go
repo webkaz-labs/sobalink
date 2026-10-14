@@ -29,7 +29,7 @@ func TestRouteBrowserFixtureUsesRealProofWithoutNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(context.Background(), Options{Directory: dir, Version: "fixture-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, Version: "fixture-test", SkipNetworkStart: true, NodeFactory: func(string, string) (NetworkBackend, error) {
 		t.Error("route fixture started network")
 		return nil, errors.New("forbidden")
 	}})
@@ -94,7 +94,7 @@ func TestRouteOfflineFailedRevocationCannotReloadOldPermission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(context.Background(), Options{Directory: dir, Version: "fixture-test", SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, Version: "fixture-test", SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestRouteOfflineFailedWithdrawalCannotReloadPermanentPermission(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err := openOwnedTestCore(t, context.Background(), Options{Directory: dir, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestRouteOfflineFailedWithdrawalCannotReloadPermanentPermission(t *testing.
 	}
 	mustCommand(t, c, "lan.routes.apply", map[string]any{"peerId": peer, "update": envelope["update"], "digest": review["digest"], "candidateIds": []any{candidate}, "lifetime": "until-revoked"})
 	c.Close()
-	c, err = Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true})
+	c, err = openOwnedTestCore(t, context.Background(), Options{Directory: dir, LifecycleLock: c.resourceLock, SkipNetworkStart: true})
 	if err != nil {
 		t.Fatal(err)
 	}

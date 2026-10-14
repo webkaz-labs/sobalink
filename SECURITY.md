@@ -2,9 +2,15 @@
 
 [日本語](docs/SECURITY.ja.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md)
 
-sobalink is experimental software. Its controls constrain local management, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. Published alpha.5, including the destination-admission integration, has completed exact-source automated, signed-distribution and four-target installation gates. Physical-device and application acceptance remain pending. See the [exact-source record](docs/VERIFICATION.en.md) before relying on a claim.
+sobalink is experimental software. Its controls constrain local management, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. The published baseline is v0.4.0-alpha.4. Current connection-setup and durable-text changes are source-development work; earlier release checks do not qualify this source. Physical-device, application, OS-login, suspend and power-loss acceptance remain separate. See the [exact-source record](docs/VERIFICATION.en.md) before relying on a claim.
 
 Administrator rights and LAN-router changes are outside the product requirements. No TUN driver, OS route/firewall change or UPnP/NAT configuration is installed by LAN setup; blocked network policy is reported, not bypassed.
+
+## Explicit setup and durable queues
+
+[Nearby setup](docs/CONNECTION_SETUP.en.md) uses an explicitly selected short-lived network scope. Discovery and QR/contact data are untrusted hints; both devices must compare the complete identity/plan fingerprint and approve separately. Connecting does not grant message/file trust or service access. Native discovery, browser confirmation, signed distribution and physical-LAN acceptance are distinct checks.
+
+The explicit [durable file queue](docs/DURABLE_OUTBOX.en.md) and development [durable text queue](docs/DURABLE_TEXT.en.md) retain immutable content, exact peer identities, original deadlines and receiver deduplication evidence. Durable jobs never fall back to the immediate protocol. Restart recovery requires current authority and certified saved state; uncertainty blocks unsafe sending or cleanup. Cancellation and expiry do not recall remote saved content, and visible-history cleanup does not erase deduplication authority. Active work, retained evidence and payload bytes have separate finite bounds. This development source requires profile format 3 and rejects older formats without migration or deletion; preserve old profiles and use separate empty state.
 
 ## Local management stays local
 
@@ -68,7 +74,7 @@ Trust for messages/file offers binds an exact verified peer in the selected back
 - Initial logical defaults are 256 entries per batch and 1 GiB per file/batch. They can be adjusted or explicitly unlimited; finite metadata, staging inventory, pending-offer, storage and concurrency budgets still bound admission. Local staging defaults to 600 seconds with an explicit unlimited option. [Capacity policy](docs/CAPACITY.en.md) separates those choices from immutable safety checks
 - Browser upload progress describes local staging. Remote acceptance and saved acknowledgement are separate states
 
-Retry is a whole-file operation for unfinished files in the current session. A saved file acknowledgement is idempotent while that batch exists. There is no partial-byte resume or durable restart-resume journal. After restart, a new offer may produce a uniquely named duplicate; users must review previously saved output.
+Immediate-transfer retry is a whole-file operation for unfinished files in the current session. A saved file acknowledgement is idempotent while that batch exists. Immediate transfers have no durable restart-resume journal; a new offer after restart may produce a uniquely named duplicate, so review previously saved output. Explicit durable queues use the separate identity/lease/receipt rules linked above. Neither path provides partial-byte resume.
 
 The receiver accounts only identified owned staging in its private index (legacy v1 is readable; v2 is written). A separate bounded durable retirement guard protects transitions that discard preparation or root evidence. The absence of a retirement guard is normal; a missing index on an existing profile requires the explicit legacy review below. It is recorded before the index changes and remains until post-save identity checks pass. An uncertain save or changed binding keeps receiving blocked across restart; receiving alone is blocked. The guard is not ownership proof or deletion authority. Recovery does not guess ownership, broadly scan destinations, or delete saved output. Zero-payload internal staging is safely retired or remains accounted, and control metadata does not accumulate per transfer. The preparation intent and existing three index writes preserve compatibility and preparation ordering but are not by themselves the retirement safety guarantee. No atomic compare-and-delete is promised across profile and destination filesystems against same-account mutation. Unknown, corrupt, unavailable or replaced state/destinations, unsafe entries and incomplete or over-budget inventory block receiving. This private index and guard are not a peer/API/export contract; do not edit them manually.
 
@@ -106,7 +112,7 @@ The private state directory contains node identity, trust and local configuratio
 
 Logs, issue reports, screenshots, sample configuration, README examples and distribution metadata must use generic fixtures. Remove codes, auth URLs, peer capabilities, private keys, local paths, private endpoints and unrelated personal context. Production packaging rejects provenance gaps and includes dependency notices rather than copying runtime state.
 
-There is no unrequested application launch, remote administration/command endpoint, remote filesystem browser, broadcast send, durable offline outbox, OS-wide traffic interception or clipboard watcher. An explicit `soba task` runs the exact local command and arguments with owned service leases; it grants no remote shell API. This does not prevent a separately authorized remote application from running a job; control and cancellation of that job remain the application's responsibility.
+There is no unrequested application launch, remote administration/command endpoint, remote filesystem browser, broadcast send, OS-wide traffic interception or clipboard watcher. An explicit `soba task` runs the exact local command and arguments with owned service leases; it grants no remote shell API. This does not prevent a separately authorized remote application from running a job; control and cancellation of that job remain the application's responsibility.
 
 ## Verification and disclosure
 

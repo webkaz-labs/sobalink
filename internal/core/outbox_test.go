@@ -24,7 +24,7 @@ func outboxFixture(t *testing.T) *Core {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Core{dir: dir, ctx: ctx, cancel: cancel, resourceLock: lock, resourceIdentity: strings.Repeat("a", 32), resourceNonce: strings.Repeat("b", 32), capacity: capacity.Defaults(), outgoing: map[string]*outgoingBatch{}, profile: Profile{Version: 2, DurableFiles: &DurableProfile{Version: 1, Epoch: strings.Repeat("c", 32), Phase: "ready"}, Settings: Settings{Network: "tailnet"}, Peers: []Trust{{ID: "peer-b", Network: "tailnet", Generation: 1}, {ID: "peer-c", Network: "tailnet", Generation: 1}}}, node: &pipeNode{state: identity.State{SelfID: "peer-a"}}}
+	c := &Core{dir: dir, ctx: ctx, cancel: cancel, resourceLock: lock, resourceIdentity: strings.Repeat("a", 32), resourceNonce: strings.Repeat("b", 32), capacity: capacity.Defaults(), outgoing: map[string]*outgoingBatch{}, profile: Profile{Version: currentProfileVersion, DurableFiles: &DurableProfile{Version: 1, Epoch: strings.Repeat("c", 32), Phase: "ready"}, Settings: Settings{Network: "tailnet"}, Peers: []Trust{{ID: "peer-b", Network: "tailnet", Generation: 1}, {ID: "peer-c", Network: "tailnet", Generation: 1}}}, node: &pipeNode{state: identity.State{SelfID: "peer-a"}}}
 	if err = c.initializeOutbox(true); err != nil {
 		t.Fatal(err)
 	}

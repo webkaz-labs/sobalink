@@ -18,7 +18,7 @@ type DurableProfile struct {
 	Phase   string `json:"phase"`
 }
 
-const currentProfileVersion = 2
+const currentProfileVersion = 3
 
 func newDurableProfile() *DurableProfile {
 	return &DurableProfile{Version: 1, Epoch: randomID(), Phase: "initializing"}
@@ -47,7 +47,7 @@ func checkDurableProfileInventory(dir string, p Profile) error {
 		}
 		return nil
 	}
-	for _, name := range []string{"durable-v1", "durable-outbox-v1"} {
+	for _, name := range []string{"durable-v1", "durable-outbox-v1", "messages.json"} {
 		if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
 			return durableProfileFailure("outbox_recovery_required")
 		}
@@ -56,7 +56,7 @@ func checkDurableProfileInventory(dir string, p Profile) error {
 }
 
 func durableProfileFailure(code string) error {
-	return &localCommandError{code, "durable file state needs review; do not remove or replace its profile or private stores"}
+	return &localCommandError{code, "durable state needs review; do not remove or replace its profile or private stores"}
 }
 
 func (c *Core) setDurableProfileError(code string) {
@@ -213,7 +213,7 @@ func syncDurableProfileNamespaces(root *os.Root, syncDirectory func(*os.Root) er
 // restoreDurableProfile runs before maintenance or network startup. A new
 // profile may finish only its same-epoch empty initialization. Ready stores are
 // never recreated. Missing lifecycle ownership or uncertain storage disables
-// durable work while ordinary immediate-mode operations remain available.
+// message acceptance; a mandatory message store is never silently recreated.
 func (c *Core) restoreDurableProfile() error {
 	p := c.profileCopy()
 	c.setDurableProfileError("outbox_recovery_required")
@@ -226,6 +226,9 @@ func (c *Core) restoreDurableProfile() error {
 		if err := c.persistDurableProfile(p, outboxSyncDirectory); err != nil {
 			return err
 		}
+	}
+	if err := c.initializeMessageStore(initialize); err != nil {
+		return err
 	}
 	if err := c.initializeOutbox(initialize); err != nil {
 		return err

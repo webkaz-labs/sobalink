@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/config"
 	"github.com/webkaz-labs/sobalink/internal/resource"
@@ -92,19 +94,60 @@ func TestResourceUnownedOpenPreservesLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = wrong.Close() })
-	for _, owner := range []*config.Lock{nil, wrong} {
-		dir := t.TempDir()
-		app, closeApp := openResourceApplication(t, dir, owner)
-		if _, err := app.resourceCommand("resource.list", json.RawMessage(`{}`)); err == nil {
-			t.Fatal("unowned resource available")
-		}
-		if _, err := app.capacityCommand("policy.config", json.RawMessage(`{}`)); err != nil {
-			t.Fatal("legacy capacity disabled", err)
-		}
-		if _, err := os.Lstat(resourceStatePath(dir)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("unowned resource sidecar created", err)
-		}
-		closeApp()
+	for name, owner := range map[string]*config.Lock{"missing-owner": nil, "different-profile-owner": wrong} {
+		t.Run(name, func(t *testing.T) {
+			t.Run("fresh-rejected", func(t *testing.T) {
+				dir := t.TempDir()
+				app, err := Open(context.Background(), Options{Directory: dir, SkipNetworkStart: true, LifecycleLock: owner})
+				if app != nil {
+					_ = app.Close()
+				}
+				if app != nil || messageErrorCode(err) != "message_store_recovery_required" {
+					t.Fatal("unowned fresh profile bypassed mandatory message storage", err)
+				}
+				for _, path := range []string{resourceStatePath(dir), filepath.Join(dir, "messages.json"), filepath.Join(dir, "durable-v1"), filepath.Join(dir, "durable-outbox-v1")} {
+					if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+						t.Fatal("unowned fresh profile initialized a protected store", err)
+					}
+				}
+			})
+			t.Run("existing-read-only", func(t *testing.T) {
+				dir, original := resourceOperationLifecycleOwner(t)
+				seeded, closeSeeded := openResourceApplication(t, dir, original)
+				seeded.mu.Lock()
+				err := seeded.appendMessageLocked(Message{ID: "synthetic-message", PeerID: "synthetic-peer", Direction: "incoming", Text: "synthetic retained history", CreatedAt: time.Now().UTC(), Status: "received"})
+				seeded.mu.Unlock()
+				if err != nil {
+					t.Fatal(err)
+				}
+				closeSeeded()
+				if err := original.Close(); err != nil {
+					t.Fatal(err)
+				}
+				before := map[string][]byte{}
+				for _, path := range []string{resourceStatePath(dir), filepath.Join(dir, "sobalink.json"), filepath.Join(dir, "messages.json")} {
+					before[path] = offlineEndpointRead(t, path)
+				}
+				// Read-only legacy inspection needs an already certified message
+				// store; an absent owner cannot initialize or recertify one.
+				app, closeApp := openResourceApplication(t, dir, owner)
+				if _, err := app.resourceCommand("resource.list", json.RawMessage(`{}`)); err == nil {
+					t.Fatal("unowned resource available")
+				}
+				if _, err := app.capacityCommand("policy.config", json.RawMessage(`{}`)); err != nil {
+					t.Fatal("legacy capacity disabled", err)
+				}
+				if app.resourceLock != nil || app.messageStore != nil || app.durableProfileReady() || len(app.messages) != 1 || app.messages[0].ID != "synthetic-message" {
+					t.Fatal("read-only inspection created authority or lost retained history")
+				}
+				closeApp()
+				for path, saved := range before {
+					if !bytes.Equal(saved, offlineEndpointRead(t, path)) {
+						t.Fatal("unowned inspection changed certified state", filepath.Base(path))
+					}
+				}
+			})
+		})
 	}
 }
 

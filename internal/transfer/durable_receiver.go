@@ -107,7 +107,7 @@ func (m *Manager) OfferDurable(peer Peer, recipientID string, offer DurableOffer
 		}
 	}
 	reserve := durableMetadataReservation(offer)
-	var metadata, bytes int64
+	var metadata, activeMetadata, bytes int64
 	var perPeer, pending, peerPending int
 	for _, r := range d.state.Records {
 		metadata += r.ReservedMetadata
@@ -115,7 +115,8 @@ func (m *Manager) OfferDurable(peer Peer, recipientID string, offer DurableOffer
 		if r.Peer.ID == peer.ID {
 			perPeer++
 		}
-		if !terminal(r.State) {
+		if d.recordActive(r) {
+			activeMetadata += r.ReservedMetadata
 			pending++
 			if r.Peer.ID == peer.ID {
 				peerPending++
@@ -134,7 +135,10 @@ func (m *Manager) OfferDurable(peer Peer, recipientID string, offer DurableOffer
 	for _, e := range offer.Manifest.Entries {
 		total += e.Size
 	}
-	if len(d.state.Records)+len(m.batches) >= m.limits.MaxBatches || reserve > m.limits.MaxMetadataBytes-m.metadata-metadata || len(d.state.Records) >= durableLedgerRecords || perPeer >= 128 || pending >= m.limits.MaxPendingBatches || peerPending >= m.limits.MaxPendingPerPeer || reserve > durableLedgerBytes-metadata || total > durableCapacityLeft(m.limits.MaxReservedBytes, m.reserved, bytes) {
+	if len(d.state.Records) >= durableLedgerRecords || perPeer >= 128 || reserve > durableLedgerBytes-metadata {
+		return DurableStatus{}, ErrDurableEvidenceCapacity
+	}
+	if m.durableCountLocked()+len(m.batches) >= m.limits.MaxBatches || reserve > m.limits.MaxMetadataBytes-m.metadata-activeMetadata || pending >= m.limits.MaxPendingBatches || peerPending >= m.limits.MaxPendingPerPeer || total > durableCapacityLeft(m.limits.MaxReservedBytes, m.reserved, bytes) {
 		return DurableStatus{}, ErrDurableCapacity
 	}
 	token, err := randomName("")
@@ -167,7 +171,7 @@ func absDuration(d time.Duration) time.Duration {
 func durableBytes(r *durableRecord) int64 {
 	var n int64
 	for _, f := range r.Files {
-		if !terminal(r.State) || f.Anchor != "" {
+		if !terminal(r.State) || r.Preparing || len(r.active) > 0 || f.Phase == "publish_pending" || f.Anchor != "" {
 			n += f.Entry.Size
 		}
 	}
@@ -569,10 +573,24 @@ func (m *Manager) durableReservedLocked() int64 {
 	var n int64
 	if m.durable != nil {
 		for _, r := range m.durable.state.Records {
-			if value := durableBytes(r); value > math.MaxInt64-n {
+			value := durableBytes(r)
+			if value > math.MaxInt64-n {
 				return math.MaxInt64
 			}
-			n += durableBytes(r)
+			n += value
+		}
+		if m.durable.blocked != nil {
+			// Failed cleanup/terminal publication can tentatively clear anchors
+			// or remove rows. Retain the last certified physical reservation.
+			var confirmed int64
+			for _, r := range m.durable.confirmed.Records {
+				value := durableBytes(r)
+				if value > math.MaxInt64-confirmed {
+					return math.MaxInt64
+				}
+				confirmed += value
+			}
+			n = max(n, confirmed)
 		}
 	}
 	return n
@@ -621,20 +639,60 @@ func (m *Manager) checkDurableRecordRelationshipLocked(r *durableRecord) error {
 	}
 	return nil
 }
-func (m *Manager) durableCountLocked() int {
-	if m.durable == nil {
-		return 0
+
+// Terminal evidence is retained separately from live admission. Physical
+// owners and unresolved publication still consume live slots, even after a
+// cancellation fence. Any uncertain snapshot conservatively charges all rows.
+func (d *durableReceiver) recordActive(r *durableRecord) bool {
+	if d.blocked != nil || !terminal(r.State) || r.Preparing || len(r.active) > 0 {
+		return true
 	}
-	return len(m.durable.state.Records)
-}
-func (m *Manager) durableMetadataLocked() int64 {
-	var n int64
-	if m.durable != nil {
-		for _, r := range m.durable.state.Records {
-			n += r.ReservedMetadata
+	for _, f := range r.Files {
+		if f.Phase == "publish_pending" {
+			return true
 		}
 	}
-	return n
+	return false
+}
+
+func (m *Manager) durableAdmissionLocked(peer string) (count, perPeer int, metadata int64) {
+	if m.durable == nil {
+		return
+	}
+	d := m.durable
+	seen := map[string]bool{}
+	for _, r := range d.state.Records {
+		seen[r.Offer.DeliveryID] = true
+		if d.recordActive(r) {
+			count++
+			metadata += r.ReservedMetadata
+			if r.Peer.ID == peer {
+				perPeer++
+			}
+		}
+	}
+	if d.blocked != nil {
+		// Failed retirement may have removed tentative rows. Charge retained
+		// certified evidence too, including its stricter per-peer bound.
+		for _, r := range d.confirmed.Records {
+			if !seen[r.Offer.DeliveryID] {
+				count++
+				metadata += r.ReservedMetadata
+				if r.Peer.ID == peer {
+					perPeer++
+				}
+			}
+		}
+	}
+	return
+}
+func (m *Manager) durableCountLocked() int {
+	count, _, _ := m.durableAdmissionLocked("")
+	return count
+}
+func (m *Manager) durableMetadataLocked() int64 {
+	_, _, metadata := m.durableAdmissionLocked("")
+	return metadata
 }
 func sameDurableLease(a, b DurableLease) bool {
 	a.ExpiresAt, a.ReceiptUntil = a.ExpiresAt.UTC(), a.ReceiptUntil.UTC()

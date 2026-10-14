@@ -13,7 +13,7 @@ import (
 )
 
 func TestMixedStrictBoundaryPreflightBeforeAnyWorker(t *testing.T) {
-	c, e := Open(context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true})
+	c, e := openOwnedTestCore(t, context.Background(), Options{Directory: t.TempDir(), SkipNetworkStart: true})
 	if e != nil {
 		t.Fatal(e)
 	}

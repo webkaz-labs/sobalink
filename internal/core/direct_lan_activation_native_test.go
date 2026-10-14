@@ -27,18 +27,19 @@ import (
 // pair, resumes old consent, or mints authenticated evidence in test code.
 // These sources are staged for independent review; their existence is not a run.
 type activationNativePair struct {
-	t             *testing.T
-	ctx           context.Context
-	cancel        context.CancelFunc
-	cores         [2]*Core
-	endpoints     [2]netip.AddrPort
-	reservations  [2]*testfixture.PortReservation
-	once          sync.Once
-	cleanupJoined atomic.Bool
-	cleanupFailed atomic.Bool
-	constructed   atomic.Bool
-	observations  [2]activationNativeObservation
-	responseGate  [2]func()
+	t                *testing.T
+	ctx              context.Context
+	cancel           context.CancelFunc
+	cores            [2]*Core
+	endpoints        [2]netip.AddrPort
+	reservations     [2]*testfixture.PortReservation
+	once             sync.Once
+	cleanupJoined    atomic.Bool
+	cleanupFailed    atomic.Bool
+	constructed      atomic.Bool
+	observations     [2]activationNativeObservation
+	responseGate     [2]func()
+	traceCompletions bool
 }
 
 // Test-only, fixed numeric stages; never retain raw errors, peer data or proof.
@@ -47,6 +48,8 @@ type activationNativeObservation struct {
 	stage              atomic.Int32 // 1=entered, 2=completion denied, 3=completed, 4=admit denied, 5=admitted
 	errorClass         atomic.Int32 // 1=unavailable, 2=review, 3=capacity, 4=identity, 5=deadline, 6=cancel, 7=other
 	controlLimit       int
+	completionSites    activationDiagnosticCompletions
+	refreshSequence    atomic.Uint64
 	completed          atomic.Int32
 	rejected           atomic.Int32
 	errors             [8]atomic.Int32
@@ -130,7 +133,7 @@ func newActivationNativePairDirectories(t *testing.T, retainOnFailure bool) *act
 			dir = t.TempDir()
 		}
 		t.Cleanup(f.close) // Join before TempDir removal, even on early failure.
-		c, err := Open(ctx, Options{Directory: dir, Version: "synthetic-activation", SkipNetworkStart: true})
+		c, err := openOwnedTestCore(t, ctx, Options{Directory: dir, Version: "synthetic-activation", SkipNetworkStart: true})
 		if err != nil {
 			t.Fatal("offline Core construction failed")
 		}
@@ -362,13 +365,26 @@ func (f *activationNativePair) preparedOwner(i int, lifetime context.Context, su
 	dropped := &atomic.Bool{}
 	observation := &f.observations[i]
 	observation.controlLimit = cfg.ControlLimit
+	if f.traceCompletions {
+		o.diagnosticRefresh = &observation.refreshSequence
+	}
 	cfg.Completion = func(ctx context.Context, a *directlan.ContextAttempt, v directlan.VerifiedContextExchange) (directlan.ContextResponse, error) {
 		observation.callbacks.Add(1)
 		observation.stage.Store(1)
 		for _, gate := range before {
 			gate()
 		}
-		response, err := c.completeContextExchange(ctx, o, a, v)
+		var result contextCompletionObservation
+		var resultPointer *contextCompletionObservation
+		var ordinal uint32
+		if f.traceCompletions {
+			ordinal = observation.completionSites.begin()
+			resultPointer = &result
+		}
+		response, err := c.completeContextExchangeObserved(ctx, o, a, v, resultPointer)
+		if resultPointer != nil {
+			observation.completionSites.finish(ordinal, result)
+		}
 		code := activationNativeErrorClass(err)
 		observation.errorClass.Store(code)
 		observation.errors[code].Add(1)
@@ -623,6 +639,7 @@ func TestActivationNativeFinalPublicationDeniesEndedLifetime(t *testing.T) {
 // code rearms the responder after its driver begins, and no reply is fabricated.
 func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 	f := newActivationNativePair(t)
+	f.traceCompletions = true
 	ctx, cancel := context.WithTimeout(f.ctx, 45*time.Second)
 	defer cancel()
 	statusReached, statusRelease := make(chan struct{}), make(chan struct{})
@@ -684,6 +701,19 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 	observation.errorClass.Store(0)
 	var previous *contextExchangeOperation
 	var diagnostics activationDiagnosticAttempts
+	defer func() {
+		records, omitted, unobserved := observation.completionSites.snapshot()
+		rejected := false
+		for _, record := range records {
+			if record.Result.Site != "inbound-success" && record.Result.Site != "outbound-success" {
+				rejected = true
+			}
+		}
+		if rejected || t.Failed() {
+			t.Logf("duplicate PREPARE completion rejection observations (completion-call ordinals, not joined to sender wires; completed records only): records=%+v omitted=%d unobserved=%d", records, omitted, unobserved)
+			t.Logf("duplicate PREPARE attempt observations (independent snapshots, not joined inbound completion): records=%+v omitted=%d", diagnostics.Records[:diagnostics.Count], diagnostics.Omitted)
+		}
+	}()
 	observe := func() activationDiagnosticCounters {
 		return activationDiagnosticCounters{
 			Callbacks: observation.callbacks.Load(), Completed: observation.completed.Load(),
@@ -700,7 +730,9 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 		success, attempts, last := false, 0, "no-arm"
 		for time.Now().Before(until) {
 			var armed *contextExchangeOperation
+			responderWait := time.Now()
 			right.op.Lock()
+			responderWaitElapsed := time.Since(responderWait)
 			for _, candidate := range responder.operations {
 				if candidate != previous && candidate.direction == directlan.ContextInbound && candidate.operation == directlan.ContextPrepare && candidate.epoch.Valid() && !candidate.attempt.Cancelled() {
 					armed = candidate
@@ -713,22 +745,40 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 				continue
 			}
 			previous = armed
+			initiatorWait := time.Now()
 			left.op.Lock()
-			outbound, err := left.prepareContextOutboundLocked(run, initiator, right.directLAN.copy().Identity.PublicKey(), directlan.ContextPrepare)
-			left.op.Unlock()
+			captureStarted := time.Now()
+			peer := right.directLAN.copy().Identity.PublicKey()
+			outbound, err := left.prepareContextOutboundLocked(run, initiator, peer, directlan.ContextPrepare)
+			captureFinished := time.Now()
 			if err != nil {
+				// Freeze the failure before stop() changes a live run to cancelled.
+				// The earlier attempt snapshots remain independently observed.
+				capture := activationDiagnosticCaptureFailureLocked(left, initiator, peer, run, ctx, err)
+				capture.Reply, capture.WireAttempts = reply, attempts
+				capture.ResponderLockWaitMS = activationDiagnosticMillis(responderWaitElapsed)
+				capture.InitiatorLockWaitMS = activationDiagnosticMillis(captureStarted.Sub(initiatorWait))
+				capture.CaptureMS = activationDiagnosticMillis(captureFinished.Sub(captureStarted))
+				capture.RemainingMS = activationDiagnosticMillis(until.Sub(captureFinished))
+				left.op.Unlock()
 				stop()
+				t.Logf("duplicate PREPARE capture observation (before cleanup, not an internal return-site trace): %+v", capture)
 				t.Fatal("duplicate PREPARE capture failed")
 			}
+			left.op.Unlock()
 			attempts++
 			before, started := observe(), time.Now()
 			err = left.exchangeContext(run, outbound)
 			finished := time.Now()
 			diagnostics.add(activationDiagnosticAttempt{
 				Reply: reply, Attempt: attempts,
-				ElapsedMS:   activationDiagnosticMillis(finished.Sub(started)),
-				RemainingMS: activationDiagnosticMillis(until.Sub(finished)),
-				Error:       activationDiagnosticError(err), Context: activationDiagnosticError(run.Err()),
+				ResponderLockWaitMS: activationDiagnosticMillis(responderWaitElapsed),
+				InitiatorLockWaitMS: activationDiagnosticMillis(captureStarted.Sub(initiatorWait)),
+				CaptureMS:           activationDiagnosticMillis(captureFinished.Sub(captureStarted)),
+				CaptureRemainingMS:  activationDiagnosticMillis(until.Sub(captureFinished)),
+				ElapsedMS:           activationDiagnosticMillis(finished.Sub(started)),
+				RemainingMS:         activationDiagnosticMillis(until.Sub(finished)),
+				Error:               activationDiagnosticError(err), Context: activationDiagnosticError(run.Err()),
 				Before: before, After: observe(),
 			})
 			if err == nil {
@@ -758,7 +808,6 @@ func TestActivationNativePendingStatusRearmsDuplicatePrepare(t *testing.T) {
 			for i := range classes {
 				classes[i] = observation.errors[i].Load()
 			}
-			t.Logf("duplicate PREPARE attempt observations (independent snapshots, not joined inbound completion): records=%+v omitted=%d", diagnostics.Records[:diagnostics.Count], diagnostics.Omitted)
 			t.Fatalf("pending STATUS duplicate PREPARE failed: reply=%d attempts=%d last=%s callbacks=%d completed=%d rejected=%d classes=%v admitted=%d denied=%d cancelled_admission=%d stale_admission=%d control_limit=%d status_held=%t exact_status_live=%t status_callbacks=%d response_lock_denials=%d", reply, attempts, last, observation.callbacks.Load(), observation.completed.Load(), observation.rejected.Load(), classes, observation.admitted.Load(), observation.denied.Load(), observation.cancelledAdmission.Load(), observation.staleAdmission.Load(), observation.controlLimit, statusHolding.Load(), sameStatus, f.observations[0].callbacks.Load(), responder.responseContention.Load())
 		}
 		select {
