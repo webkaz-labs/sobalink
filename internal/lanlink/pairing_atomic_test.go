@@ -339,3 +339,36 @@ func TestPublishedPairBlocksQueuedSnapshotWriter(t *testing.T) {
 		})
 	}
 }
+
+func TestPairCommitCancelledDuringPersistenceNeverActivatesAuthority(t *testing.T) {
+	n := testNode()
+	peerNode := testNode()
+	remote := atomicPairRecord(peerNode)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	writes := 0
+	var saved atomicPairState
+	n.cfg.Persist = func(snapshot Snapshot, remotes []RemotePeer) error {
+		writes++
+		saved = atomicPairState{snapshot, CloneRemotePeers(remotes)}
+		cancel() // deterministic commit/consent boundary, without network timing
+		return nil
+	}
+	err := n.commitPair(ctx, remote, "", registeredPairAttemptFixture(t, n, remote.Peer.Key))
+	if !errors.Is(err, config.ErrAtomicCommitted) || !errors.Is(err, context.Canceled) || !n.pairingRecovery || writes != 1 {
+		t.Fatal("crossed publication did not latch recovery", err, writes)
+	}
+	if len(saved.Trust.Peers) != 1 || len(saved.Remotes) != 1 {
+		t.Fatal("test did not publish pair")
+	}
+	if len(n.cfg.Trust.Snapshot().Peers) != 0 || len(n.RemoteSnapshot()) != 0 {
+		t.Fatal("expired attempt activated published authority")
+	}
+	if _, err := n.cfg.Trust.Epoch(remote.Peer.Key); !errors.Is(err, ErrUntrusted) {
+		t.Fatal("expired attempt gained live trust", err)
+	}
+	other := atomicPairRecord(testNode())
+	if err := n.commitPair(context.Background(), other, "", registeredPairAttemptFixture(t, n, other.Peer.Key)); !errors.Is(err, config.ErrAtomicRecovery) || writes != 1 {
+		t.Fatal("recovery permitted later stale write", err, writes)
+	}
+}

@@ -140,16 +140,17 @@ class ActualCoverageTests(unittest.TestCase):
             coverage.evaluate_jobs(jobs(scope), scope)
 
     def test_setup_and_text_browser_gates_are_required_in_every_applicable_scope(self):
-        native = 'Verify manual nearby setup across native Core peers'
-        browser = ('Verify nearby setup with separate agents and actual browser',
+        native = ('Verify manual nearby setup across native Core peers', 'Verify TOFU request approval across native Core peers', 'Verify full verification request approval across native Core peers', 'Verify request rejection and cancellation across native Core peers')
+        browser = ('Verify synthetic request pairing UI without skips', 'Verify nearby setup with separate agents and actual browser',
                    'Verify durable text recovery with separate agents and actual browser')
-        self.assertEqual(coverage.FAST_STEPS.count(native), 1)
+        for gate in native:
+            self.assertEqual(coverage.FAST_STEPS.count(gate), 1)
         for gate in browser:
             self.assertEqual(coverage.BROWSER_STEPS.count(gate), 1)
         for scope in ('frontend', 'native-short', 'full'):
             required = [('browser', gate) for gate in browser]
             if scope != 'frontend':
-                required += [(target, native) for target in coverage.TARGETS.values()]
+                required += [(target, gate) for target in coverage.TARGETS.values() for gate in native]
             for target, gate in required:
                 for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
                     data = jobs(scope)

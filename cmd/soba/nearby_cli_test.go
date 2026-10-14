@@ -442,7 +442,7 @@ func TestNearbyWizardReusesExistingSessionWithoutStartingAnother(t *testing.T) {
 	s := nearbyTestSnapshot("discovering")
 	calls := []webui.Command{}
 	var out bytes.Buffer
-	if err := runWith(context.Background(), []string{"nearby", "--interactive"}, &out, strings.NewReader("x\n"), nearbyFixtureClient(t, &calls, []nearbyScope{}, s)); err != nil {
+	if err := runWith(context.Background(), []string{"nearby", "--legacy-interactive"}, &out, strings.NewReader("x\n"), nearbyFixtureClient(t, &calls, []nearbyScope{}, s)); err != nil {
 		t.Fatal(err)
 	}
 	if len(calls) != 1 || calls[0].Name != "setup.status" {

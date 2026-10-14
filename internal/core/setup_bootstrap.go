@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -33,6 +34,8 @@ type setupWire struct {
 	Invitation    []byte                   `json:"invitation,omitempty"`
 	Paired        []byte                   `json:"paired,omitempty"`
 	Connected     []byte                   `json:"connected,omitempty"`
+	Rejection     []byte                   `json:"rejection,omitempty"`
+	Cancellation  []byte                   `json:"cancellation,omitempty"`
 }
 
 func (s *setupSession) startListener() error {
@@ -62,6 +65,10 @@ func (s *setupSession) startListener() error {
 	return nil
 }
 func (s *setupSession) serve(w http.ResponseWriter, r *http.Request) {
+	if s.local.Protocol == lanlink.SetupRequestVersion {
+		s.serveRequest(w, r)
+		return
+	}
 	s.handlerMu.Lock()
 	if s.handlerClosed {
 		s.handlerMu.Unlock()
@@ -130,7 +137,12 @@ func (s *setupSession) wireLocked(now time.Time) (setupWire, error) {
 	if s.selected == nil || s.ctx.Err() != nil {
 		return setupWire{}, lanlink.ErrSetup
 	}
-	out := setupWire{Version: 1, TargetSession: s.selected.SessionID, Participant: s.local, HelloProof: s.helloProof}
+	if s.peer != nil {
+		if e := s.verifySavedBasis(s.peer.Key); e != nil {
+			return setupWire{}, e
+		}
+	}
+	out := setupWire{Version: s.wireVersion(), TargetSession: s.selected.SessionID, Participant: s.local, HelloProof: s.helloProof}
 	if s.plan != nil {
 		out.Plan = s.plan
 		out.PlanProof = s.planProof
@@ -145,7 +157,7 @@ func (s *setupSession) wireLocked(now time.Time) (setupWire, error) {
 	return out, nil
 }
 func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time) error {
-	if s.selected == nil || s.ctx.Err() != nil || w.Version != 1 || w.TargetSession != s.local.SessionID || w.Participant.SessionID != s.selected.SessionID || w.Participant.Alias != s.selected.Alias || w.Participant.Bootstrap.String() != s.selected.Bootstrap || w.Participant.Key == s.local.Key || w.Participant.Validate(now) != nil || w.Participant.Expires.After(now.Add(setupLifetime)) {
+	if s.selected == nil || s.ctx.Err() != nil || w.Version != s.wireVersion() || w.TargetSession != s.local.SessionID || w.Participant.SessionID != s.selected.SessionID || w.Participant.Alias != s.selected.Alias || w.Participant.Bootstrap.String() != s.selected.Bootstrap || w.Participant.Key == s.local.Key || w.Participant.Validate(now) != nil || w.Participant.Protocol != s.local.Protocol {
 		return lanlink.ErrSetup
 	}
 	if s.selectedManual && !w.Participant.Expires.Equal(s.selected.ExpiresAt) {
@@ -153,6 +165,9 @@ func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time
 	}
 	if s.peer != nil && !setupParticipantsEqual(*s.peer, w.Participant) {
 		return lanlink.ErrSetup
+	}
+	if e := s.verifySavedBasis(w.Participant.Key); e != nil {
+		return e
 	}
 	if s.peer == nil {
 		peer := w.Participant
@@ -163,6 +178,11 @@ func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time
 		proof, e := lanlink.SealSetupHello(s.identity, hello, now)
 		if e != nil {
 			return e
+		}
+		if len(w.HelloProof) > 0 {
+			if e := lanlink.OpenSetupHello(s.identity, hello, peer.Key, w.HelloProof, now); e != nil {
+				return e
+			}
 		}
 		s.peer = &peer
 		s.hello = &hello
@@ -181,6 +201,26 @@ func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time
 		} else {
 			s.outbound = true
 		}
+	}
+	if len(w.Cancellation) > 0 {
+		if s.local.Protocol != 2 || s.local.Mode != "receive" || s.hello == nil {
+			return lanlink.ErrSetup
+		}
+		if e := lanlink.OpenSetupCancellation(s.identity, *s.hello, s.peer.Key, w.Cancellation, now); e != nil {
+			return e
+		}
+		if !s.commitStarted && !s.localApproved && len(s.rejected) < maxSetupRejected {
+			s.rejected[s.requestID] = setupWire{}
+			s.clearPendingRequestLocked("setup_request_cancelled")
+		} else {
+			s.terminalState, s.terminalReason, s.terminalNext = "cancelled", "setup_request_cancelled", "try_again"
+			if s.pairingAttempted {
+				s.terminalState, s.terminalReason, s.terminalNext = "recovery_required", "setup_commit_uncertain", "review_recovery"
+			}
+			s.state, s.reason, s.next = "cancelling", s.terminalReason, "wait_for_cleanup"
+			s.cancel()
+		}
+		return nil
 	}
 	if w.Plan != nil {
 		if !s.peerHello || w.Plan.Validate(now) != nil {
@@ -215,7 +255,28 @@ func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time
 		if !s.localApproved {
 			s.state = "awaiting_approval"
 			s.next = "compare_full_fingerprint"
+			if s.local.Protocol == 2 && s.local.Verification == "tofu" {
+				s.next = "review_request"
+				if s.local.Mode == "receive" {
+					s.state = "request_received"
+				}
+			}
 		}
+	}
+	if len(w.Rejection) > 0 {
+		if s.local.Protocol != 2 || s.local.Mode == "receive" || s.plan == nil || !s.peerPlan || s.commitStarted {
+			return lanlink.ErrSetup
+		}
+		if _, e := lanlink.OpenSetupMessage(s.identity, *s.plan, s.peer.Key, lanlink.SetupActionReject, w.Rejection, now); e != nil {
+			return e
+		}
+		s.terminalState, s.terminalReason, s.terminalNext = "rejected", "setup_request_rejected", "try_again"
+		s.state, s.reason, s.next = "cancelling", s.terminalReason, "wait_for_cleanup"
+		s.cancel()
+		return nil
+	}
+	if e := s.approveRequestedPlanLocked(now); e != nil {
+		return e
 	}
 	if len(w.Approval) > 0 {
 		if s.plan == nil || !s.peerPlan {
@@ -227,7 +288,7 @@ func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time
 		s.remoteApproved = true
 	}
 	if len(w.Invitation) > 0 {
-		if s.paired || s.plan == nil || !s.localApproved || !s.remoteApproved || s.plan.HostKey != s.peer.Key {
+		if s.plan == nil || !s.localApproved || !s.remoteApproved || s.plan.HostKey != s.peer.Key {
 			return lanlink.ErrSetup
 		}
 		plain, e := lanlink.OpenSetupMessage(s.identity, *s.plan, s.peer.Key, lanlink.SetupActionInvitation, w.Invitation, now)
@@ -238,13 +299,22 @@ func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time
 		if strictLANJSON(plain, &inv) != nil || inv.ValidateFor(s.local.Key, now) != nil || inv.Host.Peer.Key != s.peer.Key || inv.Host.Peer.Name != s.peer.Alias || inv.Relay != s.plan.Relay || inv.Expires.After(s.plan.Expires) {
 			return lanlink.ErrSetup
 		}
-		if s.invitation != nil {
+		binding := sha256.Sum256(plain)
+		if s.invitationBinding != ([32]byte{}) && binding != s.invitationBinding {
+			return lanlink.ErrSetup
+		}
+		if s.paired {
+			if binding != s.invitationBinding {
+				return lanlink.ErrSetup
+			}
+		} else if s.invitation != nil {
 			old, _ := json.Marshal(s.invitation)
 			if !bytes.Equal(old, plain) {
 				return lanlink.ErrSetup
 			}
 		} else {
 			s.invitation = &inv
+			s.invitationBinding = binding
 		}
 	}
 	if len(w.Paired) > 0 {
@@ -268,6 +338,9 @@ func (s *setupSession) acceptWireLocked(w setupWire, inbound bool, now time.Time
 	return nil
 }
 func (s *setupSession) peerCoordinates() bool {
+	if s.local.Protocol == 2 {
+		return s.peer != nil && s.local.Mode != "receive"
+	}
 	return s.peer != nil && s.peer.SessionID < s.local.SessionID
 }
 func (s *setupSession) samePlanParticipants(p lanlink.SetupPlan) bool {
@@ -292,6 +365,9 @@ func (s *setupSession) validHost(p lanlink.SetupPlan) bool {
 func (s *setupSession) electLocked(now time.Time) error {
 	if s.plan != nil || s.peer == nil || !s.peerHello || s.peerCoordinates() || now.Sub(s.authenticatedAt) < setupElectionDelay {
 		return nil
+	}
+	if e := s.verifySavedBasis(s.peer.Key); e != nil {
+		return e
 	}
 	var candidates []lanlink.SetupParticipant
 	if s.inbound && s.local.AllowHost && s.local.Relay != nil {
@@ -341,7 +417,7 @@ func (s *setupSession) exchange() {
 		return
 	}
 	s.mu.Lock()
-	if s.selected == nil || s.ctx.Err() != nil || s.requests >= maxSetupRequests {
+	if s.selected == nil || s.local.Protocol == 2 && s.local.Mode == "receive" || s.ctx.Err() != nil || s.requests >= s.requestLimit() {
 		s.mu.Unlock()
 		return
 	}
@@ -361,6 +437,10 @@ func (s *setupSession) exchange() {
 	if e != nil || len(raw) > maxSetupWire {
 		return
 	}
+	if s.local.Protocol == 2 {
+		s.exchangeRequest(raw, selected)
+		return
+	}
 	destination, _ := netip.ParseAddrPort(selected.Bootstrap)
 	ctx, cancel := context.WithTimeout(s.ctx, 1500*time.Millisecond)
 	defer cancel()
@@ -373,7 +453,7 @@ func (s *setupSession) exchange() {
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("setup redirects forbidden") }}
-	request, e := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+destination.String()+"/sobalink/setup/v1", bytes.NewReader(raw))
+	request, e := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+destination.String()+s.wirePath(), bytes.NewReader(raw))
 	if e != nil {
 		return
 	}
@@ -422,6 +502,9 @@ func (s *setupSession) run() {
 			return
 		case <-tick.C:
 		}
+		s.mu.Lock()
+		s.expireRequestLocked(time.Now())
+		s.mu.Unlock()
 		s.exchange()
 		s.mu.Lock()
 		_ = s.electLocked(time.Now())
@@ -464,13 +547,18 @@ func (l *setupAdmissionListener) Accept() (net.Conn, error) {
 		s := l.session
 		s.mu.Lock()
 		s.acceptedConnections++
-		exhausted := s.acceptedConnections > maxSetupRequests
+		exhausted := s.acceptedConnections > s.requestLimit()
 		selected := s.selected
 		allowed := selected != nil && s.ctx.Err() == nil && s.selectionCurrentLocked(time.Now())
 		if allowed {
 			src, e := netip.ParseAddrPort(conn.RemoteAddr().String())
 			dst, _ := netip.ParseAddrPort(selected.Bootstrap)
 			allowed = e == nil && src.Addr().Unmap() == dst.Addr()
+		}
+		if s.local.Protocol == 2 {
+			src, err := netip.ParseAddrPort(conn.RemoteAddr().String())
+			exhausted = false // unrelated sources cannot evict an already displayed request
+			allowed = err == nil && s.admitRequestSourceLocked(src.Addr().Unmap(), time.Now())
 		}
 		s.mu.Unlock()
 		if exhausted {

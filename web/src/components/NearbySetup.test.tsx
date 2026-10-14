@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Locale } from '../api'
 import type { Server } from '../useServer'
 import { nearbyText, nearbyNextAction } from '../nearby-i18n'
-import { contactText, idleSetup, liveSetup, reviewSetup, setupScopes } from '../nearby-fixture'
+import { inspectedRequestSetup, liveRequestSetup, reviewRequestSetup, contactText, idleSetup, liveSetup, reviewSetup, setupScopes } from '../nearby-fixture'
 import type { SetupSnapshot } from '../nearby-setup'
 import type { DecodeResult } from '../qr/decode-job'
 import { NearbySetup, type NearbySetupHandle } from './NearbySetup'
@@ -19,7 +19,7 @@ function setup(initial: SetupSnapshot = idleSetup(), locale: Locale = 'en') {
   const view = render(<NearbySetup server={server} locale={locale} ref={ref} />)
   const c = (key: Parameters<typeof nearbyText>[1]) => nearbyText(locale, key)
   const ready = () => waitFor(() => expect(screen.queryByText(c('loading'))).not.toBeInTheDocument())
-  const fill = () => { fireEvent.change(screen.getByLabelText(c('alias'), { exact: false }), { target: { value: 'Peer A' } }); fireEvent.change(screen.getByLabelText(c('scope')), { target: { value: setupScopes.scopes[0].scopeId } }); fireEvent.click(screen.getByLabelText(c('otherHost'))); fireEvent.click(screen.getByLabelText(c('consent'))) }
+  const fill = () => { fireEvent.click(screen.getByLabelText(c('legacyMode'))); fireEvent.change(screen.getByLabelText(c('alias'), { exact: false }), { target: { value: 'Peer A' } }); fireEvent.change(screen.getByLabelText(c('scope')), { target: { value: setupScopes.scopes[0].scopeId } }); fireEvent.click(screen.getByLabelText(c('otherHost'))); fireEvent.click(screen.getByLabelText(c('consent'))) }
   return { ...view, ref, server, run, mutations, c, ready, fill, set: (next: SetupSnapshot) => { current = next }, refresh: async () => { fireEvent.click(screen.getAllByRole('button', { name: c('checkStatus') })[0]); await act(async () => {}) } }
 }
 beforeEach(() => { vi.clearAllMocks(); png.start.mockReset() })
@@ -146,6 +146,7 @@ describe('full transcript comparison and stale UI boundaries', () => {
 describe('repeat setup preserves the completed connection', () => {
   const connected = (joined = true): SetupSnapshot => ({ ...reviewSetup(), state: 'connected', connected: true, paired: true, localApproved: true, remoteApproved: true, nextAction: joined ? 'start_new_setup' : 'done', discovery: { state: 'stopped' } })
   const freshConsent = (v: ReturnType<typeof setup>) => {
+    fireEvent.click(screen.getByLabelText(v.c('legacyMode')))
     fireEvent.change(screen.getByLabelText(v.c('alias'), { exact: false }), { target: { value: 'Peer A' } })
     fireEvent.change(screen.getByLabelText(v.c('scope')), { target: { value: setupScopes.scopes[0].scopeId } })
     fireEvent.click(screen.getByLabelText(v.c('otherHost')))
@@ -163,6 +164,7 @@ describe('repeat setup preserves the completed connection', () => {
     expect(v.mutations).not.toHaveBeenCalled()
     expect(screen.getByLabelText(v.c('alias'), { exact: false })).toHaveValue('')
     expect(screen.getByLabelText(v.c('scope'))).toHaveValue('')
+    fireEvent.click(screen.getByLabelText(v.c('legacyMode')))
     expect(screen.getByLabelText(v.c('allowHost'))).not.toBeChecked()
     expect(screen.getByLabelText(v.c('consent'))).not.toBeChecked()
     expect(screen.getByRole('button', { name: v.c('start') })).toBeDisabled()
@@ -187,7 +189,7 @@ describe('repeat setup preserves the completed connection', () => {
     v.set({ ...old, nextAction: 'start_new_setup' }); await v.refresh()
     expect(v.run).toHaveBeenLastCalledWith('setup.status', { sessionId: old.sessionId }, 'setup.status')
     expect(screen.getByText(v.c('freshForm'))).toBeInTheDocument()
-    expect(screen.getByLabelText(v.c('consent'))).not.toBeChecked()
+    expect(screen.getByLabelText(v.c('v2Consent'))).not.toBeChecked()
   })
   it('keeps Close pending until the old connected owner finishes cleanup', async () => {
     const old = connected(false), v = setup(old); await v.ready()
@@ -256,6 +258,7 @@ describe('repeat setup preserves the completed connection', () => {
 describe('plain-language role choice and bounded corrections', () => {
   it.each(['en', 'ja'] as const)('requires an explicit host choice without granting networking in %s', async locale => {
     const v = setup(idleSetup(), locale); await v.ready()
+    fireEvent.click(screen.getByLabelText(v.c('legacyMode')))
     expect(screen.getByRole('radio', { name: v.c('allowHost') })).not.toBeChecked()
     expect(screen.getByRole('radio', { name: v.c('otherHost') })).not.toBeChecked()
     expect(screen.getByLabelText(v.c('consent'))).toBeDisabled()
@@ -282,6 +285,7 @@ describe('plain-language role choice and bounded corrections', () => {
     fireEvent.click(screen.getByRole('button', { name: v.c('reviewHost') }))
     expect(screen.getByLabelText(v.c('alias'), { exact: false })).toHaveValue('')
     expect(screen.getByLabelText(v.c('scope'))).toHaveValue('')
+    fireEvent.click(screen.getByLabelText(v.c('legacyMode')))
     expect(screen.getByLabelText(v.c('allowHost'))).not.toBeChecked()
     expect(screen.getByLabelText(v.c('otherHost'))).not.toBeChecked()
     expect(screen.getByLabelText(v.c('consent'))).not.toBeChecked()
@@ -373,4 +377,204 @@ it.each(['complete', 'cancel'] as const)('keeps immediate PNG input active until
     observer.disconnect()
     await act(async () => pending.resolve({ ok: false, error: 'cancelled' }))
   }
+})
+
+describe('request-based setup without exchanged codes', () => {
+  it.each(['en', 'ja'] as const)('starts request mode with explicit first-use method and adjustable duration in %s', async locale => {
+    const v = setup(idleSetup(), locale); await v.ready()
+    expect(screen.getByLabelText(v.c('requestMode'))).toBeChecked()
+    expect(screen.queryByLabelText(v.c('peerExchange'))).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(v.c('alias'), { exact: false }), { target: { value: 'Peer A' } })
+    fireEvent.change(screen.getByLabelText(v.c('duration')), { target: { value: '1200' } })
+    fireEvent.click(screen.getByLabelText(v.c('v2Consent')))
+    v.mutations.mockResolvedValueOnce({ ok: true, result: liveRequestSetup() as any })
+    fireEvent.click(screen.getByRole('button', { name: v.c('start') }))
+    await waitFor(() => expect(v.mutations).toHaveBeenCalledWith('setup.start', { alias: 'Peer A', scopeId: setupScopes.scopes[0].scopeId, bootstrapPort: 48445, relayPort: 0, allowHost: false, consent: true, mode: 'request', verification: 'tofu', expiresInSeconds: 1200 }, 'setup.mutation'))
+    expect(screen.queryByText(v.c('invalidResponse'))).not.toBeInTheDocument()
+  })
+  it('starts outbound without a listener, relay or discovery and recovers its exact alias', async () => {
+    const v = setup(); await v.ready()
+    fireEvent.click(screen.getByLabelText(v.c('outboundMode')))
+    fireEvent.change(screen.getByLabelText(v.c('alias'), { exact: false }), { target: { value: 'Peer A' } })
+    fireEvent.click(screen.getByLabelText(v.c('v2Consent')))
+    v.mutations.mockResolvedValueOnce(undefined)
+    fireEvent.click(screen.getByRole('button', { name: v.c('startOutbound') }))
+    await screen.findByRole('alert')
+    expect(v.mutations).toHaveBeenCalledWith('setup.start', expect.objectContaining({ mode: 'outbound', bootstrapPort: 0, allowHost: false, relayPort: 0 }), 'setup.mutation')
+    v.set(liveRequestSetup('outbound')); await v.refresh()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(v.c('peerAddress'))).toBeEnabled()
+    expect(screen.queryByLabelText(v.c('receiveAddress'))).not.toBeInTheDocument()
+  })
+  it('never converts a v2 start result into legacy full verification', async () => {
+    const v = setup(); await v.ready()
+    fireEvent.change(screen.getByLabelText(v.c('alias'), { exact: false }), { target: { value: 'Peer A' } })
+    fireEvent.click(screen.getByLabelText(v.c('v2Consent')))
+    v.mutations.mockResolvedValueOnce({ ok: true, result: liveSetup() as any })
+    fireEvent.click(screen.getByRole('button', { name: v.c('start') }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(v.c('invalidResponse'))
+    expect(screen.getByRole('button', { name: v.c('start') })).toBeDisabled()
+  })
+  it('reviews a discovered target first, then sends exactly one acknowledged key/session request', async () => {
+    const v = setup(liveRequestSetup()); await v.ready()
+    v.mutations.mockResolvedValueOnce({ ok: true, result: inspectedRequestSetup() as any })
+    fireEvent.click(screen.getByRole('button', { name: v.c('select') }))
+    await screen.findByRole('region', { name: v.c('requestReview') })
+    expect(v.mutations).toHaveBeenLastCalledWith('setup.inspect-target', { sessionId: 'b'.repeat(64), candidateId: 'd'.repeat(64) }, 'setup.mutation')
+    expect(screen.getByText('10.44.0.3:48443')).toBeInTheDocument()
+    expect(screen.getByText('4'.repeat(64))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: v.c('requestConnection') })).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(v.c('saveConsent')))
+    expect(screen.getByRole('button', { name: v.c('requestConnection') })).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(v.c('tofuAcknowledge')))
+    const waiting = deferred<any>(); v.mutations.mockReturnValueOnce(waiting.promise)
+    fireEvent.click(screen.getByRole('button', { name: v.c('requestConnection') })); fireEvent.click(screen.getByRole('button', { name: v.c('requestConnection') }))
+    expect(v.mutations).toHaveBeenCalledTimes(2)
+    expect(v.mutations).toHaveBeenLastCalledWith('setup.request', { sessionId: 'b'.repeat(64), targetSessionId: 'c'.repeat(64), targetRevision: 1, expectedPeerKey: '4'.repeat(64), tofuAcknowledged: true }, 'setup.mutation')
+    await act(async () => waiting.resolve(undefined))
+    expect(screen.getByRole('button', { name: v.c('requestConnection') })).toBeDisabled()
+  })
+  it.each(['en', 'ja'] as const)('approves one fixed incoming TOFU request without fingerprint input in %s', async locale => {
+    const s = reviewRequestSetup(), v = setup(s, locale); await v.ready()
+    expect(screen.queryByLabelText(v.c('peerFingerprint'))).not.toBeInTheDocument()
+    expect(screen.getByText(s.requestId!)).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText(v.c('saveConsent')))
+    fireEvent.click(screen.getByLabelText(v.c('tofuAcknowledge')))
+    v.mutations.mockResolvedValueOnce({ ok: true, result: { ...s, localApproved: true } as any })
+    fireEvent.click(screen.getByRole('button', { name: v.c('approve') }))
+    expect(v.mutations).toHaveBeenCalledWith('setup.approve', { sessionId: s.sessionId, requestId: s.requestId, revision: 1, fingerprint: s.plan!.fingerprint, verified: false, tofuAcknowledged: true }, 'setup.mutation')
+    await waitFor(() => expect(screen.getByRole('button', { name: v.c('approve') })).toBeDisabled())
+  })
+  it('keeps the first incoming card and blocks approval when another request replaces it', async () => {
+    const s = reviewRequestSetup(), v = setup(s); await v.ready()
+    const approve = screen.getByRole('button', { name: v.c('approve') })
+    fireEvent.click(screen.getByLabelText(v.c('saveConsent'))); fireEvent.click(screen.getByLabelText(v.c('tofuAcknowledge')))
+    approve.focus()
+    const next = structuredClone(s); next.requestId = '7'.repeat(64); next.request!.requestId = next.requestId; next.request!.alias = 'Replacement'; next.selected!.alias = 'Replacement'; next.plan!.participants[1].alias = 'Replacement'
+    v.set(next); await v.refresh()
+    expect(screen.getByRole('alert')).toHaveTextContent(v.c('invalidResponse'))
+    expect(screen.queryByText('Replacement')).not.toBeInTheDocument()
+    expect(approve).toBeDisabled(); expect(v.mutations).not.toHaveBeenCalled()
+  })
+  it('rejects the exact request and waits for a fresh explicitly reviewed request', async () => {
+    const s = reviewRequestSetup(), v = setup(s); await v.ready()
+    v.mutations.mockResolvedValueOnce({ ok: true, result: liveRequestSetup('receive') as any })
+    fireEvent.click(screen.getByRole('button', { name: v.c('rejectRequest') }))
+    expect(v.mutations).toHaveBeenCalledWith('setup.reject', { sessionId: s.sessionId, requestId: s.requestId }, 'setup.mutation')
+    await waitFor(() => expect(screen.queryByRole('button', { name: v.c('approve') })).not.toBeInTheDocument())
+    v.set(reviewRequestSetup()); await v.refresh()
+    expect(screen.getByRole('button', { name: v.c('approve') })).toBeDisabled()
+  })
+  it('preserves complete independent comparison for explicitly strong v2 verification', async () => {
+    const s = reviewRequestSetup('receive', 'full-sha256'), v = setup(s); await v.ready()
+    expect(screen.getByLabelText(v.c('peerFingerprint'))).toBeInTheDocument()
+    expect(screen.queryByLabelText(v.c('tofuAcknowledge'))).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(v.c('peerFingerprint')), { target: { value: s.plan!.verificationText } })
+    fireEvent.click(screen.getByLabelText(v.c('verified'))); fireEvent.click(screen.getByLabelText(v.c('saveConsent')))
+    v.mutations.mockResolvedValueOnce({ ok: true, result: { ...s, localApproved: true } as any })
+    fireEvent.click(screen.getByRole('button', { name: v.c('approve') }))
+    expect(v.mutations).toHaveBeenCalledWith('setup.approve', expect.objectContaining({ requestId: s.requestId, verified: true, tofuAcknowledged: false }), 'setup.mutation')
+  })
+  it('shows stopped discovery while the pinned request remains available', async () => {
+    const s = inspectedRequestSetup(); s.discovery = { state: 'stopped', reasonCode: 'setup_discovery_expired' }
+    const v = setup(s); await v.ready()
+    expect(screen.getByText(v.c('discoveryStopped'))).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: v.c('requestReview') })).toBeInTheDocument()
+    expect(screen.queryByText(v.c('expired'))).not.toBeInTheDocument()
+  })
+  it('rejects nonnumeric address input without any network mutation', async () => {
+    const v = setup(liveRequestSetup('outbound')); await v.ready()
+    fireEvent.change(screen.getByLabelText(v.c('peerAddress')), { target: { value: 'https://example.invalid' } })
+    fireEvent.click(screen.getByRole('button', { name: v.c('reviewAddress') }))
+    expect(screen.getByRole('alert')).toHaveTextContent(v.c('invalidAddress'))
+    expect(v.mutations).not.toHaveBeenCalled()
+  })
+})
+
+it('accepts same-key save progress without mistaking the trust status for a replacement request', async () => {
+  const s = reviewRequestSetup(), v = setup(s); await v.ready()
+  v.set({ ...s, request: { ...s.request!, keyStatus: 'saved' }, localApproved: true, remoteApproved: true, paired: true, state: 'connecting' }); await v.refresh()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByText(v.c('paired'))).toBeInTheDocument()
+  expect(screen.queryByText(v.c('connected'))).not.toBeInTheDocument()
+})
+it('refuses to close after a terminal cancellation response swaps the request identity', async () => {
+  const s = reviewRequestSetup(), v = setup(s); await v.ready()
+  v.mutations.mockResolvedValueOnce({ ok: true, result: { ...s, state: 'cancelled', requestId: '7'.repeat(64), request: { ...s.request!, requestId: '7'.repeat(64) }, discovery: { state: 'stopped' } } as any })
+  await act(async () => { expect(await v.ref.current!.close()).toBe(false) })
+  expect(screen.getByRole('alert')).toHaveTextContent(v.c('invalidResponse'))
+})
+
+it('clears request consent when the same key and session acquire a new preflight relay revision', async () => {
+  const s = inspectedRequestSetup(), v = setup(s); await v.ready()
+  fireEvent.click(screen.getByLabelText(v.c('saveConsent'))); fireEvent.click(screen.getByLabelText(v.c('tofuAcknowledge')))
+  expect(screen.getByRole('button', { name: v.c('requestConnection') })).toBeEnabled()
+  const next = { ...s, target: { ...s.target!, revision: 2, relayAddress: '10.44.0.3:48446' } }
+  v.set(next); await v.refresh()
+  expect(screen.getByLabelText(v.c('saveConsent'))).not.toBeChecked()
+  expect(screen.getByLabelText(v.c('tofuAcknowledge'))).not.toBeChecked()
+  expect(screen.getByRole('button', { name: v.c('requestConnection') })).toBeDisabled()
+  expect(v.mutations).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByLabelText(v.c('saveConsent'))); fireEvent.click(screen.getByLabelText(v.c('tofuAcknowledge')))
+  v.mutations.mockResolvedValueOnce({ ok: true, result: next as any })
+  fireEvent.click(screen.getByRole('button', { name: v.c('requestConnection') }))
+  expect(v.mutations).toHaveBeenCalledWith('setup.request', { sessionId: s.sessionId, targetSessionId: s.target!.sessionId, targetRevision: 2, expectedPeerKey: s.target!.peerKey, tofuAcknowledged: true }, 'setup.mutation')
+})
+it('blocks uncertain recovery when the request response carries a different preflight revision', async () => {
+  const s = inspectedRequestSetup(), v = setup(s); await v.ready()
+  fireEvent.click(screen.getByLabelText(v.c('saveConsent'))); fireEvent.click(screen.getByLabelText(v.c('tofuAcknowledge')))
+  v.mutations.mockResolvedValueOnce({ ok: true, result: { ...s, target: { ...s.target!, revision: 2, relayAddress: '10.44.0.3:48446' } } as any })
+  fireEvent.click(screen.getByRole('button', { name: v.c('requestConnection') }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(v.c('invalidResponse'))
+  expect(screen.queryByText('10.44.0.3:48446')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: v.c('requestConnection') })).toBeDisabled()
+  expect(v.mutations).toHaveBeenCalledTimes(1)
+})
+
+
+it.each([
+  { revision: 1, relayAddress: '10.44.0.3:48446' },
+  { revision: 0 },
+  { revision: 1, peerKey: '5'.repeat(64) },
+])('rejects an altered preflight without a fresh revision: %j', async target => {
+  const s = inspectedRequestSetup(), v = setup(s); await v.ready()
+  fireEvent.click(screen.getByLabelText(v.c('saveConsent'))); fireEvent.click(screen.getByLabelText(v.c('tofuAcknowledge')))
+  v.set({ ...s, target: { ...s.target!, ...target } }); await v.refresh()
+  expect(screen.getByRole('alert')).toHaveTextContent(v.c('invalidResponse'))
+  expect(screen.getByRole('button', { name: v.c('requestConnection') })).toBeDisabled()
+  expect(v.mutations).not.toHaveBeenCalled()
+})
+it('keeps same-name discovery candidates separate and binds the exact selected session', async () => {
+  const s = liveRequestSetup(); s.candidates.push({ ...s.candidates[0], candidateId: '8'.repeat(64), contact: { ...s.candidates[0].contact, sessionId: '9'.repeat(64), bootstrap: '10.44.0.9:48445' } })
+  const v = setup(s); await v.ready()
+  expect(screen.getAllByText('Peer B')).toHaveLength(2)
+  v.mutations.mockResolvedValueOnce({ ok: true, result: inspectedRequestSetup() as any })
+  fireEvent.click(screen.getAllByRole('button', { name: v.c('select') })[1])
+  expect(await screen.findByRole('alert')).toHaveTextContent(v.c('invalidResponse'))
+  expect(v.mutations).toHaveBeenCalledWith('setup.inspect-target', { sessionId: s.sessionId, candidateId: '8'.repeat(64) }, 'setup.mutation')
+})
+it('blocks a fresh setup and Close while removed-key reenrollment is unresolved', async () => {
+  const v = setup(); await v.ready(); const record = { peerKey: '4'.repeat(64), generation: 7, verification: 'full-sha256' }
+  v.mutations.mockResolvedValueOnce({ ok: true, result: { kind: 'sobalink-setup-revoked', version: 1, records: [record] } })
+  fireEvent.click(screen.getByText(v.c('removedDevices')))
+  fireEvent.click(screen.getByRole('button', { name: v.c('removedLoad') }))
+  fireEvent.click(await screen.findByRole('button', { name: v.c('removedSelect') }))
+  fireEvent.click(screen.getByLabelText(v.c('removedConsent')))
+  v.mutations.mockResolvedValueOnce(undefined)
+  fireEvent.click(screen.getByRole('button', { name: v.c('reenroll') }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(v.c('reenrollUncertain'))
+  expect(screen.getByRole('button', { name: v.c('start') })).toBeDisabled()
+  await act(async () => { expect(await v.ref.current!.close()).toBe(false) })
+  expect(v.mutations.mock.calls.filter(([name]) => name === 'setup.reenroll')).toHaveLength(1)
+})
+
+it.each(['en', 'ja'] as const)('can reject the exact admitted request before a plan exists in %s', async locale => {
+  const s = reviewRequestSetup(); s.state = 'authenticating'; delete s.plan
+  const v = setup(s, locale); await v.ready()
+  expect(screen.queryByRole('button', { name: v.c('approve') })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: v.c('rejectRequest') })).toBeEnabled()
+  v.mutations.mockResolvedValueOnce({ ok: true, result: liveRequestSetup('receive') as any })
+  fireEvent.click(screen.getByRole('button', { name: v.c('rejectRequest') }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: v.c('incomingRequest') })).not.toBeInTheDocument())
+  expect(v.mutations).toHaveBeenCalledWith('setup.reject', { sessionId: s.sessionId, requestId: s.requestId }, 'setup.mutation')
 })

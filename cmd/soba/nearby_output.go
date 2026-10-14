@@ -39,11 +39,14 @@ type nearbyCandidate struct {
 	Verification string        `json:"verification"`
 }
 type nearbyParticipant struct {
-	SessionID string `json:"session_id"`
-	Key       string `json:"key"`
-	Alias     string `json:"alias"`
-	Bootstrap string `json:"bootstrap"`
-	Scope     struct {
+	Protocol     int    `json:"protocol"`
+	Mode         string `json:"mode"`
+	Verification string `json:"verification"`
+	SessionID    string `json:"session_id"`
+	Key          string `json:"key"`
+	Alias        string `json:"alias"`
+	Bootstrap    string `json:"bootstrap"`
+	Scope        struct {
 		InterfaceIndex int    `json:"interface_index"`
 		LocalAddress   string `json:"local_address"`
 		Prefix         string `json:"prefix"`
@@ -68,6 +71,12 @@ type nearbyPlan struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 type nearbySnapshot struct {
+	Alias          string            `json:"alias"`
+	Mode           string            `json:"mode"`
+	Verification   string            `json:"verification"`
+	RequestID      string            `json:"requestId"`
+	Target         *nearbyV2Target   `json:"target"`
+	Request        *nearbyV2Request  `json:"request"`
 	Kind           string            `json:"kind"`
 	Version        int               `json:"version"`
 	SessionID      string            `json:"sessionId"`
@@ -104,23 +113,44 @@ func (e *nearbyCLIError) Error() string     { return e.message }
 func (e *nearbyCLIError) ErrorCode() string { return e.code }
 func nearbyError(ja bool, code string) error {
 	messages := map[string][2]string{
-		"setup_invalid":               {"Invalid nearby inputs; use soba nearby --help. No input values are echoed.", "近くの端末との接続の指定を確認してください。soba nearby --help を参照できます。入力値はエラーに表示しません。"},
-		"setup_consent_required":      {"Review the chosen scope and local listener permission, then explicitly add --consent. JSON never prompts or gives consent.", "選択した範囲とローカル待受の許可を確認し、明示的に --consent を指定してください。JSONでは質問も暗黙の承認も行いません。"},
-		"setup_scope_required":        {"Choose one scope with --scope from nearby scopes. Dry-run requires an explicit scope and never queries interfaces or Core.", "nearby scopes の範囲を --scope で一つ選んでください。dry-runでは範囲の明示が必要で、インターフェースや本体を照会しません。"},
-		"setup_scope_unavailable":     {"The selected scope is unavailable. Review nearby scopes; do not expand to another interface without new consent.", "選択した範囲を利用できません。nearby scopes を確認し、新しい承認なしで別のインターフェースへ広げないでください。"},
-		"setup_input_required":        {"Choose exactly one --file PATH or --stdin (pipe only), or use the explicit --fingerprint for approval.", "--file PATH または --stdin（パイプ入力）のどちらか一つを指定してください。承認時は --fingerprint の明示指定も使えます。"},
-		"setup_input_unavailable":     {"Could not read the input. Use a readable regular file or a bounded pipe.", "入力を読み込めません。読取り可能な通常ファイルか有限のパイプ入力を使ってください。"},
-		"setup_input_too_large":       {"The setup input is too large. Copy only the single contact or verification line.", "接続情報が大きすぎます。連絡先または照合情報の1行だけをコピーしてください。"},
-		"setup_verification_required": {"Compare the complete SHA-256 fingerprint through an independent channel. Explicit --verified confirms that comparison and consents to this exact connection plan; matching text alone is not approval.", "独立した方法でSHA-256指紋の全桁を照合してください。--verified は照合の完了と、この正確な接続計画への承認を示します。文字列の一致だけでは承認になりません。"},
-		"setup_fingerprint_mismatch":  {"The complete fingerprints differ. Do not connect; check both devices and the current revision.", "指紋の全桁が一致しません。接続せず、両端末と現在の版を確認してください。"},
-		"setup_stale":                 {"The session or reviewed plan changed or expired. Check the original session; review the new plan before approving again.", "セッションまたは確認した計画が変わったか期限切れです。元のセッションを照会し、新しい計画を確認してから再承認してください。"},
-		"setup_invalid_response":      {"The setup response is incomplete or inconsistent. Check the original session with matching CLI and Core versions; do not start a replacement blindly.", "接続の応答が不完全か整合していません。CLIと本体の版を合わせて元のセッションを確認し、確認せずに代わりの接続を開始しないでください。"},
-		"setup_control_unavailable":   {"Result not confirmed. Use the same profile to check nearby status and the original session before repeating any action. Do not start a replacement session blindly.", "結果を確認できません。同じプロファイルの nearby status で元のセッションを照会してから操作してください。確認せずに代わりのセッションを開始しないでください。"},
-		"setup_stop_required":         {"Stop the same profile explicitly, then start it offline. Active connections and transfers stop. Setup approvals do not survive restart; the profile is preserved.", "同じプロファイルを明示的に停止し、オフラインで起動してください。現在の接続と転送は終了します。接続の承認は再起動で失われ、プロファイルは保持されます。"},
-		"setup_needs_restart":         {"The saved network needs an explicit restart of the same profile. Existing TCP sessions do not migrate. Check pairing and reachability after restart; setup approvals do not survive it.", "保存済みネットワークには同じプロファイルの明示的な再起動が必要です。既存のTCP接続は移行しません。再起動後にペアと到達性を確認してください。接続の承認は再起動で失われます。"},
-		"setup_recovery_required":     {"Pairing or saved state is uncertain. Preserve this profile and inspect both devices before a new invitation or session. Do not assume rollback or retry blindly.", "ペアリングまたは保存状態が未確定です。このプロファイルを保持し、新たな招待やセッションの前に両端末を確認してください。元に戻ったと判断したり、確認せずに再試行したりしないでください。"},
-		"setup_file_exists":           {"Could not create a new private output file. Choose a new path; an existing file is never replaced.", "新しい非公開の出力ファイルを作成できません。別のパスを指定してください。既存ファイルは置換しません。"},
-		"setup_offline_unavailable":   {"Nearby setup needs the local agent, optionally started with start --offline. Global --offline is for saved-definition edits and cannot run nearby setup.", "近くの端末との接続にはローカル本体が必要です。start --offline での起動も使えます。共通指定の --offline は保存済み定義の編集用で、この操作には使えません。"},
+		"setup_reenroll_offline_required":     {"Stop the same profile and restart it offline before permitting reenrollment. Active transfers and connections will stop.", "再登録を許可する前に、同じプロファイルを停止してオフラインで再起動してください。進行中の転送や接続は終了します。"},
+		"setup_peer_still_paired":             {"A saved transport pair still exists for this key. Explicitly revoke it and confirm cleanup before reenrollment.", "この鍵の通信ペアがまだ保存されています。明示的に解除し、終了状態を確認してから再登録してください。"},
+		"setup_generation_changed":            {"The removed key's generation changed. Read the current removed-key list and review it again; old consent cannot be reused.", "解除した鍵の世代が変わりました。現在の一覧を読み直して確認してください。古い同意は使えません。"},
+		"setup_reenroll_consent_required":     {"Review the exact removed key and generation, then explicitly consent to a fresh pairing attempt.", "解除した正確な鍵と世代を確認し、新しいペアリングの試行を明示的に許可してください。"},
+		"setup_generation_exhausted":          {"This profile cannot safely advance its pairing generation. Do not clear its private state or retry blindly.", "このプロファイルのペアリング世代を安全に進められません。非公開の状態を消したり、確認せず再試行したりしないでください。"},
+		"setup_request_unavailable":           {"The latest request exchange could not be completed. Check the same session and the receiving device; this does not mean it was declined.", "依頼の最新の通信を完了できませんでした。同じセッションと相手の受付状態を確認してください。拒否されたという意味ではありません。"},
+		"setup_verification_downgrade":        {"This key already has independent full verification. Select that method on both devices; it cannot silently become first-use acceptance.", "この鍵は既に独立した全文照合済みです。両端末で全文照合を選んでください。初回受入方式へ無言で格下げできません。"},
+		"setup_request_cancelled":             {"The sender cancelled this request. Previous approval does not apply to a later request.", "依頼元が取り消しました。以前の承認は次の依頼に引き継ぎません。"},
+		"setup_mode_invalid":                  {"Choose request, receive, or outbound mode.", "接続依頼・受付・接続の開始のみの方式を選んでください。"},
+		"setup_role_invalid":                  {"The selected device is not receiving compatible requests. Check its receiving screen.", "相手は対応する依頼を受付中ではありません。相手の受付画面を確認してください。"},
+		"setup_version_mismatch":              {"The devices use incompatible request protocols. Update both or explicitly use full verification; no automatic fallback occurs.", "両端末の依頼方式が対応していません。両方を更新するか、明示的に全文照合を使ってください。自動で方式は変えません。"},
+		"setup_target_invalid":                {"Enter a numeric private IP:port from the receiving screen, within the selected network scope.", "相手の受付画面にある数値のプライベートIP:ポートを、選択した範囲内で入力してください。"},
+		"setup_target_unreachable":            {"Could not reach the receiving device. Check its address, receiving state, and network path; an empty discovery list does not prove a firewall block.", "相手に到達できません。接続先、受付状態、通信経路を確認してください。探索結果が空でもファイアウォールが原因とは限りません。"},
+		"setup_target_changed":                {"The selected recipient changed. Inspect the target again and review its key before a new request.", "確認した接続先が変わりました。接続先と鍵を確認し直してから依頼してください。"},
+		"setup_request_changed":               {"This request changed. Refresh and review the current request before approving.", "依頼が変わりました。更新して現在の依頼を確認してから承認してください。"},
+		"setup_request_rejected":              {"The request was declined. Check with the recipient before starting a fresh request.", "依頼が拒否されました。相手に確認してから新しい依頼を始めてください。"},
+		"setup_request_expired":               {"The request expired. Inspect cleanup, then start a fresh request with new consent; a longer review time can be selected beforehand.", "依頼の期限が切れました。終了状態を確認し、改めて許可して依頼してください。開始前に長い確認時間を選べます。"},
+		"setup_tofu_acknowledgement_required": {"Explicitly acknowledge first-use key acceptance. This does not independently verify the recipient's identity.", "初回に受け入れた鍵を記憶することを明示的に確認してください。独立した本人確認ではありません。"},
+		"setup_peer_revoked":                  {"This key was removed previously. It cannot be silently restored by an old request.", "この鍵は以前解除されています。古い依頼で自動的に復元できません。"},
+		"setup_outbound_only":                 {"This session starts connections only. Enter the receiving device's address; discovery and LAN listeners are disabled.", "このセッションは接続の開始のみです。相手の接続先を入力してください。探索とLAN待受は無効です。"},
+		"setup_discovery_expired":             {"The discovery period ended. An existing request can continue until its own deadline; otherwise enter the receiving address or start fresh discovery with consent.", "探索時間が終了しました。既存の依頼はその期限まで続けられます。接続先を入力するか、改めて許可して探索してください。"},
+		"setup_invalid":                       {"Invalid nearby inputs; use soba nearby --help. No input values are echoed.", "近くの端末との接続の指定を確認してください。soba nearby --help を参照できます。入力値はエラーに表示しません。"},
+		"setup_consent_required":              {"Review the chosen scope and local listener permission, then explicitly add --consent. JSON never prompts or gives consent.", "選択した範囲とローカル待受の許可を確認し、明示的に --consent を指定してください。JSONでは質問も暗黙の承認も行いません。"},
+		"setup_scope_required":                {"Choose one scope with --scope from nearby scopes. Dry-run requires an explicit scope and never queries interfaces or Core.", "nearby scopes の範囲を --scope で一つ選んでください。dry-runでは範囲の明示が必要で、インターフェースや本体を照会しません。"},
+		"setup_scope_unavailable":             {"The selected scope is unavailable. Review nearby scopes; do not expand to another interface without new consent.", "選択した範囲を利用できません。nearby scopes を確認し、新しい承認なしで別のインターフェースへ広げないでください。"},
+		"setup_input_required":                {"Choose exactly one --file PATH or --stdin (pipe only), or use the explicit --fingerprint for approval.", "--file PATH または --stdin（パイプ入力）のどちらか一つを指定してください。承認時は --fingerprint の明示指定も使えます。"},
+		"setup_input_unavailable":             {"Could not read the input. Use a readable regular file or a bounded pipe.", "入力を読み込めません。読取り可能な通常ファイルか有限のパイプ入力を使ってください。"},
+		"setup_input_too_large":               {"The setup input is too large. Copy only the single contact or verification line.", "接続情報が大きすぎます。連絡先または照合情報の1行だけをコピーしてください。"},
+		"setup_verification_required":         {"Compare the complete SHA-256 fingerprint through an independent channel. Explicit --verified confirms that comparison and consents to this exact connection plan; matching text alone is not approval.", "独立した方法でSHA-256指紋の全桁を照合してください。--verified は照合の完了と、この正確な接続計画への承認を示します。文字列の一致だけでは承認になりません。"},
+		"setup_fingerprint_mismatch":          {"The complete fingerprints differ. Do not connect; check both devices and the current revision.", "指紋の全桁が一致しません。接続せず、両端末と現在の版を確認してください。"},
+		"setup_stale":                         {"The session or reviewed plan changed or expired. Check the original session; review the new plan before approving again.", "セッションまたは確認した計画が変わったか期限切れです。元のセッションを照会し、新しい計画を確認してから再承認してください。"},
+		"setup_invalid_response":              {"The setup response is incomplete or inconsistent. Check the original session with matching CLI and Core versions; do not start a replacement blindly.", "接続の応答が不完全か整合していません。CLIと本体の版を合わせて元のセッションを確認し、確認せずに代わりの接続を開始しないでください。"},
+		"setup_control_unavailable":           {"Result not confirmed. Use the same profile to check nearby status and the original session before repeating any action. Do not start a replacement session blindly.", "結果を確認できません。同じプロファイルの nearby status で元のセッションを照会してから操作してください。確認せずに代わりのセッションを開始しないでください。"},
+		"setup_stop_required":                 {"Stop the same profile explicitly, then start it offline. Active connections and transfers stop. Setup approvals do not survive restart; the profile is preserved.", "同じプロファイルを明示的に停止し、オフラインで起動してください。現在の接続と転送は終了します。接続の承認は再起動で失われ、プロファイルは保持されます。"},
+		"setup_needs_restart":                 {"The saved network needs an explicit restart of the same profile. Existing TCP sessions do not migrate. Check pairing and reachability after restart; setup approvals do not survive it.", "保存済みネットワークには同じプロファイルの明示的な再起動が必要です。既存のTCP接続は移行しません。再起動後にペアと到達性を確認してください。接続の承認は再起動で失われます。"},
+		"setup_recovery_required":             {"Pairing or saved state is uncertain. Preserve this profile and inspect both devices before a new invitation or session. Do not assume rollback or retry blindly.", "ペアリングまたは保存状態が未確定です。このプロファイルを保持し、新たな招待やセッションの前に両端末を確認してください。元に戻ったと判断したり、確認せずに再試行したりしないでください。"},
+		"setup_file_exists":                   {"Could not create a new private output file. Choose a new path; an existing file is never replaced.", "新しい非公開の出力ファイルを作成できません。別のパスを指定してください。既存ファイルは置換しません。"},
+		"setup_offline_unavailable":           {"Nearby setup needs the local agent, optionally started with start --offline. Global --offline is for saved-definition edits and cannot run nearby setup.", "近くの端末との接続にはローカル本体が必要です。start --offline での起動も使えます。共通指定の --offline は保存済み定義の編集用で、この操作には使えません。"},
 	}
 	additional := map[string][2]string{
 		"setup_contact_invalid":                 {"Contact information is invalid or expired. Privately obtain the other device's current contact line.", "連絡先が無効か期限切れです。相手の現在の連絡先の1行を非公開の方法で取得してください。"},
@@ -209,6 +239,9 @@ func nearbyWriteScope(out io.Writer, ja bool, scope nearbyScope) error {
 	return err
 }
 func nearbyWriteHuman(out io.Writer, dir string, ja bool, s nearbySnapshot) error {
+	if s.Version == 2 {
+		return nearbyWriteV2Human(out, dir, ja, s)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n", text(ja, "Nearby setup", "近くの端末との接続"), nearbyStateLabel(ja, s.State))
 	if s.SessionID != "" {

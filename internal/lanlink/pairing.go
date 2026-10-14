@@ -68,6 +68,21 @@ func (inv Invitation) ValidateFor(recipient string, now time.Time) error {
 }
 
 func (n *Node) IssueInvitation(ctx context.Context, recipient Peer, hostName string, ttl time.Duration) (Invitation, error) {
+	return n.issueInvitation(ctx, nil, recipient, hostName, ttl, time.Time{})
+}
+
+// IssueSetupInvitation binds consumption to the approved setup lifetime, even
+// when a borrowed node's pairing server outlives that setup. ctx only bounds
+// issuance; setupCtx and expires independently bound consent until consumption.
+// The consent context remains memory-only and must not be the short issuance ctx.
+func (n *Node) IssueSetupInvitation(ctx, setupCtx context.Context, recipient Peer, hostName string, expires time.Time) (Invitation, error) {
+	if setupCtx == nil {
+		return Invitation{}, ErrInvite
+	}
+	return n.issueInvitation(ctx, setupCtx, recipient, hostName, 120*time.Second, expires)
+}
+
+func (n *Node) issueInvitation(ctx, consent context.Context, recipient Peer, hostName string, ttl time.Duration, expires time.Time) (Invitation, error) {
 	if n.cfg.Persist == nil {
 		return Invitation{}, errors.New("durable pairing persistence required")
 	}
@@ -96,7 +111,13 @@ func (n *Node) IssueInvitation(ctx context.Context, recipient Peer, hostName str
 		return Invitation{}, ErrInvite
 	}
 	now := time.Now()
-	token, e := n.cfg.Trust.IssueTrusted(ctx, recipient, n.cfg.Relay, now, ttl)
+	if consent != nil {
+		if !deadline.Active(now, expires) {
+			return Invitation{}, ErrInvite
+		}
+		ttl = min(ttl, expires.Sub(now))
+	}
+	token, e := n.cfg.Trust.issueTrusted(ctx, consent, recipient, n.cfg.Relay, now, ttl)
 	if e != nil {
 		return Invitation{}, e
 	}
@@ -306,16 +327,27 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 	if e = distinctRoleKeys(remote, usedKeys); e != nil {
 		return e
 	}
-	var tokenDigest [32]byte
-	if token != "" {
-		if expiry, ok := n.admissions[remote.IncomingClientKey]; !ok || !deadline.Active(time.Now(), expiry) {
+	// The Book/Node locks prevent changes to the records, but cannot stop
+	// their deadlines or the independent setup consent context from ending.
+	permissionError := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if token == "" {
+			return nil
+		}
+		now := time.Now()
+		if expiry, ok := n.admissions[remote.IncomingClientKey]; !ok || !deadline.Active(now, expiry) {
 			return ErrUntrusted
 		}
-		tokenDigest = sha256.Sum256([]byte(token))
-		inv, ok := b.invites[tokenDigest]
-		if !ok || inv.peer.Key != remote.Peer.Key || inv.relay != n.cfg.Relay.Address || !deadline.Active(time.Now(), inv.expires) {
+		inv, ok := b.invites[sha256.Sum256([]byte(token))]
+		if !ok || inv.peer.Key != remote.Peer.Key || inv.relay != n.cfg.Relay.Address || !inv.active(now) {
 			return ErrInvite
 		}
+		return nil
+	}
+	if e = permissionError(); e != nil {
+		return e
 	}
 	snapshot := Snapshot{Version: 1, Peers: make([]Peer, 0, len(b.peers)+1)}
 	for _, a := range b.peers {
@@ -326,6 +358,9 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 	records := n.remoteSnapshotLocked()
 	records = append(records, remote)
 	sort.Slice(records, func(i, j int) bool { return records[i].Peer.Key < records[j].Peer.Key })
+	if e = permissionError(); e != nil {
+		return e
+	}
 	if e = n.cfg.Persist(snapshot, records); e != nil {
 		if errors.Is(e, config.ErrAtomicCommitted) {
 			// Keep the published approval on disk without granting uncertain trust.
@@ -333,6 +368,12 @@ func (n *Node) commitPair(ctx context.Context, remote RemotePeer, token string, 
 			n.pairingRecovery = true
 		}
 		return fmt.Errorf("pairing was not activated because private state could not be saved: %w", e)
+	}
+	if e = permissionError(); e != nil {
+		// Publication crossed cancellation/expiry. Keep the durable evidence,
+		// but never activate authority or acknowledge success after consent ends.
+		n.pairingRecovery = true
+		return fmt.Errorf("pairing was saved after its attempt ended; inspect both devices before retrying: %w", errors.Join(config.ErrAtomicCommitted, e))
 	}
 	b.generation++
 	b.peers[remote.Peer.Key] = &approval{remote.Peer, b.generation, make(map[*trackedFlow]struct{})}

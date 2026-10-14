@@ -440,7 +440,9 @@ class FullProofTests(unittest.TestCase):
     def test_setup_and_text_browser_missing_duplicate_or_non_success_blocks_release(self):
         original = copy.deepcopy(self.jobs)
         gates = [(name, 'Verify manual nearby setup across native Core peers') for name, _ in full.TARGETS.values()]
-        gates += [('browser', 'Verify nearby setup with separate agents and actual browser'),
+        gates += [(name, gate) for name, _ in full.TARGETS.values() for gate, _, _ in full.REQUEST_SETUP_CASES]
+        gates += [('browser', 'Verify synthetic request pairing UI without skips'),
+                  ('browser', 'Verify nearby setup with separate agents and actual browser'),
                   ('browser', 'Verify durable text recovery with separate agents and actual browser')]
         for name, gate in gates:
             for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
@@ -513,7 +515,7 @@ class FullProofTests(unittest.TestCase):
     def test_setup_and_text_browser_gates_cannot_be_omitted_from_literal_policy(self):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
-        for gate in ('Verify manual nearby setup across native Core peers',
+        for gate in tuple(name for name, _, _ in full.REQUEST_SETUP_CASES) + ('Verify synthetic request pairing UI without skips', 'Verify manual nearby setup across native Core peers',
                      'Verify nearby setup with separate agents and actual browser',
                      'Verify durable text recovery with separate agents and actual browser'):
             needle = ('"' + gate + '"').encode()
@@ -521,6 +523,51 @@ class FullProofTests(unittest.TestCase):
             self.sources[path] = original.replace(needle, b'"Other gate"', 1)
             with self.subTest(gate=gate), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
+
+    def test_request_setup_ci_and_prerelease_exact_execution_is_required(self):
+        self.assertEqual(tuple(test for _, _, test in full.REQUEST_SETUP_CASES), (
+            'TestLANCoreRequestTOFUIntegration', 'TestLANCoreRequestFullVerificationIntegration',
+            'TestLANCoreRequestRejectCancelIntegration'))
+        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+            original = self.sources[path]
+            full.validate_request_setup_workflow(original)
+            for gate, suite, test in full.REQUEST_SETUP_CASES:
+                marker = ('      - name: ' + gate + '\n').encode()
+                start = original.index(marker)
+                end = original.index(b'      - ', start + len(marker))
+                block = original[start:end]
+                changes = ((b'--exact ', b''), (b'-race ', b''), (b'-count=1', b'-count=0'),
+                    (b'-timeout=3m', b'-timeout=0'), (test.encode(), b'TestOther'),
+                    (suite.encode(), b'other-suite'), (b"INTEGRATION: '1'", b"INTEGRATION: '0'"),
+                    (marker, marker + b'        if: false\n'),
+                    (marker, marker + b"        if: matrix.goos != 'windows'\n"),
+                    (marker, marker + b'        continue-on-error: true\n'),
+                    (b'timeout-minutes: 6', b'timeout-minutes: 60'))
+                mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1)]
+                for before, after in changes:
+                    self.assertIn(before, block)
+                    mutations.append(original.replace(block, block.replace(before, after), 1))
+                # Moving the exact block outside native must not satisfy the gate.
+                mutations.append(original.replace(block, b'', 1) + block)
+                for i, value in enumerate(mutations):
+                    with self.subTest(path=path, gate=gate, mutation=i), self.assertRaises(ValueError):
+                        full.validate_request_setup_workflow(value)
+
+    def test_pairing_ui_gate_cannot_be_skipped_moved_or_suppressed(self):
+        original = self.sources[full.WORKFLOW]
+        marker = b'      - name: Verify synthetic request pairing UI without skips\n'
+        start = original.index(marker); end = original.index(b'      - ', start + len(marker))
+        block = original[start:end]
+        mutations = [original.replace(block, b'', 1), original.replace(block, block + block, 1),
+                     original.replace(block, b'', 1) + block]
+        for before, after in ((b'ci-pairing-ui.py', b'other.py'),
+                (b'timeout-minutes: 6', b'timeout-minutes: 60'),
+                (marker, marker + b'        if: false\n'),
+                (marker, marker + b'        continue-on-error: true\n'),
+                (b'python -B .github/scripts/ci-pairing-ui.py', b'python -B .github/scripts/ci-pairing-ui.py || true')):
+            mutations.append(original.replace(block, block.replace(before, after), 1))
+        for value in mutations:
+            with self.assertRaises(ValueError): full.validate_pairing_ui_workflow(value)
 
     def test_fixed_browser_summary_sources_are_bound_to_checkout(self):
         for path in ('.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py'):

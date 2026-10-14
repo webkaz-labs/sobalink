@@ -59,7 +59,7 @@ func TestLANJoinPrivateSaveOutcomeAtCommandBoundary(t *testing.T) {
 			}
 			// Exercise the real lanStore publication contract before the actual command
 			// boundary; the fake engine supplies only the authenticated remote outcome.
-			saveErr := store.persist(next.Trust, next.Remotes)
+			saveErr := store.persistAt(store.copy().SetupPersistenceEpoch)(next.Trust, next.Remotes)
 			backend, engine := testLANBackend()
 			if err := backend.Start(); err != nil {
 				t.Fatal(err)

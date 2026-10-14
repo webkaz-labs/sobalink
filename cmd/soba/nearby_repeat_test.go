@@ -33,7 +33,7 @@ func TestNearbyRepeatSetupDeclineOrEOFLeavesConnectionAlone(t *testing.T) {
 				calls := []webui.Command{}
 				s := nearbyTestConnected(joined)
 				var out bytes.Buffer
-				if err := runWith(context.Background(), []string{"--locale", locale, "--state-dir", "/synthetic/profile", "nearby", "--interactive"}, &out, strings.NewReader(input), nearbyFixtureClient(t, &calls, nil, s)); err != nil {
+				if err := runWith(context.Background(), []string{"--locale", locale, "--state-dir", "/synthetic/profile", "nearby", "--legacy-interactive"}, &out, strings.NewReader(input), nearbyFixtureClient(t, &calls, nil, s)); err != nil {
 					t.Fatal(err)
 				}
 				if len(calls) != 1 || calls[0].Name != "setup.status" {
@@ -122,7 +122,7 @@ func TestNearbyRepeatSetupWaitsForJoinedMarkerThenRequiresFreshConsent(t *testin
 			return json.Unmarshal(data, target)
 		}
 		var out bytes.Buffer
-		if err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--interactive"}, &out, strings.NewReader("y\nDevice C\ny\ny\nx\n"), client); err != nil {
+		if err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--legacy-interactive"}, &out, strings.NewReader("y\nDevice C\ny\ny\nx\n"), client); err != nil {
 			t.Fatal(err)
 		}
 		if !startSeen {
@@ -145,7 +145,7 @@ func TestNearbyRepeatSetupNewReviewDeclineDoesNotStart(t *testing.T) {
 		s := nearbyTestConnected(true)
 		calls := []webui.Command{}
 		var out bytes.Buffer
-		if err := runWith(context.Background(), []string{"nearby", "--interactive"}, &out, strings.NewReader(input), nearbyFixtureClient(t, &calls, []nearbyScope{nearbyTestScope()}, s)); err != nil {
+		if err := runWith(context.Background(), []string{"nearby", "--legacy-interactive"}, &out, strings.NewReader(input), nearbyFixtureClient(t, &calls, []nearbyScope{nearbyTestScope()}, s)); err != nil {
 			t.Fatal(err)
 		}
 		if len(calls) != 2 || calls[0].Name != "setup.status" || calls[1].Name != "setup.scopes" {
@@ -174,7 +174,7 @@ func TestNearbyRepeatSetupLostCancelOrStatusKeepsOriginalLocator(t *testing.T) {
 			data, _ := json.Marshal(response)
 			return json.Unmarshal(data, target)
 		}
-		err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--interactive"}, &out, strings.NewReader("y\n"), client)
+		err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--legacy-interactive"}, &out, strings.NewReader("y\n"), client)
 		if nearbyErrorCode(t, err) != "setup_control_unavailable" {
 			t.Fatal(err)
 		}
@@ -209,7 +209,7 @@ func TestNearbyRepeatSetupLostFreshStartQueriesCurrentSession(t *testing.T) {
 		data, _ := json.Marshal(response)
 		return json.Unmarshal(data, target)
 	}
-	err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--interactive"}, &out, strings.NewReader("y\nDevice C\ny\ny\n"), client)
+	err := runWith(context.Background(), []string{"--state-dir", "/synthetic/profile", "nearby", "--legacy-interactive"}, &out, strings.NewReader("y\nDevice C\ny\ny\n"), client)
 	if nearbyErrorCode(t, err) != "setup_control_unavailable" || len(calls) != 3 {
 		t.Fatal(err, calls)
 	}

@@ -62,6 +62,8 @@ test('nearby-native-manual-bilateral-consent-cancel-join-en-ja', async ({ app })
   }
   const start = async device => {
     const c = labels[device.locale], { page } = device
+    await page.getByText(device.locale === 'ja' ? 'その他の接続方法' : 'More connection options', { exact: true }).click()
+    await page.getByRole('radio', { name: device.locale === 'ja' ? '旧方式で完全フィンガープリントを照合' : 'Legacy setup with full fingerprint comparison', exact: true }).check()
     await page.getByRole('textbox', { name: new RegExp(`^${c.alias}`) }).fill(device.alias)
     await expect(page.getByRole('combobox', { name: c.scope, exact: true }).locator('option')).toHaveCount(2)
     await captureInitial(device) // Optional real illustration, before this page creates setup secrets.

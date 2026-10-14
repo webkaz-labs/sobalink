@@ -11,3 +11,13 @@
 .nearby-entry { display: grid; gap: .8rem; margin-bottom: 1rem; }
 
 .nearby-host-choice { display: grid; gap: .65rem; min-width: 0; border: 1px solid currentColor; border-radius: .5rem; padding: .8rem; }
+.nearby-setup fieldset, .nearby-setup form, .nearby-setup .field, .nearby-setup .invitation-card { min-width: 0; }
+.nearby-setup input:not([type="checkbox"]):not([type="radio"]), .nearby-setup select { max-width: 100%; min-width: 0; }
+.nearby-setup button, .nearby-setup summary, .nearby-setup .checkbox-field { min-height: 44px; }
+.nearby-setup summary { display: flex; align-items: center; cursor: pointer; }
+.nearby-setup .checkbox-field { align-items: center; overflow-wrap: anywhere; }
+.nearby-setup strong, .nearby-setup dt, .nearby-setup p { overflow-wrap: anywhere; }
+@media (max-width: 375px) {
+  .nearby-setup .modal-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .nearby-setup button { white-space: normal; height: auto; }
+}

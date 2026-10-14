@@ -350,3 +350,29 @@ records remain bounded. `resources.transferConcurrentRecipients` is a finite
 sender concurrency budget, separate from receiving concurrency. The last retained
 owner releases the copy only after its active readers have joined; failed cleanup
 remains charged. No persistent outbox or cross-restart delivery is introduced.
+
+## Request-based nearby setup (v2)
+
+The default Web path uses `src/nearby-setup.ts`: choose a receiving device, inspect its exact key/session/relay/scope, explicitly request, then approve on the receiving device. The ordinary `tofu` method remembers the first accepted key; it does not independently identify the physical device or resist first-use active impersonation. `full-sha256` is an explicit alternative requiring independent complete-fingerprint comparison. No short verification code is used. Legacy v1 remains an explicitly selected separate path; protocol or verification mismatch never silently falls back.
+
+- `setup.start` adds `mode:"request"|"receive"|"outbound"`, `verification:"tofu"|"full-sha256"`, and `expiresInSeconds:120..1200`. Duration and scope consent precede start. Request/outbound cannot host. Receive requires explicit hosting permission and the displayed distinct high relay port. Outbound uses `bootstrapPort:0,allowHost:false,relayPort:0` and owns neither a LAN bootstrap listener nor an mDNS socket.
+- `setup.inspect-target {sessionId,address? ,candidateId?}` takes exactly one target. The address is a canonical private numeric IP with an allowed high port; no URL, hostname, loopback or IPv6 zone input. Inspection pins the target without requesting or approving it. Its target view includes `revision,sessionId,peerKey,alias,address,expiresAt,verification,keyStatus,relayAddress,relayCertificateSHA256,scopePrefix`.
+- `setup.request {sessionId,targetSessionId,targetRevision,expectedPeerKey,tofuAcknowledged}` repeats the reviewed target identity and positive preflight revision. Every fresh inspection changes that revision; stale consent from another tab cannot approve a replacement relay or scope even when key/session are unchanged. TOFU requires explicit acknowledgement and consent to saving that exact key, relay and network permission. Strong comparison still requires a later exact approval.
+- `setup.approve {sessionId,requestId,revision,fingerprint,verified,tofuAcknowledged}` binds the immutable request and plan. `setup.reject {sessionId,requestId}` rejects only the displayed pending request. Incoming requests do not move focus or replace an existing approval target.
+- `setup.status` recovers the original session after uncertain replies; mutations are blocked until a valid fresh observation. Close retains the existing cleanup-wait contract. `setup.cancel` does not imply rollback of already saved state.
+
+V2 snapshots add `alias,mode,verification,requestId?,target?,request?`. Outbound snapshots omit `contact`; other v2 contacts use `version:2`. All v2 snapshots omit `contactText` and `contactQR`. Plan participants add `protocol:2,mode,verification`; an outbound participant has bootstrap `IP:0`, no relay, and no host permission. The complete fingerprint wire prefix remains `sobalink-setup-verify-v1:` for typed comparison; it does not select protocol v1.
+
+Discovery ends after 120 seconds even when the selected session duration is longer. `discovery.state:"stopped",reasonCode:"setup_discovery_expired"` does not expire an already pinned request; the earlier participant/plan deadline still applies. Local approval, remote approval, pairing saved, connection verified and application receiving trust remain distinct. Neither a synthetic UI test nor pairing saved proves application communication or real-device enrollment.
+
+
+### Removed-device reenrollment (advanced)
+
+The initial setup screen keeps this review inside “Removed devices (advanced)”. It reads only after an explicit action and displays each complete cryptographic key, durable removal generation, and retained verification basis (`tofu`, `full-sha256`, or `unknown`). Names never merge devices or authorize a replacement key.
+
+- `setup.revoked {}` returns `{kind:"sobalink-setup-revoked",version:1,records:[{peerKey,generation,verification}]}` containing only currently revoked records. Generations are positive JavaScript-safe integers.
+- `setup.reenroll {peerKey,expectedGeneration,consent:true}` requires an exact current removed record and fresh unchecked-by-default consent. Core requires offline operation, no active network node or live/unjoined setup, and no saved transport peer for that key. It atomically advances the generation while preserving the strongest recorded verification basis.
+- The response is `{kind:"sobalink-setup-reenroll",version:1,peerKey,generation,verification,paired:false,trusted:false}`. The Web UI requires the exact key, the exact next generation (`expectedGeneration + 1`), unchanged retained basis, and explicit false pairing/trust facts. This only allows a new setup; it never starts, pairs, connects, approves, or trusts automatically. Earlier-session approvals and delayed callbacks cannot acquire authority from reenrollment.
+- Lost, malformed, or mismatched responses block repeat actions and fresh setup until `setup.revoked` is reread. A key absent from that list is reported only as no longer removed, never as proof that the earlier operation succeeded or that pairing/connection/trust exists. A still-removed or changed-generation record requires a new selection and fresh consent. Reload never restores selection or consent and never replays a mutation.
+
+Synthetic rendered tests cover Japanese and English at 320, 375, and 1280 CSS pixels, including full-key reenrollment review and keyboard operation. The separate unit tests cover stale generations, uncertain replies, rereads, reload, double-clicks, invalid receipts and changed auth/process availability. Rendered and unit coverage is not real-device enrollment acceptance.

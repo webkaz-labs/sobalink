@@ -67,15 +67,17 @@ type LANSelection struct {
 // All private transport material belongs to this one protected atomic file.
 // Application trust is a separate explicit approval in the ordinary profile.
 type lanState struct {
-	WANCandidates     *WANCandidateConfig      `json:"wan_candidates,omitempty"`
-	Version           int                      `json:"version"`
-	DestinationPolicy lanpolicy.Config         `json:"destination_policy,omitzero"`
-	Identity          lanlink.Identity         `json:"identity"`
-	Selection         *LANSelection            `json:"selection,omitempty"`
-	RelayIdentity     *lanlink.RelayIdentity   `json:"relayIdentity,omitempty"`
-	Trust             lanlink.Snapshot         `json:"trust"`
-	Remotes           []lanlink.RemotePeer     `json:"remotes"`
-	RouteCandidates   []lanlink.RouteCandidate `json:"route_candidates,omitempty"`
+	SetupPersistenceEpoch uint64                   `json:"setup_persistence_epoch,omitempty"`
+	SetupTrust            []setupTrustRecord       `json:"setup_trust,omitempty"`
+	WANCandidates         *WANCandidateConfig      `json:"wan_candidates,omitempty"`
+	Version               int                      `json:"version"`
+	DestinationPolicy     lanpolicy.Config         `json:"destination_policy,omitzero"`
+	Identity              lanlink.Identity         `json:"identity"`
+	Selection             *LANSelection            `json:"selection,omitempty"`
+	RelayIdentity         *lanlink.RelayIdentity   `json:"relayIdentity,omitempty"`
+	Trust                 lanlink.Snapshot         `json:"trust"`
+	Remotes               []lanlink.RemotePeer     `json:"remotes"`
+	RouteCandidates       []lanlink.RouteCandidate `json:"route_candidates,omitempty"`
 }
 
 type lanStore struct {
@@ -150,6 +152,9 @@ func supportedLANStateVersion(version int) bool { return version >= 1 && version
 func validateLANState(s lanState) error {
 	if !supportedLANStateVersion(s.Version) || s.Identity.Validate() != nil {
 		return errors.New("invalid private LAN state")
+	}
+	if err := validateSetupTrust(s); err != nil {
+		return err
 	}
 	if err := validateWANCandidateState(s); err != nil {
 		return err
@@ -241,6 +246,7 @@ func (s *lanStore) copy() lanState {
 }
 
 func cloneLANState(s lanState) lanState {
+	s.SetupTrust = append([]setupTrustRecord(nil), s.SetupTrust...)
 	s.WANCandidates = cloneWANCandidates(s.WANCandidates)
 	s.DestinationPolicy.Prefixes = append([]string(nil), s.DestinationPolicy.Prefixes...)
 	if s.Selection != nil {
@@ -260,6 +266,23 @@ func cloneLANState(s lanState) lanState {
 }
 
 func (s *lanStore) saveLocked(next lanState) error {
+	next.SetupTrust = append([]setupTrustRecord(nil), next.SetupTrust...)
+	if err := markRemovedSetupTrust(s.state, &next); err != nil {
+		return err
+	}
+	oldPeers := map[string]bool{}
+	for _, p := range s.state.Trust.Peers {
+		oldPeers[p.Key] = true
+	}
+	var added []lanlink.Peer
+	for _, p := range next.Trust.Peers {
+		if !oldPeers[p.Key] {
+			added = append(added, p)
+		}
+	}
+	if err := rejectRevokedSetupPeers(next.SetupTrust, added); err != nil {
+		return err
+	}
 	if s.routeRecovery {
 		return config.ErrAtomicRecovery
 	}
@@ -306,10 +329,26 @@ func (s *lanStore) save(next lanState) error {
 }
 
 // Persist never calls Node or Book: the transport holds its commit locks.
-func (s *lanStore) persist(trust lanlink.Snapshot, remotes []lanlink.RemotePeer) error {
+func (s *lanStore) persistAt(epoch uint64) func(lanlink.Snapshot, []lanlink.RemotePeer) error {
+	return func(trust lanlink.Snapshot, remotes []lanlink.RemotePeer) error {
+		return s.persist(epoch, trust, remotes)
+	}
+}
+
+func (s *lanStore) persist(epoch uint64, trust lanlink.Snapshot, remotes []lanlink.RemotePeer) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The callback belongs to one whole-backend snapshot. Check before applying
+	// even an empty snapshot: omissions from an old owner can erase newer pairs.
+	if epoch != s.state.SetupPersistenceEpoch {
+		return setupError("setup_generation_changed", "this LAN owner predates explicit re-enrollment; start a fresh network owner")
+	}
 	next := cloneLANState(s.state)
+	// Revocation and pairing persistence share this lock. A delayed network
+	// completion cannot reintroduce any tombstoned key after local revocation.
+	if err := rejectRevokedSetupPeers(next.SetupTrust, trust.Peers); err != nil {
+		return err
+	}
 	next.Trust, next.Remotes = trust, lanlink.CloneRemotePeers(remotes)
 	for _, remote := range remotes {
 		if remote.Routes != nil {
@@ -470,6 +509,7 @@ type lanNetworkBackend interface {
 	NetworkBackend
 	PublicKey() string
 	IssueInvitation(context.Context, lanlink.Peer, string, time.Duration) (lanlink.Invitation, error)
+	IssueSetupInvitation(context.Context, context.Context, lanlink.Peer, string, time.Time) (lanlink.Invitation, error)
 	CancelInvitation(string)
 	PairInvitation(context.Context, lanlink.Invitation) error
 	Revoke(string) error
@@ -484,6 +524,7 @@ type lanEngine interface {
 	ListenPacket(context.Context, uint16) (net.PacketConn, error)
 	RegisterTCPFallback(func(netip.AddrPort, netip.AddrPort) (func(net.Conn), bool)) (func(), error)
 	IssueInvitation(context.Context, lanlink.Peer, string, time.Duration) (lanlink.Invitation, error)
+	IssueSetupInvitation(context.Context, context.Context, lanlink.Peer, string, time.Time) (lanlink.Invitation, error)
 	CancelInvitation(string)
 	PairInvitation(context.Context, lanlink.Invitation) error
 	Revoke(string) error
@@ -511,6 +552,9 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 		return nil, config.ErrAtomicRecovery
 	}
 	state := store.copy()
+	if err := rejectRevokedSetupPeers(state.SetupTrust, state.Trust.Peers); err != nil {
+		return nil, err
+	}
 	relay, err := savedLANRelay(state)
 	if err != nil {
 		return nil, err
@@ -531,7 +575,7 @@ func (c *Core) newLANBackend(store *lanStore) (lanNetworkBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, RelayResources: resources, WANCandidates: wan, DestinationPolicy: state.DestinationPolicy, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persist, EmbeddedRelay: state.Selection.Kind == "host"})
+	node, err := lanlink.NewNode(lanlink.NodeConfig{Identity: state.Identity, RelayResources: resources, WANCandidates: wan, DestinationPolicy: state.DestinationPolicy, Relay: relay, Candidates: candidates, Trust: book, Remotes: state.Remotes, Persist: store.persistAt(state.SetupPersistenceEpoch), EmbeddedRelay: state.Selection.Kind == "host"})
 	if err != nil {
 		return nil, err
 	}
@@ -955,7 +999,7 @@ func (r offlineLANRevoker) Revoke(id string) error {
 }
 
 func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
-	revocationErr := errors.Join(c.retireMixedTransport("lan", id), c.revokeStartupPeer(id))
+	revocationErr := errors.Join(c.retireMixedTransport("lan", id), c.revokeStartupPeer(id), c.recordSetupRevocation(id))
 	// Even a pre-publication journal failure must not retain inbound authority.
 	p := c.profileCopy()
 	peers := p.Peers[:0]
@@ -1005,8 +1049,11 @@ func (c *Core) revokeLANPeer(node lanRevoker, id string) error {
 func (c *Core) reconcileLANTrust() error {
 	paired := map[string]bool{}
 	if saved := c.lanStoreCopy(); saved != nil {
-		for _, peer := range saved.copy().Trust.Peers {
-			paired[peer.Key] = true
+		state := saved.copy()
+		for _, peer := range state.Trust.Peers {
+			if rejectRevokedSetupPeers(state.SetupTrust, []lanlink.Peer{peer}) == nil {
+				paired[peer.Key] = true
+			}
 		}
 	}
 	p := c.profileCopy()

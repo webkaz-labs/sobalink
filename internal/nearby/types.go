@@ -15,6 +15,9 @@ import (
 
 const (
 	Protocol              = "sobalink-setup-v1"
+	RequestProtocol       = "sobalink-setup-v2"
+	RequestCapability     = "lan-request-v2"
+	ReceiveCapability     = "lan-receive-v2"
 	Capability            = "lan-bootstrap-v1"
 	SessionLifetime       = 120 * time.Second
 	CandidateTTL          = 30 * time.Second
@@ -97,7 +100,7 @@ func (a Advertisement) validate(policy discoveryPolicy) error {
 		return ErrInvalidAdvertisement
 	}
 	sid, err := hex.DecodeString(a.SessionID)
-	if err != nil || len(sid) != 32 || strings.ToLower(a.SessionID) != a.SessionID || a.SessionID == strings.Repeat("0", 64) || a.Protocol != Protocol || a.Capability != Capability || !policy.validAddress(a.Bootstrap.Addr()) || a.Bootstrap.Port() < 1024 || (a.Bootstrap.Port() >= 54543 && a.Bootstrap.Port() <= 54545) {
+	if err != nil || len(sid) != 32 || strings.ToLower(a.SessionID) != a.SessionID || a.SessionID == strings.Repeat("0", 64) || !((a.Protocol == Protocol && a.Capability == Capability) || (a.Protocol == RequestProtocol && (a.Capability == RequestCapability || a.Capability == ReceiveCapability))) || !policy.validAddress(a.Bootstrap.Addr()) || a.Bootstrap.Port() < 1024 || (a.Bootstrap.Port() >= 54543 && a.Bootstrap.Port() <= 54545) {
 		return ErrInvalidAdvertisement
 	}
 	if len(a.Alias) == 0 || len(a.Alias) > 80 || !utf8.ValidString(a.Alias) || strings.TrimSpace(a.Alias) != a.Alias {
