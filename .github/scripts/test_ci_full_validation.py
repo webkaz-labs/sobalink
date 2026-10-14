@@ -7,6 +7,7 @@ from pathlib import Path
 import unittest
 import test_ci_dnssd_required as dnssd_fixture
 import test_ci_native_core_required as core_fixture
+from test_ci_upload_artifact import upload_log
 
 SPEC = importlib.util.spec_from_file_location('full_validation', Path(__file__).with_name('ci_full_validation.py'))
 full = importlib.util.module_from_spec(SPEC)
@@ -50,6 +51,15 @@ class FullProofTests(unittest.TestCase):
         self.hook = None
         self.producing_jobs = copy.deepcopy(self.jobs)
         self.artifact, self.archive = dnssd_fixture.artifact()
+        self.refresh_job_logs()
+
+    def refresh_job_logs(self, run_id=10):
+        self.job_logs = {}
+        for target, (meta, _) in self.core_artifacts.items():
+            producer = next(j for j in self.jobs if j['name'] == full.TARGETS[target][0])
+            self.job_logs[producer['id']] = upload_log(meta, run_id=run_id)
+            if target == 'darwin-arm64':
+                self.job_logs[producer['id']] += upload_log(self.artifact, run_id=run_id)
 
     def api(self, path):
         self.calls.append(path)
@@ -87,7 +97,20 @@ class FullProofTests(unittest.TestCase):
         self.fail('unexpected API route: ' + path)
 
     def audit(self, **kwargs):
-        return full.audit(self.api, SHA, artifact_download=lambda identifier: self.archive if identifier == 300 else next(data for meta, data in self.core_artifacts.values() if meta['id'] == identifier), **kwargs)
+        return full.audit(self.api, SHA, artifact_download=lambda identifier: self.archive if identifier == 300 else next(data for meta, data in self.core_artifacts.values() if meta['id'] == identifier), job_log=lambda identifier:self.job_logs[identifier], **kwargs)
+
+    def test_shared_upload_helper_is_source_bound_and_packaged_for_publication(self):
+        helper = '.github/scripts/ci-upload-artifact.py'
+        tests = '.github/scripts/test_ci_upload_artifact.py'
+        for inventory in (full.SOURCES, full.DNSSD_SOURCES, full.CORE_SOURCES,
+                          dnssd_fixture.gate.POLICY_FILES, core_fixture.gate.POLICY_FILES):
+            self.assertIn(helper, inventory)
+            self.assertIn(tests, inventory)
+        prerelease = (ROOT / '.github/workflows/prerelease.yml').read_text(encoding='utf-8')
+        self.assertEqual(prerelease.count('            ' + helper + '\n'), 1)
+        self.sources[helper] += b'\n# synthetic source mutation\n'
+        with self.assertRaisesRegex(ValueError, 'loaded release tool differs'):
+            self.audit()
 
     def test_native_package_gate_and_receipt_require_unique_actual_success(self):
         steps = core_fixture.gate.STEPS
@@ -763,6 +786,7 @@ class FullProofTests(unittest.TestCase):
             meta['name'] = meta['name'].replace('-10-1', '-11-1')
             meta['workflow_run']['id'] = 11
             self.core_artifacts[target] = (meta, data)
+        self.refresh_job_logs(run_id=11)
         result = self.audit(previous_proof=proof)
         self.assertEqual(result['full_validation']['id'], 11)
 

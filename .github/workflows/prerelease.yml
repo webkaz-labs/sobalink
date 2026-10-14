@@ -62,6 +62,7 @@ jobs:
             .github/scripts/ci-windows-packages.py
             .github/scripts/ci-metrics.py
             .github/scripts/ci-dnssd-required.py
+            .github/scripts/ci-upload-artifact.py
             .github/scripts/ci-dnssd-diagnostic.py
             .github/scripts/ci-dnssd-terminal.py
             .github/scripts/ci-nearby-native.py

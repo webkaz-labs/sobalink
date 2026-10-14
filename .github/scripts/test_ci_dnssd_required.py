@@ -13,6 +13,7 @@ import zipfile
 
 from test_ci_dnssd_diagnostic import record, events, raw
 from test_ci_dnssd_terminal import native_observation
+from test_ci_upload_artifact import upload_log
 import importlib.util
 
 SCRIPT = Path(__file__).with_name('ci-dnssd-required.py')
@@ -274,17 +275,23 @@ class ArtifactAdmissionTests(unittest.TestCase):
     def setUp(self):
         self.run=run(); self.original=job(); self.current=job(); self.meta,self.data=artifact(); self.artifacts=[self.meta]
         self.old_run=run()
+        self.log=upload_log(self.meta)
+        self.log_jobs=[]
 
     def api(self,path):
         if path.endswith('/artifacts?per_page=100&page=1'):return {'total_count':len(self.artifacts),'artifacts':copy.deepcopy(self.artifacts)}
-        if path=='actions/artifacts/300':return copy.deepcopy(self.meta)
+        if path==f"actions/artifacts/{self.meta['id']}":return copy.deepcopy(self.meta)
         if path.endswith('/jobs?per_page=100&page=1'):
             attempt=int(path.split('/attempts/')[1].split('/')[0]); selected=self.current if attempt==self.run['run_attempt'] else self.original
             return {'total_count':1,'jobs':[copy.deepcopy(selected)]}
         if path=='actions/runs/10/attempts/1':return copy.deepcopy(self.old_run)
         raise AssertionError(path)
 
-    def audit(self):return gate.audit_artifact(self.api,self.run,SHA,TREE,download=lambda _:self.data)
+    def audit(self):
+        def job_log(identifier):
+            self.log_jobs.append(identifier)
+            return self.log
+        return gate.audit_artifact(self.api,self.run,SHA,TREE,download=lambda _:self.data,job_log=job_log)
 
     def carry(self):
         self.run=run(2); self.current=job(2,101); self.old_run['conclusion']='failure'
@@ -293,6 +300,44 @@ class ArtifactAdmissionTests(unittest.TestCase):
         self.assertEqual(self.audit()['producingAttempt'],1)
         self.carry(); proof=self.audit()
         self.assertEqual((proof['producingAttempt'],proof['effectiveAttempt'],proof['producingJobId'],proof['effectiveJobId']),(1,2,100,101))
+
+    def test_metadata_one_second_after_upload_end_remains_exactly_bound(self):
+        for carried in (False, True):
+            self.setUp()
+            if carried: self.carry()
+            self.meta.update(created_at='2026-01-01T00:00:51Z', updated_at='2026-01-01T00:00:51Z')
+            self.assertEqual(self.audit()['artifactId'], 300)
+            self.assertEqual(self.log_jobs, [100])
+
+    def test_same_name_replacement_and_out_of_job_metadata_are_rejected(self):
+        for changes in ({'id': 301}, {'created_at': '2026-01-01T00:00:29Z'},
+                        {'created_at': '2026-01-01T00:01:01Z'},
+                        {'updated_at': '2026-01-01T00:01:01Z'},
+                        {'updated_at': '2026-01-01T00:00:39Z'}):
+            self.setUp(); self.meta.update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError): self.audit()
+
+    def test_required_original_job_log_cannot_be_missing_or_wrong(self):
+        for log in (b'', upload_log(dict(self.meta, id=301)), self.log + self.log):
+            self.log=log
+            with self.assertRaises(ValueError): self.audit()
+
+    def test_artifact_and_original_producer_readbacks_remain_immutable(self):
+        for carried in (False, True):
+            for target in ('artifact', 'producer'):
+                self.setUp()
+                if carried: self.carry()
+                original_api, counts = self.api, {}
+                def api(path):
+                    result=original_api(path)
+                    counts[path]=counts.get(path,0)+1
+                    if target == 'artifact' and path == 'actions/artifacts/300' and counts[path] == 2:
+                        result['updated_at']='2026-01-01T00:00:42Z'
+                    if target == 'producer' and '/attempts/1/jobs?' in path and counts[path] == 2:
+                        result['jobs'][0]['id']=999
+                    return result
+                with patch.object(self,'api',side_effect=api), self.subTest(carried=carried,target=target), self.assertRaises(ValueError):
+                    self.audit()
 
     def test_core_failure_artifacts_do_not_collide_with_current_or_carried_discovery_success(self):
         extras=[{'name':'soba-native-core-failure-'+target+'-10-'+str(attempt)}
@@ -314,6 +359,7 @@ class ArtifactAdmissionTests(unittest.TestCase):
         self.meta,self.data=artifact(value)
         self.meta['workflow_run'].update(head_sha='d'*40, head_branch='synthetic-feature')
         self.artifacts=[self.meta]
+        self.log=upload_log(self.meta)
         proof=self.audit()
         self.assertEqual((proof['commit'],proof['tree']),(SHA,TREE))
         self.assertNotEqual(proof['commit'],self.run['head_sha'])
@@ -344,6 +390,7 @@ class ArtifactAdmissionTests(unittest.TestCase):
         for field in ('commit','tree','eventHead','runId','runAttempt'):
             self.setUp();value=fixture();value['provenance']['ciIdentity'][field]='d'*40 if field in ('commit','tree','eventHead') else 2
             self.meta,self.data=artifact(value);self.artifacts=[self.meta]
+            self.log=upload_log(self.meta)  # Reach the receipt identity check with matching upload bytes.
             with self.assertRaises(ValueError):self.audit()
 
 

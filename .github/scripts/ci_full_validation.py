@@ -57,6 +57,8 @@ DNSSD_SOURCES = (
     'cmd/prepare-engine/main.go',
     'internal/nearby/provider_raw.go',
     'internal/nearby/records.go',
+    '.github/scripts/ci-upload-artifact.py',
+    '.github/scripts/test_ci_upload_artifact.py',
 )
 CORE_SOURCES = (
     '.github/workflows/activation-diagnostic.yml',
@@ -82,6 +84,8 @@ CORE_SOURCES = (
     '.github/scripts/ci_full_validation.py',
     '.github/scripts/check-frontend.py',
     'cmd/prepare-engine/main.go',
+    '.github/scripts/ci-upload-artifact.py',
+    '.github/scripts/test_ci_upload_artifact.py',
 )
 SOURCES = tuple(dict.fromkeys((*SOURCES, *DNSSD_SOURCES, *CORE_SOURCES)))
 TARGETS = {
@@ -210,7 +214,8 @@ def source_bytes(api, commit, local_root=None):
     for name in ('ci_full_validation.py', 'release-validation.py', 'source_provenance.py',
                  'ci-dnssd-required.py', 'ci-dnssd-diagnostic.py', 'ci-dnssd-terminal.py',
                  'ci-nearby-native.py', 'ci-nearby-diagnostic.py', 'ci-go-test.py',
-                 'ci-native-core-required.py', 'ci-native-core.py', 'ci-windows-packages.py', 'ci-metrics.py'):
+                 'ci-native-core-required.py', 'ci-native-core.py', 'ci-windows-packages.py', 'ci-metrics.py',
+                 'ci-upload-artifact.py'):
         require(Path(__file__).with_name(name).read_bytes() == sources['.github/scripts/' + name],
                 'loaded release tool differs from exact source')
     return sources
@@ -707,7 +712,7 @@ def validate_native_packages_workflow(sources):
             'package partition runner differs from reviewed policy')
     require(digest(sources['.github/scripts/ci-native-core.py']) == 'd5e6b47a41cfd608e3d4f34a9f9949a351b07ac60299243ca1d68d677b881389',
             'native Core collector differs from reviewed policy')
-    require(digest(sources['.github/scripts/ci-native-core-required.py']) == 'b11baba01eaa6f438dad17eb12d596b12ec16c04bb52917f11db3122e4ccb0fc',
+    require(digest(sources['.github/scripts/ci-native-core-required.py']) == '23d78172edea2511cc2fae956bf35bd8394c62023fed62469b25e015e8079131',
             'required native Core runner differs from reviewed policy')
     early = """      - name: Collect required whole-Core race evidence
         id: native-core
@@ -928,7 +933,7 @@ def fingerprint(run):
     return result
 
 
-def audit(api, commit, latest=None, local_root=None, previous_proof=None, artifact_download=None):
+def audit(api, commit, latest=None, local_root=None, previous_proof=None, artifact_download=None, job_log=None):
     repository = api('')
     require(repository.get('full_name') == REPOSITORY and repository.get('private') is False
             and repository.get('default_branch') == 'main', 'canonical release repository changed')
@@ -957,14 +962,14 @@ def audit(api, commit, latest=None, local_root=None, previous_proof=None, artifa
     dnssd = importlib.util.module_from_spec(spec)
     exec(compile(path.read_bytes(), str(path), 'exec'), dnssd.__dict__)
     require(tuple(dnssd.POLICY_FILES) == DNSSD_SOURCES, 'DNS-SD policy source inventory differs')
-    macos_proof = dnssd.audit_artifact(api, run, commit, tree, download=artifact_download,
+    macos_proof = dnssd.audit_artifact(api, run, commit, tree, download=artifact_download, job_log=job_log,
         policy_hashes={name: hashes[name] for name in DNSSD_SOURCES})
     path = Path(__file__).with_name('ci-native-core-required.py')
     spec = importlib.util.spec_from_file_location('ci_native_core_required', path)
     core = importlib.util.module_from_spec(spec)
     exec(compile(path.read_bytes(), str(path), 'exec'), core.__dict__)
     require(tuple(core.POLICY_FILES) == CORE_SOURCES, 'native Core policy source inventory differs')
-    package_proof = {platform: core.audit_artifact(api, run, commit, tree, platform, download=artifact_download,
+    package_proof = {platform: core.audit_artifact(api, run, commit, tree, platform, download=artifact_download, job_log=job_log,
         policy_hashes={name: hashes[name] for name in CORE_SOURCES}) for platform in core.TARGETS}
     current = select_candidate(api, commit)
     require(fingerprint(current) == fingerprint(run), 'full-CI selection changed during audit')

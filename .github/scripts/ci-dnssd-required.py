@@ -22,7 +22,7 @@ MAX_BYTES = 1024 * 1024
 SHA = re.compile('[0-9a-f]{40}\\Z')
 HASH = re.compile('[0-9a-f]{64}\\Z')
 LOADED_FILES = ('ci-dnssd-required.py', 'ci-dnssd-diagnostic.py', 'ci-dnssd-terminal.py',
-                'ci-nearby-native.py', 'ci-nearby-diagnostic.py', 'ci-go-test.py')
+                'ci-nearby-native.py', 'ci-nearby-diagnostic.py', 'ci-go-test.py', 'ci-upload-artifact.py')
 
 
 def require(ok, message='required DNS-SD proof differs'):
@@ -39,13 +39,15 @@ def module(name):
 
 
 diag = module('ci-dnssd-diagnostic')
+upload = module('ci-upload-artifact')
 POLICY_FILES = tuple(dict.fromkeys((*diag.POLICY_FILES, WORKFLOW,
     '.github/workflows/prerelease.yml', '.github/scripts/ci-dnssd-required.py',
     '.github/scripts/ci-dnssd-terminal-marker.py', '.github/scripts/test_ci_dnssd_required.py',
     '.github/scripts/ci-coverage.py', '.github/scripts/ci_full_validation.py',
     '.github/scripts/ci-metrics.py', '.github/scripts/check-frontend.py',
     'cmd/prepare-engine/main.go', 'internal/nearby/provider_raw.go',
-    'internal/nearby/records.go')))
+    'internal/nearby/records.go', '.github/scripts/ci-upload-artifact.py',
+    '.github/scripts/test_ci_upload_artifact.py')))
 
 
 def positive(value):
@@ -343,7 +345,7 @@ def artifact_receipt(raw, artifact):
     return module('ci-nearby-diagnostic').parse_json(data.decode('utf-8')), hashlib.sha256(data).hexdigest()
 
 
-def audit_artifact(api, run, commit, tree, *, download=None, policy_hashes=None):
+def audit_artifact(api, run, commit, tree, *, download=None, policy_hashes=None, job_log=None):
     require(positive(run.get('id')) and positive(run.get('run_attempt'))
             and run.get('name') == 'Cross-platform CI' and run.get('path') == WORKFLOW
             and type(commit) is str and SHA.fullmatch(commit) and type(tree) is str and SHA.fullmatch(tree))
@@ -381,13 +383,15 @@ def audit_artifact(api, run, commit, tree, *, download=None, policy_hashes=None)
             effective = next(step for step in current['steps'] if step['name'] == name)
             require(all(old[key] == effective[key] for key in ('started_at', 'completed_at', 'status', 'conclusion')))
     exported = next(step for step in producer['steps'] if step['name'] == STEPS[1])
-    require(timestamp(exported['started_at']) <= timestamp(artifact['created_at']) <= timestamp(exported['completed_at'])
+    require(timestamp(exported['started_at']) <= timestamp(artifact['created_at'])
             and timestamp(artifact['created_at']) <= timestamp(artifact['updated_at']) <= timestamp(producer['completed_at'])
             and artifact.get('expired') is False)
     origin = artifact.get('workflow_run', {})
     require(origin.get('id') == run['id'] and type(origin.get('id')) is int
             and origin.get('head_sha') == run['head_sha'] and origin.get('head_branch') == run.get('head_branch'))
     require(api(f"actions/artifacts/{artifact['id']}") == artifact, 'artifact identity changed')
+    upload.validate_job_upload((job_log or upload.download_job_log)(producer['id']),
+        artifact, producer, exported, REPOSITORY, run['id'])
     raw = (download or download_artifact)(artifact['id'])
     receipt, receipt_hash = artifact_receipt(raw, artifact)
     identity = {'repository': REPOSITORY, 'workflow': WORKFLOW, 'job': JOB, 'runId': run['id'],
@@ -396,6 +400,8 @@ def audit_artifact(api, run, commit, tree, *, download=None, policy_hashes=None)
         policy_hashes = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in POLICY_FILES}
     validate_receipt(receipt, identity, policy_hashes)
     require(api(f"actions/artifacts/{artifact['id']}") == artifact, 'artifact identity changed after admission')
+    if attempt != run['run_attempt']:
+        require(native_job(api, run, attempt) == producer, 'original Mac job changed during admission')
     require(native_job(api, run, run['run_attempt']) == current, 'effective Mac job changed during admission')
     return {'artifactId': artifact['id'], 'artifactSha256': hashlib.sha256(raw).hexdigest(),
             'receiptSha256': receipt_hash, 'runId': run['id'], 'producingAttempt': attempt,

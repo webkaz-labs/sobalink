@@ -15,6 +15,7 @@ from unittest.mock import patch, Mock
 
 from test_ci_native_core import event, raw
 from test_ci_dnssd_required import archive
+from test_ci_upload_artifact import upload_log
 import test_ci_dnssd_required as dnssd_fixtures
 
 SCRIPT = Path(__file__).with_name('ci-native-core-required.py')
@@ -558,24 +559,63 @@ class ArtifactTests(unittest.TestCase):
     def audit(self, platform=PLATFORM, *, effective=1, producing=1, mutate=None):
         meta,data=artifact(platform,producing)
         current,previous=job(platform,effective,101),job(platform,producing,100)
-        state={'artifact':meta,'current':current,'previous':previous,'run':run(effective),'prior':run(producing)}
+        state={'artifact':meta,'current':current,'previous':previous,'run':run(effective),'prior':run(producing),
+               'log':upload_log(meta)}
         if mutate: mutate(state)
+        calls = {}
         def api(path):
+            calls[path] = calls.get(path, 0) + 1
+            if calls[path] == 2 and path == state.get('mutatePath'):
+                state['onReadback'](state)
             if '/artifacts?' in path:
                 artifacts=([state['artifact']] if state['artifact'] is not None else [])+state.get('extraArtifacts',[])
-                return {'total_count':len(artifacts),'artifacts':artifacts}
-            if path=='actions/artifacts/301':return state['artifact']
+                return {'total_count':len(artifacts),'artifacts':copy.deepcopy(artifacts)}
+            if state['artifact'] is not None and path==f"actions/artifacts/{state['artifact']['id']}":return copy.deepcopy(state['artifact'])
             if '/jobs?' in path:
                 selected=state['current'] if f'/attempts/{effective}/' in path else state['previous']
-                return {'total_count':1,'jobs':[selected]}
+                return {'total_count':1,'jobs':[copy.deepcopy(selected)]}
             if path==f'actions/runs/10/attempts/{producing}':return state['prior']
             raise AssertionError(path)
-        return gate.audit_artifact(api,state['run'],SHA,TREE,platform,download=lambda _:data)
+        def job_log(identifier):
+            self.assertEqual(identifier, 101 if effective == producing else 100)
+            return state['log']
+        return gate.audit_artifact(api,state['run'],SHA,TREE,platform,download=lambda _:data,job_log=job_log)
     def test_exact_artifact_and_legitimate_carried_forward_results(self):
         for platform in gate.TARGETS:
             self.assertEqual(self.audit(platform)['producingAttempt'],1)
             proof=self.audit(platform,effective=2,producing=1)
             self.assertEqual((proof['producingAttempt'],proof['effectiveAttempt']),(1,2))
+    def test_one_second_post_step_metadata_uses_original_upload_association(self):
+        for platform in gate.TARGETS:
+            for effective in (1,2):
+                proof=self.audit(platform,effective=effective,producing=1,
+                    mutate=lambda s:s['artifact'].update(created_at='2026-01-01T00:00:51Z',updated_at='2026-01-01T00:00:51Z'))
+                self.assertEqual(proof['producingJobId'],101 if effective == 1 else 100)
+
+    def test_same_name_replacement_future_metadata_and_bad_logs_are_rejected(self):
+        changes=[lambda s:s['artifact'].update(id=302),
+            lambda s:s['artifact'].update(created_at='2026-01-01T00:01:01Z'),
+            lambda s:s['artifact'].update(updated_at='2026-01-01T00:01:01Z'),
+            lambda s:s['artifact'].update(updated_at='2026-01-01T00:00:39Z'),
+            lambda s:s.update(log=b''),lambda s:s.update(log=s['log']+s['log']),
+            lambda s:s.update(log=upload_log(dict(s['artifact'],id=302)))]
+        for platform in gate.TARGETS:
+            for mutate in changes:
+                with self.subTest(platform=platform),self.assertRaises(ValueError):self.audit(platform,mutate=mutate)
+
+    def test_artifact_and_original_job_readback_mutations_fail(self):
+        for platform in gate.TARGETS:
+            for effective in (1, 2):
+                for target in ('artifact', 'producer'):
+                    def mutate(state):
+                        path = 'actions/artifacts/301' if target == 'artifact' else 'actions/runs/10/attempts/1/jobs?per_page=100&page=1'
+                        def change(value):
+                            if target == 'artifact': value['artifact']['updated_at']='2026-01-01T00:00:42Z'
+                            else: value['current' if effective == 1 else 'previous']['id']=999
+                        state.update(mutatePath=path, onReadback=change)
+                    with self.subTest(platform=platform,effective=effective,target=target),self.assertRaises(ValueError):
+                        self.audit(platform,effective=effective,mutate=mutate)
+
     def test_failure_artifacts_never_match_required_or_discovery_selectors_even_on_later_attempt(self):
         extras=[{'name':gate.FAILURE_ARTIFACT+'-'+target+'-10-'+str(attempt)}
                 for target in gate.TARGETS for attempt in (1,2)]

@@ -59,7 +59,8 @@ POLICY_FILES = tuple(dict.fromkeys((*collector.POLICY_FILES, *packages.POLICY_FI
     '.github/scripts/test_ci_native_core_required.py', '.github/scripts/ci-dnssd-required.py',
     '.github/scripts/ci-dnssd-diagnostic.py', '.github/scripts/ci-dnssd-terminal.py',
     '.github/scripts/ci-coverage.py', '.github/scripts/ci_full_validation.py',
-    '.github/scripts/check-frontend.py', 'cmd/prepare-engine/main.go')))
+    '.github/scripts/check-frontend.py', 'cmd/prepare-engine/main.go',
+    '.github/scripts/ci-upload-artifact.py', '.github/scripts/test_ci_upload_artifact.py')))
 
 
 def positive(value):
@@ -569,7 +570,7 @@ def native_job(api, run, attempt, platform):
 
 
 
-def audit_artifact(api, run, commit, tree, platform, *, download=None, policy_hashes=None):
+def audit_artifact(api, run, commit, tree, platform, *, download=None, policy_hashes=None, job_log=None):
     require(platform in TARGETS)
     artifact_prefix = ARTIFACT + '-' + platform
     require(positive(run.get('id')) and positive(run.get('run_attempt'))
@@ -609,13 +610,15 @@ def audit_artifact(api, run, commit, tree, platform, *, download=None, policy_ha
             effective = next(step for step in current['steps'] if step['name'] == name)
             require(all(old[key] == effective[key] for key in ('started_at', 'completed_at', 'status', 'conclusion')))
     exported = next(step for step in producer['steps'] if step['name'] == STEPS[-1])
-    require(shared.timestamp(exported['started_at']) <= shared.timestamp(artifact['created_at']) <= shared.timestamp(exported['completed_at'])
+    require(shared.timestamp(exported['started_at']) <= shared.timestamp(artifact['created_at'])
             and shared.timestamp(artifact['created_at']) <= shared.timestamp(artifact['updated_at']) <= shared.timestamp(producer['completed_at'])
             and artifact.get('expired') is False)
     origin = artifact.get('workflow_run', {})
     require(origin.get('id') == run['id'] and type(origin.get('id')) is int
             and origin.get('head_sha') == run['head_sha'] and origin.get('head_branch') == run.get('head_branch'))
     require(api(f"actions/artifacts/{artifact['id']}") == artifact, 'artifact identity changed')
+    shared.upload.validate_job_upload((job_log or shared.upload.download_job_log)(producer['id']),
+        artifact, producer, exported, REPOSITORY, run['id'])
     raw = (download or shared.download_artifact)(artifact['id'])
     receipt, receipt_hash = shared.artifact_receipt(raw, artifact)
     identity = {'repository': REPOSITORY, 'workflow': WORKFLOW, 'job': TARGETS[platform][0], 'runId': run['id'],
@@ -624,6 +627,8 @@ def audit_artifact(api, run, commit, tree, platform, *, download=None, policy_ha
         policy_hashes = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in POLICY_FILES}
     validate_receipt(receipt, identity, policy_hashes)
     require(api(f"actions/artifacts/{artifact['id']}") == artifact, 'artifact identity changed after admission')
+    if attempt != run['run_attempt']:
+        require(native_job(api, run, attempt, platform) == producer, 'original native job changed during admission')
     require(native_job(api, run, run['run_attempt'], platform) == current, 'effective native job changed during admission')
     return {'artifactId': artifact['id'], 'artifactSha256': hashlib.sha256(raw).hexdigest(),
             'receiptSha256': receipt_hash, 'runId': run['id'], 'producingAttempt': attempt,
