@@ -1,0 +1,36 @@
+// Copyright 2018 The gVisor Authors.
+// Modifications Copyright 2026 The Sobalink Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package tcp
+
+import "gvisor.dev/gvisor/pkg/waiter"
+
+// WaitHangup observes the same completed TCP exchange as Wait, including a
+// TIME_WAIT transition that happened before this call. Registering before the
+// state check prevents a lost notification between inspection and sleep.
+//
+// Like Wait's already-registered EventHUp observer, this does not wait for the
+// TIME_WAIT timer or join the stack's dispatcher. Those remain stack-owned and
+// must be retired separately. It neither closes nor aborts the endpoint.
+func (e *Endpoint) WaitHangup() {
+	waitEntry, notifyCh := waiter.NewChannelEntry(waiter.EventHUp)
+	e.waiterQueue.EventRegister(&waitEntry)
+	defer e.waiterQueue.EventUnregister(&waitEntry)
+	switch e.EndpointState() {
+	case StateClose, StateError, StateTimeWait:
+		return
+	}
+	<-notifyCh
+}

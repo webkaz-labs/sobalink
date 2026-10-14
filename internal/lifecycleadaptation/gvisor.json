@@ -8,7 +8,7 @@
   "revision": "a6f909f08a7250c080b5b70f3513e8b27b75f64a",
   "license": "Apache-2.0",
   "upstream_tree_sha256": "851bfb125ed38e026bf420e0be369d71f35260327a5ec7a463b187aceecb7d82",
-  "adapted_tree_sha256": "636b426fb6cf6b5d84c4c1966df873907828d48fe41f5696b44559b51d8c56c5",
+  "adapted_tree_sha256": "6da508199c763d04bdabc2e547d6dc1639c7c90b5d301e35abe5ebd66094bc13",
   "notices": [
     {"path": "AUTHORS", "sha256": "16818597d03ff1b20e9a5e6eeedb3108acde75ec30c3edba534892b1a66b1e71"},
     {"path": "LICENSE", "sha256": "0fbab5c58efbdf6d31e8085214f2dd821659c03d73cff3ed2b08e98826ea1cd9"}
@@ -25,6 +25,12 @@
       "original_sha256": "",
       "adapted_sha256": "c9635a1b85f2d7533b9eed690f5d5d95f3ad6096ea3956beeb82c6dbde1d609c",
       "source_path": "sources/gvisor/pkg/tcpip/transport/tcp/forwarder_owned.go.txt"
+    },
+    {
+      "path": "pkg/tcpip/transport/tcp/endpoint_owned.go",
+      "original_sha256": "",
+      "adapted_sha256": "8c59c39ee62989dd74027c155a10192b887bdbeddc97170ee853ec471689faa3",
+      "source_path": "sources/gvisor/pkg/tcpip/transport/tcp/endpoint_owned.go.txt"
     }
   ]
 }
