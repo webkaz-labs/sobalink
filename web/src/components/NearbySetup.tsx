@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, type FormEvent, type Ref } from 'react'
+import { useEffect, useLayoutEffect, useImperativeHandle, useRef, useState, type FormEvent, type Ref } from 'react'
 import type { CommandPayloads, Locale } from '../api'
 import type { Server } from '../useServer'
 import { MAX_SETUP_TEXT_BYTES, readSetupContact, readSetupFingerprint, readSetupScopes, readSetupSnapshot, setupEndpoint, setupTerminal, validSetupPort, validSetupAlias, type SetupCommandPayloads, type SetupPlan, type SetupScope, type SetupSnapshot } from '../nearby-setup'
@@ -188,7 +188,8 @@ function TypedInput({ kind, server, locale, label, pngLabel, disabled, value, on
   const c = (key: NearbyTextKey) => nearbyText(locale, key), budget = pngPolicy(server.state?.limits?.effective.resources)
   const invalidate = () => { ++sequence.current; importer.current?.cancel(); setReading(false); setNotice(undefined) }
   const binding = JSON.stringify([kind, disabled, budget, server.auth, server.stale])
-  useEffect(() => { invalidate(); return () => { ++sequence.current; importer.current?.dispose(); importer.current = undefined } }, [binding])
+  // Apply binding invalidation before newly committed controls can receive input.
+  useLayoutEffect(() => { invalidate(); return () => { ++sequence.current; importer.current?.dispose(); importer.current = undefined } }, [binding])
   const file = (selected?: File) => {
     if (!selected || disabled) return
     invalidate(); onChange(''); const generation = sequence.current
