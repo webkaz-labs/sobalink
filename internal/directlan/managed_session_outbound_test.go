@@ -42,6 +42,31 @@ func TestManagedOutboundBoundReplyComposition(t *testing.T) {
 			t.Fatalf("peer-close classification: got %v, want %v for %T", got, check.want, check.err)
 		}
 	}
+	// WSAECONNABORTED is not a generic peer close. Only the deliberately
+	// cancelled reply write may race the client's cancellation-owned close.
+	for _, check := range []struct {
+		kind, goos      string
+		contextErr, err error
+		want            bool
+	}{
+		{"cancelled", "windows", context.Canceled, syscall.Errno(10053), true},
+		{"cancelled", "windows", context.Canceled, &net.OpError{Op: "write", Net: "tcp4", Err: syscall.Errno(10053)}, true},
+		{"cancelled", "linux", context.Canceled, syscall.Errno(10053), false},
+		{"cancelled", "darwin", context.Canceled, syscall.Errno(10053), false},
+		{"cancelled", "windows", nil, syscall.Errno(10053), false},
+		{"cancelled", "windows", context.DeadlineExceeded, syscall.Errno(10053), false},
+		{"wrong-pin", "windows", context.Canceled, syscall.Errno(10053), false},
+		{"stopped-owner", "windows", context.Canceled, syscall.Errno(10053), false},
+		{"exact", "windows", context.Canceled, syscall.Errno(10053), false},
+		{"cancelled", "windows", context.Canceled, nil, false},
+		{"cancelled", "windows", context.Canceled, context.DeadlineExceeded, false},
+		{"cancelled", "windows", context.Canceled, syscall.Errno(10060), false},
+		{"cancelled", "windows", context.Canceled, errors.New("An established connection was aborted by the software in your host machine."), false},
+	} {
+		if got := managedExpectedCancelledReplyAbort(check.kind, check.goos, check.contextErr, check.err); got != check.want {
+			t.Fatalf("cancelled-reply classification: got %v, want %v for %s/%s/%v/%T", got, check.want, check.kind, check.goos, check.contextErr, check.err)
+		}
+	}
 	for _, kind := range []string{"exact", "wrong-binding", "wrong-operation", "v1", "noncanonical", "oversize", "truncated", "lost-reply", "wrong-pin", "cancelled", "stale-registration", "stale-peer", "stopped-owner"} {
 		t.Run(kind, func(t *testing.T) {
 			listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
@@ -210,7 +235,8 @@ func TestManagedOutboundBoundReplyComposition(t *testing.T) {
 				if outcome.stage != kind {
 					t.Fatal("intended negative exchange not reached", kind, outcome.stage, outcome.err)
 				}
-				if outcome.err != nil && !((kind == "cancelled" || kind == "stopped-owner") && managedExpectedPeerClose(outcome.err)) {
+				if outcome.err != nil && !((kind == "cancelled" || kind == "stopped-owner") && managedExpectedPeerClose(outcome.err)) &&
+					!managedExpectedCancelledReplyAbort(kind, runtime.GOOS, ctx.Err(), outcome.err) {
 					t.Fatal("scripted server exchange failed", outcome.err)
 				}
 			}
@@ -242,4 +268,8 @@ func TestManagedOutboundBoundReplyComposition(t *testing.T) {
 func managedExpectedPeerClose(err error) bool {
 	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
 		(runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10054))) // WSAECONNRESET
+}
+
+func managedExpectedCancelledReplyAbort(kind, goos string, contextErr, err error) bool {
+	return kind == "cancelled" && goos == "windows" && errors.Is(contextErr, context.Canceled) && errors.Is(err, syscall.Errno(10053)) // WSAECONNABORTED
 }
