@@ -10,6 +10,7 @@ import sys
 import pathlib
 import re
 import shlex
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -110,6 +111,53 @@ class WorkflowCachePolicy(unittest.TestCase):
                         download = self.step("prerelease", job, "name: " + artifact)
                         self.assertLess(source.index(checkout), source.index(download))
                 self.assertNotIn("python tools/release-validation.py gate", source)
+
+    def stage_loader(self):
+        stage = self.step("prerelease", "stage", "name: Recheck source and CI,")
+        inline = stage.split("python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+        # Execute the actual workflow import prefix only, before environment
+        # access, API reads or publication side effects.
+        prefix = textwrap.dedent(inline).split("version, commit =", 1)[0]
+        self.assertIn("spec.loader.exec_module(checks)", prefix)
+        return prefix
+
+    def run_stage_loader(self, prefix, missing=None):
+        upload = self.step("prerelease", "gate", "name: release-validation-tools")
+        files = re.findall(r"^            (\.github/scripts/[^\n]+)$", upload, re.MULTILINE)
+        self.assertEqual(len(files), 16)
+        root = pathlib.Path(__file__).parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            tools = pathlib.Path(directory) / "tools"
+            tools.mkdir()
+            for filename in files:
+                source = root / filename
+                if source.name != missing:
+                    (tools / source.name).write_bytes(source.read_bytes())
+            # Isolated Python excludes the test runner's sys.path/PYTHONPATH.
+            return subprocess.run([sys.executable, "-I", "-c", prefix],
+                                  cwd=directory, capture_output=True, text=True,
+                                  timeout=30, check=False)
+
+    def test_stage_inline_loader_finds_exact_packaged_sibling(self):
+        prefix = self.stage_loader()
+        prefix += '\nassert pathlib.Path(sys.modules["source_provenance"].__file__).resolve() == pathlib.Path("tools/source_provenance.py").resolve()\n'
+        result = self.run_stage_loader(prefix)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
+
+    def test_stage_inline_loader_reproduces_original_missing_import(self):
+        prefix = self.stage_loader().replace('sys.path.insert(0, str(pathlib.Path("tools").resolve()))\n', '')
+        result = self.run_stage_loader(prefix)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ModuleNotFoundError: No module named 'source_provenance'", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_stage_inline_loader_rejects_missing_packaged_sibling(self):
+        result = self.run_stage_loader(self.stage_loader(), missing="source_provenance.py")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ModuleNotFoundError: No module named 'source_provenance'", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_stage_revalidates_before_any_tag_or_draft_mutation(self):
         stage = self.step("prerelease", "stage", "name: Recheck source and CI,")
