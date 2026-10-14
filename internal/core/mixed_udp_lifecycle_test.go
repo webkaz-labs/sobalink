@@ -78,15 +78,18 @@ func TestReviewOpaqueUDPCoreAdmissionLifecycle(t *testing.T) {
 	if _, e := p.WriteTo([]byte("wrong-port"), net.UDPAddrFromAddrPort(netip.AddrPortFrom(ap.Addr(), 2))); e == nil {
 		t.Fatal("forged alias port routed reply")
 	}
-	// Retire the final mapping by idle expiration without sleeping in wall time.
-	p.mu.Lock()
-	for _, s := range p.aliases {
-		s.lastActive = time.Time{}
+	// Delivery can precede the producer's deferred borrow release. Join that
+	// counted work before testing idle expiration, without a wall-clock sleep.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := reviewRetireIdleUDPSource(ctx, p, fresh, nil); err != nil {
+		t.Fatal(err)
 	}
-	p.retireIdleLocked(time.Now())
-	p.mu.Unlock()
 	freshAP, _ := netip.ParseAddrPort(fresh.String())
 	if _, e := c.authenticated(context.Background(), freshAP); e == nil {
 		t.Fatal("idle retired alias authenticated")
+	}
+	if _, e := p.WriteTo([]byte("idle-retired"), fresh); e == nil {
+		t.Fatal("idle retired alias routed reply")
 	}
 }
