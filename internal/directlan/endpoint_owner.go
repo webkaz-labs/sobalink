@@ -106,7 +106,7 @@ func (e *liveEndpoint) supervise() {
 		// This terminal observer does not mutate the endpoint. The one mutator
 		// remains here, including a retirement Abort after an earlier normal Close.
 		terminal := make(chan struct{})
-		go func() { transport.Wait(); close(terminal) }()
+		go func() { transport.WaitHangup(); close(terminal) }()
 		select {
 		case <-terminal:
 		case <-e.g.stop:

@@ -78,6 +78,17 @@ creator cleans an endpoint before handoff. Request completion and handler return
 are separate obligations. Creator completion does not establish stack or dispatcher
 completion; outgoing creators and ingress must follow their own generation fences.
 
+The additive gVisor `Endpoint.WaitHangup` observes the same TCP hangup event
+as an already-registered upstream `Wait`, including entry into `TIME_WAIT`.
+It registers before checking `CLOSE`, `ERROR`, and `TIME_WAIT`, so a late
+observer cannot miss the hangup and wait for the default one-minute timer.
+The direct-LAN endpoint owner uses it after sealing and joining all borrowed
+calls. Normal close keeps TCP's `TIME_WAIT` behavior intact; retirement still
+aborts an unfinished close. This observation releases the application's live
+endpoint reservation, not the stack-owned timer or dispatcher. Generation
+retirement must still close, wait, and destroy the old stack independently.
+The ordinary upstream `Wait` API and protocol timeouts are unchanged.
+
 The opt-in WireGuard facade restricts configuration to one initial bind/start,
 non-lazy peers, zero persistent keepalive and the documented nonblocking callbacks.
 It seals/wakes the exact socket and TUN before application cancellation bookkeeping,

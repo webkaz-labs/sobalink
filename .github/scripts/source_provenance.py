@@ -27,7 +27,7 @@ ADAPTED_MODULES = {
     "gvisor.dev/gvisor": {
         "name": "gvisor", "source_path": "internal/lifecycleadaptation/gvisor",
         "manifest_path": "internal/lifecycleadaptation/gvisor.json",
-        "manifest_sha256": "8462cc271c23a11c445c8b2997bf03fd5c822c81a5c59be7197f670b96f18f31",
+        "manifest_sha256": "e37db9389f8dd9fd1514fba9fc9b6b0a2e4351d858d7f597c7ff791e1a80af08",
         "version": "v0.0.0-20260915211658-a6f909f08a72", "license": "Apache-2.0",
         "module_sum": "h1:EytKYr5WrVs+Aah/0xDO8ZAZZzS/iTEVC8ln4ipDbL0=",
         "go_mod_sum": "h1:8aLQqUBHDH8fY5y60lzmwDpMMbQCcT3EBfoSwhfaGCY=",
