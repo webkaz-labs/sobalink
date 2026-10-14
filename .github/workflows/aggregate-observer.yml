@@ -29,8 +29,8 @@ jobs:
           fetch-depth: 0
           ref: e3f6fd4adf74d9306f55d40b75ed96f2dd532d51
           path: baseline
-      - name: Observe original aggregate without publishing its receipt
+      - name: Compare original and private candidate fetch without qualification
         env:
           GH_TOKEN: ${{ github.token }}
           PYTHONDONTWRITEBYTECODE: '1'
-        run: python -B observer/.github/scripts/ci-aggregate-observer.py --baseline "$GITHUB_WORKSPACE/baseline"
+        run: python -B observer/.github/scripts/ci-aggregate-fetch-comparison.py --baseline "$GITHUB_WORKSPACE/baseline"
