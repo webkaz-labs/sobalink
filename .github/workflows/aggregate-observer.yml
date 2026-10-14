@@ -1,0 +1,36 @@
+name: Aggregate observation (never qualification)
+
+# Fresh ref creation is supported without default-branch workflow registration.
+# This unique prefix does not start activation diagnostics or the native matrix.
+on:
+  create:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aggregate-observation-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  observe-historical-aggregate:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.ref_type == 'branch' && startsWith(github.ref, 'refs/heads/aggregate-observer/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: observer
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: e3f6fd4adf74d9306f55d40b75ed96f2dd532d51
+          path: baseline
+      - name: Observe original aggregate without publishing its receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -B observer/.github/scripts/ci-aggregate-observer.py --baseline "$GITHUB_WORKSPACE/baseline"
