@@ -233,7 +233,7 @@ func mockTool(t *testing.T) (*Tool, *int) {
 	builds := new(int)
 	tool.nativeProbe = nativeProbeFixture(t)
 	tool.nativeInventory = func([]goPackage) ([]NativePackage, []Notice, error) { return []NativePackage{}, []Notice{}, nil }
-	tool.nativeLinks = func(string) ([]string, error) { return append([]string{}, darwinSystemLibraries...), nil }
+	tool.nativeLinks = func(string, string) ([]string, error) { return append([]string{}, darwinSystemLibraries...), nil }
 	tool.run = func(env []string, args ...string) ([]byte, error) {
 		for _, want := range []string{"GOTOOLCHAIN=local", "GOWORK=off", "GOENV=off", "GOFLAGS=", "GOEXPERIMENT=", "GOFIPS140=off"} {
 			if !strings.Contains(strings.Join(env, "\n"), want) {
@@ -482,5 +482,64 @@ func TestSupportedDistributionTargets(t *testing.T) {
 	}
 	if (Target{"darwin", "amd64"}).valid() {
 		t.Fatal("Intel macOS is not a distribution target")
+	}
+}
+
+func TestBuildUsesAndRecordsExactDarwinUUID(t *testing.T) {
+	for _, target := range Targets {
+		t.Run(target.String(), func(t *testing.T) {
+			tool, _ := mockTool(t)
+			run := tool.run
+			var flags, inspectedUUID string
+			tool.run = func(env []string, args ...string) ([]byte, error) {
+				if args[0] == "build" {
+					for i, arg := range args {
+						if arg == "-ldflags" {
+							flags = args[i+1]
+						}
+					}
+				}
+				return run(env, args...)
+			}
+			tool.nativeLinks = func(path, expectedUUID string) ([]string, error) {
+				inspectedUUID = expectedUUID
+				return append([]string{}, darwinSystemLibraries...), nil
+			}
+			const version = "1.2.3"
+			commit := strings.Repeat("a", 40)
+			if err := tool.Build(version, target, commit, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			raw := readFixture(t, filepath.Join(tool.Root, "dist", stem(version, target)+".build.json"))
+			var metadata struct {
+				Flags  string       `json:"ldflags"`
+				Native *NativeBuild `json:"native_build"`
+				Binary struct {
+					SHA256 string `json:"sha256"`
+				} `json:"binary"`
+			}
+			if err := json.Unmarshal(raw, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			want := "-s -w -buildid= -X main.version=" + version
+			if target.OS == "darwin" {
+				uuid := darwinBuildUUID(commit, version, nativeDigest(metadata.Native))
+				want += " -linkmode=external -B=0x" + uuid
+				if inspectedUUID != uuid {
+					t.Fatal("binary inspection did not receive complete native UUID identity")
+				}
+			} else if inspectedUUID != "" {
+				t.Fatal("inspected native UUID for another target")
+			}
+			if flags != want || metadata.Flags != want {
+				t.Fatal("compiler and metadata flags differ from build identity")
+			}
+			if metadata.Binary.SHA256 != bytesHash([]byte("compiled binary")) {
+				t.Fatal("UUID replaced full content integrity digest")
+			}
+			if bytes.Contains(raw, []byte(tool.Root)) {
+				t.Fatal("build metadata leaked source path")
+			}
+		})
 	}
 }

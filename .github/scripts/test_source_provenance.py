@@ -406,11 +406,12 @@ def add_native_fixture(build, notices, bom, target='darwin-arm64'):
     """Coherent synthetic metadata only; never invokes native credential APIs."""
     from source_provenance import (DARWIN_CFLAGS, DARWIN_LDFLAGS, DARWIN_LIBRARIES,
         DARWIN_PACKAGES, DARWIN_POLICY_INPUTS, DARWIN_SDK_INPUTS, native_digest,
-        DARWIN_ROUTECAT_PACKAGE, DARWIN_ROUTECAT_PATH, DARWIN_ROUTECAT_INPUTS)
+        DARWIN_ROUTECAT_PACKAGE, DARWIN_ROUTECAT_PATH, DARWIN_ROUTECAT_INPUTS,
+        DARWIN_BUILD_TAGS, darwin_build_uuid)
     darwin = target == 'darwin-arm64'
     build.update(target=target, cgo_enabled=darwin, go_version='go1.27.1', trimpath=True,
-                 buildvcs=False, source_commit='a' * 40)
-    build['ldflags'] = '-s -w -buildid= -X main.version=' + build['version'] + (' -linkmode=external -B=none' if darwin else '')
+                 buildvcs=False, source_commit='a' * 40, build_tags=DARWIN_BUILD_TAGS)
+    build['ldflags'] = '-s -w -buildid= -X main.version=' + build['version']
     notices['scope'] = 'Target-filtered inventory (CGO_ENABLED=' + ('1' if darwin else '0') + ').'
     props = {'build:target': target, 'source:commit': build['source_commit'],
              'build:cgo': '1' if darwin else '0', 'inventory:scope': notices['scope']}
@@ -447,6 +448,7 @@ def add_native_fixture(build, notices, bom, target='darwin-arm64'):
             'cflags': DARWIN_CFLAGS.copy(), 'ldflags': DARWIN_LDFLAGS.copy(), 'packages': packages,
             'policy_inputs': [{'path': p, 'sha256': h} for p, h in sorted(DARWIN_POLICY_INPUTS.items())],
             'system_libraries': list(DARWIN_LIBRARIES)}
+        build['ldflags'] += ' -linkmode=external -B=0x' + darwin_build_uuid(build['source_commit'], build['version'], native_digest(native))
         build['native_build'] = copy.deepcopy(native)
         notices['native_build'] = copy.deepcopy(native)
         props['build:native:sha256'] = native_digest(native)
@@ -490,7 +492,7 @@ class NativeProvenanceTests(unittest.TestCase):
                 self.assertEqual(digest((REPOSITORY / DARWIN_ROUTECAT_PATH / name).read_bytes()), sha)
 
     def test_routecat_native_policy_inventory_fails_closed(self):
-        from source_provenance import DARWIN_ROUTECAT_PACKAGE, native_digest, verify_native
+        from source_provenance import DARWIN_ROUTECAT_PACKAGE, native_digest, darwin_build_uuid, verify_native
         for kind in ('old-five-only', 'missing', 'extra', 'duplicate', 'changed'):
             with self.subTest(kind=kind):
                 build, notices, bom = self.fixture()
@@ -507,6 +509,7 @@ class NativeProvenanceTests(unittest.TestCase):
                 notices['native_build'] = copy.deepcopy(native)
                 for prop in bom['metadata']['properties']:
                     if prop['name'] == 'build:native:sha256': prop['value'] = native_digest(native)
+                build['ldflags'] = build['ldflags'].rsplit('-B=', 1)[0] + '-B=0x' + darwin_build_uuid(build['source_commit'], build['version'], native_digest(native))
                 with self.assertRaises(AssertionError):
                     verify_native(build, notices, bom)
 
@@ -533,7 +536,7 @@ class NativeProvenanceTests(unittest.TestCase):
                     verify_native(build, notices, bom)
 
     def test_darwin_native_mutations_fail_closed(self):
-        from source_provenance import native_digest, verify_native
+        from source_provenance import native_digest, darwin_build_uuid, verify_native
         mutations = [
             lambda n: n.update(schema=True), lambda n: n.update(host_os='linux'),
             lambda n: n.update(host_arch='amd64'), lambda n: n.update(deployment_target='26.0'),
@@ -559,6 +562,8 @@ class NativeProvenanceTests(unittest.TestCase):
                 for prop in bom['metadata']['properties']:
                     if prop['name'] == 'build:native:sha256':
                         prop['value'] = native_digest(build['native_build'])
+                # Keep metadata and UUID flags coherent so the reviewed policy itself must reject this.
+                build['ldflags'] = build['ldflags'].rsplit('-B=', 1)[0] + '-B=0x' + darwin_build_uuid(build['source_commit'], build['version'], native_digest(build['native_build']))
                 with self.assertRaises((AssertionError, KeyError, ValueError)):
                     verify_native(build, notices, bom)
 
@@ -589,8 +594,10 @@ class NativeProvenanceTests(unittest.TestCase):
     def test_macho_actual_linkage_and_deployment(self):
         import struct
         from source_provenance import DARWIN_LIBRARIES, read_macho_libraries, verify_native
+        expected_uuid = self.fixture()[0]['ldflags'].rsplit('=0x', 1)[1]
         def write(path, libraries, minimum=13, rpath=False):
-            commands = [struct.pack('<6I', 0x32, 24, 1, minimum << 16, 26 << 16, 0)]
+            commands = [struct.pack('<6I', 0x32, 24, 1, minimum << 16, 26 << 16, 0),
+                        struct.pack('<2I', 0x1b, 24) + bytes.fromhex(expected_uuid)]
             for name in libraries:
                 string = name.encode() + b'\0'
                 size = (24 + len(string) + 7) // 8 * 8
@@ -601,8 +608,155 @@ class NativeProvenanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = pathlib.Path(temp) / 'synthetic-macho'
             write(path, DARWIN_LIBRARIES)
-            self.assertEqual(read_macho_libraries(path), list(DARWIN_LIBRARIES))
+            self.assertEqual(read_macho_libraries(path, expected_uuid), list(DARWIN_LIBRARIES))
             verify_native(*self.fixture(), path)
             for libraries, minimum, rpath in ((DARWIN_LIBRARIES, 26, False), (DARWIN_LIBRARIES, 13, True), (DARWIN_LIBRARIES + ('/tmp/evil.dylib',), 13, False), (DARWIN_LIBRARIES + ('/usr/lib/libdns_sd.dylib',), 13, False)):
                 write(path, libraries, minimum, rpath)
                 with self.assertRaises(AssertionError): verify_native(*self.fixture(), path)
+
+
+class DarwinUUIDTests(unittest.TestCase):
+    UUID = '2e6dad755e7b82b2969ea347a6757472'
+
+    def test_fixed_cross_language_vector_and_public_inputs(self):
+        from source_provenance import darwin_build_uuid, DARWIN_GO_VERSION, DARWIN_BUILD_TAGS
+        self.assertEqual(darwin_build_uuid('a' * 40, '1.2.3', '1' * 64), self.UUID)
+        for commit, version, native in (('b' * 40, '1.2.3', '1' * 64),
+                                       ('a' * 40, '1.2.4', '1' * 64),
+                                       ('a' * 40, '1.2.3', '2' * 64)):
+            value = darwin_build_uuid(commit, version, native)
+            self.assertNotEqual(value, self.UUID)
+            self.assertRegex(value, r'^[0-9a-f]{12}8[0-9a-f]{3}[89ab][0-9a-f]{15}$')
+        go = (REPOSITORY / 'internal/distribution/distribution.go').read_text()
+        self.assertIn('const GoVersion = "' + DARWIN_GO_VERSION + '"', go)
+        self.assertIn('const BuildTags = "' + DARWIN_BUILD_TAGS + '"', go)
+        for commit, version, native in (('synthetic/private/path', '1.2.3', '1' * 64),
+                                       ('a' * 40, '../1.2.3', '1' * 64),
+                                       ('a' * 40, '1.2.3-01', '1' * 64),
+                                       ('a' * 40, '1.2.3', 'private/native/path')):
+            with self.assertRaises(AssertionError) as result:
+                darwin_build_uuid(commit, version, native)
+            self.assertNotIn('private', str(result.exception))
+
+    def test_fixed_cross_language_normalized_native_digest(self):
+        from source_provenance import native_digest, NATIVE_KEYS, DARWIN_LIBRARIES
+        native = {key: '' for key in NATIVE_KEYS}
+        native['schema'] = 0
+        for key in ('sdk_inputs', 'cflags', 'ldflags', 'packages', 'policy_inputs'):
+            native[key] = None
+        native['system_libraries'] = list(DARWIN_LIBRARIES)
+        self.assertEqual(native_digest(native), '62fe8fdfd20854cda760466679b09c7cd6152a3d36d9744f8dfa9aa3a4951f03')
+
+    def macho(self, uuid=UUID):
+        import struct
+        from source_provenance import DARWIN_LIBRARIES
+        commands = [struct.pack('<6I', 0x32, 24, 1, 13 << 16, 26 << 16, 0),
+                    struct.pack('<2I', 0x1b, 24) + bytes.fromhex(uuid)]
+        for name in DARWIN_LIBRARIES:
+            raw = name.encode('ascii') + b'\0'
+            size = (24 + len(raw) + 7) // 8 * 8
+            commands.append(struct.pack('<6I', 0xc, size, 24, 0, 0, 0) + raw + b'\0' * (size - 24 - len(raw)))
+        body = b''.join(commands)
+        return bytearray(struct.pack('<8I', 0xfeedfacf, 0x100000c, 0, 2, len(commands), len(body), 0, 0) + body)
+
+    def test_macho_uuid_and_bounded_command_mutations_fail_closed(self):
+        import struct
+        from source_provenance import DARWIN_LIBRARIES, read_macho_libraries
+        def word(raw, offset, value):
+            struct.pack_into('<I', raw, offset, value)
+            return raw
+        def replace(raw, start, block):
+            old = struct.unpack_from('<I', raw, start + 4)[0]
+            raw[start:start + old] = block
+            return word(raw, 20, len(raw) - 32)
+        def add(raw, block):
+            raw += block
+            word(raw, 16, struct.unpack_from('<I', raw, 16)[0] + 1)
+            return word(raw, 20, len(raw) - 32)
+        valid = self.macho()
+        end_library = 80 + struct.unpack_from('<I', valid, 84)[0]
+        cases = {
+            'missing UUID': lambda b: word(replace(b, 56, b''), 16, 5),
+            'duplicate UUID': lambda b: add(b, valid[56:80]),
+            'zero UUID': lambda b: replace(b, 56, valid[56:64] + bytes(16)),
+            'wrong UUID': lambda b: word(b, 64, 0),
+            'short UUID': lambda b: replace(b, 56, word(bytearray(valid[56:72]), 4, 16)),
+            'long UUID': lambda b: replace(b, 56, word(bytearray(valid[56:80] + bytes(8)), 4, 32)),
+            'duplicate deployment': lambda b: add(b, valid[32:56]),
+            'missing deployment': lambda b: word(b, 32, 0),
+            'legacy deployment': lambda b: word(b, 32, 0x24),
+            'malformed deployment tools': lambda b: word(b, 52, 1),
+            'duplicate library': lambda b: add(b, valid[80:end_library]),
+            'unaligned command': lambda b: word(b, 36, 23),
+            'zero command': lambda b: word(b, 36, 0),
+            'short command': lambda b: word(b, 36, 4),
+            'oversized command': lambda b: word(b, 36, 0xfffffff8),
+            'trailing command bytes': lambda b: word(b + bytes(8), 20, len(b) - 32 + 8),
+            'truncated header': lambda b: b[:31],
+            'truncated commands': lambda b: b[:-1],
+            'zero commands': lambda b: word(b, 16, 0),
+            'too many commands': lambda b: word(b, 16, 1025),
+            'count exceeds bytes': lambda b: word(b, 16, 1024),
+            'zero command bytes': lambda b: word(b, 20, 0),
+            'unbounded command bytes': lambda b: word(b, 20, 1024 * 1024 + 1),
+            'wrong target': lambda b: word(b, 4, 0x1000007),
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / 'synthetic-macho'
+            path.write_bytes(valid)
+            self.assertEqual(read_macho_libraries(path, self.UUID), list(DARWIN_LIBRARIES))
+            for name, mutate in cases.items():
+                with self.subTest(kind=name):
+                    path.write_bytes(mutate(bytearray(valid)))
+                    with self.assertRaises(AssertionError) as result:
+                        read_macho_libraries(path, self.UUID)
+                    self.assertNotIn(str(path), str(result.exception))
+                    self.assertNotIn(self.UUID, str(result.exception))
+            for expected in ('', '0' * 32, self.UUID.upper(), 'synthetic/private/path'):
+                with self.subTest(expected=expected), self.assertRaises(AssertionError) as result:
+                    read_macho_libraries(path, expected)
+                self.assertNotIn('synthetic/private/path', str(result.exception))
+
+    def test_uuid_binds_installed_binary_to_complete_native_identity(self):
+        from source_provenance import darwin_build_uuid, native_digest, verify_native
+        fixture = NativeProvenanceTests().fixture
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / 'synthetic-macho'
+            original = fixture()
+            original_uuid = original[0]['ldflags'].rsplit('=0x', 1)[1]
+            path.write_bytes(self.macho(original_uuid))
+            verify_native(*original, path)
+            for field in ('commit', 'version', 'compiler', 'sdk-build', 'sdk-input', 'source-input'):
+                with self.subTest(field=field):
+                    build, notices, bom = fixture()
+                    native = build['native_build']
+                    if field == 'commit': build['source_commit'] = 'b' * 40
+                    elif field == 'version': build['version'] = '1.2.4'
+                    elif field == 'compiler': native['compiler_sha256'] = 'f' * 64
+                    elif field == 'sdk-build': native['sdk_build'] = '25A2'
+                    elif field == 'sdk-input': native['sdk_inputs'][0]['sha256'] = 'f' * 64
+                    elif field == 'source-input': native['packages'][1]['inputs'][0]['sha256'] = 'f' * 64
+                    notices['native_build'] = copy.deepcopy(native)
+                    for prop in bom['metadata']['properties']:
+                        if prop['name'] == 'build:native:sha256': prop['value'] = native_digest(native)
+                        elif prop['name'] == 'source:commit': prop['value'] = build['source_commit']
+                    # Even coherent replacement metadata/flags cannot validate the old binary.
+                    expected = darwin_build_uuid(build['source_commit'], build['version'], native_digest(native))
+                    self.assertNotEqual(expected, original_uuid)
+                    build['ldflags'] = '-s -w -buildid= -X main.version=' + build['version'] + ' -linkmode=external -B=0x' + expected
+                    verify_native(build, notices, bom)
+                    with self.assertRaisesRegex(AssertionError, 'Darwin UUID'):
+                        verify_native(build, notices, bom, path)
+
+    def test_exact_uuid_flags_and_build_settings(self):
+        from source_provenance import verify_native
+        for value in ('none', '0x' + '0' * 32, '0x' + self.UUID, 'gobuildid', ''):
+            build, notices, bom = NativeProvenanceTests().fixture()
+            build['ldflags'] = build['ldflags'].rsplit('-B=', 1)[0] + '-B=' + value
+            with self.subTest(value=value), self.assertRaises(AssertionError):
+                verify_native(build, notices, bom)
+        for key, value in (('build_tags', 'unreviewed'), ('go_version', 'go1.99.0')):
+            build, notices, bom = NativeProvenanceTests().fixture()
+            build[key] = value
+            with self.subTest(key=key), self.assertRaises(AssertionError):
+                verify_native(build, notices, bom)
