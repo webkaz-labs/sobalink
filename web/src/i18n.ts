@@ -67,6 +67,8 @@ export const en = {
   message_safety_limit: 'Message sending is paused because this page’s duplicate-send protection is full. No new message was sent. Keep the draft and check the receiver and history for earlier uncertain messages.',
   message_safety_unavailable: 'Message sending is paused because duplicate-send protection could not be checked in this browser. No new message was sent. Keep the draft and check the receiver and message history.',
   receive_recovery_required: 'File receiving is blocked. Open Preferences → File receiving → Review receiving to check previous folders or repair the recorded storage.',
+  transfer_accept_busy: 'Receiving storage is busy. This attempt saved no new acceptance; an earlier acceptance may still exist. Wait briefly, then choose Accept batch again for this same batch and folder.',
+  transfer_accept_unconfirmed: 'Acceptance could not be confirmed. Check the original transfer, file receiving settings and storage before another action. Do not retry blindly.',
   peer_storage_unavailable: 'The receiving device could not store this transfer. Check its storage and receive settings, then retry.',
   disk_space_low: 'Storage or its disk quota is full, or free space is below the transfer safety margin. Free space, check the quota or review diskReserveBytes in Capacity and history, then retry. Original and saved files stay in place.',
   disk_space_unknown: 'Available disk space could not be checked. Check the destination volume and permissions, then retry. Original and saved files stay in place.',
@@ -235,6 +237,8 @@ export const ja: Record<TextKey, string> = {
   message_safety_limit: 'この画面の重複送信防止の記録が上限に達したため、メッセージ送信を止めています。新たな送信は行っていません。下書きを残し、到達状況が不確かな以前のメッセージを相手側と履歴で確認してください。',
   message_safety_unavailable: 'このブラウザーで重複送信防止を確認できないため、メッセージ送信を止めています。新たな送信は行っていません。下書きを残し、相手側とメッセージ履歴を確認してください。',
   receive_recovery_required: 'ファイル受信が停止中です。表示設定 → ファイルの受信 → 受信状態を確認から、以前の保存先の確認または記録されたストレージの修復を行ってください。',
+  transfer_accept_busy: '受信側の保存処理が使用中です。今回の操作では新しい受信承認は保存されていません。以前の承認が残っている可能性はあります。少し待ち、同じバッチ・保存先で「まとめて受信」をもう一度選んでください。',
+  transfer_accept_unconfirmed: '受信承認の結果を確認できません。次の操作の前に、元の転送、ファイル受信の設定、ストレージの状態を確認してください。結果が不明なまま再試行しないでください。',
   peer_storage_unavailable: '受信側で転送内容を保存できませんでした。受信側の保存容量と受信設定を確認して再試行してください。',
   disk_space_low: 'ディスク・ディスクquotaが満杯か、転送用に残す空き容量が不足しています。空き容量・quotaか「容量と履歴」の diskReserveBytes を確認して再試行してください。元のファイルと保存済みファイルは残ります。',
   disk_space_unknown: 'ディスクの空き容量を確認できません。保存先のボリュームとアクセス権を確認して再試行してください。元のファイルと保存済みファイルは残ります。',
@@ -361,8 +365,9 @@ export function timestamp(value: string, locale: Locale) {
   return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(date)
 }
 export function errorText(error: unknown, t: Translate) {
-  const object = error as { code?: string; message?: string }
-  return object?.code && object.code in en ? t(object.code as TextKey) : t('request_failed')
+  const object = error as { code?: string; displayCode?: string; message?: string }
+  const code = object?.displayCode ?? object?.code
+  return code && code in en ? t(code as TextKey) : t('request_failed')
 }
 export function errorDetail(error: unknown, t: Translate) {
   const object = error as { message?: string }

@@ -457,6 +457,11 @@ func (m *Manager) Accept(id, destination string) (Batch, error) {
 	defer m.mu.Unlock()
 	if r := m.durable.record(id); r != nil {
 		err := m.acceptDurableLocked(r, destination)
+		// The exact sentinel excludes joined recovery/publication uncertainty.
+		// Legacy transfer concurrency must not gain this acceptance contract.
+		if err == ErrBusy {
+			err = ErrAcceptBusy
+		}
 		return durableBatch(r), err
 	}
 	b, ok := m.batches[id]

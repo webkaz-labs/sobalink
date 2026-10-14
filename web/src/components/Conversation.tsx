@@ -39,7 +39,13 @@ function TransferCard({ transfer, peer, t, locale, server, destination, setDesti
   useEffect(() => { setReviewingDiscard(false) }, [transfer.id, transfer.direction, transfer.status])
   const selectedDestination = destination ?? configuredDirectory
   const expectedRetry = server.state && retryExpected(server.state, peer, transfer, server.stale, server.busy)
-  const action = (name: 'transfer.accept' | 'transfer.decline' | 'transfer.cancel' | 'transfer.retry' | 'transfer.forget') => { if (name === 'transfer.retry' && (!expectedRetry || server.auth !== 'ready')) return; return server.run(name, { transferId: transfer.id, ...(name === 'transfer.retry' ? { expected: expectedRetry } : {}), ...(name === 'transfer.accept' ? { destination: selectedDestination.trim() } : {}) }, `transfer:${transfer.id}`) }
+  const action = (name: 'transfer.accept' | 'transfer.decline' | 'transfer.cancel' | 'transfer.retry' | 'transfer.forget') => {
+    if (name === 'transfer.retry' && (!expectedRetry || server.auth !== 'ready')) return
+    // Keep the reviewed default explicit across refresh/navigation and manual
+    // acceptance retries. A later default change must not retarget this batch.
+    if (name === 'transfer.accept' && destination === undefined) setDestination(selectedDestination)
+    return server.run(name, { transferId: transfer.id, ...(name === 'transfer.retry' ? { expected: expectedRetry } : {}), ...(name === 'transfer.accept' ? { destination: selectedDestination.trim() } : {}) }, `transfer:${transfer.id}`)
+  }
   const discard = async () => { if (await action('transfer.forget')) setReviewingDiscard(false) }
   return <article className={`transfer-card ${incoming && offered ? 'incoming-offer' : ''}`} aria-label={`${transfer.name} · ${t(transfer.status)}`}>
     <div className="transfer-top"><div className="transfer-icon"><Icon name={incoming ? 'download' : 'upload'} size={22} /></div><div className="grow"><p className="eyebrow">{t(incoming ? offered ? 'incomingOffer' : 'incomingBatch' : 'outgoingOffer')}</p><h3>{transfer.name || `${entries.length} ${t(entries.length === 1 ? 'item' : 'items')}`}</h3><p className="small muted">{entries.length} {t(entries.length === 1 ? 'item' : 'items')}<span className="dot-separator">·</span>{bytes(transfer.totalBytes, locale)}</p></div><Badge tone={transfer.status === 'completed' ? 'green' : transfer.status === 'failed' ? 'red' : offered ? 'purple' : 'neutral'}>{t(transfer.status)}</Badge></div>

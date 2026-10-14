@@ -295,7 +295,10 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		raw, _ := json.Marshal(value)
 		reply := processReply{Value: raw}
 		if callErr != nil {
-			reply.Error = request.Name + ": " + networkErrorCode(callErr)
+			reply.Error = request.Name + ": " + routeProcessCommandErrorCode(request.Name, callErr)
+			if request.Name == "transfer.accept" {
+				reply.AcceptCause = routeProcessAcceptCause(callErr)
+			}
 			if reply.Error == request.Name+": " {
 				reply.Error += "failed"
 			}
@@ -307,8 +310,9 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 }
 
 type processReply struct {
-	Value json.RawMessage
-	Error string
+	Value       json.RawMessage
+	Error       string
+	AcceptCause string `json:",omitempty"`
 }
 type routeCoreProcess struct {
 	cmd         *exec.Cmd
@@ -385,6 +389,16 @@ func (p *routeCoreProcess) invokeResult(t *testing.T, name string, payload any) 
 
 func (p *routeCoreProcess) invokeResultID(t *testing.T, name, requestID string, payload any) processReply {
 	t.Helper()
+	return p.invokeResultIDContext(t, context.Background(), name, requestID, payload)
+}
+
+// Acceptance retries share the existing child-command budget. Other fixture
+// calls retain their original 40-second response wait and unchanged behavior.
+func (p *routeCoreProcess) invokeResultIDContext(t *testing.T, ctx context.Context, name, requestID string, payload any) processReply {
+	t.Helper()
+	if ctx.Err() != nil {
+		return processReply{Error: "subprocess command context ended"}
+	}
 	raw, _ := json.Marshal(payload)
 	if json.NewEncoder(p.input).Encode(struct {
 		Name      string
@@ -404,6 +418,9 @@ func (p *routeCoreProcess) invokeResultID(t *testing.T, name, requestID string, 
 	select {
 	case reply := <-ch:
 		return reply
+	case <-ctx.Done():
+		p.cmd.Process.Kill()
+		return processReply{Error: "subprocess command context ended"}
 	case <-time.After(40 * time.Second):
 		p.cmd.Process.Kill()
 		t.Fatalf("subprocess command timed out: %s", name)

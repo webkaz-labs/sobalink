@@ -328,7 +328,11 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		if e != nil {
 			return e
 		}
-		return request("transfer.accept", map[string]string{"transferId": args[0], "destination": destination})
+		err := request("transfer.accept", map[string]string{"transferId": args[0], "destination": destination})
+		if jsonErrors || err == nil {
+			return err
+		}
+		return localizeTransferAcceptError(ja, err)
 	case "retry":
 		payload, err := transferRetryPayload(args, ja, out)
 		if err != nil {

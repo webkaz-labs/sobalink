@@ -25,6 +25,10 @@ var (
 	ErrConflict        = errors.New("transfer identity or destination conflicts")
 	ErrState           = errors.New("transfer operation is not allowed in this state")
 	ErrBusy            = errors.New("concurrent transfer limit reached")
+	// ErrAcceptBusy is minted only by durable Accept after an exact transient
+	// ownership refusal. This attempt made no new durable acceptance publication;
+	// earlier consent may exist and destination checks/sync may have occurred.
+	ErrAcceptBusy      = fmt.Errorf("acceptance storage operation is busy: %w", ErrBusy)
 	ErrIntegrity       = errors.New("received size or SHA-256 does not match manifest")
 	ErrCancelled       = errors.New("transfer was cancelled")
 	ErrClosed          = errors.New("transfer manager is closed")
