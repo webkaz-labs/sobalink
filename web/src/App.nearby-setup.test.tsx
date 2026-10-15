@@ -9,6 +9,26 @@ import { nearbyText } from './nearby-i18n'
 const state: State = { csrfToken: 'synthetic-csrf', self: { name: 'Synthetic local device', status: 'idle', networks: [] }, settings: { network: 'none' }, peers: [], services: [], shares: [], transfers: [], messages: [] }
 beforeEach(() => { localStorage.setItem('sobalink.locale', 'en') })
 describe('nearby setup navigation ownership', () => {
+  it.each(['en', 'ja'] as const)('%s: entry explains request approval and optional fingerprint comparison', async locale => {
+    localStorage.setItem('sobalink.locale', locale)
+    const commands: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/api/state') return new Response(JSON.stringify(state))
+      commands.push(JSON.parse(init!.body as string).name)
+      return new Response(JSON.stringify({ ok: true }))
+    }))
+    render(<App />)
+    await userEvent.click((await screen.findAllByRole('button', { name: locale === 'ja' ? 'ネットワークを設定' : 'Set up network' }))[0])
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByText(nearbyText(locale, 'entryIntro'))).toBeInTheDocument()
+    expect(dialog.queryByText(nearbyText(locale, 'intro'))).not.toBeInTheDocument()
+    expect(nearbyText(locale, 'entryIntro')).toContain(nearbyText(locale, 'requestMode'))
+    expect(nearbyText(locale, 'entryIntro')).toContain(nearbyText(locale, 'receiveMode'))
+    expect(nearbyText(locale, 'entryIntro')).toContain('TOFU')
+    expect(nearbyText(locale, 'intro')).toContain(locale === 'ja' ? '両画面で承認' : 'approve on both screens')
+    expect(nearbyText(locale, 'fullMode')).toContain('SHA-256')
+    expect(commands).toEqual([])
+  })
   it.each(['close', 'back', 'history', 'escape'] as const)('waits for exact-session cancellation on %s', async navigation => {
     const live = liveSetup(), commands: { name: string; payload: unknown }[] = []
     let finish!: (response: Response) => void
