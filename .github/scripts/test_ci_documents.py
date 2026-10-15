@@ -1,5 +1,6 @@
 """Offline, cross-platform regression tests for required document evidence."""
 import copy
+import base64
 import importlib.util
 import json
 import os
@@ -115,6 +116,9 @@ class RepositoryStaticTests(unittest.TestCase):
         self.files = set()
         for name in documents.SVG_NAMES:
             self.write(documents.VISUALS + '/' + name, SVG)
+        for name in documents.PNG_NAMES:
+            path = self.write(documents.SCREENSHOTS + '/' + name, '')
+            path.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII='))
         self.write('README.md', '# Heading\n')
 
     def write(self, name, text):
@@ -130,8 +134,30 @@ class RepositoryStaticTests(unittest.TestCase):
         result = documents.static_checks(self.files)
         self.assertEqual(result['markdown_files'], 3)
         self.assertEqual(result['local_links'], 2)
-        self.assertEqual(result['svg_variants'], 32)
-        self.assertEqual(result['images'], {'docs/assets/visuals/connection-en-light-wide.svg'})
+        self.assertEqual(result['svg_variants'], 88)
+        self.assertEqual(result['images'], {'docs/assets/visuals/connection-en-light-wide.svg'} | {documents.SCREENSHOTS + '/' + n for n in documents.PNG_NAMES})
+
+    def test_unreferenced_known_png_still_selects_render(self):
+        result = documents.static_checks(self.files)
+        name = documents.SCREENSHOTS + '/' + sorted(documents.PNG_NAMES)[0]
+        self.assertEqual(documents.render_selection({'scope': 'docs', 'changed_paths': [name]}, result),
+                         (True, 'changed_image_asset'))
+        self.files.remove(name)
+        with self.assertRaisesRegex(ValueError, 'exact 30'):
+            documents.static_checks(self.files)
+
+    def test_known_png_symlink_is_rejected_without_decoder_dependency(self):
+        name = documents.SCREENSHOTS + '/' + sorted(documents.PNG_NAMES)[0]
+        path = self.root / name
+        target = self.root / 'target.png'
+        target.write_bytes(path.read_bytes())
+        path.unlink()
+        try:
+            path.symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest('Symlink creation unavailable on this host')
+        with self.assertRaises(ValueError):
+            documents.static_checks(self.files)
 
     def test_missing_links_and_anchors_fail(self):
         for source in ('[bad](missing.md)', '[bad](README.md#missing)', '[bad](../outside.md)',
@@ -172,7 +198,7 @@ class RepositoryStaticTests(unittest.TestCase):
 
     def test_unreferenced_application_svg_is_not_a_document_schema(self):
         self.write('web/public/logo.svg', '<svg><defs/></svg>')
-        self.assertEqual(documents.static_checks(self.files)['svg_variants'], 32)
+        self.assertEqual(documents.static_checks(self.files)['svg_variants'], 88)
         self.write('README.md', '![Logo](web/public/logo.svg)')
         with self.assertRaises(ValueError):
             documents.static_checks(self.files)
@@ -219,6 +245,66 @@ class RepositoryStaticTests(unittest.TestCase):
             valid.write_text(source, encoding='utf-8')
             with self.subTest(index=index), self.assertRaises(ValueError):
                 documents.svg_check(valid)
+
+
+    def test_image_allowlists_match_and_helpers_remain_explicit(self):
+        spec = importlib.util.spec_from_file_location('impact_for_svg_test', Path(__file__).with_name('ci-impact.py'))
+        impact = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(impact)
+        self.assertEqual(impact.DOC_IMAGES, {documents.VISUALS + '/' + n for n in documents.SVG_NAMES} | impact.DOC_SCREENSHOTS)
+        self.assertEqual(impact.DOC_SCREENSHOTS, {
+            'docs/assets/screenshots/direct-review-en-focused.png',
+            'docs/assets/screenshots/direct-review-ja-focused.png',
+            'docs/assets/screenshots/message-context-en-narrow-input.png',
+            'docs/assets/screenshots/message-context-en.png',
+            'docs/assets/screenshots/message-context-ja-narrow-input.png',
+            'docs/assets/screenshots/message-context-ja.png',
+            'docs/assets/screenshots/navigation-detail-en-narrow.png',
+            'docs/assets/screenshots/navigation-detail-ja-narrow.png',
+            'docs/assets/screenshots/navigation-graph-en-narrow.png',
+            'docs/assets/screenshots/navigation-graph-en-wide.png',
+            'docs/assets/screenshots/navigation-graph-ja-narrow.png',
+            'docs/assets/screenshots/navigation-graph-ja-wide.png',
+            'docs/assets/screenshots/receive-damaged-en-wide.png',
+            'docs/assets/screenshots/receive-damaged-ja-wide.png',
+            'docs/assets/screenshots/receive-en.png',
+            'docs/assets/screenshots/receive-ja.png',
+            'docs/assets/screenshots/receive-legacy-en-wide.png',
+            'docs/assets/screenshots/receive-legacy-ja-wide.png',
+            'docs/assets/screenshots/service-review-en.png',
+            'docs/assets/screenshots/service-review-ja.png',
+            'docs/assets/screenshots/setup-fixed-en-1180.png',
+            'docs/assets/screenshots/setup-fixed-en-390.png',
+            'docs/assets/screenshots/setup-fixed-ja-1180.png',
+            'docs/assets/screenshots/setup-fixed-ja-390.png',
+            'docs/assets/screenshots/startup-guide-en-narrow-actions.png',
+            'docs/assets/screenshots/startup-guide-en-wide.png',
+            'docs/assets/screenshots/startup-guide-ja-narrow-actions.png',
+            'docs/assets/screenshots/startup-guide-ja-wide.png',
+            'docs/assets/screenshots/stopped-review-en-focused.png',
+            'docs/assets/screenshots/stopped-review-ja-focused.png',
+        })
+        self.assertEqual(impact.DOC_SCREENSHOTS, {documents.SCREENSHOTS + '/' + n for n in documents.PNG_NAMES})
+        self.assertEqual(len(documents.PNG_NAMES), 30)
+        self.assertEqual(len(documents.SVG_NAMES), 88)
+        self.assertEqual(documents.GENERATORS, ('build.py', 'explainers.py', 'semantic.py'))
+        self.assertEqual(documents.VALIDATORS, ('render.py', 'verify.py'))
+
+    def test_bounded_dash_array_is_path_presentation_only(self):
+        path = self.root / 'dash.svg'
+        for value in ('1', '6 4', '0.5 100', '1 2 3 4 5 6 7 8'):
+            with self.subTest(valid=value):
+                path.write_text(SVG.replace('</svg>', '<path d="M0 0L1 1" stroke-dasharray="'+value+'"/></svg>'))
+                documents.svg_check(path)
+        for value in ('0', '-1', 'NaN', 'inf', '1e2', '+1', '.5', '1.', '101',
+                      '1px', 'url(x)', 'none', '1,2', '1  2', ' 1', '1 ',
+                      '1 2 3 4 5 6 7 8 9', '9999999999999999999999999999999999999'):
+            with self.subTest(invalid=value):
+                path.write_text(SVG.replace('</svg>', '<path d="M0 0L1 1" stroke-dasharray="'+value+'"/></svg>'))
+                with self.assertRaisesRegex(ValueError, "Unsupported SVG attribute value"): documents.svg_check(path)
+        for body in ('<g stroke-dasharray="1 2"/>', '<style>path{stroke-dasharray:1 2}</style>'):
+            path.write_text(SVG.replace('</svg>', body+'</svg>'))
+            with self.assertRaisesRegex(ValueError, "Unsupported SVG (attribute|stylesheet)"): documents.svg_check(path)
 
 
 class SelectionTests(unittest.TestCase):
@@ -386,6 +472,10 @@ class RenderContractTests(unittest.TestCase):
         self.root_patch = patch.object(documents, 'ROOT', self.root)
         self.root_patch.start()
         self.addCleanup(self.root_patch.stop)
+        self.decoder_cases = ['corrupt', 'jpeg-disguised-as-png', 'oversize', 'symlink']
+        self.decoder_patch = patch.object(documents, 'png_decoder_negative_checks', return_value=self.decoder_cases)
+        self.decoder = self.decoder_patch.start()
+        self.addCleanup(self.decoder_patch.stop)
 
     def test_only_exact_helpers_execute_in_scratch_after_content_verification(self):
         called = []
@@ -406,9 +496,12 @@ class RenderContractTests(unittest.TestCase):
                 patch.object(documents, 'renderer_root', return_value=self.top / 'renderer'), \
                 patch.object(documents, 'run_quiet', side_effect=execute), \
                 patch.object(documents, 'check_png'):
-            documents.render(self.static, self.output, {})
+            report = {}
+            documents.render(self.static, self.output, report)
+        self.decoder.assert_called_once()
+        self.assertEqual(report['png_decoder_negative_checks'], self.decoder_cases)
         self.assertEqual(tuple(called), documents.HELPERS)
-        self.assertEqual(len(list(self.output.glob('*.png'))), 32)
+        self.assertEqual(len(list(self.output.glob('*.png'))), 88)
 
     def test_reproduction_fixture_is_stable_with_windows_text_newlines(self):
         original = Path.write_text
@@ -432,7 +525,7 @@ class RenderContractTests(unittest.TestCase):
                     patch.object(documents, 'renderer_root', return_value=self.top / 'renderer'), \
                     patch.object(documents, 'run_quiet', side_effect=execute), self.assertRaises(ValueError):
                 documents.render(self.static, self.output, {})
-            self.assertEqual(called, ['build.py', 'explainers.py'])
+            self.assertEqual(called, list(documents.GENERATORS))
 
     def test_untracked_helper_cannot_be_executed(self):
         self.files.remove(documents.VISUALS + '/build.py')
@@ -450,7 +543,7 @@ class CommandTests(unittest.TestCase):
         self.plan = {'scope': 'docs', 'head_sha': 'a' * 40, 'head_tree': 'b' * 40,
                      'policy_sha256': 'c' * 64, 'base_sha': 'd' * 40}
         self.static = {'markdown_files': 1, 'local_links': 0, 'mermaid_blocks': 0,
-                       'svg_variants': 32, 'diagrams': [], 'images': set(), 'svg_hashes': {}}
+                       'svg_variants': 88, 'diagrams': [], 'images': set(), 'svg_hashes': {}}
         self.report = {'scope': 'docs', 'head_sha': 'a' * 40, 'head_tree': 'b' * 40,
                        'render_required': False, 'rendered': False}
 
@@ -507,7 +600,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(json.loads((self.top / 'selection.json').read_text())['result'], 'selected')
 
     def test_only_exact_helpers_execute_and_browser_blocks_external_resources(self):
-        self.assertEqual(documents.HELPERS, ('build.py', 'explainers.py', 'render.py', 'verify.py'))
+        self.assertEqual(documents.HELPERS, ('build.py', 'explainers.py', 'semantic.py', 'render.py', 'verify.py'))
         driver = documents.MERMAID_DRIVER
         self.assertIn('setOfflineMode(true)', driver)
         self.assertIn("request.abort('blockedbyclient')", driver)

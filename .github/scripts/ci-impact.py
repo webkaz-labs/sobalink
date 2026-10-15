@@ -64,14 +64,48 @@ EXTRA_DOCS = frozenset((
     "internal/nearby/README.md",
     "web/API.md", "web/BROWSER_ACCEPTANCE.md", "web/UX_ACCEPTANCE.md",
     "web/browser/png-fixtures/README.md",
-    "docs/assets/visuals/README.md",
+    "docs/assets/visuals/README.md", "docs/assets/screenshots/README.md",
 ))
 # Only these static document images are outside application inputs. Their
 # content, reproduction and rendering are mandatory in the documents gate.
 # Generator/renderer Python, pipeline/configuration and dependency locks stay full.
-DOC_IMAGES = frozenset(
+DOC_SCREENSHOTS = frozenset(
+    "docs/assets/screenshots/" + name for name in (
+        'direct-review-en-focused.png',
+        'direct-review-ja-focused.png',
+        'message-context-en-narrow-input.png',
+        'message-context-en.png',
+        'message-context-ja-narrow-input.png',
+        'message-context-ja.png',
+        'navigation-detail-en-narrow.png',
+        'navigation-detail-ja-narrow.png',
+        'navigation-graph-en-narrow.png',
+        'navigation-graph-en-wide.png',
+        'navigation-graph-ja-narrow.png',
+        'navigation-graph-ja-wide.png',
+        'receive-damaged-en-wide.png',
+        'receive-damaged-ja-wide.png',
+        'receive-en.png',
+        'receive-ja.png',
+        'receive-legacy-en-wide.png',
+        'receive-legacy-ja-wide.png',
+        'service-review-en.png',
+        'service-review-ja.png',
+        'setup-fixed-en-1180.png',
+        'setup-fixed-en-390.png',
+        'setup-fixed-ja-1180.png',
+        'setup-fixed-ja-390.png',
+        'startup-guide-en-narrow-actions.png',
+        'startup-guide-en-wide.png',
+        'startup-guide-ja-narrow-actions.png',
+        'startup-guide-ja-wide.png',
+        'stopped-review-en-focused.png',
+        'stopped-review-ja-focused.png',
+    )
+)
+DOC_IMAGES = DOC_SCREENSHOTS | frozenset(
     f"docs/assets/visuals/{kind}-{lang}-{theme}-{size}.svg"
-    for kind in ("connection", "permissions", "saved-and-running", "delivery-evidence")
+    for kind in ("connection", "permissions", "saved-and-running", "delivery-evidence", "pairing-exchange", "port-observation", "network-topologies", "durable-save-gates", "restart-state", "api-boundary", "resource-gates")
     for lang in ("en", "ja") for theme in ("light", "dark")
     for size in ("wide", "narrow")
 )
