@@ -72,6 +72,7 @@ MACOS_NEARBY_TARGETS = ('darwin-arm64',)
 MACOS_NEARBY_STEPS = ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof')
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
+DOCUMENT_STEPS = ("Verify document selection and static content", "Require document checks and selected rendering")
 SCOPES = {"docs", "frontend", "go", "native-short", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Verify actual UI workflows with isolated Playwright fixtures",
@@ -183,7 +184,8 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
             require(successful_step(job, step), "required step did not run: " + name + ": " + step)
 
     passed("impact", (SCOPE_STEP,))
-    required = {"impact"}
+    passed("documents", DOCUMENT_STEPS)
+    required = {"impact", "documents"}
     if scope in ("frontend", "native-short", "full"):
         passed("browser", BROWSER_STEPS)
         required.add("browser")
@@ -259,8 +261,8 @@ def job_timings(jobs):
             return value if value >= 0 else None
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
-    names = {*TARGETS.values(), "impact", "browser", "go-unit", "manifest-smoke"}
-    steps = {*FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS,
+    names = {*TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke"}
+    steps = {*DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}
@@ -311,6 +313,8 @@ def finalize(input_path, output, *, scheduled=False):
                "head_sha": head(), "head_tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
                "policy_sha256": digest(POLICY), "workflow_sha256": digest(WORKFLOW),
                "scope": scope, "full_native": full,
+               "documents": "success",
+               "documents_policy_sha256": digest(".github/scripts/ci-documents.py"),
                "targets": {t: "success" if full else "short_checks_passed" if scope == "native-short" else "not_run" for t in TARGETS},
                "long_checks": {t: "success" if full else "not_run" for t in TARGETS},
                "browser": "success" if scope in ("frontend", "native-short", "full") else "not_run",

@@ -26,7 +26,7 @@ Text equivalent: classify the complete change; run only a recognized narrower su
 
 | Complete change | Checks |
 | --- | --- |
-| Ordinary root README/SECURITY or top-level `docs/*.md` prose | Lightweight Git scope proof and required-document presence; application tests, builds and packages are not run |
+| Ordinary root README/SECURITY, top-level `docs/*.md`, explicitly reviewed internal/Web prose, or known document SVG variants | Required document checks: immutable Git scope proof, Markdown/local links/anchors/alt text and safe SVG validation. Changed diagrams also require reproduction/rendering; application tests, builds and packages are not run |
 | `web/src` TypeScript/TSX/CSS or existing `web/browser/*.mjs` acceptance code, optionally with ordinary prose | Linux frontend unit tests, two matching exact-lock builds, fixture safety tests and real browser acceptance |
 | Accompanying generated `web/dist` changes | Included in frontend scope only with a frontend source change; regeneration must match |
 | Reviewed Go-only changes in `internal/servicepresets` or `internal/boundedlog`, optionally with ordinary prose | Changed packages and transitive reverse dependencies, including test imports, tested with race detection and vet on Linux |
@@ -35,6 +35,14 @@ Text equivalent: classify the complete change; run only a recognized narrower su
 | Combinations of the reviewed CLI presentation, frontend and scoped-Go domains | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates and native resource inspection, management and fixed-group catalog are not run |
 | Platform-specific Go, cgo, unreviewed imports, policy/provenance Markdown, unsafe modes/types or unverifiable input | Full |
 | Daily scheduled validation, manual full validation or any prerelease | Full |
+
+### Required document checks
+
+Every selected scope runs the `documents` job, and `ci-required` rejects a missing, skipped, failed or cancelled document job or required check step. Static checks cover all tracked Markdown and the reviewed SVG set. Ordinary prose changes do not install Node, Chromium or rendering dependencies. A changed Mermaid block, diagram image or local image reference selects rendering; uncertain selection and full CI render conservatively. Rendering dependencies are installed from the exact lock into a temporary directory outside the checkout, and generated images never modify the source tree.
+
+The extra prose and 32 SVG variants are file-level allowlists in `ci-impact.py`; an arbitrary README, SVG or Python file is not enough to qualify. Document generators, rendering/checking scripts, dependency manifests/locks, workflow changes, agent/development policy and unknown paths still require full application CI. Both old and new rename endpoints and file modes remain part of classification. The document checker independently verifies the current event/commit/tree and reproduces selection; an artifact or a previous successful run cannot grant a skip.
+
+Performance targets, excluding runner queue time, are a required result within three minutes for prose-only changes and five minutes for diagram changes. These are measured targets, not verified timing guarantees; receipts retain current job timings. A document-only success is never application, native or release-validation evidence.
 
 ### Native-short for reviewed changes
 
