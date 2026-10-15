@@ -146,6 +146,13 @@ func (c *Core) messageStoreReadyLocked() error {
 	}
 	return nil
 }
+
+// This exact private type certifies that lifecycle admission refused before
+// any callback ran. Wrapped, joined, or post-admission errors cannot mint it.
+type messageStoreAdmissionBusy struct{ error }
+
+func (e *messageStoreAdmissionBusy) Unwrap() error { return e.error }
+
 func (c *Core) mutateMessageStoreLocked(change func(*messageEnvelope) error) error {
 	if err := c.messageStoreReadyLocked(); err != nil {
 		return err
@@ -157,7 +164,9 @@ func (c *Core) mutateMessageStoreLocked(change func(*messageEnvelope) error) err
 	if s.frozen != "" {
 		return messageStoreError(s.frozen)
 	}
+	entered := false
 	err := c.resourceLock.TryWithOwnershipInfo(c.dir, func(profile, lock os.FileInfo) error {
+		entered = true
 		if err := c.checkMessageSnapshotLocked(s, profile, lock); err != nil {
 			s.frozen = "message_store_recovery_required"
 			return err
@@ -206,8 +215,8 @@ func (c *Core) mutateMessageStoreLocked(change func(*messageEnvelope) error) err
 		c.messageHistoryUncertain = false
 		return nil
 	})
-	if errors.Is(err, config.ErrLifecycleBusy) {
-		return messageStoreError("message_storage_busy")
+	if !entered && err == config.ErrLifecycleBusy {
+		return &messageStoreAdmissionBusy{messageStoreError("message_storage_busy")}
 	}
 	if s.frozen != "" {
 		return errors.Join(messageStoreError(s.frozen), err)

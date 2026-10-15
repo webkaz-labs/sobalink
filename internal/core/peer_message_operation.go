@@ -9,11 +9,38 @@ import (
 	"github.com/webkaz-labs/sobalink/internal/config"
 )
 
+// Retry only a certified pre-callback admission refusal. Each attempt releases
+// both Core.mu and its incoming commit lease before waiting, then revalidates
+// cancellation, trust, generation, duplicates and storage from scratch. This
+// local admission budget does not extend the request or any publication lease.
 func (c *Core) commitIncomingPeerMessage(ctx context.Context, trust Trust, peer, id, text string) (int, map[string]string) {
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for {
+		status, body, retry := c.tryCommitIncomingPeerMessage(ctx, trust, peer, id, text)
+		if !retry || !time.Now().Before(deadline) {
+			return status, body
+		}
+		timer := time.NewTimer(min(20*time.Millisecond, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return http.StatusForbidden, map[string]string{"error": "request refused"}
+		case <-c.ctx.Done():
+			timer.Stop()
+			return http.StatusForbidden, map[string]string{"error": "request refused"}
+		case <-timer.C:
+		}
+		if !time.Now().Before(deadline) {
+			return status, body
+		}
+	}
+}
+
+func (c *Core) tryCommitIncomingPeerMessage(ctx context.Context, trust Trust, peer, id, text string) (int, map[string]string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	refused := func(status int) (int, map[string]string) {
-		return status, map[string]string{"error": "request refused"}
+	refused := func(status int) (int, map[string]string, bool) {
+		return status, map[string]string{"error": "request refused"}, false
 	}
 	if c.closing || c.ctx.Err() != nil || ctx.Err() != nil {
 		return refused(http.StatusForbidden)
@@ -47,9 +74,9 @@ func (c *Core) commitIncomingPeerMessage(ctx context.Context, trust Trust, peer,
 					return refused(http.StatusConflict)
 				}
 				if err := c.reconcileMessageStoreLocked(); err != nil {
-					return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, true).Error()}
+					return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, true).Error()}, false
 				}
-				return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}
+				return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}, false
 			}
 		}
 	}
@@ -61,16 +88,17 @@ func (c *Core) commitIncomingPeerMessage(ctx context.Context, trust Trust, peer,
 			return refused(http.StatusConflict)
 		}
 		if c.messageStore != nil && c.messageStore.frozen != "" {
-			return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(messageStoreError(c.messageStore.frozen), true).Error()}
+			return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(messageStoreError(c.messageStore.frozen), true).Error()}, false
 		}
-		return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}
+		return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}, false
 	}
 
 	message := Message{ID: id, PeerID: peer, Text: text, Direction: "incoming", CreatedAt: time.Now().UTC(), Status: "received"}
 	if err := c.appendMessageLocked(message); err != nil {
-		return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, errors.Is(err, config.ErrAtomicCommitted)).Error()}
+		_, retry := err.(*messageStoreAdmissionBusy)
+		return http.StatusInsufficientStorage, map[string]string{"code": "message_history_unavailable", "error": messageHistoryError(err, errors.Is(err, config.ErrAtomicCommitted)).Error()}, retry
 	}
-	return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}
+	return http.StatusOK, map[string]string{"id": message.ID, "status": "received"}, false
 }
 
 // An outgoing message owns an obligation to record its exact delivery outcome
