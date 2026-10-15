@@ -228,6 +228,15 @@ Use `![example](absent.svg)` as syntax.
         with self.assertRaisesRegex(ValueError, "web/README.md"):
             verify_document_images(self.root)
 
+    def test_packaged_png_alternative_must_exist(self):
+        self.write("docs/assets/screenshots/example-wide.png", b"synthetic PNG fixture")
+        narrow = self.write("docs/assets/screenshots/example-narrow.png", b"synthetic PNG fixture")
+        self.write("docs/guide.md", '<picture><source srcset="assets/screenshots/example-narrow.png"><img src="assets/screenshots/example-wide.png"></picture>')
+        self.assertEqual(verify_document_images(self.root), 2)
+        narrow.unlink()
+        with self.assertRaisesRegex(ValueError, "example-narrow.png"):
+            verify_document_images(self.root)
+
     def test_html_files_are_checked(self):
         self.write("docs/guide.html", '<img src="absent.svg">')
         with self.assertRaisesRegex(ValueError, "guide.html"):

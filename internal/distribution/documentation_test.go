@@ -29,7 +29,7 @@ func TestInstalledDocumentationVisualsForAllTargets(t *testing.T) {
 				t.Fatal("missing or changed offline SVG")
 			}
 			for path := range entries {
-				if strings.HasPrefix(path, "share/sobalink/docs/assets/") && path != "share/sobalink/"+rel {
+				if strings.HasPrefix(path, "share/sobalink/docs/assets/visuals/") && path != "share/sobalink/"+rel {
 					t.Fatalf("unexpected documentation asset: %s", path)
 				}
 			}
