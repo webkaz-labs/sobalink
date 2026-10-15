@@ -6,13 +6,14 @@ Explicitly queue one immutable text message for one exact recipient, including a
 
 Available in the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1). It uses **profile format 3**, incompatible with 0.4.0-alpha.4 and older formats. Preserve existing state and select a separate empty `--state-dir`; there is no migration, automatic deletion or same-profile downgrade. [Published verification](VERIFICATION.en.md) does not establish physical-device, power-loss, OS-login or suspend qualification.
 
-```mermaid
-flowchart TD
-    A["Review exact text, recipient and deadline"] --> B["Explicit local acceptance"]
-    B --> C["Attempt within original authority"]
-    C --> D["Durable receiver-save evidence"]
-    C --> E["Unknown: inspect original ID"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/durable-save-gates-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/durable-save-gates-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/durable-save-gates-en-dark-wide.svg">
+  <img src="assets/visuals/durable-save-gates-en-light-wide.svg" alt="Both text and files need current peer trust; files also need saving consent. Inspect the original ID when a save receipt is lost." width="960">
+</picture>
+
+[Open full-size diagram (wide)](assets/visuals/durable-save-gates-en-light-wide.svg) · [Narrow version](assets/visuals/durable-save-gates-en-light-narrow.svg)
 
 A queue record authorizes bounded attempts; it is not a delivery receipt. If the reply is lost, inspect the original ID and receiver evidence before deciding what to do next. Cancellation cannot recall saved content.
 

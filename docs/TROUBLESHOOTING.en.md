@@ -8,11 +8,14 @@ Use this order for v0.5.0-alpha.1. Stop at the first failed stage; a successful 
 
 ```mermaid
 flowchart TD
-    A["Local management"] --> B
-    B["Network and identity"] --> C
-    C["Current permission"] --> D
-    D["Started service or queued job"] --> E
-    E["Application or save evidence"]
+ accTitle: Self-check order, not a diagnosis
+ accDescr: Unknown is not failure. Inspect the original operation before retrying.
+ A["1. Local management available?"] --> B["2. Network and current identity?"]
+ B --> C["3. Exact current permission?"]
+ C --> D["4. Service started or job queued?"]
+ D --> E["5. Application or saved evidence?"]
+
+ LIMIT["Unknown is not failure. Inspect the original operation before retrying."]
 ```
 
 ## Check the symptom

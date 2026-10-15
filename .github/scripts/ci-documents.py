@@ -25,11 +25,46 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 VISUALS = 'docs/assets/visuals'
-HELPERS = ('build.py', 'explainers.py', 'render.py', 'verify.py')
+GENERATORS = ('build.py', 'explainers.py', 'semantic.py')
+VALIDATORS = ('render.py', 'verify.py')
+HELPERS = GENERATORS + VALIDATORS
 SVG_NAMES = frozenset(f'{kind}-{lang}-{theme}-{size}.svg'
-                      for kind in ('connection', 'permissions', 'saved-and-running', 'delivery-evidence')
+                      for kind in ('connection', 'permissions', 'saved-and-running', 'delivery-evidence', 'pairing-exchange', 'port-observation', 'network-topologies', 'durable-save-gates', 'restart-state', 'api-boundary', 'resource-gates')
                       for lang in ('en', 'ja') for theme in ('light', 'dark')
                       for size in ('wide', 'narrow'))
+SCREENSHOTS = 'docs/assets/screenshots'
+PNG_NAMES = frozenset((
+    'direct-review-en-focused.png',
+    'direct-review-ja-focused.png',
+    'message-context-en-narrow-input.png',
+    'message-context-en.png',
+    'message-context-ja-narrow-input.png',
+    'message-context-ja.png',
+    'navigation-detail-en-narrow.png',
+    'navigation-detail-ja-narrow.png',
+    'navigation-graph-en-narrow.png',
+    'navigation-graph-en-wide.png',
+    'navigation-graph-ja-narrow.png',
+    'navigation-graph-ja-wide.png',
+    'receive-damaged-en-wide.png',
+    'receive-damaged-ja-wide.png',
+    'receive-en.png',
+    'receive-ja.png',
+    'receive-legacy-en-wide.png',
+    'receive-legacy-ja-wide.png',
+    'service-review-en.png',
+    'service-review-ja.png',
+    'setup-fixed-en-1180.png',
+    'setup-fixed-en-390.png',
+    'setup-fixed-ja-1180.png',
+    'setup-fixed-ja-390.png',
+    'startup-guide-en-narrow-actions.png',
+    'startup-guide-en-wide.png',
+    'startup-guide-ja-narrow-actions.png',
+    'startup-guide-ja-wide.png',
+    'stopped-review-en-focused.png',
+    'stopped-review-ja-focused.png',
+))
 IMAGE_SUFFIXES = frozenset(('.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif'))
 LIMIT = 8 * 1024 * 1024
 OID = re.compile(r'[0-9a-f]{40}\Z')
@@ -381,7 +416,7 @@ ELEMENT_ATTRIBUTES = {
     'circle': COMMON_ATTRIBUTES | frozenset(('cx', 'cy', 'r')),
     'ellipse': COMMON_ATTRIBUTES | frozenset(('cx', 'cy', 'rx', 'ry')),
     'line': COMMON_ATTRIBUTES | frozenset(('x1', 'y1', 'x2', 'y2')),
-    'path': COMMON_ATTRIBUTES | frozenset(('d',)),
+    'path': COMMON_ATTRIBUTES | frozenset(('d', 'stroke-dasharray')),
     'polyline': COMMON_ATTRIBUTES | frozenset(('points',)),
     'polygon': COMMON_ATTRIBUTES | frozenset(('points',)),
     'text': COMMON_ATTRIBUTES | frozenset(('x', 'y', 'font-size', 'font-weight', 'text-anchor', 'font-family')),
@@ -414,6 +449,12 @@ def svg_check(path):
                     valid = valid and 0 < float(value) <= 8192
                 if 'opacity' in attr:
                     valid = valid and 0 <= float(value) <= 1
+            elif attr == 'stroke-dasharray':
+                # Only bounded decimal presentation values; no CSS, units or references.
+                parts = value.split(' ')
+                valid = (1 <= len(parts) <= 8 and all(
+                    re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', part) and 0 < float(part) <= 100
+                    for part in parts))
             elif attr in ('fill', 'stroke'):
                 valid = bool(PAINT.fullmatch(value))
             elif attr in ('id', 'class'):
@@ -482,9 +523,15 @@ def static_checks(files=None):
                 links += 1
                 if image or PurePosixPath(resolved).suffix.lower() in IMAGE_SUFFIXES:
                     images.add(resolved)
+    expected_pngs = {SCREENSHOTS + '/' + name for name in PNG_NAMES}
+    actual_pngs = {name for name in files if name.startswith(SCREENSHOTS + '/') and name.endswith('.png')}
+    require(actual_pngs == expected_pngs, 'Expected exact 30 named documentation PNG variants')
+    for name in expected_pngs:
+        repository_path(name)
+    images.update(expected_pngs)
     expected = {VISUALS + '/' + name for name in SVG_NAMES}
     actual = {name for name in files if name.startswith(VISUALS + '/') and name.endswith('.svg')}
-    require(actual == expected, 'Expected exact 32 named documentation SVG variants')
+    require(actual == expected, 'Expected exact 88 named documentation SVG variants')
     checked_svgs = expected | {name for name in images if name.lower().endswith('.svg')}
     svgs = {name: svg_check(repository_path(name)) for name in sorted(checked_svgs)}
     return {'markdown_files': len(documents), 'local_links': links, 'mermaid_blocks': len(diagrams),
@@ -599,6 +646,34 @@ def check_png(path):
         image.verify()
 
 
+def png_decoder_negative_checks(directory):
+    """Mandatory real-decoder negative tests in the PIL-equipped document gate."""
+    from PIL import Image, UnidentifiedImageError
+    path = directory / 'decoder-negative.png'
+    cases = ('corrupt', 'jpeg-disguised-as-png', 'oversize', 'symlink')
+    for case in cases:
+        if case == 'corrupt':
+            path.write_bytes(b'not an image')
+        elif case == 'jpeg-disguised-as-png':
+            Image.new('RGB', (1, 1)).save(path, format='JPEG')
+        elif case == 'oversize':
+            Image.new('L', (16385, 1)).save(path, format='PNG')
+        else:
+            path.unlink()
+            target = directory / 'decoder-symlink-target.png'
+            Image.new('L', (1, 1)).save(target, format='PNG')
+            path.symlink_to(target)
+        try:
+            check_png(path)
+        except (ValueError, UnidentifiedImageError):
+            pass
+        else:
+            raise ValueError('PNG decoder accepted invalid fixture: ' + case)
+    path.unlink()
+    target.unlink()
+    return list(cases)
+
+
 def renderer_root():
     tracked = tracked_files()
     require({'.github/docs-render/package.json', '.github/docs-render/package-lock.json'} <= tracked,
@@ -630,15 +705,17 @@ def render(static, output, report):
     tools = renderer_root()
     with tempfile.TemporaryDirectory(prefix='ci-documents-') as temp:
         scratch = Path(temp)
+        report['stage'] = 'png-decoder-negative-checks'
+        report['png_decoder_negative_checks'] = png_decoder_negative_checks(scratch)
         for name in HELPERS:
             shutil.copyfile(repository_path(VISUALS + '/' + name), scratch / name)
         expected = {name: static['svg_hashes'][VISUALS + '/' + name] for name in SVG_NAMES}
-        for name in HELPERS[:2]:
+        for name in GENERATORS:
             report['stage'] = 'svg-regenerate-' + name
             run_quiet([sys.executable, '-I', '-B', str(scratch / name)], scratch, 60)
         generated = {path.name: svg_check(path) for path in scratch.glob('*.svg')}
         require(generated == expected, 'SVG regeneration differs from exact committed variants')
-        for name in HELPERS[2:]:
+        for name in VALIDATORS:
             report['stage'] = 'svg-' + name
             run_quiet([sys.executable, '-I', '-B', str(scratch / name)], scratch, 120)
         for name in SVG_NAMES:
@@ -662,9 +739,12 @@ def render(static, output, report):
         for name in sorted(static['images']):
             if PurePosixPath(name).suffix.lower() in IMAGE_SUFFIXES - {'.svg'}:
                 from PIL import Image
-                with Image.open(repository_path(name)) as image:
-                    require(0 < image.width <= 16384 and 0 < image.height <= 16384, 'Invalid image dimensions: ' + name)
-                    image.verify()
+                if name.startswith(SCREENSHOTS + '/'):
+                    check_png(repository_path(name))
+                else:
+                    with Image.open(repository_path(name)) as image:
+                        require(0 < image.width <= 16384 and 0 < image.height <= 16384, 'Invalid image dimensions: ' + name)
+                        image.verify()
         driver = scratch / 'render-mermaid.mjs'
         driver.write_text(MERMAID_DRIVER, encoding='utf-8')
         manifest = []

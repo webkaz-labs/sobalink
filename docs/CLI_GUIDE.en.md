@@ -60,7 +60,7 @@ soba discover --json
 soba connect --json --name advertised-api --peer PEER_ID --network tcp --ports 8080 --purpose web --local-port 18080 --service-id GRANT_ID --service-revision REVIEWED_REVISION
 ```
 
-The revision is opaque review metadata. Core checks its freshness and re-queries the authenticated peer before applying the connection. A replaced grant, changed purpose or endpoint, or shortened sharing lifetime is rejected. Later renewal of the same unchanged grant is permitted. The wizard refreshes an unchanged reviewed grant before applying it, so time spent reviewing does not silently change the selected scope. Agent scripts must compare all reviewed fields before accepting a newer revision.
+The revision is opaque review metadata. See [when advertised information changes](GENERIC.en.md#when-advertised-information-changes) for the freshness decision. Scripts must compare every reviewed field before accepting a newer revision.
 
 ## Saved definitions, endpoints and stopping
 
@@ -91,7 +91,7 @@ soba task --services api --ttl 45m --confirm -- PROGRAM ARG
 
 Group lists and share confirmations show service names and scope as readable text. `--json` service/group starts with shares still require explicit `--confirm` and never prompt.
 
-`--ttl` changes only this invocation's active permission lifetime; it leaves saved definitions and their revisions unchanged. It must be positive and use whole seconds. Explicit `--owner` binds subsequent stop/wait operations to the same owner and does not invent a renewable lease. Tasks still acquire a private renewable lease, execute arguments directly without a shell, and clean up their owned services on exit, failure or cancellation. Readiness means transport readiness; remote jobs have their own completion and cancellation mechanisms.
+`--ttl` changes this invocation only, using positive whole seconds; saved definitions and revisions stay unchanged. `--owner` scopes start/stop/wait to the same owner without creating a renewable lease. See [task ownership and the two deadlines](SAVED_SERVICES.en.md#temporary-services-owned-by-a-command) for cleanup, lease renewal and the remote-job boundary.
 
 ## Review startup effects
 
@@ -108,3 +108,5 @@ Credentials and private invitations do not belong in command arguments, shell hi
 ## Opt-in durable file outbox
 
 `soba send --queue --peer PEER_ID --expires-in 24h --json PATH` prepares a queue review without sending. The Web UI has the same explicit mode and deadline review. Queued means local acceptance, not delivered; unknown outcomes must be looked up by their original request ID. See [durable outbox](DURABLE_OUTBOX.en.md) for confirmation, restart, cancellation and the additive API contract.
+
+See the [actual CLI save-versus-start output](SAVED_SERVICES.en.md#distinguish-save-from-start-in-actual-cli-output).

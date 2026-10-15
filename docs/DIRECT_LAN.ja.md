@@ -40,6 +40,38 @@ WireGuardで暗号化したTCPとネイティブUDPを組み込みgVisorユー�
 コマンド引数、共有文書に残さないでください。使用済み・期限切れの招待は表示中の
 コピー・QR欄から消えます。ペアリングだけではアプリ利用を許可しません。
 
+
+デモデータでの画面例。実機での接続・配送・アプリ動作を検証した結果ではありません。
+
+<img src="assets/screenshots/direct-review-ja-focused.png" alt="架空のNotebookの正確な接続先と許可prefixを確認し、開始前に取り消せる画面。" width="680">
+
+[原寸で開く](assets/screenshots/direct-review-ja-focused.png)
+
+ローカルの正確なIP・ポート → 許可prefixを確認します。同じ番号のTCPとUDPへの到達が必要です。これは開始前の確認で、招待や秘密情報は表示していません。
+
+### 明示的な招待で渡すもの
+
+CLIの前に、公開IDと秘密の一回用招待の渡す向きを分けます。
+
+```mermaid
+sequenceDiagram
+ participant I as 招待する端末
+ participant R as 招待を受ける端末
+ R->>I: 受信者の公開ID
+ I->>I: 一回用招待を作成：既定5分
+ I-->>R: 秘密の招待を非公開で渡す
+ R->>R: 招待元・接続先・期限を確認
+ alt 有効かつ相手を確認済み
+ R->>I: 別に確認して参加
+ else 無効または相手が違う
+ R->>R: 参加しない
+ end
+ Note over I,R: ペアリングでアプリの許可は増えない
+ Note over I,R: 公開IDと秘密招待は別
+```
+
+受信側が先に公開IDを渡し、招待側が受信者を限定した一回用の秘密招待を返します。既定の期限は5分です。内容を確認してから別に参加し、アプリの許可は個別に行います。
+
 ## CLIでの操作
 
 まず `soba start --offline` で起動します。以下は架空のプライベートネットワーク例です。
@@ -116,6 +148,75 @@ soba direct-lan join --json-file invitation.json
 
 同一設定の繰り返しは識別情報を維持します。接続先・範囲の変更は停止、オフライン再起動、
 対象ペアの明示的な解除、再ペアリングを必要とします。招待によって許可範囲を自動拡大しません。
+
+
+### 新しい接続はどちらから始まるか
+
+固定端点ペアの模式図です。managed context の追加認可・終端tombstoneは別の実装契約です。
+
+アプリの要求元とWireGuardを開始する側は別の役割です。
+
+```mermaid
+sequenceDiagram
+ participant A as アプリの要求元
+ participant L as 公開鍵が小さい側
+ participant H as 公開鍵が大きい側
+ alt 小さい鍵の端末から要求
+ A->>L: 新しい接続を要求
+ else 大きい鍵の端末から要求
+ A->>H: 新しい接続を要求
+ H->>L: 固定済みの相互TLSで開始を依頼
+ end
+ L->>H: UDPでWireGuardを開始
+ H-->>L: handshakeへの応答
+ L->>H: 認証済みtransportパケット
+ Note over L: 小さい鍵側は確立を確認
+ Note over H: 大きい鍵側は確立と受信を確認
+ Note over A,H: 確認できた要求だけアプリ接続へ
+ Note over L,H: 同時要求は一つの開始処理を共有
+ Note over L,H: 再試行でも要求の期限は延びない
+```
+
+WireGuardの開始役はEd25519識別用公開鍵の順で決まり、アプリの要求元とは別です。大きい鍵の端末は必要に応じて相互TLSで依頼します。同時要求は開始処理を共有し、元の期限内で、小さい鍵側は確立、大きい鍵側は確立に加えて認証済みパケットの受信を待ちます。既存通信のrekeyや継続性を示す図ではありません。
+
+
+### ペア保存と解除で結果が不明なとき
+
+固定端点ペアの模式図です。managed context の追加認可・終端tombstoneは別の実装契約です。
+
+現在の接続を閉じても、保存済みペアの解除を証明することにはなりません。
+
+```mermaid
+flowchart TD
+ Pair["ペアを保存"]
+ Good["保存成功"]
+ Activate["有効化して応答"]
+ Bad["結果不明・保存失敗"]
+ Lost["応答が届かない"]
+ Inspect["相手だけ保存済みか確認"]
+ Remote["必要なら相手の許可を解除"]
+ Revoke["解除を要求"]
+ Close["追跡中の通信を閉じる"]
+ Disk["解除状態を保存"]
+ Removed["保存成功：解除済み"]
+ Failed["保存失敗：古いペアが残る"]
+ Recover["停止して保護された状態を復旧"]
+ Before["照合できるまで再起動しない"]
+ subgraph Pairing["ペアの保存"]
+ Pair --> Good --> Activate
+ Pair --> Bad
+ Activate --> Lost --> Inspect --> Remote
+ end
+ subgraph Revocation["解除の保存"]
+ Revoke --> Close --> Disk
+ Disk --> Removed
+ Disk --> Failed
+ end
+ Bad --> Recover
+ Failed --> Recover --> Before
+```
+
+ペアは永続保存の後に有効化します。保存結果が不明なら閉じ、応答消失では相手だけ保存済みの場合があります。解除時に現在の通信を閉じても、保存に失敗すれば古いペアが残ります。再起動前に保護された状態を復旧し、再ペアリング前に相手の許可を確認します。
 
 ## 容量と検証
 

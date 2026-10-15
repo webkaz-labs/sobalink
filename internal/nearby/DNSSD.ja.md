@@ -25,7 +25,37 @@ DNSService が選択するのはインターフェースです。IPv4 パケッ�
 
 所有者ごとの上限は、64セッション、193問い合わせ、4登録、512回の開始・問い合わせ API 呼び出し、512コールバック、毎秒16回の解析、合計512 KiBの受理レコードです。C のリングだけが最大64観測を保持し、Go 側はバッファーなしで受け渡します。上限到達や不正な状態更新では、無効化通知を捨てて候補を残さず、受理を停止します。これはアプリ側の作業量の制限であり、OS デーモンが送るパケット数の保証ではありません。
 
-停止し得るデーモン IPC の前から所有者を保持します。API 操作とネイティブコールバックは1本の直列ディスパッチキューで実行します。C は Go ポインターやハンドルを保持しません。取り消しで受理を止め、読み取りを起こし、同じキュー上で共有参照を解放します。キューと処理中の全呼び出し・読み取りワーカーが終了するまで領域を解放しません。公開 Close の2秒タイムアウトは未解決の所有者を保持し、終了済みとは扱いません。必須の終了処理は受理予算を使い切っても実行します。
+
+### Close が時間切れでも所有者を保持する理由
+
+```mermaid
+sequenceDiagram
+    participant C as 公開 Close
+    participant O as 保持中の所有者
+    participant Q as 直列キュー
+    participant W as 呼出しと読取り
+    Note over O,Q: デーモン IPC の前から所有者を保持
+    C->>O: 取消し・候補を無効化
+    O->>O: 新規受理を停止
+    O->>W: 停止・読取りを起こす
+    O->>Q: 同じキューで共有参照の解放を開始
+    alt 公開期限内に全終了を確認
+        Q-->>O: キュー終了を確認
+        W-->>O: Start・Query・Next の終了を確認
+        O->>O: ネイティブ領域を解放
+        O-->>C: 終了済み
+    else 公開期限の2秒が先に経過
+        O-->>C: 終了未確認
+        Note over O,W: 所有者と終了処理を保持し置換を禁止
+    end
+```
+
+文章での説明: 取消しで候補を無効化し新規呼出しを止め、読取りを起こして同じ直列キュー上で共有参照を解放します。キューと処理中の全呼出し・読取りの終了後だけネイティブ領域を解放します。公開 Close が2秒で時間切れになっても所有者と必須の終了処理を保持します。
+
+実装参照: [session.go](session.go) · [dnssd_owner.go](dnssd_owner.go) · [provider_darwin.go](provider_darwin.go) · [dnssd_bridge_darwin.c](dnssd_bridge_darwin.c).
+
+API 操作とネイティブコールバックは1本の直列ディスパッチキューで実行します。
+C は Go ポインターやハンドルを保持しません。受理予算を使い切っても必須の終了処理は実行します。
 
 参照解放はアプリの登録・問い合わせを終了しますが、相手キャッシュの消去、デーモン内で待機中のパケット、終了通知の到達までは確認できません。他の場所に候補が残っていても、取り消した Core セッションとブートストラップリスナーは選択・確定を拒否します。
 
@@ -37,12 +67,40 @@ Darwin+cgo、システム SDK の dns_sd.h・dispatch ヘッダーと、DNS-SD�
 
 これは同一ホスト内の証拠です。選択した OS 範囲では OS-backed Session の相互候補、lookup、Close による無効化を確認します。受信専用 UDP は送信元ポート 5353、承認済み private family/prefix、選択 interface、宛先、TTL 255 を要求し、変更のない製品の `validatePacket` → `decodeRecordPacket` → `recordAssembler`/store に通して PTR/SRV/TXT/A の mask 15 を確認します。証明するのは OS 公開データ → 製品 raw parser の方向だけです。legacy native-C の一回の query と selected-interface response は別のテスト専用経路です。製品 raw mDNS 送信 → OS resolver、二つの OS／物理端末、Core/browser の自動発見、TCC の原因・responsible-code identity は証明しません。通常の Terminal 起動は権限・設定を変更せず、prompt を承認せず、拒否や有限時間内に完了しない実行では安全に失敗します。所有する子処理の join は Terminal アプリ／window の終了を意味しません。任意の create-event 診断は別に残し、unavailable をそのまま報告できます。
 
-ネイティブテストは別々の明示的な opt-in を持ちます。
 
-- `SOBALINK_DNSSD_LOCAL_ONLY=1`: LocalOnly を使い、2つの API 登録、正確なレコードの相互受信と削除通知を確認。同一ホスト内の API 検証です。
-- `SOBALINK_DNSSD_SELECTED_LOOPBACK=1`: 正確なループバックのインターフェース・アドレス上で、2つの実プロバイダーと Session を確認。非対応なら利用不可のままです。
-- `SOBALINK_DNSSD_SELECTED_INTERFACE=1`: 別途承認されたホスト型 CI で、既存のプライベート IPv4・マルチキャスト対応範囲が一意な場合だけ架空データで確認。範囲がない・曖昧なら利用不可です。他テストから自動切替しません。
-- `SOBALINK_DNSSD_RAW_RECEIVE=1`: 同じ条件で選択したホスト型 CI の範囲で、固定グループにバインドした受信専用ソケットが OS 広告の実メタデータとレコード組み立てを確認します。生パケットは送信せず、逆方向や別端末への到達は証明しません。
+### 各ネイティブ試験はどの方向を確認するか
+
+```mermaid
+sequenceDiagram
+    participant A as 製品 API または Session
+    participant O as OS DNS-SD
+    participant R as 製品 raw parser
+    participant F as テスト専用 native fixture
+    Note over A,F: 同一ホスト内のみ・各範囲に独立した verified receipt が必要
+    Note over A,O: 1 LocalOnly・2 loopback・3 interface
+    A->>O: 正確な架空レコードを登録
+    O-->>A: 正確な通知・候補・削除
+    Note over O,R: 4 受信専用 raw reception
+    O->>R: 実メタデータを持つ OS 広告パケット
+    Note right of R: メタデータ受理・解析・組立て
+    Note over O,F: 5 Legacy serialization
+    F->>O: native C で legacy 問い合わせを一回
+    O-->>F: 正確な legacy ユニキャスト応答を検証
+```
+
+文章での説明: 1～3は OS API と Session の観測、4は OS 広告から変更のない製品 raw parser への受信方向です。5はテスト専用のネイティブ C による一回の legacy 問い合わせとユニキャスト応答です。同一ホスト内に限り、製品 raw 送信から OS・別の物理端末・Core やブラウザーの証明にはなりません。
+
+実装参照: [dnssd_native_acceptance_test.go](dnssd_native_acceptance_test.go) · [dnssd_raw_receive_test.go](dnssd_raw_receive_test.go) · [dnssd_legacy_native_test.go](dnssd_legacy_native_test.go) · [dnssd_socket_native_test.go](dnssd_socket_native_test.go).
+
+各範囲は独立した明示的な opt-in と証明方向を持ちます。番号は図と対応します。
+
+| 範囲 | 明示的な opt-in | 確認する境界と条件 |
+| --- | --- | --- |
+| 1. LocalOnly | `SOBALINK_DNSSD_LOCAL_ONLY=1` | 同一ホストの LocalOnly で2登録・正確な相互通知・削除 |
+| 2. 選択 loopback | `SOBALINK_DNSSD_SELECTED_LOOPBACK=1` | 正確な loopback binding 上の2 provider と Session。非対応は利用不可 |
+| 3. 選択 interface | `SOBALINK_DNSSD_SELECTED_INTERFACE=1` | 別途承認したホスト型 CI の既存 private IPv4 multicast 範囲1個で架空データを確認。曖昧なら利用不可・代替なし |
+| 4. 受信専用 raw reception | `SOBALINK_DNSSD_RAW_RECEIVE=1` | 厳密に選択したホスト型 CI 範囲で OS 広告から製品 metadata 判定・record assembler への受信だけ |
+| 5. Legacy serialization | `SOBALINK_DNSSD_LEGACY_SERIALIZATION=1` | テスト専用 native C による一回の問い合わせと正確な legacy ユニキャスト応答。独立した条件と上限は後述 |
 
 有限時間の終了確認後に、この4テストが独立した `NEARBY_DNSSD_CAPABILITY` を出力します。受信専用テストは、受信パケット数、コピー済みバイト数、メタデータの受理・拒否、デコード結果、レート制限数、架空の正確な4レコード種別を表すビットマスクも記録します。`receivedBytes` は有限長のバッファーにコピーした量であり、切り詰められたデータグラムの完全な通信量ではありません。受信専用・legacy ソケットはそれぞれ、所有期間全体で512回の受信、614,912コピー済みバイト（512 × 1201）を上限とします。プロバイダーの受理レコード予算とは別です。不正・切り詰め済みのメタデータを持つパケットはデコードしません。
 

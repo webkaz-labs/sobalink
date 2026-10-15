@@ -21,6 +21,7 @@ applies only exact manifest edits, and atomically writes a new generated module
 for each dependency. This component is written at `.sobalink-deps/tailscale`;
 the separately pinned WireGuard/gVisor overlays are described in
 [lifecycleadaptation/UPSTREAM.md](../lifecycleadaptation/UPSTREAM.md).
+See the [three-module preparation and provenance diagram](../lifecycleadaptation/UPSTREAM.md#how-do-three-original-modules-become-verified-build-inputs).
 It does not patch the Go module cache. Existing
 output is fully rehashed and rejected on drift. `--verify` performs read-only
 verification. With the original archive cached, preparation works with

@@ -38,6 +38,34 @@ The job has read-only repository permissions. It does not change main, tags,
 releases, assets, OS startup settings, network settings, or an existing profile.
 It does not enroll a node or select an external relay.
 
+
+### Read values within their measurement window
+
+This is the historical measurement procedure, not new performance evidence.
+
+```mermaid
+sequenceDiagram
+ participant P as Measurement progression
+ participant M as Live-process samples
+ participant D as Disk checkpoints
+ P->>M: Observe idle for 15 minutes
+ P->>D: Checkpoint after stop
+ loop Ten clean restart cycles
+ P->>D: Checkpoint before start
+ P->>M: Observe each for 10 seconds
+ P->>D: Checkpoint after stop
+ end
+ P->>M: Observe 10 seconds before forced idle stop
+ P->>D: Checkpoint after forced stop
+ P->>M: Observe recovery for 60 seconds
+ P->>D: Checkpoint after recovery observation and stop
+ Note over M: Each phase: baseline, sampled max, end
+ Note over D: Disk history spans restarts, distinct from live metrics
+ Note over P,D: Traffic unmeasured, cleanup success is separate evidence
+```
+
+Read baseline, sampled maximum and end inside each live phase. The source also observes ten seconds immediately before the forced idle stop. Disk checkpoints span process restarts; network traffic remains unmeasured and cleanup has a separate result. These are historical fixture windows, not new benchmark results.
+
 ## Report and limits
 
 The uploaded JSON includes release/source/binary identity and aggregate counters:

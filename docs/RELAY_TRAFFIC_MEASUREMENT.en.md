@@ -13,10 +13,18 @@ reporting measured results.
 
 ```mermaid
 flowchart LR
-    A[Synthetic peer A] --> B[Counting proxy: leg A]
-    B --> C[Pinned loopback relay]
-    C --> D[Counting proxy: leg B]
-    D --> E[Synthetic echo peer B]
+ accTitle: Two measurement points, two directions
+ accDescr: Synthetic loopback counts are not physical-network throughput.
+ A["Synthetic peer A"] -->|Request| B["Meter A"]
+ B --> C["Pinned loopback relay"]
+ C --> D["Meter B"]
+ D --> E["Synthetic echo peer B"]
+ E -. Echo .-> D
+ D -.-> C
+ C -.-> B
+ B -.-> A
+
+ LIMIT["Synthetic loopback counts are not physical-network throughput."]
 ```
 
 Text equivalent: synthetic peer A reaches peer B through a pinned loopback relay; the proxy counts encrypted bytes on each peer-to-relay leg in both directions. It does not count outer packet headers.

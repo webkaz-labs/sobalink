@@ -17,6 +17,8 @@ This is an experimental open-source project; no user support is provided. These 
   <img src="docs/assets/visuals/connection-en-light-wide.svg" alt="Service-sharing path: local app, sobalink, selected network, peer permission, shared service" width="1100">
 </picture>
 
+[Open full-size diagram (wide)](docs/assets/visuals/connection-en-light-wide.svg) · [Narrow version](docs/assets/visuals/connection-en-light-narrow.svg)
+
 Your app uses the actual local endpoint; sobalink routes traffic to the peer’s explicitly permitted service. A reachable network path and separate application authentication are required. Ordinary Tailnet services do not require sobalink on the target.
 
 ## Get started

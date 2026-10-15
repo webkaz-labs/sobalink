@@ -6,9 +6,24 @@ The current release includes Web-requested restart in the reviewed Direct LAN ac
 
 ## What to expect
 
-**Keep the temporary restart window open until it finishes.** A fresh process requires a fresh ordinary login; the old browser session is not transferred. The original review and deadline stay fixed.
+```mermaid
+flowchart TB
+    accTitle: Which restart checks preserve the original intent?
+    accDescr: The original browser confirms and acknowledges. Valid session-bound stop authorization is consumed before shutdown. Successful close, lock release and native exit are all required before an offline successor rechecks the same intent and deadline. Login is fresh.
+O["Original signed-in browser"] --> P["Popup: confirm and acknowledge"]
+    P --> G{"Stop authorization valid?"}
+    G -->|no| R["Inspect current state"]
+    G -->|yes: consume| Shutdown
+    subgraph Shutdown["All three checks required"]
+        direction LR
+        S["IPC and Core closed"] --> L["Profile lock released"] --> X["Native exit verified"]
+    end
+    Shutdown --> N["Offline successor"]
+    N --> I["Recheck intent and deadline"]
+    I --> F["Fresh code; normal login"]
+```
 
-If the popup is blocked, the window closes or the response is uncertain, reopen current local management and inspect state before trying again. A new attempt needs a new explicit review. Neither reopening the page nor canceling undoes a confirmation already saved.
+Keep the temporary restart window open until it finishes. The original session must still authorize stop admission; logging out or invalidating it beforehand denies restart. After admission, the same intent and deadline continue through the shutdown checks, without transferring the old browser session. Open the normal login screen with the separate Open button or bare URL, then use the fresh one-time code. If continuation fails or is uncertain, inspect state before a new explicit review. Canceling does not undo a saved confirmation.
 
 ## Web flow
 

@@ -6,12 +6,7 @@ For normal first-use setup, start with [request and accept](CONNECTION_SETUP.en.
 
 The current release includes explicit pinned-relay pairing, prepared-route recovery, the [LAN destination policy](LAN_DESTINATIONS.en.md), and [relay certificate/resource controls](RELAY_OPERATIONS.en.md). Exact-source automated and distribution results are recorded in [verification](VERIFICATION.en.md). Physical devices, LAN/WAN/NAT topology, sleep/wake and native IME remain separate, unperformed acceptance checks.
 
-<picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-en-dark-narrow.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/permissions-en-dark-wide.svg">
-  <source media="(max-width: 839px)" srcset="assets/visuals/permissions-en-light-narrow.svg">
-  <img src="assets/visuals/permissions-en-light-wide.svg" alt="Pairing, message and file trust, and service permissions are separate decisions.">
-</picture>
+Compare [network structures and reachability](MIXED_CONNECTIONS.en.md#three-separate-choices), and review receiving/sharing authority separately in [Security](../SECURITY.md).
 
 
 **Upgrading:** profile 3 is incompatible with v0.4.0-alpha.4 and earlier. Keep old state untouched and start with a separate empty `--state-dir`; there is no automatic migration or deletion. Per-feature format histories below do not override this profile boundary.
@@ -129,10 +124,16 @@ Then use explicit messages, batch transfers and scoped services from the [main g
 Prepare **both devices before moving networks**. Keep the original pairing; add only relay endpoints whose operator and certificate pin you have verified. An additional relay must already exist and admit the paired roles. `routes add` neither starts a relay nor changes its admission policy.
 
 ```mermaid
-flowchart LR
-    C[Prepare exact candidates] --> X[Exchange private offers]
-    X --> A[Review and approve on each device]
-    A --> R[Reconnect using eligible routes]
+flowchart TD
+ accTitle: An offer and local approval are different
+ accDescr: A candidate is not connection evidence or an application grant.
+ A["Prepare exact private candidates"] --> B["Exchange recipient-bound offers"]
+ B --> C["Device A: review local approval"]
+ B --> D["Device B: review local approval"]
+ C --> E["Use only currently eligible routes"]
+ D --> E
+
+ LIMIT["A candidate is not connection evidence or an application grant."]
 ```
 
 1. Stop the running agent and start `soba start --offline`. Keep it running; in another terminal use `soba lan routes list`, then add the exact endpoint/pin and `local` or `external` scope. The original relay remains required; additional exact candidates are limited by saved-state and exchange-format capacity, with separate adjustable runtime budgets. See [relay resources](RELAY_OPERATIONS.en.md)
@@ -231,6 +232,31 @@ Peer Pause blocks messages/files and cancels active sends. After unpausing, sele
 
 The default trusted-relay mode permits direct peer traffic, encrypted payload through the selected relay and HTTPS/ICMP diagnostics to that relay endpoint. It is not strict LAN isolation or zero external traffic. Required build tags omit port mapping, captive-portal probes and system-proxy support; unsupported proxy/backend override environments are rejected.
 
-The embedded relay authenticates a sealed HTTPS bootstrap before admitting the invited transport role. Unknown keys have no blanket exception. Its two-minute relay connection lease rechecks admission; a previously admitted relay session can persist for up to two minutes after removal, or about four minutes from initial bootstrap when temporary admission overlaps a lease. Application authorization and tracked application flows are revoked immediately.
+The embedded relay authenticates a sealed HTTPS bootstrap before admitting the invited transport role. Unknown keys have no blanket exception. Its relay connection closes when its two-minute lease expires; a new connection must pass admission again. a previously admitted relay session can persist for up to two minutes after removal, or about four minutes from initial bootstrap when temporary admission overlaps a lease. Application authorization and tracked application flows are revoked immediately.
+
+
+### Application revocation and relay expiry are separate
+
+Removing an application permission does not wait for a relay lease to expire.
+
+```mermaid
+sequenceDiagram
+ participant C as Permission removal
+ participant A as Application traffic
+ participant R as Existing relay session
+ par Application boundary
+ C->>A: Revoke permission immediately
+ A->>A: Close tracked application flows
+ and Relay boundary
+ C->>R: Remove relay admission
+ Note over R: Any new relay connection requires admission
+ R->>R: Close connection at two-minute lease expiry
+ end
+ Note over A,R: Remaining relay session is not app permission
+ Note over C,R: Up to 2 minutes after removal
+ Note over C,R: Temporary-admission overlap: about 4 minutes from first bootstrap
+```
+
+Application permission and tracked application traffic stop immediately. An existing relay connection may remain up to two minutes after removal. About four minutes refers to time from the first bootstrap when temporary admission overlaps a lease, not four minutes of application access after revocation.
 
 Path state remains Unknown until measured. A saved pairing is not evidence of contact. The graph shows this device and observed peers only; it must not invent a full mesh, bandwidth or direct/relay paths. Direct/relay changes, sleep/wake and reconnection do not guarantee existing TCP continuity. The successful native fixture establishes one loopback relay scenario across a lease boundary, not real LAN/WAN/NAT migration or a production zero-egress policy.

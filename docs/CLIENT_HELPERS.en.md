@@ -33,6 +33,33 @@ A saved endpoint is usable only after the relevant service is explicitly started
 
 ## Save a RustDesk group
 
+```mermaid
+flowchart LR
+    NAT["NAT TCP / 32115"] --> N["TCP 21115"]
+    ID["ID TCP / 32116"] --> I["TCP 21116"]
+    HB["Heartbeat UDP / 32116"] --> H["UDP 21116"]
+    Relay["Relay TCP / 32117"] --> B["TCP 21117"]
+    Rule["NAT = ID port - 1"] -.-> NAT
+    Rule -.-> N
+    subgraph Local["Local entrances on this device · defaults"]
+      NAT
+      ID
+      HB
+      Relay
+    end
+    subgraph TargetID["ID peer"]
+      N
+      I
+      H
+    end
+    subgraph TargetRelay["Relay peer (may be the same device)"]
+      B
+    end
+```
+
+These are the four default forwarding mappings. Saving, separately reviewed start and manual RustDesk configuration are separate actions. This is not SOCKS substitution or evidence of screen-sharing success; actual application compatibility requires separate verification.
+
+
 Obtain the RustDesk server's existing public key and the immutable peer IDs from the selected network. These examples use placeholders; the helper does not generate a server key or configure a remote server.
 
 ```sh

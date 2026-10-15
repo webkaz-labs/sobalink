@@ -16,6 +16,21 @@ private channel. Export never copies the configured hostname automatically.
 
 ## Exchange a key without granting access
 
+```mermaid
+flowchart TD
+  Input["Public card text / PNG"]
+  Field["Local input field"]
+  Review["Review explicitly: identity and freshness unverified"]
+  Draft["Use explicitly: draft the key and alias"]
+  Invite["Review separately: create a private invitation"]
+  Change["Input, mode or scope changes invalidate review"]
+  Input --> Field --> Review --> Draft --> Invite
+  Review --> Change --> Field
+```
+
+Decoding and inspection do not authenticate the peer, pair devices or grant access. PNG reading only fills the local text field. Independent key comparison and private invitation creation remain separate.
+
+
 1. Export with a deliberately chosen alias; omit optional address hints unless needed.
 2. Inspect the received text or PNG and compare the public key through a trusted channel. “Unverified” and “Unknown” are meaningful results, not success badges.
 3. Copy only the reviewed key and alias to the recipient draft. Create and review the private invitation separately.

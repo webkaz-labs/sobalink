@@ -11,13 +11,17 @@ Run the checks affected by the complete change. Ordinary documentation does not 
 3. Before a prerelease, require exact-source full validation plus the independent signing, provenance, public retrieval and installed-binary gates.
 
 ```mermaid
-flowchart LR
-    A[Complete change] --> B{Recognized narrow scope?}
-    B -->|Yes| C[Declared limited checks]
-    B -->|No| D[Full native and browser checks]
-    C --> E[Scope-labelled required result]
-    D --> E
-    E --> F[Release requires independent full proof]
+flowchart TD
+ accTitle: Selected checks still require the aggregate
+ accDescr: Supplemental success cannot replace required checks; releases need independent full proof.
+ A["Complete event delta"] --> B{"Recognized narrow scope?"}
+ B -->|Yes| C["Declared selected checks"]
+ B -->|No or uncertain| D["Full native and browser checks"]
+ C --> E["Required aggregate with scope evidence"]
+ D --> E
+ F["Supplemental document rendering: separate evidence"]
+
+ LIMIT["Supplemental success cannot replace required checks; releases need independent full proof."]
 ```
 
 Text equivalent: classify the complete change; run only a recognized narrower suite or the full suite; report the actual scope. Release eligibility still requires its independent exact-source full proof.
@@ -40,7 +44,7 @@ Text equivalent: classify the complete change; run only a recognized narrower su
 
 Every selected scope runs the `documents` job, and `ci-required` rejects a missing, skipped, failed or cancelled document job or required check step. Static checks cover all tracked Markdown and the reviewed SVG set. Ordinary prose changes do not install Node, Chromium or rendering dependencies. A changed Mermaid block, diagram image or local image reference selects rendering; uncertain selection and full CI render conservatively. Rendering dependencies are installed from the exact lock into a temporary directory outside the checkout, and generated images never modify the source tree.
 
-The extra prose and 32 SVG variants are file-level allowlists in `ci-impact.py`; an arbitrary README, SVG or Python file is not enough to qualify. Document generators, rendering/checking scripts, dependency manifests/locks, workflow changes, agent/development policy and unknown paths still require full application CI. Both old and new rename endpoints and file modes remain part of classification. The document checker independently verifies the current event/commit/tree and reproduces selection; an artifact or a previous successful run cannot grant a skip.
+The extra prose and 88 SVG variants are file-level allowlists in `ci-impact.py`; an arbitrary README, SVG or Python file is not enough to qualify. Document generators, rendering/checking scripts, dependency manifests/locks, workflow changes, agent/development policy and unknown paths still require full application CI. Both old and new rename endpoints and file modes remain part of classification. The document checker independently verifies the current event/commit/tree and reproduces selection; an artifact or a previous successful run cannot grant a skip.
 
 Performance targets, excluding runner queue time, are a required result within three minutes for prose-only changes and five minutes for diagram changes. These are measured targets, not verified timing guarantees; receipts retain current job timings. A document-only success is never application, native or release-validation evidence.
 

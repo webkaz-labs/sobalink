@@ -35,13 +35,38 @@ traffic acceptance and packaging review before use.
 
 An optional per-engine `DestinationPrefixes` policy now wires the adapted engine before socket setup, restricts advertised endpoints, and revokes admitted UDP/TCP on retirement. Nil preserves the normal behavior; the policy does not bind a NIC or establish VPN isolation.
 
+
+### Can WAN discovery change relay selection or peer authority?
+
+```mermaid
+flowchart TB
+    subgraph DISCOVERY["Optional WAN candidates"]
+        WAN["Separate explicit opt-in"] --> POLICY{"Restricted mode or destination policy?"}
+        POLICY --> REJECT["Present: reject WAN before setup"]
+        POLICY --> ALLOW["Absent: validate bounded discovery"]
+        ALLOW --> STUN["Exact STUN destinations in a separate map"]
+        ALLOW --> IPV6["Opt-in IPv6 uses actual socket port"]
+        STUN --> CANDIDATES["Candidate addresses only"]
+        IPV6 --> CANDIDATES
+        STUN --> REMOVE["Discard discovery regions before relay selection"]
+    end
+    subgraph RELAY["Independent relay configuration"]
+        PIN["Certificate-pinned relay map"] --> SELECT["Relay selection and authenticated presence"]
+        SELECT --> FALLBACK["Configured encrypted-relay fallback remains"]
+    end
+```
+
+Text equivalent: WAN discovery is rejected with PrivateOnly or any non-nil destination policy. Otherwise, explicitly allowed STUN/IPv6 discovery supplies candidates only. Discovery-region information is removed before relay selection; the certificate-pinned encrypted relay remains configured for fallback. A non-nil destination policy includes an empty slice. Discovery grants neither peer authority nor a direct-path reachability result.
+
+Implementation references: [wan_candidates.go](wan_candidates.go) · [tailcat.go](tailcat.go) · [manifest.json](../engineadaptation/manifest.json).
+
 `WANCandidates` is a separate, explicit local opt-in for trusted-relay transport.
 It accepts exact numeric STUN destinations and/or native IPv6 candidate
 advertisement. Metadata is bounded by the configurable private-state byte
 budget and the inherent nonzero 16-bit discovery-ID namespace. An adjustable
 per-netcheck destination budget defaults to four; a rotating subset and bounded
-retries keep each run finite without imposing a four-endpoint metadata cap. Nil preserves existing behavior. Both `PrivateOnly`
-and any non-nil `DestinationPrefixes` reject this option before engine setup.
+retries keep each run finite without imposing a four-endpoint metadata cap. Nil preserves existing behavior. WAN opt-in is incompatible with either `PrivateOnly` or any non-nil
+`DestinationPrefixes`.
 Discovery settings never enter a peer capability, pinned relay map, or relay
 presence connection. The generated engine uses a separate STUN-only netcheck
 map, admits only those exact discovery destinations at its STUN writer, removes
@@ -51,7 +76,8 @@ does not query cloud metadata or introduce DNS, HTTPS/ICMP diagnostic fallback,
 port mapping, router configuration, or privileged network changes. STUN reveals
 the source address and port to each selected discovery service and does not
 authenticate a peer or establish direct-path reachability. The authorized
-certificate-pinned encrypted relay remains required and available as fallback.
+certificate-pinned encrypted relay remains configured for fallback; its
+presence does not establish current reachability.
 Socket-free validation and a separately opted-in loopback STUN fixture do not
 prove WAN NAT traversal, relayless WAN operation, or real-device compatibility.
 

@@ -89,6 +89,11 @@ func newActivationNativePair(t *testing.T) *activationNativePair {
 // that must preserve owned state if a bounded shutdown fails to join.
 func newActivationNativePairDirectories(t *testing.T, retainOnFailure bool) *activationNativePair {
 	t.Helper()
+	return newActivationNativePairDirectoriesWithInspection(t, retainOnFailure, false)
+}
+
+func newActivationNativePairDirectoriesWithInspection(t *testing.T, retainOnFailure, inspection bool) *activationNativePair {
+	t.Helper()
 	if os.Getenv("SOBALINK_RUN_ACTIVATION_NATIVE") != "1" {
 		t.Skip("requires explicit isolated native activation execution")
 	}
@@ -133,7 +138,7 @@ func newActivationNativePairDirectories(t *testing.T, retainOnFailure bool) *act
 			dir = t.TempDir()
 		}
 		t.Cleanup(f.close) // Join before TempDir removal, even on early failure.
-		c, err := openOwnedTestCore(t, ctx, Options{Directory: dir, Version: "synthetic-activation", SkipNetworkStart: true})
+		c, err := openOwnedTestCore(t, ctx, Options{Directory: dir, Version: "synthetic-activation", SkipNetworkStart: true, EnableResourceInspection: inspection})
 		if err != nil {
 			t.Fatal("offline Core construction failed")
 		}

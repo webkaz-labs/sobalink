@@ -17,6 +17,8 @@ The local Web UI and guided CLI support normal service workflows; explicit CLI c
   <img src="assets/visuals/connection-en-light-wide.svg" alt="A client uses its local entry point to reach an explicitly shared service on a peer." width="1100">
 </picture>
 
+[Open full-size diagram (wide)](assets/visuals/connection-en-light-wide.svg) · [Narrow version](assets/visuals/connection-en-light-narrow.svg)
+
 In this example both devices use sobalink. An ordinary Tailnet application target does not need it. Set up the network first, then review the service scope and use the displayed local endpoint.
 
 ## Choose your next step
@@ -157,6 +159,27 @@ soba connect --preset web --ports 3000 --local-port 8081 --peer PEER_ID
 Connections default to `until-stopped`; use `--ttl` for a finite lifetime. Connect listeners bind numeric loopback, use local ports 1024–65535 and consume the adjustable finite listener budget, initially 64. `--local-port` maps sorted effective remote ports to consecutive local ports; review the displayed mapping. It does not change the provider's application-target mapping.
 
 A ready listener is only transport readiness. Verify authentication and an actual operation in the target app. Preserve TLS certificate names, SSH host-key verification, origin rules and the app's own authorization. A tunnel does not adapt stdio protocols into HTTP or run remote jobs.
+
+### When advertised information changes
+
+Can a connection still start after time spent reviewing? For an ordinary advertised service, freeze the peer ID, grant ID, purpose, protocol, complete port scope and lifetime mode from the same refreshed row.
+
+```mermaid
+flowchart TB
+    Frozen["Review one row and freeze its scope"] --> Fetch["Before start: authenticated refresh"]
+    Fetch --> Same["Same grant and scope"]
+    Fetch --> Changed["Missing grant or changed scope"]
+    Same --> Equal["Expiry equal or later"]
+    Same --> Shorter["Expiry shortened"]
+    Equal --> Core["Fresh revision: Core rechecks before admission"]
+    Core --> Start["Start only if all checks pass"]
+    Changed --> Review["Do not start: review again"]
+    Shorter --> Review
+```
+
+Text equivalent: the guided CLI and Web refresh the authenticated peer immediately before a new start. The same grant and scope with an equal or later expiry can use the fresh revision. A missing or replaced grant, changed scope or shorter expiry stops the action for a new review. Core still rechecks freshness and the current grant before admission.
+
+Scripts must compare all reviewed fields before accepting a newer revision. Saved historical restarts retain their exact saved-review checks. This is ordinary service discovery; [resource-catalog review](CATALOG_VIEW_CONTRACT.en.md) has a separate grant and consumption contract. [CLI example](CLI_GUIDE.en.md#explicit-agent-commands)
 
 ## Reuse saved service settings
 

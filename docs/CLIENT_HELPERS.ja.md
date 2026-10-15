@@ -33,6 +33,33 @@ soba settings --group GROUP_NAME --json
 
 ## RustDesk グループを保存する
 
+```mermaid
+flowchart LR
+    NAT["NAT TCP / 32115"] --> N["TCP 21115"]
+    ID["ID TCP / 32116"] --> I["TCP 21116"]
+    HB["Heartbeat UDP / 32116"] --> H["UDP 21116"]
+    Relay["Relay TCP / 32117"] --> B["TCP 21117"]
+    Rule["NAT = ID port - 1"] -.-> NAT
+    Rule -.-> N
+    subgraph Local["この端末のローカル入口・初期値"]
+      NAT
+      ID
+      HB
+      Relay
+    end
+    subgraph TargetID["ID用の相手"]
+      N
+      I
+      H
+    end
+    subgraph TargetRelay["Relay用の相手（同じ端末でも可）"]
+      B
+    end
+```
+
+図は初期値の4つの転送対応です。保存、別途確認した開始、RustDesk自身への手動設定は別操作です。SOCKSへの置換や画面共有成功を示すものではなく、実アプリの互換性確認は別途必要です。
+
+
 RustDesk サーバーの既存の公開鍵と、選択するネットワークの不変の相手 ID を用意してください。以下の例はプレースホルダーです。ヘルパーはサーバー鍵の生成や接続先サーバーの設定を行いません。
 
 ```sh

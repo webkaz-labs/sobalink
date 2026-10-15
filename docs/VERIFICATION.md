@@ -146,3 +146,5 @@
 [配布](DISTRIBUTION.md)では、公開に選んだ正確な main の CI、実ブラウザー受入、反復ビルド、署名・provenance、独立した公開取得、4ネイティブ対象での実導入を必要とします。[sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) で、選んだ版の資材・ソース・リンクされた workflow の結果を確認してください。準備した workflow、ドラフト PR、条件付きの導入例、候補番号だけでは公開の証拠になりません。
 
 過去の [tsnet-bridge 公開版](https://github.com/webkaz-labs/tsnet-bridge/releases) は当時の実行ファイル・設定・署名情報を保持します。その導入結果や特定アプリの結果を、この製品の証拠にはしません。
+
+[アプリの取消と中継の期限](LAN.ja.md#アプリの取消と中継の期限は別)は起点を分けて読みます。中継の残存リースがアプリ許可を維持することはありません。

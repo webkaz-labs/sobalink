@@ -41,7 +41,7 @@ The local command API has `proxy.preview`, `proxy.start`, `proxy.list` and `prox
 
 The listener uses exactly `127.0.0.1` or `::1`, with username/password authentication and TCP CONNECT only. BIND and UDP ASSOCIATE are unsupported. Dialing uses the selected userspace backend, current approved peer identity and exact allowed TCP ports. Unrecognized names never reach OS DNS or an OS connection fallback. Management ports cannot be targets. An active proxy listener cannot be exposed through a service share, including a mapped share; a port already covered by a share cannot become a proxy listener.
 
-Network loss, peer revocation, identity reassignment, expiry, logout, listener failure or process exit stops the proxy. An ephemeral proxy restart requires fresh review and runtime credentials. A separately saved approval can support explicit restart, recovery within its original expiry, or an opted-in future process launch; changed scope or revoked identity requires renewed approval. Stopping a proxy closes tracked connections; it does not cancel work an application has already accepted.
+An ephemeral proxy stops on network loss, revocation, identity change, expiry, logout, listener failure or process exit; restart requires fresh review and runtime credentials. Saved-profile recovery and the effects of stop, disable and delete are shown in [private proxy state and actions](STARTUP.en.md#private-socks-profiles). Stopping a proxy closes tracked connections; it does not cancel work an application has already accepted.
 
 ## Inspect failures and check one TCP target
 

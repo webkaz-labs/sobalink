@@ -146,3 +146,5 @@ Before a clearly labeled prerelease, pass the integrated automated gates, authen
 [Distribution](DISTRIBUTION.md) requires successful CI for the exact main commit selected for publication, real-browser acceptance, repeatable packages, signatures/provenance, independent public download and actual installed-binary checks on four native targets. Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a selected version's assets, source and linked workflow results. A prepared workflow, draft PR, conditional installation example or candidate version is not evidence of a release.
 
 Historical [tsnet-bridge releases](https://github.com/webkaz-labs/tsnet-bridge/releases) retain their original executable, configuration and signature identities. Their installation and application-specific results do not verify this product.
+
+[Application revocation versus relay expiry](LAN.en.md#application-revocation-and-relay-expiry-are-separate) uses separate time origins; the remaining relay lease does not preserve application permission.

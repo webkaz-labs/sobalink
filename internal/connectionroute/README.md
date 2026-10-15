@@ -18,3 +18,5 @@ Tests exercise signature/nonce binding, independent transport observations, expi
 4. Stop on authorization failure or revocation; do not replay an existing stream.
 
 The routing decision concerns a new flow. A matching display name, address or saved mapping cannot replace the live transport identity check.
+
+See the [new-flow decision diagram](../../docs/MIXED_CONNECTIONS.en.md#only-an-availability-failure-may-try-another-route) for the per-attempt checks and stop branches.

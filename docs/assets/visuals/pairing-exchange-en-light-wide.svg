@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="744" viewBox="0 0 960 744" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">Request here. Approve there.</title><desc id="desc">In the TOFU flow the receiver opens a scoped request session. Full fingerprint verification additionally requires independent comparison and explicit approval on both devices. The requester reviews the exact key and deadline, then sends. The receiver approves that request. Discovery is not identity proof; TOFU does not prevent first-use impersonation. Saved pairing, connectivity and application permissions remain separate.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="960" height="744" rx="0" fill="#ffffff"/>
+<text x="24" y="33" font-size="13" fill="#5844bf" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  EXPLAINED</text>
+<text x="24" y="73" font-size="28" fill="#272c38" font-weight="650" text-anchor="start" id="label-5-box-916">Request here. Approve there.</text>
+<text x="24" y="105" font-size="14" fill="#596172" font-weight="400" text-anchor="start" id="label-6-box-916">Nearby setup · v2 TOFU flow</text>
+<rect x="158" y="133" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="168" y="143" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M188.0 189h24 M200.0 179v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="200.0" y="221" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-10-box-119">Requester</text>
+<rect x="718" y="133" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="728" y="143" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M748.0 189h24 M760.0 179v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="760.0" y="221" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-14-box-119">Receiver</text>
+<path d="M200 234V580" fill="none" stroke="#e0e2ea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 6"/>
+<path d="M760 234V580" fill="none" stroke="#e0e2ea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 6"/>
+<rect x="620" y="231" width="250" height="30" rx="15" fill="#f0edff"/>
+<text x="745.0" y="252" font-size="13" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-18-box-234">Approve scope/listeners</text>
+<text x="480.0" y="302" font-size="17" fill="#272c38" font-weight="600" text-anchor="middle" id="label-19-box-540">Requester selects a candidate</text>
+<circle cx="200" cy="320" r="12" fill="#f0edff"/>
+<text x="200" y="325" font-size="13" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-21-box-20">1</text>
+<path d="M215 320h12v13h-12" fill="none" stroke="#6550d8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="480.0" y="342" font-size="14" fill="#596172" font-weight="400" text-anchor="middle" id="label-23-box-545">Name / IP is not identity proof</text>
+<text x="480.0" y="390" font-size="17" fill="#272c38" font-weight="600" text-anchor="middle" id="label-24-box-540">Review key, scope, expiry → request</text>
+<path d="M200 408 L760 408" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M753.0 411.8 L760 408 L753.0 404.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="200" cy="408" r="12" fill="#f0edff"/>
+<text x="200" y="413" font-size="13" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-28-box-20">2</text>
+<text x="480.0" y="465" font-size="17" fill="#272c38" font-weight="600" text-anchor="middle" id="label-29-box-540">Review that request → approve</text>
+<path d="M760 483 L200 483" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M207.0 479.2 L200 483 L207.0 486.8" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="760" cy="483" r="12" fill="#f0edff"/>
+<text x="760" y="488" font-size="13" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-33-box-20">3</text>
+<text x="480.0" y="515" font-size="13" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-34-box-912">Alternative: full fingerprint verification</text>
+<text x="480.0" y="539" font-size="12" fill="#596172" font-weight="400" text-anchor="middle" id="label-35-box-912">Both compare independently, then both approve</text>
+<rect x="24" y="563" width="912" height="77" rx="12" fill="#f0edff"/>
+<text x="40" y="589" font-size="14" fill="#5844bf" font-weight="400" text-anchor="start" id="label-37-box-900">TOFU remembers the accepted key.</text>
+<text x="40" y="611" font-size="14" fill="#5844bf" font-weight="400" text-anchor="start" id="label-38-box-900">It cannot prevent first-use impersonation.</text>
+<path d="M24 656H936" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="676" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-40-box-916">Pair saved? Check connectivity and app permission.</text>
+<text x="24" y="696" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-41-box-916">Unknown result? Inspect the original session.</text>
+<text x="24" y="716" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-42-box-916">Discovery stops at 120s. The earlier peer review deadline wins.</text>
+</svg>

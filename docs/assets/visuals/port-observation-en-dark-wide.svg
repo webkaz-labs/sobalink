@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="760" viewBox="0 0 960 760" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">A free port is not reserved.</title><desc id="desc">A transient bind observes a stopped definition. All probe sockets close before results return. Saving checks the source revision without binding. Actual start binds every port again.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="960" height="760" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  EXPLAINED</text>
+<text x="24" y="73" font-size="28" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-916">A free port is not reserved.</text>
+<text x="24" y="105" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-916">Stopped connection · preserve source revision</text>
+<rect x="24" y="132" width="912" height="104" rx="12" fill="#191c24" stroke="#454959"/>
+<text x="40" y="160" font-size="18" fill="#e8e9f0" font-weight="600" text-anchor="start" id="label-8-box-900">1  Open ports briefly to check</text>
+<text x="40" y="187" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-9-box-900">Original port → search only on address-in-use</text>
+<text x="40" y="209" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-10-box-900">Keep protocol, loopback and remote scope</text>
+<path d="M48 278H912" fill="none" stroke="#9ba4b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="48" cy="278" r="5" fill="#a18bff"/>
+<circle cx="912" cy="278" r="5" fill="#a18bff"/>
+<text x="48" y="264" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-14-box-892">Open</text>
+<text x="912" y="264" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="end" id="label-15-box-76">Close all</text>
+<rect x="380.0" y="293" width="200" height="30" rx="15" fill="#30294b"/>
+<text x="480.0" y="314" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-17-box-184">Candidate = observed now</text>
+<path d="M40 333 L40 366" fill="none" stroke="#9ba4b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<path d="M36.2 359.0 L40 366 L43.8 359.0" fill="none" stroke="#9ba4b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="480.0" y="354" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-20-box-940">After closing, another app may take it</text>
+<text x="24" y="388" font-size="16" fill="#e8e9f0" font-weight="600" text-anchor="start" id="label-21-box-916">2  Review mapping; save / start separately</text>
+<text x="210" y="428" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-22-box-400">Local</text>
+<text x="680" y="428" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-23-box-540">Remote</text>
+<rect x="164" y="440" width="92" height="30" rx="15" fill="#30294b"/>
+<text x="210.0" y="461" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-25-box-76">49152</text>
+<rect x="634" y="440" width="92" height="30" rx="15" fill="#30294b"/>
+<text x="680.0" y="461" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-27-box-76">8000</text>
+<path d="M264 455 L626 455" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M619.0 458.8 L626 455 L619.0 451.2" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="164" y="482" width="92" height="30" rx="15" fill="#30294b"/>
+<text x="210.0" y="503" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-31-box-76">49153</text>
+<rect x="634" y="482" width="92" height="30" rx="15" fill="#30294b"/>
+<text x="680.0" y="503" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-33-box-76">8002</text>
+<path d="M264 497 L626 497" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M619.0 500.8 L626 497 L619.0 493.2" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="680" y="548" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-36-box-540">8001 excluded</text>
+<text x="24" y="577" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-37-box-916">Changed source revision? Review the candidate again.</text>
+<rect x="24" y="584" width="912" height="72" rx="10" fill="#30294b"/>
+<text x="40" y="608" font-size="17" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-39-box-900">3  Real start: open the ports again</text>
+<text x="40" y="633" font-size="15" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-40-box-900">Save checks revision. Start rechecks every port.</text>
+<path d="M24 680H936" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="700" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-42-box-916">Selecting a candidate does not save, share or start.</text>
+<text x="24" y="720" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-43-box-916">A start conflict fails; no silent alternate port.</text>
+</svg>

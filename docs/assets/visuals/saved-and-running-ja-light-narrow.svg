@@ -1,32 +1,34 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 872" width="360" height="872" role="img" aria-labelledby="title desc" xml:lang="ja"><title id="title">保存した設定は、起動して使う。</title><desc id="desc">保存したサービス定義は、それだけでは待受や以前の許可を再開しません。手動で起動すると、現在のネットワークと相手の識別情報を再確認します。共有は許可内容を確認します。開始済みはアプリのログインや遠隔処理の完了を示しません。個別に承認した起動時接続は別の設定です。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="800" viewBox="0 0 400 800" role="img" aria-labelledby="title desc" xml:lang="ja">
+<title id="title">設定を保存。開始は、別の操作。</title><desc id="desc">保存は停止した定義を作ります。別途内容を確認して開始すると実行状態になり、停止は設定を保って稼働だけを止めます。通常の保存定義はプロセス再起動しても停止したままです。</desc>
 <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
-<rect x="0" y="0" width="360" height="872" rx="0" fill="#ffffff"/>
-<g transform="translate(24 25) rotate(-23 12 12)" fill="#6550d8" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
-<text x="60" y="45" font-size="22" fill="#272c38" font-weight="650">sobalink</text>
-<text x="24" y="100" font-size="22" fill="#272c38" font-weight="650">保存した設定は、</text>
-<text x="24" y="133" font-size="22" fill="#272c38" font-weight="650">起動して使う。</text>
-<text x="24" y="168" font-size="14" fill="#596172" font-weight="400">保存済みサービスを手動で開始する場合</text>
-<rect x="16" y="192" width="328" height="162" rx="16" fill="#f8f8fb"/>
-<text x="32" y="219" font-size="13" fill="#5844bf" font-weight="600">1 · 設定</text>
-<text x="32" y="250" font-size="20" fill="#272c38" font-weight="650">保存済み</text>
-<text x="32" y="278" font-size="15" fill="#596172" font-weight="400">相手・サービス・期限を</text>
-<text x="32" y="300" font-size="15" fill="#596172" font-weight="400">設定として保存</text>
-<text x="32" y="332" font-size="13" fill="#5844bf" font-weight="500">保存だけでは開始しない</text>
-<path d="M180 357v16m-4-5 4 5 4-5" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="16" y="377" width="328" height="162" rx="16" fill="#f8f8fb"/>
-<text x="32" y="404" font-size="13" fill="#5844bf" font-weight="600">2 · 操作</text>
-<text x="32" y="435" font-size="20" fill="#272c38" font-weight="650">内容を確認して起動</text>
-<text x="32" y="463" font-size="15" fill="#596172" font-weight="400">現在のネットワークと</text>
-<text x="32" y="485" font-size="15" fill="#596172" font-weight="400">相手の識別情報を再確認</text>
-<text x="32" y="517" font-size="13" fill="#5844bf" font-weight="500">共有は許可内容も確認</text>
-<path d="M180 542v16m-4-5 4 5 4-5" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="16" y="562" width="328" height="162" rx="16" fill="#f8f8fb"/>
-<text x="32" y="589" font-size="13" fill="#5844bf" font-weight="600">3 · 状態</text>
-<text x="32" y="620" font-size="20" fill="#272c38" font-weight="650">開始済み</text>
-<text x="32" y="648" font-size="15" fill="#596172" font-weight="400">許可された範囲で</text>
-<text x="32" y="670" font-size="15" fill="#596172" font-weight="400">通信の準備ができた状態</text>
-<text x="32" y="702" font-size="13" fill="#5844bf" font-weight="500">アプリで接続・認証を確認</text>
-<text x="24" y="772" font-size="13" fill="#596172" font-weight="400">開始済みは、アプリの成功や</text>
-<text x="24" y="797" font-size="13" fill="#596172" font-weight="400">処理完了の証明ではありません。</text>
-<text x="24" y="822" font-size="13" fill="#596172" font-weight="400">起動時の自動接続は別途承認する設定です。</text>
+<rect x="0" y="0" width="400" height="800" rx="0" fill="#ffffff"/>
+<text x="24" y="33" font-size="13" fill="#5844bf" font-weight="600" text-anchor="start" id="label-4-box-356">sobalink  /  図解</text>
+<text x="24" y="73" font-size="22" fill="#272c38" font-weight="650" text-anchor="start" id="label-5-box-356">設定を保存。開始は、別の操作。</text>
+<text x="24" y="105" font-size="14" fill="#596172" font-weight="400" text-anchor="start" id="label-6-box-356">通常の保存サービスを手動で開始する場合</text>
+<rect x="24" y="138" width="352" height="102" rx="12" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="42" y="158" width="36" height="50" rx="4" fill="#f0edff" stroke="#e0e2ea"/>
+<path d="M50 172h20 M50 181h20 M50 190h14" fill="none" stroke="#6550d8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="94" y="170" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-10-box-286">保存済みの定義</text>
+<text x="94" y="196" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-11-box-280">相手・ポート・期限などの設定</text>
+<text x="94" y="218" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-12-box-280">保存だけでは待受や許可を開始しない</text>
+<path d="M200.0 247V278" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 5"/>
+<rect x="110" y="290" width="180" height="60" rx="30" fill="#f8f8fb" stroke="#e0e2ea"/>
+<text x="200" y="327" font-size="20" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-15-box-160">停止中</text>
+<rect x="110" y="484" width="180" height="60" rx="30" fill="#f0edff" stroke="#e0e2ea"/>
+<text x="200" y="521" font-size="20" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-17-box-160">実行中</text>
+<path d="M200 358 L200 476" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M196.2 469.0 L200 476 L203.8 469.0" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="40" y="398" width="320" height="43" rx="0" fill="#ffffff"/>
+<text x="200" y="415" font-size="13" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-21-box-320">内容を確認して、明示的に開始</text>
+<text x="200" y="436" font-size="12" fill="#596172" font-weight="400" text-anchor="middle" id="label-22-box-320">ネットワーク・相手の識別情報を再確認</text>
+<path d="M295 525H368V314H297" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M313 314 L297 314" fill="none" stroke="#7f8799" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M304.0 310.2 L297 314 L304.0 317.8" fill="none" stroke="#7f8799" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="352" y="474" font-size="13" fill="#596172" font-weight="400" text-anchor="middle" id="label-26-box-50">停止</text>
+<rect x="54.0" y="607" width="292" height="30" rx="15" fill="#f0edff"/>
+<text x="200.0" y="628" font-size="13" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-28-box-276">実アプリの接続・認証は別に確認</text>
+<path d="M24 668H376" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="688" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-30-box-356">通常の定義は、プロセス再起動後も停止したまま。</text>
+<text x="24" y="708" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-31-box-356">自動の起動選択は、別途確認・承認する設定です。</text>
+<text x="24" y="728" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-32-box-356">停止で終了するのは稼働と許可。定義は残ります。</text>
 </svg>

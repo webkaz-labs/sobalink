@@ -8,13 +8,20 @@ This guide covers the local resource foundation: inspection, preview, explicitly
 
 ## Keep three results separate
 
-| Question | Read | Meaning |
-| --- | --- | --- |
-| What would change? | Fresh preview | Exact two choices and bound revisions; nothing applied |
-| What happened to this request? | Operation result/status | Historical outcome and whether its evidence is durable |
-| What is configured now? | Current descriptor or fresh inspection | Current observation, which can differ from the past result |
+```mermaid
+flowchart TB
+    accTitle: Why can a successful operation differ from settings now?
+    accDescr: The original operation response separates historical outcome, durability of that record and current settings. Later changes affect the current observation without rewriting history.
+P["Review both choices"] --> A["Apply exact binding"]
+    A --> R["Operation response"]
+    S["Status: original ID"] --> R
+    R --> H["outcome: past result"]
+    R --> E["evidenceDurable: record saved?"]
+    R --> N["current: observed now"]
+    L["Later settings change"] --> N
+```
 
-After a lost reply, keep the original operation ID and check status. `unknown` is neither success nor rollback; creating a replacement operation does not resolve it.
+Preview is read-only and binds both choices. Apply or status returns three independent facts: the original outcome, whether its evidence is durable, and settings observed at response time. Later operations or legacy commands can change the last without rewriting the first. After a lost reply, keep the original operation ID; even durable `unknown` evidence proves neither success nor rollback.
 
 ## Review, apply and check
 

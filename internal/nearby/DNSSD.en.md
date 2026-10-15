@@ -25,7 +25,38 @@ All exact queries remain active while their hints are displayed, for at most the
 
 There are at most 64 session bundles, 193 queries, four registrations, 512 setup/query calls, 512 callbacks, 16 parsed callbacks per second and 512 KiB admitted record bytes per owner. One C ring holds at most 64 observations; Go delivery is unbuffered. Exhaustion or malformed state updates stop admission rather than discard a possible invalidation. These are application work limits, not a daemon wire-packet budget.
 
-The provider is owned before any potentially blocking daemon IPC. Calls and native callbacks use one serial dispatch queue. C retains no Go pointers or handles. Cancellation fences admission, wakes readers and deallocates the shared reference on that queue. Storage is released only after the queue and every in-flight call/read worker join. A two-second public close timeout retains unresolved ownership; it never proves physical shutdown. Mandatory teardown still runs after an admission budget is exhausted.
+
+### Why does a Close timeout retain the owner?
+
+```mermaid
+sequenceDiagram
+    participant C as Public Close
+    participant O as Retained owner
+    participant Q as Serial queue
+    participant W as Calls and readers
+    Note over O,Q: Owner exists before daemon IPC
+    C->>O: Cancel, invalidate candidates
+    O->>O: Fence new admission
+    O->>W: Stop, wake readers
+    O->>Q: Request same-queue shared-ref teardown
+    alt Teardown joins before public deadline
+        Q-->>O: Queue teardown joined
+        W-->>O: Start, Query and Next joined
+        O->>O: Free native storage
+        O-->>C: Closed
+    else Two-second public deadline arrives first
+        O-->>C: Cleanup unresolved
+        Note over O,W: Retain owner and teardown, block replacement
+    end
+```
+
+Text equivalent: cancellation invalidates candidates and fences calls, then wakes readers and deallocates the shared reference on its serial queue. Native storage is freed only after the queue and every in-flight call/read join. The two-second public timeout returns uncertainty while ownership remains; it does not cancel mandatory teardown.
+
+Implementation references: [session.go](session.go) · [dnssd_owner.go](dnssd_owner.go) · [provider_darwin.go](provider_darwin.go) · [dnssd_bridge_darwin.c](dnssd_bridge_darwin.c).
+
+Calls and native callbacks use one serial dispatch queue. C retains no Go
+pointers or handles. Mandatory teardown still runs after an admission budget
+is exhausted.
 
 Deallocation terminates application registrations/queries, but does not acknowledge remote cache eviction, queued daemon packets or delivery of goodbye records. Canceled Core sessions and bootstrap listeners reject selection/commit regardless of cached hints elsewhere.
 
@@ -37,12 +68,40 @@ Required macOS CI compiles one race-enabled nearby test binary and runs all five
 
 This is same-host evidence. The selected OS scopes exercise reciprocal OS-backed Session candidates, lookup and Close invalidation. Passive UDP reception requires source port 5353, the approved private family/prefix, selected interface, destination and TTL 255, then uses unchanged production `validatePacket` → `decodeRecordPacket` → `recordAssembler`/store and requires the PTR/SRV/TXT/A mask 15. It proves OS-published data entering the production raw parser only. The legacy native-C one-shot query/selected-interface response is a separate test fixture. Neither proves production raw-mDNS-send → OS resolver, two-OS/physical peers, automatic Core/browser discovery, TCC cause or responsible-code identity. Ordinary Terminal launch changes no permissions/settings, never accepts prompts and stops safely on denial or finite blocked execution. Owned-child joins do not claim Terminal application/window cleanup. The optional create-event diagnostic remains separate and may report unavailable honestly.
 
-Native tests have independent closed opt-ins:
 
-- `SOBALINK_DNSSD_LOCAL_ONLY=1`: two API registrations, reciprocal exact record callbacks and withdrawal, using the LocalOnly sentinel. This is same-host API evidence.
-- `SOBALINK_DNSSD_SELECTED_LOOPBACK=1`: two actual providers/Sessions on the exact loopback interface/address. Unsupported loopback stays unavailable.
-- `SOBALINK_DNSSD_SELECTED_INTERFACE=1`: a separately authorized hosted-only synthetic test on exactly one existing private IPv4 multicast-capable scope. Missing/ambiguous scope stays unavailable; there is no automatic fallback from the other tests.
-- `SOBALINK_DNSSD_RAW_RECEIVE=1`: on the same strictly selected kind of hosted scope, an exact-group receive-only socket verifies OS advertisements through the raw metadata checks/record assembler. It never sends a raw packet or claims the reverse direction/cross-device delivery.
+### Which direction does each native scope verify?
+
+```mermaid
+sequenceDiagram
+    participant A as Production API or Session
+    participant O as OS DNS-SD
+    participant R as Production raw parser
+    participant F as Test-only native fixture
+    Note over A,F: Same-host scopes, each requires its own verified receipt
+    Note over A,O: 1 LocalOnly, 2 loopback, 3 interface
+    A->>O: Register exact synthetic records
+    O-->>A: Exact callbacks, candidates and withdrawal
+    Note over O,R: 4 Passive raw reception
+    O->>R: OS-published packets with real metadata
+    Note right of R: Admit metadata, decode and assemble
+    Note over O,F: 5 Legacy serialization
+    F->>O: One native-C legacy query
+    O-->>F: Exact legacy unicast response validated
+```
+
+Text equivalent: scopes 1–3 exercise OS-backed API/session observations; scope 4 follows OS advertisements into the unchanged production raw parser. Scope 5 sends one test-only native-C legacy query and validates its unicast response. These are same-host directions, not production raw-send → OS or physical-device/Core/browser proof.
+
+Implementation references: [dnssd_native_acceptance_test.go](dnssd_native_acceptance_test.go) · [dnssd_raw_receive_test.go](dnssd_raw_receive_test.go) · [dnssd_legacy_native_test.go](dnssd_legacy_native_test.go) · [dnssd_socket_native_test.go](dnssd_socket_native_test.go).
+
+Each scope has a separate closed opt-in and proof direction. The numbers match the diagram.
+
+| Scope | Explicit opt-in | Verified boundary and condition |
+| --- | --- | --- |
+| 1. LocalOnly | `SOBALINK_DNSSD_LOCAL_ONLY=1` | Two API registrations, reciprocal exact callbacks and withdrawal; same-host LocalOnly sentinel |
+| 2. Selected loopback | `SOBALINK_DNSSD_SELECTED_LOOPBACK=1` | Two actual providers/Sessions on the exact loopback binding; unsupported remains unavailable |
+| 3. Selected interface | `SOBALINK_DNSSD_SELECTED_INTERFACE=1` | Separately authorized hosted-only synthetic test on one unambiguous existing private IPv4 multicast scope; no fallback |
+| 4. Passive raw reception | `SOBALINK_DNSSD_RAW_RECEIVE=1` | OS advertisements into production metadata checks and record assembler on a strictly selected hosted scope; receive only |
+| 5. Legacy serialization | `SOBALINK_DNSSD_LEGACY_SERIALIZATION=1` | One test-only native-C query and exact legacy unicast response; the separate controls and limits follow below |
 
 These four tests publish separate `NEARBY_DNSSD_CAPABILITY` markers after bounded owner cleanup. The passive raw receipt adds fixed counters for received packets, copied bytes, metadata admission/rejection, decode outcomes, rate-limited packets and a four-bit exact-record-kind mask. `receivedBytes` measures bytes copied into the bounded read buffer, not the full wire length of a truncated datagram. The passive and legacy sockets each have a lifetime cap of 512 receives and 614,912 copied bytes (512 × 1201), separate from the provider's admitted-record budget. Invalid/truncated metadata is never decoded.
 

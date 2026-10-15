@@ -32,10 +32,27 @@ prove physical NIC or VPN isolation. This adapter rejects any unapproved
 send/receive endpoint. Incoming decrypted packets must have the
 peer's exact /128 source and this node's exact destination before stack delivery.
 
-Application TCP and native UDP use WireGuard plus gVisor. TLS carries only the
-one-use pairing exchange and bounded session-activation control. Pairing binds
-both peers' distinct WireGuard keys to their mutually authenticated Ed25519
-identities. This source uses the opt-in owned WireGuard facade and owned
+
+### Where are control and application packets authorized?
+
+```mermaid
+flowchart TB
+    TLS["TLS control: pairing and activation only"] --> KEYS["WG keys bound to authenticated identities"]
+    UDP["Outer UDP: application ciphertext"] --> OUTER{"Exact approved endpoint within prefixes?"}
+    OUTER --> DROP["No: reject outer packet"]
+    OUTER --> DECRYPT["Yes: WG peer-key authentication and decryption"]
+    KEYS -.-> DECRYPT
+    DECRYPT --> INNER{"Peer /128 source and local destination exact?"}
+    INNER --> DROP2["No: reject decrypted packet"]
+    INNER --> APP["Yes: gVisor TCP or native UDP"]
+```
+
+Text equivalent: TLS carries pairing and activation controls. Application traffic uses WireGuard and gVisor, with the current outer exact-endpoint gate before decryption and the exact peer-source/local-destination gate afterward. An approved outer address never substitutes for authenticated peer-key identity. The outer gate also requires the selected prefixes. The inner check is the authenticated peer’s exact /128 source plus this node’s exact destination; the bind applies exact-endpoint admission in both directions.
+
+Implementation references: [bind.go](bind.go) · [stack.go](stack.go) · [pairing.go](pairing.go) · [session.go](session.go).
+
+Pairing binds both peers' distinct WireGuard keys to their mutually
+authenticated Ed25519 identities, supplying the identity relationship shown above. This source uses the opt-in owned WireGuard facade and owned
 gVisor forwarder lifecycle. Their separately pinned source adaptations,
 preparation, module selection and distribution provenance are reviewed together. The deterministic lower-key initiator gates new application
 dials, with generation checks and separately bounded control work. Independent

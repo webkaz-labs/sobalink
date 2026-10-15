@@ -1,34 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 540" width="1040" height="540" role="img" aria-labelledby="title desc" xml:lang="en"><title id="title">Save the setup. Start it when you need it.</title><desc id="desc">Saving a service definition does not open listeners or restore a previous permission. A manual start rechecks the current network and peer identity, with review for shares. A started service does not prove an application login or remote job completed. Separately approved outbound startup is a different setting.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="690" viewBox="0 0 960 690" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">Save settings. Start separately.</title><desc id="desc">Saving creates a stopped definition. A separately reviewed start creates live runtime. Stopping preserves the settings. Ordinary saved services remain stopped after process restart.</desc>
 <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
-<rect x="0" y="0" width="1040" height="540" rx="0" fill="#ffffff"/>
-<g transform="translate(32 25) rotate(-23 12 12)" fill="#6550d8" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
-<text x="68" y="45" font-size="22" fill="#272c38" font-weight="650">sobalink</text>
-<text x="32" y="108" font-size="30" fill="#272c38" font-weight="650">Save the setup. Start it when you need it.</text>
-<text x="32" y="144" font-size="17" fill="#596172" font-weight="400">Manually starting a saved service</text>
-<rect x="32" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
-<text x="52" y="222" font-size="14" fill="#5844bf" font-weight="600">1 · CONFIGURATION</text>
-<text x="52" y="266" font-size="22" fill="#272c38" font-weight="650">Saved definition</text>
-<text x="52" y="306" font-size="17" fill="#596172" font-weight="400">Keep the peer, service</text>
-<text x="52" y="333" font-size="17" fill="#596172" font-weight="400">and lifetime settings</text>
-<rect x="52" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
-<text x="60" y="389" font-size="14" fill="#5844bf" font-weight="500">Saving alone starts nothing</text>
-<path d="M344 306h16m-5-4 5 4-5 4" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="368" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
-<text x="388" y="222" font-size="14" fill="#5844bf" font-weight="600">2 · ACTION</text>
-<text x="388" y="266" font-size="22" fill="#272c38" font-weight="650">Review and start</text>
-<text x="388" y="306" font-size="17" fill="#596172" font-weight="400">Recheck the current network</text>
-<text x="388" y="333" font-size="17" fill="#596172" font-weight="400">and peer identity</text>
-<rect x="388" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
-<text x="396" y="389" font-size="14" fill="#5844bf" font-weight="500">Review sharing permissions too</text>
-<path d="M680 306h16m-5-4 5 4-5 4" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="704" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
-<text x="724" y="222" font-size="14" fill="#5844bf" font-weight="600">3 · STATE</text>
-<text x="724" y="266" font-size="22" fill="#272c38" font-weight="650">Started</text>
-<text x="724" y="306" font-size="17" fill="#596172" font-weight="400">Ready to communicate</text>
-<text x="724" y="333" font-size="17" fill="#596172" font-weight="400">within the approved scope</text>
-<rect x="724" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
-<text x="732" y="389" font-size="14" fill="#5844bf" font-weight="500">Check your app’s login and use</text>
-<path d="M32 455H1008" stroke="#e6e7ed"/>
-<text x="32" y="485" font-size="15" fill="#596172" font-weight="400">A started service does not prove application success or remote job completion.</text>
-<text x="32" y="512" font-size="15" fill="#596172" font-weight="400">Automatic outbound startup uses separately reviewed approvals.</text>
+<rect x="0" y="0" width="960" height="690" rx="0" fill="#ffffff"/>
+<text x="24" y="33" font-size="13" fill="#5844bf" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  EXPLAINED</text>
+<text x="24" y="73" font-size="28" fill="#272c38" font-weight="650" text-anchor="start" id="label-5-box-916">Save settings. Start separately.</text>
+<text x="24" y="105" font-size="14" fill="#596172" font-weight="400" text-anchor="start" id="label-6-box-916">Ordinary saved services · manual start</text>
+<rect x="24" y="138" width="912" height="102" rx="12" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="42" y="158" width="36" height="50" rx="4" fill="#f0edff" stroke="#e0e2ea"/>
+<path d="M50 172h20 M50 181h20 M50 190h14" fill="none" stroke="#6550d8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="94" y="170" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-10-box-846">Saved definition</text>
+<text x="94" y="196" font-size="14" fill="#596172" font-weight="400" text-anchor="start" id="label-11-box-840">Peer, ports and lifetime</text>
+<text x="94" y="218" font-size="14" fill="#596172" font-weight="400" text-anchor="start" id="label-12-box-840">Saving opens no listeners or grants</text>
+<path d="M480.0 247V278" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 5"/>
+<rect x="140" y="308" width="180" height="60" rx="30" fill="#f8f8fb" stroke="#e0e2ea"/>
+<text x="230" y="345" font-size="20" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-15-box-160">Stopped</text>
+<rect x="640" y="308" width="180" height="60" rx="30" fill="#f0edff" stroke="#e0e2ea"/>
+<text x="730" y="345" font-size="20" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-17-box-160">Started</text>
+<path d="M330 338 L630 338" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M623.0 341.8 L630 338 L623.0 334.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="480" y="304" font-size="16" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-20-box-300">Review scope, then start</text>
+<text x="480" y="376" font-size="13" fill="#596172" font-weight="400" text-anchor="middle" id="label-21-box-330">Recheck network + peer identity</text>
+<path d="M730 377V428H230V377" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M230 392 L230 375" fill="none" stroke="#7f8799" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M233.8 382.0 L230 375 L226.2 382.0" fill="none" stroke="#7f8799" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="480" y="453" font-size="15" fill="#596172" font-weight="400" text-anchor="middle" id="label-25-box-430">Stop: runtime ends, definition stays.</text>
+<rect x="334.0" y="518" width="292" height="30" rx="15" fill="#f0edff"/>
+<text x="480.0" y="539" font-size="13" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-27-box-276">Check the actual app and its login</text>
+<path d="M24 579H936" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="599" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-29-box-916">Ordinary definitions stay stopped after process restart.</text>
+<text x="24" y="619" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-30-box-916">Automatic startup uses separately reviewed approvals.</text>
+<text x="24" y="639" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-31-box-916">Stop ends live authority; the saved definition remains.</text>
 </svg>

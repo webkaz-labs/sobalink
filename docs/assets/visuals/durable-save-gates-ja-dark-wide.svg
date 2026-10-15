@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="690" viewBox="0 0 960 690" role="img" aria-labelledby="title desc" xml:lang="ja">
+<title id="title">文字とファイル、保存までの違い。</title><desc id="desc">文字は信頼された相手から耐久保存、ファイルは受信承認または別途承認済みautosaveを経て保存します。双方ともローカル受付は配達完了ではなく、保存ACK喪失時は元のIDで状態確認します。</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="960" height="690" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  図解</text>
+<text x="24" y="73" font-size="28" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-916">文字とファイル、保存までの違い。</text>
+<text x="24" y="105" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-916">永続キュー · 両端末の稼働・接続・有効な権限が必要</text>
+<rect x="24" y="142" width="440" height="335" rx="14" fill="#191c24" stroke="#454959"/>
+<rect x="42" y="160" width="28" height="32" rx="3" fill="#30294b" stroke="#454959"/>
+<path d="M48 169h16" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M48 175h16" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M48 181h16" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="82" y="182" font-size="19" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-12-box-858">文字メッセージ</text>
+<text x="69" y="219" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-13-box-118">送信</text>
+<text x="419" y="219" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-14-box-818">受信</text>
+<path d="M69 233V442 M419 233V442" fill="none" stroke="#454959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 5"/>
+<circle cx="69" cy="239" r="5" fill="#a18bff"/>
+<text x="81" y="244" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-17-box-360">この端末で受付</text>
+<text x="244.0" y="265" font-size="12" fill="#e8e9f0" font-weight="400" text-anchor="middle" id="label-18-box-395">申込み / 送信試行</text>
+<path d="M69 272 L419 272" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M412.0 275.8 L419 272 L412.0 268.2" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="244.0" y="300" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-21-box-408">現在の信頼・送信権限を確認</text>
+<rect x="394" y="337" width="50" height="35" rx="4" fill="#30294b" stroke="#454959"/>
+<path d="M403 347h32 M403 354h32 M403 361h22" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="226.0" y="360" font-size="14" fill="#e8e9f0" font-weight="600" text-anchor="middle" id="label-24-box-295">相手で耐久保存</text>
+<path d="M419 382 L69 382" fill="none" stroke="#9ba4b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 5"/>
+<path d="M76.0 378.2 L69 382 L76.0 385.8" fill="none" stroke="#9ba4b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="226.0" y="367" width="36" height="30" rx="0" fill="#191c24"/>
+<path d="M237.0 375l14 14 M251.0 375l-14 14" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="244.0" y="418" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-29-box-395">ACK が届かないことも</text>
+<rect x="41" y="436" width="56" height="30" rx="15" fill="#30294b"/>
+<text x="69.0" y="457" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-31-box-40">元ID</text>
+<rect x="496" y="142" width="440" height="335" rx="14" fill="#191c24" stroke="#454959"/>
+<rect x="514" y="160" width="28" height="32" rx="3" fill="#30294b" stroke="#454959"/>
+<path d="M519 169h9l3 4h7v12h-19z" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="554" y="182" font-size="19" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-35-box-386">ファイル・フォルダー</text>
+<text x="541" y="219" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-36-box-818">送信</text>
+<text x="891" y="219" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-37-box-118">受信</text>
+<path d="M541 233V442 M891 233V442" fill="none" stroke="#454959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 5"/>
+<circle cx="541" cy="239" r="5" fill="#a18bff"/>
+<text x="553" y="244" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-40-box-360">この端末で受付</text>
+<text x="716.0" y="265" font-size="12" fill="#e8e9f0" font-weight="400" text-anchor="middle" id="label-41-box-395">申込み / 送信試行</text>
+<path d="M541 272 L891 272" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M884.0 275.8 L891 272 L884.0 268.2" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="716.0" y="300" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-44-box-408">受信承認／設定済み自動保存</text>
+<path d="M541 324 L891 324" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M884.0 327.8 L891 324 L884.0 320.2" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="716.0" y="319" font-size="11" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-47-box-390">承認後にファイル本体</text>
+<rect x="866" y="337" width="50" height="35" rx="4" fill="#30294b" stroke="#454959"/>
+<path d="M875 347h32 M875 354h32 M875 361h22" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="698.0" y="360" font-size="14" fill="#e8e9f0" font-weight="600" text-anchor="middle" id="label-50-box-295">相手で耐久保存</text>
+<path d="M891 382 L541 382" fill="none" stroke="#9ba4b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 5"/>
+<path d="M548.0 378.2 L541 382 L548.0 385.8" fill="none" stroke="#9ba4b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="698.0" y="367" width="36" height="30" rx="0" fill="#191c24"/>
+<path d="M709.0 375l14 14 M723.0 375l-14 14" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="716.0" y="418" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-55-box-395">ACK が届かないことも</text>
+<rect x="513" y="436" width="56" height="30" rx="15" fill="#30294b"/>
+<text x="541.0" y="457" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-57-box-40">元ID</text>
+<rect x="24" y="501" width="912" height="74" rx="12" fill="#30294b"/>
+<text x="40" y="526" font-size="16" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-59-box-900">不明でも、保存済みの場合があります。</text>
+<text x="40" y="548" font-size="16" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-60-box-900">元のIDで確認。安易に新規送信を作り直さない。</text>
+<path d="M24 591H936" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="611" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-62-box-916">保存確認は既読や、今も残ることの保証ではありません。</text>
+<text x="24" y="631" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-63-box-916">取り消しは追加送信を止めます。保存済み内容は回収不可。</text>
+</svg>

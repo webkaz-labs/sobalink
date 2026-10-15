@@ -43,12 +43,34 @@ that a connection is ready.
 `ReadSnapshotFile` and `SaveSnapshotFile` require an explicit positive byte
 budget and use the existing canonical snapshot encoding. Reads return evidence
 without initializing missing files, reconciling pending changes or confirming
-durability. Saves use `config.AtomicWritePrivate` once and preserve its error:
-`ErrAtomicCommitted` reports published bytes with uncertain durability; other
-errors report no publication. Use `ResolveSave` to retain the corresponding
-model recovery outcome. A later successful read does not clear that recovery
-requirement. No identity secrets or current application grants belong in these
+durability. Saves call `config.AtomicWritePrivate` once and preserve its original error.
+`ErrAtomicCommitted` identifies the published-but-uncertain branch below.
+`ResolveSave` retains the appropriate model and recovery outcome. No identity secrets or current application grants belong in these
 files.
+
+
+### Which save outcomes require recovery?
+
+```mermaid
+flowchart TB
+    subgraph MODEL["Isolated snapshot adapter"]
+        SAVE["SaveSnapshotFile result"]
+        SAVE --> OK["Success: published durably"]
+        SAVE --> EARLY["Failure: not published"]
+        SAVE --> UNCERTAIN["Failure: published, durability unknown"]
+        OK --> CANDIDATE["Keep candidate; Durable true"]
+        EARLY --> BEFORE["Keep previous; Recovery true"]
+        UNCERTAIN --> RECOVER["Keep candidate; Recovery true"]
+    end
+    subgraph CORE["Core store"]
+        ERR["Any writer error"] --> LATCH["Latch recovery"]
+        LATCH --> READ["Later read succeeds: recovery stays latched"]
+    end
+```
+
+Text equivalent: a successful save keeps the candidate as durable; an unpublished failure keeps the previous model, and a published-but-uncertain failure keeps the candidate. Both errors require recovery. Core latches recovery on every writer error; a later read cannot clear it.
+
+Implementation references: [private_file.go](private_file.go) · [transition.go](transition.go) · [direct_lan_context_store.go](../core/direct_lan_context_store.go) · [lan.go](../core/lan.go).
 
 Atomic publication is not a logical compare-and-swap. The caller must exclusively
 own model and file lifecycle access, perform current authorization checks and
@@ -98,11 +120,34 @@ v3ファイルにはv3対応の読取り実装が必要です。古い実装の�
 `ReadSnapshotFile` と `SaveSnapshotFile` は明示的な正のバイト上限を必要とし、
 既存の正規化されたスナップショット形式を使います。読み込みは記録を返すだけで、
 存在しないファイルの初期化、保留中の変更の整合確認、永続性の確認は行いません。
-保存は `config.AtomicWritePrivate` を1回呼び、そのエラーを保持します。
-`ErrAtomicCommitted` は書き換え済みで永続性が未確認、それ以外のエラーは
-書き換え未完了を示します。`ResolveSave` で対応するモデルの復旧状態を保持して
-ください。後の読み込みが成功しても、復旧の必要性は解除されません。
+保存は `config.AtomicWritePrivate` を1回呼び、元のエラーを保持します。
+`ErrAtomicCommitted` は下図の書換え済み・永続性不明の分岐を示します。
+`ResolveSave` で対応するモデルと復旧状態を保持してください。
 識別用の秘密鍵や現在のアプリの許可情報は、これらのファイルに含めません。
+
+
+### どの保存結果で復旧待ちを保持するか
+
+```mermaid
+flowchart TB
+    subgraph MODEL["独立 snapshot アダプター"]
+        SAVE["SaveSnapshotFile の結果"]
+        SAVE --> OK["成功: 書換え・永続化済み"]
+        SAVE --> EARLY["失敗: 書換えなし"]
+        SAVE --> UNCERTAIN["失敗: 書換え済み・永続性不明"]
+        OK --> CANDIDATE["候補を保持・永続化済み"]
+        EARLY --> BEFORE["変更前を保持・復旧待ち"]
+        UNCERTAIN --> RECOVER["候補を保持・復旧待ち"]
+    end
+    subgraph CORE["Core の保存"]
+        ERR["書込みエラー全般"] --> LATCH["復旧待ちを保持"]
+        LATCH --> READ["後の読込み成功でも復旧待ちを継続"]
+    end
+```
+
+文章での説明: 保存成功は候補を永続化済みとして保持します。書換え前の失敗は変更前、書換え済みで永続性不明の失敗は候補を保持し、どちらも復旧待ちです。Core は全書込みエラーで復旧待ちを保持し、後の読込み成功では解除しません。
+
+実装参照: [private_file.go](private_file.go) · [transition.go](transition.go) · [direct_lan_context_store.go](../core/direct_lan_context_store.go) · [lan.go](../core/lan.go).
 
 ファイルのアトミックな書き換えは、モデルの論理的な比較更新ではありません。
 呼出し側はモデルとファイルのライフサイクルを排他的に管理し、現在の許可確認と

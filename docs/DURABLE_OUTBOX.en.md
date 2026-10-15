@@ -10,8 +10,10 @@ The published 0.5.0-alpha.1 release includes an opt-in file/folder outbox. A suc
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/delivery-evidence-en-dark-narrow.svg">
   <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/delivery-evidence-en-dark-wide.svg">
   <source media="(max-width: 839px)" srcset="assets/visuals/delivery-evidence-en-light-narrow.svg">
-  <img src="assets/visuals/delivery-evidence-en-light-wide.svg" alt="Local acceptance, saving on the peer, and sender confirmation are separate stages; an unknown result needs the original ID." width="1040">
+  <img src="assets/visuals/delivery-evidence-en-light-wide.svg" alt="Work state and delivery evidence are independent. Cancellation or expiry does not erase known save evidence; inspect unknown results using the original ID." width="1040">
 </picture>
+
+[Open full-size diagram (wide)](assets/visuals/delivery-evidence-en-light-wide.svg) · [Narrow version](assets/visuals/delivery-evidence-en-light-narrow.svg)
 
 A queue record authorizes bounded attempts; it is not a delivery receipt. If the reply is lost, inspect the original ID and receiver evidence before deciding what to do next. Cancellation cannot recall saved content.
 

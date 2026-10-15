@@ -5,17 +5,20 @@
 sobalink connects devices to their selected application services, with explicit text and file transfer as additional operations. It combines an embedded React UI and a Go agent. Human interaction and agent CLI requests share one application boundary. A peer can exchange authorized messages, batches and service metadata; it cannot operate the local administration API.
 
 ```mermaid
-flowchart LR
-    U["Browser on this device"] --> W["127.0.0.1 ephemeral Web API"]
-    C["soba CLI"] --> I["Owner-only local IPC"]
-    W --> K["Shared Go core"]
-    I --> K
-    K --> P["Identity and permission checks"]
-    P --> N["Explicit network backend"]
-    N --> R["Authenticated peer API"]
-    P --> F["Bounded file receiver"]
-    P --> S["Scoped service dispatcher"]
-    S --> L["Exact local loopback service"]
+flowchart TD
+ accTitle: Management and peer surfaces stay separate
+ accDescr: Peer authentication never grants access to the local management API.
+ U["Local browser"] --> W["Exact loopback Web API"]
+ C["Owner CLI"] --> I["Owner-only local IPC"]
+ W --> K["Shared Go core"]
+ I --> K
+ R["Authenticated peer surface"] --> P["Current identity and scoped permission"]
+ K --> P
+ P --> F["Bounded file receiver"]
+ P --> S["Scoped service dispatcher"]
+ S --> L["Exact target service"]
+
+ LIMIT["Peer authentication never grants access to the local management API."]
 ```
 
 The local browser and owner-only CLI reach the same Go core. Peer traffic uses a separate authenticated surface; it cannot call local management. Read the [connection overview](../README.en.md) first, then the operation-specific sections below.
@@ -59,14 +62,20 @@ A relay may be self-hosted or another endpoint explicitly trusted by the user. T
 
 ```mermaid
 flowchart TD
-    A["Explicit network selection"] --> B["Existing Tailnet"]
-    A --> C["Tailcat with selected trusted relay"]
-    B --> D["Current authenticated peer identity"]
-    C --> E["Explicit pairing and verified peer key"]
-    D --> F["Transfer or service grant"]
-    E --> F
-    F --> G["Direct or encrypted relay path when observed"]
-    G --> H["Application result checked separately"]
+ accTitle: Network choice, observed route and application result
+ accDescr: Mixed does not merge identities or permissions; changing modes does not preserve existing TCP streams.
+ A["Explicit network selection"] --> B["Existing Tailnet"]
+ A --> C["Tailcat with selected relay"]
+ A --> D["Direct LAN with explicit pairing"]
+ A --> M["Mixed: preserve each backend boundary"]
+ B --> I["Current backend identity and permissions"]
+ C --> I
+ D --> I
+ M --> I
+ I --> P["Observe the actual route"]
+ P --> R["Check the application result separately"]
+
+ LIMIT["Mixed does not merge identities or permissions; changing modes does not preserve existing TCP streams."]
 ```
 
 Direct and Relay are path observations; Reconnecting is a lifecycle state. Unknown means the backend has not supplied reliable path evidence. A route can change inside a backend, but the product makes no established-TCP preservation promise. An unavailable backend does not trigger automatic exchange to another mode.
@@ -80,13 +89,17 @@ The original relay remains the pairing/bootstrap anchor. Additional exact numeri
 A private recipient-sealed version-2 offer carries the explicitly selected candidates within the existing 24 KiB plaintext/64 KiB envelope bounds, directional pair binding, a durable sequence and an explicit `finite` or `until-revoked` lifetime. Local approval independently binds exact candidate IDs and its reviewed lifetime. Version 2 has no arbitrary 30-day duration ceiling; finite dates must still be valid and representable. A finite approval cannot outlast a finite offer, and until-revoked approval requires an until-revoked offer. The CLI requires exactly one of `--ttl` or `--until-revoked` for offer/withdraw and nonempty approval; it has no lifetime default. The Web UI defaults new offers and eligible approvals to until-revoked, shows the scope and impact for review and leaves every candidate unchecked. Finite offers, including old version 1, permit only finite approval. A fresh offer, reconnect or reload never renews permission automatically. Exchange remains manual and private, with no automatic external messaging or command execution.
 
 ```mermaid
-flowchart LR
-    O[Authenticated peer offer] --> V[Validate binding and sequence]
-    V --> E[Eligible exact candidates]
-    P[Independent local approval] --> E
-    E --> T[One outgoing transport generation]
-    L[Existing local service listener] --> T
-    T --> A[Unchanged paired application target]
+flowchart TD
+ accTitle: New transport generation, same scoped target
+ accDescr: A fresh offer or route attempt cannot renew local approval or app authority.
+ O["Authenticated pair-bound offer"] --> V["Validate binding, sequence and lifetime"]
+ V --> E["Eligible exact candidates"]
+ P["Independent local lifetime approval"] --> E
+ E --> T["One outgoing transport generation"]
+ L["Existing local service listener"] --> T
+ T --> A["Unchanged paired target and app authority"]
+
+ LIMIT["A fresh offer or route attempt cannot renew local approval or app authority."]
 ```
 
 Managed new connections try local candidates first, with deterministic ordering, five-second route checks/connection attempts within a candidate-count × five-second dial budget and a 30-second hold-down. Concurrent dials serialize per peer. The coordinator preserves healthy active flows during optional preference probes. Fresh transport checks can retire a failed generation, including hung flows, so a new connection can recover; application-port refusal alone does not retire a transport that passes its follow-up health check. It revisits the preferred candidate after the hold-down when no flows are active. These are current implementation bounds, not a measured recovery SLA. Permission expiry, revocation and shutdown cancel the generation.
@@ -119,17 +132,24 @@ Trust, pairing, autosave and service sharing are distinct scopes. LAN invitation
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: Valid offer from trusted peer
-    Pending --> Accepted: Batch consent or exact autosave grant
-    Pending --> Rejected: Receiver declines
-    Accepted --> Receiving: Stream a file
-    Receiving --> Completed: All files verified and saved
-    Receiving --> Partial: An unfinished file fails
-    Partial --> Receiving: Retry unfinished whole files
-    Pending --> Cancelled: Cancel or revoke
-    Accepted --> Cancelled: Cancel or revoke
-    Receiving --> Cancelled: Cancel or revoke
-    Partial --> Cancelled: Cancel or revoke
+ accTitle: File offer, receiver consent and saved evidence
+ accDescr: Cancelled does not recall files already saved; retry does not imply byte-offset resume.
+ [*] --> Pending: Valid offer from trusted peer
+ Pending --> Accepted: Exact receiver consent
+ Pending --> Rejected: Receiver declines
+ Accepted --> Receiving: Start a file
+ Receiving --> Completed: All files verified and saved
+ Receiving --> Partial: An unfinished file fails
+ Partial --> Receiving: Explicit eligible whole-file retry
+ Pending --> Cancelled: Cancel or revoke
+ Accepted --> Cancelled: Cancel or revoke
+ Receiving --> Cancelled: Cancel or revoke
+ Partial --> Cancelled: Cancel or revoke
+ direction TB
+
+ note right of Cancelled
+  Saved files are not recalled.
+ end note
 ```
 
 A manifest includes relative paths, kinds, sizes and SHA-256 values. Directories explicitly represent empty folders. The receiver bounds metadata, path depth, reservations, outstanding batches and concurrent file streams, rejects unsafe paths/links and creates files without overwrite. Final acknowledgement follows size/hash verification and save completion. Completed-file acknowledgements are idempotent while their batch exists.

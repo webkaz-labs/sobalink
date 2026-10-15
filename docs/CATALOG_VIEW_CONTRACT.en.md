@@ -13,14 +13,21 @@ Release and exact-source acceptance status belong to the [verification record](V
 
 ## View, review, then connect
 
-| Step | Owner | Required boundary |
-| --- | --- | --- |
-| Select current shared-service activation IDs | Provider | Exact managed DirectLAN peer and finite viewing grant |
-| List and inspect the returned services | Viewer | Exact target, grant and revision; retained original transport attribution |
-| Review one connection | Viewer | Fresh list/review plus independent service membership |
-| Start the connection | Existing service workflow | Revalidate and consume the review before starting |
+```mermaid
+flowchart TB
+    accTitle: What must be true before a listed service can connect?
+    accDescr: The saved definition creates a separate activation ID selected by a view grant. A fresh review and independent service membership must both pass revalidation. Restart creates a new activation and invalidates the old selection.
+D["Saved definition ID"] --> A["Start: activation ID"]
+    A --> V["View grant selects activation IDs"]
+    V --> L["Fresh list and review"]
+    L --> C{"Both checks pass?"}
+    M["Service peer membership"] --> C
+    C -->|yes| T["Consume review; attempt connect"]
+    C -->|no| B["No connection start"]
+    A -. "share restart" .-> N["New ID; old selection invalid"]
+```
 
-Viewing never adds connection membership. Restarting a share changes its activation ID; saving a connection definition does not retain catalog authority. Use the [local catalog](RESOURCE_CATALOG.en.md) for local observations instead.
+The finite view grant selects current activation IDs for one exact peer; it does not add that peer to the service’s connection membership. Connect re-fetches the selection and validates the original transport, share generation, review conditions and current membership, then consumes the review before attempting a start. A failed or uncertain start needs a new list/review. Restarting a share requires a new explicit activation selection; save-only keeps configuration, not catalog authority.
 
 ## Exact selection and coexistence
 

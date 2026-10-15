@@ -68,13 +68,38 @@ Existing native restart cases can be rerun separately with `managed_restart_nati
 
 ## Budgets, native cleanup and browser confinement
 
+
+### When may private acceptance data be deleted?
+
+```mermaid
+flowchart LR
+    subgraph CASE["Supervisor-owned case profile"]
+        direction TB
+        OBS["Native exits observed; observer workers joined"] --> PROOF{"Supervisor exit and descendant proof verified?"}
+        REAP["wait4 reaches ECHILD; all descendants reaped"] --> PROOF
+        PROOF --> GOOD["Yes: remove private case profile"]
+        PROOF --> BAD["No: fail and retain private profile"]
+    end
+    subgraph RUN["Entire private run directory"]
+        direction TB
+        CHECK{"Runner and seven cases pass; all profiles gone?"}
+        CHECK --> DELETE["Yes: delete private run directory"]
+        CHECK --> RETAIN["No: fail and retain private run directory"]
+    end
+    CASE --> RUN
+```
+
+Text equivalent: native observer completion plus all-descendant reaping must be established before a case profile can be removed. The wrapper deletes its private run directory only after runner success, exact-seven acceptance and profile cleanup; uncertainty fails and retains private data. Only the fixed sanitized summary and independent hashes may leave that boundary. Observers cover the old owner and any created helper/successor; unregistered orphaned starts remain covered by subreaping. Native observer handles close only after their workers join; a cancellation or closers marker alone is never exit proof.
+
+Implementation references: [upgrade_web_supervisor_test.go](../cmd/soba/upgrade_web_supervisor_test.go) · [activation-fixtures.mjs](../web/browser/activation-fixtures.mjs) · [activation-runner.mjs](../web/browser/activation-runner.mjs).
+
 - One browser worker, no retries and seven exact named cases. The reporter requires all seven unique names, passed status, expected passed status, retry zero, no unexpected cases, no global errors and a passed final runner result. Missing/import/setup/global failures cannot look successful.
 - A 150-second shared case deadline starts before resource acquisition. Body/setup is capped at 120 seconds to reserve teardown time; cleanup waits use the remaining absolute deadline instead of stacking independent budgets. Browser-context close has a five-second sub-budget within that same deadline.
 - Playwright has a 20-minute global timeout; the private wrapper requests termination of its exact Playwright child at 21 minutes and gives up with failed/retained-private-state at 23 minutes. The integrated CI compile/run step has a 40-minute timeout and its whole job a 55-minute timeout; these outer limits do not extend the wrapper or case deadlines. A timeout never authorizes profile deletion or a passing summary.
 - A 45-second original review and the product ten-second helper lease are unchanged. Synthetic owners have a 70-second cooperative lifetime and an 80-second fixture-only self-exit watchdog. These do not add a product force-kill fallback.
 - Each case creates a fresh protected `sr-` profile inside the wrapper’s 0700 `sa-` private directory. Cleanup ownership begins with allocation, including setup failures. Child environments contain fixture paths, temporary home and race options, not account credentials.
-- A Linux test-only supervisor enables child subreaping before spawning the old owner. It owns the initial child, verifies role/parent registrations and opens native exit observers for old/helper/successor before owner work. Orphaned descendants, including failures before registration/readiness markers, become its waitable children. Success requires native observer completion and `wait4` reaching `ECHILD`; a closers marker or requested cancellation is never process-exit proof. Observer goroutines are joined before their handles close.
-- Browser cancellation and a fixture-only stop marker request cooperative shutdown. Private profiles are removed only after the supervisor itself exits and its all-descendant/native-exit proof is verified. If exit remains uncertain, the directory stays private and the case fails. No-successor cases check the final registered-owner result after cleanup, not just immediate marker absence after Cancel.
+- The Linux test-only supervisor enables child subreaping before spawning the old owner, verifies role/parent registrations and opens native exit observers before owner work. The diagram distinguishes registered-owner observations from orphaned descendants, including starts that fail before registration/readiness.
+- Browser cancellation and a fixture-only stop marker request cooperative shutdown; they do not bypass either deletion gate above. No-successor cases check the final registered-owner result after cleanup, not just immediate marker absence after Cancel.
 - Each actual HTTP owner publishes its exact numeric-loopback origin through the protected supervisor channel before the browser receives readiness. The helper origin is registered from its real private-pipe descriptor. Origins are revoked when their native owner exits. Browser HTTP is denied by default unless its exact live origin is registered; credentials/query/fragment URLs are rejected. Service workers are blocked and all WebSockets are denied. Only sanitized violation counts are retained.
 - Reviewed browser controls combine the pinned Chromium launch defaults that suppress background networking, the exact owned-origin routes above, and existing executor restrictions. Playwright routing is not an OS-wide firewall. Preserve these controls without changing OS firewall or network settings; no new outward-network-denied environment is required by this source review.
 

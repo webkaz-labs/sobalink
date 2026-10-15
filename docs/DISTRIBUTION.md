@@ -16,12 +16,16 @@ The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the ear
 | Replace a development binary | [Updating a development build](#updating-a-development-build) | Preserve state; incompatible formats need a separate empty directory |
 
 ```mermaid
-flowchart LR
-    A[Reviewed source] --> B[Exact-source full CI]
-    B --> C[Native archives and inventories]
-    C --> D[Signature and provenance]
-    D --> E[Public retrieval]
-    E --> F[Verify actual mise installation]
+flowchart TD
+ accTitle: From source identity to installed evidence
+ accDescr: Installed startup does not establish two-physical-device acceptance.
+ A["Reviewed exact source"] --> B["Source-bound full CI"]
+ B --> C["Native archives and inventories"]
+ C --> D["Verify signatures and provenance"]
+ D --> E["Retrieve public artifacts again"]
+ E --> F["Actual mise installation and startup"]
+
+ LIMIT["Installed startup does not establish two-physical-device acceptance."]
 ```
 
 Text equivalent: reviewed source must pass exact-source full CI, native packaging, signature/provenance checks, public retrieval and verification of the actual mise installation. Physical-device acceptance is separate.

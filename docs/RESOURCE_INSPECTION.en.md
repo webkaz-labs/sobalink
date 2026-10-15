@@ -4,15 +4,19 @@
 
 The current release permits one managed DirectLAN peer to read exactly two transfer settings and their effective values. This inspect-only scope does not expose a catalog, operation history, arbitrary commands, or remote changes. Separately confirmed [management](RESOURCE_MANAGEMENT.en.md) is a distinct permission scope; it never upgrades an inspection grant implicitly. Normal agent startup enables the implementation, but creates no permission or inspection listener without an eligible confirmed grant. Exact-source and release evidence are recorded in [verification](VERIFICATION.en.md).
 
-## Who does what
+## What exactly is readable?
 
-| Device | Action | Result to check |
+The target confirms one finite inspection grant; the permitted peer then requests its exact resource, grant ID and revision. Those selectors do not authenticate a peer or create permission. Check the complete read-only scope:
+
+| Boundary | Permitted read | Excluded by this grant |
 | --- | --- | --- |
-| Target, whose settings will be read | Preview and confirm one exact finite inspection grant | Saved grant, activation and listener readiness separately |
-| Permitted peer | Request the exact target/grant/revision | Two requested settings and their effective values |
-| Target | Revoke the current grant when no longer needed | Confirm persistence; an uncertain save is not durable revocation |
+| File admission setting | `transferConcurrentFiles`: requested and effective value | Changes to this value |
+| Per-peer admission setting | `transferConcurrentPerPeer`: requested and effective value | Changes to this value |
+| Fields together | Both settings above, and only those settings | Other settings, profiles, paths, catalog or operation history |
+| One resource and pair | Exact resource plus target key, peer key and immutable pair binding | Wildcards, other peers or a replacement pairing |
+| Action and lifetime | `inspect` while the original finite grant remains valid | Change preview/apply or renewal by restart/reconnect |
 
-Start with the target's grant below. Pairing and ordinary message/file trust do not supply inspection permission. For changes rather than reading, use the separately reviewed [management workflow](RESOURCE_MANAGEMENT.en.md).
+A table makes the exact scope visible without suggesting a write step. Pairing and ordinary message/file trust do not grant inspection. Confirm saved permission, runtime activation and listener readiness separately; a listener alone does not prove a successful read. For changes, obtain the separately reviewed [management scope](RESOURCE_MANAGEMENT.en.md).
 
 ## Review and grant on the target
 

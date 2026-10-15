@@ -227,6 +227,9 @@ func mockTool(t *testing.T) (*Tool, *int) {
 	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "package.json"), `{"name":"react","version":"1.0.0"}`)
 	writeFixture(t, filepath.Join(root, "web", "node_modules", "react", "LICENSE"), "React license")
 	writeFixture(t, filepath.Join(root, "web", "dist", "index.html"), "<!doctype html><html></html>")
+	for _, rel := range documentationScreenshots {
+		writeFixture(t, filepath.Join(root, filepath.FromSlash(rel)), "synthetic screenshot fixture")
+	}
 	writeSourceFixture(t, root)
 	goRoot := filepath.Join(root, "toolchain")
 	writeFixture(t, filepath.Join(goRoot, "LICENSE"), "Go license")

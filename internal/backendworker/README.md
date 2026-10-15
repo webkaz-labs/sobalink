@@ -12,9 +12,15 @@ Tests include socket-free framing, cancellation, peer-stream data, owner shutdow
 
 ```mermaid
 flowchart LR
-    A[Application owner] --> B[Inherited typed pipes]
-    B --> C[Isolated worker]
-    C --> D[Selected userspace network stack]
+ accTitle: Owner and worker communicate through typed pipes
+ accDescr: This diagram does not grant the worker a local management API or arbitrary network access.
+ A["Application owner"] -->|Typed commands| B["Inherited private pipes"]
+ B --> C["Isolated worker"]
+ C --> D["Explicit userspace network stack"]
+ C -. Typed result .-> B
+ B -.-> A
+
+ LIMIT["This diagram does not grant the worker a local management API or arbitrary network access."]
 ```
 
 Text equivalent: the application owner controls the worker through inherited typed pipes; the worker uses the selected userspace stack. There is no OS-network application fallback.

@@ -24,9 +24,13 @@ To deliver while a peer is offline, explicitly choose the [file queue](DURABLE_O
 
 ## Two service addresses
 
-The client uses its own `127.0.0.1` address and entry port shown in status. A host sharing a service provides the embedded node’s address and approved port to its peers. Even if the port numbers match, these are different addresses.
+| Address | Who uses it | Purpose |
+| --- | --- | --- |
+| Client loopback and the entry port shown in status | The application on that client | Enter the selected forward |
+| Host embedded-node address and approved port | A permitted peer | Reach the shared service |
+| Temporary local management URL | The browser on the same device | Manage sobalink; never share or forward it |
 
-The temporary `127.0.0.1` management URL belongs only to that device. Do not open it from another device or add it to a share. If ordinary Tailscale or an existing shared service already meets the need, consider whether a separate node or additional local entry is useful.
+Matching port numbers do not make these the same endpoint. See the [connection illustration](GENERIC.en.md) and [local API boundary](../web/API.md). If ordinary Tailscale or an existing shared service already meets the need, consider whether a separate node or additional local entry is useful.
 
 ## Connection and application responsibilities
 

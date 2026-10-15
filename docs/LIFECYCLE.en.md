@@ -4,6 +4,15 @@
 
 `soba` and `soba run` run in the foreground. `soba start --background` starts a detached application and waits for its local management interface. Startup success confirms local readiness, not network connectivity or success in another application. Use `soba status` to inspect the network and `soba ui` to get a fresh sign-in code.
 
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/restart-state-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/restart-state-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/restart-state-en-dark-wide.svg">
+  <img src="assets/visuals/restart-state-en-light-wide.svg" alt="Saved-network and offline startup differ. Ordinary saved services stay stopped; startup approvals and durable queues have separate conditions." width="960">
+</picture>
+
+[Open full-size diagram (wide)](assets/visuals/restart-state-en-light-wide.svg) · [Narrow version](assets/visuals/restart-state-en-light-narrow.svg)
+
 ## Start, inspect, stop
 
 ```sh
@@ -63,7 +72,25 @@ To disable, preview `soba autostart disable --startup saved` (or the original `o
 soba logout
 ```
 
-The saved Tailnet network must be active. Logout first stops local services, peer listeners, and file transfer activity, then requests logout from the embedded node. The application exits after either outcome:
+The saved Tailnet network must be active. Does a disconnected control page prove logout? No: local traffic cleanup, backend acknowledgement and process exit are separate results.
+
+```mermaid
+flowchart TB
+    Stop["Cancel local traffic and await cleanup"] --> Returned["Cleanup callbacks returned"]
+    Stop --> Timeout["Cleanup timed out or was canceled"]
+    Timeout --> Skipped["Backend logout not attempted"]
+    Returned --> Logout["Request backend logout"]
+    Logout --> NoAck["No backend ACK"]
+    Logout --> Ack["Backend acknowledged"]
+    Ack --> Clean["No cleanup error: logout confirmed"]
+    Ack --> Error["Cleanup error: logout confirmed, cleanup unconfirmed"]
+    Skipped --> Retry["Verify exit, restart same profile and retry"]
+    NoAck --> Retry
+    Clean --> Exit["Application stopping: verify process exit"]
+    Error --> Exit
+```
+
+Text equivalent: cleanup timeout or cancellation skips backend logout. Otherwise the backend is asked even if a listener reported a cleanup error. Missing acknowledgement means unconfirmed logout; acknowledgement with a cleanup error means confirmed logout but unconfirmed cleanup. The process starts exiting on all these paths; check exit separately. Read the result code before deciding whether to retry:
 
 - Success returns `state: logged-out` and `logoutConfirmed: true`, meaning the local backend acknowledged logout
 - `tailnet_logout_unconfirmed` means backend logout was not confirmed. The error states whether local traffic stopped or its cleanup is also unconfirmed; if a transfer cannot finish stopping, backend logout is not attempted. Wait for the application to exit, then start with the saved Tailnet network and retry

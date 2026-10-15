@@ -4,6 +4,15 @@
 
 Mixed mode explicitly runs selected connection backends together. A new profile still selects no network. This is a userspace application transport, not a gateway between unrelated single-backend devices. It changes no OS routes, firewall rules or router settings and needs no administrator privileges.
 
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/network-topologies-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/network-topologies-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/network-topologies-en-dark-wide.svg">
+  <img src="assets/visuals/network-topologies-en-light-wide.svg" alt="Tailnet, relay-anchored LAN and direct LAN have different reachability requirements. Mixed associates approved routes without migrating existing TCP." width="960">
+</picture>
+
+[Open full-size diagram (wide)](assets/visuals/network-topologies-en-light-wide.svg) · [Narrow version](assets/visuals/network-topologies-en-light-narrow.svg)
+
 ## Three separate choices
 
 | Choice | What you review | What remains separate |
@@ -44,6 +53,26 @@ New connections can choose another explicitly approved route when a backend is p
 Existing TCP streams are never migrated, replayed or resumed. An application may need to reconnect. UDP sessions retain their route and identity; queued datagrams are not replayed onto another route. Backend readiness does not prove application success or NAT reachability.
 
 The local entry can remain stable for new connections in the same application process. Process restart is a separate lifecycle; previous transfer progress and arbitrary remote jobs do not resume. Two devices that support only incompatible single backends cannot communicate through this feature without a separately designed gateway.
+
+
+### Only an availability failure may try another route
+
+Every new route attempt rechecks its current identity and exact permission.
+
+```mermaid
+flowchart TD
+ New["New flow: reviewed ordered route set"] --> Auth["Current transport ID, same-peer binding, resource permission"] --> Dial["Attempt reviewed route"]
+ Auth --> Denied["Denied or other non-availability error: stop"]
+ Dial --> Available["Classified unavailable"] --> Next{"Another approved route available?"} --> Has["Yes: recheck"] --> Auth
+ Dial --> Connected["Connection returned"] --> Again["Recheck permission and generation"] --> Use["Return authorized flow"]
+ Again --> Changed["Any recheck failure or generation change: close"]
+ Auth --> UnavailableAuth["Authorization transport classified unavailable"] --> Next
+ Dial --> Other["Any other failure: stop"]
+ Scope["Never replay or migrate existing streams"]
+ Next --> Exhausted["No approved route left: stop"]
+```
+
+Only a positively classified availability failure permits the next approved route. Identity, same-peer binding and exact resource permission are checked on every attempt and again after dialing. Denial, revocation, a generation change or exhausted routes stop the attempt. Existing streams are not replayed.
 
 ## Removing authority
 

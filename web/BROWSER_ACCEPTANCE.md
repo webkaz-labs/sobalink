@@ -10,10 +10,15 @@ Playwright Test is the deterministic browser gate. The pinned `@playwright/test`
 4. Report the source, run, passed cases and substitutions. Keep real Core, mocked API responses, physical devices and installed binaries separate.
 
 ```mermaid
-flowchart LR
-    A[Exact source and assets] --> B[Private fixture and browser]
-    B --> C[Actual UI assertions]
-    C --> D[Sanitized report and reviewed images]
+flowchart TD
+ accTitle: What real-browser evidence establishes
+ accDescr: Fixture success does not prove OS login, suspend or physical-device behavior.
+ A["Exact source and built assets"] --> B["Private production-Go fixture"]
+ B --> C["Actual browser interactions"]
+ C --> D["Assertions on visible state"]
+ D --> E["Sanitized reports and reviewed images"]
+
+ LIMIT["Fixture success does not prove OS login, suspend or physical-device behavior."]
 ```
 
 Text equivalent: bind the source and assets, execute the private fixture in a real browser, evaluate actual UI assertions, then review sanitized results and images. No step establishes physical-device acceptance by itself.

@@ -97,7 +97,7 @@ func newResourceNativeOwnedPair(t *testing.T) *resourceInspectionNativePair {
 // with Core's actual policy before activation. Inspection keeps its old setup.
 func newResourceNativeOwnedPairWithPolicy(t *testing.T, alignPolicy bool) *resourceInspectionNativePair {
 	t.Helper()
-	base := newActivationNativePairDirectories(t, true) // 90-second total pair context; no address reselection after this allocation.
+	base := newActivationNativePairDirectoriesWithInspection(t, true, true) // 90-second total pair context; no address reselection after this allocation.
 	f := &resourceInspectionNativePair{activationNativePair: base}
 	for i, c := range base.cores {
 		f.owners[i] = &resourceInspectionNativeOwner{core: c, done: make(chan struct{})}
@@ -137,9 +137,11 @@ func newResourceNativeOwnedPairWithPolicy(t *testing.T, alignPolicy bool) *resou
 				t.Fatal("synthetic policy alignment attempted after activation")
 			}
 		}
-		c.initializeResourceIdentity(owner)
-		c.initializeResourceGrants()
+		// Open initialized identity and grants before starting maintenance.
+		// Inspect under mu; op alone does not exclude message maintenance.
+		c.mu.RLock()
 		valid := c.resourceIdentity != "" && c.resourceLock == owner && c.resourceGrants != nil && !c.resourceGrants.frozen && c.resourceGrants.firstUse
+		c.mu.RUnlock()
 		// The activation helper changes this profile only in memory. Persist the
 		// exact synthetic network choice using the owned production writer so a
 		// later normal Open cannot silently restart as network:none.

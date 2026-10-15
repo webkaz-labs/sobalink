@@ -18,11 +18,13 @@ Web 画面には元設定の正確な ID・版、プロトコル、ループバ�
 最初に保存済みの数値ループバックの対応を確認し、OS が「アドレス使用中」と報告した場合だけ別の候補を調べます。元の対応が現在利用可能なら `listener_no_conflict` を返し、自動再開始しません。選んだ TCP/UDP と正確な `127.0.0.1` または `::1` の系統で一時的に待受を試します。ソケットでアプリの通信を受理・転送せず、結果を返す前にすべて閉じます。保存済み設定、相手への許可、自動起動の承認、ルーターやセキュリティ設定は変更しません。
 
 <picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/saved-and-running-ja-dark-narrow.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/saved-and-running-ja-dark-wide.svg">
-  <source media="(max-width: 839px)" srcset="assets/visuals/saved-and-running-ja-light-narrow.svg">
-  <img src="assets/visuals/saved-and-running-ja-light-wide.svg" alt="保存済み設定、待受準備、アプリ成功は別々に確認します。">
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/port-observation-ja-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/port-observation-ja-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/port-observation-ja-dark-wide.svg">
+  <img src="assets/visuals/port-observation-ja-light-wide.svg" alt="一時的にポートを開いて確認し全て閉じます。候補は予約ではなく、別の保存でrevision、起動で全ポートを再確認します。" width="960">
 </picture>
+
+[図を元の大きさで開く（横長）](assets/visuals/port-observation-ja-light-wide.svg) · [縦長版](assets/visuals/port-observation-ja-light-narrow.svg)
 
 
 ## 確認 → 再確認 → 保存または再開始

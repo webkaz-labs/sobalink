@@ -18,7 +18,7 @@ for f in D.glob('*.svg'):
  c.cairo_destroy(cr);c.cairo_surface_destroy(surface);g.g_object_unref(handle)
 print('Rendered all SVG variants with librsvg and Cairo.')
 from PIL import Image,ImageDraw
-for kind in ['permissions','saved-and-running','delivery-evidence']:
+for kind in sorted({f.name.rsplit('-ja-light-wide.svg',1)[0] for f in D.glob('*-ja-light-wide.svg')}):
  if not (D/f'{kind}-ja-light-wide.png').exists(): continue
  out=Image.new('RGB',(1440,1456),'#ddd');draw=ImageDraw.Draw(out)
  for lang in ['ja','en']:

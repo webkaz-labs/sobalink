@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="820" viewBox="0 0 400 820" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">Management stays local.</title><desc id="desc">The local browser uses session and same-origin/CSRF checks for management. A peer uses the authenticated peer protocol and explicit scoped permission. Peer protocols never forward /api/command.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="400" height="820" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-356">sobalink  /  EXPLAINED</text>
+<text x="24" y="73" font-size="22" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-356">Management stays local.</text>
+<text x="24" y="105" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-356">Shared Go core; separate entrances and authority.</text>
+<rect x="24" y="139" width="352" height="467" rx="16" fill="#191c24" stroke="#454959"/>
+<text x="40" y="167" font-size="13" fill="#bdc5d8" font-weight="650" text-anchor="start" id="label-8-box-340">THIS DEVICE</text>
+<rect x="94" y="188" width="212" height="30" rx="15" fill="#30294b"/>
+<text x="200.0" y="209" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-10-box-196">Browser on this device</text>
+<path d="M200 225V232" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M200 254 L200 262" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M196.2 255.0 L200 262 L203.8 255.0" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="200" y="247" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-14-box-320">Session + Host / Origin + CSRF</text>
+<rect x="54" y="268" width="292" height="66" rx="10" fill="#30294b"/>
+<text x="200" y="295" font-size="19" fill="#c0aeff" font-weight="650" text-anchor="middle" id="label-16-box-270">/api/command</text>
+<text x="200" y="319" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-17-box-270">Numeric loopback only</text>
+<path d="M200 340 L200 371" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M196.2 364.0 L200 371 L203.8 364.0" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="54" y="380" width="292" height="66" rx="10" fill="#1d202a" stroke="#454959"/>
+<text x="200" y="406" font-size="16" fill="#e8e9f0" font-weight="600" text-anchor="middle" id="label-21-box-270">Go: current state + authority</text>
+<text x="200" y="429" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-22-box-270">Operation-specific permitted scope</text>
+<path d="M321 543H340V514" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M340 514 L340 451" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M343.8 458.0 L340 451 L336.2 458.0" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="79" y="528" width="242" height="30" rx="15" fill="#30294b"/>
+<text x="200.0" y="549" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-27-box-226">Peer identity + explicit scope</text>
+<path d="M40 489H360" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 5"/>
+<text x="40" y="511" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-29-box-340">Separate entrance: peer protocol</text>
+<rect x="158" y="635" width="84" height="64" rx="9" fill="#191c24" stroke="#454959"/>
+<rect x="168" y="645" width="64" height="34" rx="3" fill="#30294b"/>
+<path d="M188.0 691h24 M200.0 681v10" fill="none" stroke="#9ba4b7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="200.0" y="723" font-size="15" fill="#e8e9f0" font-weight="600" text-anchor="middle" id="label-33-box-119">Peer device</text>
+<path d="M200 629 L200 564" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M203.8 571.0 L200 564 L196.2 571.0" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M24 750H376" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="770" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-37-box-356">An open endpoint never bypasses authorization.</text>
+<text x="24" y="790" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-38-box-356">Do not expose or forward the local management API.</text>
+<text x="24" y="810" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-39-box-356">Peer protocols never forward requests into /api.</text>
+</svg>
