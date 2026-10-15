@@ -56,6 +56,27 @@ class ImpactRulesTests(unittest.TestCase):
                 self.assertEqual(classify_paths(path)[0], "full")
                 self.assertEqual(classify_paths("README.md", path)[0], "full")
 
+    def test_reviewed_prose_and_document_images_are_closed_allowlists(self):
+        for path in impact.EXTRA_DOCS | impact.DOC_IMAGES:
+            with self.subTest(path=path):
+                self.assertEqual(classify_paths(path, "README.md")[0], "docs")
+                self.assertEqual(classify_paths(path, "internal/core/core.go")[0], "full")
+                self.assertEqual(classify_paths(path, "web/src/App.tsx")[0], "frontend")
+        for path in (
+            "internal/new/README.md", "web/dist/README.md", "web/public/guide.svg",
+            "web/src/catalog/INTEGRATION.md", "web/src/group/INTEGRATION.md",
+            "web/src/resource/INTEGRATION.md",
+            "docs/assets/visuals/new.svg", "docs/assets/visuals/connection-en-dark-wide.png",
+            "docs/assets/visuals/build.py", "docs/assets/visuals/explainers.py",
+            "docs/assets/visuals/render.py", "docs/assets/visuals/verify.py",
+            "docs/assets/visuals/.gitignore", "docs/assets/visuals/helper.py",
+            ".github/docs-render/package.json", ".github/docs-render/package-lock.json",
+            ".github/scripts/ci-documents.py", ".github/workflows/docs-review.yml",
+            "docs/DEVELOPMENT_PRINCIPLES.en.md", "docs/assets/visuals/AGENTS.md",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(classify_paths(path, "README.md")[0], "full")
+
     def test_native_short_is_a_closed_presentation_allowlist(self):
         for path in impact.NATIVE_SHORT_IMPORTS:
             self.assertEqual(classify_paths(path, "README.md"),

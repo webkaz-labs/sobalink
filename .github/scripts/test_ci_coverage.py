@@ -26,7 +26,7 @@ def job(name, steps=(), conclusion="success"):
 
 
 def jobs(scope="full"):
-    result = [job("impact", (coverage.SCOPE_STEP,))]
+    result = [job("impact", (coverage.SCOPE_STEP,)), job("documents", coverage.DOCUMENT_STEPS)]
     if scope in ("native-short", "full"):
         for target, name in coverage.TARGETS.items():
             steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
@@ -247,7 +247,7 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertIn("  schedule:\n    # Daily 03:00 JST (UTC+09:00); changes to cadence require review.\n    - cron: '0 18 * * *'", workflow)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
         self.assertIn("|| format('ci-run-{0}', github.run_id)", workflow)
-        self.assertIn("needs: [impact, native, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, native, browser, go-unit, manifest-smoke]", workflow)
         self.assertIn("needs: [ci-required, web-activation, product-activation]", workflow)
         nightly = workflow.split("  nightly-full-check:\n", 1)[1]
         self.assertIn("ci-coverage.py nightly-finalize", nightly)
@@ -347,12 +347,55 @@ class ActualCoverageTests(unittest.TestCase):
                     with self.subTest(scope=scope, job=required["name"], step=s), self.assertRaises(ValueError):
                         coverage.evaluate_jobs(invalid, scope)
 
+    def test_real_document_job_and_each_step_are_mandatory_in_every_scope(self):
+        for scope in coverage.SCOPES:
+            for mode in ("missing", "skipped", "failure", "cancelled", "pending"):
+                data = jobs(scope)
+                document = next(j for j in data if j["name"] == "documents")
+                if mode == "missing":
+                    data.remove(document)
+                elif mode == "pending":
+                    document["status"] = "in_progress"
+                else:
+                    document["conclusion"] = mode
+                with self.subTest(scope=scope, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, scope)
+            for name in coverage.DOCUMENT_STEPS:
+                for mode in ("missing", "skipped", "failure", "cancelled", "duplicate"):
+                    data = jobs(scope)
+                    document = next(j for j in data if j["name"] == "documents")
+                    item = next(s for s in document["steps"] if s["name"] == name)
+                    if mode == "missing":
+                        document["steps"].remove(item)
+                    elif mode == "duplicate":
+                        document["steps"].append(copy.deepcopy(item))
+                    else:
+                        item["conclusion"] = mode
+                    with self.subTest(scope=scope, step=name, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
+    def test_document_workflow_is_required_and_render_dependencies_are_conditional(self):
+        workflow = (pathlib.Path(__file__).resolve().parents[1] / "workflows/ci.yml").read_text()
+        documents = workflow.split("  documents:\n", 1)[1].split("  native:\n", 1)[0]
+        for name in coverage.DOCUMENT_STEPS:
+            self.assertIn("name: " + name, documents)
+        self.assertIn("needs: [impact, documents, native, browser, go-unit, manifest-smoke]", workflow)
+        self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 2)
+        self.assertIn('npm ci --prefix "$DOCS_RENDER_ROOT"', documents)
+        # runner context is unavailable in jobs.<id>.env; resolve it only in steps.
+        self.assertNotIn("runner.", documents.split("    steps:", 1)[0])
+        self.assertEqual(documents.count("          DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render"), 2)
+        self.assertEqual(documents.count("run: /usr/bin/python3 -B .github/scripts/ci-"), 3)
+        self.assertIn("/usr/bin/python3 -I -c 'from PIL import Image'", documents)
+        self.assertNotIn("setup-go", documents)
+        self.assertNotIn("contents: write", documents)
+
     def test_documentation_scope_does_not_claim_application_execution(self):
-        self.assertFalse(coverage.evaluate_jobs([jobs("docs")[0]], "docs"))
+        self.assertFalse(coverage.evaluate_jobs(jobs("docs")[:2], "docs"))
         self.assertFalse(coverage.evaluate_jobs(jobs("docs"), "docs"))
         for name in (*coverage.TARGETS.values(), "native", "browser", "manifest-smoke", "go-unit"):
             for bad in ("failure", "cancelled", "success", None):
-                data = [jobs("docs")[0], job(name, conclusion=bad)]
+                data = jobs("docs")[:2] + [job(name, conclusion=bad)]
                 with self.subTest(name=name, bad=bad), self.assertRaises(ValueError):
                     coverage.evaluate_jobs(data, "docs")
 
@@ -407,6 +450,15 @@ class ActualCoverageTests(unittest.TestCase):
             return original(path, *args, **kwargs)
         with patch.object(pathlib.Path, "read_text", autospec=True, side_effect=explicit_utf8):
             self.test_native_short_plan_disables_real_time_and_full_only_steps()
+
+    def test_document_job_and_static_render_step_timings_are_measurable(self):
+        document = job("documents", coverage.DOCUMENT_STEPS)
+        for item in [document, *document["steps"]]:
+            item.update(started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:01Z")
+        rows = coverage.job_timings([document])
+        self.assertEqual(rows[0]["job"], "documents")
+        self.assertEqual(rows[0]["elapsed_seconds"], 1)
+        self.assertEqual([s["step"] for s in rows[0]["steps"]], list(coverage.DOCUMENT_STEPS))
 
     def test_timings_only_record_fixed_names(self):
         data = jobs()

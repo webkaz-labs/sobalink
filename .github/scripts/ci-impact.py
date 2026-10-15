@@ -52,6 +52,29 @@ POLICY_DOCS = frozenset((
     "docs/DEVELOPMENT_PRINCIPLES.en.md",
     "docs/DEVELOPMENT_PRINCIPLES.ja.md",
 ))
+# Reviewed human-facing prose outside the root documentation directory.
+# Never allow arbitrary README/Markdown paths: provenance, fixtures and embedded
+# resources may affect builds or runtime behavior even when their suffix is .md.
+EXTRA_DOCS = frozenset((
+    "internal/backendworker/README.md",
+    "internal/connectionroute/README.md",
+    "internal/endpointmeta/README.md",
+    "internal/endpointmeta/testdata/README.md",
+    "internal/nearby/DNSSD.en.md", "internal/nearby/DNSSD.ja.md",
+    "internal/nearby/README.md",
+    "web/API.md", "web/BROWSER_ACCEPTANCE.md", "web/UX_ACCEPTANCE.md",
+    "web/browser/png-fixtures/README.md",
+    "docs/assets/visuals/README.md",
+))
+# Only these static document images are outside application inputs. Their
+# content, reproduction and rendering are mandatory in the documents gate.
+# Generator/renderer Python, pipeline/configuration and dependency locks stay full.
+DOC_IMAGES = frozenset(
+    f"docs/assets/visuals/{kind}-{lang}-{theme}-{size}.svg"
+    for kind in ("connection", "permissions", "saved-and-running", "delivery-evidence")
+    for lang in ("en", "ja") for theme in ("light", "dark")
+    for size in ("wide", "narrow")
+)
 # These are separately ignored by the repository. A local/global ignore rule
 # must not be able to conceal extra runtime source files from classification.
 IGNORED_BUILD_DIRECTORIES = (
@@ -173,7 +196,7 @@ def path_kind(path):
     parts = path.split("/")
     if path in POLICY_DOCS or parts[-1] in ("AGENTS.md", "SKILL.md"):
         return "full"
-    if path in ROOT_DOCS or (len(parts) == 2 and parts[0] == "docs"
+    if path in ROOT_DOCS | EXTRA_DOCS | DOC_IMAGES or (len(parts) == 2 and parts[0] == "docs"
                             and parts[1].endswith(".md")):
         return "docs"
     if path.startswith("web/src/") and path.endswith((".ts", ".tsx", ".css")):

@@ -623,7 +623,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("      force_full:\n", workflow)
         self.assertIn("        type: boolean\n        default: true", workflow)
         aggregate = self.job("ci", "ci-required")
-        self.assertIn("    needs: [impact, native, browser, go-unit, manifest-smoke]\n", aggregate)
+        self.assertIn("    needs: [impact, documents, native, browser, go-unit, manifest-smoke]\n", aggregate)
         self.assertIn("    if: always()\n", aggregate)
         self.assertIn("ci-coverage.py finalize", aggregate)
         self.assertNotIn("contents: write", aggregate)
