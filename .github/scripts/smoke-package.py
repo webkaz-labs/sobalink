@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from document_images import verify_document_images
 from source_provenance import read_json, verify_native, verify_sources
 
 archive = pathlib.Path(sys.argv[1])
@@ -43,6 +44,7 @@ with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
                 else:
                     raise ValueError("package contains a special file")
     share = root / "share" / "sobalink"
+    verify_document_images(share)
     build = read_json((share / "build.json").read_bytes())
     binary = destination(build["binary"]["path"])
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == build["binary"]["sha256"]

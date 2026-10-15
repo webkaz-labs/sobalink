@@ -321,6 +321,9 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 			}
 		}
 	}
+	if err = copyDocumentationVisuals(t.Root, share); err != nil {
+		return err
+	}
 	binaryHash, err := fileHash(bin)
 	if err != nil {
 		return err
