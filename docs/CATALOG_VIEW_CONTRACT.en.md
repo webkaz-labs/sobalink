@@ -1,6 +1,6 @@
 # Shared-service catalog view contract
 
-[日本語](CATALOG_VIEW_CONTRACT.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
+[日本語](CATALOG_VIEW_CONTRACT.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 This implementation adds eligibility data, owned private storage, explicit local
 approval/revocation and a bounded peer list exchange. It retains original transport
@@ -10,6 +10,17 @@ processes. Linux CI verifies the actual browser workflow against those child
 processes; use the exact commit's CI result as acceptance evidence. Historical catalog rows remain
 stale and viewing does not authorize a connection.
 Release and exact-source acceptance status belong to the [verification record](VERIFICATION.en.md).
+
+## View, review, then connect
+
+| Step | Owner | Required boundary |
+| --- | --- | --- |
+| Select current shared-service activation IDs | Provider | Exact managed DirectLAN peer and finite viewing grant |
+| List and inspect the returned services | Viewer | Exact target, grant and revision; retained original transport attribution |
+| Review one connection | Viewer | Fresh list/review plus independent service membership |
+| Start the connection | Existing service workflow | Revalidate and consume the review before starting |
+
+Viewing never adds connection membership. Restarting a share changes its activation ID; saving a connection definition does not retain catalog authority. Use the [local catalog](RESOURCE_CATALOG.en.md) for local observations instead.
 
 ## Exact selection and coexistence
 

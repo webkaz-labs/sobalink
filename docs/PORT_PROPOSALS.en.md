@@ -1,6 +1,6 @@
 # Explicit alternate-port checks
 
-[日本語](PORT_PROPOSALS.ja.md) · [CLI guide](CLI_GUIDE.en.md) · [Capacity](CAPACITY.en.md) · [API](../web/API.md)
+[日本語](PORT_PROPOSALS.ja.md) · [CLI guide](CLI_GUIDE.en.md) · [Capacity](CAPACITY.en.md) · [API](../web/API.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 A stopped saved outbound TCP/UDP connection can explicitly check alternate local entry ports. The existing fixed port stays unchanged until a separate reviewed save or restart. In the local Web UI, open **Saved services → Manage service → Check alternate ports** for a stopped connection. Opening the view reads its source only; **Check loopback ports now** explicitly performs the transient checks.
 
@@ -16,6 +16,22 @@ The Web view shows the exact source ID/revision, protocol, loopback family, orig
 Use the revision and chosen port returned by `service ports`, and retain the same `--state-dir` throughout. Review the entire saved scope and lifetime before restarting: normal explicit restart begins the reviewed permission lifetime. An active service must first be stopped explicitly. Shares and application-side target ports are outside this proposal command.
 
 The check first attempts the saved numeric loopback mapping. Only an OS address-in-use error triggers alternate checking. A currently free original mapping returns `listener_no_conflict`; there is no automatic restart. Every check temporarily binds the selected TCP/UDP protocol and exact `127.0.0.1` or `::1` family. No socket accepts or forwards application traffic, and all sockets close before returning. No saved configuration, remote permission, startup approval, router or security setting changes.
+
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/saved-and-running-en-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/saved-and-running-en-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/saved-and-running-en-light-narrow.svg">
+  <img src="assets/visuals/saved-and-running-en-light-wide.svg" alt="Saved configuration, listener readiness and application success require separate checks.">
+</picture>
+
+
+## Check → review → save or restart
+
+A candidate is a momentary bind observation, not a reservation. Keep the returned source revision with your chosen port; review the complete mapping and lifetime before applying it. A later start checks the port again and may still fail.
+
+- **Web:** check explicitly, select one candidate, review the edited stopped definition, then save. Start separately when ready.
+- **CLI:** inspect and check first; the final restart command below is a separate mutating action, not part of the check.
+- **No conflict:** keep the original mapping. `listener_no_conflict` does not restart the service.
 
 ## Mapping and review
 

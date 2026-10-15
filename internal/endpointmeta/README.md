@@ -4,8 +4,20 @@ This package provides data contracts for authenticated endpoint updates. Core
 uses its records and validators for private direct-LAN state v3, stopped-state
 transactions and the managed context/endpoint-following candidate. Source
 integration is distinct from exact-source runtime and release acceptance; see
-the [current evidence snapshot](../../docs/CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
+the [historical integration snapshot](../../docs/CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
 
+## Read the contract by operation
+
+| Operation | Review first | Preserve on uncertainty |
+| --- | --- | --- |
+| Load existing state | Reader version and exact state format | Original state; no automatic migration |
+| Review/apply stopped-state migration | Current process, file and revision | No implicit pair context or new grants |
+| Save an isolated snapshot | Positive byte budget and exclusive ownership | Published-but-uncertain durability and recovery requirement |
+| Follow a managed endpoint | Current context and reviewed authority | Pending recovery; no legacy fallback |
+
+日本語: 既存状態は形式と読取り版を確認し、自動移行しません。停止中の移行は現在のプロセス・ファイル・版を確認し、ペア文脈や許可を暗黙に追加しません。独立した snapshot 保存は容量上限と排他的所有を必要とし、保存済みでも永続性が不明なら復旧待ちを保持します。管理対象の端点追従は現在の文脈と確認済み許可を使い、従来方式へ自動で戻しません。
+
+The detailed English/Japanese contracts below remain authoritative. Current release evidence is in [verification](../../docs/VERIFICATION.en.md); the convenience-plan link records the earlier integration checkpoint.
 Core still owns one `direct-lan.json` file, its identity and selected endpoint.
 Valid v2 files load without an automatic rewrite. The stopped/offline
 `direct-lan.migration.review` and `direct-lan.migration.apply` actions require a
@@ -62,7 +74,7 @@ or synthetic data; they are not credentials for a running service.
 このpackageは認証済み接続先更新のデータ契約を提供します。
 Coreの非公開direct LAN状態v3、停止中の保存操作、管理対象の文脈と端点追従の候補に、
 記録と検証処理を組み込んでいます。ソース統合と同一sourceの実行・配布受入は区別し、
-[現在の証拠](../../docs/CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
+[過去の統合時点の証拠](../../docs/CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
 
 Coreは引き続き1個の `direct-lan.json` と、識別情報・選択済み接続先を管理します。
 有効なv2ファイルは自動で書き換えずに読み込みます。停止・オフライン状態での

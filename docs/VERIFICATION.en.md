@@ -4,13 +4,33 @@
 
 **Verification applies to an exact source and version.** Device/service connectivity, transfers, saved workflows, capacity controls, private sign-in, the optional proxy and diagnostics are implemented. Implementation, local logic tests, native CI, browser execution, signed distribution and actual-device acceptance are separate results. For a published prerelease, also inspect its linked release workflow results.
 
+## Read the evidence before the history
+
+| Evidence | What it answers | What it does not establish |
+| --- | --- | --- |
+| Source and unit fixtures | Is the behavior implemented and its logic exercised? | Real enrollment or production transport |
+| Native / production-browser checks | Did the named suite pass on the exact source and target? | Every physical device, network or application |
+| Signed distribution and installation | Does the retrieved and installed binary match the verified release? | OS sign-in, suspend or power-loss recovery |
+| Physical-device acceptance | Did the recorded real scenario work? | Unrecorded environments or newer source |
+
+Start with the current version below, then inspect the relevant evidence category. Use the historical records to trace changes, not to qualify a newer checkout.
+
 ## Current integration and published baseline
 
-The published baseline is [0.4.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.4.0-alpha.4), exact source `e4f7f4ef0a38a032eef9776c5e4a5d0ea8cbf28f`, including the explicit [durable file queue](DURABLE_OUTBOX.en.md). The current development source implements the [durable text queue](DURABLE_TEXT.en.md), which is unreleased. Profile format 3 is incompatible with alpha.4 and older profiles; use separate empty state without migration or deletion. Record new-source checks separately: earlier native/browser/distribution passes do not transfer to this checkout. Physical-device, OS-login, suspend/wake and power-loss acceptance remain separate and are not inferred from automated success.
+The published baseline is [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), exact source `46dcd363b3eafc8ed9b92c7403937cf4d11d65af`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be rolled back to an older binary.
+
+[Exact-source full CI 38666924688](https://github.com/webkaz-labs/sobalink/actions/runs/38666924688) and [release verification 38671902508](https://github.com/webkaz-labs/sobalink/actions/runs/38671902508) passed. The release was published on 2026-10-15 at 03:19 UTC with 19 public assets; all 15 release gates passed, including public signature/provenance verification and actual mise-installed product starts on all four native targets. Full CI's repeated-build check covers macOS; the separate release run repeats identical-input builds and bilingual archive smoke tests on all four targets. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate and unverified. These results apply to this exact source, not later edits.
+
+### Unresolved historical failures before the current release
+
+- Earlier macOS source `3ad02e28`: one execution did not observe guest-stream closure within five seconds after successful revocation and verified removal of host trust and active service grants. That read observed no post-revocation data, but later target-release and new-message-denial checks were not reached. A later full run on that earlier source passed; the cause remains unknown. This is neither a confirmed authorization bypass nor a resolved defect.
+- Earlier Windows source `e33d390f`: one execution failed a wire command while checking hidden-text replay. A subsequent required full run on that source passed, but the cause remains unknown and no process-cleanup leak was established.
+
+The current exact-source CI/release results above are separate. They do not identify the causes of these earlier failures. See the [release record](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) for the source-specific caveats.
 
 ### Historical 0.3-series records
 
-The original source-specific records below are retained. Alpha.5/alpha.6 in this subsection refer to the 0.3 series, not the current published baseline or acceptance of unreleased text queueing.
+The original source-specific records below are retained. Alpha.5/alpha.6 in this subsection refer to the 0.3 series, not the current published baseline or acceptance of later text queueing.
 
 **Known alpha.5 UI limitation:** when a saved profile contains a `direct-lan` or `mixed` service, the Saved Services dialog rejects the definition response as invalid and does not show its normal selection controls. Definition import/review uses the same reader. A post-release regression reproduces both backends; the correction is merged through [PR #13](https://github.com/webkaz-labs/sobalink/pull/13) and [PR #17](https://github.com/webkaz-labs/sobalink/pull/17), but is not yet distributed in alpha.6. See the [ten-area evidence snapshot](CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot). The released Linux amd64 binary has separately passed offline CLI definition save/show, group save/list and profile export for both backends. This verifies definition management only; it does not establish connection or group-launch acceptance.
 
@@ -80,7 +100,7 @@ Use generic fixtures and the necessary account/network permissions. Record sourc
 7. Offer an image, several files and a folder together. Decline one batch, accept another into an explicit destination, then compare sizes, hashes and empty-folder behavior
 8. Test invalid paths/links, name collisions, custom/unlimited logical choices with finite metadata/spool budgets, staging cancellation/timeouts, storage errors and no overwrite/open/execute
 9. Enable autosave for one exact peer/destination; check pause, disable, identity replacement and renewed trust without silently reviving the old grant
-10. Test immediate file interruption/whole-item retry separately from the explicit durable file queue. Immediate sends require review of prior saves before deciding on a new batch after restart. Durable queue tests retain original request/delivery IDs and deadlines across restart and lost ACKs, using status/reconciliation/cancel without replacement IDs. For unreleased text queueing, separately test real ACK loss after receiver save, both process restarts, and no duplicate or restored hidden entry after history cleanup and same-ID replay. These are acceptance requirements, not records of unperformed passes
+10. Test immediate file interruption/whole-item retry separately from the explicit durable file queue. Immediate sends require review of prior saves before deciding on a new batch after restart. Durable queue tests retain original request/delivery IDs and deadlines across restart and lost ACKs, using status/reconciliation/cancel without replacement IDs. For explicit text queueing, separately test real ACK loss after receiver save, both process restarts, and no duplicate or restored hidden entry after history cleanup and same-ID replay. These are acceptance requirements, not records of unperformed passes
 11. Test the authenticated optional SOCKS5 listener with allowed and denied TCP targets, credentials, reserved endpoints, identity changes and stop; verify no BIND, UDP or OS dial/DNS fallback. Separately test private save/generate/reveal, revision conflicts, disable/delete and durable revoke; verify no credentials in ordinary output or portable exports
 12. Inspect diagnostics before/after a one-target TCP probe. Preserve runtime last-failure information while keeping application health unverified
 13. Test direct/relay telemetry where observed, network interruption, sleep/wake and optional per-user OS sign-in startup. Keep unknown paths unknown and verify application reconnection separately. Test separately approved outbound/proxy launch, changed-scope refusal, offline suppression, finite lifetime and explicit stop without revival; inbound shares must stay stopped

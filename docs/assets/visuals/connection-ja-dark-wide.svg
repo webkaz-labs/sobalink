@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="650" viewBox="0 0 1100 650" xml:lang="ja" role="img" aria-labelledby="title desc"><title id="title">使いたいサービスだけを、もう一方の端末へ。</title><desc id="desc">概念図。左の端末のアプリがローカルのsobalinkに接続します。選んだネットワークのDirectまたはRelay経路を通り、右の端末のsobalinkが現在の相手・ポート・期限の共有許可を確認して、共有サービスへ通信を転送します。線上の盾はこの許可確認を示します。通信は双方向です。到達可能な経路とアプリの起動・認証は別途必要です。</desc><style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans CJK JP",sans-serif}</style>
+<rect x="0" y="0" width="1100" height="650" rx="0" fill="#1d202a"/>
+<g transform="translate(40 28) scale(1) rotate(-23 12 12)" fill="#a18bff"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="76" y="48" font-size="23" fill="#e8e9f0" font-weight="650" text-anchor="start">sobalink</text>
+<text x="40" y="112" font-size="32" fill="#e8e9f0" font-weight="650" text-anchor="start">使いたいサービスだけを、もう一方の端末へ。</text>
+<text x="40" y="148" font-size="18" fill="#bdc5d8" font-weight="400" text-anchor="start">sobalink 同士でサービスを共有する仕組みの例</text>
+<ellipse cx="234" cy="432" rx="196" ry="32" fill="#191c24"/><ellipse cx="866" cy="432" rx="196" ry="32" fill="#191c24"/>
+<text x="205" y="207" font-size="19" fill="#e8e9f0" font-weight="650" text-anchor="middle">この端末</text>
+<text x="895" y="207" font-size="19" fill="#e8e9f0" font-weight="650" text-anchor="middle">相手の端末</text>
+<rect x="69" y="230" width="272" height="164" rx="15" fill="#191c24" stroke="#818ba0" stroke-width="2"/>
+<rect x="81" y="242" width="248" height="140" rx="8" fill="#1d202a"/>
+<path d="M54 394H356L344 409H66Z" stroke="#818ba0" stroke-width="2" fill="#191c24" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M168 395h74" stroke="#818ba0" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="759" y="230" width="272" height="164" rx="15" fill="#191c24" stroke="#818ba0" stroke-width="2"/>
+<rect x="771" y="242" width="248" height="140" rx="8" fill="#1d202a"/>
+<path d="M895 395v20m-35 4h70" stroke="#818ba0" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M205 365v72q0 15 15 15h660q15 0 15-15V365" stroke="#a18bff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M471 447l5 5-5 5 M459 447l-5 5 5 5" stroke="#a18bff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M619 447l5 5-5 5 M607 447l-5 5 5 5" stroke="#a18bff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="164" y="265" width="82" height="59" rx="9" fill="#30294b"/>
+<path d="M164 280h82" stroke="#a18bff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M190 292l-7 7 7 7m30-14 7 7-7 7" stroke="#a18bff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="205" y="354" font-size="17" fill="#e8e9f0" font-weight="600" text-anchor="middle">使うアプリ</text>
+<rect x="854" y="265" width="82" height="20" rx="6" fill="#30294b" stroke="#a18bff" stroke-width="1.7"/>
+<rect x="854" y="291" width="82" height="20" rx="6" fill="#30294b" stroke="#a18bff" stroke-width="1.7"/>
+<path d="M864 275h4m11 0h25" stroke="#a18bff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M864 301h4m11 0h25" stroke="#a18bff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="895" y="354" font-size="17" fill="#e8e9f0" font-weight="600" text-anchor="middle">共有するサービス</text>
+<circle cx="361" cy="452" r="40" fill="#1d202a" stroke="#343846" stroke-width="2"/>
+<g transform="translate(346 437) scale(1.25) rotate(-23 12 12)" fill="#a18bff"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="361" y="515" font-size="18" fill="#c0aeff" font-weight="650" text-anchor="middle">sobalink</text>
+<circle cx="739" cy="452" r="40" fill="#1d202a" stroke="#343846" stroke-width="2"/>
+<g transform="translate(724 437) scale(1.25) rotate(-23 12 12)" fill="#a18bff"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="739" y="515" font-size="18" fill="#c0aeff" font-weight="650" text-anchor="middle">sobalink</text>
+<text x="550" y="348" font-size="19" fill="#c0aeff" font-weight="650" text-anchor="middle">通信の経路</text>
+<text x="550" y="378" font-size="17" fill="#bdc5d8" font-weight="400" text-anchor="middle">Direct または Relay</text>
+<path d="M550 394v42" stroke="#818ba0" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="895" cy="413" r="23" fill="#30294b"/>
+<path d="M895 398l12 5v9c0 8-12 15-12 15s-12-7-12-15v-9Z" stroke="#a18bff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M889 412l4 4 8-9" stroke="#a18bff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1006" y="452" font-size="14" fill="#c0aeff" font-weight="500" text-anchor="middle">共有の許可</text>
+<path d="M939 442l-24-19" stroke="#818ba0" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="80" y="492" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="start">実際の接続先を</text>
+<text x="80" y="517" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="start">アプリに設定</text>
+<text x="842" y="492" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="start">相手・ポート・期限を</text>
+<text x="842" y="517" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="start">指定して許可</text>
+<path d="M40 555H1060" stroke="#343846" stroke-width="1" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="40" y="589" font-size="17" fill="#bdc5d8" font-weight="400" text-anchor="start">到達可能な経路が必要です。アプリの起動・認証は別途行います。</text>
+<text x="40" y="619" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start">線は通信の仕組みを示します。実際の接続状態や自動接続の保証ではありません。</text>
+</svg>

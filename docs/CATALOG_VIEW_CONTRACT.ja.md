@@ -1,6 +1,6 @@
 # 共有サービス一覧の閲覧契約
 
-[English](CATALOG_VIEW_CONTRACT.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md)
+[English](CATALOG_VIEW_CONTRACT.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 閲覧許可の適格性データ、所有権を確認する private 保存、明示承認・取消、容量を
 限定した相手との一覧取得を実装しています。元の transport origin を保持します。
@@ -9,6 +9,17 @@ Web／CLI のレビュー導線も実装しました。同一テストプロセ�
 ブラウザー導線を検査し、受入の証拠には正確なコミットの CI 結果を使います。既存 catalog 行は stale
 のままで、閲覧は接続権限を与えません。公開状況と正確なソースの受入は
 [検証記録](VERIFICATION.md)に従います。
+
+## 閲覧・確認・接続を分ける
+
+| 手順 | 操作する側 | 必要な境界 |
+| --- | --- | --- |
+| 現在の共有 activation ID を選ぶ | 提供側 | 正確な managed DirectLAN の相手と有限の閲覧許可 |
+| 一覧を取得して内容を見る | 閲覧側 | 正確な対象・許可・変更番号と、保持した元の通信の出所 |
+| 接続1件を確認する | 閲覧側 | 新しい一覧・確認と、独立したサービスの相手一覧への所属 |
+| 接続を開始する | 既存のサービス操作 | 開始前に確認内容を再検査・消費する |
+
+閲覧は接続できる相手を追加しません。共有の再開始で activation ID は変わり、接続定義の保存では閲覧権限を保持しません。ローカルの観測には[ローカルカタログ](RESOURCE_CATALOG.ja.md)を使います。
 
 ## 明示選択と既存許可との共存
 

@@ -1,6 +1,6 @@
 # Public device cards
 
-[日本語](DEVICE_CARDS.ja.md) · [0.3-series planning history](CONVENIENCE_PLAN.en.md)
+[日本語](DEVICE_CARDS.ja.md) · [0.3-series planning history](CONVENIENCE_PLAN.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 **Read-only Web and CLI controls make public keys easier to exchange.** A card
 contains a public key, an explicitly chosen alias and optional address hints.
@@ -14,30 +14,13 @@ An address hint can reveal network details. Choose an alias deliberately, leave
 address hints omitted when unnecessary, and exchange cards through a suitable
 private channel. Export never copies the configured hostname automatically.
 
-## Export and inspect
+## Exchange a key without granting access
 
-The authenticated local command API supports:
+1. Export with a deliberately chosen alias; omit optional address hints unless needed.
+2. Inspect the received text or PNG and compare the public key through a trusted channel. “Unverified” and “Unknown” are meaningful results, not success badges.
+3. Copy only the reviewed key and alias to the recipient draft. Create and review the private invitation separately.
 
-- `device-card.export`: `{mode,name,includeEndpointHint?,qr?}`. Mode is exactly
-  `lan` or `direct-lan`; the alias is required. Optional booleans default to false
-- `device-card.inspect`: `{card,expectedMode}`. Works without a configured local
-  identity; the expected mode must be explicitly selected
-
-Export reads an already-created identity. It never initializes or repairs one.
-Missing or recovery-uncertain identity returns an error. An explicitly requested
-address hint that is unavailable returns `device_card_hint_unavailable`.
-
-Results contain only the documented public fields and explicit
-`verification:"unverified"`, `freshness:"unknown"` labels. Export additionally
-returns the encoded `card` and optionally a locally generated QR bitmap.
-Inspection returns `contentDigest`, the SHA-256 of the complete canonical card
-text after permitted outer whitespace removal. This digest identifies content,
-not a person, device owner or proof of key possession. Pure reads are not retained
-in the command retry-result cache, so a retry reads current saved identity data.
-
-For mixed configurations, choose a component's `lan` or `direct-lan` identity.
-The mixed logical identity is not a component card. Tailnet uses its existing
-sign-in flow and has no card in this format.
+Use the Web or CLI steps below for ordinary exchange. The API fields, reader provenance and versioned format are reference material later in this guide. A card is reusable public contact data; a private invitation is a different, one-use capability.
 
 ## Web export and recipient review
 
@@ -101,23 +84,6 @@ produce a matching enforced-CSP event. The larger independent
 227-case Node comparison is not a browser result. No supported-browser native
 raster or installed-release pass is claimed merely from these specifications.
 
-## Reader assets and notices
-
-The offline application embeds the unchanged official zxing-wasm 3.1.5 reader
-WASM and bundles its pinned ESM JavaScript into one disposable worker. The
-unchanged WASM SHA-256 is
-`aecc1876de036c62c8419f67a5e1a16b1698a325bcd190aa84810d516e263931`.
-Known wrapper, C++, generated/runtime and mapping-table notices accompany it at
-`/assets/png-reader-notices.txt` on the local application, and in installed
-`licenses/npm/zxing-wasm@3.1.5/` under the package's shared files.
-
-The original archive's authenticated publisher/build association is distinct
-from a source rebuild. The exact fetched stb revision, native function link map,
-and complete historical mapping-input provenance are not established; a
-byte-identical source rebuild has not been demonstrated. The retained notice
-inventory explains these limits and includes conservative runtime attributions;
-it is not a claim of an exhaustive function-level SBOM.
-
 ## CLI export and inspection
 
 ```sh
@@ -153,6 +119,48 @@ validates local inputs and previews the read request without contacting Core.
 The CLI is covered by mocked read-only API, codec, bounded-input, cancellation,
 locale, JSON and terminal bitmap tests. This is not real-device QR scanning or
 end-to-end pairing acceptance. Invitation commands and their flags are unchanged.
+
+## Export and inspect
+
+The authenticated local command API supports:
+
+- `device-card.export`: `{mode,name,includeEndpointHint?,qr?}`. Mode is exactly
+  `lan` or `direct-lan`; the alias is required. Optional booleans default to false
+- `device-card.inspect`: `{card,expectedMode}`. Works without a configured local
+  identity; the expected mode must be explicitly selected
+
+Export reads an already-created identity. It never initializes or repairs one.
+Missing or recovery-uncertain identity returns an error. An explicitly requested
+address hint that is unavailable returns `device_card_hint_unavailable`.
+
+Results contain only the documented public fields and explicit
+`verification:"unverified"`, `freshness:"unknown"` labels. Export additionally
+returns the encoded `card` and optionally a locally generated QR bitmap.
+Inspection returns `contentDigest`, the SHA-256 of the complete canonical card
+text after permitted outer whitespace removal. This digest identifies content,
+not a person, device owner or proof of key possession. Pure reads are not retained
+in the command retry-result cache, so a retry reads current saved identity data.
+
+For mixed configurations, choose a component's `lan` or `direct-lan` identity.
+The mixed logical identity is not a component card. Tailnet uses its existing
+sign-in flow and has no card in this format.
+
+## Reader assets and notices
+
+The offline application embeds the unchanged official zxing-wasm 3.1.5 reader
+WASM and bundles its pinned ESM JavaScript into one disposable worker. The
+unchanged WASM SHA-256 is
+`aecc1876de036c62c8419f67a5e1a16b1698a325bcd190aa84810d516e263931`.
+Known wrapper, C++, generated/runtime and mapping-table notices accompany it at
+`/assets/png-reader-notices.txt` on the local application, and in installed
+`licenses/npm/zxing-wasm@3.1.5/` under the package's shared files.
+
+The original archive's authenticated publisher/build association is distinct
+from a source rebuild. The exact fetched stb revision, native function link map,
+and complete historical mapping-input provenance are not established; a
+byte-identical source rebuild has not been demonstrated. The retained notice
+inventory explains these limits and includes conservative runtime attributions;
+it is not a claim of an exhaustive function-level SBOM.
 
 ## Version 1 format
 

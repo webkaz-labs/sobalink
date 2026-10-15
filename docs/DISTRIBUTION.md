@@ -6,17 +6,41 @@
 
 The legacy `tsnet-bridge` releases, including `0.2.0-alpha.2`, belong to the earlier CLI. Their CI, signatures and installation results do not verify sobalink, its embedded UI, file protocol or Tailcat adapter. Historical signatures retain their original identities. [Legacy releases](https://github.com/webkaz-labs/tsnet-bridge/releases)
 
+## Choose the shortest safe path
+
+| Goal | Start here | Keep this boundary |
+| --- | --- | --- |
+| Use a published binary | [Install a signed prerelease](#install-a-signed-prerelease) | Pin the version and verify the actual installed binary |
+| Try reviewed source | [Build this checkout](#build-this-checkout) | A local build is not a signed release |
+| Prepare a release | [Publication gates](#publication-gates) | Exact-source full CI, signatures, provenance and installation all remain required |
+| Replace a development binary | [Updating a development build](#updating-a-development-build) | Preserve state; incompatible formats need a separate empty directory |
+
+```mermaid
+flowchart LR
+    A[Reviewed source] --> B[Exact-source full CI]
+    B --> C[Native archives and inventories]
+    C --> D[Signature and provenance]
+    D --> E[Public retrieval]
+    E --> F[Verify actual mise installation]
+```
+
+Text equivalent: reviewed source must pass exact-source full CI, native packaging, signature/provenance checks, public retrieval and verification of the actual mise installation. Physical-device acceptance is separate.
+
 ## Install a signed prerelease
 
-[0.4.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.4.0-alpha.4) is the published baseline, from source `e4f7f4ef0a38a032eef9776c5e4a5d0ea8cbf28f`. The commands below pin that release, which includes the explicit durable file queue. The current development checkout additionally implements the [durable text queue](DURABLE_TEXT.en.md); it is unreleased and requires its own final-source checks. Its profile format 3 is incompatible with alpha.4 and older profiles: keep existing state unchanged and select a separate empty `--state-dir`. No migration or wipe is performed. Earlier 0.3-series release results remain [historical evidence](VERIFICATION.en.md#current-integration-and-published-baseline), not evidence for this checkout.
+The published baseline is [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), exact source `46dcd363b3eafc8ed9b92c7403937cf4d11d65af`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be rolled back to an older binary.
+
+[Exact-source full CI 38666924688](https://github.com/webkaz-labs/sobalink/actions/runs/38666924688) and [release verification 38671902508](https://github.com/webkaz-labs/sobalink/actions/runs/38671902508) passed. The release was published on 2026-10-15 at 03:19 UTC with 19 public assets; all 15 release gates passed, including public signature/provenance verification and actual mise-installed product starts on all four native targets. Full CI's repeated-build check covers macOS; the separate release run repeats identical-input builds and bilingual archive smoke tests on all four targets. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate and unverified. These results apply to this exact source, not later edits.
+
+The commands below pin this release. Earlier 0.3/0.4-series results remain historical evidence; they do not qualify later source.
 
 A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
 
 With mise **2026.9.18** available, the same explicit prerelease pin used by the publication workflow is:
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.0-alpha.1"
 mise exec -- soba version
 mise exec -- soba
 ```

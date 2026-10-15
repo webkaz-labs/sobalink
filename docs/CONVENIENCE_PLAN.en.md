@@ -12,6 +12,16 @@ At the historical main `7d505315` snapshot, the tree also included [merged PR #1
 
 Normal operation remains a user process without administrator privileges, TUN, OS route/firewall changes or router configuration. Outside-LAN use normally uses Tailscale. Existing explicitly opted-in WAN functionality remains available on its existing terms; new public-relay deployment and a standalone relay daemon are outside this patch. Byte-level transfer resume, durable message outboxes, a TUI and native UI are also outside scope.
 
+## Read this plan by purpose
+
+| Need | Use |
+| --- | --- |
+| Operate the current product | [User guide](GENERIC.en.md) and the feature-specific guides |
+| Decide what still needs acceptance | [Current roadmap](ROADMAP.en.md) and [verification](VERIFICATION.en.md) |
+| Trace the 0.3-series design decisions | Evidence snapshot, implementation order and boundaries below |
+
+The historical snapshots retain their original source IDs, failures and then-pending gates. They are not instructions to repeat a completed release or to treat a later implementation as physically accepted.
+
 ## What already works and what must improve
 
 | Area | Existing foundation | Acceptance for this patch | Current evidence; release status |

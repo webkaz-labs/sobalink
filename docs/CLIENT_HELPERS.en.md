@@ -4,6 +4,15 @@
 
 `soba settings` returns the saved application endpoints, exact port mappings, current listener state and application-specific hints. The RustDesk helper saves four forwards and the server's public key as one group. It does not change application settings or start listeners. Automated tests cover metadata and command behavior; RustDesk screen sharing and input control remain unverified.
 
+## From saved settings to an application
+
+1. Inspect the exact service or group with `soba settings` below.
+2. If it is stopped, review and start it through [saved services](SAVED_SERVICES.en.md). Reading settings never starts it.
+3. Copy the actual mapping into the application and keep its own authentication and certificate/host-key checks.
+4. Perform one real application operation. A displayed endpoint or ready listener alone is insufficient.
+
+For RustDesk, follow the four-role setup below; a SOCKS address is not interchangeable with those forwards.
+
 ## Copy ordinary application settings
 
 ```sh

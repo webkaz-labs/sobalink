@@ -4,6 +4,15 @@
 
 Saved definitions work with the agent stopped or with its selected network offline. Saving or importing never opens a listener or restores an old permission. Use the global `--offline` flag to edit only saved metadata under an exclusive profile lock, without starting the agent, generating network credentials, or loading transfer and pairing state. If the agent is already running, omit that flag. `soba start --offline` instead opens the local management UI without connecting a network.
 
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/saved-and-running-en-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/saved-and-running-en-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/saved-and-running-en-light-narrow.svg">
+  <img src="assets/visuals/saved-and-running-en-light-wide.svg" alt="Saving creates a stopped definition; a separately reviewed start creates a running service." width="1040">
+</picture>
+
+Save → review → start → check the application. Stop ends the active permission while preserving its definition; copying with `service copy` starts a new service.
+
 ```sh
 soba --offline service save share --backend tailnet --name example-web --ports 8080 --peers PEER_ID
 soba --offline service save connect --backend tailnet --name example-ssh --preset ssh --peer PEER_ID

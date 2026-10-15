@@ -2,6 +2,24 @@
 
 Playwright Test is the deterministic browser gate. The pinned `@playwright/test`, `playwright` and `playwright-core` versions are 1.63.0. Tests use production Go HTTP, authentication, CSRF, CSP and embedded frontend assets with fictional in-process peers. Each named test gets a fresh private fixture and browser context.
 
+## Run, inspect, then report
+
+1. Use the exact source and pinned dependencies; prepare the Go fixture and browser with the commands below.
+2. Run the actual suite. Test enumeration and fixture-safety checks are useful prerequisites, not execution evidence.
+3. Inspect the permitted PNGs and typography metadata, including narrow layouts, Japanese glyphs and the lower action area.
+4. Report the source, run, passed cases and substitutions. Keep real Core, mocked API responses, physical devices and installed binaries separate.
+
+```mermaid
+flowchart LR
+    A[Exact source and assets] --> B[Private fixture and browser]
+    B --> C[Actual UI assertions]
+    C --> D[Sanitized report and reviewed images]
+```
+
+Text equivalent: bind the source and assets, execute the private fixture in a real browser, evaluate actual UI assertions, then review sanitized results and images. No step establishes physical-device acceptance by itself.
+
+## Prepare the browser run
+
 Run on an environment authorized to start the Go fixture and Chromium:
 
 ```sh
@@ -66,9 +84,7 @@ Real enrollment, device pairing, relay hosting, native IME/clipboard/folder dial
 
 Use an isolated private runtime with a short session/socket path. Keep login codes out of command arguments, captures and reports; start evidence capture only after authentication and inspect it for private controls. Never export cookies, storage, traces or raw session files. Findings from exploration become focused Playwright regressions when repeatable. Do not turn blocked local browser or socket access into an alternate execution route.
 
-
 Client-helper cases in `browser/client-helpers.spec.mjs` use only fictional peer IDs and a synthetic public key. They cover JA/EN four-flow preview/back/cancel/save-only, separate saved-group selection/start review, common-relay/application caveats, narrow layouts, copyable HTTP settings with TLS guidance, and a reviewed finite runtime override followed by stop while the saved lifetime stays unchanged. These authored cases require the integrated Core helper contracts and must pass the pinned browser job before acceptance; source review or DOM tests alone are not browser evidence. No external client is launched/configured, no real enrollment occurs, and existing private capture guards remain unchanged.
-
 
 `browser/startup-proxies.spec.mjs` adds authored JA/EN future-startup review/cancel/save/disable checks with no process restart, and fictional private proxy input/save/reveal/hide/delete. It verifies sanitized snapshots and never captures a private credential view. These cases use the real isolated Core command route when run in the browser CI; they have not been locally executed. Synthetic DOM tests cover stale revisions, persistence failures, generated credentials never being revealed automatically, late private responses, private-field erasure and lifecycle effects. Real OS launch, installed permissions, reconnection and application compatibility remain separate gates.
 

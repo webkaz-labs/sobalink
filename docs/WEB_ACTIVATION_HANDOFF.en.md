@@ -1,8 +1,14 @@
 # Web and CLI initial activation
 
-[日本語](WEB_ACTIVATION_HANDOFF.ja.md)
+[日本語](WEB_ACTIVATION_HANDOFF.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-This source candidate adds Web-requested restart to the reviewed Direct LAN activation controller. Both Web and CLI initial activation passed the real-Core product cases at `719d6bfa`, with original review, ordinary readiness, bilateral native confirmation and complete cleanup preserved. The seven synthetic-owner helper cases also passed on that source. These bounded Linux loopback results do not establish final-source full CI or release verification, which remain pending. See the [exact-source evidence and limits](CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
+The current release includes Web-requested restart in the reviewed Direct LAN activation controller. Both Web and CLI initial activation passed the real-Core product cases at `719d6bfa`, with original review, ordinary readiness, bilateral native confirmation and complete cleanup preserved. The seven synthetic-owner helper cases also passed on that source. These bounded historical Linux loopback results do not establish later-source or physical-device acceptance. Current native/browser and distribution results are recorded separately in [verification](VERIFICATION.en.md). See the historical [exact-source evidence and limits](CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
+
+## What to expect
+
+**Keep the temporary restart window open until it finishes.** A fresh process requires a fresh ordinary login; the old browser session is not transferred. The original review and deadline stay fixed.
+
+If the popup is blocked, the window closes or the response is uncertain, reopen current local management and inspect state before trying again. A new attempt needs a new explicit review. Neither reopening the page nor canceling undoes a confirmation already saved.
 
 ## Web flow
 

@@ -13,6 +13,15 @@ Limits describe different things. Removing a logical limit does not allocate unl
 
 `default` resolves to the build's visible catalog value. It is not zero or unlimited. Finite values use positive JSON-safe integers; durations use whole seconds within the time representation. Omitted keys return to their defaults when a replacement policy is applied. The policy version is `1`; unknown keys, duplicate fields, nulls and ambiguous choices are rejected. Check `policy.config` for the exact build's `requested`, `effective`, `catalog`, `adjustable` and `usage` values.
 
+## Change one limit safely
+
+1. Open **Preferences → Capacity and history**, or read `soba command policy.config '{}'`.
+2. Identify the exhausted item and compare requested choice, effective value and current usage. A listener shortage is different from a saved-definition limit.
+3. Preview the complete replacement policy, preserving other choices you still need; review its revision before applying. Omitted choices reset to default.
+4. Retry only the previously blocked operation after checking current state. Raising a budget does not start work, extend permission or erase history.
+
+The defaults below help interpret a result. Use the running build’s catalog as the source for exact effective settings.
+
 ## Initial values are not product maxima
 
 | Logical choice | Initial default |

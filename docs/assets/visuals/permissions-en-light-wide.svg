@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 540" width="1040" height="540" role="img" aria-labelledby="title desc" xml:lang="en"><title id="title">Connectivity and permission are separate choices.</title><desc id="desc">Network connectivity, trust for message and file offers, and service-sharing permission are independent choices. Joining a network does not authorize trust or service sharing. File batches require receiver acceptance by default. Autosave requires a separate explicit configuration.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="1040" height="540" rx="0" fill="#ffffff"/>
+<g transform="translate(32 25) rotate(-23 12 12)" fill="#6550d8" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="68" y="45" font-size="22" fill="#272c38" font-weight="650">sobalink</text>
+<text x="32" y="108" font-size="30" fill="#272c38" font-weight="650">Connectivity and permission are separate choices.</text>
+<text x="32" y="144" font-size="17" fill="#596172" font-weight="400">Review network access, receiving and service sharing independently.</text>
+<rect x="32" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
+<text x="52" y="222" font-size="14" fill="#5844bf" font-weight="600">CONNECT</text>
+<text x="52" y="266" font-size="22" fill="#272c38" font-weight="650">Join a network</text>
+<text x="52" y="306" font-size="17" fill="#596172" font-weight="400">Prepare a selected path</text>
+<text x="52" y="333" font-size="17" fill="#596172" font-weight="400">to communicate with a peer</text>
+<rect x="52" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
+<text x="60" y="389" font-size="14" fill="#5844bf" font-weight="500">Separate from trust and sharing</text>
+<rect x="368" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
+<text x="388" y="222" font-size="14" fill="#5844bf" font-weight="600">RECEIVE</text>
+<text x="388" y="266" font-size="22" fill="#272c38" font-weight="650">Trust a peer</text>
+<text x="388" y="306" font-size="17" fill="#596172" font-weight="400">Allow this sender’s</text>
+<text x="388" y="333" font-size="17" fill="#596172" font-weight="400">messages and file offers</text>
+<rect x="388" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
+<text x="396" y="389" font-size="14" fill="#5844bf" font-weight="500">Accept each file batch by default</text>
+<rect x="704" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
+<text x="724" y="222" font-size="14" fill="#5844bf" font-weight="600">SHARE</text>
+<text x="724" y="266" font-size="22" fill="#272c38" font-weight="650">Allow a service</text>
+<text x="724" y="306" font-size="17" fill="#596172" font-weight="400">Choose the peers, ports</text>
+<text x="724" y="333" font-size="17" fill="#596172" font-weight="400">and permission lifetime</text>
+<rect x="724" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
+<text x="732" y="389" font-size="14" fill="#5844bf" font-weight="500">Separate from message/file trust</text>
+<path d="M32 455H1008" stroke="#e6e7ed"/>
+<text x="32" y="485" font-size="15" fill="#596172" font-weight="400">The receiving device controls who may send to it.</text>
+<text x="32" y="512" font-size="15" fill="#596172" font-weight="400">Autosave is a separate choice tied to a peer and destination.</text>
+</svg>

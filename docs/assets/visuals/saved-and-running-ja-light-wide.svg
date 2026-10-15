@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 540" width="1040" height="540" role="img" aria-labelledby="title desc" xml:lang="ja"><title id="title">保存した設定は、起動して使う。</title><desc id="desc">保存したサービス定義は、それだけでは待受や以前の許可を再開しません。手動で起動すると、現在のネットワークと相手の識別情報を再確認します。共有は許可内容を確認します。開始済みはアプリのログインや遠隔処理の完了を示しません。個別に承認した起動時接続は別の設定です。</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="1040" height="540" rx="0" fill="#ffffff"/>
+<g transform="translate(32 25) rotate(-23 12 12)" fill="#6550d8" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="68" y="45" font-size="22" fill="#272c38" font-weight="650">sobalink</text>
+<text x="32" y="108" font-size="30" fill="#272c38" font-weight="650">保存した設定は、起動して使う。</text>
+<text x="32" y="144" font-size="17" fill="#596172" font-weight="400">保存済みサービスを手動で開始する場合</text>
+<rect x="32" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
+<text x="52" y="222" font-size="14" fill="#5844bf" font-weight="600">1 · 設定</text>
+<text x="52" y="266" font-size="22" fill="#272c38" font-weight="650">保存済み</text>
+<text x="52" y="306" font-size="17" fill="#596172" font-weight="400">相手・サービス・期限を</text>
+<text x="52" y="333" font-size="17" fill="#596172" font-weight="400">設定として保存</text>
+<rect x="52" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
+<text x="60" y="389" font-size="14" fill="#5844bf" font-weight="500">保存だけでは開始しない</text>
+<path d="M344 306h16m-5-4 5 4-5 4" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="368" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
+<text x="388" y="222" font-size="14" fill="#5844bf" font-weight="600">2 · 操作</text>
+<text x="388" y="266" font-size="22" fill="#272c38" font-weight="650">内容を確認して起動</text>
+<text x="388" y="306" font-size="17" fill="#596172" font-weight="400">現在のネットワークと</text>
+<text x="388" y="333" font-size="17" fill="#596172" font-weight="400">相手の識別情報を再確認</text>
+<rect x="388" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
+<text x="396" y="389" font-size="14" fill="#5844bf" font-weight="500">共有は許可内容も確認</text>
+<path d="M680 306h16m-5-4 5 4-5 4" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="704" y="188" width="304" height="238" rx="16" fill="#f8f8fb"/>
+<text x="724" y="222" font-size="14" fill="#5844bf" font-weight="600">3 · 状態</text>
+<text x="724" y="266" font-size="22" fill="#272c38" font-weight="650">開始済み</text>
+<text x="724" y="306" font-size="17" fill="#596172" font-weight="400">許可された範囲で</text>
+<text x="724" y="333" font-size="17" fill="#596172" font-weight="400">通信の準備ができた状態</text>
+<rect x="724" y="363" width="264" height="41" rx="8" fill="#f0edff"/>
+<text x="732" y="389" font-size="14" fill="#5844bf" font-weight="500">アプリで接続・認証を確認</text>
+<path d="M32 455H1008" stroke="#e6e7ed"/>
+<text x="32" y="485" font-size="15" fill="#596172" font-weight="400">開始済みは、アプリの成功や処理完了の証明ではありません。</text>
+<text x="32" y="512" font-size="15" fill="#596172" font-weight="400">起動時の自動接続は、別途確認・承認する設定です。</text>
+</svg>

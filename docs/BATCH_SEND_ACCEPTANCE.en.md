@@ -7,6 +7,25 @@ real-device acceptance. Passing a mocked backend, protected local IPC or a
 three-process loopback test does not establish enrollment, browser behavior,
 WAN/NAT reachability, OS login/suspend recovery or installed-package behavior.
 
+## Choose the evidence you need
+
+| Question | Start here | What a pass establishes |
+| --- | --- | --- |
+| Does reviewed dispatch preserve the exact content and recipients? | Narrow reproducible checks below | CLI/Core and protected-IPC contracts, within the stated fixtures |
+| Does a partial failure retry only the failed recipient? | Three-process native case | Real loopback transport and exact saved bytes |
+| Can the UI recover a lost commit response without another send? | Actual browser recovery check | Production UI/Core recovery against synthetic receivers |
+| Does it work on physical devices after sleep or network changes? | [Verification](VERIFICATION.en.md) | A separate device/application acceptance record is required |
+
+```mermaid
+flowchart LR
+    A[Prepare one payload] --> B[Review exact recipients]
+    B --> C[Commit once]
+    C --> D[Observe each child]
+    D --> E[Retry only failed children]
+```
+
+Text equivalent: prepare one payload, review the exact recipients, commit once, inspect each child result, then explicitly retry only failed children. A lost response calls for status recovery, not an assumed failed send.
+
 ## Narrow reproducible checks
 
 Use the repository-pinned Go, Node and npm versions, prepare the pinned engine

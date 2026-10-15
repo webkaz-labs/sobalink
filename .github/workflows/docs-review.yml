@@ -1,0 +1,58 @@
+name: Supplemental document review
+
+# `create` uses the newly created branch's workflow, unlike workflow_dispatch.
+# A fresh docs-review/* branch must point to the exact reviewed draft-PR SHA.
+# This is documentation evidence only; it neither replaces nor waives required CI.
+on:
+  create:
+
+permissions:
+  contents: read
+
+jobs:
+  documents:
+    if: >-
+      github.repository == 'webkaz-labs/sobalink' &&
+      github.event.ref_type == 'branch' &&
+      startsWith(github.event.ref, 'docs-review/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove event SHA, bounded delta and static documents
+        run: /usr/bin/python3 .github/scripts/check-docs.py --static --output "$RUNNER_TEMP/docs-review-static"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Install official rendering dependencies
+        env:
+          PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y librsvg2-2 libcairo2 python3-pil fonts-noto-core fonts-noto-cjk
+          npm install --global npm@11.9.0 --registry=https://registry.npmjs.org --no-audit --no-fund
+          test "$(node --version)" = v24.19.0
+          test "$(npm --version)" = 11.9.0
+          npm ci --prefix .github/docs-render --registry=https://registry.npmjs.org --no-audit --no-fund
+      - name: Reproduce SVGs and render every diagram
+        env:
+          PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
+        run: /usr/bin/python3 .github/scripts/check-docs.py --output "$RUNNER_TEMP/docs-review"
+      - name: Upload sanitized report and diagrams only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: supplemental-documents-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/docs-review-static/report.json
+            ${{ runner.temp }}/docs-review/report.json
+            ${{ runner.temp }}/docs-review/*.png
+          if-no-files-found: error
+          retention-days: 14

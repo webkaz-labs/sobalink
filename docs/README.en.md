@@ -2,9 +2,22 @@
 
 [日本語](README.md) · [Project overview](../README.en.md)
 
+This is an experimental open-source project; no user support is provided. These self-service notes do not promise responses, fixes or compatibility.
+
 Start with the [user guide](GENERIC.en.md). The [verification record](VERIFICATION.en.md) is authoritative for published versions, development sources and executed checks. Each workflow identifies its target version and limitations; automated tests do not establish physical-device acceptance.
 
 This index routes readers to the right document. Dedicated guides own workflows, contracts own guarantees and limits, verification owns executed evidence, and the roadmap owns remaining work. Japanese and English pages are paired views of the same role. Architecture, distribution and the Web acceptance proposal use shared English documents.
+
+## Choose your next step
+
+| Goal | Read first | Then check |
+| --- | --- | --- |
+| Understand the product | [Overview](../README.en.md) | [Common questions](FAQ.en.md) |
+| Install or update | [Signed distribution and profile boundary](DISTRIBUTION.md) | [First run](GENERIC.en.md) |
+| Use a service | [Connect to a service](GENERIC.en.md#connect-to-a-peers-service) | [Connection setup](CONNECTION_SETUP.en.md), if a new pairing is needed |
+| Change limits or permissions | [Capacity](CAPACITY.en.md) | [Security](../SECURITY.md) |
+| Diagnose a problem | [First failing stage](TROUBLESHOOTING.en.md) | The focused guide below |
+| Build or verify a change | [Development principles](DEVELOPMENT_PRINCIPLES.en.md) | [Verification](VERIFICATION.en.md) |
 
 ## Start and use
 
@@ -19,7 +32,9 @@ This index routes readers to the right document. Dedicated guides own workflows,
 - [Durable files and folders](DURABLE_OUTBOX.en.md)
 - [Capacity, budgets and history](CAPACITY.en.md)
 - [Scoped proxies and diagnostics](PROXY_DIAGNOSTICS.en.md)
-- [Use cases (Japanese)](USE_CASES.ja.md)
+- [Use cases](USE_CASES.en.md)
+- [Common questions](FAQ.en.md)
+- [Things to check yourself](TROUBLESHOOTING.en.md)
 
 ## Network workflows
 
@@ -31,12 +46,12 @@ This index routes readers to the right document. Dedicated guides own workflows,
 - [Review and exchange device cards](DEVICE_CARDS.en.md)
 - [Review alternate ports](PORT_PROPOSALS.en.md)
 
-## Development-source workflows and limits
+## Connection, queues and resource settings
 
-These are entry points for source workflows. Inclusion here does not establish release inclusion or completed acceptance.
+These workflows are described for v0.5.0-alpha.1. Their inclusion in the release does not establish physical-device acceptance; consult each guide and the exact-source evidence.
 
-- [Connection setup (unreleased)](CONNECTION_SETUP.en.md)
-- [Durable text (unreleased)](DURABLE_TEXT.en.md)
+- [Connection setup](CONNECTION_SETUP.en.md)
+- [Durable text](DURABLE_TEXT.en.md)
 - [Resource catalog](RESOURCE_CATALOG.en.md)
 - [Local resource settings](RESOURCE_SETTINGS.en.md)
 - [Permitted peer inspection](RESOURCE_INSPECTION.en.md)
@@ -48,6 +63,8 @@ These are entry points for source workflows. Inclusion here does not establish r
 
 - [Development and usability principles](DEVELOPMENT_PRINCIPLES.en.md)
 - [Architecture and network boundaries](ARCHITECTURE.md)
+- [Local browser API and peer boundary](../web/API.md)
+- [Diagram source and maintenance](assets/visuals/README.md)
 - [Security boundaries](../SECURITY.md)
 - [Route recovery contract](ROUTE_RECOVERY_DESIGN.en.md)
 - [Catalog view contract](CATALOG_VIEW_CONTRACT.en.md)

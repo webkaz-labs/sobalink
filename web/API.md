@@ -4,12 +4,45 @@ The React client uses only same-origin `/api` requests. The Go host is responsib
 
 `src/api.ts` is the authoritative frontend TypeScript contract. Machine field names are stable across Japanese and English.
 
+[Documentation index](../docs/README.en.md) · [日本語の操作ガイド](../docs/WEB_CONTROLS.ja.md) · [Security boundaries](../SECURITY.md)
+
+## Start with the management boundary
+
+This page documents the local browser contract in v0.5.0-alpha.1 (`46dcd363`). Use the [CLI guide](../docs/CLI_GUIDE.en.md) for automation rather than exposing or forwarding this HTTP API. The detailed types below remain authoritative for request shapes.
+
+```mermaid
+flowchart LR
+    Browser["Browser on this device"] --> Session["One-time code → local session"]
+    Session --> Local["Exact loopback management API"]
+    Local --> Core["Go authorization and current state"]
+```
+
+Only the local browser session reaches management; mutations also require same-origin checks and the session-bound CSRF token. A one-time local Web code is separate from network setup and peer identity verification.
+
+```mermaid
+flowchart LR
+    Peer["Authenticated peer"] --> PeerAPI["Peer protocol"]
+    PeerAPI --> Scope["Current identity and scoped permission"]
+    Scope --> Operation["Permitted transfer or resource operation"]
+```
+
+The peer protocol does not forward `/api/command` or grant access to the local management API. Resource inspection/management requires its own explicit limited authority; see [architecture](../docs/ARCHITECTURE.md#management-and-peer-surfaces).
+
+### Read a result before retrying
+
+1. Authenticate with the terminal's code, then fetch `/api/state`.
+2. Review the intended operation and current revision; send the typed command with its request ID and CSRF token.
+3. On `{ok:true,result:...}`, read the operation-specific result and refresh current state. This means command success at its documented boundary, not remote application success.
+4. On `401` with `unauthenticated`, return to code entry. On an uncertain mutation result, inspect the original operation/state before attempting a new action; do not invent a new ID to conceal an unknown outcome.
+
+Keep codes, cookies, tokens, private paths and peer identifiers out of copied diagnostics. The examples here show response shapes, not reusable credentials.
+
 ## Session and state
 
 - `GET /api/state` returns `State`: `csrfToken`, `self`, `peers`, `messages`, `transfers`, local `services`, local `shares`, optional discovered `availableServices`, `servicePresets`, effective `limits`, `settings`, and optional `lan` readiness/selected-relay state
 - `POST /api/session` accepts `{code}`; a successful response may return `{csrfToken}`. The client then fetches state. Codes are not retained in browser storage
 - `401 {code:"unauthenticated"}` returns the client to local-code entry and clears in-memory drafts
-- All responses are JSON. Errors use `{code,message?}` or `{error:{code,message}}`. The client localizes recognized codes. Unknown failures receive localized next-step guidance, with the unchanged backend explanation available under Technical details
+- All responses are JSON. Production host errors use `{code,error}`; the frontend parser also accepts `{code,message?}` or `{error:{code,message}}`. The client localizes recognized codes. Unknown failures receive localized next-step guidance, with the unchanged backend explanation available under Technical details
 - Mutation success is `{ok:true,result?:{...}}`; no state is optimistically marked sent, received, connected or saved
 - State arrays remain complete; standalone list endpoints do not truncate the snapshot. State is polled every three seconds while visible, with stale-request cancellation and generation guards. Loss of contact retains clearly stale information and disables new sends/starts
 

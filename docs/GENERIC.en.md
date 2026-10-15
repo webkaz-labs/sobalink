@@ -2,20 +2,39 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-The published baseline is [0.4.0-alpha.4](https://github.com/webkaz-labs/sobalink/releases/tag/v0.4.0-alpha.4). This guide covers `soba` workflows and explicitly labeled development-source additions. The [durable file queue](DURABLE_OUTBOX.en.md) is in that published baseline; the [durable text queue](DURABLE_TEXT.en.md) is implemented and unreleased. Development builds containing it use profile format 3, incompatible with alpha.4 and older profiles. Keep existing state and select a separate empty `--state-dir`; there is no migration or wipe. [Verification](VERIFICATION.en.md#current-integration-and-published-baseline) separates source-specific results. Real-device enrollment, application compatibility, native IME, ordinary-user Windows processes, OS-login/suspend and power-loss recovery remain separate acceptance.
+**Connect devices and use explicitly scoped application services.** This guide targets the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), including durable file and text queues. [Verification](VERIFICATION.en.md#current-integration-and-published-baseline) separates exact-source CI and signed distribution from physical-device/application acceptance, which remains open.
+
+**Keep old state untouched.** Profile format 3 is incompatible with 0.4.0-alpha.4 and earlier. Select a separate empty `--state-dir`; there is no migration, wipe or same-profile downgrade.
 
 The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
 [Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
-The [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and uses existing authenticated local IPC and the local Web command dispatcher. See [the local operation workflow](#local-transfer-settings-operations-source-build).
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 959px)" srcset="assets/visuals/connection-en-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/connection-en-dark-wide.svg">
+  <source media="(max-width: 959px)" srcset="assets/visuals/connection-en-light-narrow.svg">
+  <img src="assets/visuals/connection-en-light-wide.svg" alt="A client uses its local entry point to reach an explicitly shared service on a peer." width="1100">
+</picture>
+
+In this example both devices use sobalink. An ordinary Tailnet application target does not need it. Set up the network first, then review the service scope and use the displayed local endpoint.
+
+## Choose your next step
+
+| Your goal | Start here | Check the result |
+| --- | --- | --- |
+| First use | Start below, then choose one network | Current identity and network status |
+| Use another device’s application | [Connect](#connect-to-a-peers-service) | Actual local endpoint, then an application operation |
+| Let a peer use your application | [Share](#share-a-local-service) | Exact peers, ports and expiry |
+| Reuse an earlier setup | [Saved services](SAVED_SERVICES.en.md) | Saved versus running state |
+| Send something | [Text and files](#send-text-images-and-files) | Receiver evidence, not local acceptance |
 
 ## Start and open the local UI
 
-Use mise **2026.9.18** to select the published 0.4.0-alpha.4 prerelease, verify the version, then start it. Keep signature verification enabled:
+Use mise **2026.9.18** to select the published 0.5.0-alpha.1 prerelease, verify the version, then start it. Keep signature verification enabled:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.0-alpha.1"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -40,14 +59,16 @@ soba --state-dir ./sample-state
 soba --state-dir ./sample-state status
 ```
 
-A fresh profile starts with no network selected. UI preferences, trust and service definitions are saved. Ordinary saved definitions remain stopped after a process restart; immediate transfer progress does not resume. Explicit durable file requests, and unreleased durable text requests, have a separate original-ID/deadline/evidence recovery contract. Separately reviewed [outbound startup and private proxy profiles](STARTUP.en.md) can opt into a future online launch. Inbound shares remain manual.
+A fresh profile starts with no network selected. UI preferences, trust and service definitions are saved. Ordinary saved definitions remain stopped after a process restart; immediate transfer progress does not resume. Explicit durable file requests, and durable text requests, have a separate original-ID/deadline/evidence recovery contract. Separately reviewed [outbound startup and private proxy profiles](STARTUP.en.md) can opt into a future online launch. Inbound shares remain manual.
 
-## Choose one network
+## Choose a connection mode
 
 | Choice | Setup | Important boundary |
 | --- | --- | --- |
 | Existing Tailnet | Activate the embedded node, then use the official interactive Tailscale sign-in flow | It is a separate node in the chosen Tailnet; the OS Tailscale app's session is not imported |
-| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI and exact-source loopback gates are recorded for alpha.5. Physical topology remains unverified. No arbitrary public fallback or zero-external-traffic claim |
+| Tailcat / explicit trusted relay | Explicitly select a numeric relay endpoint and certificate pin, then pair specific peers | Local UI/CLI and exact-source release results are recorded in verification. Physical topology remains unverified. No arbitrary public fallback or zero-external-traffic claim |
+| [Direct LAN](DIRECT_LAN.en.md) | Explicitly pair at exact private addresses without a relay | Both devices need a reachable permitted path; this does not bypass network policy |
+| [Mixed connections](MIXED_CONNECTIONS.en.md) | Configure the selected backends, then authenticate that their routes reach the same peer | New connections may use another approved available route; existing TCP streams do not migrate |
 | No network | Leave the agent local | No peer transfer or service connection |
 
 For the Tailnet path:
@@ -64,11 +85,11 @@ Selecting a mode is explicit. Stop the agent and use `soba start --offline` to o
 
 For foreground/background startup, optional reviewed startup at user sign-in, saved autosave behavior and Tailnet logout, see [startup and logout](LIFECYCLE.en.md).
 
-Tailcat permits direct peer traffic, encrypted payload and HTTPS/ICMP diagnostics to explicitly configured/approved relay endpoints. The normal direct-enabled binary can use public peer paths; `local` is a relay classification, not a LAN egress sandbox. The [prepared-route workflow](LAN.en.md#prepare-another-route) keeps the same pair across reviewed candidates, with an explicitly reviewed finite or until-revoked local approval on both devices. It was already included in alpha.4 and remains included in alpha.5. [Transport detail](ARCHITECTURE.md#network-boundaries)
+Tailcat permits direct peer traffic, encrypted payload and HTTPS/ICMP diagnostics to explicitly configured/approved relay endpoints. The normal direct-enabled binary can use public peer paths; `local` is a relay classification, not a LAN egress sandbox. The [prepared-route workflow](LAN.en.md#prepare-another-route) keeps the same pair across reviewed candidates, with an explicitly reviewed finite or until-revoked local approval on both devices. It was already included in 0.3.0-alpha.4; see the historical records in [verification](VERIFICATION.en.md). [Transport detail](ARCHITECTURE.md#network-boundaries)
 
-## Trust the peer you mean
+## Trust a sender for messages and files
 
-Choose a current peer in the UI and compare its identity before trusting it. Names are labels, not credentials. Reusing a name or address does not transfer permission to another identity.
+Do this when you want to receive that sender’s messages or file offers. It is not a prerequisite for using a service with its own explicit grant. Choose a current peer in the UI and compare its identity before trusting it. Names are labels, not credentials. Reusing a name or address does not transfer permission to another identity.
 
 ```sh
 soba peers
@@ -202,7 +223,7 @@ For immediate text, if message history cannot be saved, the receiver may already
 
 A pasted image enters the same reviewable file batch flow as a chosen image file. It is not sent merely because it was pasted. Images are transferred as files; received payloads are not automatically opened or executed.
 
-### Queue text explicitly (unreleased development build)
+### Queue text explicitly
 
 Choose **Queue text** in the existing composer, then review and approve one recipient, exact text, absolute deadline and local retention. Immediate sending never switches modes silently. In the CLI:
 
@@ -331,10 +352,10 @@ soba stop
 
 Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust and any inspection permission; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
-Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the 0.4.0-alpha.4 release's signed assets and successful verification before using this pin. Moving to unreleased profile format 3 requires separate empty state, with no migration or wipe; do not assume prerelease state is compatible with every upgrade or downgrade:
+Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the 0.5.0-alpha.1 release's signed assets and successful verification before using this pin. Moving from profile format 2 to format 3 requires separate empty state, with no migration or wipe; do not assume prerelease state is compatible with every upgrade or downgrade:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.4.0-alpha.4"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.0-alpha.1"
 mise exec -- soba version
 mise exec -- soba start --offline
 ```
@@ -391,7 +412,11 @@ A recipient may temporarily refuse an update while another operation is running.
 
 “Saved” and “active” describe the local result. “Unconfirmed” does not prove that the recipient accepted or rejected the update. If the bounded attempts are exhausted, review the existing proof and current destination through the separate delivery preview/apply action before retrying. That explicit retry reuses the proof without changing its sequence or lifetime. It never discovers a new address automatically.
 
+For your own diagnostic notes, omit login codes, identity state, pairing material and private endpoints. See [safe self-check notes](TROUBLESHOOTING.en.md#keep-safe-notes-for-your-own-checks).
+
 ## Local transfer settings operations (source build)
+
+The [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and uses existing authenticated local IPC and the local Web command dispatcher. See [the local operation workflow](#local-transfer-settings-operations-source-build).
 
 Start the local agent first. Use the opaque resource ID returned by `list`, then review both settings together:
 

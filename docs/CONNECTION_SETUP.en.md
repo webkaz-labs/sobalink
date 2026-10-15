@@ -4,7 +4,16 @@
 
 Nearby setup offers an explicitly scoped request-and-accept flow and an optional complete-fingerprint verification flow. Discovery names and addresses are hints, never identity proof. First-use key acceptance (TOFU) remembers the exact accepted key but does not prevent an active impersonator during the initial exchange. Application permissions remain separate.
 
-This is source-development work. Deterministic tests, isolated loopback acceptance, packaged-binary validation and real-device validation are separate gates; one does not stand in for another. This document does not claim real-device or released-binary acceptance.
+The request-and-accept flow is included in [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1). [Verification](VERIFICATION.en.md) records exact-source CI and signed distribution. Same-host discovery and controlled browser/loopback results do not establish physical-device discovery, enrollment or application compatibility.
+
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-en-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/permissions-en-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/permissions-en-light-narrow.svg">
+  <img src="assets/visuals/permissions-en-light-wide.svg" alt="Transport pairing, message and file trust, autosave, and service sharing require distinct decisions." width="1040">
+</picture>
+
+Pairing identifies a transport peer. Review message/file trust, autosave destination and service scope separately. For first-use acceptance, understand the TOFU limitation before approving.
 
 ## Request and accept (v2)
 

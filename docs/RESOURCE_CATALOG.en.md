@@ -1,10 +1,20 @@
 # Local resource catalog
 
-[日本語](RESOURCE_CATALOG.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
+[日本語](RESOURCE_CATALOG.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 `soba resource catalog` presents a bounded local composition of existing observations. It does not add a peer-wire catalog, remotely enumerate resources, grant permission or perform changes. This describes source behavior; tests, real devices, installed binaries and distribution require separate acceptance.
 
 The separate [shared-service catalog view](CATALOG_VIEW_CONTRACT.en.md) is implemented: it uses explicit peer-specific viewing consent, a bounded remote list and fresh connection review through `resource catalog view` and the Web services flow. The legacy-cache restrictions below apply to `resource catalog`, not to every service-listing capability.
+
+## Choose the information you need
+
+| Goal | Workflow | Permission boundary |
+| --- | --- | --- |
+| Read local settings, saved services and transfer activity | `soba resource catalog` | An observation; no changes or continuous monitoring |
+| Inspect one peer's settings | Exact remote selector below | Existing inspection or management grant |
+| View current shared services on a peer | [Shared-service view](CATALOG_VIEW_CONTRACT.en.md) | Separate view grant, then separate connection permission |
+
+Missing or stale rows do not prove absence. Read each source's state and observation time before choosing its next workflow.
 
 ## Start with the normal command
 
@@ -35,7 +45,7 @@ Persistent resource/service identities last with their saved records. Advertised
 
 ### Service-discovery limitation
 
-In this source slice, cached `remote_service` observations are returned stale and non-actionable, including recently observed or confirmed-empty caches. Retained publication attribution alone does not authorize a current catalog observation or connection. An unknown or mixed backend may instead return unavailable. Running `discover --peer PEER_ID` explicitly refreshes the existing discovery workflow, but does not by itself lift this catalog gate. Use the separate [catalog-view workflow](CATALOG_VIEW_CONTRACT.en.md) for a currently authorized service list and fresh connection review; it does not promote these historical rows.
+In this local catalog, cached `remote_service` observations are returned stale and non-actionable, including recently observed or confirmed-empty caches. Retained publication attribution alone does not authorize a current catalog observation or connection. An unknown or mixed backend may instead return unavailable. Running `discover --peer PEER_ID` explicitly refreshes the existing discovery workflow, but does not by itself lift this catalog gate. Use the separate [catalog-view workflow](CATALOG_VIEW_CONTRACT.en.md) for a currently authorized service list and fresh connection review; it does not promote these historical rows.
 
 ## Continue through existing workflows
 

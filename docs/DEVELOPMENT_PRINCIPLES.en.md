@@ -35,6 +35,8 @@
 - Separate implemented, mock-tested, distribution-verified and real-device-verified results. Claims must match evidence
 - Reference these principles instead of maintaining conflicting copies
 
+- Give each diagram one question; provide meaningful alt text and a short text equivalent. Use separate Japanese/English and narrow/wide layouts where labels would otherwise shrink. Maintain shared diagram sources in [documentation visuals](assets/visuals/README.md), and distinguish rendered-image checks from browser/accessibility acceptance
+
 ## Change checklist
 
 - [ ] Check Japanese and English onboarding/help/confirmation/status/errors/next actions

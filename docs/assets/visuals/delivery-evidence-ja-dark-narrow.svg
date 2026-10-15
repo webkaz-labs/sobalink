@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 872" width="360" height="872" role="img" aria-labelledby="title desc" xml:lang="ja"><title id="title">受付から、相手の保存確認へ。</title><desc id="desc">永続送信待ちへの受付は送信側での記録であり、相手への配達完了ではありません。受信承認または明示設定済みの自動保存により転送後のファイルが保存され、相手の永続的な記録によって送信側が保存を確認します。結果が不明でも保存済みの可能性があるため、元の要求を確認し、新しい要求で安易に再送しません。保存確認は既読や現在もファイルが残ることの保証ではありません。</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="360" height="872" rx="0" fill="#1d202a"/>
+<g transform="translate(24 25) rotate(-23 12 12)" fill="#a18bff" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="60" y="45" font-size="22" fill="#e8e9f0" font-weight="650">sobalink</text>
+<text x="24" y="100" font-size="22" fill="#e8e9f0" font-weight="650">受付から、</text>
+<text x="24" y="133" font-size="22" fill="#e8e9f0" font-weight="650">相手の保存確認へ。</text>
+<text x="24" y="160" font-size="13" fill="#bdc5d8" font-weight="400">ファイル・フォルダーの永続送信待ち</text>
+<text x="24" y="182" font-size="13" fill="#bdc5d8" font-weight="400">期限内・両端末が起動し接続可能な場合</text>
+<rect x="16" y="210" width="328" height="162" rx="16" fill="#191c24"/>
+<text x="32" y="237" font-size="13" fill="#c0aeff" font-weight="600">送信側</text>
+<text x="32" y="268" font-size="20" fill="#e8e9f0" font-weight="650">この端末で受付</text>
+<text x="32" y="296" font-size="15" fill="#bdc5d8" font-weight="400">確認した送信を</text>
+<text x="32" y="318" font-size="15" fill="#bdc5d8" font-weight="400">この端末に記録</text>
+<text x="32" y="350" font-size="13" fill="#c0aeff" font-weight="500">相手の保存は、まだ未確認</text>
+<path d="M180 375v16m-4-5 4 5 4-5" fill="none" stroke="#818ba0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="16" y="395" width="328" height="162" rx="16" fill="#191c24"/>
+<text x="32" y="422" font-size="13" fill="#c0aeff" font-weight="600">受信側</text>
+<text x="32" y="453" font-size="20" fill="#e8e9f0" font-weight="650">相手の端末に保存</text>
+<text x="32" y="481" font-size="15" fill="#bdc5d8" font-weight="400">受信の同意・転送後に</text>
+<text x="32" y="503" font-size="15" fill="#bdc5d8" font-weight="400">相手の保存先へ保存</text>
+<text x="32" y="535" font-size="13" fill="#c0aeff" font-weight="500">送信側に結果が届かない場合も</text>
+<path d="M180 560v16m-4-5 4 5 4-5" fill="none" stroke="#818ba0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="16" y="580" width="328" height="162" rx="16" fill="#191c24"/>
+<text x="32" y="607" font-size="13" fill="#c0aeff" font-weight="600">送信側の確認</text>
+<text x="32" y="638" font-size="20" fill="#e8e9f0" font-weight="650">保存の記録を確認</text>
+<text x="32" y="666" font-size="15" fill="#bdc5d8" font-weight="400">相手の永続的な記録で</text>
+<text x="32" y="688" font-size="15" fill="#bdc5d8" font-weight="400">保存を確認</text>
+<text x="32" y="720" font-size="13" fill="#c0aeff" font-weight="500">既読を示すものではない</text>
+<text x="24" y="772" font-size="13" fill="#bdc5d8" font-weight="400">結果が不明でも、保存済みの場合があります。</text>
+<text x="24" y="797" font-size="13" fill="#bdc5d8" font-weight="400">元の送信記録を確認します。</text>
+<text x="24" y="822" font-size="13" fill="#bdc5d8" font-weight="400">新しい送信を安易に作り直しません。</text>
+</svg>

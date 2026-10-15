@@ -1,8 +1,18 @@
 # Mixed connections
 
-[日本語](MIXED_CONNECTIONS.ja.md) · [Direct LAN](DIRECT_LAN.en.md) · [Capacity](CAPACITY.en.md)
+[日本語](MIXED_CONNECTIONS.ja.md) · [Direct LAN](DIRECT_LAN.en.md) · [Capacity](CAPACITY.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 Mixed mode explicitly runs selected connection backends together. A new profile still selects no network. This is a userspace application transport, not a gateway between unrelated single-backend devices. It changes no OS routes, firewall rules or router settings and needs no administrator privileges.
+
+## Three separate choices
+
+| Choice | What you review | What remains separate |
+| --- | --- | --- |
+| Enable backends | Exact modes and preference order | Enrollment/pairing for each mode |
+| Bind routes | Authenticated identities for the same application | Application and service permissions |
+| Use another route | Positively classified availability and current grants | Reconnecting the application; existing TCP is not migrated |
+
+Start with the normal setup below. If availability is unknown or authorization fails, resolve that condition instead of assuming another route is safe.
 
 ## Normal setup
 
@@ -49,7 +59,7 @@ On failed or uncertain persistence, the runtime closes authority and requires re
 
 Worker frame bytes, concurrent requests and handles are adjustable finite resource budgets. Streams span multiple frames; frame size is not a file-size cap. Reserved control slots prevent data work from starving closure and permission updates. Workers snapshot their budgets at startup; status shows when a restart is needed for a changed allocation. UDP aliases use bounded admission and idle retirement, with application permission checked before allocation.
 
-Automated evidence includes signed cross-transport binding, overlapping-address isolation, known-denial refusal, failed-save retirement, child-process separation and byte-preserving owner-pipe traffic. Native direct LAN fixtures separately exercise IPv4/IPv6 pairing and application TCP/UDP. Alpha.5 completed its separate exact-source CI and signed-distribution gates; see [verification](VERIFICATION.en.md). Real enrollment and physical-device/network compatibility remain pending; synthetic tests do not establish those results.
+Automated evidence includes signed cross-transport binding, overlapping-address isolation, known-denial refusal, failed-save retirement, child-process separation and byte-preserving owner-pipe traffic. Native direct LAN fixtures separately exercise IPv4/IPv6 pairing and application TCP/UDP. Historical 0.3.0-alpha.5 completed its separate exact-source CI and signed-distribution gates; see [verification](VERIFICATION.en.md). Real enrollment and physical-device/network compatibility remain pending; synthetic tests do not establish those results.
 
 Startup may continue with a healthy selected backend when another backend has positively confirmed absence (for example, its saved direct LAN address is not on an up local interface). A backend that never started requires a soba restart after that address is restored or explicitly reconfigured. A previously running direct LAN backend can report address availability again without changing its listener address.
 

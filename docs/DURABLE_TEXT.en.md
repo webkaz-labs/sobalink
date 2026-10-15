@@ -4,9 +4,17 @@
 
 Explicitly queue one immutable text message for one exact recipient, including an offline recipient. Acceptance is local; completion means the receiving device durably saved the text. It never means a person read it.
 
-This is the development implementation after v0.4.0-alpha.4. It uses **profile format 3**, which is incompatible with alpha.4 and older profile formats. There is no migration or automatic deletion. Preserve the existing profile and its data, and use a separate empty `--state-dir` for this version. Do not reopen a format-3 profile with an older binary. This guide does not claim a released build or real-device, power-loss, OS-login or suspend qualification.
+Available in the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1). It uses **profile format 3**, incompatible with 0.4.0-alpha.4 and older formats. Preserve existing state and select a separate empty `--state-dir`; there is no migration, automatic deletion or same-profile downgrade. [Published verification](VERIFICATION.en.md) does not establish physical-device, power-loss, OS-login or suspend qualification.
 
-A format-3 profile can have a separately reviewed startup/proxy scope for a peer before that peer's first app-trust approval. If that saved scope captured an empty peer epoch, the first app approval creates a nonempty persisted epoch and the same-peer saved scope becomes stale. Review and explicitly save that separate scope again if still wanted. Existing nonempty epochs and unrelated peers are not rewritten; app trust never silently renews startup/proxy approval.
+```mermaid
+flowchart TD
+    A["Review exact text, recipient and deadline"] --> B["Explicit local acceptance"]
+    B --> C["Attempt within original authority"]
+    C --> D["Durable receiver-save evidence"]
+    C --> E["Unknown: inspect original ID"]
+```
+
+A queue record authorizes bounded attempts; it is not a delivery receipt. If the reply is lost, inspect the original ID and receiver evidence before deciding what to do next. Cancellation cannot recall saved content.
 
 ## Shortest CLI path
 
@@ -37,6 +45,8 @@ It never silently turns into queued text. Text queueing has no files, folder pat
 The local agent and selected network backend must run with a known local identity before preparation. A recipient may be offline. A stopped local backend, including settings-only startup, cannot safely prepare a queued text message. A mixed-network backend without a known `SelfID` also fails closed. Starting the backend does not itself grant new recipient trust.
 
 After acceptance, automatic attempts can resume after sender restart until the original deadline. Delivery still requires both devices running Sobalink, connectivity, current identities and trust, no applicable pause or revocation, and authenticated `durable_text_v1` support. Offline compatibility may be unverified until connection. There is no downgrade to legacy immediate messaging when durable support is missing.
+
+A format-3 profile can have a separately reviewed startup/proxy scope for a peer before that peer's first app-trust approval. If that saved scope captured an empty peer epoch, the first app approval creates a nonempty persisted epoch and the same-peer saved scope becomes stale. Review and explicitly save that separate scope again if still wanted. Existing nonempty epochs and unrelated peers are not rewritten; app trust never silently renews startup/proxy approval.
 
 ## JSON and explicit approval
 

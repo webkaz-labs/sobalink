@@ -1,6 +1,6 @@
 # 代替ポートの明示的な確認
 
-[English](PORT_PROPOSALS.en.md) · [CLI ガイド](CLI_GUIDE.ja.md) · [容量](CAPACITY.ja.md) · [API](../web/API.md)
+[English](PORT_PROPOSALS.en.md) · [CLI ガイド](CLI_GUIDE.ja.md) · [容量](CAPACITY.ja.md) · [API](../web/API.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 停止中の保存済み送信 TCP/UDP 接続は、代替のローカル入口ポートを明示的に確認できます。別途確認した保存・再開始操作までは、元の固定ポートを維持します。ローカル Web UI では、停止中の接続の「保存済みサービス → サービスを管理 → 代替ポートを確認」を開きます。画面を開くだけでは元設定の読込みのみを行い、「ループバックポートを今確認」で一時的な待受を明示的に確認します。
 
@@ -16,6 +16,22 @@ Web 画面には元設定の正確な ID・版、プロトコル、ループバ�
 `service ports` が返す版と選んだポートを使い、一連の操作で同じ `--state-dir` を指定してください。再開始前に保存済み設定全体と有効期間を確認します。通常の明示的な再開始では、確認した許可の有効期間が新しく始まります。稼働中サービスは先に明示的に停止してください。共有やアプリ側の接続先ポートは、この候補提示の対象外です。
 
 最初に保存済みの数値ループバックの対応を確認し、OS が「アドレス使用中」と報告した場合だけ別の候補を調べます。元の対応が現在利用可能なら `listener_no_conflict` を返し、自動再開始しません。選んだ TCP/UDP と正確な `127.0.0.1` または `::1` の系統で一時的に待受を試します。ソケットでアプリの通信を受理・転送せず、結果を返す前にすべて閉じます。保存済み設定、相手への許可、自動起動の承認、ルーターやセキュリティ設定は変更しません。
+
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/saved-and-running-ja-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/saved-and-running-ja-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/saved-and-running-ja-light-narrow.svg">
+  <img src="assets/visuals/saved-and-running-ja-light-wide.svg" alt="保存済み設定、待受準備、アプリ成功は別々に確認します。">
+</picture>
+
+
+## 確認 → 再確認 → 保存または再開始
+
+候補は確認時点の待受結果であり、予約ではありません。選んだポートと返された元設定の版を保持し、反映前に対応全体と有効期間を確認します。後の開始時にもポートを検査し、失敗する場合があります。
+
+- **Web:** 明示して確認し、候補を選び、編集した停止中の定義を確認して保存します。開始は準備ができてから別途行います。
+- **CLI:** 先に表示・候補確認を行います。以下の最後の再開始コマンドは変更操作であり、候補確認には含まれません。
+- **競合なし:** 元の対応を維持します。`listener_no_conflict` でサービスは再開始しません。
 
 ## 対応と再確認
 

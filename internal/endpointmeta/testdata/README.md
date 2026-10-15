@@ -13,3 +13,11 @@ the Go implementation. These fixtures contain no production identity or data.
 
 The tests cover metadata encodings and signatures only. They establish no
 network, pairing, migration, transport or application behavior.
+
+## Verify without changing the vectors
+
+1. Preserve the canonical JSON bytes, including the absence of a final newline.
+2. Compare context, scope, envelope digests and signature against `vector.json`.
+3. Run the package checks described in the [contract](../README.md).
+
+A changed encoding requires a reviewed vector change, not a reformatted fixture. Passing these checks remains codec/signature evidence only.

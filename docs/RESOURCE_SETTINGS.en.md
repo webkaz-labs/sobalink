@@ -1,8 +1,20 @@
-# Local transfer settings resource: source build
+# Local transfer settings resource
 
-[日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md)
+[日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-This guide covers the local resource foundation: inspection, preview, explicitly bound apply and durable operation evidence for two transfer-admission settings. This is source-build functionality, not a new published release or a release commitment. Later source work adds separately authorized [remote management](RESOURCE_MANAGEMENT.en.md) and [group/Web workflows](RESOURCE_GROUP.en.md); those guides describe their own scope and evidence.
+This guide covers the local resource foundation: inspection, preview, explicitly bound apply and durable operation evidence for two transfer-admission settings. It is available in the current release. For separately authorized [remote management](RESOURCE_MANAGEMENT.en.md) and [group/Web workflows](RESOURCE_GROUP.en.md), see those guides for their own scope and evidence.
+
+**Upgrading:** profile 3 is incompatible with v0.4.0-alpha.4 and earlier. Keep old state untouched and start with a separate empty `--state-dir`; there is no automatic migration or deletion. Per-feature format histories below do not override this profile boundary.
+
+## Keep three results separate
+
+| Question | Read | Meaning |
+| --- | --- | --- |
+| What would change? | Fresh preview | Exact two choices and bound revisions; nothing applied |
+| What happened to this request? | Operation result/status | Historical outcome and whether its evidence is durable |
+| What is configured now? | Current descriptor or fresh inspection | Current observation, which can differ from the past result |
+
+After a lost reply, keep the original operation ID and check status. `unknown` is neither success nor rollback; creating a replacement operation does not resolve it.
 
 ## Review, apply and check
 

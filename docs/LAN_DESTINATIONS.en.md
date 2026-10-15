@@ -1,10 +1,20 @@
 # Explicit LAN destination admission
 
-[日本語](LAN_DESTINATIONS.ja.md) · [LAN setup](LAN.en.md) · [Relay operations](RELAY_OPERATIONS.en.md)
+[日本語](LAN_DESTINATIONS.ja.md) · [LAN setup](LAN.en.md) · [Relay operations](RELAY_OPERATIONS.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-**Published in alpha.5, with exact-source automated and distribution evidence in [verification](VERIFICATION.en.md). Physical-device network acceptance remains pending.** The optional `allowed-lan-destinations` policy restricts this LAN transport's UDP writes to explicitly selected private/ULA/loopback CIDRs and its DERP TCP connections to exact configured numeric relay endpoints within those CIDRs. It does not bind a physical interface or prove same-link, VPN isolation, or whole-host/process zero egress. A matching destination can still be routed through another interface or VPN.
+**Available in the current release, with exact-source automated and distribution evidence in [verification](VERIFICATION.en.md). Physical-device network acceptance remains pending.** The optional `allowed-lan-destinations` policy restricts this LAN transport's UDP writes to explicitly selected private/ULA/loopback CIDRs and its DERP TCP connections to exact configured numeric relay endpoints within those CIDRs. It does not bind a physical interface or prove same-link, VPN isolation, or whole-host/process zero egress. A matching destination can still be routed through another interface or VPN.
 
 Administrator rights and LAN-router changes are not required or performed. The feature uses ordinary userspace sockets; it does not install a TUN driver, modify routes/firewalls, enable UPnP/NAT mappings or bypass a network policy. If the selected network blocks the needed traffic, report the failure and choose another explicitly allowed configuration.
+
+## What this setting controls
+
+| You choose | It controls | It does not establish |
+| --- | --- | --- |
+| Private/ULA/loopback prefixes | Permitted UDP destination addresses | The physical interface or VPN path |
+| Exact relay endpoint and pin | Configured DERP TCP destination and identity | Reachability or another peer's approval |
+| A reviewed policy change | The next configured transport's scope | Whole-device zero egress |
+
+Choose the smallest intended destination scope before connecting. If the required relay falls outside it, review the configuration rather than widening it automatically.
 
 ## Choose before connecting
 

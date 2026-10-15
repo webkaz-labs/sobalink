@@ -2,22 +2,27 @@
 
 [日本語](DURABLE_OUTBOX.ja.md) · [CLI](CLI_GUIDE.en.md) · [Web controls](WEB_CONTROLS.en.md)
 
-The published 0.4.0-alpha.4 baseline includes an opt-in file/folder outbox. A successful queue operation means **accepted on this sending device**, not delivered. Only durable receiver evidence confirms a save. Source tests and synthetic checks do not establish release-package, physical-device, power-loss, enrollment or OS-login acceptance.
+The published 0.5.0-alpha.1 release includes an opt-in file/folder outbox. A successful queue operation means **accepted on this sending device**, not delivered. Only durable receiver evidence confirms a save. Source tests and synthetic checks do not establish release-package, physical-device, power-loss, enrollment or OS-login acceptance.
 
-## Fresh profile format
+**Before starting:** use a fresh format-3 profile for 0.5.0-alpha.1; preserve older profiles without migration or deletion. See the format and recovery conditions below.
 
-Published 0.4.0-alpha.4 uses profile format 2. The current unreleased checkout uses format 3, which also requires the message store for the [durable text queue](DURABLE_TEXT.en.md). Both initialize their required stores under the agent's lifecycle lock. Format 3 rejects alpha.4 and older profiles; preserve them and select a separate empty directory. There is no migration or feature-enable wizard. Earlier profiles are rejected without being rewritten or erased: preserve them and choose a fresh profile directory. Normal receiving approvals remain in force; each queued send still needs explicit review and consent.
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/delivery-evidence-en-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/delivery-evidence-en-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/delivery-evidence-en-light-narrow.svg">
+  <img src="assets/visuals/delivery-evidence-en-light-wide.svg" alt="Local acceptance, saving on the peer, and sender confirmation are separate stages; an unknown result needs the original ID." width="1040">
+</picture>
 
-An interrupted first initialization may remain blocked if empty-state ownership cannot be certified. A ready profile never recreates missing delivery ledgers. Process-restart recovery excludes restored/rolled-back private snapshots, manual state replacement/deletion, and concurrent private-namespace modification by another actor with the same filesystem access. Detected substitution or unknown inventory fails closed; filesystem checks are not inode-conditional deletion or protection against an adversarial simultaneous rename. Do not delete private evidence to clear a recovery warning.
+A queue record authorizes bounded attempts; it is not a delivery receipt. If the reply is lost, inspect the original ID and receiver evidence before deciding what to do next. Cancellation cannot recall saved content.
 
 ## Shortest path
 
-1. In a device conversation, keep **Send now** for an ordinary immediate send, or explicitly choose **Queue for later**. Trusted offline recipients may be eligible for the file queue while immediate text is unavailable. The unreleased development build separately offers explicit [text queueing](DURABLE_TEXT.en.md).
+1. In a device conversation, keep **Send now** for an ordinary immediate send, or explicitly choose **Queue for later**. Trusted offline recipients may be eligible for the file queue while immediate text is unavailable. The current release separately offers explicit [text queueing](DURABLE_TEXT.en.md).
 2. Use the existing file/folder picker and select each exact recipient. Choose a deadline, then **Prepare queue review**. Review the returned files, identities, local staged-copy use and absolute deadline with timezone. Preparation alone authorizes no delivery.
 3. Choose **Queue until {time}**. The exact immutable content and recipients may be attempted automatically, including after an application restart, only until that deadline. Both devices must run Sobalink and become reachable. Browser closure after confirmed enqueue is safe while the sender agent remains running.
 4. Open **Outbox** from the persistent navigation or conversation to check each recipient. It fetches authoritative server records after reopening or reconnecting.
 
-The default deadline is 24 hours and the maximum is 7 days. The Web picker also offers 1 hour; CLI accepts durations from 1 minute through 168 hours. The absolute reviewed deadline is stored and never extended by a restart. A changed payload, recipient or deadline needs a new explicit review. Text-message queueing is a separate, unreleased [feature](DURABLE_TEXT.en.md). Scheduled start times remain outside both queue modes.
+The default deadline is 24 hours and the maximum is 7 days. The Web picker also offers 1 hour; CLI accepts durations from 1 minute through 168 hours. The absolute reviewed deadline is stored and never extended by a restart. A changed payload, recipient or deadline needs a new explicit review. Text-message queueing is a separate [feature](DURABLE_TEXT.en.md). Scheduled start times remain outside both queue modes.
 
 ## CLI
 
@@ -35,6 +40,12 @@ soba outbox discard OUTBOX_ID --process PROCESS_ID --json
 `--json` without `--confirm` prepares only and never prompts. Human queue mode reviews the staged content before its confirmation. `--confirm` explicitly approves the exact selected recipients, staged contents and displayed absolute deadline. For a selected profile, retain the same `--state-dir` in follow-up commands; printed continuations preserve it.
 
 `--dry-run` validates local command inputs without IPC, staging, capability checks or sending. Exit 0 means a verified command result, including local enqueue, blocked/expired status, or cancellation; it never means delivery by itself. Validation, control failure and an unconfirmed mutation fail nonzero. JSON uncertainty includes a stable error code and the original locator. No first-slice long-running wait command or manual replay-as-new shortcut is provided.
+
+## Fresh profile format
+
+Published 0.4.0-alpha.4 uses profile format 2. Published 0.5.0-alpha.1 uses format 3, which also requires the message store for the [durable text queue](DURABLE_TEXT.en.md). Both initialize their required stores under the agent's lifecycle lock. Format 3 rejects alpha.4 and older profiles; preserve them and select a separate empty directory. There is no migration or feature-enable wizard. Earlier profiles are rejected without being rewritten or erased: preserve them and choose a fresh profile directory. Normal receiving approvals remain in force; each queued send still needs explicit review and consent.
+
+An interrupted first initialization may remain blocked if empty-state ownership cannot be certified. A ready profile never recreates missing delivery ledgers. Process-restart recovery excludes restored/rolled-back private snapshots, manual state replacement/deletion, and concurrent private-namespace modification by another actor with the same filesystem access. Detected substitution or unknown inventory fails closed; filesystem checks are not inode-conditional deletion or protection against an adversarial simultaneous rename. Do not delete private evidence to clear a recovery warning.
 
 ## Read state and evidence separately
 

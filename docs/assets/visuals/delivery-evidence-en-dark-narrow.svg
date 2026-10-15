@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 872" width="360" height="872" role="img" aria-labelledby="title desc" xml:lang="en"><title id="title">From local acceptance to a confirmed save.</title><desc id="desc">Acceptance into the durable outbox records a send on the sending device; it does not prove delivery. After receiver acceptance or explicitly configured autosave, files are transferred and saved. Durable receiver evidence confirms the save to the sender. An unknown result may already be saved, so query the original request rather than creating a replacement. Saved evidence is not a read receipt or a guarantee that the file still exists.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="360" height="872" rx="0" fill="#1d202a"/>
+<g transform="translate(24 25) rotate(-23 12 12)" fill="#a18bff" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="60" y="45" font-size="22" fill="#e8e9f0" font-weight="650">sobalink</text>
+<text x="24" y="100" font-size="22" fill="#e8e9f0" font-weight="650">From local acceptance</text>
+<text x="24" y="133" font-size="22" fill="#e8e9f0" font-weight="650">to a confirmed save.</text>
+<text x="24" y="160" font-size="13" fill="#bdc5d8" font-weight="400">Durable queue · Within the deadline</text>
+<text x="24" y="182" font-size="13" fill="#bdc5d8" font-weight="400">Both devices must be running and reachable</text>
+<rect x="16" y="210" width="328" height="162" rx="16" fill="#191c24"/>
+<text x="32" y="237" font-size="13" fill="#c0aeff" font-weight="600">SENDING DEVICE</text>
+<text x="32" y="268" font-size="20" fill="#e8e9f0" font-weight="650">Accepted locally</text>
+<text x="32" y="296" font-size="15" fill="#bdc5d8" font-weight="400">Record the reviewed send</text>
+<text x="32" y="318" font-size="15" fill="#bdc5d8" font-weight="400">on this device</text>
+<text x="32" y="350" font-size="13" fill="#c0aeff" font-weight="500">Remote save is not yet confirmed</text>
+<path d="M180 375v16m-4-5 4 5 4-5" fill="none" stroke="#818ba0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="16" y="395" width="328" height="162" rx="16" fill="#191c24"/>
+<text x="32" y="422" font-size="13" fill="#c0aeff" font-weight="600">RECEIVING DEVICE</text>
+<text x="32" y="453" font-size="20" fill="#e8e9f0" font-weight="650">Saved on the peer</text>
+<text x="32" y="481" font-size="15" fill="#bdc5d8" font-weight="400">After receiver consent</text>
+<text x="32" y="503" font-size="15" fill="#bdc5d8" font-weight="400">and transfer, save the files</text>
+<text x="32" y="535" font-size="13" fill="#c0aeff" font-weight="500">The reply may not reach the sender</text>
+<path d="M180 560v16m-4-5 4 5 4-5" fill="none" stroke="#818ba0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="16" y="580" width="328" height="162" rx="16" fill="#191c24"/>
+<text x="32" y="607" font-size="13" fill="#c0aeff" font-weight="600">SENDER’S CONFIRMATION</text>
+<text x="32" y="638" font-size="20" fill="#e8e9f0" font-weight="650">Save confirmed</text>
+<text x="32" y="666" font-size="15" fill="#bdc5d8" font-weight="400">Verify the receiver’s</text>
+<text x="32" y="688" font-size="15" fill="#bdc5d8" font-weight="400">durable saved evidence</text>
+<text x="32" y="720" font-size="13" fill="#c0aeff" font-weight="500">This is not a read receipt</text>
+<text x="24" y="772" font-size="13" fill="#bdc5d8" font-weight="400">An unknown result may already be saved.</text>
+<text x="24" y="797" font-size="13" fill="#bdc5d8" font-weight="400">Check the original send record.</text>
+<text x="24" y="822" font-size="13" fill="#bdc5d8" font-weight="400">Do not blindly create a replacement send.</text>
+</svg>
