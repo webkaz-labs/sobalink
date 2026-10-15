@@ -1,8 +1,19 @@
 # Authenticated route recovery
 
-[日本語](ROUTE_RECOVERY_DESIGN.ja.md) · [LAN steps](LAN.en.md#prepare-another-route) · [Architecture](ARCHITECTURE.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#route-recovery-gate)
+[日本語](ROUTE_RECOVERY_DESIGN.ja.md) · [LAN steps](LAN.en.md#prepare-another-route) · [Architecture](ARCHITECTURE.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#route-recovery-gate) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-**Status: prepared-route recovery was already included in `0.3.0-alpha.4`; its resource and failure-classification extensions are published in `0.3.0-alpha.5`.** Recovery keeps the **same Tailcat device and pairing**. Alpha.5 includes adjustable relay resources and removes the fixed candidate-permission ceiling. Its same-source native/browser CI and distribution gates passed; see [verification](VERIFICATION.en.md). Historical alpha.2 is the single-relay baseline. Physical-device acceptance remains pending.
+**Recovery keeps the same Tailcat device and pairing.** Current behavior includes exact prepared candidates, explicit local route approval and adjustable resource budgets. Physical-device acceptance remains separate; see [verification](VERIFICATION.en.md).
+
+Historical milestones: prepared-route recovery shipped in `0.3.0-alpha.4`; resource and failure-classification extensions shipped in `0.3.0-alpha.5`. The older 0.3.0-alpha.2 singleton and state-version migration rules below describe transport-state compatibility, not permission to reuse an incompatible current profile.
+
+## Read this design by question
+
+- **How do I configure it?** Follow the [LAN preparation steps](LAN.en.md#prepare-another-route).
+- **What can recover?** A new connection through an already authorized service entrance, subject to current route permission and availability.
+- **What cannot be inferred?** Existing TCP migration, application replay or remote-job completion.
+- **What if saving fails?** Stop and reconcile private state before restarting; a process-local stop is not proof of durable revocation.
+
+The diagram below shows separate authentication, local approval and application authorization checks. An arrow means a dependency, not a successful network test.
 
 ## Result and boundaries
 
@@ -22,7 +33,7 @@ flowchart LR
 
 - An existing TCP connection can fail; the application must reconnect. Healthy active flows are not interrupted for optional preferred-route probes; a failed transport generation is retired, including hung flows, so new connections can recover
 - No arbitrary TCP bytes, HTTP requests, commands, jobs or transactions are replayed. UDP can lose datagrams; there is no stale-datagram replay
-- File retry remains in-process retry of unfinished **whole items from byte zero**. No partial-byte resume, restart resume or durable offline outbox is added
+- Ordinary in-process file retry restarts unfinished **whole items from byte zero**. Route recovery does not provide partial-byte resume or automatic replay. The separately authorized [durable file queue](DURABLE_OUTBOX.en.md) and [durable text queue](DURABLE_TEXT.en.md) have their own storage, retry and permission contracts
 - Route recovery never switches Tailcat to Tailnet, renews application permissions, changes a receive directory or starts a stopped definition
 - `local` classifies a relay address. The normal single executable retains direct UDP and can use public peer paths. The optional [LAN destination policy](LAN_DESTINATIONS.en.md) restricts selected transport destinations; it does not promise physical-interface/VPN isolation or whole-process/host zero egress
 
@@ -89,9 +100,9 @@ The Core service listener is separate from the selected outgoing engine. Recover
 
 ## Migration and release gates
 
-A valid alpha.2 private LAN version-1 state remains a legacy singleton. Earlier private LAN version-2 route data contains v1 finite proofs/approvals; loading or migrating it keeps the original exact deadlines and v1 validation limits. Explicit v2 lifetime records require LAN file version 3. A pair without an applied incoming offer stays legacy even after export. Additional candidates still require explicit offline edits/restart, and outgoing grants require local review on each side. Old binaries reject unsupported versions rather than stripping records. Never lower stored versions or restore old authority to bypass the checks. Exact-source acceptance must cover migration, interruption, legacy peers, version/counter regression, re-pair replay and attempted downgrade.
+A valid historical 0.3.0-alpha.2 private LAN version-1 state remains a legacy singleton. Earlier private LAN version-2 route data contains v1 finite proofs/approvals; loading or migrating it keeps the original exact deadlines and v1 validation limits. Explicit v2 lifetime records require LAN file version 3. A pair without an applied incoming offer stays legacy even after export. Additional candidates still require explicit offline edits/restart, and outgoing grants require local review on each side. Old binaries reject unsupported versions rather than stripping records. Never lower stored versions or restore old authority to bypass the checks. Exact-source acceptance must cover migration, interruption, legacy peers, version/counter regression, re-pair replay and attempted downgrade.
 
-[Verification](VERIFICATION.en.md#route-recovery-gate) separates pure tests, transport prototypes and integrated Core/UI evidence. The earlier `10e836ca` had two browser selector failures. Integrated `15d878ea` passed [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553): four native targets, 69/69 browser cases and manifest, including the independent Core-process fixture in both transport builds. The later alpha.4 release completed its own signed distribution and four-target installation gates; see the verification record for its exact source. Alpha.5 subsequently completed its own exact-source CI and signed-release gates for the resource/failure-classification extensions; see the current verification table. Historical runs remain scoped to their original sources, and physical-device acceptance remains pending.
+[Verification](VERIFICATION.en.md#route-recovery-gate) separates pure tests, transport prototypes and integrated Core/UI evidence. The earlier `10e836ca` had two browser selector failures. Integrated `15d878ea` passed [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553): four native targets, 69/69 browser cases and manifest, including the independent Core-process fixture in both transport builds. The later 0.3.0-alpha.4 release completed its own signed distribution and four-target installation gates; see the verification record for its exact source. 0.3.0-alpha.5 subsequently completed its own exact-source CI and signed-release gates for the resource/failure-classification extensions; see the current verification table. Historical runs remain scoped to their original sources, and physical-device acceptance remains pending.
 
 For a clearly labeled prerelease, require:
 

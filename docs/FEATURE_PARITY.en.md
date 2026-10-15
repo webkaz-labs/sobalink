@@ -39,6 +39,12 @@
 | F54 | Native packages and signed distribution | Four native targets, embedded JA/EN UI, repeatability, signatures, provenance and installed-binary release gates remain required. [Distribution](DISTRIBUTION.md). | Alpha.2 exact-source CI/browser and all 15 release jobs passed; 19 assets were published and all four mise installations verified. This proves alpha.2 distribution, not all feature rows or PR #8 acceptance. |
 | F56 | Explicit optional startup restoration | Separately approved exact outbound selections and saved proxies attempt launch once after readiness; offline startup suppresses them, changed scope/revocation invalidates approval, and inbound shares never auto-start. | Synthetic Core/CLI race/vet and the alpha.2 Go-backed browser suite passed. Actual OS sign-in/suspend and installed startup behavior remain unverified; rerun affected PR #8 paths. |
 
+## Use this historical matrix
+
+1. Find the stable F01–F56 capability ID; use it to compare behavior, not old command spelling.
+2. Read the row's implementation and evidence separately. Aggregate alpha.2 success does not close every physical acceptance gate.
+3. For current operation, follow the linked feature guide and [current verification](VERIFICATION.en.md). Keep this checkpoint unchanged when later features ship.
+
 ## Evidence that must stay separate
 
 - Published alpha.2, `00cc6a99809df77bf1754936ea7bf5ca4c5d0741`: [CI 37177788934](https://github.com/webkaz-labs/sobalink/actions/runs/37177788934) and [release 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) passed. The release has 19 assets and verified installs on Linux x64/ARM64, macOS ARM64 and Windows x64. Its automated and distribution gates are complete for that source

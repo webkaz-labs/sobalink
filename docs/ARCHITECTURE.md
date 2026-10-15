@@ -18,6 +18,15 @@ flowchart LR
     S --> L["Exact local loopback service"]
 ```
 
+The local browser and owner-only CLI reach the same Go core. Peer traffic uses a separate authenticated surface; it cannot call local management. Read the [connection overview](../README.en.md) first, then the operation-specific sections below.
+
+## Read by question
+
+- Which path carries application traffic? [Network boundaries](#network-boundaries) and [prepared routes](#prepared-routes-and-stable-service-entrances).
+- Which authority permits a request? [Management and peer surfaces](#management-and-peer-surfaces) and [trust and storage](#trust-batches-and-storage).
+- What survives a restart? [Saved workflows](#capacity-saved-workflows-and-local-tools) and [private-state persistence](#bounded-private-state-persistence).
+- What has actually been tested? [Exact-source verification](VERIFICATION.en.md). This describes v0.5.0-alpha.1 source `46dcd363`; old observations below remain tied to their original version.
+
 ## Source map
 
 | Source | Responsibility |
@@ -40,11 +49,11 @@ The legacy `cmd/tsnet-bridge` implementation may remain in the tree. It does not
 
 ## Network boundaries
 
-The application selects one backend explicitly. A new profile selects none. A saved selected backend may reconnect when the agent starts. Saved definitions alone do not restart services, and transfer progress never resumes. Separately reviewed outbound startup approvals have the bounded behavior described below. Runtime switching cannot silently exchange backend identities or continue an existing TCP session.
+The application selects one backend explicitly. A new profile selects none. A saved selected backend may reconnect when the agent starts. Saved definitions alone do not restart services. Immediate-transfer progress does not resume after process restart; explicitly queued durable work has its own identity, deadline and recovery contract. Separately reviewed outbound startup approvals have the bounded behavior described below. Runtime switching cannot silently exchange backend identities or continue an existing TCP session.
 
 Existing Tailnet mode uses a separate embedded tsnet node. Enrollment uses the official interactive login flow. Current peer identity, Tailnet grants/ACLs and the application grant are checked independently. Service dialing uses the embedded stack instead of an OS-network fallback. OS routes and DNS remain outside this product's management surface.
 
-Published alpha.5 includes authenticated prepared-route recovery and the reviewed resource/failure-classification extensions; alpha.2 remains the historical single-relay baseline: `internal/routecat` is a bounded, attributed adaptation of the pinned Tailcat source, not an unmodified upstream feature. It keeps the prepared server regions in one engine and selects a single approved outgoing candidate per peer generation. The original numeric bootstrap relay, certificate pin, device identity, PSK and directional role keys remain unchanged. [Adaptation and provenance](../internal/routecat/UPSTREAM.md) · [Route contract](ROUTE_RECOVERY_DESIGN.en.md)
+Historical v0.3.0-alpha.5 included authenticated prepared-route recovery and the reviewed resource/failure-classification extensions; alpha.2 remains the historical single-relay baseline: `internal/routecat` is a bounded, attributed adaptation of the pinned Tailcat source, not an unmodified upstream feature. It keeps the prepared server regions in one engine and selects a single approved outgoing candidate per peer generation. The original numeric bootstrap relay, certificate pin, device identity, PSK and directional role keys remain unchanged. [Adaptation and provenance](../internal/routecat/UPSTREAM.md) · [Route contract](ROUTE_RECOVERY_DESIGN.en.md)
 
 A relay may be self-hosted or another endpoint explicitly trusted by the user. The normal single `soba` executable retains direct UDP support; permitted traffic includes direct peer paths (including public paths), encrypted payload and HTTPS/ICMP diagnostics to exact configured/approved relays. `local` is a relay classification, not strict LAN isolation or zero external traffic. Strict no-external-egress mode remains unimplemented and no helper binary is added. Required tags omit port mapping, captive-portal probes and system-proxy fallback; proxy/unsupported backend overrides are rejected. No default public relay map, DNS bootstrap or arbitrary fallback is selected. [Current evidence](VERIFICATION.en.md#route-recovery-gate)
 
@@ -62,7 +71,7 @@ flowchart TD
 
 Direct and Relay are path observations; Reconnecting is a lifecycle state. Unknown means the backend has not supplied reliable path evidence. A route can change inside a backend, but the product makes no established-TCP preservation promise. An unavailable backend does not trigger automatic exchange to another mode.
 
-Startup restores the explicitly saved network and saved receive approvals by default, including enabled, unpaused per-peer file autosave with an available destination. Unavailable autosave destinations stop only receiving and disable the affected grant; restoring the destination or confirming inventory does not re-enable it. See [receiver recovery](CAPACITY.en.md#receiver-recovery). Ordinary saved definitions remain stopped and previous transfers never resume. Separate exact outbound startup selections and private saved-proxy approvals may opt into a future online launch, once after readiness; offline launch suppresses those attempts for the entire process. Changed definitions/groups/network/hostname or target revocation invalidate approval. A finite permission begins afresh on a new process launch, while transport recovery preserves the existing expiry. [Explicit startup and private profiles](STARTUP.en.md) Optional per-user sign-in startup previews and binds the exact OS plan and saved profile to a review token; local-only startup is an explicit alternative. Tailnet logout closes application traffic before contacting the identity backend, distinguishes acknowledged and unconfirmed logout, and then exits. See [startup and logout](LIFECYCLE.en.md) ([日本語](LIFECYCLE.ja.md)).
+Startup restores the explicitly saved network and saved receive approvals by default, including enabled, unpaused per-peer file autosave with an available destination. Unavailable autosave destinations stop only receiving and disable the affected grant; restoring the destination or confirming inventory does not re-enable it. See [receiver recovery](CAPACITY.en.md#receiver-recovery). Ordinary saved definitions remain stopped and previous immediate transfers never resume. Explicit durable queues recover only within their current authority, original deadline and saved-evidence rules. Separate exact outbound startup selections and private saved-proxy approvals may opt into a future online launch, once after readiness; offline launch suppresses those attempts for the entire process. Changed definitions/groups/network/hostname or target revocation invalidate approval. A finite permission begins afresh on a new process launch, while transport recovery preserves the existing expiry. [Explicit startup and private profiles](STARTUP.en.md) Optional per-user sign-in startup previews and binds the exact OS plan and saved profile to a review token; local-only startup is an explicit alternative. Tailnet logout closes application traffic before contacting the identity backend, distinguishes acknowledged and unconfirmed logout, and then exits. See [startup and logout](LIFECYCLE.en.md) ([日本語](LIFECYCLE.ja.md)).
 
 ## Prepared routes and stable service entrances
 

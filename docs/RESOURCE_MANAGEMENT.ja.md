@@ -1,8 +1,16 @@
 # 相手1台の転送設定を確認して管理する
 
-[English](RESOURCE_MANAGEMENT.en.md) · [参照のみの許可](RESOURCE_INSPECTION.ja.md)
+[English](RESOURCE_MANAGEMENT.en.md) · [参照のみの許可](RESOURCE_INSPECTION.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-このソース開発では、ペアになった DirectLAN の相手1台について、`transferConcurrentFiles` と `transferConcurrentPerPeer` の2項目だけを、明示的な管理許可で変更できます。統合レビュー中です。純粋なフェンス・世代の試験だけでは、遠隔管理の全体動作、配布、実端末、アプリ、OS ログイン、スリープからの復帰の受入は確認できません。公開版の検証状況は[検証記録](VERIFICATION.md)に従います。
+現在の公開版では、ペアになった DirectLAN の相手1台について、`transferConcurrentFiles` と `transferConcurrentPerPeer` の2項目だけを、明示的な管理許可で変更できます。純粋なフェンス・世代の試験だけでは、遠隔管理の全体動作、配布、実端末、アプリ、OS ログイン、スリープからの復帰の受入は確認できません。公開版の検証状況は[検証記録](VERIFICATION.md)に従います。
+
+## 最初に許可し、次に正確な変更案を確認する
+
+1. 対象側で、意図したペアの相手と2項目について有限の管理許可を明示して確定します。
+2. 許可された相手側で参照・preview を行い、変更していない確認内容だけを適用します。
+3. 応答を失った場合は元の操作 ID を照会します。現在の設定を知るには別途参照します。
+
+永続的な操作記録に、失敗や不確かな結果が記録される場合もあります。設定適用や転送完了の証明ではありません。対象側の許可、操作の確認内容、結果の記録は別のものです。
 
 ## 対象端末で正確な範囲を許可する
 

@@ -1,32 +1,25 @@
 # Direct LAN without a relay
 
-[日本語](DIRECT_LAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
+[日本語](DIRECT_LAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-Published alpha.5 implements `direct-lan`: recipient-authenticated pairing
+For normal first-use setup, start with [request and accept](CONNECTION_SETUP.en.md). The explicit identity/invitation workflow below remains available when you want that path. Normal first-use setup uses TOFU: names and discovery do not authenticate a person or prevent a first-use man-in-the-middle attack. Compare the full fingerprint through a trusted channel when needed.
+
+`direct-lan` provides recipient-authenticated pairing
 at an exact numeric private-network address, followed by WireGuard-encrypted TCP
 and native UDP through an embedded gVisor userspace stack. No relay, DNS lookup,
 STUN, public discovery, kernel TUN, administrator permission, router change or
 firewall change is used by this mode. Existing network policy may still block
 reachability; the application reports failure rather than changing that policy.
 
-Native automated loopback tests cover cold-start pairing, both directions of
-identity proof, TCP streaming/half-close, native UDP, restart, message delivery,
-scoped application forwarding and revocation. These do **not** establish
-real-device LAN reachability, application compatibility, suspend/resume,
-installation or publication by themselves. Alpha.5 separately completed its
-exact-source native/browser and signed-release gates; see [verification](VERIFICATION.en.md).
-An earlier local browser attempt was blocked before page load by Chromium's
-process-singleton socket permission; that attempt established no visual acceptance. An earlier concurrent race run exposed simultaneous initial WireGuard
-handshakes: only 9/10 first messages and 7/10 first HTTP probes connected before
-the unchanged eight-second application deadline. A deterministic session gate
-now serializes initial activation, and the broader Core order subsequently
-passed ten repetitions concurrently with two full adapter repetitions. Immediate
-responder restart also passes without extending production deadlines. The separate
-native lifecycle gate passes bidirectional TCP and UDP through 125 seconds of
-active traffic, with a later completed handshake observed on both peers, and
-fresh TCP/UDP dials after 185 seconds idle. Synthetic key expiry, flushing and
-scheduled rekey also pass. These are bounded localhost results, not real-device
-or installed-release acceptance.
+**Upgrading:** profile 3 is incompatible with v0.4.0-alpha.4 and earlier. Keep old state untouched and start with a separate empty `--state-dir`; there is no automatic migration or deletion. Per-feature format histories below do not override this profile boundary.
+
+## Before you pair
+
+- Run sobalink on both devices and select each device's exact assigned private address, unused TCP/UDP port and intended prefix.
+- Exchange and compare public identities through a trusted private channel. A display name or address is not identity proof.
+- Keep the one-use invitation private. After pairing, approve only the messages, files or service scope you need.
+
+**Expected result:** a saved pair and a usable encrypted transport, subject to reachability. Local readiness alone does not prove peer or application success. Use [relay-based LAN](LAN.en.md) instead if that is the topology you intend to configure.
 
 ## Shortest path in the local Web UI
 
@@ -169,3 +162,24 @@ TLS-stream/framed-UDP prototype results do not establish the final
 WireGuard/native-UDP implementation's acceptance. Ordinary `lan` trusted-relay
 mode and [mixed connections](MIXED_CONNECTIONS.en.md) have different external
 traffic permissions.
+
+## Historical transport checks
+
+Native automated loopback tests cover cold-start pairing, both directions of
+identity proof, TCP streaming/half-close, native UDP, restart, message delivery,
+scoped application forwarding and revocation. These do **not** establish
+real-device LAN reachability, application compatibility, suspend/resume,
+installation or publication by themselves. Historical 0.3.0-alpha.5 separately completed its
+exact-source native/browser and signed-release gates; see [verification](VERIFICATION.en.md).
+An earlier local browser attempt was blocked before page load by Chromium's
+process-singleton socket permission; that attempt established no visual acceptance. An earlier concurrent race run exposed simultaneous initial WireGuard
+handshakes: only 9/10 first messages and 7/10 first HTTP probes connected before
+the unchanged eight-second application deadline. A deterministic session gate
+now serializes initial activation, and the broader Core order subsequently
+passed ten repetitions concurrently with two full adapter repetitions. Immediate
+responder restart also passes without extending production deadlines. The separate
+native lifecycle gate passes bidirectional TCP and UDP through 125 seconds of
+active traffic, with a later completed handshake observed on both peers, and
+fresh TCP/UDP dials after 185 seconds idle. Synthetic key expiry, flushing and
+scheduled rekey also pass. These are bounded localhost results, not real-device
+or installed-release acceptance.

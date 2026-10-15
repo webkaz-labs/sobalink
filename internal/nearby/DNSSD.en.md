@@ -2,6 +2,15 @@
 
 The macOS adapter uses the system DNS-SD service on the explicitly selected interface. It produces untrusted setup hints. A selected hint never grants trust or permission to connect; the existing numeric bootstrap endpoint, current remote session, full fingerprint comparison and both peers' approval remain mandatory.
 
+## Review the provider result
+
+1. Confirm the explicitly selected interface and current random discovery session.
+2. Treat the returned records as setup hints with the documented OS visibility limits.
+3. Authenticate the selected endpoint and obtain the existing approvals independently.
+4. If permission or provider availability fails, show unavailable and use manual setup. Do not widen the interface scope or change OS settings automatically.
+
+[Provider selection and shared limits](README.md) · [Current verification](../../docs/VERIFICATION.en.md)
+
 ## Scope and privacy
 
 The adapter registers four bounded records for the current random session: PTR, SRV, TXT and one A record. Instance and host names derive only from that session, never the OS hostname. The A record contains only the selected IPv4 address. Queries follow only the exact service and validated session-derived instance/host names. No default hostname/domain, interface Any, automatic rename, P2P inclusion, generic hostname resolver or wider fallback is used.

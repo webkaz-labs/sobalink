@@ -4,7 +4,16 @@
 
 近くの端末との接続では、範囲を明示した「相手を選んで依頼→相手が承認」と、任意の指紋全文照合を提供します。探索の名前や接続先は本人確認の証拠ではありません。初回に受け入れた鍵を記憶する方式（TOFU）は、最初の交換時の能動的ななりすましを防げません。アプリの権限は別途許可します。
 
-これはソース開発段階です。決定的テスト、隔離 loopback 検証、配布物の検証、実端末検証は別の確認段階であり、互いの代替にはなりません。この文書は実端末や公開済みバイナリでの合格を主張しません。
+依頼して承認する手順は [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) に含まれます。[検証記録](VERIFICATION.md)で同一ソースの CI と署名付き配布を区別します。同一ホストの探索や制御されたブラウザー・ループバック試験は、物理端末間の探索・実登録・アプリ互換性の合格を示しません。
+
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-ja-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/permissions-ja-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/permissions-ja-light-narrow.svg">
+  <img src="assets/visuals/permissions-ja-light-wide.svg" alt="通信のペアリング、文字・ファイルの信頼、自動保存、サービス共有は別々に判断します。" width="1040">
+</picture>
+
+ペアリングは通信相手を識別します。文字・ファイルの信頼、自動保存先、サービスの範囲はそれぞれ確認してください。初回の鍵の承認では、TOFU の限界を理解してから承認します。
 
 ## 依頼して承認する手順（v2）
 

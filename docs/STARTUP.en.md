@@ -4,9 +4,20 @@
 
 Saved definitions remain inert by default. Optional startup selections authorize
 only the exact reviewed outbound connections on future online process launches.
-No inbound shares or file transfers start automatically. These controls are
+These startup approvals start neither inbound shares nor new file transfers. Previously accepted durable queues have their own original-ID/deadline recovery contract. These controls are
 implemented and covered by synthetic tests; installed-device, enrollment and
 application acceptance still require real-device verification.
+
+## Choose the permission you need
+
+| Goal | Control | Takes effect |
+| --- | --- | --- |
+| Keep reusable settings only | [Save a service](SAVED_SERVICES.en.md) | Definition stays stopped |
+| Start reviewed outbound services on a future launch | `startup preview` / `startup save` below | Once after network readiness on an online launch |
+| Start the process at OS sign-in | [Per-user autostart](LIFECYCLE.en.md) | Future user sign-in; separate registration review |
+| Retain scoped SOCKS credentials | Private proxy profile below | Save only; future startup requires its explicit selection |
+
+Start with outbound services below. Configure OS sign-in startup only if you also want the application itself launched for you.
 
 ## Saved outbound connections
 

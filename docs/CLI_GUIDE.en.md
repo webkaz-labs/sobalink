@@ -24,9 +24,20 @@ The wizard shows the peer, purpose, complete port scope, local entry or applicat
 
 On supported terminals, Up/Down selects choices and Left/Right edits text. Numbers, names and comma-separated values also work. Redirected output and `TERM=dumb` use plain prompts. `--interactive` explicitly enables the guided flow for supplied input; `--json` never prompts and cannot be combined with interactive mode. Guided input refuses `TEA_TRACE`, stores no input history, rejects invalid UTF-8/control sequences, and restores terminal modes after exit.
 
+### Choose the output before automating
+
+| Need | Mode | What to expect |
+| --- | --- | --- |
+| Help choosing a service | `soba connect` | Guided selection and review in a terminal |
+| Repeat a known action | Explicit flags | Exact target and scope; review before starting |
+| Parse a result | `--json` | Stable machine output; no interactive approval |
+| Validate input only | Global `--dry-run` | No start and no proof that a port is available |
+
+Use the same global `--state-dir PATH` throughout a workflow. A preview is not permission for a later changed action.
+
 ## Nearby LAN setup
 
-For a nearby-device connection, start with `soba init`, `soba start --offline --background`, then `soba nearby` on both devices. Choose a relay role explicitly on each device and permit at least one to relay. Review [nearby setup, port corrections and stop behavior](CONNECTION_SETUP.en.md#short-cli-path-and-corrections) before using an existing profile; receiving trust remains separate.
+For a nearby-device connection, start with `soba init`, `soba start --offline --background`, then `soba nearby` on both devices. Have the receiving device explicitly open requests and review the requester’s immutable plan before approval. Review [request-and-accept setup](CONNECTION_SETUP.en.md#request-and-accept-v2), including TOFU versus full-fingerprint verification; message/file trust remains separate. The legacy full-fingerprint flow and its relay-role choices are documented separately there.
 
 ## Explicit agent commands
 

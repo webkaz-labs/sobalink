@@ -4,9 +4,25 @@
 
 The local Web UI supports service connections, reviewed sharing, files and messages, saved definitions, diagnostics, optional scoped proxies, and Tailnet sign-out. The controls below use the same local command API as the CLI. Browser checks, real-device compatibility and OS sign-in behavior remain separate acceptance gates.
 
+## Open the UI and choose one task
+
+1. Start `soba`, then run `soba ui` if you need a fresh code.
+2. On this same device, open the exact printed numeric-loopback URL and enter the separately printed one-time code. Keep both sign-in output and screenshots private.
+3. Choose a device for a connection, share or transfer; use **Saved services** for reusable definitions and **Preferences** for local settings.
+4. Review the target, ports/content and lifetime before applying. Check status after an uncertain response before repeating an action.
+
+| What you see | What it establishes |
+| --- | --- |
+| Device online | Network observation, not message/file permission |
+| Saved service | Stored settings, not a running listener |
+| Ready listener | Transport readiness, not application success |
+| Outbox accepted | Local acceptance, not receiver save |
+
+The following sections explain each control and its recovery boundaries.
+
 ## Use the device list and network graph
 
-See the [verification record](VERIFICATION.en.md#current-integration-and-published-baseline) for the target version and completed checks. Physical-device and OS-lifecycle acceptance are separate. The dedicated guides are authoritative for [durable files](DURABLE_OUTBOX.en.md), unreleased [durable text](DURABLE_TEXT.en.md) and [connection setup](CONNECTION_SETUP.en.md).
+See the [verification record](VERIFICATION.en.md#current-integration-and-published-baseline) for the target version and completed checks. Physical-device and OS-lifecycle acceptance are separate. The dedicated guides are authoritative for [durable files](DURABLE_OUTBOX.en.md), [durable text](DURABLE_TEXT.en.md) and [connection setup](CONNECTION_SETUP.en.md).
 
 **Device list** and **Network graph** use the same search and filter. Counts refer to remote devices and exclude this device. Use **Clear filters** when filtering hides the desired device. Select a node or line to open that peer's details; Close or Escape returns to the previous control. On narrow screens, details replace the graph.
 
@@ -20,7 +36,7 @@ Service rows keep the endpoint, state and lifetime visible. Open **Manage servic
 
 Start offline and open **Set up network**. [Direct LAN](DIRECT_LAN.en.md) pairs exact numeric private-network endpoints without a relay. [Mixed connections](MIXED_CONNECTIONS.en.md) explicitly selects backends and requires fresh authenticated binding before treating multiple routes as the same peer; unbound routes remain individually usable. [LAN destination restrictions](LAN_DESTINATIONS.en.md) constrain admitted destinations; they do not bind physical interfaces or override VPN routing. WAN discovery is a separate opt-in to selected numeric STUN destinations and/or IPv6 candidates, incompatible with strict LAN destination restrictions. None requires administrator privileges or LAN-router changes.
 
-Review configuration and network effects before applying. Local readiness is not confirmed peer response. The direct-LAN cold-start regression is fixed with localhost TCP/UDP lifecycle evidence. The alpha.5 exact-source browser and four-target release gates passed as recorded in [verification](VERIFICATION.en.md); actual-device reachability and application success remain separate checks.
+Review configuration and network effects before applying. Local readiness is not confirmed peer response. The direct-LAN cold-start regression is fixed with localhost TCP/UDP lifecycle evidence. The historical 0.3.0-alpha.5 exact-source browser and four-target release gates passed as recorded in [verification](VERIFICATION.en.md); actual-device reachability and application success remain separate checks.
 
 ## Prepare route recovery
 
@@ -98,13 +114,13 @@ Open **Saved proxy credentials → Manage saved proxies** to inspect sanitized s
 
 **Reveal credentials temporarily** is the only display action. Hide/close and scope changes clear the private fields. Exports/history exclude them, and automated browser evidence capture rejects the private view. Copying is explicit and leaves the chosen value on the system clipboard until you replace it. Never include credentials in command arguments, source code, screenshots or shared files. Failed/uncertain saves clear input; reload the saved record and make a fresh scope review before retrying. All controls retain the local session/Host/Origin/CSRF boundary. Real installed startup, file ACL and external-client behavior still need their separate acceptance checks.
 
-## Readable, compact controls in alpha.2
+## Readable, compact controls introduced in 0.3.0-alpha.2
 
 The device list keeps a visible search label and a persistent selected row. In the device view, service actions and file/message shortcuts form separate action groups without repeating the current tab heading. Service rows align the saved name and kind, runtime state and immediate actions; endpoint, lifetime and management details remain beneath them. The same row wraps into a compact two-line header in a narrow panel.
 
 Service forms group destination/access separately from service settings, followed by the exact review. Preferences groups display, receiving and management. Advanced options still open on request. Closing a form preserves the existing draft behavior; changing its grouping does not apply settings.
 
-Inputs and copyable values use a readable 16px scale. Secondary text and compact metadata retain separate sizes. Buttons and utilities use readable text/icons and restrained tonal fills before hover in both themes. Input boundaries remain distinct. Focus follows the field’s existing contour for both pointer and keyboard editing, without a detached second frame. The message editor highlights its outer container; its toolbar buttons retain their own keyboard indicator. Unavailable actions use neutral styling while retaining readable captions, and read-only values stay selectable. Selected tabs use a fill and type weight. Sparse dividers and aligned rows establish structure without framing every control or underlining every action. Touch layouts retain at least 44px principal controls while avoiding oversized cards. These presentation changes shipped in alpha.2. The alpha.5 connection controls have their own exact-source browser evidence in [verification](VERIFICATION.en.md); any later UI changes need separate acceptance.
+Inputs and copyable values use a readable 16px scale. Secondary text and compact metadata retain separate sizes. Buttons and utilities use readable text/icons and restrained tonal fills before hover in both themes. Input boundaries remain distinct. Focus follows the field’s existing contour for both pointer and keyboard editing, without a detached second frame. The message editor highlights its outer container; its toolbar buttons retain their own keyboard indicator. Unavailable actions use neutral styling while retaining readable captions, and read-only values stay selectable. Selected tabs use a fill and type weight. Sparse dividers and aligned rows establish structure without framing every control or underlining every action. Touch layouts retain at least 44px principal controls while avoiding oversized cards. These presentation changes shipped in 0.3.0-alpha.2. The 0.3.0-alpha.5 connection controls have their own exact-source browser evidence in [verification](VERIFICATION.en.md); any later UI changes need separate acceptance.
 
 ## Opt-in durable file outbox
 

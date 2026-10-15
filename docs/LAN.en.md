@@ -1,12 +1,35 @@
 # Tailcat LAN setup and recovery
 
-[日本語](LAN.ja.md) · [Main guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#tailcat-gate)
+[日本語](LAN.ja.md) · [Main guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#tailcat-gate) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-Published `0.3.0-alpha.5` includes explicit pinned-relay pairing, prepared-route recovery, the [LAN destination policy](LAN_DESTINATIONS.en.md), and [relay certificate/resource controls](RELAY_OPERATIONS.en.md). Exact-source automated and distribution results are recorded in [verification](VERIFICATION.en.md). Physical devices, LAN/WAN/NAT topology, sleep/wake and native IME remain separate, unperformed acceptance checks.
+For normal first-use setup, start with [request and accept](CONNECTION_SETUP.en.md). The explicit identity/invitation workflow below remains available when you want that path. Normal first-use setup uses TOFU: names and discovery do not authenticate a person or prevent a first-use man-in-the-middle attack. Compare the full fingerprint through a trusted channel when needed.
+
+The current release includes explicit pinned-relay pairing, prepared-route recovery, the [LAN destination policy](LAN_DESTINATIONS.en.md), and [relay certificate/resource controls](RELAY_OPERATIONS.en.md). Exact-source automated and distribution results are recorded in [verification](VERIFICATION.en.md). Physical devices, LAN/WAN/NAT topology, sleep/wake and native IME remain separate, unperformed acceptance checks.
+
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-en-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/permissions-en-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/permissions-en-light-narrow.svg">
+  <img src="assets/visuals/permissions-en-light-wide.svg" alt="Pairing, message and file trust, and service permissions are separate decisions.">
+</picture>
+
+
+**Upgrading:** profile 3 is incompatible with v0.4.0-alpha.4 and earlier. Keep old state untouched and start with a separate empty `--state-dir`; there is no automatic migration or deletion. Per-feature format histories below do not override this profile boundary.
+
+## Choose your next step
+
+| Goal | Start here | Check before continuing |
+| --- | --- | --- |
+| Pair two devices through a relay | Use the local UI below | Both devices can use the same reviewed relay and pin |
+| Connect without a relay | [Direct LAN](DIRECT_LAN.en.md) | Both the exact TCP and UDP endpoints are reachable |
+| Prepare for another network | [Prepare another route](#prepare-another-route) | Each device approves its own exact candidates and lifetime |
+| Stop or remove access | [Revoke, recover and stop](#revoke-recover-and-stop) | Application trust and transport pairing are separate |
+
+Keep invitations private. Pairing establishes the transport relationship; it does not approve messages, files or a service. Check an actual application operation after setting up its separate permission.
 
 ## Use the local UI
 
-The draft alpha.6 UI always inspects an incoming invitation before the separate pairing action, including when LAN is already configured. Review the intended identity, exact relay/pin and expiry. A change of invitation, identity, network or destination policy invalidates that review. For initial configuration, pairing continues only if the acknowledged configuration still matches the reviewed scope; closing the view does not cancel an already-submitted command. The published alpha.5 UI does not include this complete review flow.
+The local UI always inspects an incoming invitation before the separate pairing action, including when LAN is already configured. Review the intended identity, exact relay/pin and expiry. A change of invitation, identity, network or destination policy invalidates that review. For initial configuration, pairing continues only if the acknowledged configuration still matches the reviewed scope; closing the view does not cancel an already-submitted command. The historical 0.3.0-alpha.5 UI did not include this complete review flow.
 
 For two devices, choose either one as the host before pairing, using an address the other can reach. Keep sobalink running on that host; hosting does not move automatically to the other device. Open “Set up network” → LAN and create or display the public identity needed for the invitation. Then choose the appropriate path:
 
@@ -14,7 +37,7 @@ For two devices, choose either one as the host before pairing, using an address 
 2. To join from a fresh profile, send this device's public ID to the inviter and paste its private invitation. Review the host identity, exact relay/pin and expiry, then choose “Connect and pair”. The UI configures that reviewed relay and pairs; an existing different network or relay requires explicit stop/offline recovery first
 3. “Advanced: use an existing relay” remains available for a verified numeric endpoint and certificate pin. Once connected, invite the exact recipient key or join a received invitation. Pairing leaves application trust off until explicitly approved
 
-For an unchanged saved host in an offline process, choose “Review saved host” → check the exact public identity, name, listener, fingerprint, destination policy and existing scope → “Start saved relay”. This needs no address lookup and preserves the saved pair and valid certificate. Changed settings or permissions require a new review. If a running or failed engine still exists, stop the whole app and reopen with `soba start --offline` first. Address/certificate replacement retains its separate explicit recovery requirements. These shortcuts are draft alpha.6 source changes; physical-device hosting and pairing acceptance remain open.
+For an unchanged saved host in an offline process, choose “Review saved host” → check the exact public identity, name, listener, fingerprint, destination policy and existing scope → “Start saved relay”. This needs no address lookup and preserves the saved pair and valid certificate. Changed settings or permissions require a new review. If a running or failed engine still exists, stop the whole app and reopen with `soba start --offline` first. Address/certificate replacement retains its separate explicit recovery requirements. These reviewed shortcuts do not establish physical-device hosting or pairing acceptance; those checks remain open.
 
 “Stop sobalink” reviews active transfers and services before stopping the app, hosted relay and connections. The local control page disconnects. Reopen the app to continue. Ordinary definitions remain stopped; only separately reviewed [outbound startup approvals](STARTUP.en.md) can start fresh connections. Previous transfer progress never resumes.
 
@@ -143,7 +166,7 @@ soba lan routes revoke PEER_ID
 
 In the local UI, open LAN setup → “Advanced: prepared relay candidates” to review additions/removals. A paired device's details → “Route recovery” provides private offer creation, inspect/approve, expiry and revoke controls. New offers and eligible approval reviews start with Until revoked selected; finite/v1 offers allow only finite approval. The chosen lifetime and its impact still require confirmation. Select exact candidates explicitly; none is checked automatically. Saving reports configuration, not proven reachability.
 
-`local` is a relay address classification. Direct peer traffic can leave the LAN; use the separate [explicit destination policy](LAN_DESTINATIONS.en.md) to restrict permitted destinations. It still does not prove NIC/VPN isolation or whole-process zero egress. Saved-state cold start with external services unavailable, stable service entrances and route transitions require the [native integration gate](VERIFICATION.en.md#route-recovery-gate), not just configuration success. Existing TCP preservation, automatic application replay and byte-offset/restart file resume are not provided.
+`local` is a relay address classification. Direct peer traffic can leave the LAN; use the separate [explicit destination policy](LAN_DESTINATIONS.en.md) to restrict permitted destinations. It still does not prove NIC/VPN isolation or whole-process zero egress. Saved-state cold start with external services unavailable, stable service entrances and route transitions require the [native integration gate](VERIFICATION.en.md#route-recovery-gate), not just configuration success. This route workflow provides neither existing TCP preservation nor automatic application replay or byte-offset/restart file resume. Separately authorized durable queue behavior is described in the [file queue guide](DURABLE_OUTBOX.en.md).
 
 ### Withdraw an advertised offer
 
@@ -159,7 +182,7 @@ Run withdraw on the issuer; inspect/approve run on the recipient with that side'
 
 ### Upgrade and recovery
 
-Alpha.2 private LAN state version 1 preserves its original identity, keys, anchor and singleton behavior. Earlier prepared-route version-2 files retain their v1 finite deadlines. Explicit-lifetime protocol/state version 2 uses private LAN file version 3; these are different version numbers. Older binaries reject unsupported state. Do not lower versions or restore old backups to bypass that check. Keep backups private and inspect state with a compatible binary under `--offline`. Until-revoked approval does not bypass certificate validity: generated local relay certificates last 365 days, and expiry or a changed pin requires separate reviewed recovery.
+Historical 0.3.0-alpha.2 private LAN state version 1 preserves its original identity, keys, anchor and singleton behavior. Earlier prepared-route version-2 files retain their v1 finite deadlines. Explicit-lifetime protocol/state version 2 uses private LAN file version 3; these are different version numbers. Older binaries reject unsupported state. Do not lower versions or restore old backups to bypass that check. Keep backups private and inspect state with a compatible binary under `--offline`. Until-revoked approval does not bypass certificate validity: generated local relay certificates last 365 days, and expiry or a changed pin requires separate reviewed recovery.
 
 `lan_routes_invalid` means obtain and inspect a fresh valid update; `lan_routes_unavailable` means no current local route permission. `lan_routes_recovery` means saved-state durability is uncertain: stop the agent and inspect/repair private storage before restarting. Refresh state before retrying an uncertain action. No successful offer import proves remote approval or connectivity.
 

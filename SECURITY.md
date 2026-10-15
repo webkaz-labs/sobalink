@@ -2,15 +2,24 @@
 
 [日本語](docs/SECURITY.ja.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md)
 
-sobalink is experimental software. Its controls constrain local management, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. The published baseline is v0.4.0-alpha.4. Current connection-setup and durable-text changes are source-development work; earlier release checks do not qualify this source. Physical-device, application, OS-login, suspend and power-loss acceptance remain separate. See the [exact-source record](docs/VERIFICATION.en.md) before relying on a claim.
+sobalink is experimental software. Its controls constrain local management, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. The published baseline is [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), source `46dcd363`, including connection setup and durable text. Signed distribution and native installed-binary checks are recorded separately from physical-device acceptance. Physical-device, application, OS-login, suspend and power-loss acceptance remain separate. See the [exact-source record](docs/VERIFICATION.en.md) before relying on a claim.
 
 Administrator rights and LAN-router changes are outside the product requirements. No TUN driver, OS route/firewall change or UPnP/NAT configuration is installed by LAN setup; blocked network policy is reported, not bypassed.
+
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="docs/assets/visuals/permissions-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="docs/assets/visuals/permissions-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/visuals/permissions-en-dark-wide.svg">
+  <img src="docs/assets/visuals/permissions-en-light-wide.svg" alt="Network connection, sender trust and scoped service permission are separate decisions" width="1040">
+</picture>
+
+Connecting a peer does not trust it for messages/files or expose services. File receiving normally needs batch acceptance; autosave is a separate explicit setting. Review the peer identity and each permission independently.
 
 ## Explicit setup and durable queues
 
 [Nearby setup](docs/CONNECTION_SETUP.en.md) uses an explicitly selected short-lived network scope. Discovery names and addresses are untrusted hints. Request-and-accept mode uses explicit first-use key acceptance (TOFU): it pins the accepted key, but cannot authenticate the intended physical device against an active attacker during the first exchange. The optional full-SHA-256 mode requires independent comparison of the entire identity/plan fingerprint and approval on both devices. There is no silent fallback from full verification to TOFU. Exact roles, scopes, relay endpoint/certificate and expiration are bound to the request; revoked keys remain blocked against delayed completion. Connecting does not grant message/file trust or service access. Native discovery, browser confirmation, signed distribution and physical-LAN acceptance are distinct checks.
 
-The explicit [durable file queue](docs/DURABLE_OUTBOX.en.md) and development [durable text queue](docs/DURABLE_TEXT.en.md) retain immutable content, exact peer identities, original deadlines and receiver deduplication evidence. Durable jobs never fall back to the immediate protocol. Restart recovery requires current authority and certified saved state; uncertainty blocks unsafe sending or cleanup. Cancellation and expiry do not recall remote saved content, and visible-history cleanup does not erase deduplication authority. Active work, retained evidence and payload bytes have separate finite bounds. This development source requires profile format 3 and rejects older formats without migration or deletion; preserve old profiles and use separate empty state.
+The explicit [durable file queue](docs/DURABLE_OUTBOX.en.md) and [durable text queue](docs/DURABLE_TEXT.en.md) retain immutable content, exact peer identities, original deadlines and receiver deduplication evidence. Durable jobs never fall back to the immediate protocol. Restart recovery requires current authority and certified saved state; uncertainty blocks unsafe sending or cleanup. Cancellation and expiry do not recall remote saved content, and visible-history cleanup does not erase deduplication authority. Active work, retained evidence and payload bytes have separate finite bounds. This version requires profile format 3 and rejects older formats without migration or deletion; preserve old profiles and use separate empty state.
 
 ## Local management stays local
 
@@ -24,7 +33,7 @@ The explicit [durable file queue](docs/DURABLE_OUTBOX.en.md) and development [du
 - Local session and command JSON request bodies have a five-second native socket read deadline. Native browser upload bodies have a rolling 30-second no-progress read deadline, refreshed only when bytes arrive. The existing total staging deadline still begins after reservation and is not extended by progress; explicitly unlimited staging removes that total deadline but not the idle deadline
 - Local IPC is restricted to the owning OS user and dispatches to the same application core. A process already running as that user can still access their files and authority; these controls do not isolate a compromised local account
 
-The ordinary peer API is a different handler. A peer cannot use it to change networks, trust, receive paths, service grants, sessions, settings or arbitrary local files. The separate source-development [resource management](docs/RESOURCE_MANAGEMENT.en.md) protocol requires explicit, finite, one-pair management consent for exactly two transfer settings. It never forwards arbitrary local commands or exposes the local management API. Its integration and acceptance gates remain separate.
+The ordinary peer API is a different handler. A peer cannot use it to change networks, trust, receive paths, service grants, sessions, settings or arbitrary local files. The separate [resource management](docs/RESOURCE_MANAGEMENT.en.md) protocol requires explicit, finite, one-pair management consent for exactly two transfer settings. It never forwards arbitrary local commands or exposes the local management API. Its integration and acceptance gates remain separate.
 
 ## Explicit network and identity
 
@@ -118,7 +127,7 @@ There is no unrequested application launch, remote administration/command endpoi
 
 Retain native Linux x64/ARM64, macOS ARM64 and Windows x64 race tests, vet, frontend tests and actual packaged-binary checks. Signed artifacts, provenance and repeatable builds are separate from OS code signing/notarization and real-device acceptance. Do not disable signature, identity, digest or OS security checks to make an installation pass.
 
-Report security issues privately through the repository's available private reporting mechanism; do not put credentials or a working exploit against a private endpoint in a public issue. If private reporting is unavailable, ask for a private channel before sharing sensitive details. There is no claim of a completed external security audit or stable support for this draft.
+Report security issues privately through the repository's available private reporting mechanism; do not put credentials or a working exploit against a private endpoint in a public issue. If private reporting is unavailable, do not publish sensitive details. This experimental project provides no user support; an available private security-reporting mechanism is not a support channel or a promise of a response or fix. No completed external security audit is claimed.
 
 ### Route permission save failures
 

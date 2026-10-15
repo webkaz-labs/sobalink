@@ -4,6 +4,17 @@
 
 The advanced SOCKS5 entry point and explicit TCP diagnostics are available through `soba` and the authenticated local command API. They use the same current peer identity and transport policy as service connections. New logic is covered by mock and in-memory transport tests; native socket, actual-device and application compatibility checks are separate acceptance gates.
 
+## Diagnose before changing settings
+
+| Question | First action | Next check |
+| --- | --- | --- |
+| What failed? | `soba doctor` | Reported stage and next action; no active probe |
+| Can one approved TCP target accept a connection? | `soba doctor --service SERVICE_ID --tcp` | Choose one effective port for a range |
+| Does the application work? | Use the actual client | Authentication and a real application operation |
+| Do I need a proxy? | Prefer `soba connect` for one service | Use SOCKS only for a compatible client and reviewed TCP scope |
+
+A successful TCP probe does not clear retained `lastFailure` history or establish application health. The proxy setup below is optional.
+
 ## Review an optional proxy
 
 A proxy is optional. For a single service, the normal `soba connect` workflow is usually simpler.

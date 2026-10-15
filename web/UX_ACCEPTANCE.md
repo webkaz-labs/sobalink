@@ -4,6 +4,17 @@ This log separates the current UI refinement from earlier workflow checkpoints. 
 
 Apply the [development and usability principles](../docs/DEVELOPMENT_PRINCIPLES.en.md) ([日本語](../docs/DEVELOPMENT_PRINCIPLES.ja.md)). This document records workflow effort, evidence, and remaining acceptance work rather than duplicating those principles.
 
+## Use this review record
+
+This page preserves dated UI checkpoints. Counts and pending statements belong to their recorded source; use [current verification](../docs/VERIFICATION.en.md) for release status and [browser acceptance](BROWSER_ACCEPTANCE.md) for the reproducible execution path.
+
+1. Choose the workflow and viewport being reviewed.
+2. Inspect the actual image and interactions, not only a test count or DOM assertion.
+3. Record visible state, next action, focus, clipping and readable text in both languages.
+4. Keep synthetic preview findings separate from production Go-backed browser results and physical-device acceptance.
+
+The review order is overview → normal action → advanced details. In particular, saved configuration, listener readiness and the application's own success must remain distinguishable.
+
 ## UI refinement — 2026-10-03
 
 The isolated UI work starts from the exact released `8e6cbb00d60757f701d7d453adb92590cc5d2544` source tree. It changes presentation, frontend regressions and the Japanese/English Web guide. Backend contracts, transport, storage and authorization logic are unchanged.

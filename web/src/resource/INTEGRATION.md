@@ -1,6 +1,22 @@
 # Transfer-settings Web integration
 
-The standalone W1 controller, decoders, and dialog passed whole-Web typecheck and 59 focused tests. The App/API hookup is now authored in source; its new integration tests still require the separate reviewed execution gate. This is local settings plus inspection v1 or management v2 for one explicitly selected remote device. Service/transfer catalog integration, the distinct catalog capability/schema, and group execution remain incomplete.
+**Integration checkpoint record.** The standalone W1 controller, decoders, and dialog passed whole-Web typecheck and 59 focused tests at that checkpoint. The App/API hookup and integration tests below were then authored pending their separate reviewed execution gate. This module covers local settings plus inspection v1 or management v2 for one explicitly selected remote device. Later catalog and group UI integration are documented separately in [catalog](../catalog/INTEGRATION.md) and [group](../group/INTEGRATION.md); those modules do not imply that all original remote-provider scope is complete.
+
+## Operation and recovery at a glance
+
+```mermaid
+flowchart LR
+    A[Explicit selection] --> B[Inspect and review]
+    B --> C[Confirm exact two-field change]
+    C --> D[Apply once]
+    D --> E{Outcome known?}
+    E -->|Yes| F[Show evidence]
+    E -->|No| G[Explicit original-operation status]
+```
+
+Text equivalent: select, inspect, review and confirm the exact change before one apply. If the outcome is unknown, recover the original operation's status rather than submitting another change. Authentication or navigation changes invalidate the review without erasing retained ambiguous attempts.
+
+The counts and pending execution statements below are integration-checkpoint records. For the current release, consult [verification](../../../docs/VERIFICATION.en.md); a later aggregate result must not be presented as proof of every individual scenario.
 
 ## Existing contract
 

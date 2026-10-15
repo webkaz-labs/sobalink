@@ -2,6 +2,20 @@
 
 This source connects the authenticated-local `resource.catalog.snapshot` command to a bounded EN/JA settings, saved-service and transfer-activity dialog. The Core command and opaque `State.resourceCatalogProcessId` are required. Existing inspection/management grants do not establish a remote catalog capability.
 
+## Follow a catalog action
+
+```mermaid
+flowchart LR
+    A[Open dialog] --> B[Explicit snapshot request]
+    B --> C[Validate and show bounded rows]
+    C --> D[Select current row]
+    D --> E[Open existing reviewed workflow]
+```
+
+Text equivalent: opening is inert; explicit refresh obtains bounded observations; a current row navigates to an existing workflow whose own fresh review remains required. A row does not create a grant or perform an action.
+
+For integration review, inspect explicit reads first, invalidation second, and the existing destination workflow last. Failed or stale observations must stay distinguishable from a complete empty result.
+
 ## Explicit reads and existing workflows
 
 - Opening the dialog or receiving `/api/state` polls performs no catalog request. Local settings resolution and snapshot refresh are explicit controls. An unresolved selected category is never silently omitted.

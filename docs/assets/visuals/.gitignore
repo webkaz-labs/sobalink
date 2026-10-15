@@ -1,0 +1,5 @@
+*.png
+*-preview-*.html
+preview-*.html
+explainer-manifest.json
+__pycache__/

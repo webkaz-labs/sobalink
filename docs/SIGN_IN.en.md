@@ -1,8 +1,10 @@
 # Tailnet sign-in
 
+[日本語](SIGN_IN.ja.md) · [Startup](LIFECYCLE.en.md) · [Nearby setup](CONNECTION_SETUP.en.md)
+
 Start the local application and select Tailnet. The local Web settings provide an official sign-in link. Pairing through a selected relay is a separate setup flow and does not use this login.
 
-For a terminal:
+## Choose a sign-in method
 
 ```sh
 soba login --browser
@@ -17,3 +19,14 @@ An already connected node or one awaiting administrator approval does not restar
 Plain `soba login` keeps the machine JSON interface. `soba login --wait` waits and returns a final state as JSON. Use `--state-dir PATH` before the command to retain the selected profile.
 
 Mocked tests cover URL validation, repeated requests, pending approval, cancellation and QR pixels/display restoration. Phone scanning, real enrollment, native IME and terminal/font combinations require real-device acceptance.
+
+## Read the outcome
+
+| Result | Next step |
+| --- | --- |
+| Connected | Inspect `soba peers`, then choose a service |
+| Waiting for administrator approval | Complete the Tailnet approval process; do not restart authentication unnecessarily |
+| Still waiting or timed out | Inspect `soba status`; a local timeout does not revoke the sign-in link |
+| Stopped waiting with Ctrl+C | The node and link may remain active; use `soba stop` to stop the application |
+
+Tailnet enrollment and the one-time code for the local Web UI are separate sign-ins. Never paste an enrollment link into a shared issue or diagnostic log.

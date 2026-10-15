@@ -2,9 +2,22 @@
 
 [English](README.en.md) · [概要](../README.md)
 
+実験的な OSS プロジェクトであり、利用者向けサポートは提供しません。文書は自分で確認するための資料で、回答・修正・互換性を約束するものではありません。
+
 最初の操作は[利用ガイド](GENERIC.ja.md)から始めてください。公開版・開発ソース・実行済みの確認結果は[検証記録](VERIFICATION.md)を正本とします。各手順は対象版と未確認の条件を明記し、実機の受入を自動試験から推定しません。
 
 この一覧は読む場所を案内します。操作は専用ガイド、保証・制約は契約、実行結果は検証記録、残る作業はロードマップに置き、同じ説明をここへ複製しません。日英版は同じ役割の対です。全体設計・配布・Web 受入提案は共通の英語文書を参照します。
+
+## 目的から選ぶ
+
+| 目的 | 最初に読む | 次に確認する |
+| --- | --- | --- |
+| 全体像を知る | [概要](../README.md) | [よくある疑問](FAQ.ja.md) |
+| 導入・更新する | [署名付き配布とプロフィールの境界](DISTRIBUTION.md) | [最初の起動](GENERIC.ja.md) |
+| サービスを使う | [相手のサービスを使う](GENERIC.ja.md#相手のサービスを使う) | 新しいペアが必要なら[接続セットアップ](CONNECTION_SETUP.ja.md) |
+| 上限や許可を変える | [容量](CAPACITY.ja.md) | [安全性](SECURITY.ja.md) |
+| 問題を切り分ける | [最初に止まった段階](TROUBLESHOOTING.ja.md) | 下記の専用ガイド |
+| 開発・検証する | [開発の基本方針](DEVELOPMENT_PRINCIPLES.ja.md) | [検証記録](VERIFICATION.md) |
 
 ## 使い始める・日常の操作
 
@@ -19,7 +32,9 @@
 - [ファイル・フォルダーの永続送信待ち](DURABLE_OUTBOX.ja.md)
 - [容量・予算・履歴](CAPACITY.ja.md)
 - [範囲を限定したプロキシ・診断](PROXY_DIAGNOSTICS.ja.md)
-- [用途例（日本語）](USE_CASES.ja.md)
+- [用途例](USE_CASES.ja.md)
+- [よくある疑問](FAQ.ja.md)
+- [自分で確認できること](TROUBLESHOOTING.ja.md)
 
 ## ネットワークの操作
 
@@ -31,12 +46,12 @@
 - [端末カードの確認・交換](DEVICE_CARDS.ja.md)
 - [代替ポートの確認](PORT_PROPOSALS.ja.md)
 
-## 開発ソースの操作・制約
+## 接続・送信待ち・リソース設定
 
-以下はソースの機能を読むための入口です。一覧への掲載を公開版への収録や受入完了の意味にはしません。
+v0.5.0-alpha.1 の機能の入口です。公開版への収録と実機の受入完了は別です。各ガイドの条件と正確なソースの検証記録を確認してください。
 
-- [接続セットアップ（未公開）](CONNECTION_SETUP.ja.md)
-- [テキストの永続送信待ち（未公開）](DURABLE_TEXT.ja.md)
+- [接続セットアップ](CONNECTION_SETUP.ja.md)
+- [テキストの永続送信待ち](DURABLE_TEXT.ja.md)
 - [リソース一覧](RESOURCE_CATALOG.ja.md)
 - [ローカルのリソース設定](RESOURCE_SETTINGS.ja.md)
 - [許可した相手の参照](RESOURCE_INSPECTION.ja.md)
@@ -48,6 +63,8 @@
 
 - [開発・使いやすさの基本方針](DEVELOPMENT_PRINCIPLES.ja.md)
 - [全体設計・通信境界](ARCHITECTURE.md)
+- [ローカル画面 API と相手側の境界](../web/API.md)
+- [説明図の生成元と保守](assets/visuals/README.md)
 - [安全性の境界](SECURITY.ja.md)
 - [経路復旧の契約](ROUTE_RECOVERY_DESIGN.ja.md)
 - [カタログ表示の契約](CATALOG_VIEW_CONTRACT.ja.md)

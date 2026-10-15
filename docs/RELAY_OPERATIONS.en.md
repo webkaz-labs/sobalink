@@ -1,8 +1,18 @@
 # Local relay setup and recovery
 
-[日本語](RELAY_OPERATIONS.ja.md) · [User guide](GENERIC.en.md)
+[日本語](RELAY_OPERATIONS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 Choose this device's private address explicitly, start its relay, and privately pair the other devices. A saved configuration, a running listener, and successful peer/application traffic are different states. Native loopback tests do not establish physical LAN reachability, sleep/wake behavior, or application compatibility.
+
+## Read status in three steps
+
+| Observation | What it tells you | Next step |
+| --- | --- | --- |
+| Saved relay | The reviewed endpoint, identity and policy are stored | Start only the intended configuration |
+| Listener ready | This process owns its listener | Pair the exact peer and check reachability |
+| Application response | The selected application operation worked | Keep its scope and lifetime under review |
+
+An unknown listener observation is not proof of failure. Certificate replacement, endpoint changes and wider destination permission each require their own review; none is a generic repair button.
 
 ## LAN and outside-LAN use
 

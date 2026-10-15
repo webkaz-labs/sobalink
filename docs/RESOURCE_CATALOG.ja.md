@@ -1,10 +1,20 @@
 # ローカルリソースカタログ
 
-[English](RESOURCE_CATALOG.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md)
+[English](RESOURCE_CATALOG.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
 `soba resource catalog` は、既存の観測を上限内でローカルにまとめて表示します。相手向けのカタログ通信方式・遠隔のリソース列挙・新しい許可・変更操作は追加しません。ソースの動作を説明する文書です。テスト・実機・インストール済みバイナリ・配布には別々の受入確認が必要です。
 
 独立した[共有サービス一覧の閲覧](CATALOG_VIEW_CONTRACT.ja.md)は実装済みです。相手別の明示的な閲覧許可、上限付きの遠隔一覧取得、接続直前の確認を `resource catalog view` と Web のサービス導線で使います。以下の旧キャッシュの制限は `resource catalog` のもので、すべてのサービス一覧機能の制限ではありません。
+
+## 必要な情報を選ぶ
+
+| 目的 | 操作 | 許可の境界 |
+| --- | --- | --- |
+| ローカル設定・保存済みサービス・転送状況を読む | `soba resource catalog` | 観測のみ。変更や常時監視はしない |
+| 相手1台の設定を参照する | 以下の正確な遠隔指定 | 既存の参照または管理許可 |
+| 相手の現在の共有サービスを見る | [共有サービス閲覧](CATALOG_VIEW_CONTRACT.ja.md) | 独立した閲覧許可と、その後の別の接続許可 |
+
+行の欠落や古い行は、不存在の証拠ではありません。次の操作を選ぶ前に、各情報源の状態と観測時刻を確認してください。
 
 ## まず通常のコマンド
 

@@ -8,6 +8,20 @@ certificate pin, trust grant, or evidence of connectivity. Core must consent to
 and own the bootstrap listener, look up the exact selected candidate ID again,
 and authenticate that endpoint independently.
 
+## From a hint to an approved peer
+
+```mermaid
+flowchart LR
+    A[Consent to selected scope] --> B[Bounded discovery session]
+    B --> C[Select untrusted hint]
+    C --> D[Revalidate current candidate]
+    D --> E[Independent endpoint authentication]
+```
+
+Text equivalent: consent selects a scope; a bounded session produces untrusted hints; selection requires current-candidate revalidation and independent authentication. Discovery never grants access.
+
+日本語: 明示的な同意で範囲を選び、上限付きセッションで未認証の候補を取得します。選択後は現在の候補を確認し直し、接続先を別途認証します。発見だけではアクセス許可になりません。
+
 ## Current provider selection
 
 Core uses `StartNative` only after scope and advertisement consent. Linux and

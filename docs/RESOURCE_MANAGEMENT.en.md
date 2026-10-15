@@ -1,8 +1,16 @@
 # Review and manage one peer's transfer settings
 
-[日本語](RESOURCE_MANAGEMENT.ja.md) · [Read-only inspection](RESOURCE_INSPECTION.en.md)
+[日本語](RESOURCE_MANAGEMENT.ja.md) · [Read-only inspection](RESOURCE_INSPECTION.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-This source-development slice adds explicitly permitted management of exactly `transferConcurrentFiles` and `transferConcurrentPerPeer` on one paired DirectLAN peer. It is under integration review. The pure fence/epoch tests do not establish end-to-end management, distribution, physical-device, application, OS-login or suspend acceptance. Published-release claims remain governed by the [verification record](VERIFICATION.en.md).
+The current release supports explicitly permitted management of exactly `transferConcurrentFiles` and `transferConcurrentPerPeer` on one paired DirectLAN peer. The pure fence/epoch tests do not establish end-to-end management, distribution, physical-device, application, OS-login or suspend acceptance. Published-release claims remain governed by the [verification record](VERIFICATION.en.md).
+
+## Permission first, exact review second
+
+1. On the target, explicitly confirm the finite management grant for the intended paired peer and both settings.
+2. On the permitted peer, inspect and preview the exact choices. Apply only that unchanged review.
+3. If the reply is lost, query the original operation ID. Inspect separately to learn the current settings.
+
+A durable operation record can record failure or uncertainty. It is not proof that settings applied or a transfer completed. The target's grant, the operation review and the resulting evidence are different objects.
 
 ## Authorize the exact scope on the target
 

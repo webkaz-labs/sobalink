@@ -4,6 +4,18 @@
 
 `soba` and `soba run` run in the foreground. `soba start --background` starts a detached application and waits for its local management interface. Startup success confirms local readiness, not network connectivity or success in another application. Use `soba status` to inspect the network and `soba ui` to get a fresh sign-in code.
 
+## Start, inspect, stop
+
+```sh
+soba start --background
+soba status
+soba ui
+# When finished:
+soba stop
+```
+
+Use `soba start --offline --background` instead when you want local management without reconnecting the saved network. Choose one startup mode; a second start does not change a running process. `soba ui` returns private sign-in information for this device only. Retain the same `--state-dir` on every command when using a custom profile.
+
 ## What comes back after startup
 
 | State | Normal startup / `--startup saved` | `--offline` / `--startup offline` |
@@ -14,7 +26,8 @@
 | Saved per-peer automatic file saving | Effective again for the selected network when enabled and not paused | No reception |
 | Ordinary saved shares and forwarding rules | Remain stopped | Remain stopped |
 | Separately approved outbound startup/proxy selections | One launch attempt after network readiness, within the exact reviewed scope | Suppressed for the entire process |
-| Previous file transfers | Do not resume | Do not resume |
+| Immediate file-transfer progress | Does not resume | Does not resume |
+| Explicitly accepted durable file/text queues | Eligible attempts recover under original IDs and deadlines | No delivery while the backend is offline |
 
 Automatic saving uses the exact previously approved peer and destination; a default receive folder alone does not approve automatic saving. Files are never automatically opened or executed. Starting offline does not clear saved approvals. Explicit network activation can make the saved receive approvals effective later.
 
@@ -24,7 +37,7 @@ Background application output and command errors go to private `startup.log` ins
 
 A readiness timeout or cancellation can leave the launched process running; check `soba status` before retrying and use `soba stop` if needed. For a direct startup error or runtime panic, run `soba run` with the same `--state-dir`.
 
-[Explicit outbound startup and private SOCKS profiles](STARTUP.en.md) describe the separate opt-in. Saving a definition or importing a profile does not create that permission. Changes to reviewed scope, network/hostname or peer revocation invalidate approval. A finite lifetime begins anew on a new online process launch; reconnecting an existing session does not renew it. Inbound shares and old file transfers never auto-start.
+[Explicit outbound startup and private SOCKS profiles](STARTUP.en.md) describe the separate opt-in. Saving a definition or importing a profile does not create that permission. Changes to reviewed scope, network/hostname or peer revocation invalidate approval. A finite lifetime begins anew on a new online process launch; reconnecting an existing session does not renew it. Inbound shares and immediate file-transfer progress never auto-start. Explicitly accepted [durable file](DURABLE_OUTBOX.en.md) and [text](DURABLE_TEXT.en.md) queues recover only under their original authority and deadlines.
 
 ## Optional startup at user sign-in
 

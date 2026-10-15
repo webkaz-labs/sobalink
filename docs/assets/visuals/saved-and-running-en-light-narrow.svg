@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 872" width="360" height="872" role="img" aria-labelledby="title desc" xml:lang="en"><title id="title">Save the setup. Start it when you need it.</title><desc id="desc">Saving a service definition does not open listeners or restore a previous permission. A manual start rechecks the current network and peer identity, with review for shares. A started service does not prove an application login or remote job completed. Separately approved outbound startup is a different setting.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="360" height="872" rx="0" fill="#ffffff"/>
+<g transform="translate(24 25) rotate(-23 12 12)" fill="#6550d8" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
+<text x="60" y="45" font-size="22" fill="#272c38" font-weight="650">sobalink</text>
+<text x="24" y="100" font-size="22" fill="#272c38" font-weight="650">Save the setup.</text>
+<text x="24" y="133" font-size="22" fill="#272c38" font-weight="650">Start it when you need it.</text>
+<text x="24" y="168" font-size="14" fill="#596172" font-weight="400">Manually starting a saved service</text>
+<rect x="16" y="192" width="328" height="162" rx="16" fill="#f8f8fb"/>
+<text x="32" y="219" font-size="13" fill="#5844bf" font-weight="600">1 · CONFIGURATION</text>
+<text x="32" y="250" font-size="20" fill="#272c38" font-weight="650">Saved definition</text>
+<text x="32" y="278" font-size="15" fill="#596172" font-weight="400">Keep the peer, service</text>
+<text x="32" y="300" font-size="15" fill="#596172" font-weight="400">and lifetime settings</text>
+<text x="32" y="332" font-size="13" fill="#5844bf" font-weight="500">Saving alone starts nothing</text>
+<path d="M180 357v16m-4-5 4 5 4-5" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="16" y="377" width="328" height="162" rx="16" fill="#f8f8fb"/>
+<text x="32" y="404" font-size="13" fill="#5844bf" font-weight="600">2 · ACTION</text>
+<text x="32" y="435" font-size="20" fill="#272c38" font-weight="650">Review and start</text>
+<text x="32" y="463" font-size="15" fill="#596172" font-weight="400">Recheck the current network</text>
+<text x="32" y="485" font-size="15" fill="#596172" font-weight="400">and peer identity</text>
+<text x="32" y="517" font-size="13" fill="#5844bf" font-weight="500">Review sharing permissions too</text>
+<path d="M180 542v16m-4-5 4 5 4-5" fill="none" stroke="#7f8799" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="16" y="562" width="328" height="162" rx="16" fill="#f8f8fb"/>
+<text x="32" y="589" font-size="13" fill="#5844bf" font-weight="600">3 · STATE</text>
+<text x="32" y="620" font-size="20" fill="#272c38" font-weight="650">Started</text>
+<text x="32" y="648" font-size="15" fill="#596172" font-weight="400">Ready to communicate</text>
+<text x="32" y="670" font-size="15" fill="#596172" font-weight="400">within the approved scope</text>
+<text x="32" y="702" font-size="13" fill="#5844bf" font-weight="500">Check your app’s login and use</text>
+<text x="24" y="772" font-size="13" fill="#596172" font-weight="400">A started service does not prove app success</text>
+<text x="24" y="797" font-size="13" fill="#596172" font-weight="400">or completion of a remote job.</text>
+<text x="24" y="822" font-size="13" fill="#596172" font-weight="400">Outbound startup needs separate approval.</text>
+</svg>

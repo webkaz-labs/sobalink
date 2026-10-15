@@ -1,8 +1,16 @@
 # Fixed resource groups
 
-[日本語](RESOURCE_GROUP.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
+[日本語](RESOURCE_GROUP.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-This source-build workflow reviews a fixed selection of at most 16 explicitly permitted peers. One local coordinator owns the prepared review, acceptance and independent results. It does not promise an atomic multi-peer transaction or exactly-once execution. Source implementation alone does not establish tested, installed-binary or real-device acceptance.
+This workflow reviews a fixed selection of at most 16 explicitly permitted peers. One local coordinator owns the prepared review, acceptance and independent results. It does not promise an atomic multi-peer transaction or exactly-once execution. Source implementation alone does not establish tested, installed-binary or real-device acceptance.
+
+## Review every row, keep every result
+
+**Before starting:** obtain management permission on each exact target. The group creates no grants.
+
+**Before applying:** review the complete fixed membership, settings, failed rows and chosen execution subset. Only explicitly selected ready peers are submitted.
+
+**After applying:** retain the run ID. Read local status first; explicitly refresh only selected original operations if remote evidence is needed. Partial success and unknown results remain visible. Cancel stops further admission, not already admitted work or previously applied settings.
 
 ## Short normal path
 
@@ -71,4 +79,4 @@ Later bounded results establish separate claims:
 
 F-S2/B2 ran at source `168a7fff4036f3aa89be7f118872ee15617dacd8`, tree `f03e0b427cb5a4c2ef990f9fc77810d357c9bc66`, using managed Chromium headless-shell revision 1243 with the CI SDK's default sandbox-disabled route. Earlier cases were not rerun in that invocation; their receipts remain historical evidence for their own sources.
 
-Real-browser draft/preview authoring, changed subsets, partial/uncertain outcomes and resource-specific Japanese pixel/layout acceptance remain unproved by these results. So do abrupt crash/power loss, post-intent cancellation, lost replies, terminal-save failure and post-rename uncertainty. Final-candidate full/race/cross-platform checks, actual devices, installed binaries and signed distribution retain their own gates. The remote-catalog capability, current advertised-service provenance, durable file-sharing semantics and cross-backend authority decisions remain open; no deferral or release version is selected here. These narrow passes do not establish full-candidate, merge, release or original-proposal completion.
+Real-browser draft/preview authoring, changed subsets, partial/uncertain outcomes and resource-specific Japanese pixel/layout acceptance remain unproved by these results. So do abrupt crash/power loss, post-intent cancellation, lost replies, terminal-save failure and post-rename uncertainty. Final-candidate full/race/cross-platform checks, actual devices, installed binaries and signed distribution retain their own gates. Remote catalog viewing and retained advertised-service provenance are now described by the separate [view contract](CATALOG_VIEW_CONTRACT.en.md). These group results do not establish that capability, durable file-sharing semantics or a cross-backend authority policy. Current exact-source CI and signed distribution are recorded in [verification](VERIFICATION.en.md). These narrow passes do not establish full-candidate, merge, release or original-proposal completion.

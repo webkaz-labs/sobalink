@@ -1,8 +1,14 @@
 # Web と CLI での初回有効化
 
-[English](WEB_ACTIVATION_HANDOFF.en.md)
+[English](WEB_ACTIVATION_HANDOFF.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
 
-このソース候補は、確認付き直接LAN有効化コントローラーにWebからの再起動要求を追加します。`719d6bfa` の実Core製品ケースでWeb・CLI双方の初回有効化が成功し、元の確認内容、通常の準備完了、双方のnative確認、完全な後始末を確認しました。同じsourceで模擬所有者を使うhelperの7ケースも成功しています。この限定したLinux loopback結果は最終source全体CIや配布検証ではなく、それらは未完了です。[正確なsourceの証拠と限界](CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
+現在の公開版は、確認付き直接LAN有効化コントローラーにWebからの再起動要求を含みます。`719d6bfa` の実Core製品ケースでWeb・CLI双方の初回有効化が成功し、元の確認内容、通常の準備完了、双方のnative確認、完全な後始末を確認しました。同じsourceで模擬所有者を使うhelperの7ケースも成功しています。この過去の限定した Linux loopback 結果は、後のソースや実機の受入を証明しません。現在の native／browser・配布結果は別途[検証記録](VERIFICATION.md)に示します。過去の[正確なsourceの証拠と限界](CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
+
+## 操作中に確認すること
+
+**一時的な再起動画面は、完了するまで開いたままにします。** 新しいプロセスでは通常のログインをやり直し、古いブラウザーセッションは移行しません。元の確認内容と期限は維持します。
+
+ポップアップがブロックされた、画面が閉じた、応答が不明な場合は、現在のローカル管理画面を開き直し、状態を確認してから再試行します。新しい試行には新しい明示的な確認が必要です。画面の再表示や中止で、保存済みの確認を取り消すことはできません。
 
 ## Web の操作
 

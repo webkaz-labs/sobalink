@@ -4,6 +4,24 @@
 
 Run the checks affected by the complete change. Ordinary documentation does not need an application build or four operating systems. Frontend changes need frontend and browser checks. Sensitive, shared or uncertain changes keep the complete native matrix. Every prerelease still runs the independent full validation and distribution/signature/install gates.
 
+## Choose a check, then read its scope
+
+1. Classify the **complete** PR/main change using the scope table below. Unknown, policy or provenance paths stay full.
+2. Read `ci-required` and the named jobs for that exact source and attempt. A green skipped-job aggregate does not mean the application ran.
+3. Before a prerelease, require exact-source full validation plus the independent signing, provenance, public retrieval and installed-binary gates.
+
+```mermaid
+flowchart LR
+    A[Complete change] --> B{Recognized narrow scope?}
+    B -->|Yes| C[Declared limited checks]
+    B -->|No| D[Full native and browser checks]
+    C --> E[Scope-labelled required result]
+    D --> E
+    E --> F[Release requires independent full proof]
+```
+
+Text equivalent: classify the complete change; run only a recognized narrower suite or the full suite; report the actual scope. Release eligibility still requires its independent exact-source full proof.
+
 ## Scope
 
 | Complete change | Checks |

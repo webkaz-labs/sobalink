@@ -9,6 +9,20 @@ published executable, sobalink's file/message protocol, discovery, or Web UI
 polling. A completed hosted run and its aggregate artifact are required before
 reporting measured results.
 
+## Follow the measured boundary
+
+```mermaid
+flowchart LR
+    A[Synthetic peer A] --> B[Counting proxy: leg A]
+    B --> C[Pinned loopback relay]
+    C --> D[Counting proxy: leg B]
+    D --> E[Synthetic echo peer B]
+```
+
+Text equivalent: synthetic peer A reaches peer B through a pinned loopback relay; the proxy counts encrypted bytes on each peer-to-relay leg in both directions. It does not count outer packet headers.
+
+Read the result in this order: verify source and fixture identity, select one phase, check successful payload/digest evidence, then interpret its counters. An N-byte echo contributes 2N to payload P; two relay legs explain the 2P comparison baseline. For idle phases, use bytes per second rather than a payload ratio.
+
 ## Fixture and phases
 
 The job independently checks out that exact source, adds three test-only files,

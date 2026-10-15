@@ -1,6 +1,27 @@
 # Fixed-group transfer settings Web integration
 
-Source implementation and synthetic tests are prepared. This new integration has not yet passed its independent frozen execution gate. Earlier settings/catalog/navigation receipts do not cover it. See the final gate receipt for the exact tested state before making a completion claim.
+**Integration checkpoint record.** At the original source-preparation checkpoint, implementation and synthetic tests were prepared but the independent frozen execution gate had not yet run. Earlier settings/catalog/navigation receipts did not cover this slice. Use an exact gate receipt for case-level claims and [current verification](../../../docs/VERIFICATION.en.md) for the published baseline.
+
+## Review a group before applying
+
+1. Select the fixed 1–16 members and obtain a preview.
+2. Review every row, keeping failed rows visible and excluded.
+3. Explicitly select the execution subset and confirm its immutable ID/revision.
+4. Apply once; inspect the original run status for uncertain outcomes.
+5. Use explicit eligible-member refresh only when current observation is needed. Stop waiting does not undo remote changes.
+
+```mermaid
+flowchart LR
+    A[Fixed members] --> B[Preview and row review]
+    B --> C[Confirm exact subset]
+    C --> D[One apply]
+    D --> E[Original run status]
+```
+
+Text equivalent: fixed members become a reviewed subset, one confirmed apply, then status for that same run. Historical all-applied evidence covers only that execution subset and is not current compliance.
+
+The source/pre-execution statements below describe this integration checkpoint. See [current verification](../../../docs/VERIFICATION.en.md) for release-level results; this document does not issue a new execution receipt.
+## Controller and execution contract
 
 One App-lifetime `ResourceGroupController` shares `ResourceAttemptRegistry` with the existing single-device controller. Seven exact local commands are typed: preview, review.select, review.current, apply, status, status.refresh and cancel. They use the existing authenticated `api.command` adapter, a fresh request ID and AbortSignal; they never enter `useServer.run`, an effect, a retry queue or polling. The existing transport body and error/retry behavior remain unchanged.
 

@@ -8,6 +8,14 @@ published `0.3.0-alpha.2` Linux amd64 executable from source
 result: inspect its completed run and aggregate artifact before making a claim.
 The existing cross-platform CI and release gates are unchanged.
 
+## Read a measurement in three steps
+
+1. Match the release, source and installed-binary digest to the historical baseline above.
+2. Compare baseline, maximum and end values within the same phase. Keep idle, normal restart and forced idle recovery separate.
+3. Check completion and cleanup before quoting results. Keep network traffic as `not_measured`; do not translate offline status into zero bytes.
+
+For [relay traffic](RELAY_TRAFFIC_MEASUREMENT.en.md), use the separate source-built fixture. Its byte counters cannot be combined with these installed-binary resource observations.
+
 ## Procedure and identity
 
 A same-repository pull request changing the measurement files starts the isolated

@@ -4,6 +4,15 @@
 
 本体が停止中でも、選択したネットワークがオフラインでも設定を保存できます。保存・読込みだけで入口を開いたり、以前の許可を復活させたりしません。共通指定の `--offline` はプロファイルを排他ロックし、本体を起動せず保存設定だけを編集します。ネットワークの認証情報を生成せず、転送やペアリングの状態も読み込みません。本体が稼働中ならこの指定を省略してください。`soba start --offline` はネットワークに接続せずローカル管理画面を開く別の操作です。
 
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/saved-and-running-ja-dark-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/saved-and-running-ja-dark-wide.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/saved-and-running-ja-light-narrow.svg">
+  <img src="assets/visuals/saved-and-running-ja-light-wide.svg" alt="保存で停止中の定義を作り、別に確認した起動でサービスを動かします。" width="1040">
+</picture>
+
+保存 → 確認 → 起動 → アプリを確認、の順です。停止は定義を残して有効な許可を終了します。`service copy` は新しいサービスを起動する操作です。
+
 ```sh
 soba --offline service save share --backend tailnet --name example-web --ports 8080 --peers PEER_ID
 soba --offline service save connect --backend tailnet --name example-ssh --preset ssh --peer PEER_ID
