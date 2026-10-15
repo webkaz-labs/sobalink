@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 import stat
+import string
 from urllib.parse import unquote, urlsplit
 
 
@@ -75,7 +76,7 @@ def _destination(text):
     escaped = False
     for char in text:
         if escaped:
-            result.append(char)
+            result.append(char if char in string.punctuation else "\\" + char)
             escaped = False
         elif char == "\\":
             escaped = True
@@ -94,29 +95,121 @@ def _destination(text):
     return "".join(result)
 
 
+def _image_labels(text):
+    """Yield balanced image labels and their end offsets, honoring escapes."""
+    offset = 0
+    while offset < len(text):
+        if text[offset] == "\\":
+            offset += 2
+            continue
+        if not text.startswith("![", offset):
+            offset += 1
+            continue
+        start = offset + 2
+        cursor, depth = start, 1
+        while cursor < len(text) and depth:
+            if text[cursor] == "\\":
+                cursor += 2
+                continue
+            if text[cursor] == "[":
+                depth += 1
+            elif text[cursor] == "]":
+                depth -= 1
+            cursor += 1
+        if depth == 0:
+            yield text[start:cursor - 1], cursor
+            offset = cursor
+        else:
+            offset = start
+
+
+def _inline_destination(tail):
+    """Recognize the destination/title boundary before consuming an outer image."""
+    cursor = 1
+    while cursor < len(tail) and tail[cursor].isspace():
+        cursor += 1
+    if re.search(r"\n[ \t]*\n", tail[1:cursor]):
+        return None
+    start = cursor
+    if cursor < len(tail) and tail[cursor] == "<":
+        cursor += 1
+        while cursor < len(tail) and tail[cursor] != ">":
+            if tail[cursor] in "\r\n<":
+                return None
+            cursor += 2 if tail[cursor] == "\\" else 1
+        if cursor == len(tail):
+            return None
+        cursor += 1
+    else:
+        depth = 0
+        while cursor < len(tail):
+            char = tail[cursor]
+            if char == "\\":
+                cursor += 2
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if not depth:
+                    break
+                depth -= 1
+            elif char.isspace():
+                if depth:
+                    return None
+                break
+            cursor += 1
+        if depth:
+            return None
+    destination = _destination(tail[start:cursor])
+    rest = tail[cursor:]
+    if rest.startswith(")"):
+        return destination
+    if not rest or not rest[0].isspace():
+        return None
+    whitespace = rest[:len(rest) - len(rest.lstrip())]
+    if re.search(r"\n[ \t]*\n", whitespace):
+        return None
+    rest = rest.lstrip()
+    if rest.startswith(")"):
+        return destination
+    title = re.match(r'''^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))\s*\)''', rest)
+    return destination if title and not re.search(r"\n[ \t]*\n", title[0]) else None
+
+
+def _label_key(value):
+    return " ".join(value.split()).casefold()
+
+
+def _markdown_targets(text, definitions):
+    for alt, end_offset in _image_labels(text):
+        tail = text[end_offset:]
+        reference = re.match(r"^\[((?:\\.|[^\[\]\\])*)\]", tail)
+        inline = _inline_destination(tail) if tail.startswith("(") else None
+        if inline is not None:
+            yield inline
+        elif reference:
+            label = reference[1] or alt
+            key = _label_key(label)
+            if key not in definitions:
+                raise ValueError(f"undefined image reference: {label}")
+            yield definitions[key]
+        elif _label_key(alt) in definitions:
+            yield definitions[_label_key(alt)]
+        else:
+            # Unrecognized outer brackets are text; an inner image can still
+            # render. A recognized outer image uses inner markup only as alt.
+            yield from _markdown_targets(alt, definitions)
+
+
 def image_targets(text):
     text = _prose(text)
     parser = ImageHTMLParser()
     parser.feed(text)
-    targets = list(parser.targets)
-    label_key = lambda value: " ".join(value.split()).casefold()
     definitions = {}
-    for match in re.finditer(r"^ {0,3}\[([^\]\n]+)\]:\s*(.+)$", text, re.M):
-        definitions.setdefault(label_key(match[1]), _destination(match[2]))
-    for match in re.finditer(r"(?<!\\)!\[((?:\\.|[^\]\\])*)\]", text):
-        tail = text[match.end():]
-        if tail.startswith("("):
-            targets.append(_destination(tail[1:]))
-        elif tail.startswith("["):
-            end = tail.find("]")
-            label = tail[1:end] or match[1] if end >= 0 else match[1]
-            key = label_key(label)
-            if key not in definitions:
-                raise ValueError(f"undefined image reference: {label}")
-            targets.append(definitions[key])
-        elif label_key(match[1]) in definitions:
-            targets.append(definitions[label_key(match[1])])
-    return targets
+    for match in re.finditer(r"^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:\s*(.+)$", text, re.M):
+        if not re.search(r"\n[ \t]*\n", match[1]):
+            definitions.setdefault(_label_key(match[1]), _destination(match[2]))
+    return parser.targets + list(_markdown_targets(text, definitions))
 
 
 def _regular(root, relative):

@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import unittest
 
-from document_images import verify_document_images
+from document_images import image_targets, verify_document_images
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
@@ -40,6 +40,76 @@ class DocumentImageTests(unittest.TestCase):
 [collapsed]: <docs/image.svg>
 [shortcut]: docs/image.svg
 '''), 5)
+
+    def test_nested_and_escaped_alt_labels_check_missing_images(self):
+        for label in ("status [offline]", "status [nested [offline]]", r"status \[offline\]",
+                      r"status [offline\]]", r"status [offline\\]"):
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, "missing.svg"):
+                self.check_document(f'![{label}](missing.svg)')
+
+    def test_nested_alt_labels_resolve_inline_and_full_references(self):
+        self.write("figure.svg")
+        self.assertEqual(self.check_document('![status [offline]](figure.svg)'), 1)
+        self.assertEqual(self.check_document('![status [offline]][figure]\n[figure]: figure.svg'), 1)
+        with self.assertRaisesRegex(ValueError, "missing.svg"):
+            self.check_document('![status [offline]][figure]\n[figure]: missing.svg')
+
+    def test_image_marker_escape_parity(self):
+        for count in range(6):
+            text = "\\" * count + "![status [offline]](missing.svg)"
+            with self.subTest(backslashes=count):
+                if count % 2:
+                    self.assertEqual(self.check_document(text), 0)
+                else:
+                    with self.assertRaisesRegex(ValueError, "missing.svg"):
+                        self.check_document(text)
+
+    def test_balanced_and_escaped_destination_parentheses(self):
+        for name in ("figure(nested(wide)).svg", "figure(wide).svg", "figure wide.svg"):
+            self.write(name)
+        for destination in ("figure(nested(wide)).svg", r"figure\(wide\).svg", "<figure wide.svg>"):
+            with self.subTest(destination=destination):
+                self.assertEqual(self.check_document(f'![status [offline]]({destination})'), 1)
+        for destination in ("missing(nested(wide)).svg", r"missing\(wide\).svg", "<missing wide.svg>"):
+            with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, "missing"):
+                self.check_document(f'![status [offline]]({destination})')
+
+    def test_escaped_and_multiline_reference_labels(self):
+        for text in (r"![a\]b]" + "\n\n" + r"[a\]b]: missing.svg",
+                     r"![a\]b][]" + "\n\n" + r"[a\]b]: missing.svg",
+                     r"![image][a\]b]" + "\n\n" + r"[a\]b]: missing.svg",
+                     "![a b]\n\n[a\nb]: missing.svg"):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "missing.svg"):
+                self.check_document(text)
+
+    def test_inner_images_only_render_when_outer_is_not_image(self):
+        self.write("present.svg")
+        self.assertEqual(self.check_document('![outer ![inner](missing.svg)](present.svg)'), 1)
+        for text in ('![outer ![inner](missing.svg)]',
+                     '![outer ![inner][target]]\n\n[target]: missing.svg'):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "missing.svg"):
+                self.check_document(text)
+
+    def test_malformed_outer_destination_does_not_hide_inner_image(self):
+        self.write("present.svg")
+        for suffix in ("(present.svg", "(present.svg bad title)", "(<present.svg)",
+                       "(present.svg 'unfinished)", "(<pre<sent.svg>)", "(\n\npresent.svg)",
+                       "(present.svg\n\n)", "(present.svg 'title\n\ncontinued')"):
+            with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, "missing.svg"):
+                self.check_document('![outer ![inner](missing.svg)]' + suffix)
+        for suffix in ("(present.svg)", "(present.svg 'title')", '(present.svg "title")',
+                       "(<present.svg> (title))"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(self.check_document('![outer ![inner](missing.svg)]' + suffix), 1)
+
+    def test_angle_and_bare_less_than_destination_boundaries(self):
+        self.assertEqual(image_targets("![alt](pre<sent.svg)"), ["pre<sent.svg"])
+        self.assertEqual(image_targets("![outer ![inner](missing.svg)](<pre<sent.svg>)"), ["missing.svg"])
+
+    def test_unrecognized_backslash_escape_cannot_retarget_image(self):
+        self.write("presenta.svg")
+        with self.assertRaises(ValueError):
+            self.check_document(r"![alt](present\a.svg)")
 
     def test_html_picture_and_srcset_all_candidates(self):
         for name in ("fallback", "narrow", "wide", "dense"):
