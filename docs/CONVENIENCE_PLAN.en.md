@@ -66,13 +66,17 @@ The isolated diagnostic workflow's create-ref route provides bounded feedback: t
 
 ```mermaid
 flowchart TD
-    A["Existing identity, permissions and saved definitions"] --> B["Service usability and compact status"]
-    A --> C["Reviewed contact and invitation exchange"]
-    C --> D["Pair-bound durable endpoint updates"]
-    D --> E["Safe rebind and bounded discovery"]
-    E --> F["Preapproved LAN relay candidates"]
-    B --> G["Combined acceptance"]
-    F --> G
+ accTitle: Dependencies of the convenience plan
+ accDescr: Arrows show dependencies, not completed acceptance or a delivery promise.
+ A["Existing identity and scoped permissions"] --> B["Service workflow and saved definitions"]
+ A --> C["Reviewed invitation exchange"]
+ C --> D["Pair-bound endpoint updates"]
+ D --> E["Bounded discovery and rebind"]
+ E --> F["Previously approved relay candidates"]
+ B --> G["Combined acceptance evidence"]
+ F --> G
+
+ LIMIT["Arrows show dependencies, not completed acceptance or a delivery promise."]
 ```
 
 ## Risks and boundaries

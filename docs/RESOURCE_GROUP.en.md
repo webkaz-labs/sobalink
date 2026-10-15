@@ -6,11 +6,24 @@ This workflow reviews a fixed selection of at most 16 explicitly permitted peers
 
 ## Review every row, keep every result
 
-**Before starting:** obtain management permission on each exact target. The group creates no grants.
+```mermaid
+flowchart TB
+    accTitle: Which rows survive a partial group result?
+    accDescr: An illustrative roster selects ready peers A and B while retaining excluded or failed C. A applied and B unknown remain independent records. Local status reads the run; explicit refresh queries original operations without dispatching again.
+F["Review roster A, B, C"] --> S["Confirm ready A and B"]
+    F --> X["C: excluded or failed preview"]
+    S --> A["A: applied; original ID"]
+    S --> B["B: unknown; original ID"]
+    subgraph Ledger["One run ID; retain every row"]
+        A
+        B
+        X
+    end
+    Ledger --> Q["Read local run status"]
+    Q -. "explicit refresh only" .-> R["Query original operations"]
+```
 
-**Before applying:** review the complete fixed membership, settings, failed rows and chosen execution subset. Only explicitly selected ready peers are submitted.
-
-**After applying:** retain the run ID. Read local status first; explicitly refresh only selected original operations if remote evidence is needed. Partial success and unknown results remain visible. Cancel stops further admission, not already admitted work or previously applied settings.
+This illustrative partial result shows independent records, not parallel or atomic execution. Each target needs its own management grant. Review all rows and the exact ready subset before confirming; C remains visible without submission. Keep the run ID and read local status first. Explicit refresh queries selected original operations without resending them. “All applied” can describe only the execution subset with durable matching evidence. Cancel stops further admission, not admitted work or already applied settings.
 
 ## Short normal path
 

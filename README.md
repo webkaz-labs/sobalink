@@ -17,6 +17,8 @@
   <img src="docs/assets/visuals/connection-ja-light-wide.svg" alt="サービス共有の経路：この端末のアプリ、sobalink、選択したネットワーク、相手の許可、共有サービス" width="1100">
 </picture>
 
+[図を元の大きさで開く（横長）](docs/assets/visuals/connection-ja-light-wide.svg) · [縦長版](docs/assets/visuals/connection-ja-light-narrow.svg)
+
 アプリには実際のローカル接続先を設定し、sobalink が相手の明示的に許可したサービスへ転送します。到達できる経路とアプリ側の認証は別途必要です。通常の Tailnet サービスでは相手側に sobalink は不要です。
 
 ## まず使う

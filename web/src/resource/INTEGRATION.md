@@ -5,13 +5,17 @@
 ## Operation and recovery at a glance
 
 ```mermaid
-flowchart LR
-    A[Explicit selection] --> B[Inspect and review]
-    B --> C[Confirm exact two-field change]
-    C --> D[Apply once]
-    D --> E{Outcome known?}
-    E -->|Yes| F[Show evidence]
-    E -->|No| G[Explicit original-operation status]
+flowchart TD
+ accTitle: Keep an unknown operation tied to its original ID
+ accDescr: Review invalidation must not erase an ambiguous attempt or silently resubmit it.
+ A["Select exact device"] --> B["Inspect and review"]
+ B --> C["Confirm exact two-field change"]
+ C --> D["Apply once with original operation ID"]
+ D --> E{"Outcome known?"}
+ E -->|Yes| F["Show operation evidence"]
+ E -->|No| G["Inspect original-operation status"]
+
+ LIMIT["Review invalidation must not erase an ambiguous attempt or silently resubmit it."]
 ```
 
 Text equivalent: select, inspect, review and confirm the exact change before one apply. If the outcome is unknown, recover the original operation's status rather than submitting another change. Authentication or navigation changes invalidate the review without erasing retained ambiguous attempts.

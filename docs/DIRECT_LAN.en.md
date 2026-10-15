@@ -13,6 +13,8 @@ reachability; the application reports failure rather than changing that policy.
 
 **Upgrading:** profile 3 is incompatible with v0.4.0-alpha.4 and earlier. Keep old state untouched and start with a separate empty `--state-dir`; there is no automatic migration or deletion. Per-feature format histories below do not override this profile boundary.
 
+[Compare the three connection structures](MIXED_CONNECTIONS.en.md) before choosing a mode; this guide covers the exact direct-LAN endpoints.
+
 ## Before you pair
 
 - Run sobalink on both devices and select each device's exact assigned private address, unused TCP/UDP port and intended prefix.
@@ -44,6 +46,38 @@ confirmed peer/application response. A public ID is not a secret. An invitation
 is a one-use secret and must stay out of logs, public screenshots, command-line
 arguments and shared documents. Consumed/expired invitations are removed from
 the visible copy/QR controls. Pairing never grants application permissions.
+
+
+Screen example with demo data. This does not establish real-device connection, delivery or application compatibility.
+
+<img src="assets/screenshots/direct-review-en-focused.png" alt="Review a fictional Notebook endpoint and allowed prefix before start, with Cancel available." width="680">
+
+[Open full size](assets/screenshots/direct-review-en-focused.png)
+
+Check the exact local IP/port and allowed prefix. TCP and UDP must be reachable on the same numeric port. This is a pre-start review and shows no invitation or secret.
+
+### Explicit invitation: who sends what
+
+Before the CLI alternative, distinguish the public identity from the private one-use invitation.
+
+```mermaid
+sequenceDiagram
+ participant I as Inviting device
+ participant R as Recipient device
+ R->>I: Recipient public ID
+ I->>I: Create one-use invitation: five-minute default
+ I-->>R: Transfer private invitation
+ R->>R: Inspect inviter, endpoint and expiry
+ alt Valid invitation and reviewed peer
+ R->>I: Join after separate review
+ else Invalid invitation or wrong peer
+ R->>R: Do not join
+ end
+ Note over I,R: Pairing does not grant application access
+ Note over I,R: Public identity, private invitation
+```
+
+The recipient sends a public ID first. The inviter returns a recipient-bound, one-use secret invitation with a five-minute default. Inspect it, then separately join only while valid. Pairing and application grants remain separate.
 
 ## CLI alternative
 
@@ -133,6 +167,75 @@ content or stop work already launched inside a remote application.
 Repeated identical configuration preserves identity. Changing the endpoint or
 prefixes requires stopping, reopening offline, explicitly removing affected
 pairs and pairing again; an invitation does not silently broaden local policy.
+
+
+### Who starts a new tunnel session
+
+Schematic for fixed-endpoint pairs. Additional managed-context authorization and terminal tombstones are separate implementation contracts.
+
+The application requester and the WireGuard initiator are different roles.
+
+```mermaid
+sequenceDiagram
+ participant A as Application caller
+ participant L as Lower public key
+ participant H as Higher public key
+ alt Request on lower-key device
+ A->>L: New application dial
+ else Request on higher-key device
+ A->>H: New application dial
+ H->>L: Request through pinned mutual TLS
+ end
+ L->>H: Initiate WireGuard over UDP
+ H-->>L: Handshake response
+ L->>H: Authenticated transport packet
+ Note over L: Lower-key side: established
+ Note over H: Higher-key side: established and received
+ Note over A,H: Only confirmed requests continue the app dial
+ Note over L,H: Concurrent callers share one activation
+ Note over L,H: Retries never extend the caller deadline
+```
+
+The lower Ed25519 identity key starts WireGuard, regardless of which device requests the app connection. The higher-key device asks over pinned mutual TLS when needed. Within the original caller deadline, the lower-key initiator waits for establishment and the higher-key responder also requires authenticated packet reception. Existing-flow rekey and continuity are outside this diagram.
+
+
+### Pairing and revocation have different save boundaries
+
+Schematic for fixed-endpoint pairs. Additional managed-context authorization and terminal tombstones are separate implementation contracts.
+
+A closed runtime connection does not establish durable revocation.
+
+```mermaid
+flowchart TD
+ Pair["Persist pair"]
+ Good["Durable success"]
+ Activate["Activate and acknowledge"]
+ Bad["Uncertain or failed write"]
+ Lost["Reply not received"]
+ Inspect["Inspect possible remote-only pair"]
+ Remote["Revoke remote approval if needed"]
+ Revoke["Request revocation"]
+ Close["Close tracked runtime work"]
+ Disk["Persist revocation"]
+ Removed["Durable success: revoked"]
+ Failed["Write failed: old disk pair may remain"]
+ Recover["Stop and reconcile protected state"]
+ Before["Do not restart before reconciliation"]
+ subgraph Pairing["Pair persistence"]
+ Pair --> Good --> Activate
+ Pair --> Bad
+ Activate --> Lost --> Inspect --> Remote
+ end
+ subgraph Revocation["Revocation persistence"]
+ Revoke --> Close --> Disk
+ Disk --> Removed
+ Disk --> Failed
+ end
+ Bad --> Recover
+ Failed --> Recover --> Before
+```
+
+Activation follows durable pair storage. An uncertain write fails closed; a lost reply can leave only the remote side paired. Revocation closes current tracked work but a failed save can leave an old disk pair. Reconcile protected state before restarting, and inspect remote approval before another pairing attempt.
 
 ## Capacity and evidence
 

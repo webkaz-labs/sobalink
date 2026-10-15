@@ -13,6 +13,15 @@ Limits describe different things. Removing a logical limit does not allocate unl
 
 `default` resolves to the build's visible catalog value. It is not zero or unlimited. Finite values use positive JSON-safe integers; durations use whole seconds within the time representation. Omitted keys return to their defaults when a replacement policy is applied. The policy version is `1`; unknown keys, duplicate fields, nulls and ambiguous choices are rejected. Check `policy.config` for the exact build's `requested`, `effective`, `catalog`, `adjustable` and `usage` values.
 
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/resource-gates-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/resource-gates-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/resource-gates-en-dark-wide.svg">
+  <img src="assets/visuals/resource-gates-en-light-wide.svg" alt="Logical unlimited still obeys finite resource budgets and actual OS capacity. Changing a budget does not expand authority or lifetime." width="960">
+</picture>
+
+[Open full-size diagram (wide)](assets/visuals/resource-gates-en-light-wide.svg) · [Narrow version](assets/visuals/resource-gates-en-light-narrow.svg)
+
 ## Change one limit safely
 
 1. Open **Preferences → Capacity and history**, or read `soba command policy.config '{}'`.
@@ -109,11 +118,39 @@ Local staging defaults to 600 seconds in both browser and CLI paths. Its explici
 
 ## Receiver recovery
 
+When may blocked receiving resume?
+
+```mermaid
+flowchart TB
+    State["Read current recovery status"] --> Legacy["Missing legacy index"]
+    State --> Broken["Damaged or unknown records"]
+    Legacy --> Complete["Six checks complete; partials resolved"]
+    Legacy --> Incomplete["Unknown old folder or incomplete review"]
+    Complete --> Confirm["Confirm and save missing index"]
+    Confirm --> Ready["Save succeeded; status ready"]
+    Confirm --> Uncertain["Failure, uncertainty or changed status"]
+    Incomplete --> Blocked["Keep receiving blocked"]
+    Uncertain --> Blocked
+    Broken --> Repair["Repair or reconnect; restart and recheck"]
+    Ready --> Resume["Resume with existing permissions"]
+```
+
+Text equivalent: only the missing-legacy-index path offers the six-item confirmation. Unknown old destinations or unfinished review keep receiving blocked. Confirm only after resolving untracked partial data; failed or uncertain persistence requires a fresh status check. Other damaged or unknown states require storage repair/reconnection and restart. Saved files remain; restoring storage does not re-enable disabled autosave.
+
 Recovery accounts only staging whose ownership can be confirmed. Before creating a recovery record, recovery removes only the earlier temporary state-save file whose ownership is confirmed and prevents competing saves until this operation finishes. Other saved settings retain their existing size limits. A failed or uncertain recovery keeps receiving blocked during that attempt; an error alone does not establish whether the recovery record remains, so inspect recovery status before assuming completion. Sending and local management remain available. Uncertain saves or changed bindings keep receiving blocked across restart. Recovery does not claim or delete ambiguous roots, scan arbitrary destinations, or remove saved output. Zero-payload internal staging is safely retired or remains accounted, without per-transfer metadata accumulation. A missing legacy index still requires the explicit review described below; recovery does not discover unrecorded leftovers. See [bounded private-state persistence](ARCHITECTURE.md#bounded-private-state-persistence) for persistence and recovery details, and [security boundaries](../SECURITY.md#trust-and-receiving) for the cross-filesystem limitation.
 
 At startup, an unavailable per-peer autosave destination blocks receiving while local management and sending remain available. Its autosave grant is disabled; restoring the folder or confirming recovery does not enable it again. Review and explicitly enable autosave if wanted. If the disable cannot be saved, receiving stays blocked until confirmation can persist it; repair storage before restarting. A default folder alone grants no autosave, and manual destinations are checked through their recorded unfinished staging.
 
-An existing profile without an index is blocked from receiving until local review. Run `soba receive recovery confirm` to preview. Review all previous default, per-peer and manually selected receive folders, unfinished staging and previously saved output; resolve unfinished old receives so no untracked partial data remains, keeping saved files; then run `soba receive recovery confirm --reviewed` to persist the review and initialize the missing index. This explicit legacy path cannot discover arbitrary old leftovers that were never recorded. Check old locations yourself. Unknown or unavailable old locations must be reviewed before confirmation. --reviewed attests that review and cleanup are complete; it does not delete files. Do not confirm while untracked partial data remains. If you remove confirmed leftovers manually, delete only exact known unfinished staging files; do not broadly remove ordinary files or saved output. A missing legacy index does not erase or recalculate previous files, and confirmation adds no partial-byte or restart resume. See [security boundaries](../SECURITY.md#trust-and-receiving).
+For a missing legacy index, run `soba receive recovery confirm` to preview, then review all six items:
+
+1. Every previous default receive folder
+2. Every previous per-peer receive folder
+3. Every manually selected receive folder
+4. Unfinished staging from old receives
+5. Previously saved output, keeping those files
+6. Resolution of unfinished old receives so no untracked partial data remains
+
+Unknown or unavailable old locations must be reviewed before confirmation; recovery cannot discover unrecorded leftovers. Delete only exact known unfinished staging files if manual cleanup is needed, never ordinary files or saved output. Once all six checks are complete, run `soba receive recovery confirm --reviewed`. It attests to the review and persists the missing index; it does not delete files, recalculate previous output or resume old transfers. Inspect current recovery status after an error or uncertain response. [Security boundaries](../SECURITY.md#trust-and-receiving)
 
 ## Reviewed history cleanup
 

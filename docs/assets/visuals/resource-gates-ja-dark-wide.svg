@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="740" viewBox="0 0 960 740" role="img" aria-labelledby="title desc" xml:lang="ja">
+<title id="title">「無制限」でも、資源は有限。</title><desc id="desc">論理上の許可、有限の資源予算、実際のOS資源は別です。容量を上げても権限や期限は変わりません。</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="960" height="740" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  図解</text>
+<text x="24" y="73" font-size="28" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-916">「無制限」でも、資源は有限。</text>
+<text x="24" y="105" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-916">受付には、すべての条件が必要です。</text>
+<rect x="24" y="139" width="912" height="414" rx="16" fill="#191c24" stroke="#454959"/>
+<rect x="44" y="237" width="872" height="316" rx="16" fill="#30294b" stroke="#454959"/>
+<rect x="64" y="335" width="832" height="218" rx="16" fill="#1d202a" stroke="#454959"/>
+<text x="40" y="168" font-size="18" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-10-box-900">1  論理上の選択</text>
+<text x="40" y="196" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-11-box-900">例: ファイルサイズ・件数</text>
+<text x="40" y="218" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-12-box-900">default / limited / unlimited</text>
+<text x="60" y="267" font-size="18" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-13-box-880">2  有限の資源予算</text>
+<text x="60" y="294" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-14-box-880">送信側の一時保存、受信側の予約領域</text>
+<text x="60" y="316" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-15-box-880">無制限は選べません。待受・同時転送も有限。</text>
+<text x="80" y="365" font-size="18" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-16-box-800">3  実際に使える資源</text>
+<text x="80" y="395" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-17-box-800">ディスク・メモリ・OSの上限</text>
+<text x="80" y="417" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-18-box-800">予算以下でも失敗する場合があります。</text>
+<text x="80" y="449" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-19-box-860">ディスク余裕の考え方（模式図）</text>
+<rect x="80" y="464" width="800" height="22" rx="4" fill="#191c24" stroke="#454959"/>
+<rect x="80" y="464" width="440.00000000000006" height="22" rx="4" fill="#30294b"/>
+<rect x="520.0" y="464" width="360.0" height="22" rx="0" fill="#454959"/>
+<text x="80" y="510" font-size="12" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-23-box-860">転送と予約</text>
+<text x="880" y="510" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="end" id="label-24-box-140">安全余白</text>
+<path d="M480.0 562 L480.0 595" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M476.2 588.0 L480.0 595 L483.8 588.0" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="360.0" y="605" width="240" height="30" rx="15" fill="#30294b"/>
+<text x="480.0" y="626" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-28-box-224">現在の使用量と実効値を比較</text>
+<path d="M24 649H936" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="669" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-30-box-916">容量の変更は、権限や有効期限を広げません。</text>
+<text x="24" y="689" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-31-box-916">論理上の無制限も、有限の資源予算に従います。</text>
+<text x="24" y="709" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-32-box-916">default は既定値。0や無制限ではありません。</text>
+</svg>

@@ -17,11 +17,17 @@ WAN/NAT reachability, OS login/suspend recovery or installed-package behavior.
 | Does it work on physical devices after sleep or network changes? | [Verification](VERIFICATION.en.md) | A separate device/application acceptance record is required |
 
 ```mermaid
-flowchart LR
-    A[Prepare one payload] --> B[Review exact recipients]
-    B --> C[Commit once]
-    C --> D[Observe each child]
-    D --> E[Retry only failed children]
+flowchart TD
+ accTitle: One dispatch, separate child evidence
+ accDescr: Lost response is not a failed send.
+ A["Prepare one immutable payload"] --> B["Review exact recipients"]
+ B --> C["Commit once"]
+ C --> D{"Each child result?"}
+ D -->|Saved| E["Keep completed result"]
+ D -->|Failed| F["Review eligible failed-child retry"]
+ D -->|Unknown| G["Inspect original dispatch and child IDs"]
+
+ LIMIT["Lost response is not a failed send."]
 ```
 
 Text equivalent: prepare one payload, review the exact recipients, commit once, inspect each child result, then explicitly retry only failed children. A lost response calls for status recovery, not an assumed failed send.

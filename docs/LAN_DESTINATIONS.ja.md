@@ -8,6 +8,20 @@
 
 ## この設定で制限するもの
 
+```mermaid
+flowchart TD
+    UDP["UDP: このLAN transport"] --> Prefix{"許可した宛先集合の中?"}
+    Prefix -->Condition1["許可"] --> Route["OS が経路を決定"]
+    Route --> NIC["物理 interface または VPN"]
+    TCP["中継への DERP TCP"] --> Exact{"設定した正確な端点かつ prefix 内?"}
+    Exact -->Condition2["許可"] --> Route
+    Prefix -->Condition3["範囲外"] --> Deny["送信を拒否・範囲を勝手に広げない"]
+    Exact -->Condition4["一致せず"] --> Deny
+```
+
+許可するのは宛先です。許可済みの宛先でも、OSがVPNへ送る場合があります。この制約を端末全体やプロセス全体の通信隔離と解釈しないでください。
+
+
 | 選ぶもの | 制限する対象 | 証明しないこと |
 | --- | --- | --- |
 | private／ULA／loopback の prefix | UDP の送信先アドレス | 物理インターフェースや VPN の経路 |

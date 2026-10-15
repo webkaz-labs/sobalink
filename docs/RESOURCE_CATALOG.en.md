@@ -37,9 +37,17 @@ At most one remote identity is selected. Combining discovery and remote settings
 
 ## Read observations accurately
 
-Human output includes the exact selected scope, source state, observation time, row identity lifetime, completeness, partial results and the next existing workflow. `current` means successfully observed at the stated source time. It never means continuously watched, reachable now, or that all sources were read atomically. Local settings, saved services and transfers have no invented reachability TTL.
+Read each source's scope, state, observation time, completeness and next workflow separately. Settings, services and transfers can have different observation times within one response. `current` means successfully observed at that source's stated time, not continuously watched, reachable now or atomically read with every other source.
 
-A successful empty source differs from an unavailable, unconfirmed or limited source. Limited or incomplete rows are not a deletion report. Source failure remains visible independently of other successful sources. Only an authenticated explicit unsupported protocol result can be called unsupported; generic control failure or unreachable peers do not establish support.
+| Source at its own observation time | What the row establishes | Next check, and why |
+| --- | --- | --- |
+| Local settings | Values read from the exact resource | Inspect, then fresh preview before changes; past success does not fix current values |
+| Saved services | Saved definitions at that read | `service show`, then the normal start/stop review; saved does not mean running or reachable |
+| Transfer activity | Current-process activity for a batch and direction | Find that same batch/direction in the UI; restart does not preserve its process-local identity |
+| Exact remote settings | An authorized read of one target | Use its existing exact-selector workflow; reading alone grants no change permission |
+| Cached discovery | Historical rows, always `stale`, even when recently observed or empty | Use the separate [catalog view](CATALOG_VIEW_CONTRACT.en.md); publication attribution or a newer timestamp does not grant viewing or connection |
+
+The table compares independent observations rather than implying an event sequence. Local settings, saved services and transfers have no reachability TTL. A successful empty source differs from unavailable, unconfirmed or limited results; missing rows do not prove deletion. A failed source stays visible when another succeeds. Only an authenticated explicit unsupported response establishes protocol non-support; an unreachable peer does not.
 
 Persistent resource/service identities last with their saved records. Advertised service IDs last only for the activation. Transfer IDs retain their original batch ID, incoming/outgoing direction and current-process namespace. Transfer rows describe activity; they do not expose file contents or paths or establish durable file-share semantics.
 

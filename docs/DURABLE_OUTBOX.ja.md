@@ -10,8 +10,10 @@
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/delivery-evidence-ja-dark-narrow.svg">
   <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/delivery-evidence-ja-dark-wide.svg">
   <source media="(max-width: 839px)" srcset="assets/visuals/delivery-evidence-ja-light-narrow.svg">
-  <img src="assets/visuals/delivery-evidence-ja-light-wide.svg" alt="ローカル受付、相手での保存、送信側の確認を分け、不明な結果は元の ID で確認します。" width="1040">
+  <img src="assets/visuals/delivery-evidence-ja-light-wide.svg" alt="送信作業の状態と到着の証拠を分けます。中止・期限切れでも保存済みの証拠は残り、不明は元の ID で確認します。" width="1040">
 </picture>
+
+[図を元の大きさで開く（横長）](assets/visuals/delivery-evidence-ja-light-wide.svg) · [縦長版](assets/visuals/delivery-evidence-ja-light-narrow.svg)
 
 送信待ちの記録は期限内の試行を許可するもので、到着証明ではありません。応答が失われたら、元の ID と相手の到着記録を確認して次の操作を決めます。停止しても保存済みの内容は回収できません。
 

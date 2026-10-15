@@ -13,6 +13,8 @@ Administrator rights and LAN-router changes are outside the product requirements
   <img src="docs/assets/visuals/permissions-en-light-wide.svg" alt="Network connection, sender trust and scoped service permission are separate decisions" width="1040">
 </picture>
 
+[Open full-size diagram (wide)](docs/assets/visuals/permissions-en-light-wide.svg) · [Narrow version](docs/assets/visuals/permissions-en-light-narrow.svg)
+
 Connecting a peer does not trust it for messages/files or expose services. File receiving normally needs batch acceptance; autosave is a separate explicit setting. Review the peer identity and each permission independently.
 
 ## Explicit setup and durable queues

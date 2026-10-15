@@ -6,11 +6,25 @@ The current release supports explicitly permitted management of exactly `transfe
 
 ## Permission first, exact review second
 
-1. On the target, explicitly confirm the finite management grant for the intended paired peer and both settings.
-2. On the permitted peer, inspect and preview the exact choices. Apply only that unchanged review.
-3. If the reply is lost, query the original operation ID. Inspect separately to learn the current settings.
+```mermaid
+flowchart TB
+    accTitle: Why can work finish without a visible reply?
+    accDescr: Target permission and the peer exact review precede durable intent and provider admission. Admitted work may finish after revoke; a separate current authorization check decides whether historical evidence may be returned.
+subgraph Consent["1. Permission and exact review"]
+        direction LR
+        G["Target: finite grant"] --> P["Peer: exact preview"] --> A["Apply unchanged"]
+    end
+    Consent --> Work
+    subgraph Work["2. Admitted work may finish after revoke"]
+        direction LR
+        I["Durable intent"] --> W["Admit provider once"] --> E["Record outcome"]
+    end
+    Work --> R{"Reply permitted now?"}
+    R -->|yes| H["Original-ID history or unavailable"]
+    R -->|no| N["Withhold reply"]
+```
 
-A durable operation record can record failure or uncertainty. It is not proof that settings applied or a transfer completed. The target's grant, the operation review and the resulting evidence are different objects.
+The target grants management for the exact pair, resource and two settings; the permitted peer applies only its unchanged preview. Revoke before provider admission denies execution. After admission, work may finish and record an outcome, but the reply can still be withheld. Status reads the original operation under currently valid scope; it never re-executes it. Durable evidence can record failure or uncertainty. Inspect separately for current settings; an unavailable status does not justify a replacement operation.
 
 ## Authorize the exact scope on the target
 

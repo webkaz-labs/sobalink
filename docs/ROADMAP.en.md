@@ -37,11 +37,15 @@ Feature work outside the current scope is listed later. A missing physical test 
 ## Acceptance order
 
 ```mermaid
-flowchart LR
-    S[Final source and security review] --> I[Two-process real-socket proof]
-    I --> N[Four native targets and real browser]
-    N --> D[Signed release and mise installation]
-    D --> P[Physical-device acceptance]
+flowchart TD
+ accTitle: Evidence levels and the remaining device gate
+ accDescr: Use the source-specific verification record; an earlier layer does not prove the next.
+ A["Source and security review"] --> B["Real-socket process evidence"]
+ B --> C["Four native targets and real browser"]
+ C --> D["Signed artifacts and actual installation"]
+ D -. Separate gate .-> E["Physical-device acceptance: unverified"]
+
+ LIMIT["Use the source-specific verification record; an earlier layer does not prove the next."]
 ```
 
 Text equivalent: review the final source, exercise real sockets in separate processes, run all four native targets and the real browser, verify signed installation, then record physical-device acceptance separately.

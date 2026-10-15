@@ -20,15 +20,19 @@ The diagram below shows separate authentication, local approval and application 
 Prepare the exact candidates on both devices, exchange recipient-authenticated offers privately, then approve the selected routes locally. A new application connection can try an eligible LAN-local or external relay without pairing again. The intended same-process service entrance retains its exact loopback address and port while the underlying path recovers. This is an existing authorized service listener, not the management UI's ephemeral port.
 
 ```mermaid
-flowchart LR
-    P[Same paired public identity] --> O[Authenticated private offer]
-    O --> V[Validate pair and freshness]
-    V --> E[Eligible exact candidate]
-    L[Separate local lifetime approval] --> E
-    E --> T[Bounded transport coordinator]
-    A[Existing application permission] --> G[Authorize new flow]
-    T --> G
-    G --> S[Same local service entrance]
+flowchart TD
+ accTitle: Two approvals remain independent
+ accDescr: Route recovery does not promise preservation of an established TCP stream.
+ O["Authenticated offer for this pair"] --> V["Validate binding and freshness"]
+ V --> E["Eligible exact candidate"]
+ L["Separate local lifetime approval"] --> E
+ E --> T["Bounded transport coordination"]
+ T --> G{"Current app permission?"}
+ A["Existing scoped app grant"] --> G
+ G -->|Valid| S["Same local service entrance"]
+ G -->|Absent or expired| X["No new flow"]
+
+ LIMIT["Route recovery does not promise preservation of an established TCP stream."]
 ```
 
 - An existing TCP connection can fail; the application must reconnect. Healthy active flows are not interrupted for optional preferred-route probes; a failed transport generation is retired, including hung flows, so new connections can recover

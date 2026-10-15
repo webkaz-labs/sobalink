@@ -4,6 +4,15 @@
 
 `soba` と `soba run` はフォアグラウンドで動作します。`soba start --background` は本体をバックグラウンドで起動し、ローカル管理機能の準備を待ちます。起動成功はローカル管理機能の準備を示し、ネットワーク接続や他のアプリの動作成功までは示しません。`soba status` で状態を確認し、`soba ui` で新しいログインコードを取得します。
 
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/restart-state-ja-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/restart-state-ja-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/restart-state-ja-dark-wide.svg">
+  <img src="assets/visuals/restart-state-ja-light-wide.svg" alt="通常起動とoffline起動の比較。普通の保存サービスは停止したまま。承認済み起動と永続キューは個別条件で動きます。" width="960">
+</picture>
+
+[図を元の大きさで開く（横長）](assets/visuals/restart-state-ja-light-wide.svg) · [縦長版](assets/visuals/restart-state-ja-light-narrow.svg)
+
 ## 起動・確認・停止
 
 ```sh
@@ -63,7 +72,25 @@ Linux は systemd のユーザーユニット、macOS は LaunchAgents、Windows
 soba logout
 ```
 
-保存済みの Tailnet ネットワークを有効にしてから使います。まずローカルのサービス、相手向け待受、ファイル転送を停止し、その後で組み込みノードへログアウトを要求します。どちらの結果でも本体を終了します。
+保存済みの Tailnet ネットワークが有効な状態で実行します。管理画面の切断だけでログアウト成功とは判断できません。ローカル通信の終了処理、バックエンドの確認応答、プロセス終了は別の結果です。
+
+```mermaid
+flowchart TB
+    Stop["ローカル通信を取消し終了処理を待つ"] --> Returned["終了処理がすべて返った"]
+    Stop --> Timeout["終了処理が時間切れ・取消"]
+    Timeout --> Skipped["ログアウトは未試行"]
+    Returned --> Logout["バックエンドへログアウト要求"]
+    Logout --> NoAck["バックエンドの確認応答なし"]
+    Logout --> Ack["バックエンドが確認応答"]
+    Ack --> Clean["終了処理エラーなし・ログアウト確認"]
+    Ack --> Error["終了処理エラー・ログアウト確認済みだが終了処理は未確認"]
+    Skipped --> Retry["終了確認後に同じプロフィールで再起動・再試行"]
+    NoAck --> Retry
+    Clean --> Exit["本体は終了処理中・プロセス終了を確認"]
+    Error --> Exit
+```
+
+図の要約：終了処理の時間切れ・取消ではバックエンドへのログアウトを試行しません。それ以外は、待受の終了処理に通常エラーがあってもバックエンドに要求します。応答がなければログアウト未確認、応答済みで終了処理エラーならログアウト確認済み・終了処理未確認です。いずれも本体は終了処理へ進むため、終了を別途確認します。再試行の判断には次の結果を使ってください。
 
 - 成功時の `state: logged-out` と `logoutConfirmed: true` は、ローカルのバックエンドがログアウトを受理したことを示します
 - `tailnet_logout_unconfirmed` はバックエンドでのログアウトが未確認です。通信の停止を確認できたか、終了処理も未確認かはエラーに表示します。転送の停止が完了しなければ、バックエンドへのログアウトは試行しません。本体の終了を待ってから保存済み Tailnet で起動し、再試行します

@@ -1,34 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 540" width="1040" height="540" role="img" aria-labelledby="title desc" xml:lang="en"><title id="title">From local acceptance to a confirmed save.</title><desc id="desc">Acceptance into the durable outbox records a send on the sending device; it does not prove delivery. After receiver acceptance or explicitly configured autosave, files are transferred and saved. Durable receiver evidence confirms the save to the sender. An unknown result may already be saved, so query the original request rather than creating a replacement. Saved evidence is not a read receipt or a guarantee that the file still exists.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="690" viewBox="0 0 960 690" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">Stopped ≠ undelivered.</title><desc id="desc">Durable-file work status and delivery evidence are independent. Cancellation or expiry stops further sending but cannot recall saved files. Inspect the original ID and exact saved evidence after an unknown result.</desc>
 <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
-<rect x="0" y="0" width="1040" height="540" rx="0" fill="#1d202a"/>
-<g transform="translate(32 25) rotate(-23 12 12)" fill="#a18bff" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
-<text x="68" y="45" font-size="22" fill="#e8e9f0" font-weight="650">sobalink</text>
-<text x="32" y="108" font-size="30" fill="#e8e9f0" font-weight="650">From local acceptance to a confirmed save.</text>
-<text x="32" y="144" font-size="17" fill="#bdc5d8" font-weight="400">Durable file queue: within the deadline, with both devices running and reachable</text>
-<rect x="32" y="188" width="304" height="238" rx="16" fill="#191c24"/>
-<text x="52" y="222" font-size="14" fill="#c0aeff" font-weight="600">SENDING DEVICE</text>
-<text x="52" y="266" font-size="22" fill="#e8e9f0" font-weight="650">Accepted locally</text>
-<text x="52" y="306" font-size="17" fill="#bdc5d8" font-weight="400">Record the reviewed send</text>
-<text x="52" y="333" font-size="17" fill="#bdc5d8" font-weight="400">on this device</text>
-<rect x="52" y="363" width="264" height="41" rx="8" fill="#30294b"/>
-<text x="60" y="389" font-size="14" fill="#c0aeff" font-weight="500">Remote save is not yet confirmed</text>
-<path d="M344 306h16m-5-4 5 4-5 4" fill="none" stroke="#818ba0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="368" y="188" width="304" height="238" rx="16" fill="#191c24"/>
-<text x="388" y="222" font-size="14" fill="#c0aeff" font-weight="600">RECEIVING DEVICE</text>
-<text x="388" y="266" font-size="22" fill="#e8e9f0" font-weight="650">Saved on the peer</text>
-<text x="388" y="306" font-size="17" fill="#bdc5d8" font-weight="400">After receiver consent</text>
-<text x="388" y="333" font-size="17" fill="#bdc5d8" font-weight="400">and transfer, save the files</text>
-<rect x="388" y="363" width="264" height="41" rx="8" fill="#30294b"/>
-<text x="396" y="389" font-size="14" fill="#c0aeff" font-weight="500">The reply may not reach the sender</text>
-<path d="M680 306h16m-5-4 5 4-5 4" fill="none" stroke="#818ba0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="704" y="188" width="304" height="238" rx="16" fill="#191c24"/>
-<text x="724" y="222" font-size="14" fill="#c0aeff" font-weight="600">SENDER’S CONFIRMATION</text>
-<text x="724" y="266" font-size="22" fill="#e8e9f0" font-weight="650">Save confirmed</text>
-<text x="724" y="306" font-size="17" fill="#bdc5d8" font-weight="400">Verify the receiver’s</text>
-<text x="724" y="333" font-size="17" fill="#bdc5d8" font-weight="400">durable saved evidence</text>
-<rect x="724" y="363" width="264" height="41" rx="8" fill="#30294b"/>
-<text x="732" y="389" font-size="14" fill="#c0aeff" font-weight="500">This is not a read receipt</text>
-<path d="M32 455H1008" stroke="#343846"/>
-<text x="32" y="485" font-size="15" fill="#bdc5d8" font-weight="400">An unknown delivery result may still mean the files were saved.</text>
-<text x="32" y="512" font-size="15" fill="#bdc5d8" font-weight="400">Check the original send record. Do not blindly create a replacement send.</text>
+<rect x="0" y="0" width="960" height="690" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  EXPLAINED</text>
+<text x="24" y="73" font-size="28" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-916">Stopped ≠ undelivered.</text>
+<text x="24" y="105" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-916">Durable files · example of a lost save receipt</text>
+<text x="24" y="150" font-size="18" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-7-box-916">Work status</text>
+<path d="M40 215H920" fill="none" stroke="#454959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="64" cy="215" r="6" fill="#a18bff"/>
+<text x="64" y="246" font-size="17" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-10-box-240">Queued</text>
+<circle cx="480.0" cy="215" r="6" fill="#a18bff"/>
+<text x="480.0" y="246" font-size="17" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-12-box-240">Attempt</text>
+<circle cx="896" cy="215" r="6" fill="#9ba4b7"/>
+<text x="896" y="246" font-size="17" fill="#bdc5d8" font-weight="600" text-anchor="middle" id="label-14-box-240">Cancel</text>
+<text x="480.0" y="283" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-15-box-912">Cancellation stops further sends</text>
+<text x="24" y="305" font-size="18" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-16-box-916">Delivery evidence</text>
+<path d="M40 370H920" fill="none" stroke="#454959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="64" cy="370" r="6" fill="#a18bff"/>
+<text x="64" y="401" font-size="17" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-19-box-240">Not tried</text>
+<circle cx="480.0" cy="370" r="6" fill="#a18bff"/>
+<text x="480.0" y="401" font-size="17" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-21-box-240">Unknown</text>
+<circle cx="896" cy="370" r="6" fill="#9ba4b7"/>
+<text x="896" y="401" font-size="17" fill="#bdc5d8" font-weight="600" text-anchor="middle" id="label-23-box-240">Confirmed</text>
+<path d="M480.0 352Q688.0 302 896 352" fill="none" stroke="#9ba4b7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<text x="480.0" y="441" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-25-box-912">Original ID + exact receiver-save evidence</text>
+<text x="480.0" y="468" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-26-box-912">Without exact evidence, the result stays unknown.</text>
+<path d="M480.0 298V283" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<rect x="24" y="490" width="912" height="75" rx="12" fill="#30294b"/>
+<text x="40" y="512" font-size="16" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-29-box-880">Canceled or expired can still mean saved.</text>
+<text x="40" y="534" font-size="16" fill="#c0aeff" font-weight="400" text-anchor="start" id="label-30-box-880">Unknown does not mean undelivered.</text>
+<path d="M24 595H936" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="615" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-32-box-916">Saved evidence is not reading or continued retention.</text>
+<text x="24" y="635" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-33-box-916">Keep the original ID; do not blindly create another send.</text>
+<text x="24" y="655" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-34-box-916">Cancellation does not erase known save evidence.</text>
 </svg>

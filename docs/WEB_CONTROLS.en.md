@@ -20,6 +20,27 @@ The local Web UI supports service connections, reviewed sharing, files and messa
 
 The following sections explain each control and its recovery boundaries.
 
+### Where to send a message and review incoming files
+
+Screen example with demo data. This does not establish real-device connection, delivery or application compatibility.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/screenshots/message-context-en-narrow-input.png">
+  <img src="assets/screenshots/message-context-en.png" alt="Studio selected, with the message field and Send button." width="960">
+</picture>
+
+[Open full size](assets/screenshots/message-context-en.png) · [Narrow version](assets/screenshots/message-context-en-narrow-input.png)
+
+1. Select the peer on the left.
+2. Enter the message. On narrow screens, scroll to the composer.
+3. Check the peer and content before sending. This example is a draft, not a sent message.
+
+<img src="assets/screenshots/receive-en.png" alt="Demo incoming offer with its file list, destination, decline and accept controls." width="680">
+
+[Open full size](assets/screenshots/receive-en.png)
+
+Review the file list, the destination for this batch, and whether to accept, in that order. The folder is fictional. Displaying this review does not accept or save files.
+
 ## Use the device list and network graph
 
 See the [verification record](VERIFICATION.en.md#current-integration-and-published-baseline) for the target version and completed checks. Physical-device and OS-lifecycle acceptance are separate. The dedicated guides are authoritative for [durable files](DURABLE_OUTBOX.en.md), [durable text](DURABLE_TEXT.en.md) and [connection setup](CONNECTION_SETUP.en.md).
@@ -31,6 +52,25 @@ Online status, a confirmed sobalink response and local communication permission 
 Lines represent relationships with this device. A backend that does not report its actual route remains **Path unknown**. A configured relay is not an observed route; Relay does not establish Internet use, and Direct does not establish the same LAN. The graph does not infer an OS, form factor or successful application operation.
 
 Service rows keep the endpoint, state and lifetime visible. Open **Manage service** for copy, edit, remove and diagnostic actions; active **Stop** remains directly available. Settings open by topic. Long forms scroll their contents while retaining the heading and close control. Closing an unapplied form does not change runtime or saved configuration. Language and theme take effect immediately and are stored in this browser.
+
+### From the graph to peer details
+
+Screen example with demo data. This does not establish real-device connection, delivery or application compatibility.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/screenshots/navigation-graph-en-narrow.png">
+  <img src="assets/screenshots/navigation-graph-en-wide.png" alt="Fictional devices and network graph. Read presence, permissions and route separately." width="960">
+</picture>
+
+[Open full size](assets/screenshots/navigation-graph-en-wide.png) · [Narrow version](assets/screenshots/navigation-graph-en-narrow.png)
+
+1. Select the peer.
+2. Read online presence, confirmed response, permission and route separately.
+3. On narrow screens, details replace the graph. Close details to return.
+
+<img src="assets/screenshots/navigation-detail-en-narrow.png" alt="Narrow peer-details view; close it to return to the graph." width="390">
+
+[Open full size](assets/screenshots/navigation-detail-en-narrow.png)
 
 ## Choose a connection mode
 
@@ -50,9 +90,25 @@ Cancel/back clears private update text; copying is explicit. Creating, importing
 
 Open **Preferences → File receiving → Review receiving**, or select the **File receiving is blocked** notice in preferences or peer autosave settings. **Receive recovery** reads the current recovery state. Sending files, messages and service operations remain available while file reception is blocked; saved autosave permission is shown separately.
 
-For a missing legacy index, review all six items: previous default, per-peer and manual destinations, unfinished staging, saved output, and resolution of untracked partial data. Keep saved files and resolve only confirmed unfinished staging. Leave receiving blocked if a former destination is unknown or unavailable. After completing the review, select the acknowledgment checkbox and **Confirm review and resume receiving**. Opening or closing the dialog does not confirm anything. The confirmation initializes only the missing index; it does not delete files, resume old transfers or re-enable disabled autosave permission.
+For a missing legacy index, complete the [six checks and recovery decision](CAPACITY.en.md#receiver-recovery), then select the acknowledgment checkbox and **Confirm review and resume receiving**. Opening or closing the dialog does not confirm anything. The confirmation initializes only the missing index; it does not delete files, resume old transfers or re-enable disabled autosave permission.
 
 Damaged or unknown records do not offer that confirmation. Follow the storage repair/reconnection and restart guidance; the UI does not discard the records or reset accounting to zero. The CLI alternative is `soba receive recovery confirm`, followed by `--reviewed` only after completing the same legacy review. [Recovery details and limits](CAPACITY.en.md#receiver-recovery)
+
+Screen example with demo data. This does not establish real-device connection, delivery or application compatibility.
+
+**Legacy record: review items are available**
+
+<img src="assets/screenshots/receive-legacy-en-wide.png" alt="Six legacy-record checks with the acknowledgment still unchecked." width="680">
+
+[Open full size](assets/screenshots/receive-legacy-en-wide.png)
+
+**Damaged record: the same review cannot resume receiving**
+
+<img src="assets/screenshots/receive-damaged-en-wide.png" alt="Damaged storage has no review-and-resume action." width="680">
+
+[Open full size](assets/screenshots/receive-damaged-en-wide.png)
+
+Unknown does not mean empty. Inspect earlier destinations and keep saved files; proceed only when all six checks can actually be completed. These examples remain unchecked and do not execute resume.
 
 ## Save and manage a service while offline
 
@@ -62,17 +118,33 @@ Choose **Review stopped definition**, check the complete scope, then **Save revi
 
 Edits use the authoritative saved revision. After a conflict, reload the definition and review again. Removal reviews the current definition, any active service and affected groups; canceling leaves them intact. Task ownership and lease information appear when supplied. Manual operations cannot take another task's ownership; use the owning task or wait for its lease to end.
 
-For live starts, advertised services retain the reviewed grant ID, purpose, protocol, ports and metadata review. Purpose and bound ports cannot be edited independently. A changed grant, purpose, scope or shorter expiry requires a fresh explicit review. Immediately before starting a new advertised connection, the UI rechecks that peer. If the same scope has equal or later expiry, it submits the fresh metadata revision; time spent reviewing the form alone does not require starting over. A changed scope stops the action for a new review. Saved historical restarts remain subject to Core’s exact saved-review revalidation. **Refresh advertised review** explicitly accepts the currently displayed metadata; **Enter ports manually** explicitly clears the advertised reference. Saving or copying historical references while offline does not authorize a live connection.
+For live starts, advertised services follow the [freshness decision](GENERIC.en.md#when-advertised-information-changes); purpose and bound ports cannot be edited independently. **Refresh advertised review** explicitly accepts the currently displayed metadata; **Enter ports manually** explicitly clears the advertised reference. Saving or copying historical references while offline does not authorize a live connection.
+
+Screen example with demo data. This does not establish real-device connection, delivery or application compatibility.
+
+<img src="assets/screenshots/stopped-review-en-focused.png" alt="Review peer, ports and lifetime before saving a stopped definition." width="680">
+
+[Open full size](assets/screenshots/stopped-review-en-focused.png)
+
+Review peer and port mapping, then lifetime, then save. This stores a stopped definition; starting it requires a separate review.
 
 ## Read service discovery results
 
 Device details and connection setup show the last service-information observation. A confirmed empty reply means no services are currently advertised; known approved ports can still be entered manually. Pending, unconfirmed and unsupported replies do not prove that software is absent or the device/application is offline. A limited result points to the configured framing budget; review **Preferences → Capacity and history** and check again. A stale result needs another check before selecting an advertised service. **Check shared services** explicitly queries service metadata without restarting active transports. Ordinary peers remain selectable for explicit sharing.
 
+Screen example with demo data. This does not establish real-device connection, delivery or application compatibility.
+
+<img src="assets/screenshots/service-review-en.png" alt="Review Studio, TCP port 8080 and lifetime before starting the connection." width="680">
+
+[Open full size](assets/screenshots/service-review-en.png)
+
+Review the displayed peer, shared scope and lifetime. A changed scope requires review again before starting. This example does not start a connection.
+
 ## Sign out of Tailnet
 
 Open **Set up network → Sign out of Tailnet**. The review lists active services, proxies and transfers. **Cancel** leaves them running. **Stop traffic and sign out** stops local traffic, requests embedded-node logout and exits the application, so this control page disconnects.
 
-Success means the local backend acknowledged logout; it does not prove process exit or removal from Tailnet administration. Saved approvals, definitions and files remain. An unconfirmed result must not be treated as logout success. Wait for exit, use the same state directory to restart with the saved Tailnet network, then retry. The result panel provides copyable status, restart, logout and fresh-access-code commands. LAN pairing has separate revoke controls.
+Use the [logout outcomes and retry decision](LIFECYCLE.en.md#tailnet-logout) to distinguish backend acknowledgement from cleanup and process exit. The result panel provides copyable status, same-profile restart, logout and fresh-access-code commands. Saved approvals, definitions and files remain; LAN pairing has separate revoke controls.
 
 ## Review startup at OS sign-in
 
@@ -82,6 +154,23 @@ Choose **Restore saved network and receive approvals** or **Local management onl
 
 Registration applies at a future sign-in. Saved mode restores the saved network and previously approved, unpaused receiving; offline mode starts only local management. Saving definitions or registering startup alone does not authorize service or proxy launch. Optional launch behavior requires a separate reviewed startup approval; offline mode suppresses it. See the [startup approval guide](STARTUP.en.md) for its exact scope. Previous file transfers are not resumed. Disabling registration does not stop the currently running application. The preview is a plan, not an installed-status check; inspect its exact file/name in the OS sign-in manager to verify registration.
 
+
+Screen example with demo data. This does not establish real-device connection, delivery or application compatibility.
+
+<img src="assets/screenshots/startup-guide-en-wide.png" alt="Web OS-startup guidance; it does not change registration and points to CLI review." width="680">
+
+[Open full size](assets/screenshots/startup-guide-en-wide.png)
+
+<img src="assets/screenshots/startup-guide-en-narrow-actions.png" alt="Narrow apply-step guidance; command fields scroll, so use the full text too." width="390">
+
+[Open full size](assets/screenshots/startup-guide-en-narrow-actions.png)
+
+Do not rely on a screenshot as the sole command source. Replace `STATE_DIRECTORY` and the `REVIEW_TOKEN` returned by the actual preview in these examples.
+
+```sh
+soba --state-dir STATE_DIRECTORY autostart enable --startup offline --json
+soba --state-dir STATE_DIRECTORY autostart enable --startup offline --apply --review REVIEW_TOKEN --json
+```
 
 ## Set up a client from saved services
 
@@ -110,7 +199,7 @@ On a future online process launch, each exact approved selection is attempted on
 
 In **Preferences → Advanced connections**, review an exact proxy scope as usual. **Continue to authentication** keeps the ordinary ephemeral flow. **Save this reviewed proxy** instead explains private storage, offers explicit generation or private input, and leaves **Also approve this exact proxy on future online launches** unchecked. Saving/generating stores credentials only in the protected local state directory, separately from portable definitions; it starts no listener. Generation never displays credentials automatically. Existing-name replacement requires a separate checkbox and a stopped same-name listener.
 
-Open **Saved proxy credentials → Manage saved proxies** to inspect sanitized scopes and state. **Review saved proxy start** rechecks current identities and shows the complete listener/targets before an explicit start. **Review disabling future launch** prevents later automatic starts and transient recovery but leaves a current listener and its credentials in place. **Review deleting saved credentials** permanently removes the record and stops its associated session; canceling either review changes nothing. A saved proxy may recover transient transport loss within its original expiry. Expiry, explicit stop or invalidated scope never silently restarts it; a separately approved future process launch may begin a new lifetime.
+Open **Saved proxy credentials → Manage saved proxies** to inspect sanitized scopes and state. **Review saved proxy start** rechecks current identities and shows the complete listener/targets. Use **Review disabling future launch** or **Review deleting saved credentials** for those separate actions; canceling either review changes nothing. Their different effects on credentials, startup and current sessions are shown in [private proxy state and actions](STARTUP.en.md#private-socks-profiles).
 
 **Reveal credentials temporarily** is the only display action. Hide/close and scope changes clear the private fields. Exports/history exclude them, and automated browser evidence capture rejects the private view. Copying is explicit and leaves the chosen value on the system clipboard until you replace it. Never include credentials in command arguments, source code, screenshots or shared files. Failed/uncertain saves clear input; reload the saved record and make a fresh scope review before retrying. All controls retain the local session/Host/Origin/CSRF boundary. Real installed startup, file ACL and external-client behavior still need their separate acceptance checks.
 

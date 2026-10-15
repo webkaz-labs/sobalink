@@ -6,12 +6,7 @@
 
 現在の公開版は明示したpin付き中継によるペアリング、準備済み経路の復旧、[LAN送信先ポリシー](LAN_DESTINATIONS.ja.md)、[中継証明書・資源予算の操作](RELAY_OPERATIONS.ja.md)を含みます。同一ソースの自動試験と配布結果は[検証記録](VERIFICATION.md)に示します。実端末、LAN／WAN／NATの構成、休止復帰、ネイティブIMEの受入は別の未実施項目です。
 
-<picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-ja-dark-narrow.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/permissions-ja-dark-wide.svg">
-  <source media="(max-width: 839px)" srcset="assets/visuals/permissions-ja-light-narrow.svg">
-  <img src="assets/visuals/permissions-ja-light-wide.svg" alt="ペアリング、メッセージ・ファイルへの信頼、サービス許可は別々の選択です。">
-</picture>
+[接続方式の構造と到達条件](MIXED_CONNECTIONS.ja.md)を確認し、受信・共有の許可は[安全性](SECURITY.ja.md)で別に確認してください。
 
 
 **更新時:** profile 3 は v0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` で開始してください。自動移行・自動消去はありません。以下の機能別の保存形式の履歴は、このプロファイル境界を変更しません。
@@ -129,10 +124,16 @@ soba trust PEER_ID
 **ネットワークを移る前に両端を準備します。** 元のペアは維持し、運用者と証明書ピンを確認した中継先だけを追加します。追加中継は既に稼働し、ペアのロールを受け入れる必要があります。`routes add` は中継の起動や入場制限の変更をしません。
 
 ```mermaid
-flowchart LR
-    C[正確な候補を準備] --> X[非公開で経路情報を交換]
-    X --> A[各端末で確認して許可]
-    A --> R[有効な経路で再接続]
+flowchart TD
+ accTitle: 経路情報とローカル許可を分ける
+ accDescr: 候補は接続の証拠でもアプリの許可でもありません。
+ A["正確な非公開候補を準備"] --> B["相手に束縛した経路情報を交換"]
+ B --> C["端末A：ローカル許可を確認"]
+ B --> D["端末B：ローカル許可を確認"]
+ C --> E["現在有効な経路だけを使う"]
+ D --> E
+
+ LIMIT["候補は接続の証拠でもアプリの許可でもありません。"]
 ```
 
 1. 本体を停止して `soba start --offline` で起動します。そのまま別の端末で `soba lan routes list` を実行し、正確な接続先・ピン・`local` または `external` の区分を指定して追加します。元の中継は必須です。追加の正確な候補は保存状態・交換形式の容量内で設定し、実行時には別の調整可能な予算を使います。[中継のリソース予算](RELAY_OPERATIONS.ja.md)を参照してください
@@ -231,6 +232,31 @@ soba stop
 
 既定の trusted-relay モードは、相手への直接通信、選んだ中継を通る暗号化ペイロード、その中継先への HTTPS/ICMP 診断を許します。LAN 内だけ・外部通信ゼロの保証ではありません。必須タグでポートマッピング、captive portal 検査、システムプロキシを除き、未対応のプロキシ・上書き環境を拒否します。
 
-組込み中継は sealed HTTPS bootstrap で認証してから、招待された通信ロールを受け入れます。不明な鍵の一律許可はありません。2分の中継接続リースで許可を再確認するため、既存セッションが削除後最大2分、bootstrap の一時許可と重なる場合は初回から約4分まで残ることがあります。アプリの許可と追跡中のアプリ通信は直ちに解除します。
+組込み中継は sealed HTTPS bootstrap で認証してから、招待された通信ロールを受け入れます。不明な鍵の一律許可はありません。中継接続は2分のリース満了で閉じ、再接続時に許可を確認します。既存セッションが削除後最大2分、bootstrap の一時許可と重なる場合は初回から約4分まで残ることがあります。アプリの許可と追跡中のアプリ通信は直ちに解除します。
+
+
+### アプリの取消と中継の期限は別
+
+アプリ許可の取消は、中継リースの期限を待ちません。
+
+```mermaid
+sequenceDiagram
+ participant C as 許可の削除
+ participant A as アプリ通信
+ participant R as 既存の中継接続
+ par アプリ側の境界
+ C->>A: アプリ許可を直ちに取消
+ A->>A: 追跡中のアプリ通信を閉じる
+ and 中継側の境界
+ C->>R: 中継の受付許可を削除
+ Note over R: 新しい中継接続には受付許可が必要
+ R->>R: 2分のリース期限で接続を閉じる
+ end
+ Note over A,R: 中継接続が残ってもアプリ許可ではない
+ Note over C,R: 削除後は最大2分
+ Note over C,R: 一時許可と重なる場合：初回bootstrapから約4分
+```
+
+アプリ許可と追跡中のアプリ通信は直ちに取り消します。既存の中継接続は削除後最大2分残る場合があります。約4分は一時許可がリースと重なったときの初回bootstrapからの時間で、取消後にアプリを4分使えるという意味ではありません。
 
 経路は測定できるまで不明です。ペア保存だけでは相手への接触を証明しません。図はこの端末と観測した相手だけを示し、全員同士の線、帯域、直接・中継経路を作りません。経路変更、スリープ復帰、再接続で既存 TCP を維持する保証はありません。合格したネイティブ試験は loopback 中継の一つのリース境界の確認で、実 LAN/WAN/NAT の移動や本番の外部通信ゼロを証明するものではありません。

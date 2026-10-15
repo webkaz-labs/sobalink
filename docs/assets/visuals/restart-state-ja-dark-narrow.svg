@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="800" viewBox="0 0 400 800" role="img" aria-labelledby="title desc" xml:lang="ja">
+<title id="title">再起動で、何が戻る？</title><desc id="desc">通常起動とoffline起動の差。通常の保存済みサービスは停止したまま。承認済み起動選択だけが別条件で試行し、永続キューは元のIDと期限を維持します。</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="400" height="800" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-356">sobalink  /  図解</text>
+<text x="24" y="73" font-size="22" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-356">再起動で、何が戻る？</text>
+<text x="24" y="105" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-356">同じプロファイル · 停止してから、起動方法を選択</text>
+<rect x="108.0" y="130" width="184" height="30" rx="15" fill="#30294b"/>
+<text x="200.0" y="151" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-8-box-168">停止 → プロセス再起動</text>
+<path d="M200.0 164v14H226v17 M200.0 178H330v17" fill="none" stroke="#9ba4b7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="226" y="211" font-size="13" fill="#c0aeff" font-weight="650" text-anchor="middle" id="label-10-box-100">通常起動</text>
+<text x="330" y="211" font-size="13" fill="#c0aeff" font-weight="650" text-anchor="middle" id="label-11-box-100">管理のみ</text>
+<text x="226" y="232" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-12-box-100">saved</text>
+<text x="330" y="232" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-13-box-100">offline</text>
+<text x="24" y="219" font-size="15" fill="#bdc5d8" font-weight="600" text-anchor="start" id="label-14-box-356">対象</text>
+<rect x="16" y="240" width="368" height="56" rx="0" fill="#191c24"/>
+<text x="24" y="273" font-size="14" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-16-box-165">管理UI / CLI</text>
+<text x="226" y="273" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-17-box-100">起動</text>
+<text x="330" y="273" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-18-box-100">起動</text>
+<text x="24" y="329" font-size="14" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-19-box-165">ネットワーク</text>
+<text x="226" y="329" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-20-box-100">起動試行</text>
+<text x="330" y="329" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-21-box-100">起動せず</text>
+<rect x="16" y="352" width="368" height="56" rx="0" fill="#191c24"/>
+<text x="24" y="385" font-size="14" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-23-box-165">受信 / 自動保存</text>
+<text x="226" y="385" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-24-box-100">条件付き</text>
+<text x="330" y="385" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-25-box-100">保存のみ</text>
+<text x="24" y="441" font-size="14" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-26-box-165">通常の保存定義</text>
+<text x="226" y="441" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-27-box-100">停止</text>
+<text x="330" y="441" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-28-box-100">停止</text>
+<rect x="16" y="464" width="368" height="56" rx="0" fill="#191c24"/>
+<text x="24" y="497" font-size="14" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-30-box-165">別承認の自動起動</text>
+<text x="226" y="497" font-size="13" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-31-box-100">条件付き1回</text>
+<text x="330" y="497" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-32-box-100">抑止</text>
+<text x="24" y="553" font-size="14" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-33-box-165">永続キュー</text>
+<text x="226" y="553" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-34-box-100">条件付き</text>
+<text x="330" y="553" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-35-box-100">配達せず</text>
+<rect x="16" y="576" width="368" height="56" rx="0" fill="#191c24"/>
+<text x="24" y="609" font-size="14" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-37-box-165">即時転送の途中</text>
+<text x="226" y="609" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-38-box-100">再開せず</text>
+<text x="330" y="609" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-39-box-100">再開せず</text>
+<path d="M24 652H376" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="672" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-41-box-356">条件付き: 現在の接続・権限・停止設定を確認。</text>
+<text x="24" y="692" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-42-box-356">永続キューは元のID・期限内で試行。</text>
+<text x="24" y="712" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-43-box-356">offline は保存済みの許可を消しません。</text>
+<text x="24" y="732" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-44-box-356">soba status で接続状態を別に確認。</text>
+</svg>

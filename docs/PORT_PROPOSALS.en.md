@@ -18,11 +18,13 @@ Use the revision and chosen port returned by `service ports`, and retain the sam
 The check first attempts the saved numeric loopback mapping. Only an OS address-in-use error triggers alternate checking. A currently free original mapping returns `listener_no_conflict`; there is no automatic restart. Every check temporarily binds the selected TCP/UDP protocol and exact `127.0.0.1` or `::1` family. No socket accepts or forwards application traffic, and all sockets close before returning. No saved configuration, remote permission, startup approval, router or security setting changes.
 
 <picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/saved-and-running-en-dark-narrow.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/saved-and-running-en-dark-wide.svg">
-  <source media="(max-width: 839px)" srcset="assets/visuals/saved-and-running-en-light-narrow.svg">
-  <img src="assets/visuals/saved-and-running-en-light-wide.svg" alt="Saved configuration, listener readiness and application success require separate checks.">
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/port-observation-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/port-observation-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/port-observation-en-dark-wide.svg">
+  <img src="assets/visuals/port-observation-en-light-wide.svg" alt="Transient checks close all ports before returning. Candidates are not reservations; saving checks revision and actual start binds all ports again." width="960">
 </picture>
+
+[Open full-size diagram (wide)](assets/visuals/port-observation-en-light-wide.svg) · [Narrow version](assets/visuals/port-observation-en-light-narrow.svg)
 
 
 ## Check → review → save or restart

@@ -54,12 +54,40 @@ reparse points, unknown files and source drift are rejected rather than silently
 repaired. Inspect and explicitly remove a changed generated directory before
 preparing it again.
 
+
+### How do three original modules become verified build inputs?
+
+```mermaid
+flowchart LR
+    subgraph PREPARATION["Repeat for each pinned module"]
+        direction TB
+        ORIGINAL["Original archive"] --> CHECK["Verify checksum and full tree"]
+        MANIFEST["Pinned manifest and overlays"] --> ADAPT["Exact in-memory adaptation"]
+        CHECK --> ADAPT
+        ADAPT --> STAGING["Fresh staging: verify adapted tree"]
+        STAGING --> GENERATED["Rename to exact generated directory"]
+    end
+    subgraph DISTRIBUTION["Require Tailscale, WireGuard and gVisor"]
+        direction TB
+        ALL{"All three verified?"}
+        ALL --> PARTIAL["No: preparation remains incomplete"]
+        ALL --> PRE["Yes: verify resolution and trees"]
+        PRE --> BUILD["Compile target"]
+        BUILD --> POST["Reverify resolution and trees"]
+        POST --> SBOM["SBOM: adapted components with upstream ancestors"]
+    end
+    PREPARATION --> DISTRIBUTION
+```
+
+Text equivalent: each original archive and full tree is authenticated before applying its separately pinned adaptation. Only verified staging trees become generated inputs, and all three are required. Distribution checks resolution and trees before and after compilation and retains separate original/adapted provenance. Existing generated output is fully rehashed and rejected on drift; a verified partial preparation can resume without being called complete.
+
+Implementation references: [main.go](../../cmd/prepare-engine/main.go) · [materialize.go](materialize.go) · [archive.go](../engineadaptation/archive.go) · [main.go](../../cmd/package-tool/main.go).
+
 `go run ./cmd/prepare-engine --verify` performs read-only verification of all three
 input sets and generated trees. With the pinned toolchain and original archives
 already cached, `GOPROXY=off go run ./cmd/prepare-engine` uses the same preparation
-path offline. A partially completed preparation leaves only individually verified
-output trees; a later invocation resumes and the final verification still requires
-all three. No build should treat partial preparation as complete.
+path offline. Partial preparation retains only verified output trees; the all-three gate above
+still applies on a resumed invocation.
 
 Distribution checks exact package/module resolution and complete generated trees
 before and after compilation. Its build metadata records actual target-linked
@@ -77,6 +105,32 @@ and transfers ownership through the generation's final handoff check. Only the
 creator cleans an endpoint before handoff. Request completion and handler return
 are separate obligations. Creator completion does not establish stack or dispatcher
 completion; outgoing creators and ingress must follow their own generation fences.
+
+
+### Who owns a created endpoint?
+
+```mermaid
+sequenceDiagram
+    participant C as Creator before handoff
+    participant E as Exact endpoint
+    participant G as Generation gate
+    participant O as Owner after handoff
+    C->>E: Publish endpoint before bind, connect or wait
+    C->>G: Final ownership handoff check
+    alt Handoff refused or creation failed
+        C->>E: Creator cleans and joins endpoint
+    else Handoff accepted
+        G->>O: Transfer exact endpoint ownership
+        O->>E: Seal and join borrowed calls
+        O->>E: TCP Close, then observe WaitHangup
+    end
+    Note over C,G: Forwarder: request completion and handler return both required
+    Note over E,O: Hangup releases live reservation, TIME_WAIT remains stack-owned
+```
+
+Text equivalent: the creator owns cleanup until the final generation handoff succeeds. The receiving owner then seals and joins borrowed calls before terminal endpoint observation. Request completion, handler return and stack retirement remain separate obligations.
+
+Implementation references: [creator.go](../directlan/creator.go) · [endpoint_owner.go](../directlan/endpoint_owner.go) · [forwarder.go.txt](sources/gvisor/pkg/tcpip/transport/tcp/forwarder.go.txt) · [endpoint_owned.go.txt](sources/gvisor/pkg/tcpip/transport/tcp/endpoint_owned.go.txt).
 
 The additive gVisor `Endpoint.WaitHangup` observes the same TCP hangup event
 as an already-registered upstream `Wait`, including entry into `TIME_WAIT`.
@@ -98,6 +152,32 @@ distinct from terminal SealAndClose. BeginSetup must span initial configuration
 and be released before waiting. A wait timeout retains the owner; it does not
 manufacture terminal completion. Retained peer admission is capped at MaxPeers.
 
+
+### What still has to finish after endpoint hangup?
+
+```mermaid
+flowchart TB
+    RETIRE["Independent transport retirement joins"]
+    RETIRE --> ENDPOINT["Endpoint calls sealed and joined"]
+    ENDPOINT --> HANGUP["Hangup observed; live reservation released"]
+    RETIRE --> STACK["Old stack closed, waited and destroyed"]
+    STACK --> TIMER["Timers and dispatcher separately finished"]
+    RETIRE --> WG["WG socket sealed; TUN closed"]
+    WG --> PRODUCERS["APIs and producers joined"]
+    PRODUCERS --> HANDSHAKE["Handshake consumers and timer arms joined"]
+    HANDSHAKE --> PEERS["Retained peer workers joined"]
+    PEERS --> CRYPTO["Crypto consumers and limiter joined"]
+    HANGUP --> ALL{"All three transport joins?"}
+    TIMER --> ALL
+    CRYPTO --> ALL
+    ALL --> COMPLETE["Yes: transport joins established"]
+    ALL --> TIMEOUT["No, wait expired: retain owner"]
+```
+
+Text equivalent: endpoint hangup, stack shutdown and the restricted WireGuard worker join are distinct completion requirements. WireGuard wakes socket/TUN operations before joining producers and then consumers. A timeout proves none of the missing joins and retains ownership. Outer creators, handlers and retained application participants still need their own joins. This obligation map does not establish that RetireTransport or replacement publication is complete.
+
+Implementation references: [endpoint_owner.go](../directlan/endpoint_owner.go) · [generation.go](../directlan/generation.go) · [owned.go.txt](sources/wireguard/device/owned.go.txt).
+
 Peer callbacks include a nonzero immutable registration token scoped to one WG
 owner. Values never repeat; explicit exhaustion rejects rather than wrapping.
 Same-key re-pair receives a new identity. PeerRegistered runs synchronously before
@@ -105,12 +185,30 @@ publication/start, outside owner.mu, and must bind the exact session selected fo
 that configuration transaction. Later callbacks reject mismatched tokens; owned
 receive never falls back to key-only attribution.
 
-The shared Admit bookkeeping closure has the strict lock order application mutex
--> WG admission gate -> generation mutex. No path holding the generation mutex
-may enter the WG facade or request stop, and the closure must not perform I/O,
-cancellation, resource operations or waits. Bind/TUN/callback implementations must
-satisfy their documented behavior; Go interfaces alone do not prove those
-properties. The joint lifecycle and caller lock graph requires its own review.
+
+### Which lock direction is allowed inside Admit?
+
+```mermaid
+sequenceDiagram
+    participant A as Application mutex
+    participant W as WG admission gate
+    participant G as Generation mutex
+    A->>W: 1. Enter Admit with application lock held
+    W->>G: 2. Lock generation bookkeeping
+    Note right of G: 3. Bookkeeping only
+    G-->>W: 4. Unlock generation
+    W-->>A: 5. Release WG gate
+    Note over A,G: Inside closure: no I/O, cancel, resource work or wait
+    Note over A,G: With generation lock held: no WG call or RequestStop
+```
+
+Text equivalent: acquire application mutex → WG admission gate → generation mutex, and release in reverse order. The short bookkeeping closure must not perform I/O, cancellation, resource operations or waits. A generation-lock holder must never enter the WG facade or request stop.
+
+Implementation references: [owned.go.txt](sources/wireguard/device/owned.go.txt).
+
+Bind/TUN/callback implementations must satisfy their documented behavior; Go
+interfaces alone do not prove those properties. The joint lifecycle and caller
+lock graph requires its own review.
 
 The additive `device/owned_lifecycle_testing.go` overlay is compiled only when
 both `directlan_integration` and `directlan_lifecycle` are selected. Its fixture

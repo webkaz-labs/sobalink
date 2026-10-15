@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="920" viewBox="0 0 400 920" role="img" aria-labelledby="title desc" xml:lang="ja">
+<title id="title">3つの経路、異なる到達条件。</title><desc id="desc">Tailnetは外部調整と選択された経路、relay-based LANは共通の承認済みrelay、direct LANは正確なTCP/UDP端点の到達性が必要です。Mixedは承認済み経路を関連付け、無関係なネットワークのgatewayにはなりません。</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="400" height="920" rx="0" fill="#ffffff"/>
+<text x="24" y="33" font-size="13" fill="#5844bf" font-weight="600" text-anchor="start" id="label-4-box-356">sobalink  /  図解</text>
+<text x="24" y="73" font-size="22" fill="#272c38" font-weight="650" text-anchor="start" id="label-5-box-356">3つの経路、異なる到達条件。</text>
+<text x="24" y="105" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-6-box-356">線は必要な経路。接続成功の証明ではありません。</text>
+<text x="24" y="137" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-7-box-356">外部サービスでつなぐ</text>
+<text x="24" y="157" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-8-box-356">Tailnet</text>
+<rect x="30" y="179" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="40" y="189" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M60.0 235h24 M72.0 225v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="72.0" y="267" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-12-box-119">A</text>
+<rect x="286" y="179" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="296" y="189" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M316.0 235h24 M328.0 225v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="328.0" y="267" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-16-box-119">B</text>
+<path d="M122 211 L278 211" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M271.0 214.8 L278 211 L271.0 207.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="133.0" y="196" width="134" height="30" rx="15" fill="#f0edff"/>
+<text x="200.0" y="217" font-size="13" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-20-box-118">Direct / Relay</text>
+<text x="200" y="286" font-size="13" fill="#596172" font-weight="400" text-anchor="middle" id="label-21-box-380">外部の調整サービス</text>
+<path d="M72 275v12h58 M328 275v12h-58" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 4"/>
+<text x="24" y="307" font-size="14" fill="#5844bf" font-weight="600" text-anchor="start" id="label-23-box-356">参加認証と外部調整が必要</text>
+<text x="24" y="330" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-24-box-356">選ばれる経路はネットワーク条件次第。</text>
+<path d="M24 341H376" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="361" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-26-box-356">中継点を使ってつなぐ</text>
+<text x="24" y="381" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-27-box-356">Relay-based LAN</text>
+<rect x="30" y="403" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="40" y="413" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M60.0 459h24 M72.0 449v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="72.0" y="491" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-31-box-119">A</text>
+<rect x="286" y="403" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="296" y="413" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M316.0 459h24 M328.0 449v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="328.0" y="491" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-35-box-119">B</text>
+<path d="M122 447 L158.0 447" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M151.0 450.8 L158.0 447 L151.0 443.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M242.0 447 L278 447" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M271.0 450.8 L278 447 L271.0 443.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M122 427Q200.0 371 278 427" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<rect x="117.0" y="387" width="166" height="21" rx="4" fill="#ffffff"/>
+<text x="200.0" y="402" font-size="11" fill="#596172" font-weight="400" text-anchor="middle" id="label-42-box-156">直接経路も利用可能</text>
+<rect x="160.0" y="422" width="80" height="50" rx="8" fill="#f0edff" stroke="#e0e2ea"/>
+<text x="200.0" y="452" font-size="16" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-44-box-68">Relay</text>
+<circle cx="185.0" cy="463" r="2" fill="#6550d8"/>
+<circle cx="200.0" cy="463" r="2" fill="#6550d8"/>
+<circle cx="215.0" cy="463" r="2" fill="#6550d8"/>
+<text x="24" y="531" font-size="14" fill="#5844bf" font-weight="600" text-anchor="start" id="label-48-box-356">両端末から同じ relay に到達</text>
+<text x="24" y="554" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-49-box-356">中継点は承認した基点。自動では移転しません。</text>
+<path d="M24 565H376" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="585" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-51-box-356">LAN内で直接つなぐ</text>
+<text x="24" y="605" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-52-box-356">Direct LAN</text>
+<rect x="30" y="627" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="40" y="637" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M60.0 683h24 M72.0 673v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="72.0" y="715" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-56-box-119">A</text>
+<rect x="286" y="627" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="296" y="637" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M316.0 683h24 M328.0 673v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="328.0" y="715" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-60-box-119">B</text>
+<path d="M122 654 L278 654" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M271.0 657.8 L278 654 L271.0 650.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M278 668 L122 668" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M129.0 664.2 L122 668 L129.0 671.8" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="200.0" y="638" font-size="13" fill="#5844bf" font-weight="400" text-anchor="middle" id="label-65-box-380">TCP + UDP</text>
+<text x="24" y="755" font-size="14" fill="#5844bf" font-weight="600" text-anchor="start" id="label-66-box-356">正確な私設アドレス・端点へ到達</text>
+<text x="24" y="778" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-67-box-356">中継・外部探索なし。OSの経路は変えません。</text>
+<path d="M24 830H376" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="850" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-69-box-356">Mixed は承認した経路を関連付けます。</text>
+<text x="24" y="870" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-70-box-356">既存TCPの移行やネットワーク間の橋渡しはしません。</text>
+</svg>

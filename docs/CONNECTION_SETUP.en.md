@@ -7,13 +7,26 @@ Nearby setup offers an explicitly scoped request-and-accept flow and an optional
 The request-and-accept flow is included in [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1). [Verification](VERIFICATION.en.md) records exact-source CI and signed distribution. Same-host discovery and controlled browser/loopback results do not establish physical-device discovery, enrollment or application compatibility.
 
 <picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-en-dark-narrow.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/permissions-en-dark-wide.svg">
-  <source media="(max-width: 839px)" srcset="assets/visuals/permissions-en-light-narrow.svg">
-  <img src="assets/visuals/permissions-en-light-wide.svg" alt="Transport pairing, message and file trust, autosave, and service sharing require distinct decisions." width="1040">
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/pairing-exchange-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/pairing-exchange-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/pairing-exchange-en-dark-wide.svg">
+  <img src="assets/visuals/pairing-exchange-en-light-wide.svg" alt="In TOFU the requester reviews the key and deadline, then the receiver approves. Full verification requires both devices to compare and approve." width="960">
 </picture>
 
+[Open full-size diagram (wide)](assets/visuals/pairing-exchange-en-light-wide.svg) · [Narrow version](assets/visuals/pairing-exchange-en-light-narrow.svg)
+
 Pairing identifies a transport peer. Review message/file trust, autosave destination and service scope separately. For first-use acceptance, understand the TOFU limitation before approving.
+
+### Connection entry screen example
+
+Demo screen captured with the entry-copy correction included in the same change set as this document. It is not evidence of a released build. It explains default request/accept with TOFU and optional full-fingerprint comparison.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/screenshots/setup-fixed-en-390.png">
+  <img src="assets/screenshots/setup-fixed-en-1180.png" alt="Updated entry guidance describing requester and receiver roles and the TOFU default." width="680">
+</picture>
+
+[Open full size](assets/screenshots/setup-fixed-en-1180.png) · [Narrow version](assets/screenshots/setup-fixed-en-390.png)
 
 ## Request and accept (v2)
 

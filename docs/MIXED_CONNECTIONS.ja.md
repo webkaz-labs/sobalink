@@ -4,6 +4,15 @@
 
 mixed は、明示的に選んだ接続方式を同時に使うモードです。新規プロファイルは従来どおり未接続で始まります。OSの経路・ファイアウォール・ルーター設定を変えず、管理者権限も不要です。方式の異なる端末間を中継するゲートウェイ機能ではありません。
 
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/network-topologies-ja-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/network-topologies-ja-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/network-topologies-ja-dark-wide.svg">
+  <img src="assets/visuals/network-topologies-ja-light-wide.svg" alt="Tailnet、relay基点のLAN、direct LANは異なる到達条件を持ちます。Mixedは承認済み経路を関連付け、既存TCPを移行しません。" width="960">
+</picture>
+
+[図を元の大きさで開く（横長）](assets/visuals/network-topologies-ja-light-wide.svg) · [縦長版](assets/visuals/network-topologies-ja-light-narrow.svg)
+
 ## 3つの選択を分ける
 
 | 選択 | 確認するもの | 別途必要なもの |
@@ -44,6 +53,26 @@ mixed は、明示的に選んだ接続方式を同時に使うモードです�
 既存のTCP接続の移行・再送・再開は行いません。利用アプリからの再接続が必要になる場合があります。UDPセッションも元の経路と識別子に結び付き、待機中のデータを別経路へ再送しません。接続方式の準備完了は、利用アプリの成功やNAT越えの証明ではありません。
 
 同一プロセス内では、新しい接続に使うローカル入口を維持できます。アプリ再起動は別の処理で、転送途中の進捗や任意のリモートジョブを再開しません。互換性のない単一方式だけを持つ2端末を、この機能で相互接続することはできません。
+
+
+### 別経路を試せるのは到達性の失敗だけ
+
+新しい経路を試すたびに、現在の識別情報と正確な許可を再確認します。
+
+```mermaid
+flowchart TD
+ New["新しい接続：確認済み経路の順序"] --> Auth["現在のID・同一相手の束縛・利用許可"] --> Dial["確認済み経路を試す"]
+ Auth --> Denied["到達不能以外の認可失敗：停止"]
+ Dial --> Available["到達不能と分類できる"] --> Next{"次の承認済み経路があるか"} --> Has["ある：再確認へ"] --> Auth
+ Dial --> Connected["接続できた"] --> Again["許可と世代を再確認"] --> Use["許可された接続を返す"]
+ Again --> Changed["再確認の失敗・世代変更：閉じる"]
+ Auth --> UnavailableAuth["認可確認の経路が到達不能"] --> Next
+ Dial --> Other["その他の失敗：停止"]
+ Scope["既存通信の再送・移行はしない"]
+ Next --> Exhausted["承認済み経路が尽きたら停止"]
+```
+
+到達性の失敗と明確に分類できた場合だけ、次の承認済み経路を試せます。識別情報・同一相手の束縛・正確な利用許可を各試行と接続後に確認します。拒否・取消・世代変更・候補の枯渇では停止し、既存通信を再送しません。
 
 ## 許可を外す
 

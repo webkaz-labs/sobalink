@@ -6,13 +6,14 @@
 
 実験的な [0.5.0-alpha.1 公開版](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)で利用できます。**profile 形式 3** は 0.4.0-alpha.4 と旧形式に非互換です。既存の状態を保管し、別の空の `--state-dir` を選びます。移行・自動消去・同じプロフィールでのダウングレードは行いません。[公開版の検証](VERIFICATION.md)は実機・電源断・OS ログイン・休止復帰の合格を意味しません。
 
-```mermaid
-flowchart TD
-    A["正確な本文・相手・期限を確認"] --> B["明示的なローカル受付"]
-    B --> C["元の許可の範囲で試行"]
-    C --> D["相手の永続的な保存記録"]
-    C --> E["不明なら元の ID を照会"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/durable-save-gates-ja-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/durable-save-gates-ja-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/durable-save-gates-ja-dark-wide.svg">
+  <img src="assets/visuals/durable-save-gates-ja-light-wide.svg" alt="文字とファイルは現在の相手の信頼が必要です。ファイルには保存同意も必要。保存ACK喪失時は元のIDで確認します。" width="960">
+</picture>
+
+[図を元の大きさで開く（横長）](assets/visuals/durable-save-gates-ja-light-wide.svg) · [縦長版](assets/visuals/durable-save-gates-ja-light-narrow.svg)
 
 送信待ちの記録は期限内の試行を許可するもので、到着証明ではありません。応答が失われたら、元の ID と相手の到着記録を確認して次の操作を決めます。停止しても保存済みの内容は回収できません。
 

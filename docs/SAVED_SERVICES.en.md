@@ -11,6 +11,8 @@ Saved definitions work with the agent stopped or with its selected network offli
   <img src="assets/visuals/saved-and-running-en-light-wide.svg" alt="Saving creates a stopped definition; a separately reviewed start creates a running service." width="1040">
 </picture>
 
+[Open full-size diagram (wide)](assets/visuals/saved-and-running-en-light-wide.svg) · [Narrow version](assets/visuals/saved-and-running-en-light-narrow.svg)
+
 Save → review → start → check the application. Stop ends the active permission while preserving its definition; copying with `service copy` starts a new service.
 
 ```sh
@@ -106,7 +108,35 @@ Readiness means the authorized listeners are ready. It does not prove applicatio
 soba task --group example --confirm -- APPLICATION ARGUMENT...
 ```
 
-The task starts the reviewed selection, waits for listener readiness, then runs the exact local command and arguments directly. It owns only those services, renews a 30-second lease every 10 seconds, and attempts owned cleanup when the command exits, fails, or is canceled. If the wrapper disappears or cleanup cannot reach the agent, successfully leased permissions expire no later than 30 seconds after their last renewal. The invocation's permission lifetime also remains in effect, using the saved lifetime unless `--ttl` overrides it; renewing a task lease does not extend that permission.
+Why does renewing the task lease not extend permission? The task starts only the reviewed selection, waits for listener readiness and runs the exact local command directly. The two deadlines below are independent.
+
+```mermaid
+sequenceDiagram
+    participant T as Local task
+    participant S as Owned services
+    participant R as Remote job
+    T->>S: Start reviewed selection with task owner
+    Note over S: A = last renewal + 30 seconds
+    Note over S: B = saved lifetime or this run's TTL
+    S-->>T: Listener ready
+    T->>T: Run exact local command
+    opt Application submits a remote job
+        T->>R: Submit application work
+    end
+    loop Every 10 seconds
+        T->>S: Renew A only, B stays unchanged
+    end
+    alt Local exit, failure or cancellation
+        T->>S: Attempt owned cleanup
+    else Wrapper lost or cleanup unreachable
+        S->>S: A expires after last renewal
+    else Finite permission expires first
+        S->>S: B stops permission even if A was renewed
+    end
+    Note over R: Cancel with the application's own controls
+```
+
+Text equivalent: the task renews its 30-second lease every 10 seconds while running; the saved permission lifetime, or this invocation’s `--ttl`, does not move. Local exit, failure or cancellation triggers owned cleanup. If the wrapper disappears or cleanup cannot reach the agent, the successfully leased permission expires no later than 30 seconds after its last renewal. An earlier finite permission deadline still wins. `--owner` alone scopes operations and creates no renewable lease.
 
 Unix cancellation terminates the local process group. Windows cancellation follows direct-child process semantics. Stopping transport does not promise to cancel a job already submitted remotely; use that application's own cancellation mechanism.
 
@@ -134,3 +164,37 @@ Exports contain only saved service scopes and groups. They exclude local node id
 Import previews replacement of saved definitions. Its review binds both the destination's current profile and the incoming definitions, so changing either requires another preview. Stop active services before applying an import. The existing local identity, network settings, trust, and received data are preserved, and every imported service remains stopped.
 
 Groups and group membership obey the configured `groups` and `groupMembers` admission choices. Lower choices retain saved groups and members; they constrain growth. Native tests cover disabled persistence, revision guards, rollback, ownership, lease expiry, and process cancellation. Real enrollment and application compatibility still require real-device acceptance.
+
+## Distinguish save from start in actual CLI output
+
+Excerpts from the real CLI with a fresh fictional local profile. No connection, credentials or service start was performed. IDs and revisions were generated for the demo.
+
+The save preview validates local input only. It does not check runtime capacity or peer reachability.
+
+```text
+  "applied": false,
+  "command": "service.save",
+  "validation": "local-input-only"
+```
+
+The save response reports `active: false`: storing the definition did not start it.
+
+```text
+  "active": false
+```
+
+The stopped-settings display below omits only the final command for the temporary profile; it is an excerpt, not the complete transcript.
+
+```text
+demo-web (42c68b758c950065d60c189e07d86263) | custom tcp | saved; listener ready: no
+  Local endpoint: 127.0.0.1:8080
+  Peer: demo-peer
+  local 8080-8080 -> remote 8080-8080 (tcp)
+  Lifetime: until-stopped
+  Current network addresses are unavailable; the saved peer IDs and port mappings remain authoritative.
+  These are saved endpoint mappings. Review and start the service separately before using the local endpoint.
+  These are service endpoints, not SOCKS proxy addresses.
+  Saved configuration and listener readiness do not prove application success. Keep TLS certificate and SSH host-key verification enabled.
+```
+
+Read “listener ready: no” separately from the stored mapping. A ready-state output was not captured and is not invented here.

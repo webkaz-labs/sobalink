@@ -11,6 +11,8 @@ sobalink は実験的なソフトウェアです。ローカル管理、相手�
   <img src="assets/visuals/permissions-ja-light-wide.svg" alt="ネットワーク接続、送信者の信頼、範囲付きサービス許可は独立した判断" width="1040">
 </picture>
 
+[図を元の大きさで開く（横長）](assets/visuals/permissions-ja-light-wide.svg) · [縦長版](assets/visuals/permissions-ja-light-narrow.svg)
+
 相手と接続しても、メッセージ・ファイルの信頼やサービス公開は付与されません。ファイル受信は通常バッチごとの承認が必要で、自動保存は別の明示設定です。相手の識別情報と各許可を個別に確認してください。
 
 ## 明示的な接続設定と永続キュー

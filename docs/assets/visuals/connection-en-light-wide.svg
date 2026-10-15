@@ -32,6 +32,7 @@
 <circle cx="739" cy="452" r="40" fill="#ffffff" stroke="#e6e7ed" stroke-width="2"/>
 <g transform="translate(724 437) scale(1.25) rotate(-23 12 12)" fill="#6550d8"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
 <text x="739" y="515" font-size="18" fill="#5844bf" font-weight="650" text-anchor="middle">sobalink</text>
+<text x="361" y="398" font-size="14" fill="#596172" font-weight="400" text-anchor="middle">Local entrance</text>
 <text x="550" y="348" font-size="19" fill="#5844bf" font-weight="650" text-anchor="middle">Network path</text>
 <text x="550" y="378" font-size="17" fill="#596172" font-weight="400" text-anchor="middle">Direct or Relay</text>
 <path d="M550 394v42" stroke="#7f8799" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>

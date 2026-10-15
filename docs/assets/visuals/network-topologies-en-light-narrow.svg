@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="920" viewBox="0 0 400 920" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">Three routes to a peer.</title><desc id="desc">Tailnet uses external coordination and an available direct or relay route. Relay-based LAN needs a common approved reachable relay. Direct LAN needs exact TCP/UDP endpoint reachability. Mixed associates approved routes; it is not a gateway between unrelated networks.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="400" height="920" rx="0" fill="#ffffff"/>
+<text x="24" y="33" font-size="13" fill="#5844bf" font-weight="600" text-anchor="start" id="label-4-box-356">sobalink  /  EXPLAINED</text>
+<text x="24" y="73" font-size="22" fill="#272c38" font-weight="650" text-anchor="start" id="label-5-box-356">Three routes to a peer.</text>
+<text x="24" y="105" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-6-box-356">Paths show requirements, not proof of connectivity.</text>
+<text x="24" y="137" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-7-box-356">Tailnet</text>
+<rect x="30" y="179" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="40" y="189" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M60.0 235h24 M72.0 225v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="72.0" y="267" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-11-box-119">A</text>
+<rect x="286" y="179" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="296" y="189" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M316.0 235h24 M328.0 225v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="328.0" y="267" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-15-box-119">B</text>
+<path d="M122 211 L278 211" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M271.0 214.8 L278 211 L271.0 207.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="133.0" y="196" width="134" height="30" rx="15" fill="#f0edff"/>
+<text x="200.0" y="217" font-size="13" fill="#5844bf" font-weight="600" text-anchor="middle" id="label-19-box-118">Direct / Relay</text>
+<text x="200" y="286" font-size="13" fill="#596172" font-weight="400" text-anchor="middle" id="label-20-box-380">External coordination</text>
+<path d="M72 275v12h58 M328 275v12h-58" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 4"/>
+<text x="24" y="307" font-size="14" fill="#5844bf" font-weight="600" text-anchor="start" id="label-22-box-356">Enrollment + external coordination</text>
+<text x="24" y="330" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-23-box-356">The usable path depends on network conditions.</text>
+<path d="M24 341H376" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="361" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-25-box-356">Relay-based LAN</text>
+<rect x="30" y="403" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="40" y="413" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M60.0 459h24 M72.0 449v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="72.0" y="491" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-29-box-119">A</text>
+<rect x="286" y="403" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="296" y="413" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M316.0 459h24 M328.0 449v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="328.0" y="491" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-33-box-119">B</text>
+<path d="M122 447 L158.0 447" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M151.0 450.8 L158.0 447 L151.0 443.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M242.0 447 L278 447" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M271.0 450.8 L278 447 L271.0 443.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M122 427Q200.0 371 278 427" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<rect x="117.0" y="387" width="166" height="21" rx="4" fill="#ffffff"/>
+<text x="200.0" y="402" font-size="11" fill="#596172" font-weight="400" text-anchor="middle" id="label-40-box-156">Direct path possible</text>
+<rect x="160.0" y="422" width="80" height="50" rx="8" fill="#f0edff" stroke="#e0e2ea"/>
+<text x="200.0" y="452" font-size="16" fill="#5844bf" font-weight="650" text-anchor="middle" id="label-42-box-68">Relay</text>
+<circle cx="185.0" cy="463" r="2" fill="#6550d8"/>
+<circle cx="200.0" cy="463" r="2" fill="#6550d8"/>
+<circle cx="215.0" cy="463" r="2" fill="#6550d8"/>
+<text x="24" y="531" font-size="14" fill="#5844bf" font-weight="600" text-anchor="start" id="label-46-box-356">Both peers reach the same relay</text>
+<text x="24" y="554" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-47-box-356">Approved anchor; hosting never moves automatically.</text>
+<path d="M24 565H376" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="585" font-size="19" fill="#272c38" font-weight="650" text-anchor="start" id="label-49-box-356">Direct LAN</text>
+<rect x="30" y="627" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="40" y="637" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M60.0 683h24 M72.0 673v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="72.0" y="715" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-53-box-119">A</text>
+<rect x="286" y="627" width="84" height="64" rx="9" fill="#f8f8fb" stroke="#e0e2ea"/>
+<rect x="296" y="637" width="64" height="34" rx="3" fill="#f0edff"/>
+<path d="M316.0 683h24 M328.0 673v10" fill="none" stroke="#7f8799" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="328.0" y="715" font-size="15" fill="#272c38" font-weight="600" text-anchor="middle" id="label-57-box-119">B</text>
+<path d="M122 654 L278 654" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M271.0 657.8 L278 654 L271.0 650.2" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M278 668 L122 668" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M129.0 664.2 L122 668 L129.0 671.8" fill="none" stroke="#6550d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="200.0" y="638" font-size="13" fill="#5844bf" font-weight="400" text-anchor="middle" id="label-62-box-380">TCP + UDP</text>
+<text x="24" y="755" font-size="14" fill="#5844bf" font-weight="600" text-anchor="start" id="label-63-box-356">Reach the exact private endpoints</text>
+<text x="24" y="778" font-size="12" fill="#596172" font-weight="400" text-anchor="start" id="label-64-box-356">No relay, STUN or OS route changes.</text>
+<path d="M24 830H376" fill="none" stroke="#e0e2ea" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="850" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-66-box-356">Mixed associates explicitly approved routes.</text>
+<text x="24" y="870" font-size="13" fill="#596172" font-weight="400" text-anchor="start" id="label-67-box-356">Existing TCP does not migrate. This is not a gateway.</text>
+</svg>

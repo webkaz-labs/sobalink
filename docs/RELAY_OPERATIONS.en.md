@@ -42,6 +42,21 @@ Startup reports port conflict, unavailable address/address family, denied bind p
 
 ## Certificate and address changes
 
+```mermaid
+flowchart TD
+    Change{"What changes?"}
+    Change -->Condition1["Same endpoint, valid"] --> Keep["Keep a valid saved certificate"]
+    Change -->Condition2["Port only, valid"] --> Keep
+    Change -->Condition3["Changed IP or invalid certificate"] --> Replace["Explicit certificate replacement review"]
+    Replace --> Block{"Saved pairs or a running engine?"}
+    Block -->Condition4["Yes"] --> Stop["Replacement blocked; use recovery flow"]
+    Block -->Condition5["No"] --> Save["Save the reviewed change"]
+    Save -.->Condition6["Save result unknown"] --> Inspect["Inspect actual saved state before recovery"]
+```
+
+Device public identity and relay certificate are separate. A valid certificate on the same IP is not automatically rotated for a port-only change. A save error does not establish rollback to the old state.
+
+
 The host certificate is bound to its IP. Ordinary repeat setup keeps a usable certificate. Changing only the port keeps the certificate and fingerprint, but a changed endpoint still requires removing saved pairs first. Status shows the certificate expiry and warns within 30 days. Check the device's clock before replacing an expired or not-yet-valid certificate.
 
 Replacing an existing certificate requires a separate explicit choice. An IP change or invalid certificate cannot silently generate a new pin:

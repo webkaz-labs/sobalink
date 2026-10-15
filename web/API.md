@@ -10,23 +10,16 @@ The React client uses only same-origin `/api` requests. The Go host is responsib
 
 This page documents the local browser contract in v0.5.0-alpha.1 (`46dcd363`). Use the [CLI guide](../docs/CLI_GUIDE.en.md) for automation rather than exposing or forwarding this HTTP API. The detailed types below remain authoritative for request shapes.
 
-```mermaid
-flowchart LR
-    Browser["Browser on this device"] --> Session["One-time code → local session"]
-    Session --> Local["Exact loopback management API"]
-    Local --> Core["Go authorization and current state"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="../docs/assets/visuals/api-boundary-en-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="../docs/assets/visuals/api-boundary-en-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/assets/visuals/api-boundary-en-dark-wide.svg">
+  <img src="../docs/assets/visuals/api-boundary-en-light-wide.svg" alt="The local browser reaches loopback management through its session and origin/CSRF checks. Authenticated peers use a separate scoped protocol, never a forwarded /api/command." width="960">
+</picture>
 
-Only the local browser session reaches management; mutations also require same-origin checks and the session-bound CSRF token. A one-time local Web code is separate from network setup and peer identity verification.
+[Open full-size diagram (wide)](../docs/assets/visuals/api-boundary-en-light-wide.svg) · [Narrow version](../docs/assets/visuals/api-boundary-en-light-narrow.svg)
 
-```mermaid
-flowchart LR
-    Peer["Authenticated peer"] --> PeerAPI["Peer protocol"]
-    PeerAPI --> Scope["Current identity and scoped permission"]
-    Scope --> Operation["Permitted transfer or resource operation"]
-```
-
-The peer protocol does not forward `/api/command` or grant access to the local management API. Resource inspection/management requires its own explicit limited authority; see [architecture](../docs/ARCHITECTURE.md#management-and-peer-surfaces).
+Only the local browser session reaches management; mutations also require same-origin checks and the session-bound CSRF token. The peer protocol does not forward `/api/command`. Pairing alone grants neither local management access nor remote resource authority. See [architecture](../docs/ARCHITECTURE.md#management-and-peer-surfaces) for the separate boundaries.
 
 ### Read a result before retrying
 

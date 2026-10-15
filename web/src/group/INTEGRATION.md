@@ -11,11 +11,17 @@
 5. Use explicit eligible-member refresh only when current observation is needed. Stop waiting does not undo remote changes.
 
 ```mermaid
-flowchart LR
-    A[Fixed members] --> B[Preview and row review]
-    B --> C[Confirm exact subset]
-    C --> D[One apply]
-    D --> E[Original run status]
+flowchart TD
+ accTitle: A fixed group becomes a reviewed subset
+ accDescr: A historical all-applied result is not current compliance; stopping the wait does not undo changes.
+ A["Fixed 1–16 members"] --> B["Preview each member row"]
+ B --> C["Keep failed rows visible and excluded"]
+ B --> D["Select eligible execution subset"]
+ D --> E["Confirm immutable ID and revision"]
+ E --> F["Apply once"]
+ F --> G["Inspect the original run"]
+
+ LIMIT["A historical all-applied result is not current compliance; stopping the wait does not undo changes."]
 ```
 
 Text equivalent: fixed members become a reviewed subset, one confirmed apply, then status for that same run. Historical all-applied evidence covers only that execution subset and is not current compliance.

@@ -5,11 +5,17 @@ This source connects the authenticated-local `resource.catalog.snapshot` command
 ## Follow a catalog action
 
 ```mermaid
-flowchart LR
-    A[Open dialog] --> B[Explicit snapshot request]
-    B --> C[Validate and show bounded rows]
-    C --> D[Select current row]
-    D --> E[Open existing reviewed workflow]
+flowchart TD
+ accTitle: Observation first, operation elsewhere
+ accDescr: Selecting a row does not create a grant or apply a change.
+ A["Open dialog: no request"] --> B["Explicit snapshot request"]
+ B --> C{"Observation complete?"}
+ C -->|Yes| D["Bounded current rows, possibly empty"]
+ C -->|No| E["Show unavailable or partial state"]
+ D --> F["Select current row"]
+ F --> G["Existing reviewed workflow"]
+
+ LIMIT["Selecting a row does not create a grant or apply a change."]
 ```
 
 Text equivalent: opening is inert; explicit refresh obtains bounded observations; a current row navigates to an existing workflow whose own fresh review remains required. A row does not create a grant or perform an action.

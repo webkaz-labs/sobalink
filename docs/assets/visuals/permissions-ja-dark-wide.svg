@@ -1,32 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 540" width="1040" height="540" role="img" aria-labelledby="title desc" xml:lang="ja"><title id="title">つながることと、許可すること。</title><desc id="desc">接続の準備、メッセージとファイルの送信元に対する信頼、サービスの共有許可は別の判断です。ネットワークへの参加だけでは信頼やサービス共有は許可されません。ファイル保存は通常バッチごとの受信同意が必要です。自動保存は別途明示的に設定します。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="690" viewBox="0 0 960 690" role="img" aria-labelledby="title desc" xml:lang="ja">
+<title id="title">つながることと、許可すること。</title><desc id="desc">接続、文字とファイル申込みへの信頼、ファイル保存同意、自動保存、サービスの相手・port・期限は独立した許可です。</desc>
 <style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
-<rect x="0" y="0" width="1040" height="540" rx="0" fill="#1d202a"/>
-<g transform="translate(32 25) rotate(-23 12 12)" fill="#a18bff" aria-hidden="true"><rect width="6" height="24" rx="3"/><rect x="9" y="5" width="6" height="16" rx="3"/><rect x="18" y="2" width="6" height="22" rx="3" opacity=".6"/></g>
-<text x="68" y="45" font-size="22" fill="#e8e9f0" font-weight="650">sobalink</text>
-<text x="32" y="108" font-size="30" fill="#e8e9f0" font-weight="650">つながることと、許可すること。</text>
-<text x="32" y="144" font-size="17" fill="#bdc5d8" font-weight="400">接続・受信・サービス共有は、それぞれ確認します。</text>
-<rect x="32" y="188" width="304" height="238" rx="16" fill="#191c24"/>
-<text x="52" y="222" font-size="14" fill="#c0aeff" font-weight="600">接続</text>
-<text x="52" y="266" font-size="22" fill="#e8e9f0" font-weight="650">ネットワークへ参加</text>
-<text x="52" y="306" font-size="17" fill="#bdc5d8" font-weight="400">選んだ経路で</text>
-<text x="52" y="333" font-size="17" fill="#bdc5d8" font-weight="400">相手と通信する準備</text>
-<rect x="52" y="363" width="264" height="41" rx="8" fill="#30294b"/>
-<text x="60" y="389" font-size="14" fill="#c0aeff" font-weight="500">信頼・共有の許可とは別</text>
-<rect x="368" y="188" width="304" height="238" rx="16" fill="#191c24"/>
-<text x="388" y="222" font-size="14" fill="#c0aeff" font-weight="600">受信</text>
-<text x="388" y="266" font-size="22" fill="#e8e9f0" font-weight="650">相手を信頼</text>
-<text x="388" y="306" font-size="17" fill="#bdc5d8" font-weight="400">メッセージの受信と</text>
-<text x="388" y="333" font-size="17" fill="#bdc5d8" font-weight="400">ファイルの申込みを許可</text>
-<rect x="388" y="363" width="264" height="41" rx="8" fill="#30294b"/>
-<text x="396" y="389" font-size="14" fill="#c0aeff" font-weight="500">通常はファイルをバッチごとに承認</text>
-<rect x="704" y="188" width="304" height="238" rx="16" fill="#191c24"/>
-<text x="724" y="222" font-size="14" fill="#c0aeff" font-weight="600">共有</text>
-<text x="724" y="266" font-size="22" fill="#e8e9f0" font-weight="650">サービスを許可</text>
-<text x="724" y="306" font-size="17" fill="#bdc5d8" font-weight="400">相手・ポート・期限を</text>
-<text x="724" y="333" font-size="17" fill="#bdc5d8" font-weight="400">指定して共有</text>
-<rect x="724" y="363" width="264" height="41" rx="8" fill="#30294b"/>
-<text x="732" y="389" font-size="14" fill="#c0aeff" font-weight="500">メッセージ・ファイルの信頼とは別</text>
-<path d="M32 455H1008" stroke="#343846"/>
-<text x="32" y="485" font-size="15" fill="#bdc5d8" font-weight="400">受信の許可は、受け取る側が決めます。</text>
-<text x="32" y="512" font-size="15" fill="#bdc5d8" font-weight="400">自動保存は、相手と保存先を選んで別途有効にします。</text>
+<rect x="0" y="0" width="960" height="690" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  図解</text>
+<text x="24" y="73" font-size="28" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-916">つながることと、許可すること。</text>
+<text x="24" y="105" font-size="15" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-916">接続できても、受信や共有は別に選びます。</text>
+<rect x="24" y="136" width="205" height="30" rx="15" fill="#30294b"/>
+<text x="126.5" y="157" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-8-box-189">接続済みの経路</text>
+<path d="M40 171V197H710" fill="none" stroke="#454959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M240 197V232 M710 197V232" fill="none" stroke="#454959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="24" y="232" width="436" height="278" rx="12" fill="#191c24" stroke="#454959"/>
+<text x="40" y="262" font-size="17" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-12-box-404">A  文字・ファイルを受信</text>
+<rect x="40" y="282" width="404" height="30" rx="15" fill="#30294b"/>
+<text x="242.0" y="303" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-14-box-388">この送信元を信頼</text>
+<path d="M242.0 319v15H101v17 M242.0 334H378v17" fill="none" stroke="#a18bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="101" y="372" font-size="14" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-16-box-140">文字を受信</text>
+<text x="378" y="372" font-size="14" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-17-box-140">ファイル申込み</text>
+<path d="M378 384 L378 407" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M374.2 400.0 L378 407 L381.8 400.0" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="378" y="432" font-size="14" fill="#e8e9f0" font-weight="600" text-anchor="middle" id="label-20-box-160">保存の同意</text>
+<text x="40" y="465" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-21-box-404">通常: バッチごとに受信承認</text>
+<text x="40" y="487" font-size="14" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-22-box-404">自動保存: 相手と保存先を別途承認</text>
+<rect x="500" y="232" width="436" height="194" rx="12" fill="#191c24" stroke="#454959"/>
+<text x="516" y="262" font-size="17" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-24-box-404">B  サービス共有</text>
+<rect x="516" y="282" width="404" height="30" rx="15" fill="#30294b"/>
+<text x="718.0" y="303" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-26-box-388">相手・ポート・期限を許可</text>
+<path d="M718.0 321 L718.0 347" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M714.2 340.0 L718.0 347 L721.8 340.0" fill="none" stroke="#a18bff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="718.0" y="375" font-size="14" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-29-box-406">指定したサービスだけを公開</text>
+<text x="718.0" y="403" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-30-box-406">アプリの起動・認証も別途必要</text>
+<path d="M24 590H936" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="610" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-32-box-916">A と B は独立。片方の承認では他方は有効になりません。</text>
+<text x="24" y="630" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-33-box-916">受信側が、その端末への許可を決めます。</text>
+<text x="24" y="650" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-34-box-916">逆方向は、もう一方の端末で別に許可します。</text>
 </svg>

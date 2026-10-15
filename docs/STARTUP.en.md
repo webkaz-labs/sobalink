@@ -21,6 +21,21 @@ Start with outbound services below. Configure OS sign-in startup only if you als
 
 ## Saved outbound connections
 
+```mermaid
+flowchart TD
+    Launch["Explicit new online process launch"] --> Ready["Wait for network readiness"]
+    Ready --> Attempt["One attempt per eligible approval"]
+    Attempt --> Active["Started connection + original expiry"]
+    Offline["Process launched offline"] --> Suppress["Startup selections stay suppressed"]
+    Active --> Condition1["Transport reconnect"] --> Expiry["Keep absolute expiry; no renewal"]
+    Attempt --> Condition2["Failure"] --> Failed["Failed; no automatic retry"]
+    Active --> Condition3["Explicit stop"] --> Stopped["Stopped; no automatic restart"]
+    Changed["Definition, group, network or identity changes"] --> Review["Old approval invalid; review anew"]
+```
+
+A finite lifetime starts under the approved new online launch; reconnecting within the same process does not renew it. Offline startup suppresses these selections for the entire process. OS sign-in registration is a separate setting.
+
+
 1. Save the desired outbound services or group, then inspect them:
    `soba startup preview --name example --group example`
 2. Review the complete returned service scopes and lifetimes. Enable that exact
@@ -49,6 +64,35 @@ is a separate optional setting: `soba autostart --help`.
 
 ## Private SOCKS profiles
 
+What changes when a proxy is saved, stopped, disabled or deleted? Read private credentials, future-launch approval and the current session separately.
+
+```mermaid
+flowchart TB
+    subgraph Secrets["Private credentials"]
+        Stored["Save or generate: credentials stored"] --> Delete["saved-delete"] --> Removed["Credentials removed"]
+    end
+    subgraph Launch["Future process launches"]
+        Enabled["Explicit launch approval"] --> Disable["saved-disable"] --> Off["Future launch off; old recovery disarmed"]
+    end
+    subgraph Session["Current session: independent of storage"]
+        Start["Explicit start or approved online launch"] --> Live["Listener running"]
+        Live --> Loss["Transient loss"] --> Pending["Suspended: original ID and expiry"]
+        Pending --> Valid["Approval valid; original lifetime active"] --> Live
+        Live --> Stop["Stop, expiry or saved-delete"] --> Closed["Stopped: no silent recovery"]
+        Pending --> Stop
+    end
+```
+
+| Reviewed action | Private credentials | Future launch | Current listener / recovery |
+| --- | --- | --- | --- |
+| Save or generate | Stored | Explicit `startOnLaunch` choice | No listener starts |
+| Saved start | Kept | Unchanged | Fresh explicit session; current checks apply |
+| Stop or expiry | Kept | Unchanged | Session stops; no silent recovery |
+| Saved disable | Kept | Disabled | Running listener stays; recovery from the old approval is disabled |
+| Saved delete | Removed | Removed | Associated session stops |
+
+Text equivalent: save alone opens nothing. Explicit saved start or a separately approved future online launch can create a session. Transient transport recovery keeps the original ID and expiry while its approval remains valid. Stop, expiry or invalidation never silently renews permission. Initially saving with `startOnLaunch: false` still permits an explicitly started saved session to recover; `saved-disable` invalidates recovery from the previous stored revision. Offline launch suppresses automatic starts. After an uncertain save, reload the saved and runtime lists before retrying.
+
 The ordinary `soba proxy start` command remains ephemeral. Optional saving uses
 only private input files or a pipe:
 
@@ -72,9 +116,8 @@ Manage an entry using its own `revision` from `proxy saved`:
 - `soba proxy reveal NAME --review REVISION --private-file PATH`
 
 Reveal writes credentials directly to the chosen private file. Generic command
-output cannot bypass this destination requirement. Keep revealed files private. Delete also stops the session associated with that entry;
-disable prevents future automatic starts and recovery from that stored approval.
-An already running listener can be stopped with `soba proxy stop ID`.
+output cannot bypass this destination requirement. Keep revealed files private.
+Use `soba proxy stop ID` to stop the running listener separately.
 
 Saved scopes retain exact peer identities, TCP ports, loopback endpoint, network,
 node hostname and lifetime. All current-identity/netstack/loopback restrictions still

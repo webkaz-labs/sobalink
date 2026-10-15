@@ -1,0 +1,173 @@
+{
+  "base_source": "7f2f79880f3ebd4689b642a6dc9c2d367c0a8e46",
+  "capture_date": "2026-10-15",
+  "scene_count": 9,
+  "png_variants": 30,
+  "scope": "Synthetic UI illustrations, not physical-device acceptance or a released-build claim. setup-fixed shows the entry-copy correction included with this change set. No UI pixels painted over.",
+  "images": [
+    {
+      "file": "message-context-ja.png",
+      "sha256": "d582d54ccd2b8b042d1532c7b830279626f906fe7ed2d84baf6d4033fcb66656",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "receive-ja.png",
+      "sha256": "6d3e859435fa505dc9acc4ba673bb776017683ddfec74dbb5ada441567dd04e9",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "service-review-ja.png",
+      "sha256": "c7c08a6a1be6d0167900116cc00f277d29a2bf055e8fa901de6f2731afcff3b1",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "message-context-ja-narrow-input.png",
+      "sha256": "c7b3c597ba679c7b9a802d3c2e5ba9780af4012a51bca8f8018b86faa37ded4e",
+      "source_scope": "main synthetic empty-conversation fixture"
+    },
+    {
+      "file": "navigation-graph-ja-wide.png",
+      "sha256": "94394f69e715f861cb612a8efb384315abb6de86b915a0d502308d87dc6ded2d",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "navigation-graph-ja-narrow.png",
+      "sha256": "55fb47851d24ae8f8c579399ca3a38e9e7520f6ab401bf24765973ebf389c701",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "navigation-detail-ja-narrow.png",
+      "sha256": "89707b34401a3d3da61be1af9caecb7fd9ff590ab811045099a69d414d8b288e",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "receive-legacy-ja-wide.png",
+      "sha256": "57f69f96f1217bf085f7c1f7965440c0aab37d7bed4b5fa2b52235749c98a519",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "receive-damaged-ja-wide.png",
+      "sha256": "4f2cea4a6fd09d6d487978dfd086ea5221c880e5356d2b356d06ca9d5437e61b",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "stopped-review-ja-focused.png",
+      "sha256": "01dc94d5c5f8c9da3dea8e9e33283a3345e458120503925089148fb6ce58c3c3",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "direct-review-ja-focused.png",
+      "sha256": "68d36e6cd5cec74167a2956f66182cf2eb05a821498e273780c1ffeea70db5a3",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "startup-guide-ja-wide.png",
+      "sha256": "3cc8a5071396afa0eb1cb6bfcfc7fc9c336f81b966a97a2f952cca317d42250b",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "startup-guide-ja-narrow-actions.png",
+      "sha256": "d8bbbeaeca0a145cab7d2712ac868b1e6a9d80b425afb20a8d95f3c64b19a00a",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "setup-fixed-ja-1180.png",
+      "sha256": "992d84e00f372f805b70b32ad07dee486d998ca08d32e19fa67c9a2ee10451ce",
+      "source_scope": "base source plus entry-copy correction included with this change set"
+    },
+    {
+      "file": "setup-fixed-ja-390.png",
+      "sha256": "6298dcbd61fa05a2147bb4e742d07954471c654b5d21aba536fd9ca109d2e0b8",
+      "source_scope": "base source plus entry-copy correction included with this change set"
+    },
+    {
+      "file": "message-context-en.png",
+      "sha256": "c2c2b37d31c46a00d43dd256dd0a77d4fcdb14258f73b89589cf313bd43b6054",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "receive-en.png",
+      "sha256": "b35d8c897ea37823f5afbc8bb78c44bbc926221378da09836668d7e63af37c8a",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "service-review-en.png",
+      "sha256": "a3fa8ca069665a386154d67bfee1620cc109de387af7b583a17c55a82e9f0af4",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "message-context-en-narrow-input.png",
+      "sha256": "3205f0ef63ad48d7a1eb06810ac4386f357d6ad16d898596755c1afdc0f4c9c4",
+      "source_scope": "main synthetic empty-conversation fixture"
+    },
+    {
+      "file": "navigation-graph-en-wide.png",
+      "sha256": "d8b65f0374bbe3f7460ae5caadb108632fda9d481653ecbfc95506d11be7d155",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "navigation-graph-en-narrow.png",
+      "sha256": "2e97cf1b783e91548a30663633c65c02f598255ee31776012ad9189f70e4765d",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "navigation-detail-en-narrow.png",
+      "sha256": "e24e6ffb56534d9e9e131dccc560705d9d376197b8bd8b0c7d66c7e8ef02cfa7",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "receive-legacy-en-wide.png",
+      "sha256": "378bc1a753cb62c8144ac4a9b92fee0180aff32b9553c308e70673f3fa350afc",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "receive-damaged-en-wide.png",
+      "sha256": "b935c184c4df1284e960b9d0c3bc39171e7595a82b85c28f2a0f5c327d92fe97",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "stopped-review-en-focused.png",
+      "sha256": "0c1e66b8194a6c3eed7876d07d938d531a20ea150279ab0818f3c1fa3342daca",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "direct-review-en-focused.png",
+      "sha256": "5a69cdfbed4b2c5081b6079f11d5709b64169bb55b8f01a2dcc983f838bc9e4e",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "startup-guide-en-wide.png",
+      "sha256": "2472bc612d7c9f9a4174cd7c2af0149b422e52949d2f13387ac211efb1f38035",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "startup-guide-en-narrow-actions.png",
+      "sha256": "dbe50265a2ccf26dc04176a299f85ed43a7d60e34a22dd983ec744ce33424f21",
+      "source_scope": "main synthetic fixture"
+    },
+    {
+      "file": "setup-fixed-en-1180.png",
+      "sha256": "76f87ff352412e3d2f1e9a3f8b13536d7a052c742abcd7e1ac60f1d41b1ca185",
+      "source_scope": "base source plus entry-copy correction included with this change set"
+    },
+    {
+      "file": "setup-fixed-en-390.png",
+      "sha256": "95ca4d5d78b06e4bd959b1f0194ec46e27aafe004eefd20b2669c3577f269fbb",
+      "source_scope": "base source plus entry-copy correction included with this change set"
+    }
+  ],
+  "setup_source_changes": [
+    {
+      "path": "web/src/nearby-i18n.ts",
+      "sha256": "7f0079f8f05a60b4fea74617ee1e050531b11557494d77056da987d9f5e55b44"
+    },
+    {
+      "path": "web/src/components/Dialogs.tsx",
+      "sha256": "ad239de878cf9a204f0b6abc59ea7127555ea46ab69dd1f009abb4747b25b9da"
+    },
+    {
+      "path": "web/src/App.nearby-setup.test.tsx",
+      "sha256": "807966b0a937c30dc00d2bf97f462018e407b3e79a43c6ac08cfcd2f5525e698"
+    }
+  ]
+}

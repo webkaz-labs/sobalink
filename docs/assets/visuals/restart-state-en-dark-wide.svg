@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="730" viewBox="0 0 960 730" role="img" aria-labelledby="title desc" xml:lang="en">
+<title id="title">What returns after restart?</title><desc id="desc">Saved-network and offline startup differ. Ordinary saved services remain stopped. Separately approved startup selections may attempt launch; durable queues retain original IDs and deadlines.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP","Noto Sans JP",sans-serif}</style>
+<rect x="0" y="0" width="960" height="730" rx="0" fill="#1d202a"/>
+<text x="24" y="33" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="start" id="label-4-box-916">sobalink  /  EXPLAINED</text>
+<text x="24" y="73" font-size="28" fill="#e8e9f0" font-weight="650" text-anchor="start" id="label-5-box-916">What returns after restart?</text>
+<text x="24" y="105" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-6-box-916">Same profile · stop first, then choose startup mode</text>
+<rect x="388.0" y="130" width="184" height="30" rx="15" fill="#30294b"/>
+<text x="480.0" y="151" font-size="13" fill="#c0aeff" font-weight="600" text-anchor="middle" id="label-8-box-168">Stop → new process</text>
+<path d="M480.0 164v14H540v17 M480.0 178H800v17" fill="none" stroke="#9ba4b7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="540" y="211" font-size="13" fill="#c0aeff" font-weight="650" text-anchor="middle" id="label-10-box-100">Saved network</text>
+<text x="800" y="211" font-size="13" fill="#c0aeff" font-weight="650" text-anchor="middle" id="label-11-box-100">Local only</text>
+<text x="540" y="232" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-12-box-100">saved</text>
+<text x="800" y="232" font-size="12" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-13-box-100">offline</text>
+<text x="24" y="219" font-size="15" fill="#bdc5d8" font-weight="600" text-anchor="start" id="label-14-box-916">State</text>
+<rect x="16" y="240" width="928" height="49" rx="0" fill="#191c24"/>
+<text x="24" y="273" font-size="16" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-16-box-390">Local UI / CLI</text>
+<text x="540" y="273" font-size="16" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-17-box-220">Starts</text>
+<text x="800" y="273" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-18-box-220">Starts</text>
+<text x="24" y="322" font-size="16" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-19-box-390">Saved network</text>
+<text x="540" y="322" font-size="16" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-20-box-220">Attempts</text>
+<text x="800" y="322" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-21-box-220">Off</text>
+<rect x="16" y="338" width="928" height="49" rx="0" fill="#191c24"/>
+<text x="24" y="371" font-size="16" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-23-box-390">Receive / autosave</text>
+<text x="540" y="371" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-24-box-220">Conditional</text>
+<text x="800" y="371" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-25-box-220">Stored</text>
+<text x="24" y="420" font-size="16" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-26-box-390">Saved services</text>
+<text x="540" y="420" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-27-box-220">Stopped</text>
+<text x="800" y="420" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-28-box-220">Stopped</text>
+<rect x="16" y="436" width="928" height="49" rx="0" fill="#191c24"/>
+<text x="24" y="469" font-size="16" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-30-box-390">Startup approvals</text>
+<text x="540" y="469" font-size="16" fill="#c0aeff" font-weight="400" text-anchor="middle" id="label-31-box-220">Eligible once</text>
+<text x="800" y="469" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-32-box-220">Suppressed</text>
+<text x="24" y="518" font-size="16" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-33-box-390">Durable queues</text>
+<text x="540" y="518" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-34-box-220">Conditional</text>
+<text x="800" y="518" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-35-box-220">No delivery</text>
+<rect x="16" y="534" width="928" height="49" rx="0" fill="#191c24"/>
+<text x="24" y="567" font-size="16" fill="#e8e9f0" font-weight="400" text-anchor="start" id="label-37-box-390">Immediate transfer</text>
+<text x="540" y="567" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-38-box-220">No resume</text>
+<text x="800" y="567" font-size="16" fill="#bdc5d8" font-weight="400" text-anchor="middle" id="label-39-box-220">No resume</text>
+<path d="M24 604H936" fill="none" stroke="#454959" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="24" y="624" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-41-box-916">Conditional: current connection, permission and pause.</text>
+<text x="24" y="644" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-42-box-916">Durable attempts keep the original ID and deadline.</text>
+<text x="24" y="664" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-43-box-916">Offline does not erase saved approvals.</text>
+<text x="24" y="684" font-size="13" fill="#bdc5d8" font-weight="400" text-anchor="start" id="label-44-box-916">Check connectivity separately with soba status.</text>
+</svg>

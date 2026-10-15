@@ -7,13 +7,26 @@
 依頼して承認する手順は [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) に含まれます。[検証記録](VERIFICATION.md)で同一ソースの CI と署名付き配布を区別します。同一ホストの探索や制御されたブラウザー・ループバック試験は、物理端末間の探索・実登録・アプリ互換性の合格を示しません。
 
 <picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-ja-dark-narrow.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/permissions-ja-dark-wide.svg">
-  <source media="(max-width: 839px)" srcset="assets/visuals/permissions-ja-light-narrow.svg">
-  <img src="assets/visuals/permissions-ja-light-wide.svg" alt="通信のペアリング、文字・ファイルの信頼、自動保存、サービス共有は別々に判断します。" width="1040">
+  <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/pairing-exchange-ja-dark-narrow.svg">
+  <source media="(max-width: 839px)" srcset="assets/visuals/pairing-exchange-ja-light-narrow.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/pairing-exchange-ja-dark-wide.svg">
+  <img src="assets/visuals/pairing-exchange-ja-light-wide.svg" alt="TOFUでは依頼側が鍵と期限を確認して依頼し、受信側が承認。完全指紋照合では両端末で照合して承認します。" width="960">
 </picture>
 
+[図を元の大きさで開く（横長）](assets/visuals/pairing-exchange-ja-light-wide.svg) · [縦長版](assets/visuals/pairing-exchange-ja-light-narrow.svg)
+
 ペアリングは通信相手を識別します。文字・ファイルの信頼、自動保存先、サービスの範囲はそれぞれ確認してください。初回の鍵の承認では、TOFU の限界を理解してから承認します。
+
+### 初回案内の画面例
+
+この文書と同じ変更に含まれる初回案内の文言修正を、デモデータで撮影した画面例です。リリース済み画面の証明ではありません。既定の依頼・承認とTOFU、任意の完全指紋照合を説明しています。
+
+<picture>
+  <source media="(max-width: 600px)" srcset="assets/screenshots/setup-fixed-ja-390.png">
+  <img src="assets/screenshots/setup-fixed-ja-1180.png" alt="初回案内の文言修正を含む画面例。接続側の依頼と受信側の承認、TOFU既定を説明。" width="680">
+</picture>
+
+[原寸で開く](assets/screenshots/setup-fixed-ja-1180.png) · [狭幅版](assets/screenshots/setup-fixed-ja-390.png)
 
 ## 依頼して承認する手順（v2）
 

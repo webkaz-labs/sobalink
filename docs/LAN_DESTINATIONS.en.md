@@ -8,6 +8,20 @@ Administrator rights and LAN-router changes are not required or performed. The f
 
 ## What this setting controls
 
+```mermaid
+flowchart TD
+    UDP["UDP: this LAN transport"] --> Prefix{"In the allowed destination set?"}
+    Prefix -->Condition1["Allowed"] --> Route["OS chooses the route"]
+    Route --> NIC["Physical interface or VPN"]
+    TCP["DERP TCP to relay"] --> Exact{"Exact configured endpoint inside prefixes?"}
+    Exact -->Condition2["Allowed"] --> Route
+    Prefix -->Condition3["Outside"] --> Deny["Refuse; never widen the scope silently"]
+    Exact -->Condition4["No match"] --> Deny
+```
+
+This admits destinations, not physical paths. An admitted destination may still be routed through a VPN. It does not establish whole-device or whole-process isolation.
+
+
 | You choose | It controls | It does not establish |
 | --- | --- | --- |
 | Private/ULA/loopback prefixes | Permitted UDP destination addresses | The physical interface or VPN path |

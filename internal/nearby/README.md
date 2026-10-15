@@ -11,11 +11,16 @@ and authenticate that endpoint independently.
 ## From a hint to an approved peer
 
 ```mermaid
-flowchart LR
-    A[Consent to selected scope] --> B[Bounded discovery session]
-    B --> C[Select untrusted hint]
-    C --> D[Revalidate current candidate]
-    D --> E[Independent endpoint authentication]
+flowchart TD
+ accTitle: Discovery is only a hint
+ accDescr: Discovery and candidate selection never grant trust or application permission.
+ A["Consent to selected interface scope"] --> B["Bounded discovery session"]
+ B --> C["Untrusted setup hints"]
+ C --> D["Select and revalidate current candidate"]
+ D --> E["Independent endpoint authentication"]
+ E --> F["Existing separate approval workflow"]
+
+ LIMIT["Discovery and candidate selection never grant trust or application permission."]
 ```
 
 Text equivalent: consent selects a scope; a bounded session produces untrusted hints; selection requires current-candidate revalidation and independent authentication. Discovery never grants access.
