@@ -63,9 +63,6 @@ jobs:
     if: always() && !cancelled() && github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    env:
-      DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render
-      PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -89,6 +86,9 @@ jobs:
           check-latest: false
           package-manager-cache: false
       - name: Install isolated locked document rendering dependencies
+        env:
+          DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render
+          PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
         if: steps.document-selection.outputs.render_required == 'true'
         run: |
           set -euo pipefail
@@ -101,6 +101,9 @@ jobs:
           cp .github/docs-render/package.json .github/docs-render/package-lock.json "$DOCS_RENDER_ROOT/"
           npm ci --prefix "$DOCS_RENDER_ROOT" --registry=https://registry.npmjs.org --no-audit --no-fund
       - name: Require document checks and selected rendering
+        env:
+          DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render
+          PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
         run: python -B .github/scripts/ci-documents.py check --plan "$RUNNER_TEMP/ci-documents-plan.json" --output "$RUNNER_TEMP/ci-documents-report"
       - name: Preserve sanitized document evidence
         if: always()
