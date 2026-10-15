@@ -385,6 +385,8 @@ class ActualCoverageTests(unittest.TestCase):
         # runner context is unavailable in jobs.<id>.env; resolve it only in steps.
         self.assertNotIn("runner.", documents.split("    steps:", 1)[0])
         self.assertEqual(documents.count("          DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render"), 2)
+        self.assertEqual(documents.count("run: /usr/bin/python3 -B .github/scripts/ci-"), 3)
+        self.assertIn("/usr/bin/python3 -I -c 'from PIL import Image'", documents)
         self.assertNotIn("setup-go", documents)
         self.assertNotIn("contents: write", documents)
 

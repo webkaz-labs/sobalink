@@ -397,7 +397,8 @@ class RenderContractTests(unittest.TestCase):
             self.assertEqual(command[1:3], ['-I', '-B'])
             if name == 'build.py':
                 for svg in documents.SVG_NAMES:
-                    (cwd / svg).write_text(SVG, encoding='utf-8')
+                    # The reproduction contract compares bytes, independent of host newlines.
+                    (cwd / svg).write_bytes(SVG.encode('utf-8'))
             if name == 'render.py':
                 for svg in documents.SVG_NAMES:
                     (cwd / Path(svg).with_suffix('.png')).write_bytes(b'synthetic-png')
@@ -408,6 +409,14 @@ class RenderContractTests(unittest.TestCase):
             documents.render(self.static, self.output, {})
         self.assertEqual(tuple(called), documents.HELPERS)
         self.assertEqual(len(list(self.output.glob('*.png'))), 32)
+
+    def test_reproduction_fixture_is_stable_with_windows_text_newlines(self):
+        original = Path.write_text
+        def windows_newlines(path, data, *args, **kwargs):
+            kwargs.setdefault('newline', '\r\n')
+            return original(path, data, *args, **kwargs)
+        with patch.object(Path, 'write_text', windows_newlines):
+            self.test_only_exact_helpers_execute_in_scratch_after_content_verification()
 
     def test_unsafe_or_changed_generated_svg_never_reaches_renderer(self):
         for bad in (SVG.replace('</svg>', '<script/></svg>'), SVG.replace('Example', 'Changed')):

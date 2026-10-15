@@ -75,10 +75,10 @@ jobs:
           name: ci-impact-plan
           path: ${{ runner.temp }}/ci-plan
       - name: Validate document impact plan or require full coverage
-        run: python -B .github/scripts/ci-coverage.py resolve --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output "$RUNNER_TEMP/ci-documents-plan.json"
+        run: /usr/bin/python3 -B .github/scripts/ci-coverage.py resolve --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output "$RUNNER_TEMP/ci-documents-plan.json"
       - name: Verify document selection and static content
         id: document-selection
-        run: python -B .github/scripts/ci-documents.py select --plan "$RUNNER_TEMP/ci-documents-plan.json" --output "$RUNNER_TEMP/ci-documents-selection.json"
+        run: /usr/bin/python3 -B .github/scripts/ci-documents.py select --plan "$RUNNER_TEMP/ci-documents-plan.json" --output "$RUNNER_TEMP/ci-documents-selection.json"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.document-selection.outputs.render_required == 'true'
         with:
@@ -94,6 +94,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y librsvg2-2 libcairo2 python3-pil fonts-noto-core fonts-noto-cjk
+          /usr/bin/python3 -I -c 'from PIL import Image'
           npm install --global npm@11.9.0 --registry=https://registry.npmjs.org --no-audit --no-fund
           test "$(node --version)" = v24.19.0
           test "$(npm --version)" = 11.9.0
@@ -104,7 +105,7 @@ jobs:
         env:
           DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render
           PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
-        run: python -B .github/scripts/ci-documents.py check --plan "$RUNNER_TEMP/ci-documents-plan.json" --output "$RUNNER_TEMP/ci-documents-report"
+        run: /usr/bin/python3 -B .github/scripts/ci-documents.py check --plan "$RUNNER_TEMP/ci-documents-plan.json" --output "$RUNNER_TEMP/ci-documents-report"
       - name: Preserve sanitized document evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
