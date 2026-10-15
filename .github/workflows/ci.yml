@@ -57,6 +57,66 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  documents:
+    needs: impact
+    # Every scope verifies documentation; unknown plans additionally render all.
+    if: always() && !cancelled() && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Download this run's document selection
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-impact-plan
+          path: ${{ runner.temp }}/ci-plan
+      - name: Validate document impact plan or require full coverage
+        run: /usr/bin/python3 -B .github/scripts/ci-coverage.py resolve --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output "$RUNNER_TEMP/ci-documents-plan.json"
+      - name: Verify document selection and static content
+        id: document-selection
+        run: /usr/bin/python3 -B .github/scripts/ci-documents.py select --plan "$RUNNER_TEMP/ci-documents-plan.json" --output "$RUNNER_TEMP/ci-documents-selection.json"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.document-selection.outputs.render_required == 'true'
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Install isolated locked document rendering dependencies
+        env:
+          DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render
+          PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
+        if: steps.document-selection.outputs.render_required == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y librsvg2-2 libcairo2 python3-pil fonts-noto-core fonts-noto-cjk
+          /usr/bin/python3 -I -c 'from PIL import Image'
+          npm install --global npm@11.9.0 --registry=https://registry.npmjs.org --no-audit --no-fund
+          test "$(node --version)" = v24.19.0
+          test "$(npm --version)" = 11.9.0
+          mkdir -p "$DOCS_RENDER_ROOT"
+          cp .github/docs-render/package.json .github/docs-render/package-lock.json "$DOCS_RENDER_ROOT/"
+          npm ci --prefix "$DOCS_RENDER_ROOT" --registry=https://registry.npmjs.org --no-audit --no-fund
+      - name: Require document checks and selected rendering
+        env:
+          DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render
+          PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
+        run: /usr/bin/python3 -B .github/scripts/ci-documents.py check --plan "$RUNNER_TEMP/ci-documents-plan.json" --output "$RUNNER_TEMP/ci-documents-report"
+      - name: Preserve sanitized document evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-documents
+          path: |
+            ${{ runner.temp }}/ci-documents-selection.json
+            ${{ runner.temp }}/ci-documents-report/report.json
+          if-no-files-found: error
+          retention-days: 14
+
   native:
     # Unknown or failed selection defaults to the full native matrix.
     needs: impact
@@ -1183,7 +1243,7 @@ jobs:
 
   ci-required:
     # Require this aggregate in branch protection; a skipped job alone is green.
-    needs: [impact, native, browser, go-unit, manifest-smoke]
+    needs: [impact, documents, native, browser, go-unit, manifest-smoke]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10

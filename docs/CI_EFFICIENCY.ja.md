@@ -26,7 +26,7 @@ flowchart LR
 
 | 変更全体 | 実行する検証 |
 | --- | --- |
-| 通常のルートREADME/SECURITY、直下の `docs/*.md` の説明文 | 軽いGit差分判定と必須文書の存在確認。アプリ試験・ビルド・配布物作成は実行しない |
+| 通常のルートREADME/SECURITY、直下の `docs/*.md`、個別確認済みの内部/Web説明文、既知の文書SVG | 必須の文書検証：不変のGit差分証明、Markdown・ローカルリンク・見出し・代替文・SVG安全性。図の変更時は再生成・描画も確認。アプリ試験・ビルド・配布物作成は実行しない |
 | `web/src` のTypeScript/TSX/CSS、既存の `web/browser/*.mjs` のブラウザー試験コード。通常文書との混在も可 | Linuxでフロント単体試験、同一lockからの2回の再生成一致、fixture安全性試験、実ブラウザー試験 |
 | 上記に伴う生成済み `web/dist` の変更 | フロントソース変更がある場合のみフロント範囲。再生成の一致は必須 |
 | `internal/servicepresets` または `internal/boundedlog` の確認済みGo変更。通常文書との混在も可 | 変更パッケージと、テストからの参照を含む推移的な逆依存をLinuxでrace検出・vet |
@@ -35,6 +35,14 @@ flowchart LR
 | 確認済みCLI表示・フロント・限定Goの組み合わせ | 4ターゲットの短時間・安全性試験、ブラウザー、配布物・manifest検証。実時間lifecycle/leaseの3工程とnative resource inspection・management・fixed-group catalogは未実行 |
 | OS固有Go、cgo、未確認のimport、方針・出所情報のMarkdown、不正なmode/type、判定できない入力 | 全件 |
 | 毎日の定期全件確認、手動の全件確認、すべてのプレリリース | 全件 |
+
+### 必須の文書検証
+
+すべての検証範囲で `documents` jobを実行し、jobや必須工程の欠落・skip・失敗・取消は `ci-required` が拒否します。静的検査は追跡中のMarkdown全体と確認済みSVGを対象にします。通常の文章変更ではNode・Chromium・描画依存を導入しません。Mermaidブロック・図の画像・ローカル画像参照の変更で描画を選択し、判定不能や全件CIでは保守的に描画します。描画依存は正確なlockからcheckout外の一時ディレクトリへ導入し、生成画像でソースツリーを書き換えません。
+
+追加の説明文と32種類のSVGは `ci-impact.py` のファイル単位許可リストに限定します。任意のREADME・SVG・Pythonを対象にはしません。文書生成コード、描画・検証スクリプト、依存manifest/lock、workflow、agent/開発方針、未知のパスは引き続きアプリの全件CIが必要です。rename前後の両端とファイルmodeも判定します。文書検証は現在のevent・commit・treeと選択結果を独立に確認し、artifactや過去の成功だけで省略を許可しません。
+
+runnerの待ち時間を除き、文章のみは必須チェック完了まで3分、図変更は5分を性能目標にします。これは実測対象の目標であり、確認済みの時間保証ではありません。記録には現在のjob実行時間を残します。文書のみの成功をアプリ・native・リリース検証の証拠として扱いません。
 
 ### 確認済み変更のnative-short
 
