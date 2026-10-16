@@ -236,7 +236,7 @@ go test -race -tags directlan_integration,directlan_lifecycle ./internal/directl
 go test -race -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,directlan_integration ./internal/core -run '^TestDirectLAN' -count=10 -timeout 180s
 ```
 
-[転送実装の由来](../internal/directlan/UPSTREAM.md)。初期のTLSストリーム・フレーム化UDP試作の
+[転送実装の由来（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/directlan/UPSTREAM.md)。初期のTLSストリーム・フレーム化UDP試作の
 検証結果を、最終WireGuard・ネイティブUDP実装の検証済み根拠にはしません。通常の`lan`方式と
 [複合接続](MIXED_CONNECTIONS.ja.md)は、外部通信の許可範囲が異なります。
 

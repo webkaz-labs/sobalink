@@ -147,10 +147,6 @@ type inspectionClient struct {
 	resourceCapture *ResourcePeerCapture
 }
 
-func captureInspectionClient(ctx context.Context, connection net.Conn, authentication *managedAuthentication) (*inspectionClient, bool) {
-	return captureResourceInspectionClient(ctx, connection, authentication, nil)
-}
-
 func captureResourceInspectionClient(ctx context.Context, connection net.Conn, authentication *managedAuthentication, captured *ResourcePeerCapture) (*inspectionClient, bool) {
 	f, ok := connection.(*flow)
 	if ctx == nil || ctx.Err() != nil || !ok || f == nil || f.n == nil || f.g == nil || f.c == nil || f.w == nil || f.w.peer == nil || authentication == nil || f.inbound || f.network != "tcp" || f.remote.Port() != ResourceInspectPort || authentication.generation != f.g || authentication.peer != f.w.peer || authentication.binding == "" {

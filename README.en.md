@@ -31,7 +31,7 @@ Published releases and development sources can have different features. Check th
 
 ### After starting
 
-1. Open the printed `http://127.0.0.1:PORT` in a browser on the same device, then enter the one-time code shown in the terminal. The code is never part of the URL. Run `soba ui` in another terminal to issue a new code
+1. Run `soba ui` in another terminal to open the local browser without copying a code. For manual access, use `soba ui --no-browser` and enter its private one-time code at the exact printed `http://127.0.0.1:PORT`. Headless/SSH sessions use this explicit manual option; private machine output uses `soba ui --json`
 2. Choose a network. For an existing Tailnet, enroll sobalink's separate node through the official Tailscale sign-in page. Tailcat LAN setup is available in the local UI and CLI, using an explicit trusted relay and pairing. See the [LAN guide](docs/LAN.en.md). The release also provides explicit [relayless LAN](docs/DIRECT_LAN.en.md) and [mixed connections](docs/MIXED_CONNECTIONS.en.md); review their current verification limits before use
 3. Review the peer, ports and lifetime before sharing or connecting a service. Use the actual endpoint in your application and verify its authentication and operation
 4. To exchange messages or files, review the current identity and trust the intended sender. Send text explicitly; review images, multiple files and folders as a batch
@@ -111,7 +111,7 @@ Use the local UI or [guided CLI](docs/CLI_GUIDE.en.md) to select, edit and revie
 
 An optional [authenticated TCP proxy and diagnostics](docs/PROXY_DIAGNOSTICS.en.md) are also available. [Explicitly permitted transfer-setting management](docs/RESOURCE_MANAGEMENT.en.md) is a separate, limited feature. Broadcast delivery and remote filesystem browsing are not included.
 
-[Explicit startup and private proxy profiles](docs/STARTUP.en.md) · [Application settings and RustDesk](docs/CLIENT_HELPERS.en.md) · [Local Web controls](docs/WEB_CONTROLS.en.md) · [Feature parity and acceptance](docs/FEATURE_PARITY.en.md) · [Documentation index](docs/README.en.md)
+[Explicit startup and private proxy profiles](docs/STARTUP.en.md) · [Application settings and RustDesk](docs/CLIENT_HELPERS.en.md) · [Local Web controls](docs/WEB_CONTROLS.en.md) · [0.3-series feature parity history](docs/FEATURE_PARITY.en.md) · [Documentation index](docs/README.en.md)
 
 [Common questions](docs/FAQ.en.md) · [Things to check yourself](docs/TROUBLESHOOTING.en.md)
 

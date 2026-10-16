@@ -1028,17 +1028,6 @@ func (m *Manager) UpdateReceiveSettings(peer Peer, policy *ReceivePolicy, paused
 	return nil
 }
 
-func (m *Manager) RemoveReceivePolicy(peerID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return ErrClosed
-	}
-	// Removal fails closed in memory even when persistent storage is unavailable.
-	delete(m.policies, peerID)
-	return m.savePoliciesLocked(m.policies)
-}
-
 func (m *Manager) ReceivePolicies() []ReceivePolicy {
 	m.mu.Lock()
 	defer m.mu.Unlock()

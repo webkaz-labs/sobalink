@@ -190,13 +190,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		return snapshotCommand(ctx, command, args, dir, ja, out, client)
 	}
 	if command == "ui" {
-		if len(args) > 0 {
-			return usageError(ja, "ui")
-		}
-		if *dryRun {
-			return errors.New(text(ja, "--dry-run is not available for ui", "ui は --dry-run に対応していません"))
-		}
-		return call("ui")
+		return uiCommand(ctx, args, dir, ja, *dryRun, out, client)
 	}
 
 	request := func(name string, payload any) error {
@@ -390,7 +384,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 var commandUsage = map[string]string{
 	"mixed":   "mixed setup --backends direct-lan,tailnet | mixed show | mixed bind --peer ID --peer ID | mixed unbind --peer ID",
 	"profile": "profile export [--output FILE] | profile import FILE [--apply --review REVISION]",
-	"start":   "start [--offline] [--background]", "run": "run [--offline]", "autostart": "autostart [enable|disable] [--startup saved|offline] [--json] [--apply --review TOKEN]", "status": "status [--json]", "peers": "peers [--json]", "ui": "ui", "stop": "stop [--json]",
+	"start":   "start [--offline] [--background]", "run": "run [--offline]", "autostart": "autostart [enable|disable] [--startup saved|offline] [--json] [--apply --review TOKEN]", "status": "status [--json]", "peers": "peers [--json]", "ui": "ui [--no-browser|--json]", "stop": "stop [--json]",
 	"receive":     "receive recovery confirm [--reviewed] [--json]",
 	"receive-dir": "receive-dir [DIRECTORY | --clear]", "autosave": "autosave PEER_ID --on [--directory DIR] | autosave PEER_ID --off",
 	"pause": "pause PEER_ID", "resume": "resume PEER_ID", "reconnect": "reconnect PEER_ID",
@@ -538,7 +532,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba start --background      Start a detached local application
   soba autostart --help        Review optional startup at user sign-in
   soba start --offline         Open settings without starting the saved network
-  soba ui                      Get the local URL and a fresh one-time code
+  soba ui                      Open the local UI in your browser
   soba status                  Show current state (--json for machines)
   soba nearby                 Connect to a nearby device with explicit review
   soba setup --network tailnet Activate the existing Tailscale connection
@@ -600,7 +594,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba start --background      本体をバックグラウンドで起動
   soba autostart --help        サインイン時の起動を確認して任意登録
   soba start --offline         保存済みネットワークを開始せず設定画面を開く
-  soba ui                      画面URLと新しい一回用コードを表示
+  soba ui                      ローカル画面をブラウザーで開く
   soba status                  現在の状態を表示（機械向けは --json）
   soba nearby                 確認と承認で近くの端末へ接続
   soba setup --network tailnet 既存のTailscale接続を有効化

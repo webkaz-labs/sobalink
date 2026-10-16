@@ -237,9 +237,10 @@ restart は停止中のサービスを保存済み設定で置き換え、明示
 
 const examplesEN = `Short sobalink workflows
 
-Start soba, then open its local URL. soba ui provides a new sign-in code.
-Human setup and selecting peers are guided in the Web UI; command output
-stays JSON by default for scripts and agents; explicit login --qr/--link/--browser
+Start soba, then run soba ui in a private terminal to open your browser.
+For manual sign-in use soba ui --no-browser; private machine output uses soba ui --json.
+Human setup and selecting peers are guided in the Web UI. For supported commands,
+use --json for machine output; explicit login --qr/--link/--browser
 provides private human sign-in output.
 
 Tailnet: soba setup --network tailnet, then soba login and soba peers.
@@ -277,9 +278,10 @@ Keep --state-dir consistent on every command. Use soba help upgrade to update.`
 
 const examplesJA = `sobalink の短い操作例
 
-soba を起動してローカルURLを開きます。新しいコードは soba ui で取得できます。
+soba を起動し、非公開の端末で soba ui を実行するとブラウザーが開きます。
+手入力には soba ui --no-browser、非公開の機械向け出力には soba ui --json を使います。
 人が設定したり相手を選んだりする操作は画面から案内します。
-通常のコマンド結果はスクリプト・エージェント向けのJSONです。
+対応するコマンドでは --json で機械向け出力を選びます。
 login --qr/--link/--browser は、明示的に人向けの非公開サインイン表示を選びます。
 
 Tailnet: soba setup --network tailnet → soba login → soba peers

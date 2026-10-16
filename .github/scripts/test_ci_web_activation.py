@@ -1,6 +1,5 @@
 """Pure tests: fixed Web acceptance schema, environment, selection and workflow."""
 import importlib.util
-import json
 import os
 from pathlib import Path
 import unittest

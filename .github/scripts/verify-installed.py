@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Verify the actual mise installation, including retained license notices."""
 import hashlib
-import json
 import pathlib
 import platform
 import subprocess

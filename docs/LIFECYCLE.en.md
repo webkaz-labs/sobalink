@@ -2,7 +2,7 @@
 
 [日本語](LIFECYCLE.ja.md) · [User guide](GENERIC.en.md)
 
-`soba` and `soba run` run in the foreground. `soba start --background` starts a detached application and waits for its local management interface. Startup success confirms local readiness, not network connectivity or success in another application. Use `soba status` to inspect the network and `soba ui` to get a fresh sign-in code.
+`soba` and `soba run` run in the foreground. `soba start --background` starts a detached application and waits for its local management interface. Startup success confirms local readiness, not network connectivity or success in another application. Use `soba status` to inspect the network and `soba ui` to open the local browser with automatic one-time-code handoff.
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/restart-state-en-dark-narrow.svg">
@@ -23,7 +23,7 @@ soba ui
 soba stop
 ```
 
-Use `soba start --offline --background` instead when you want local management without reconnecting the saved network. Choose one startup mode; a second start does not change a running process. `soba ui` returns private sign-in information for this device only. Retain the same `--state-dir` on every command when using a custom profile.
+Use `soba start --offline --background` instead when you want local management without reconnecting the saved network. Choose one startup mode; a second start does not change a running process. `soba ui` opens the local UI on this device without manual code entry. For explicit manual access use `soba ui --no-browser`; private machine output uses `soba ui --json`. Both fallback modes return secret sign-in information for this device only. Retain the same `--state-dir` on every command when using a custom profile.
 
 ## What comes back after startup
 

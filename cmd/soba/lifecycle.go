@@ -100,7 +100,7 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 	if file, ok := out.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
 		fmt.Fprintln(out, text(ja, "One-time code (5 minutes):", "一回用コード（5分）:"), code)
 	} else {
-		fmt.Fprintln(out, text(ja, "Use soba ui in a terminal for a one-time sign-in code.", "soba ui で一回用ログインコードを表示できます。"))
+		fmt.Fprintln(out, text(ja, "In a private terminal, use soba ui to open your browser, or soba ui --no-browser for a sign-in code. For private machine output, use soba ui --json.", "非公開の端末で soba ui を実行するとブラウザーが開きます。手入力のコードは soba ui --no-browser、非公開の機械向け出力は soba ui --json を使ってください。"))
 	}
 	fmt.Fprintln(out, text(ja, "Keep this process running. Ctrl+C stops connections and shares.", "このプロセスを起動したまま使います。Ctrl+C で接続と共有を停止します。"))
 	select {

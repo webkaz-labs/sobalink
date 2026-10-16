@@ -1,5 +1,4 @@
 """Offline, cross-platform regression tests for required document evidence."""
-import copy
 import base64
 import importlib.util
 import json

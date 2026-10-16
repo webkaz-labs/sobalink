@@ -64,7 +64,7 @@ v0.5.0-alpha.1 の機能の入口です。公開版への収録と実機の受�
 - [開発・使いやすさの基本方針](DEVELOPMENT_PRINCIPLES.ja.md)
 - [全体設計・通信境界](ARCHITECTURE.md)
 - [ローカル画面 API と相手側の境界](../web/API.md)
-- [説明図の生成元と保守](assets/visuals/README.md)
+- [説明図の生成元と保守（オンラインのソースリポジトリ）](https://github.com/webkaz-labs/sobalink/blob/main/docs/assets/visuals/README.md)
 - [安全性の境界](SECURITY.ja.md)
 - [経路復旧の契約](ROUTE_RECOVERY_DESIGN.ja.md)
 - [カタログ表示の契約](CATALOG_VIEW_CONTRACT.ja.md)
@@ -75,6 +75,8 @@ v0.5.0-alpha.1 の機能の入口です。公開版への収録と実機の受�
 
 - [公開基準・正確なソースごとの実行結果](VERIFICATION.md)
 - [実装と残る受入](ROADMAP.ja.md)
+- [再現可能なブラウザー受入の実行手順](../web/BROWSER_ACCEPTANCE.md)
+- [日付ごとの UI レビュー履歴](../web/UX_ACCEPTANCE.md)
 - [一括送信の受入条件](BATCH_SEND_ACCEPTANCE.ja.md)
 - [公開バイナリの資源観測](RESOURCE_MEASUREMENT.ja.md)
 - [隔離した中継の通信量観測](RELAY_TRAFFIC_MEASUREMENT.ja.md)

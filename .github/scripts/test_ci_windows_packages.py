@@ -1,6 +1,5 @@
 """Whole-package coverage models, never a Go invocation or Windows assumption."""
 import contextlib
-import copy
 import importlib.util
 import io
 import json
@@ -8,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name('ci-windows-packages.py')
 SPEC = importlib.util.spec_from_file_location('ci_windows_packages', SCRIPT)

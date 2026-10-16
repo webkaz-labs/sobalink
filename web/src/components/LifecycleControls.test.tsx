@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { Locale, State } from '../api'
@@ -98,11 +98,29 @@ describe('reviewed lifecycle controls', () => {
     expect(screen.getByText(l('taskHint'))).toBeVisible()
     expect(screen.getByText('2026-10-03T05:00:00Z')).toBeVisible()
   })
-  it('leaves copyable commands visible when clipboard permission is unavailable', async () => {
+
+  it.each([['en', true], ['en', false], ['ja', true], ['ja', false]] as const)('%s: ignores an old clipboard result after the selected command changes (success: %s)', async (locale, success) => {
+    let settle!: () => void
+    const copy = vi.fn(() => new Promise<void>((resolve, reject) => { settle = () => success ? resolve() : reject(new Error('denied')) }))
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
+    const l = (key: string) => lifecycleText(locale, key)
+    render(<StartupGuide locale={locale} t={translator(locale)} onClose={() => {}} />)
+    await userEvent.click(screen.getAllByRole('button', { name: l('copy') })[0])
+    await userEvent.selectOptions(screen.getByLabelText(l('mode')), 'offline')
+    await act(async () => { settle() })
+    await waitFor(() => expect(screen.getByLabelText(l('previewCLI'))).toHaveValue('soba --state-dir "STATE_DIRECTORY" autostart enable --startup offline --json'))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(l('mode'))).toHaveFocus()
+  })
+  it.each(['en', 'ja'] as const)('%s: selects copyable commands when clipboard permission is unavailable', async locale => {
     const copy = vi.fn().mockRejectedValue(new Error('denied')); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
-    render(<StartupGuide locale="en" t={translator('en')} onClose={() => {}} />)
-    await userEvent.click(screen.getAllByRole('button', { name: 'Copy command' })[0])
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(lifecycleText('en', 'copyFailed')))
-    expect(screen.getByLabelText(lifecycleText('en', 'previewCLI'))).toHaveValue('soba --state-dir "STATE_DIRECTORY" autostart enable --startup saved --json')
+    render(<StartupGuide locale={locale} t={translator(locale)} onClose={() => {}} />)
+    await userEvent.click(screen.getAllByRole('button', { name: lifecycleText(locale, 'copy') })[0])
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(lifecycleText(locale, 'copyFailed')))
+    const command = screen.getByLabelText(lifecycleText(locale, 'previewCLI')) as HTMLTextAreaElement
+    expect(command).toHaveValue('soba --state-dir "STATE_DIRECTORY" autostart enable --startup saved --json')
+    expect(command).toHaveFocus()
+    expect(command.selectionStart).toBe(0)
+    expect(command.selectionEnd).toBe(command.value.length)
   })
 })

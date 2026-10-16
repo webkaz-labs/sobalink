@@ -64,7 +64,7 @@ These workflows are described for v0.5.0-alpha.1. Their inclusion in the release
 - [Development and usability principles](DEVELOPMENT_PRINCIPLES.en.md)
 - [Architecture and network boundaries](ARCHITECTURE.md)
 - [Local browser API and peer boundary](../web/API.md)
-- [Diagram source and maintenance](assets/visuals/README.md)
+- [Diagram source and maintenance (online source repository)](https://github.com/webkaz-labs/sobalink/blob/main/docs/assets/visuals/README.md)
 - [Security boundaries](../SECURITY.md)
 - [Route recovery contract](ROUTE_RECOVERY_DESIGN.en.md)
 - [Catalog view contract](CATALOG_VIEW_CONTRACT.en.md)
@@ -75,6 +75,8 @@ These workflows are described for v0.5.0-alpha.1. Their inclusion in the release
 
 - [Published baseline and exact-source run results](VERIFICATION.en.md)
 - [Implementation and remaining acceptance](ROADMAP.en.md)
+- [Reproducible browser acceptance procedure](../web/BROWSER_ACCEPTANCE.md)
+- [Dated UI review history](../web/UX_ACCEPTANCE.md)
 - [Batch-send acceptance conditions](BATCH_SEND_ACCEPTANCE.en.md)
 - [Published-binary resource observations](RESOURCE_MEASUREMENT.en.md)
 - [Isolated relay traffic observations](RELAY_TRAFFIC_MEASUREMENT.en.md)

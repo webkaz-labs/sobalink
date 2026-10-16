@@ -463,12 +463,6 @@ func (d *durableReceiver) validateRecord(r *durableRecord) error {
 	}
 	return nil
 }
-func lenPrefix(s, p string) int {
-	if len(s) >= len(p) && s[:len(p)] == p {
-		return len(p)
-	}
-	return 0
-}
 func durableIdentity(root *os.Root, name string, directory bool) (string, error) {
 	var f *os.File
 	var err error

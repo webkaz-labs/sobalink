@@ -22,3 +22,9 @@ These are real UI captures with synthetic demo data. They are not evidence of ph
 Each placement retains text steps, alt text and a full-size link. Narrow command fields may scroll; copyable command text remains the primary command source. A screenshot does not prove that the shown operation completed.
 
 各配置には手順・代替テキスト・原寸リンクを併記します。狭い画面のコマンド欄は横スクロールするため、コピー可能な本文を正本にします。画面の表示は操作完了を意味しません。
+
+## Local sign-in and copy changes / ローカルログインとコピーの変更
+
+These retained captures show post-login controls, not the automatic `soba ui` handoff or a clipboard failure. Their recorded source and image hashes remain unchanged. Normal local sign-in now needs no manual code entry; recovery-command copy failures select the full command for manual copying. Older startup-guide captures may retain the access-code label; the current command opens the browser. Use the current text guides for these behaviors. No new screenshot containing a sign-in code or launch URL is needed.
+
+既存画像はログイン後の操作を示し、`soba ui` の自動引継ぎやコピー失敗の画面ではありません。記録済みの撮影元と画像ハッシュは変更していません。通常のローカルログインではコードの手入力が不要になり、復旧コマンドのコピー失敗時は全文を選択して手動コピーできます。過去の起動ガイド画像にはアクセスコード取得の旧ラベルが残る場合がありますが、現在のコマンドはブラウザーを開きます。この動作は最新の本文を参照してください。ログインコードや起動 URL を含む追加撮影は不要です。
