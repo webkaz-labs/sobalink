@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 	"slices"
 	"strconv"
@@ -379,12 +378,4 @@ func rustDeskNotices() []ClientNotice {
 		{"rustdesk_socks_role", "SOCKS CONNECT-only mode cannot register a controlled RustDesk 1.4.9 endpoint with OSS server 1.1.16; other client roles need separate validation.", "SOCKS CONNECT のみの構成では RustDesk 1.4.9 の被操作端末を OSS サーバー 1.1.16 に登録できません。他のクライアント用途は個別の検証が必要です。"},
 		{"application_unverified", "Saved settings and ready listeners do not verify RustDesk screen sharing or input control. No RustDesk application settings were changed.", "保存済み設定や待受の準備完了は RustDesk の画面表示・操作の成功を示しません。RustDesk アプリの設定は変更していません。"},
 	}
-}
-
-// Keep formatted endpoint construction centralized for local API consumers.
-func clientPortText(first, last int) string {
-	if first == last {
-		return strconv.Itoa(first)
-	}
-	return fmt.Sprintf("%d-%d", first, last)
 }

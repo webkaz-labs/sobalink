@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Inspect and execute a native CI package without connecting to a network."""
 import hashlib
-import json
 import pathlib
 import subprocess
 import sys

@@ -47,15 +47,15 @@ The two-Core-process CI fixture proves a prepared LAN-local cold start from save
 
 | Source | Responsibility |
 | --- | --- |
-| [`routes.go`](../internal/lanlink/routes.go) | Dedicated versioned, recipient-sealed update; directional pair binding; canonical payload and sequence/expiry validation; exact candidate IDs and local-first ordering |
-| [`route_state.go`](../internal/lanlink/route_state.go) | Durable issued/received high-water marks, retained authenticated proof, separate explicit-lifetime local approvals, exact review digest, expiry/revoke and uncertain-save handling |
-| [`transport_routes.go`](../internal/lanlink/transport_routes.go) | Serialized per-peer candidate attempts, cancellation, finite deadlines/hold-down, outgoing generations and current authorization checks |
-| [`core/lan_routes.go`](../internal/core/lan_routes.go) | Local management API; offline configuration edits, private state validation and secret-free route snapshots |
-| [`cmd/soba/lan_routes.go`](../cmd/soba/lan_routes.go) | Bilingual `soba lan routes` help and typed commands, private file/stdin input and reviewed candidate selection |
-| [`LanRoutes.tsx`](../web/src/components/LanRoutes.tsx) | Local reviewed setup, private offer exchange, explicit candidate selection, expiry and revoke controls |
-| [`internal/routecat`](../internal/routecat/UPSTREAM.md) | Attributed, bounded adaptation of pinned Tailcat transport; prepared server regions and single-candidate clients |
+| [`routes.go` (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/lanlink/routes.go) | Dedicated versioned, recipient-sealed update; directional pair binding; canonical payload and sequence/expiry validation; exact candidate IDs and local-first ordering |
+| [`route_state.go` (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/lanlink/route_state.go) | Durable issued/received high-water marks, retained authenticated proof, separate explicit-lifetime local approvals, exact review digest, expiry/revoke and uncertain-save handling |
+| [`transport_routes.go` (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/lanlink/transport_routes.go) | Serialized per-peer candidate attempts, cancellation, finite deadlines/hold-down, outgoing generations and current authorization checks |
+| [`core/lan_routes.go` (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/core/lan_routes.go) | Local management API; offline configuration edits, private state validation and secret-free route snapshots |
+| [`cmd/soba/lan_routes.go` (online source)](https://github.com/webkaz-labs/sobalink/blob/main/cmd/soba/lan_routes.go) | Bilingual `soba lan routes` help and typed commands, private file/stdin input and reviewed candidate selection |
+| [`LanRoutes.tsx` (online source)](https://github.com/webkaz-labs/sobalink/blob/main/web/src/components/LanRoutes.tsx) | Local reviewed setup, private offer exchange, explicit candidate selection, expiry and revoke controls |
+| [`internal/routecat` (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/routecat/UPSTREAM.md) | Attributed, bounded adaptation of pinned Tailcat transport; prepared server regions and single-candidate clients |
 
-The upstream pin is Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`, with Tailscale `v1.104.0`. Upstream's single-region capability and lack of live region-update API cannot supply the required behavior by reordering a map. The internal adaptation keeps prepared server regions in one engine, uses the relay carrying authenticated role discovery for rendezvous, and retains WireGuard plus outer pair/trust authorization. Discovery alone is not application authentication. Packaging records the adaptation and retained licenses separately; see [UPSTREAM](../internal/routecat/UPSTREAM.md).
+The upstream pin is Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`, with Tailscale `v1.104.0`. Upstream's single-region capability and lack of live region-update API cannot supply the required behavior by reordering a map. The internal adaptation keeps prepared server regions in one engine, uses the relay carrying authenticated role discovery for rendezvous, and retains WireGuard plus outer pair/trust authorization. Discovery alone is not application authentication. Packaging records the adaptation and retained licenses separately; see [UPSTREAM (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/routecat/UPSTREAM.md).
 
 ## Identity, offers and local approval
 

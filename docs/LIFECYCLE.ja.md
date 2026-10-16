@@ -2,7 +2,7 @@
 
 [English](LIFECYCLE.en.md) · [利用ガイド](GENERIC.ja.md)
 
-`soba` と `soba run` はフォアグラウンドで動作します。`soba start --background` は本体をバックグラウンドで起動し、ローカル管理機能の準備を待ちます。起動成功はローカル管理機能の準備を示し、ネットワーク接続や他のアプリの動作成功までは示しません。`soba status` で状態を確認し、`soba ui` で新しいログインコードを取得します。
+`soba` と `soba run` はフォアグラウンドで動作します。`soba start --background` は本体をバックグラウンドで起動し、ローカル管理機能の準備を待ちます。起動成功はローカル管理機能の準備を示し、ネットワーク接続や他のアプリの動作成功までは示しません。`soba status` で状態を確認し、`soba ui` で一回用コードを自動で引き継ぎ、同じ端末のブラウザーを開きます。
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/restart-state-ja-dark-narrow.svg">
@@ -23,7 +23,7 @@ soba ui
 soba stop
 ```
 
-保存したネットワークに再接続せずローカル管理だけを開くなら、代わりに `soba start --offline --background` を使います。起動モードは一つ選びます。もう一度起動しても実行中のモードは変わりません。`soba ui` はこの端末だけで使う非公開のサインイン情報を返します。別のプロフィールを使う場合は、すべてのコマンドで同じ `--state-dir` を指定します。
+保存したネットワークに再接続せずローカル管理だけを開くなら、代わりに `soba start --offline --background` を使います。起動モードは一つ選びます。もう一度起動しても実行中のモードは変わりません。`soba ui` はコードを手入力せずにこの端末のローカル画面を開きます。明示的な手動操作は `soba ui --no-browser`、非公開の機械向け出力は `soba ui --json` を使います。どちらの代替手段も、この端末だけで使う秘密のサインイン情報を返します。別のプロフィールを使う場合は、すべてのコマンドで同じ `--state-dir` を指定します。
 
 ## 起動時に復元されるもの
 

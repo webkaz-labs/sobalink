@@ -86,7 +86,7 @@ Web は QR を表示し、ローカルの PNG 画像から QR の文字列を読
 
 ### 許可とライフサイクル
 
-- セッションは最大120秒です。Linux と Windows は同じ広告の新しい受信で候補の有効期限を更新します。macOS は選択 interface のシステム DNS-SD query を使い、正確な query の継続中は cache の候補を表示する場合があります。最近の通信や到達性の証明ではありません。削除、query 失敗、範囲変更、取消、期限切れで元の選択は無効になります。候補によるセットアップ期限の延長や失効 ID の復活はありません。両側承認後は検証済みの正確な transcript だけを元の期限まで固定します。相手を確認できなくなった場合は古いセットアップを取り消し、終了確認後に両端末で同意と照合をやり直します。観測の違いは [macOS API の範囲](../internal/nearby/DNSSD.ja.md) を参照してください。
+- セッションは最大120秒です。Linux と Windows は同じ広告の新しい受信で候補の有効期限を更新します。macOS は選択 interface のシステム DNS-SD query を使い、正確な query の継続中は cache の候補を表示する場合があります。最近の通信や到達性の証明ではありません。削除、query 失敗、範囲変更、取消、期限切れで元の選択は無効になります。候補によるセットアップ期限の延長や失効 ID の復活はありません。両側承認後は検証済みの正確な transcript だけを元の期限まで固定します。相手を確認できなくなった場合は古いセットアップを取り消し、終了確認後に両端末で同意と照合をやり直します。観測の違いは [macOS API の範囲（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/nearby/DNSSD.ja.md) を参照してください。
 - 探索広告は選んだ alias、ランダム session ID、protocol/capability、bootstrap 端点だけです。恒久 identity、招待、ファイル名、サービス一覧、OS hostname は広告しません。
 - bootstrap はローカルで選択済みの相手 session と正確な source/address 範囲だけを受け付けます。受信だけで相手を選択したり、未選択の端点へ callback したりしません。
 - 両端の鍵と session ID、alias、公開 scope、session ごとに無作為生成したローカル許可 revision、役割、端点、正確な pin、計画 revision、期限を全文 transcript に結びます。interface 名・hardware の確認情報はローカルに留めます。

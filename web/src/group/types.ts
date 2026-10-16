@@ -60,7 +60,6 @@ export type RefreshInput = StatusInput & Readonly<{ peers: readonly string[] }>
 export type CancelInput = Readonly<{ schemaVersion: 1; reviewId: string }>
 // Separate reviewed local read: no accepted-run or active-operation listing.
 export type CurrentReviewInput = Readonly<{ schemaVersion: 1 }>
-export type CurrentReviewState = 'none' | 'current'
 export type CurrentReviewView = Readonly<{ schemaVersion: 1 }> & (
   | Readonly<{ state: 'none'; prepared?: never }>
   | Readonly<{ state: 'current'; prepared: PreparedView }>

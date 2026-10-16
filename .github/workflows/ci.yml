@@ -776,6 +776,9 @@ jobs:
             extension=tar.gz
           fi
           python .github/scripts/smoke-package.py "dist/sobalink-$version-${{ matrix.goos }}-${{ matrix.goarch }}.$extension" "$version"
+          if [[ '${{ matrix.goos }}' == linux && '${{ matrix.goarch }}' == amd64 ]]; then
+            python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/cmd/soba:TestUILaunchCLIProcess --expect github.com/webkaz-labs/sobalink/cmd/soba:TestUILaunchCLIProcess/automatic-and-existing-session --expect github.com/webkaz-labs/sobalink/cmd/soba:TestUILaunchCLIProcess/opener-failure --expect github.com/webkaz-labs/sobalink/cmd/soba:TestUILaunchCLIProcess/--no-browser --expect github.com/webkaz-labs/sobalink/cmd/soba:TestUILaunchCLIProcess/--json --expect github.com/webkaz-labs/sobalink/cmd/soba:TestUILaunchCLIProcess/headless --expect github.com/webkaz-labs/sobalink/cmd/soba:TestUILaunchCLIProcess/redirected -- go test -race -count=1 -timeout=3m ./cmd/soba -run '^TestUILaunchCLIProcess$'
+          fi
           # Per-target checksum names avoid collisions when matrix artifacts merge.
           mv dist/SHA256SUMS "dist/SHA256SUMS-${{ matrix.goos }}-${{ matrix.goarch }}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -1070,6 +1073,7 @@ jobs:
           screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
           mkdir -m 700 "$screenshots"
           SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
+          SOBA_UI_BROWSER_TEST=1 python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/webui:TestUILaunchRealBrowser -- go test -race -count=1 -timeout=2m ./internal/webui -run '^TestUILaunchRealBrowser$'
       - name: Verify synthetic request pairing UI without skips
         timeout-minutes: 6
         run: |

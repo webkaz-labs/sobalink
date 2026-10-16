@@ -35,7 +35,7 @@
 - Separate implemented, mock-tested, distribution-verified and real-device-verified results. Claims must match evidence
 - Reference these principles instead of maintaining conflicting copies
 
-- Give each diagram one question; provide meaningful alt text and a short text equivalent. Use separate Japanese/English and narrow/wide layouts where labels would otherwise shrink. Maintain shared diagram sources in [documentation visuals](assets/visuals/README.md), and distinguish rendered-image checks from browser/accessibility acceptance
+- Give each diagram one question; provide meaningful alt text and a short text equivalent. Use separate Japanese/English and narrow/wide layouts where labels would otherwise shrink. Maintain shared diagram sources in [documentation visuals (online source repository)](https://github.com/webkaz-labs/sobalink/blob/main/docs/assets/visuals/README.md), and distinguish rendered-image checks from browser/accessibility acceptance
 
 ## Change checklist
 
@@ -49,4 +49,4 @@
 - [ ] Record native automated/distribution results separately from unperformed real-device tests
 - [ ] Match documentation commands, versions, links and diagrams to implementation
 
-See [SECURITY.md](../SECURITY.md) for security boundaries, [DISTRIBUTION.md](DISTRIBUTION.md) for publishing, and [ROADMAP.ja.md](ROADMAP.ja.md) for open acceptance gates.
+See [SECURITY.md](../SECURITY.md) for security boundaries, [DISTRIBUTION.md](DISTRIBUTION.md) for publishing, and [ROADMAP.en.md](ROADMAP.en.md) for open acceptance gates.

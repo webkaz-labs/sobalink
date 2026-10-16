@@ -1,6 +1,5 @@
 from pathlib import Path
 import ctypes as C
-import re
 import xml.etree.ElementTree as ET
 D=Path(__file__).parent
 r=C.CDLL('librsvg-2.so.2');g=C.CDLL('libgobject-2.0.so.0')

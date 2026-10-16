@@ -8,7 +8,7 @@
 
 The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
-[Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [Feature parity and acceptance](FEATURE_PARITY.en.md) · [All guides](README.en.md)
+[Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [0.3-series feature parity history](FEATURE_PARITY.en.md) · [All guides](README.en.md)
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 959px)" srcset="assets/visuals/connection-en-dark-narrow.svg">
@@ -50,9 +50,13 @@ soba ui
 soba status
 ```
 
-Open the exact printed numeric-loopback URL on the same device. Enter the separately printed one-time code within five minutes. `soba ui` returns the URL and a fresh code as JSON; issuing another code replaces the previous unused code. Do not place it in a bookmark, URL, screenshot or shared log. The Web UI does not have a network-facing management address.
+`soba ui` opens the browser on the same device and hands off a five-minute, one-time code automatically. You do not need to copy it. A valid existing browser session is reused without extending its eight-hour expiry. A new launch replaces any previous unused code, so use the newest launch when opening several windows.
 
-The first terminal prints a code only when its output is an interactive terminal. Use `soba ui` when needed and handle its response as secret local sign-in information. If the browser session expires, request a new code and sign in again. Normal state responses never contain the sign-in code.
+For a headless or SSH session, or if automatic browser opening fails, explicitly run `soba ui --no-browser` in a private terminal. Open its exact numeric-loopback URL and enter the code within five minutes. For private scripts, explicitly choose `soba ui --json`; this retains the `{url,code}` machine format without opening a browser. Ordinary redirected output does not expose codes. The manual/JSON output is secret local sign-in information: do not share, screenshot or record it. Remote use does not automatically create a tunnel or expose a network-facing management address; a user-managed tunnel must preserve the exact loopback host and port.
+
+Automatic launch briefly carries the code in the URL fragment, which the page removes before exchanging it by a same-origin POST. It is not sent in an HTTP request URL or saved to Web storage. Do not share or bookmark the launch URL; browser extensions, OS launch arguments and browser history mechanisms are not a secret vault. Reload/Back uses the normal session, not another code exchange. If interrupted or expired, rerun `soba ui`; closing a tab or cancelling the opener does not itself revoke an unused code. It expires within five minutes, is replaced by a new code, or disappears when the application stops.
+
+The first terminal prints a code only when its output is an interactive terminal. Normal state responses never contain the sign-in code. Local session, Origin, Host and CSRF checks remain enabled.
 
 The default private state directory is the operating system's user configuration directory under `sobalink`. To use another directory, include the same global option in every command:
 
@@ -414,7 +418,7 @@ Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For in
 
 | Problem | Next action |
 | --- | --- |
-| Local sign-in fails | Use the exact printed URL, run `soba ui`, and enter its new code |
+| Local sign-in fails | Rerun `soba ui` to open a fresh sign-in; for manual code entry, explicitly use `soba ui --no-browser` and its exact printed URL |
 | No peers | Check the selected network and complete its enrollment or pairing |
 | Transfer waits | Have the receiving peer inspect and accept its batch or review its autosave policy |
 | Partial transfer | For immediate sends, keep both agents running and retry unfinished files; after restart, review prior saves before deciding on a new batch. For a durable queue, check the original request and preserve its IDs/deadline |

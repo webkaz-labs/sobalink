@@ -120,9 +120,9 @@ prepared disclosure versus revocation, legacy-grant preservation, retained-origi
 rejection, view-only denial, fresh review, actual HTTP forwarding and review reuse.
 Web component/navigation tests use fixtures and remain distinct from real-browser tests.
 
-The [three-process integration tests](../internal/core/resource_catalog_view_process_integration_test.go)
+The [three-process integration tests (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/core/resource_catalog_view_process_integration_test.go)
 exercise managed DirectLAN list/connect and a separately selected actual-browser
-workflow. The [CI workflow](../.github/workflows/ci.yml) runs the browser case against
+workflow. The [CI workflow (online source)](https://github.com/webkaz-labs/sobalink/blob/main/.github/workflows/ci.yml) runs the browser case against
 independent agents. This supersedes the earlier fixture-only development description;
 it does not make every race or physical scenario verified. Use the exact source's
 recorded results rather than test existence as evidence of a pass.

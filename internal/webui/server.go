@@ -397,6 +397,16 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "invalid_code", "The code is invalid or expired; use soba ui for a new code")
 		return
 	}
+	// A fresh one-time code proves local authority even when the browser already
+	// has a session. Consume it without replacing that session or extending its
+	// lifetime. Repeated launches must not exhaust the bounded session table.
+	if cookie, err := r.Cookie("soba_session"); err == nil {
+		if current, ok := s.sessions[cookie.Value]; ok && now.Before(current.expires) {
+			s.code = ""
+			jsonReply(w, 200, map[string]string{"csrfToken": current.csrf})
+			return
+		}
+	}
 	token, err := randomToken()
 	if err != nil {
 		fail(w, 500, "random", "Could not create local session")

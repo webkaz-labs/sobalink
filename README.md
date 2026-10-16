@@ -31,7 +31,7 @@
 
 ### 起動後の操作
 
-1. 表示された `http://127.0.0.1:ポート` を同じ端末のブラウザーで開き、端末に表示された一回用コードを入力します。コードは URL に含みません。再発行は別の端末ウィンドウで `soba ui`
+1. 別の端末で `soba ui` を実行すると、コードをコピーせず同じ端末のブラウザーで開けます。手入力する場合は `soba ui --no-browser` を実行し、表示された正確な `http://127.0.0.1:ポート` で非公開の一回用コードを入力します。画面のない環境や SSH ではこの手動指定、非公開の機械向け出力には `soba ui --json` を使います
 2. ネットワークを選びます。既存の Tailnet を利用する場合は、sobalink の独立ノードを公式の Tailscale 認証ページで参加させます。Tailcat LAN は明示した信頼できる中継先とペアリングを使います。ローカル画面と CLI から設定できます。[LAN 手順](docs/LAN.ja.md)。この公開版には明示して選ぶ[中継なしLAN](docs/DIRECT_LAN.ja.md)と[接続方式の併用](docs/MIXED_CONNECTIONS.ja.md)もあり、利用前に現在の検証範囲を確認してください
 3. 相手・ポート・有効期間を確認してサービスを共有または接続します。表示された実際の接続先をアプリで使い、認証と動作を確認します
 4. 文字やファイルを送る場合は、現在の識別情報を確認して意図した送信者を信頼します。文字は明示して送り、画像・複数ファイル・フォルダーは一括内容を確認します
@@ -111,7 +111,7 @@ soba send RECEIVER_PEER_ID ./image.png ./notes.txt ./sample-folder
 
 任意の[認証付き TCP プロキシと診断](docs/PROXY_DIAGNOSTICS.ja.md)も用意しています。[明示的に許可した転送設定の管理](docs/RESOURCE_MANAGEMENT.ja.md)は限定した別機能です。ブロードキャスト送信や遠隔ファイル一覧は含みません。
 
-[明示的な起動時接続・非公開プロキシ設定](docs/STARTUP.ja.md) · [アプリ設定・RustDesk](docs/CLIENT_HELPERS.ja.md) · [ローカル画面の操作](docs/WEB_CONTROLS.ja.md) · [機能対応と受入](docs/FEATURE_PARITY.ja.md) · [文書一覧](docs/README.md)
+[明示的な起動時接続・非公開プロキシ設定](docs/STARTUP.ja.md) · [アプリ設定・RustDesk](docs/CLIENT_HELPERS.ja.md) · [ローカル画面の操作](docs/WEB_CONTROLS.ja.md) · [0.3 系列の機能対応履歴](docs/FEATURE_PARITY.ja.md) · [文書一覧](docs/README.md)
 
 [よくある疑問](docs/FAQ.ja.md) · [自分で確認できること](docs/TROUBLESHOOTING.ja.md)
 

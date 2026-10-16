@@ -153,7 +153,7 @@ soba lan routes approve PEER_ID --json-file ./private-route-update.json --candid
 soba lan routes list PEER_ID
 ```
 
-追加と一覧はオフラインで行い、新しい組合せを使う前に再起動します。offer は送信側、inspect/approve は受信側で行い、それぞれの正確なペア相手を `PEER_ID` に指定します。offer の完全な出力を上記のファイルへ非公開で保存して渡します。パイプ入力は `--stdin` を使えます。秘密の経路情報を引数・URL・画像・ログへ貼り付けないでください。CLI は offer の出力全体と、その中の更新情報のどちらも読めます。[正式なコマンド定義](../cmd/soba/lan_routes.go): `soba lan routes --help`。
+追加と一覧はオフラインで行い、新しい組合せを使う前に再起動します。offer は送信側、inspect/approve は受信側で行い、それぞれの正確なペア相手を `PEER_ID` に指定します。offer の完全な出力を上記のファイルへ非公開で保存して渡します。パイプ入力は `--stdin` を使えます。秘密の経路情報を引数・URL・画像・ログへ貼り付けないでください。CLI は offer の出力全体と、その中の更新情報のどちらも読めます。[正式なコマンド定義（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/cmd/soba/lan_routes.go): `soba lan routes --help`。
 
 経路情報とローカル許可は、それぞれ有効期間を選びます。`--until-revoked` は予定の期限なし、`--ttl 168h` は明示した有限期間です。CLI の offer/withdraw と候補ありの approve ではどちらか一つが必須で、期間の既定値はありません。version 2 に30日という任意の上限はありません。有限許可は有限情報の期限までに制限し、取り消すまでの許可には情報も取り消すまでであることが必要です。既存v1の有限記録は元の正確な期限を保ちます。受信・再接続・再読込で自動更新しません。取り消すまでの許可は同じ保存済み許可として再起動後も保持し、期限切れの有限許可は期限切れのままです。新しい情報の適用は許可候補を置き換えるため、元の中継を含めて引き続き使う経路をすべて確認します。期限切れ・全取消でも旧単一中継を黙って復活させません。
 

@@ -1,6 +1,6 @@
 # macOS DNS-SD discovery boundary
 
-The macOS adapter uses the system DNS-SD service on the explicitly selected interface. It produces untrusted setup hints. A selected hint never grants trust or permission to connect; the existing numeric bootstrap endpoint, current remote session, full fingerprint comparison and both peers' approval remain mandatory.
+The macOS adapter uses the system DNS-SD service on the explicitly selected interface. It produces untrusted setup hints. A selected hint never grants trust or permission to connect; the numeric bootstrap endpoint and current remote session must still be authenticated through the selected setup flow. By default, request-and-accept uses explicit first-use key acceptance (TOFU), while full-verification flows require independent comparison of the complete fingerprint; each flow retains its required approvals. See [connection setup](../../docs/CONNECTION_SETUP.en.md).
 
 ## Review the provider result
 

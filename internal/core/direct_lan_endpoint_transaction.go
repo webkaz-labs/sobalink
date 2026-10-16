@@ -75,22 +75,6 @@ func (o *endpointNodeOwner) wait(ctx context.Context) error {
 	return o.retired.Wait(ctx)
 }
 
-// Direct callers MUST release all counted old-generation work before calling
-// it, including any origin lease and synchronous control/callback ownership.
-// Core.Close may hold Core.op while joining that work; waiting to reacquire op
-// from inside a counted callback would deadlock shutdown.
-// It acquires Core.op itself; no caller may hold Core/store/Node locks.
-func (c *Core) saveEndpointTransaction(ctx context.Context, b *directLANBackend, mutation endpointmeta.Mutation) (*EndpointTransaction, error) {
-	if b == nil || b.Node == nil {
-		return nil, endpointmeta.ErrReview
-	}
-	origin, err := b.Node.CaptureTransportOrigin()
-	if err != nil {
-		return nil, err
-	}
-	return c.saveEndpointTransactionWithOwner(ctx, b, mutation, &endpointNodeOwner{node: b.Node, origin: origin}, time.Now)
-}
-
 func (c *Core) endpointTransactionOwnerCurrentLocked(ctx context.Context, t *EndpointTransaction) bool {
 	if ctx == nil || ctx.Err() != nil || t == nil || t.core != c {
 		return false
@@ -183,6 +167,11 @@ func (t *EndpointTransaction) snapshotLocked() {
 	t.file, t.state, t.revision = t.store.fileDigest, privateRevision(t.store.state), t.store.reviewRevision
 }
 
+// Direct callers MUST release all counted old-generation work before calling
+// it, including any origin lease and synchronous control/callback ownership.
+// Core.Close may hold Core.op while joining that work; waiting to reacquire op
+// from inside a counted callback would deadlock shutdown.
+// It acquires Core.op itself; no caller may hold Core/store/Node locks.
 func (c *Core) saveEndpointTransactionWithOwner(ctx context.Context, b *directLANBackend, mutation endpointmeta.Mutation, old endpointOldOwner, clock func() time.Time, checks ...func(*directLANStore) error) (*EndpointTransaction, error) {
 	if ctx == nil || b == nil || old == nil || old.identity() == nil || clock == nil {
 		return nil, endpointmeta.ErrReview

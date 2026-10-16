@@ -1,5 +1,4 @@
 """Synthetic no-skip native CI policy; never execute sockets or Go tests."""
-import copy
 import importlib.util
 import io
 import json

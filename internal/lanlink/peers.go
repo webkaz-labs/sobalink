@@ -138,9 +138,6 @@ func (b *Book) Issue(ctx context.Context, p Peer, relay RelayConfig, now time.Ti
 	}
 	return b.issue(ctx, nil, p, relay.Listen, now, ttl)
 }
-func (b *Book) IssueTrusted(ctx context.Context, p Peer, relay TrustedRelay, now time.Time, ttl time.Duration) (string, error) {
-	return b.issueTrusted(ctx, nil, p, relay, now, ttl)
-}
 func (b *Book) issueTrusted(ctx, consent context.Context, p Peer, relay TrustedRelay, now time.Time, ttl time.Duration) (string, error) {
 	if e := ctx.Err(); e != nil {
 		return "", e

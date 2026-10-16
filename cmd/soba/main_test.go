@@ -212,9 +212,7 @@ func TestPrivateIPCCommandPayloadsAndStableJSON(t *testing.T) {
 	for _, name := range []string{"status", "ui", "stop", "peers"} {
 		var out bytes.Buffer
 		args := []string{"--state-dir", dir, name}
-		if name != "ui" {
-			args = append(args, "--json")
-		}
+		args = append(args, "--json")
 		if err := run(context.Background(), args, &out); err != nil {
 			t.Fatal(err)
 		}

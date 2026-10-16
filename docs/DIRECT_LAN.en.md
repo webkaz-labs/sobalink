@@ -260,7 +260,7 @@ go test -race -tags directlan_integration,directlan_lifecycle ./internal/directl
 go test -race -tags ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,directlan_integration ./internal/core -run '^TestDirectLAN' -count=10 -timeout 180s
 ```
 
-See [transport provenance](../internal/directlan/UPSTREAM.md). Earlier
+See [transport provenance (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/directlan/UPSTREAM.md). Earlier
 TLS-stream/framed-UDP prototype results do not establish the final
 WireGuard/native-UDP implementation's acceptance. Ordinary `lan` trusted-relay
 mode and [mixed connections](MIXED_CONNECTIONS.en.md) have different external

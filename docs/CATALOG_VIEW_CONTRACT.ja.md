@@ -109,9 +109,9 @@ Web は入力・相手・起動世代などの変更や画面離脱で古い選�
 レビュー再利用の拒否を扱います。画面・ナビゲーションの fixture 試験と実ブラウザー
 試験は区別します。
 
-[3プロセスの統合試験](../internal/core/resource_catalog_view_process_integration_test.go)は、
+[3プロセスの統合試験（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/core/resource_catalog_view_process_integration_test.go)は、
 managed DirectLAN の一覧・接続と、別に選択する実ブラウザー導線を扱います。
-[CI](../.github/workflows/ci.yml)は独立した本体プロセスに接続する browser ケースを実行します。
+[CI（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/.github/workflows/ci.yml)は独立した本体プロセスに接続する browser ケースを実行します。
 以前の fixture のみという開発段階の説明は現在の試験構成に当てはまりません。ただし、
 すべての競合・実機シナリオの合格を意味しません。試験の存在を合格の証拠にせず、
 正確なソースで記録された結果を使います。

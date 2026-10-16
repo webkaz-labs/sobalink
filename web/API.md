@@ -8,7 +8,7 @@ The React client uses only same-origin `/api` requests. The Go host is responsib
 
 ## Start with the management boundary
 
-This page documents the local browser contract in v0.5.0-alpha.1 (`46dcd363`). Use the [CLI guide](../docs/CLI_GUIDE.en.md) for automation rather than exposing or forwarding this HTTP API. The detailed types below remain authoritative for request shapes.
+This page documents the local browser contract, including the automatic local sign-in handoff targeted for v0.5.1-alpha.1. Use the [CLI guide](../docs/CLI_GUIDE.en.md) for automation rather than exposing or forwarding this HTTP API. The detailed types below remain authoritative for request shapes.
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="../docs/assets/visuals/api-boundary-en-dark-narrow.svg">
@@ -23,7 +23,7 @@ Only the local browser session reaches management; mutations also require same-o
 
 ### Read a result before retrying
 
-1. Authenticate with the terminal's code, then fetch `/api/state`.
+1. Run `soba ui` for automatic local sign-in, then fetch `/api/state`. Explicit `soba ui --no-browser` retains manual code entry; `soba ui --json` retains private machine output.
 2. Review the intended operation and current revision; send the typed command with its request ID and CSRF token.
 3. On `{ok:true,result:...}`, read the operation-specific result and refresh current state. This means command success at its documented boundary, not remote application success.
 4. On `401` with `unauthenticated`, return to code entry. On an uncertain mutation result, inspect the original operation/state before attempting a new action; do not invent a new ID to conceal an unknown outcome.
@@ -33,7 +33,7 @@ Keep codes, cookies, tokens, private paths and peer identifiers out of copied di
 ## Session and state
 
 - `GET /api/state` returns `State`: `csrfToken`, `self`, `peers`, `messages`, `transfers`, local `services`, local `shares`, optional discovered `availableServices`, `servicePresets`, effective `limits`, `settings`, and optional `lan` readiness/selected-relay state
-- `POST /api/session` accepts `{code}`; a successful response may return `{csrfToken}`. The client then fetches state. Codes are not retained in browser storage
+- `POST /api/session` accepts `{code}`; a successful response may return `{csrfToken}`. Automatic launch carries a five-minute one-time code in a URL fragment, removed before React mounts or any session exchange. The same-origin POST reuses a valid existing session without extending its eight-hour expiry, or exchanges the code for a new session. The client then fetches state. Codes are not retained in browser storage or HTTP request URLs. Host, Origin and session-bound CSRF checks remain required; peer pairing is separate
 - `401 {code:"unauthenticated"}` returns the client to local-code entry and clears in-memory drafts
 - All responses are JSON. Production host errors use `{code,error}`; the frontend parser also accepts `{code,message?}` or `{error:{code,message}}`. The client localizes recognized codes. Unknown failures receive localized next-step guidance, with the unchanged backend explanation available under Technical details
 - Mutation success is `{ok:true,result?:{...}}`; no state is optimistically marked sent, received, connected or saved

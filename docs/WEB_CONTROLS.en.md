@@ -6,8 +6,8 @@ The local Web UI supports service connections, reviewed sharing, files and messa
 
 ## Open the UI and choose one task
 
-1. Start `soba`, then run `soba ui` if you need a fresh code.
-2. On this same device, open the exact printed numeric-loopback URL and enter the separately printed one-time code. Keep both sign-in output and screenshots private.
+1. Start `soba`, then run `soba ui` to open the browser on this device. The five-minute one-time code is handed off automatically; normal use needs no code entry.
+2. For manual access, explicitly run `soba ui --no-browser` in a private terminal and enter its code at the exact printed numeric-loopback URL. Headless/SSH sessions need this manual option; private machine output uses `soba ui --json`. Keep sign-in output and launch URLs private. See [local sign-in details](GENERIC.en.md).
 3. Choose a device for a connection, share or transfer; use **Saved services** for reusable definitions and **Preferences** for local settings.
 4. Review the target, ports/content and lifetime before applying. Check status after an uncertain response before repeating an action.
 
@@ -144,7 +144,7 @@ Review the displayed peer, shared scope and lifetime. A changed scope requires r
 
 Open **Set up network → Sign out of Tailnet**. The review lists active services, proxies and transfers. **Cancel** leaves them running. **Stop traffic and sign out** stops local traffic, requests embedded-node logout and exits the application, so this control page disconnects.
 
-Use the [logout outcomes and retry decision](LIFECYCLE.en.md#tailnet-logout) to distinguish backend acknowledgement from cleanup and process exit. The result panel provides copyable status, same-profile restart, logout and fresh-access-code commands. Saved approvals, definitions and files remain; LAN pairing has separate revoke controls.
+Use the [logout outcomes and retry decision](LIFECYCLE.en.md#tailnet-logout) to distinguish backend acknowledgement from cleanup and process exit. The result panel provides copyable status, same-profile restart, logout and local-UI-opening commands. If a recovery command cannot be copied, its full text is selected for manual copying; responses from an older command do not replace the current copy status. Saved approvals, definitions and files remain; LAN pairing has separate revoke controls.
 
 ## Review startup at OS sign-in
 

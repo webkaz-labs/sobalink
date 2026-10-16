@@ -47,15 +47,15 @@ flowchart TD
 
 | ソース | 担当 |
 | --- | --- |
-| [`routes.go`](../internal/lanlink/routes.go) | 専用の版付き受信者限定更新、方向別ペア対応、正規形・順序番号・期限、正確な候補 ID と local 優先順 |
-| [`route_state.go`](../internal/lanlink/route_state.go) | 発行・受信番号の永続記録、認証の証拠、独立した明示期間の許可、確認 digest、期限・取消・不確かな保存 |
-| [`transport_routes.go`](../internal/lanlink/transport_routes.go) | 相手ごとに直列化した候補試行、取消、有限の期限・再試行待機、外向き世代と現在の許可検査 |
-| [`core/lan_routes.go`](../internal/core/lan_routes.go) | ローカル管理 API、オフライン候補編集、非公開状態の検証、秘密を出さない一覧 |
-| [`cmd/soba/lan_routes.go`](../cmd/soba/lan_routes.go) | 日英の `soba lan routes` と型付き操作、非公開ファイル/stdin 入力、確認した候補選択 |
-| [`LanRoutes.tsx`](../web/src/components/LanRoutes.tsx) | ローカル確認付き設定、非公開の情報交換、明示候補選択、期限・取消 |
-| [`internal/routecat`](../internal/routecat/UPSTREAM.md) | 出所を明示した最小範囲の Tailcat 改変、準備した server regions と単一候補 client |
+| [`routes.go`（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/lanlink/routes.go) | 専用の版付き受信者限定更新、方向別ペア対応、正規形・順序番号・期限、正確な候補 ID と local 優先順 |
+| [`route_state.go`（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/lanlink/route_state.go) | 発行・受信番号の永続記録、認証の証拠、独立した明示期間の許可、確認 digest、期限・取消・不確かな保存 |
+| [`transport_routes.go`（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/lanlink/transport_routes.go) | 相手ごとに直列化した候補試行、取消、有限の期限・再試行待機、外向き世代と現在の許可検査 |
+| [`core/lan_routes.go`（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/core/lan_routes.go) | ローカル管理 API、オフライン候補編集、非公開状態の検証、秘密を出さない一覧 |
+| [`cmd/soba/lan_routes.go`（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/cmd/soba/lan_routes.go) | 日英の `soba lan routes` と型付き操作、非公開ファイル/stdin 入力、確認した候補選択 |
+| [`LanRoutes.tsx`（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/web/src/components/LanRoutes.tsx) | ローカル確認付き設定、非公開の情報交換、明示候補選択、期限・取消 |
+| [`internal/routecat`（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/routecat/UPSTREAM.md) | 出所を明示した最小範囲の Tailcat 改変、準備した server regions と単一候補 client |
 
-元の固定版は Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`、Tailscale は `v1.104.0` です。upstream の単一 region capability と live region-update API の不在は、map の並替えでは解決しません。内部改変は準備した server regions を一つの engine に置き、認証した role の探索を運んだ中継で相互到達を行い、WireGuard と外側のペア・信頼検査を維持します。探索だけではアプリ認証になりません。配布は改変とライセンスを別に記録します。[UPSTREAM](../internal/routecat/UPSTREAM.md)
+元の固定版は Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89`、Tailscale は `v1.104.0` です。upstream の単一 region capability と live region-update API の不在は、map の並替えでは解決しません。内部改変は準備した server regions を一つの engine に置き、認証した role の探索を運んだ中継で相互到達を行い、WireGuard と外側のペア・信頼検査を維持します。探索だけではアプリ認証になりません。配布は改変とライセンスを別に記録します。[UPSTREAM（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/routecat/UPSTREAM.md)
 
 ## 識別情報・経路情報・ローカル許可
 

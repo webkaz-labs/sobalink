@@ -34,7 +34,6 @@ func newProcessInput(ctx context.Context, in io.Reader) *processInput {
 }
 
 func (in *processInput) Context() context.Context { return in.ctx }
-func (in *processInput) UnwrapReader() io.Reader  { return in.in }
 
 func (in *processInput) Read(p []byte) (int, error) {
 	if err := in.ctx.Err(); err != nil {

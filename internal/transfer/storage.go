@@ -381,10 +381,6 @@ func checkRootSpace(ctx context.Context, root *os.Root, space *diskspace.Guard, 
 	return space.Check(ctx, volume, reserve)
 }
 
-func ensureDirectories(root *os.Root, name string) error {
-	return ensureDirectoriesWithSpace(context.Background(), root, name, diskspace.Process, diskspace.DefaultReserveBytes)
-}
-
 func ensureDirectoriesWithSpace(ctx context.Context, root *os.Root, name string, space *diskspace.Guard, reserve int64) error {
 	if name == "." {
 		return nil

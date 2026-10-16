@@ -195,13 +195,6 @@ func applyManagedUpgradeIntent(intent core.UpgradeIntent, query func(string, any
 	return progress, nil
 }
 
-func restartManagedUpgrade(ctx context.Context, dir, locale string, ja bool, out io.Writer, client controlCaller) error {
-	if err := restartManagedUpgradeProcess(ctx, dir, locale, ja, out, client); err != nil {
-		return err
-	}
-	return reopenUpgradeUI(ctx, dir, ja, out, client)
-}
-
 func restartManagedUpgradeProcess(ctx context.Context, dir, locale string, ja bool, out io.Writer, client controlCaller, binding ...*upgradeIdentity) error {
 	dir, err := filepath.Abs(dir)
 	if err != nil {

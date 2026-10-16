@@ -367,10 +367,6 @@ func (n *Node) applyRouteUpdateWithLifetime(peer string, raw []byte, reviewedDig
 	return n.commitRouteChangeLocked(peer, r, next, now)
 }
 
-func selectedApprovals(u RouteUpdate, ids []string, expiry, now time.Time) ([]RouteApproval, error) {
-	return selectedApprovalsWithLifetime(u, ids, RouteLifetimeFinite, expiry, now)
-}
-
 func validateRouteApproval(u RouteUpdate, lifetime string, granted, expiry time.Time) error {
 	switch lifetime {
 	case RouteLifetimeFinite:

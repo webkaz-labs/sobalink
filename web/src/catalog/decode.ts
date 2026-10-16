@@ -1,6 +1,6 @@
 import { readDigest, readID, readLocalDescriptor, readSettings, readTarget, sameTarget } from '../resource/decode'
 import type { SettingsValues } from '../resource/types'
-import type { CatalogLimits, CatalogRequest, CatalogResponse, CatalogRow, DecodeBudget, Identity, Selection, SourceKind, SourceRequest, SourceView } from './types'
+import type { CatalogLimits, CatalogRequest, CatalogResponse, CatalogRow, DecodeBudget, Identity, Selection, SourceRequest, SourceView } from './types'
 
 export class CatalogResponseError extends Error { constructor() { super('Invalid local catalog response'); this.name = 'CatalogResponseError' } }
 function fail(): never { throw new CatalogResponseError() }

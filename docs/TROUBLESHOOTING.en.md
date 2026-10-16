@@ -22,7 +22,7 @@ flowchart TD
 
 | What you see | Check next | Avoid |
 | --- | --- | --- |
-| Local page will not open | Keep the process running; use its exact printed `127.0.0.1` URL on the same device. Use `soba ui` for a fresh local code | Binding management to a LAN address or sharing its port |
+| Local page will not open | Keep the process running and retry `soba ui` on the same device. For manual access, use `soba ui --no-browser` in a private terminal and enter its code at the exact printed `127.0.0.1` URL | Binding management to a LAN address or sharing its port |
 | Setup finds no peer | Receiver must explicitly open acceptance; check selected scope and reachability. Use the guide's manual contact path when discovery is unavailable | Treating a discovery name as verified identity |
 | Peer appears but access is denied | Check current identity and the relevant trust/share grant on the correct device | Widening ports, changing networks or retrying another route to evade denial |
 | Saved service is stopped | Review the saved definition and start it. Check the displayed actual endpoint | Assuming a saved definition restores expired authority |

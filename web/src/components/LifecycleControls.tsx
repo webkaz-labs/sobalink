@@ -7,10 +7,21 @@ import { Button, Modal, useAlive } from './ui'
 const prefix = 'soba --state-dir "STATE_DIRECTORY"'
 function CommandCopy({ value, label, locale }: { value: string; label: string; locale: api.Locale }) {
   const [status, setStatus] = useState('')
-  const id = useId()
-  useEffect(() => setStatus(''), [value])
-  const copy = async () => { try { await navigator.clipboard.writeText(value); setStatus('copied') } catch { setStatus('copyFailed') } }
-  return <div className="form-stack"><div className="field"><label htmlFor={id}>{label}</label><textarea id={id} readOnly value={value} rows={2} spellCheck={false} className="code-value" /></div><div><Button type="button" onClick={copy}>{lifecycleText(locale, 'copy')}</Button>{status && <p role="status" className="small muted">{lifecycleText(locale, status)}</p>}</div></div>
+  const id = useId(), field = useRef<HTMLTextAreaElement>(null), alive = useAlive()
+  const attempt = useRef(0)
+  useEffect(() => { ++attempt.current; setStatus('') }, [value])
+  const copy = async () => {
+    const current = ++attempt.current
+    try {
+      await navigator.clipboard.writeText(value)
+      if (alive.current && current === attempt.current) setStatus('copied')
+    } catch {
+      if (alive.current && current === attempt.current) {
+        setStatus('copyFailed'); field.current?.focus(); field.current?.select()
+      }
+    }
+  }
+  return <div className="form-stack"><div className="field"><label htmlFor={id}>{label}</label><textarea ref={field} id={id} readOnly value={value} rows={2} spellCheck={false} className="code-value" /></div><div><Button type="button" onClick={copy}>{lifecycleText(locale, 'copy')}</Button>{status && <p role="status" className="small muted">{lifecycleText(locale, status)}</p>}</div></div>
 }
 export function StartupGuide({ locale, t, onClose }: { locale: api.Locale; t: Translate; onClose: () => void }) {
   const l = (key: string) => lifecycleText(locale, key)
