@@ -266,6 +266,59 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Deliberately one native platform and a bounded diagnostic sample. A failure
+  # stops the sequence; later successes cannot replace a failed receipt.
+  diagnostic-outbox:
+    needs: diagnostic-selection
+    if: needs.diagnostic-selection.outputs.suite == 'outbox'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify closed Windows outbox diagnostic policy
+        run: |
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_outbox_diagnostic.py' -v
+          python -B -m unittest discover -s .github/scripts -p 'test_ci_go_test.py' -v
+      - name: Prepare locked native dependencies
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = windows
+          test "$(go env GOARCH)" = amd64
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod download
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Verify bounded commit retry helper regressions
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessCommitRetryInitialAdmission --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessCommitRetryPreservesReply --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessCommitRetryRejectsOtherErrors --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessCommitRetryStops --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessCommitRetrySlowBusyInvocation -- go test -race -count=1 -timeout=2m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxProcessCommitRetry'
+      - name: Require three independent exact outbox restart passes
+        timeout-minutes: 14
+        env:
+          SOBALINK_RUN_DIRECT_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            printf 'outbox_restart_attempt=%s\n' "$attempt"
+            python -B .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessRestart -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxProcessRestart$'
+          done
+
   diagnostic-text:
     needs: diagnostic-selection
     if: needs.diagnostic-selection.outputs.suite == 'text'
