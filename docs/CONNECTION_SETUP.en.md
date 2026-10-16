@@ -30,8 +30,8 @@ Demo screen captured with the entry-copy correction included in the same change 
 
 ## Request and accept (v2)
 
-1. On the receiving device, choose **Receive requests**, one network scope, and explicit permission for the bootstrap and relay endpoints. Before starting, choose a review lifetime of 120–1200 seconds.
-2. On the requesting device, choose **Select and request** or **Start connections only**. The latter opens neither LAN listeners nor discovery sockets. Select the receiver, or enter the numeric private IP:port shown on its receiving screen.
+1. On the receiving device, choose **Accept connection requests**, one network scope, and explicit permission for the bootstrap and relay endpoints. Before starting, choose a review lifetime of 120–1200 seconds.
+2. On the requesting device, choose **Connect to a device**, or **More connection options** → **Connect outbound only**. The latter opens neither LAN listeners nor discovery sockets. Select the receiver, or enter the numeric private IP:port shown on its receiving screen.
 3. Review the exact recipient key, recipient scope, relay address/certificate, and effective deadline. Send the request explicitly. Both devices must use the same verification method.
 4. On the receiving device, review the immutable request and explicitly approve or decline. For independent full-fingerprint verification, both sides must compare the complete value before approval. TOFU does not require copying a code or PNG.
 5. Keep pairing persistence, confirmed connectivity, and application permissions separate. An uncertain result requires status inspection of the original session, not a replacement request.

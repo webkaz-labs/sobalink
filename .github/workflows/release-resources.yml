@@ -10,6 +10,10 @@ on:
       - .github/scripts/test_resource_observer.py
       - .github/scripts/measure-release-resources.py
       - .github/scripts/test_measure_release_resources.py
+      - .github/scripts/historical-resource-validation.py
+      - .github/scripts/test_historical_resource_validation.py
+      - .github/scripts/test_release_resources_import.py
+      - .github/scripts/test_release_resources_diagnostics.py
 
 permissions:
   contents: read
@@ -54,27 +58,63 @@ jobs:
           MISE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python - <<'PY' > /dev/null 2>&1
-          import importlib.util
-          import os
-          import pathlib
+          stage=python-verification
+          trap 'printf "Resource verification failed: %s\n" "$stage" >&2' ERR
+          python - <<'PY' > /dev/null
           import sys
-          sys.path.insert(0, str(pathlib.Path('.github/scripts').resolve()))
-          spec = importlib.util.spec_from_file_location('release_validation', '.github/scripts/release-validation.py')
-          release = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(release)
-          version, commit = os.environ['RELEASE_VERSION'], os.environ['TESTED_COMMIT']
-          _, published = release.release_state(version, commit, required=True, published=True)
-          release.require(published['id'] == int(os.environ['RELEASE_ID']), 'published release identity changed')
-          release.download_public(pathlib.Path(os.environ['RUNNER_TEMP']) / 'sobalink-resource-public', version, commit)
+          stage = 'import'
+          try:
+              import importlib.util
+              import os
+              import pathlib
+              sys.path.insert(0, str(pathlib.Path('.github/scripts').resolve()))
+              spec = importlib.util.spec_from_file_location('historical_resource_validation', '.github/scripts/historical-resource-validation.py')
+              release = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(release)
+              stage = 'historical-validator'
+              release = release.load_validator(os.environ)
+              version, commit = os.environ['RELEASE_VERSION'], os.environ['TESTED_COMMIT']
+              stage = 'release-state'
+              _, published = release.release_state(version, commit, required=True, published=True)
+              stage = 'release-id'
+              release.require(published['id'] == int(os.environ['RELEASE_ID']), 'published release identity changed')
+              stage = 'public-download-and-assets'
+              release.download_public(pathlib.Path(os.environ['RUNNER_TEMP']) / 'sobalink-resource-public', version, commit)
+          except Exception as error:
+              kind = type(error).__name__
+              if kind not in ('ValueError', 'KeyError', 'ImportError', 'ModuleNotFoundError', 'HTTPError', 'URLError', 'OSError', 'FileExistsError'):
+                  kind = 'Exception'
+              codes = {
+                  'published release identity changed': 'release-identity',
+                  'historical-baseline-mismatch': 'historical-baseline',
+                  'historical-validator-digest': 'historical-validator-digest',
+                  'historical-release-id': 'historical-release-id',
+                  'historical-asset-inventory': 'historical-asset-inventory',
+                  'published asset set differs from the verified inventory': 'asset-inventory',
+                  'GitHub public asset digest mismatch': 'asset-digest',
+                  'truncated public download': 'asset-size',
+                  'unexpected build settings': 'build-settings',
+                  'unexpected frontend toolchain': 'frontend-toolchain',
+                  'invalid native package provenance: linux-amd64': 'native-linux-amd64',
+                  'invalid native package provenance: linux-arm64': 'native-linux-arm64',
+                  'invalid native package provenance: darwin-arm64': 'native-darwin-arm64',
+                  'invalid native package provenance: windows-amd64': 'native-windows-amd64',
+              }
+              code = codes.get(str(error), 'unclassified') if isinstance(error, ValueError) else 'unclassified'
+              print('Resource verification failed: ' + stage + ' / ' + kind + ' / ' + code, file=sys.stderr)
+              raise SystemExit(1) from None
           PY
+          stage=packslip-install
           mise install github:jdx/packslip@1.4.0 > /dev/null 2>&1
           public_dir="$RUNNER_TEMP/sobalink-resource-public"
           args=()
           for file in "$public_dir"/*.tar.gz "$public_dir"/*.zip "$public_dir"/*.cdx.json; do args+=(--artifact "$file"); done
+          stage=packslip-signature
           mise exec github:jdx/packslip@1.4.0 -- packslip verify "$public_dir/packslip.sigstore.json" \
             --identity "$RELEASE_IDENTITY" --issuer https://token.actions.githubusercontent.com "${args[@]}" > /dev/null 2>&1
-          python .github/scripts/release-validation.py bundle --root "$public_dir" > /dev/null 2>&1
+          stage=bundle-binding
+          python .github/scripts/historical-resource-validation.py bundle --root "$public_dir" > /dev/null 2>&1
+          stage=github-provenance
           for file in "$public_dir"/*; do
             gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
               --cert-identity "$RELEASE_IDENTITY" --cert-oidc-issuer https://token.actions.githubusercontent.com \

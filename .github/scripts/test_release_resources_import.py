@@ -1,4 +1,5 @@
 """Exercise the resource workflow's import prefix without API or downloads."""
+import ast
 import pathlib
 import subprocess
 import sys
@@ -11,9 +12,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 class ResourceWorkflowImportTests(unittest.TestCase):
     def prefix(self):
         workflow = (ROOT / '.github/workflows/release-resources.yml').read_text()
-        start = workflow.index("          python - <<'PY' > /dev/null 2>&1\n")
+        start = workflow.index("          python - <<'PY' > /dev/null\n")
         block = workflow[start:].split('\n', 1)[1].split('          PY\n', 1)[0]
-        return textwrap.dedent(block).split('version, commit =', 1)[0]
+        tree = ast.parse(textwrap.dedent(block))
+        guarded = next(node for node in tree.body if isinstance(node, ast.Try))
+        prefix = [node for node in tree.body if isinstance(node, ast.Import)]
+        for node in guarded.body:
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == 'load_validator':
+                break
+            prefix.append(node)
+        return ast.unparse(ast.Module(body=prefix, type_ignores=[])) + '\n'
 
     def execute(self, source):
         return subprocess.run([sys.executable, '-I', '-B', '-c', source],

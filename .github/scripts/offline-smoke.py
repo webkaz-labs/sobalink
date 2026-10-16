@@ -122,7 +122,7 @@ def check(binary):
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
                 assert process.poll() is None, process.communicate()
-                probe = subprocess.run([binary, "--state-dir", str(state), "ui"],
+                probe = subprocess.run([binary, "--state-dir", str(state), "ui", "--json"],
                                        capture_output=True, text=True, encoding="utf-8", timeout=5)
                 if probe.returncode == 0:
                     ui = json.loads(probe.stdout)
