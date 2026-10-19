@@ -1,6 +1,6 @@
 # Explicit alternate-port checks
 
-[日本語](PORT_PROPOSALS.ja.md) · [CLI guide](CLI_GUIDE.en.md) · [Capacity](CAPACITY.en.md) · [API](../web/API.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](PORT_PROPOSALS.ja.md) · [CLI guide](CLI_GUIDE.en.md) · [Capacity](CAPACITY.en.md) · [API](../web/API.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 A stopped saved outbound TCP/UDP connection can explicitly check alternate local entry ports. The existing fixed port stays unchanged until a separate reviewed save or restart. In the local Web UI, open **Saved services → Manage service → Check alternate ports** for a stopped connection. Opening the view reads its source only; **Check loopback ports now** explicitly performs the transient checks.
 

@@ -2,7 +2,7 @@
 
 [English](../SECURITY.md) · [設計](ARCHITECTURE.md) · [確認範囲](VERIFICATION.md)
 
-sobalink は実験的なソフトウェアです。ローカル管理、相手との転送、サービスの許可を制限します。OS のサンドボックス、汎用 VPN、遠隔管理サービスではなく、相手アプリの安全性を保証しません。公開済みの基準版は [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)、ソース `46dcd363` です。接続設定・テキストの永続送信待ちを含みます。署名付き配布・各 OS への実インストール確認と実端末間の受入は別の記録です。実端末、アプリ、OSログイン、サスペンド、電源断の受入は別に確認します。[正確なソースの記録](VERIFICATION.md)を参照してください。
+sobalink は実験的なソフトウェアです。ローカル管理、相手との転送、サービスの許可を制限します。OS のサンドボックス、汎用 VPN、遠隔管理サービスではなく、相手アプリの安全性を保証しません。公開済みの基準版は [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)、ソース `fae64878` です。接続設定・テキストの永続送信待ちを含みます。署名付き配布・各 OS への実インストール確認と実端末間の受入は別の記録です。実端末、アプリ、OSログイン、サスペンド、電源断の受入は別に確認します。[正確なソースの記録](VERIFICATION.md)を参照してください。
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/permissions-ja-dark-narrow.svg">

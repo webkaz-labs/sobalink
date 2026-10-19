@@ -1,6 +1,6 @@
 # 相手1台の転送設定を確認して管理する
 
-[English](RESOURCE_MANAGEMENT.en.md) · [参照のみの許可](RESOURCE_INSPECTION.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](RESOURCE_MANAGEMENT.en.md) · [参照のみの許可](RESOURCE_INSPECTION.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 現在の公開版では、ペアになった DirectLAN の相手1台について、`transferConcurrentFiles` と `transferConcurrentPerPeer` の2項目だけを、明示的な管理許可で変更できます。純粋なフェンス・世代の試験だけでは、遠隔管理の全体動作、配布、実端末、アプリ、OS ログイン、スリープからの復帰の受入は確認できません。公開版の検証状況は[検証記録](VERIFICATION.md)に従います。
 

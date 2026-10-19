@@ -24,11 +24,18 @@ func startCommand(ctx context.Context, command, dir, locale string, args []strin
 	f := commandFlags(command, ja, out)
 	offline := f.Bool("offline", false, text(ja, "open local management without starting the saved network", "保存済みのネットワークを開始せず、ローカル管理画面を開く"))
 	background := f.Bool("background", false, text(ja, "detach the application and wait for local management readiness", "本体をバックグラウンドで起動し、ローカル管理機能の準備を待つ"))
+	var existingOnly bool
+	if command == "run" {
+		f.BoolVar(&existingOnly, "existing-profile", false, text(ja, "require an existing profile with --offline; never initialize a new profile", "--offline と併用し、既存のプロファイルだけを開く（新規作成しない）"))
+	}
 	if err := parseFlags(f, args, ja); err != nil {
 		return err
 	}
 	if command == "run" && *background {
 		return errors.New(text(ja, "run stays in the foreground; use start --background", "run はフォアグラウンド専用です。start --background を使ってください"))
+	}
+	if existingOnly && !*offline {
+		return errors.New(text(ja, "--existing-profile requires --offline", "--existing-profile には --offline が必要です"))
 	}
 	if dryRun {
 		return errors.New(text(ja, "Use --dry-run with a configuration or action command; start launches the local agent", "--dry-run は設定・操作コマンドと使ってください。start は本体を起動します"))
@@ -36,7 +43,7 @@ func startCommand(ctx context.Context, command, dir, locale string, args []strin
 	if *background {
 		return startBackground(ctx, dir, locale, *offline, ja, out, client, launchBackground, 10*time.Second)
 	}
-	return runForeground(ctx, dir, *offline, ja, out)
+	return runForegroundWithProfile(ctx, dir, *offline, existingOnly, ja, out)
 }
 
 // Enabling the implementation does not create a grant or listener. Only a
@@ -46,8 +53,17 @@ func foregroundCoreOptions(dir string, offline bool, lock *config.Lock) core.Opt
 }
 
 func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Writer) (err error) {
+	return runForegroundWithProfile(ctx, dir, offline, false, ja, out)
+}
+
+func runForegroundWithProfile(ctx context.Context, dir string, offline, existingOnly, ja bool, out io.Writer) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if existingOnly {
+		if err := core.CheckExistingProfile(dir); err != nil {
+			return err
+		}
 	}
 	lifecycle, err := newUpgradeLifecycle(dir, offline)
 	if err != nil {
@@ -77,7 +93,9 @@ func runForeground(ctx context.Context, dir string, offline, ja bool, out io.Wri
 			err = errors.Join(err, acknowledgeUpgradeShutdown(*handoff, errors.Join(err, closeErr), lockErr))
 		}
 	}()
-	app, err = core.Open(ctx, foregroundCoreOptions(dir, offline, lock))
+	opts := foregroundCoreOptions(dir, offline, lock)
+	opts.RequireExistingProfile = existingOnly
+	app, err = core.Open(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -180,7 +198,7 @@ func backgroundCommandOutput(args []string, out, errorOut io.Writer) (io.Writer,
 }
 
 func backgroundLogInvocation(args []string, path string) bool {
-	if len(args) != 5 && len(args) != 6 {
+	if len(args) < 5 || len(args) > 7 {
 		return false
 	}
 	if args[0] != "--state-dir" || args[2] != "--locale" || args[4] != "run" {
@@ -192,7 +210,7 @@ func backgroundLogInvocation(args []string, path string) bool {
 	if args[3] != "auto" && args[3] != "en" && args[3] != "ja" {
 		return false
 	}
-	return len(args) == 5 || args[5] == "--offline"
+	return len(args) == 5 || args[5] == "--offline" && (len(args) == 6 || args[6] == "--existing-profile")
 }
 
 func openStartupLog(path string, create bool, ja bool) (_ *os.File, err error) {
@@ -239,6 +257,13 @@ func openStartupLog(path string, create bool, ja bool) (_ *os.File, err error) {
 }
 
 func startBackground(ctx context.Context, dir, locale string, offline, ja bool, out io.Writer, client controlCaller, launch backgroundLauncher, timeout time.Duration) error {
+	return startBackgroundWithProfile(ctx, dir, locale, offline, false, ja, out, client, launch, timeout)
+}
+
+func startBackgroundWithProfile(ctx context.Context, dir, locale string, offline, existingOnly, ja bool, out io.Writer, client controlCaller, launch backgroundLauncher, timeout time.Duration) error {
+	if existingOnly && !offline {
+		return errors.New("existing-profile recovery requires an offline launch")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -246,12 +271,12 @@ func startBackground(ctx context.Context, dir, locale string, offline, ja bool, 
 	if err != nil {
 		return err
 	}
-	ready := func() (int, bool) {
+	ready := func() (int, error) {
 		probe, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		defer cancel()
 		var snapshot processStatus
 		err := client(probe, dir, "status", &snapshot)
-		return snapshot.ProcessID, err == nil
+		return snapshot.ProcessID, err
 	}
 	writeResult := func(state string, pid int, logPath string) error {
 		return json.NewEncoder(out).Encode(struct {
@@ -261,11 +286,18 @@ func startBackground(ctx context.Context, dir, locale string, offline, ja bool, 
 			StartupApplied bool   `json:"startupApplied"`
 		}{state, pid, logPath, state == "ready"})
 	}
-	if _, ok := ready(); ok {
+	if _, err := ready(); err == nil {
 		return writeResult("already-running", 0, "")
+	} else if existingOnly && !control.Unavailable(err) {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if existingOnly {
+		if err := core.CheckExistingProfile(dir); err != nil {
+			return err
+		}
 	}
 	if err := config.SecureDir(dir); err != nil {
 		return err
@@ -284,6 +316,9 @@ func startBackground(ctx context.Context, dir, locale string, offline, ja bool, 
 	if offline {
 		args = append(args, "--offline")
 	}
+	if existingOnly {
+		args = append(args, "--existing-profile")
+	}
 	process, err := launch(exe, args, log)
 	if err != nil {
 		return fmt.Errorf("%s: %w", text(ja, "Could not launch the background application", "バックグラウンド起動に失敗しました"), err)
@@ -292,19 +327,39 @@ func startBackground(ctx context.Context, dir, locale string, offline, ja bool, 
 	defer deadline.Stop()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
+	processDone := process.Done
+	childExited := false
 	for {
-		if pid, ok := ready(); ok {
+		if pid, err := ready(); err == nil {
 			if pid == process.PID && pid > 0 {
 				return writeResult("ready", process.PID, logPath)
 			}
 			return writeResult("already-running", 0, "")
+		} else if existingOnly && !control.Unavailable(err) {
+			return fmt.Errorf(text(ja, "Local readiness is unconfirmed; the application may still be running. Check %s: %w", "準備状態を確認できません。本体が動作している場合があります。%s を確認してください: %w"), cliCommandExample(dir, "status"), err)
 		}
 		select {
 		case <-ctx.Done():
+			if existingOnly {
+				return fmt.Errorf(text(ja, "Readiness check cancelled; the application may still be running. Check %s: %w", "準備確認を中断しました。本体が動作している場合があります。%s を確認してください: %w"), cliCommandExample(dir, "status"), ctx.Err())
+			}
 			return fmt.Errorf("%s: %w", text(ja, "Readiness check cancelled; the launched application may still be running. Use soba status or soba stop with this state directory", "準備確認を中断しました。起動した本体が動作している場合があります。同じ状態ディレクトリで soba status または soba stop を使ってください"), ctx.Err())
 		case <-deadline.C:
+			if existingOnly {
+				if childExited {
+					return fmt.Errorf(text(ja, "The launched local application exited and local readiness is unconfirmed. Another instance may be starting. Check %s and this private log: %s. For offline diagnosis use %s.", "起動した本体は終了し、ローカル管理機能の準備は未確認です。別の本体が起動中の場合があります。%s と、この非公開ログを確認してください: %s。オフラインで調べるには %s を使ってください。"), cliCommandExample(dir, "status"), logPath, cliCommandExample(dir, "run", "--offline", "--existing-profile"))
+				}
+				return fmt.Errorf(text(ja, "Local readiness is unconfirmed; the application may still be running. Check %s and this private log: %s", "ローカル管理機能の準備を確認できません。本体が動作している場合があります。%s と、この非公開ログを確認してください: %s"), cliCommandExample(dir, "status"), logPath)
+			}
 			return fmt.Errorf("%s: %s", text(ja, "Local readiness is unconfirmed; check this private log or run soba run with the same state directory. The process may still be running", "ローカル管理機能の準備を確認できません。この非公開ログを確認するか、同じ状態ディレクトリで soba run を使ってください。本体が動作している場合があります"), logPath)
-		case <-process.Done:
+		case <-processDone:
+			if existingOnly {
+				// Concurrent UI launches can lose the profile lock before the
+				// winning owner exposes IPC. Reuse the same bounded wait without
+				// launching again or claiming the other owner's startup mode.
+				childExited, processDone = true, nil
+				continue
+			}
 			return fmt.Errorf("%s: %s", text(ja, "The background application exited before local readiness; inspect this private log or run soba run with the same state directory", "ローカル管理機能の準備前に本体が終了しました。この非公開ログを確認するか、同じ状態ディレクトリで soba run を使ってください"), logPath)
 		case <-tick.C:
 		}

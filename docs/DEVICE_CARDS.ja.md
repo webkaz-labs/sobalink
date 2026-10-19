@@ -1,6 +1,6 @@
 # 公開鍵の端末カード
 
-[English](DEVICE_CARDS.en.md) · [0.3 系列の計画履歴](CONVENIENCE_PLAN.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](DEVICE_CARDS.en.md) · [0.3 系列の計画履歴](CONVENIENCE_PLAN.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 **読取り専用のWeb／CLI操作で、公開鍵を交換できます。** 公開鍵、明示して選んだ
 表示名、任意のアドレス情報を含みます。カードだけではペアリング、接続開始、

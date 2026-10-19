@@ -1,6 +1,6 @@
 # 共有サービス一覧の閲覧契約
 
-[English](CATALOG_VIEW_CONTRACT.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](CATALOG_VIEW_CONTRACT.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 閲覧許可の適格性データ、所有権を確認する private 保存、明示承認・取消、容量を
 限定した相手との一覧取得を実装しています。元の transport origin を保持します。

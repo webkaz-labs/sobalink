@@ -1,6 +1,6 @@
 # Web と CLI での初回有効化
 
-[English](WEB_ACTIVATION_HANDOFF.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](WEB_ACTIVATION_HANDOFF.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 現在の公開版は、確認付き直接LAN有効化コントローラーにWebからの再起動要求を含みます。`719d6bfa` の実Core製品ケースでWeb・CLI双方の初回有効化が成功し、元の確認内容、通常の準備完了、双方のnative確認、完全な後始末を確認しました。同じsourceで模擬所有者を使うhelperの7ケースも成功しています。この過去の限定した Linux loopback 結果は、後のソースや実機の受入を証明しません。現在の native／browser・配布結果は別途[検証記録](VERIFICATION.md)に示します。過去の[正確なsourceの証拠と限界](CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
 

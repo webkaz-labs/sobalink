@@ -28,7 +28,7 @@ The local browser and owner-only CLI reach the same Go core. Peer traffic uses a
 - Which path carries application traffic? [Network boundaries](#network-boundaries) and [prepared routes](#prepared-routes-and-stable-service-entrances).
 - Which authority permits a request? [Management and peer surfaces](#management-and-peer-surfaces) and [trust and storage](#trust-batches-and-storage).
 - What survives a restart? [Saved workflows](#capacity-saved-workflows-and-local-tools) and [private-state persistence](#bounded-private-state-persistence).
-- What has actually been tested? [Exact-source verification](VERIFICATION.en.md). This describes v0.5.0-alpha.1 source `46dcd363`; old observations below remain tied to their original version.
+- What has actually been tested? [Exact-source verification](VERIFICATION.en.md). This describes v0.5.1-alpha.1 source `fae64878`; old observations below remain tied to their original version.
 
 ## Source map
 
@@ -110,7 +110,7 @@ LAN state version 1 retains legacy singleton semantics. The earlier prepared-rou
 
 ## Management and peer surfaces
 
-The management listener is always `127.0.0.1:0` at allocation and then the exact resulting host/port. It serves embedded assets and `/api` only. A separately delivered one-time terminal code creates a session; mutating requests require the matching Origin and session CSRF token. URL-based secrets, wildcard listening and remote administration are excluded.
+The management listener is always `127.0.0.1:0` at allocation and then the exact resulting host/port. It serves embedded assets and `/api` only. `soba ui` hands a five-minute, one-time code to the same-device browser in a temporary URL fragment. The page removes the fragment before exchanging the code through a same-origin POST; it is not sent in an HTTP request URL or saved to Web storage. Explicit `ui --no-browser` and `ui --json` return private sign-in information. Browser extensions, OS launch arguments and browser history mechanisms may still see the fragment. Mutating requests require the matching Origin and session CSRF token. Wildcard listening and remote administration are excluded. [Local sign-in boundary](../SECURITY.md#local-management-stays-local)
 
 Network failures carry a stable `self.errorCode`; the UI localizes recovery guidance while preserving technical details. The current UI contract is [web/API.md](../web/API.md), backed by TypeScript in `web/src/api.ts`. The UI cannot make its own trust decision authoritative: Go validates identity, expiry, range, receive policy and path safety on every relevant operation. Request IDs deduplicate repeated commands within bounded process-local history; they do not claim durable transaction recovery.
 

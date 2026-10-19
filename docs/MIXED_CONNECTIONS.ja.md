@@ -1,6 +1,6 @@
 # 複数方式の接続
 
-[English](MIXED_CONNECTIONS.en.md) · [直接LAN](DIRECT_LAN.ja.md) · [容量設定](CAPACITY.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](MIXED_CONNECTIONS.en.md) · [直接LAN](DIRECT_LAN.ja.md) · [容量設定](CAPACITY.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 mixed は、明示的に選んだ接続方式を同時に使うモードです。新規プロファイルは従来どおり未接続で始まります。OSの経路・ファイアウォール・ルーター設定を変えず、管理者権限も不要です。方式の異なる端末間を中継するゲートウェイ機能ではありません。
 

@@ -1,6 +1,6 @@
 # Authenticated route recovery
 
-[日本語](ROUTE_RECOVERY_DESIGN.ja.md) · [LAN steps](LAN.en.md#prepare-another-route) · [Architecture](ARCHITECTURE.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#route-recovery-gate) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](ROUTE_RECOVERY_DESIGN.ja.md) · [LAN steps](LAN.en.md#prepare-another-route) · [Architecture](ARCHITECTURE.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md#route-recovery-gate) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 **Recovery keeps the same Tailcat device and pairing.** Current behavior includes exact prepared candidates, explicit local route approval and adjustable resource budgets. Physical-device acceptance remains separate; see [verification](VERIFICATION.en.md).
 

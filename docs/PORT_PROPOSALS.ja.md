@@ -1,6 +1,6 @@
 # 代替ポートの明示的な確認
 
-[English](PORT_PROPOSALS.en.md) · [CLI ガイド](CLI_GUIDE.ja.md) · [容量](CAPACITY.ja.md) · [API](../web/API.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](PORT_PROPOSALS.en.md) · [CLI ガイド](CLI_GUIDE.ja.md) · [容量](CAPACITY.ja.md) · [API](../web/API.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 停止中の保存済み送信 TCP/UDP 接続は、代替のローカル入口ポートを明示的に確認できます。別途確認した保存・再開始操作までは、元の固定ポートを維持します。ローカル Web UI では、停止中の接続の「保存済みサービス → サービスを管理 → 代替ポートを確認」を開きます。画面を開くだけでは元設定の読込みのみを行い、「ループバックポートを今確認」で一時的な待受を明示的に確認します。
 

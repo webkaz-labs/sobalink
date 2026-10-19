@@ -94,6 +94,9 @@ type Options struct {
 	Directory, Version string
 	NodeFactory        NodeFactory
 	SkipNetworkStart   bool
+	// RequireExistingProfile forbids first-use initialization during UI recovery.
+	// The loaded profile is checked again after the owning process takes its lock.
+	RequireExistingProfile bool
 	// LifecycleLock enables resource identity only while the matching process owns this profile.
 	LifecycleLock *config.Lock
 	// EnableResourceInspection enables explicit scoped resource grants.
@@ -237,6 +240,14 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if opts.Directory == "" {
 		return nil, errors.New("private state directory required")
 	}
+	if opts.RequireExistingProfile {
+		if !opts.SkipNetworkStart {
+			return nil, errors.New("existing-profile recovery requires an offline launch")
+		}
+		if err := CheckExistingProfile(opts.Directory); err != nil {
+			return nil, err
+		}
+	}
 	if err := config.SecureDir(opts.Directory); err != nil {
 		return nil, err
 	}
@@ -245,8 +256,13 @@ func Open(parent context.Context, opts Options) (*Core, error) {
 	if err != nil {
 		return nil, err
 	}
-	profileLoadErr := readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &p)
-	if profileLoadErr != nil && !errors.Is(profileLoadErr, os.ErrNotExist) {
+	var profileLoadErr error
+	if opts.RequireExistingProfile {
+		profileLoadErr = readExistingProfileOwned(opts.Directory, opts.LifecycleLock, limits.Number("resources", "profileBytes"), &p)
+	} else {
+		profileLoadErr = readBoundedPrivateJSON(filepath.Join(opts.Directory, "sobalink.json"), limits.Number("resources", "profileBytes"), &p)
+	}
+	if profileLoadErr != nil && (opts.RequireExistingProfile || !errors.Is(profileLoadErr, os.ErrNotExist)) {
 		return nil, profileLoadErr
 	}
 	if errors.Is(profileLoadErr, os.ErrNotExist) {

@@ -48,7 +48,7 @@ This index routes readers to the right document. Dedicated guides own workflows,
 
 ## Connection, queues and resource settings
 
-These workflows are described for v0.5.0-alpha.1. Their inclusion in the release does not establish physical-device acceptance; consult each guide and the exact-source evidence.
+These workflows are described for v0.5.1-alpha.1. Their inclusion in the release does not establish physical-device acceptance; consult each guide and the exact-source evidence.
 
 - [Connection setup](CONNECTION_SETUP.en.md)
 - [Durable text](DURABLE_TEXT.en.md)

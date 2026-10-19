@@ -4,7 +4,7 @@
 
 This is an experimental open-source project; no user support is provided. These self-service notes do not promise responses, fixes or compatibility.
 
-These answers describe v0.5.0-alpha.1. For executed checks and remaining real-device limits, use the [verification record](VERIFICATION.en.md).
+These answers describe v0.5.1-alpha.1. For executed checks and remaining real-device limits, use the [verification record](VERIFICATION.en.md).
 
 ## Do I need administrator rights or a VPN driver?
 

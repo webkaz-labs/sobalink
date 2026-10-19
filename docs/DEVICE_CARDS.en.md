@@ -1,6 +1,6 @@
 # Public device cards
 
-[日本語](DEVICE_CARDS.ja.md) · [0.3-series planning history](CONVENIENCE_PLAN.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](DEVICE_CARDS.ja.md) · [0.3-series planning history](CONVENIENCE_PLAN.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 **Read-only Web and CLI controls make public keys easier to exchange.** A card
 contains a public key, an explicitly chosen alias and optional address hints.

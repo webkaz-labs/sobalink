@@ -2,9 +2,9 @@
 
 [日本語](DURABLE_OUTBOX.ja.md) · [CLI](CLI_GUIDE.en.md) · [Web controls](WEB_CONTROLS.en.md)
 
-The published 0.5.0-alpha.1 release includes an opt-in file/folder outbox. A successful queue operation means **accepted on this sending device**, not delivered. Only durable receiver evidence confirms a save. Source tests and synthetic checks do not establish release-package, physical-device, power-loss, enrollment or OS-login acceptance.
+The published 0.5.1-alpha.1 release includes an opt-in file/folder outbox. A successful queue operation means **accepted on this sending device**, not delivered. Only durable receiver evidence confirms a save. Source tests and synthetic checks do not establish release-package, physical-device, power-loss, enrollment or OS-login acceptance.
 
-**Before starting:** use a fresh format-3 profile for 0.5.0-alpha.1; preserve older profiles without migration or deletion. See the format and recovery conditions below.
+**Before starting:** use a fresh format-3 profile for 0.5.1-alpha.1; preserve older profiles without migration or deletion. See the format and recovery conditions below.
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/delivery-evidence-en-dark-narrow.svg">
@@ -45,7 +45,7 @@ soba outbox discard OUTBOX_ID --process PROCESS_ID --json
 
 ## Fresh profile format
 
-Published 0.4.0-alpha.4 uses profile format 2. Published 0.5.0-alpha.1 uses format 3, which also requires the message store for the [durable text queue](DURABLE_TEXT.en.md). Both initialize their required stores under the agent's lifecycle lock. Format 3 rejects alpha.4 and older profiles; preserve them and select a separate empty directory. There is no migration or feature-enable wizard. Earlier profiles are rejected without being rewritten or erased: preserve them and choose a fresh profile directory. Normal receiving approvals remain in force; each queued send still needs explicit review and consent.
+Published 0.4.0-alpha.4 uses profile format 2. Published 0.5.0-alpha.1 introduced format 3, also used by 0.5.1-alpha.1, which also requires the message store for the [durable text queue](DURABLE_TEXT.en.md). Both initialize their required stores under the agent's lifecycle lock. Format 3 rejects alpha.4 and older profiles; preserve them and select a separate empty directory. There is no migration or feature-enable wizard. Earlier profiles are rejected without being rewritten or erased: preserve them and choose a fresh profile directory. Normal receiving approvals remain in force; each queued send still needs explicit review and consent.
 
 An interrupted first initialization may remain blocked if empty-state ownership cannot be certified. A ready profile never recreates missing delivery ledgers. Process-restart recovery excludes restored/rolled-back private snapshots, manual state replacement/deletion, and concurrent private-namespace modification by another actor with the same filesystem access. Detected substitution or unknown inventory fails closed; filesystem checks are not inode-conditional deletion or protection against an adversarial simultaneous rename. Do not delete private evidence to clear a recovery warning.
 

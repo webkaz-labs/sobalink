@@ -25,6 +25,8 @@ soba stop
 
 Use `soba start --offline --background` instead when you want local management without reconnecting the saved network. Choose one startup mode; a second start does not change a running process. `soba ui` opens the local UI on this device without manual code entry. For explicit manual access use `soba ui --no-browser`; private machine output uses `soba ui --json`. Both fallback modes return secret sign-in information for this device only. Retain the same `--state-dir` on every command when using a custom profile.
 
+**Published 0.5.1-alpha.1:** `soba ui` requires a running application. After stopping, use `soba start --offline --background` to reopen local management without the saved network, then run `soba ui`. **Unreleased source change:** interactive `ui` / `ui --no-browser` can attempt this offline start for a validated existing profile when the local control endpoint is known to be absent. `ui --json` never starts it, and failures other than a known absent control endpoint do not trigger recovery. See [the version-specific UI recovery steps](GENERIC.en.md#unreleased-reopen-the-ui-after-stopping).
+
 ## What comes back after startup
 
 | State | Normal startup / `--startup saved` | `--offline` / `--startup offline` |

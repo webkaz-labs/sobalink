@@ -2,7 +2,7 @@
 
 [日本語](docs/SECURITY.ja.md) · [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/VERIFICATION.en.md)
 
-sobalink is experimental software. Its controls constrain local management, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. The published baseline is [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), source `46dcd363`, including connection setup and durable text. Signed distribution and native installed-binary checks are recorded separately from physical-device acceptance. Physical-device, application, OS-login, suspend and power-loss acceptance remain separate. See the [exact-source record](docs/VERIFICATION.en.md) before relying on a claim.
+sobalink is experimental software. Its controls constrain local management, peer transfers and service grants. It is not an OS sandbox, a general VPN, a remote administration service or proof that a target application is safe. The published baseline is [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), source `fae64878`, including connection setup and durable text. Signed distribution and native installed-binary checks are recorded separately from physical-device acceptance. Physical-device, application, OS-login, suspend and power-loss acceptance remain separate. See the [exact-source record](docs/VERIFICATION.en.md) before relying on a claim.
 
 Administrator rights and LAN-router changes are outside the product requirements. No TUN driver, OS route/firewall change or UPnP/NAT configuration is installed by LAN setup; blocked network policy is reported, not bypassed.
 

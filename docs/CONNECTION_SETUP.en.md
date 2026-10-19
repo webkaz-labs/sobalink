@@ -4,7 +4,7 @@
 
 Nearby setup offers an explicitly scoped request-and-accept flow and an optional complete-fingerprint verification flow. Discovery names and addresses are hints, never identity proof. First-use key acceptance (TOFU) remembers the exact accepted key but does not prevent an active impersonator during the initial exchange. Application permissions remain separate.
 
-The request-and-accept flow is included in [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1). [Verification](VERIFICATION.en.md) records exact-source CI and signed distribution. Same-host discovery and controlled browser/loopback results do not establish physical-device discovery, enrollment or application compatibility.
+The request-and-accept flow was introduced in [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) and remains available in the current 0.5.1-alpha.1 release. [Verification](VERIFICATION.en.md) records exact-source CI and signed distribution. Same-host discovery and controlled browser/loopback results do not establish physical-device discovery, enrollment or application compatibility.
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/pairing-exchange-en-dark-narrow.svg">

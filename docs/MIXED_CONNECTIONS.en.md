@@ -1,6 +1,6 @@
 # Mixed connections
 
-[日本語](MIXED_CONNECTIONS.ja.md) · [Direct LAN](DIRECT_LAN.en.md) · [Capacity](CAPACITY.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](MIXED_CONNECTIONS.ja.md) · [Direct LAN](DIRECT_LAN.en.md) · [Capacity](CAPACITY.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 Mixed mode explicitly runs selected connection backends together. A new profile still selects no network. This is a userspace application transport, not a gateway between unrelated single-backend devices. It changes no OS routes, firewall rules or router settings and needs no administrator privileges.
 

@@ -1,6 +1,6 @@
 # 認証済み経路の復旧
 
-[English](ROUTE_RECOVERY_DESIGN.en.md) · [LAN 手順](LAN.ja.md#別の経路を準備する) · [設計](ARCHITECTURE.md) · [安全性](SECURITY.ja.md) · [確認範囲](VERIFICATION.md#経路復旧の条件) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](ROUTE_RECOVERY_DESIGN.en.md) · [LAN 手順](LAN.ja.md#別の経路を準備する) · [設計](ARCHITECTURE.md) · [安全性](SECURITY.ja.md) · [確認範囲](VERIFICATION.md#経路復旧の条件) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 **同じ Tailcat 端末とペアリングを保って復旧します。** 現在の動作は、正確な準備済み候補、明示的なローカル経路許可、変更可能な資源予算を含みます。実端末の受入は別で、[検証記録](VERIFICATION.md)を参照してください。
 

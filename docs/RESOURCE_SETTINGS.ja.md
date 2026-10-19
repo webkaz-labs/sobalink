@@ -1,6 +1,6 @@
 # ローカル転送設定リソース
 
-[English](RESOURCE_SETTINGS.en.md) · [使い方](GENERIC.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](RESOURCE_SETTINGS.en.md) · [使い方](GENERIC.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 このガイドは転送の受付制限2項目について、ローカルの内容確認・変更案の確認・確認内容に結び付いた適用・永続的な操作記録の基盤を扱います。現在の公開版で利用できます。別途許可する[遠隔管理](RESOURCE_MANAGEMENT.ja.md)と[グループ・Web の操作](RESOURCE_GROUP.ja.md)の範囲・検証状況は、それぞれのガイドを参照してください。
 

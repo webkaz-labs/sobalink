@@ -1,6 +1,6 @@
 # LAN の送信先を明示して制限する
 
-[English](LAN_DESTINATIONS.en.md) · [LAN 設定](LAN.ja.md) · [中継の運用](RELAY_OPERATIONS.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](LAN_DESTINATIONS.en.md) · [LAN 設定](LAN.ja.md) · [中継の運用](RELAY_OPERATIONS.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 **現在の公開版で利用できます。同一ソースの自動試験・配布結果は[検証記録](VERIFICATION.md)を参照してください。実端末ネットワークでの受入は未完了です。** 任意の `allowed-lan-destinations` は、LAN transport の UDP 送信を明示した private／ULA／loopback の CIDR 内へ、DERP の TCP 接続をその範囲内の正確な設定済み数値中継先へ制限します。物理 NIC への固定、同一リンク、VPN 隔離、ホスト／プロセス全体の外部送信ゼロを保証しません。許可した宛先でも別の NIC や VPN へルーティングされる場合があります。
 
