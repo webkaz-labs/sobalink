@@ -1,5 +1,9 @@
 # Use sobalink
 
+**0.5.2-alpha.1 release candidate (this checkout).** Adds offline UI reopening, reviewed saved-connection resume, truthful stop status and simultaneous-profile browser sessions. The previously verified published baseline is 0.5.1-alpha.1. Candidate source is not evidence of publication: check the signed release and its exact-source verification before installing. Physical-device acceptance remains separate.
+
+For the candidate version, use the [publication-gated 0.5.2-alpha.1 installation instructions](DISTRIBUTION.md#install-the-052-alpha1-candidate-only-after-publication). The baseline commands below deliberately remain pinned to the previously verified release.
+
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
 **Connect devices and use explicitly scoped application services.** This guide targets the experimental [0.5.1-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), including durable file and text queues. [Verification](VERIFICATION.en.md#current-integration-and-published-baseline) separates exact-source CI and signed distribution from physical-device/application acceptance, which remains open.
@@ -67,9 +71,9 @@ soba --state-dir ./sample-state status
 
 A fresh profile starts with no network selected. UI preferences, trust and service definitions are saved. Ordinary saved definitions remain stopped after a process restart; immediate transfer progress does not resume. Explicit durable file requests, and durable text requests, have a separate original-ID/deadline/evidence recovery contract. Separately reviewed [outbound startup and private proxy profiles](STARTUP.en.md) can opt into a future online launch. Inbound shares remain manual.
 
-### Unreleased: reopen the UI after stopping
+### Candidate: reopen the UI after stopping
 
-This source change is **not included in the published 0.5.1-alpha.1 binary**. For that release, start local management explicitly with `soba start --offline --background`, then run `soba ui`. This does not reconnect the saved network.
+This 0.5.2-alpha.1 candidate change is **not included in the published 0.5.1-alpha.1 binary**. For that release, start local management explicitly with `soba start --offline --background`, then run `soba ui`. This does not reconnect the saved network.
 
 In this source, interactive `soba ui` and `soba ui --no-browser` can reopen an existing profile after `soba stop`. When the local control endpoint is known to be absent and the existing profile passes validation, they attempt an offline background start and wait for local readiness. A newly started offline instance is reported explicitly. Endpoint absence alone does not prove process shutdown: startup or shutdown may still be in progress. A running application keeps its existing mode.
 
@@ -77,7 +81,7 @@ This recovery preserves the saved network configuration without starting saved n
 
 `ui --json` remains a query and never starts the application. Noninteractive output still requires explicit `--json`; headless/SSH access still requires explicit `--no-browser`. If you already use another state directory, select that same directory rather than creating a new profile. For first use, run `soba init`, then `soba ui` (or `soba ui --no-browser` for manual access); initialization is never automatic. Permission errors, damaged state and uncertain control failures do not trigger automatic startup. Use the displayed next step; do not remove the profile or repeatedly start another process to hide an error.
 
-Keep the same `--state-dir` in every command when using a custom profile. In this unreleased source, open **Review network setup → Review saved connection** to inspect the saved method, endpoints, permissions and automatic receive destinations, then explicitly resume that connection. Opening the review or cancelling it does not start networking. Changed settings or permissions require a fresh review. The running local management session is retained; separately suppressed automatic service connections and saved proxies stay stopped. Previous transfers and inbound shares do not restart.
+Keep the same `--state-dir` in every command when using a custom profile. In the 0.5.2-alpha.1 candidate, open **Review network setup → Review saved connection** to inspect the saved method, endpoints, permissions and automatic receive destinations, then explicitly resume that connection. Opening the review or cancelling it does not start networking. Changed settings or permissions require a fresh review. The running local management session is retained; separately suppressed automatic service connections and saved proxies stay stopped. Previous transfers and inbound shares do not restart.
 
 CLI users can review and apply the same saved scope:
 
