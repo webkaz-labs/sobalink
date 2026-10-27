@@ -319,6 +319,8 @@ export interface CommandPayloads extends SetupCommandPayloads, Record<EndpointCo
   'service.stop': { id: string }
   'service.config': { id: string }
   'service.ports': { id: string; expectedRevision: string; fromPort?: number; count?: number; attempts?: number }
+  'network.resume.preview': Record<string, never>
+  'network.resume': { expectedRevision: string }
   'network.configure': { mode: 'none' | Network; expectedLANStartRevision?: string; mixed?: { backends: TransportBackend[] }; directLAN?: { listen: string; prefixes: string[] }; hostname?: string; rotateCertificate?: boolean; lanPolicy?: Pick<LanPolicy, 'mode' | 'prefixes'>; lan?: { kind: 'relay'; address: string; certificateSHA256: string } | { kind: 'host'; address: string } }
   'network.logout': Record<string, never>
   'network.login': { refresh?: boolean; qr?: boolean }

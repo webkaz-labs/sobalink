@@ -77,7 +77,17 @@ This recovery preserves the saved network configuration without starting saved n
 
 `ui --json` remains a query and never starts the application. Noninteractive output still requires explicit `--json`; headless/SSH access still requires explicit `--no-browser`. If you already use another state directory, select that same directory rather than creating a new profile. For first use, run `soba init`, then `soba ui` (or `soba ui --no-browser` for manual access); initialization is never automatic. Permission errors, damaged state and uncertain control failures do not trigger automatic startup. Use the displayed next step; do not remove the profile or repeatedly start another process to hide an error.
 
-Keep the same `--state-dir` in every command when using a custom profile. To resume the saved network deliberately, stop the offline instance with `soba stop`, then use `soba start --background`. Review saved startup and receiving approvals first; an online start can make them active again. After interrupted or timed-out startup, inspect `soba status` before retrying. [Startup and recovery boundaries](LIFECYCLE.en.md)
+Keep the same `--state-dir` in every command when using a custom profile. In this unreleased source, open **Review network setup → Review saved connection** to inspect the saved method, endpoints, permissions and automatic receive destinations, then explicitly resume that connection. Opening the review or cancelling it does not start networking. Changed settings or permissions require a fresh review. The running local management session is retained; separately suppressed automatic service connections and saved proxies stay stopped. Previous transfers and inbound shares do not restart.
+
+CLI users can review and apply the same saved scope:
+
+```sh
+soba --state-dir ./sample-state network resume
+# Only after checking the displayed scope, use its exact revision:
+soba --state-dir ./sample-state network resume --expected-revision REVIEW_REVISION
+```
+
+The review prints the exact apply command; `REVIEW_REVISION` above is a placeholder. `start --background` remains idempotent for an already-running owner and does not implicitly resume its network. Resuming can enable existing automatic receive permissions and, for Tailnet, external control communication. A start acknowledgement does not prove network, peer or application readiness. After an interrupted response, inspect `soba status` before doing anything else. [Startup and recovery boundaries](LIFECYCLE.en.md)
 
 ## Choose a connection mode
 

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
+	"github.com/webkaz-labs/sobalink/internal/identity"
+	"github.com/webkaz-labs/sobalink/internal/policy"
 	"github.com/webkaz-labs/sobalink/internal/ranges"
 )
 
@@ -381,8 +383,13 @@ func TestPortProposalsCancellationBeforeReservedWindows(t *testing.T) {
 }
 
 func TestPortProposalsWideReservedWindowsDoNotAllocatePerAttempt(t *testing.T) {
-	c, spec, input := portProposalFixture(t)
-	spec.Ports, spec.ExcludePorts, spec.LocalPort = "1024-32767", "", 1024
+	// AllocsPerRun observes process-wide allocations. Do not start a Core pair:
+	// unrelated peer/housekeeping workers can run during the measured search.
+	// Exercise the real proposal implementation with only its read-only state
+	// dependency and a deterministic conflict probe; no goroutines or sockets.
+	spec := ServiceSpec{ID: "saved-port-fixture", Backend: "tailnet", Name: "port-fixture", Direction: "forward", Network: "tcp", Ports: "1024-32767", LocalPort: 1024, LoopbackHost: "127.0.0.1", Lifetime: "until-stopped", PeerID: "peer-b", Purpose: "custom"}
+	c := &Core{ctx: context.Background(), capacity: capacity.Defaults(), profile: Profile{Settings: Settings{Network: "tailnet"}, Services: []ServiceSpec{spec}}, node: &pipeNode{state: identity.State{Snapshot: policy.Snapshot{Running: true}}}}
+	input := map[string]any{"id": spec.ID}
 	c.mu.Lock()
 	c.profile.Services[0] = spec
 	c.capacity.Resources["materializedListeners"] = capacity.Limited(65535)

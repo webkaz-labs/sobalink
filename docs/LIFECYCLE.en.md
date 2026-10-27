@@ -27,6 +27,8 @@ Use `soba start --offline --background` instead when you want local management w
 
 **Published 0.5.1-alpha.1:** `soba ui` requires a running application. After stopping, use `soba start --offline --background` to reopen local management without the saved network, then run `soba ui`. **Unreleased source change:** interactive `ui` / `ui --no-browser` can attempt this offline start for a validated existing profile when the local control endpoint is known to be absent. `ui --json` never starts it, and failures other than a known absent control endpoint do not trigger recovery. See [the version-specific UI recovery steps](GENERIC.en.md#unreleased-reopen-the-ui-after-stopping).
 
+**Unreleased stop display:** a successful Stop reply acknowledges the request, not completed cleanup or process exit. The UI preserves that acknowledgement if local HTTP disconnects, disables further commands, and distinguishes a lost or invalid reply from an accepted request. Disconnection alone is not a shutdown receipt. Check the application before restarting and keep the same profile when reopening local management. Human CLI output makes the same distinction; the existing machine JSON fields are unchanged.
+
 ## What comes back after startup
 
 | State | Normal startup / `--startup saved` | `--offline` / `--startup offline` |

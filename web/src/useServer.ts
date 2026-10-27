@@ -10,6 +10,7 @@ import { catalogContextFromSession } from './catalog/context'
 // Never evict a delivery guard to make room: Core's request cache is finite
 // too. Only this page lifetime is protected; nothing here claims durable dedupe.
 export const MAX_UNCERTAIN_MESSAGES = 256
+export type ApplicationStopPhase = 'requested' | 'disconnected' | 'unconfirmed'
 export type MessageBlock = 'message_resend_blocked' | 'message_completion_interrupted' | 'message_safety_limit' | 'message_safety_unavailable'
 async function messageFingerprint(peerId: string, text: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([peerId, text])))
@@ -20,6 +21,9 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
   const [state, setState] = useState<api.State | null>(null)
   const [auth, setAuth] = useState<'checking' | 'locked' | 'ready'>('checking')
   const [stale, setStale] = useState(false)
+  const [applicationStop, setApplicationStop] = useState<ApplicationStopPhase>()
+  const stopPhase = useRef<ApplicationStopPhase | undefined>(undefined)
+  const stopPending = useRef(false)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState<Set<string>>(new Set())
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
@@ -58,6 +62,9 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
     if (!unchanged()) return
   }, [])
   const handleError = useCallback((value: unknown) => {
+    // Uploads and auxiliary controllers also report errors through this bridge.
+    // Their late replies must not replace the latched shutdown result.
+    if (stopPhase.current) return
     if (value instanceof api.ApiError && value.code === 'unauthenticated') {
       ++generation.current; ++authEpoch.current; controller.current?.abort(); controller.current = null
       uncertain.current.clear()
@@ -73,6 +80,9 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
     try {
       const next = await api.getState(request.signal)
       if (!live.current || current !== generation.current) return null
+      // A late snapshot cannot revive controls after a stop was accepted or
+      // its reply was lost. Only a fresh page/session can recover this view.
+      if (stopPhase.current) return null
       api.setCSRFToken(next.csrfToken)
       knownState.current = next; knownStale.current = false; observeResourceContext()
       // Observation notifies synchronous controller subscribers. They may
@@ -82,6 +92,13 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
       return next
     } catch (value) {
       if (!live.current || request.signal.aborted || current !== generation.current) return null
+      if (stopPhase.current) {
+        // Losing HTTP contact is not proof that cleanup or process exit finished.
+        if (stopPhase.current === 'requested' && value instanceof api.ApiError && value.code === 'network_error') {
+          stopPhase.current = 'disconnected'; setApplicationStop('disconnected')
+        }
+        return null
+      }
       if (value instanceof api.ApiError && value.code === 'unauthenticated') handleError(value)
       else {
         knownStale.current = true; observeResourceContext()
@@ -98,7 +115,7 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
     return () => { live.current = false; ++generation.current; controller.current?.abort(); observeResourceContext() }
   }, [refresh, observeResourceContext])
   useEffect(() => {
-    if (auth !== 'ready') return
+    if (auth !== 'ready' || applicationStop === 'disconnected' || applicationStop === 'unconfirmed') return
     let timer: ReturnType<typeof setTimeout>
     let cancelled = false
     const tick = async () => {
@@ -109,7 +126,7 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
     const visible = () => { if (document.visibilityState === 'visible') void refresh() }
     document.addEventListener('visibilitychange', visible)
     return () => { cancelled = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visible) }
-  }, [auth, refresh])
+  }, [auth, refresh, applicationStop])
   const messageBlock = useCallback(async (peerId: string, text: string): Promise<MessageBlock | null> => {
     if (!guardedMessages.current.size) return null
     try {
@@ -119,7 +136,8 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
     } catch { return 'message_safety_unavailable' }
   }, [])
   const run = useCallback(async <N extends api.CommandName>(name: N, payload: api.CommandPayloads[N], key = name as string): Promise<api.CommandResult | undefined> => {
-    if (active.current.has(key)) return
+    if (stopPhase.current || stopPending.current || active.current.has(key)) return
+    if (name === 'application.stop') stopPending.current = true
     active.current.add(key); setBusy(new Set(active.current)); setError(null)
     const epoch = authEpoch.current
     let fingerprint: string | undefined
@@ -155,15 +173,33 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
       if (retainUncertain) uncertain.current.set(key, { signature, requestId })
       requested = true
       const result = await api.command(name, payload, requestId)
-      if (!live.current || epoch !== authEpoch.current) return undefined
+      if (!live.current || epoch !== authEpoch.current || stopPhase.current) return undefined
       if (retainUncertain) uncertain.current.delete(key)
+      if (name === 'application.stop') {
+        const phase = result.result?.state === 'stopping' ? 'requested' : 'unconfirmed'
+        stopPhase.current = phase; setApplicationStop(phase)
+        ++generation.current; controller.current?.abort(); controller.current = null
+        knownStale.current = true; observeResourceContext(); setStale(true)
+        // Shutdown closes HTTP. Do not require another snapshot before showing
+        // the accepted reply, or replace it with a generic connection error.
+        return phase === 'requested' ? result : undefined
+      }
       const refreshed = await refresh(true)
-      if (!live.current || epoch !== authEpoch.current) return undefined
+      if (!live.current || epoch !== authEpoch.current || stopPhase.current) return undefined
       // Discovery is the first step of a reviewed connection. Do not let its
       // response authorize that next step when the current snapshot is unknown.
       if (name === 'discovery.refresh' && !refreshed) return undefined
       return result
     } catch (value) {
+      // Earlier actions cannot invalidate or repaint the acknowledged stop view.
+      if (stopPhase.current) return undefined
+      if (name === 'application.stop' && requested && live.current && epoch === authEpoch.current
+        && (!(value instanceof api.ApiError) || ['network_error', 'invalid_response'].includes(value.code))) {
+        stopPhase.current = 'unconfirmed'; setApplicationStop('unconfirmed')
+        ++generation.current; controller.current?.abort(); controller.current = null
+        knownStale.current = true; observeResourceContext(); setStale(true)
+        return undefined
+      }
       if (messageClaimed && fingerprint && value instanceof api.ApiError && ['message_history_unavailable', 'message_peer_storage_unavailable', 'message_completion_interrupted'].includes(value.code)) {
         guardedMessages.current.set(fingerprint, value.code === 'message_completion_interrupted' ? 'message_completion_interrupted' : 'message_resend_blocked')
         if (live.current) setMessageGuardRevision(current => current + 1)
@@ -180,10 +216,11 @@ export function useServer(resourceObserver?: ResourceSettingsController, catalog
       return undefined
     }
     finally {
+      if (name === 'application.stop') stopPending.current = false
       if (messageClaimed && fingerprint) pendingMessages.current.delete(fingerprint)
       active.current.delete(key); if (live.current) setBusy(new Set(active.current))
     }
-  }, [refresh, handleError])
-  return { state, auth, stale, error, setError, busy, refresh, run, updatedAt, handleError, messageBlock, messageGuardRevision }
+  }, [refresh, handleError, observeResourceContext])
+  return { state, auth, stale, applicationStop, error, setError, busy, refresh, run, updatedAt, handleError, messageBlock, messageGuardRevision }
 }
-export type Server = ReturnType<typeof useServer>
+export type Server = Omit<ReturnType<typeof useServer>, 'applicationStop'> & { applicationStop?: ApplicationStopPhase }

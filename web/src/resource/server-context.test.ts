@@ -24,7 +24,7 @@ function checkResourceCommandTypes() {
   void command('resource.remote.management.apply', { peerKey: remoteSelection.peerKey, request: { ...remoteSelection.selector, protocolVersion: 2, action: 'inspect' }, confirm: true })
 }
 describe('fixed resource context observation in useServer', () => {
-  it('invalidates synchronously at auth loss before React state catches up without changing the Server shape', async () => {
+  it('invalidates synchronously at auth loss before React state catches up without adding controller-specific Server methods', async () => {
     const { controller, calls } = harness()
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(state))))
     const hook = renderHook(() => useServer(controller))
@@ -36,7 +36,7 @@ describe('fixed resource context observation in useServer', () => {
     })
     await controller.confirmApply()
     expect(calls.some(call => call.name.endsWith('.apply'))).toBe(false)
-    expect(Object.keys(hook.result.current).sort()).toEqual(['state', 'auth', 'stale', 'error', 'setError', 'busy', 'refresh', 'run', 'updatedAt', 'handleError', 'messageBlock', 'messageGuardRevision'].sort())
+    expect(Object.keys(hook.result.current).sort()).toEqual(['state', 'auth', 'stale', 'applicationStop', 'error', 'setError', 'busy', 'refresh', 'run', 'updatedAt', 'handleError', 'messageBlock', 'messageGuardRevision'].sort())
   })
   it('mirrors stale-read failure immediately and hides context on hook unmount', async () => {
     const { controller } = harness()

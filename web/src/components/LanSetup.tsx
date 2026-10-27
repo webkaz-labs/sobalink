@@ -1,3 +1,4 @@
+import { ApplicationStopNotice } from './ApplicationStopNotice'
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
 import { messageByteLength, type LanAddress, type LanInvitationPreview, type Locale, type State } from '../api'
 import { timestamp, type Translate } from '../i18n'
@@ -172,7 +173,7 @@ export function StopApplication({ server, state, t, locale, blocked, onStopping 
   const transfers = state.transfers.filter(item => ['offered', 'awaiting-acceptance', 'queued', 'transferring', 'saving'].includes(item.status)).length
   const services = [...state.services, ...state.shares].filter(item => ['active', 'reconnecting'].includes(item.status)).length
   const stop = async () => {
-    if (!review || blocked || pending.current || accepted.current || server.busy.has('application.stop')) return
+    if (!review || blocked || server.applicationStop || pending.current || accepted.current || server.busy.has('application.stop')) return
     pending.current = true; setStopPending(true)
     try {
       const response = await server.run('application.stop', {})
@@ -182,7 +183,7 @@ export function StopApplication({ server, state, t, locale, blocked, onStopping 
       onStopping()
     } finally { pending.current = false; if (alive.current) setStopPending(false) }
   }
-  return review ? <div className="invitation-card relay-stop-review" role="region" aria-label={lt('stopReview')} tabIndex={-1} ref={reviewRegion}><strong>{lt('stopReview')}</strong><p className="small muted">{lt('stopImpact')}</p><dl><dt>{lt('activeTransfers')}</dt><dd>{transfers}</dd><dt>{lt('activeServices')}</dt><dd>{services}</dd></dl><div className="invitation-actions"><Button disabled={stopPending || accepted.current || server.busy.has('application.stop')} onClick={() => setReview(false)}>{t('cancel')}</Button><Button variant="danger" disabled={blocked || accepted.current} busy={stopPending || server.busy.has('application.stop')} onClick={stop}>{lt('confirmStop')}</Button></div></div> : <div><Button variant="ghost" disabled={blocked} onClick={() => setReview(true)}><Icon name="stop" size={15} />{lt('stopApplication')}</Button></div>
+  return review ? <div className="invitation-card relay-stop-review" role="region" aria-label={lt('stopReview')} tabIndex={-1} ref={reviewRegion}><strong>{lt('stopReview')}</strong><p className="small muted">{lt('stopImpact')}</p><dl><dt>{lt('activeTransfers')}</dt><dd>{transfers}</dd><dt>{lt('activeServices')}</dt><dd>{services}</dd></dl><div className="invitation-actions"><Button disabled={stopPending || accepted.current || Boolean(server.applicationStop) || server.busy.has('application.stop')} onClick={() => setReview(false)}>{t('cancel')}</Button><Button variant="danger" disabled={blocked || accepted.current || Boolean(server.applicationStop)} busy={stopPending || server.busy.has('application.stop')} onClick={stop}>{lt('confirmStop')}</Button></div></div> : <div><Button variant="ghost" disabled={blocked} onClick={() => setReview(true)}><Icon name="stop" size={15} />{lt('stopApplication')}</Button></div>
 }
 
 export function LanSetup({ server, state, t, locale, hostname, setHostname, draft, setDraft, onViewPeer, showStopControl = true, applicationStopping = false }: { server: Server; state: State; t: Translate; locale: Locale; hostname: string; setHostname: (value: string) => void; draft: LanDraft; setDraft: Dispatch<SetStateAction<LanDraft>>; onViewPeer: (id: string) => void; showStopControl?: boolean; applicationStopping?: boolean }) {
@@ -354,7 +355,7 @@ export function LanSetup({ server, state, t, locale, hostname, setHostname, draf
       <form className="form-stack" onSubmit={configure}><label className="field">{t('deviceName')}<input value={hostname} onChange={event => setHostname(event.target.value)} maxLength={63} pattern="[\p{L}\p{N}](?:[\p{L}\p{N}]|-){0,62}" title={t('hostnameHint')} required /></label><label className="field">{t('relayAddress')}<input value={address} onChange={event => { setAddress(event.target.value); setValidation('') }} placeholder="192.0.2.10:443" autoComplete="off" spellCheck={false} maxLength={80} required /><small className="muted">{t('relayAddressHint')}</small></label><label className="field">{t('certificatePin')}<input className="code-value" value={pin} onChange={event => { setPin(event.target.value); setValidation('') }} autoComplete="off" spellCheck={false} maxLength={64} required /><small className="muted">{t('certificateHint')}</small></label><Button type="submit" variant="primary" disabled={blocked || joinProgress} busy={server.busy.has('network.configure')}>{t('activateRelay')}<Icon name="arrow" size={15} /></Button></form></details>
       {state.lan?.configured && <PreparedLanRoutes server={server} state={state} t={t} locale={locale} disabled={blocked || joinProgress} />}
       {showStopControl && state.settings?.network === 'lan' && <StopApplication server={server} state={state} t={t} locale={locale} blocked={blocked || joinProgress} onStopping={() => setStopping(true)} />}
-      {stopping && <p role="status" className="scope-note">{lt('stopping')}</p>}
+      {(stopping || server.applicationStop) && <ApplicationStopNotice phase={server.applicationStop || 'requested'} locale={locale} />}
     </section>
     {validation && <ErrorBanner message={validation} t={t} />}
     {(section === 'join' || state.lan?.configured || active || draft.joinedPeerId) && <section className="lan-step"><h3><span>3</span>{t('pairDevice')}</h3><p className="small muted">{t('joinBeforeTrust')}</p>{section === 'invite' && !ready && <p className="scope-note"><Icon name="info" size={15} />{lt('inviteNeedsRelay')}</p>}

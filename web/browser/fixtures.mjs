@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
+import { fixtureStartDiagnostic } from './fixture-start-diagnostics.mjs'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
 import { createSyntheticPairingInterception, verifyCommandsBeforeCleanup } from './synthetic-pairing.mjs'
 import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
@@ -84,7 +85,10 @@ export const test = base.extend({
     try {
       await page.addInitScript(installInstrumentation)
       for (let attempt = 0; attempt < 200; attempt++) {
-        if (exited) throw new Error('The isolated Go harness exited before its private session was ready')
+        if (exited) {
+          testInfo.annotations.push({ type: 'fixture-start-diagnostic', description: JSON.stringify(fixtureStartDiagnostic(await exit)) })
+          throw new Error('The isolated Go harness exited before its private session was ready')
+        }
         try {
           const info = await stat(sessionFile)
           assert.equal(info.mode & 0o077, 0, 'Fixture session must not grant group or other access')
@@ -97,6 +101,7 @@ export const test = base.extend({
         }
         await delay(100)
       }
+      if (!session) testInfo.annotations.push({ type: 'fixture-start-diagnostic', description: JSON.stringify(fixtureStartDiagnostic(null, true)) })
       assert.ok(session, 'The isolated Go fixture did not become ready within the acceptance timeout')
       // Never enable tracing, screenshots, recordings, HARs or storage exports
       // while the private login control is present. Keep login failures generic;

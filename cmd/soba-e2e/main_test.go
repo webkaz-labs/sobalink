@@ -62,6 +62,7 @@ func TestFixtureBlocksLiveActivationBeforeCore(t *testing.T) {
 		backend := &recordingBackend{}
 		fixture := &fixtureBackend{Backend: backend, scenario: scenario}
 		for _, cmd := range []webui.Command{
+			{Name: "network.resume", Payload: json.RawMessage(`{"expectedRevision":"synthetic"}`)},
 			{Name: "network.login", Payload: json.RawMessage(`{}`)},
 			{Name: "network.configure", Payload: json.RawMessage(`{"mode":"lan","lan":{"kind":"host","address":"127.0.0.1:54443"}}`)},
 			{Name: "network.configure", Payload: json.RawMessage(`{"mode":"lan","lan":{"kind":"relay","address":"127.0.0.1:54443","certificateSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`)},

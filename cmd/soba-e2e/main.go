@@ -203,6 +203,9 @@ func (f *fixtureBackend) Command(ctx context.Context, cmd webui.Command) (any, e
 		// Never enumerate the CI machine's interfaces in browser evidence.
 		return map[string]any{"addresses": []core.LANLocalAddress{{Interface: "fixture0", Address: "192.168.50.10", Prefix: "192.168.50.0/24"}}}, nil
 	}
+	if cmd.Name == "network.resume" {
+		return nil, errors.New("network resume is unavailable in the browser fixture")
+	}
 	if cmd.Name == "network.login" {
 		return nil, errors.New("account login is unavailable in the browser fixture")
 	}

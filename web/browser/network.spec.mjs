@@ -114,6 +114,13 @@ test.describe('whole-application shutdown', () => {
     // All assertions after Stop observe the loaded page or process lifecycle;
     // no live-state HTTP request is used as proof of shutdown.
     await app.expectStopped()
+    // The fixture observes actual exit; the browser cannot. Keep its wording
+    // honest after losing HTTP, and retain it after dismissing the dialog.
+    await expect(page.locator('dialog [role=status]')).toContainText('プロセスの終了')
+    await expect(page.locator('dialog [role=status]')).toContainText('操作画面は切断されました')
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('status')).toContainText('プロセスの終了')
+    await expect(page.getByRole('status')).toContainText('soba ui')
   })
 })
 

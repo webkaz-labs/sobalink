@@ -72,6 +72,8 @@ func localizeLANSetupError(ja bool, err error) error {
 		return err
 	}
 	messages := map[string]string{
+		"network_resume_changed":           "保存済み接続の設定または許可が変わりました。再度確認してから再開してください",
+		"network_resume_unavailable":       "再開には保存済み接続が未開始のオフライン本体が必要です。現在の状態を確認するか、ローカル管理をオフラインで開き直してください",
 		"lan_listener_conflict":            "ローカルリレーのポートが使用中です。競合する待受を別途停止し、保存済みの端点で再試行してください",
 		"lan_listener_permission_denied":   "OSがローカルリレーの待受を拒否しました。再試行前にローカルのアクセス権を確認してください",
 		"lan_listener_capacity":            "ローカルリレーの待受資源が不足しています。不要な処理を停止するか、使用可能な資源を確認してから再試行してください",
