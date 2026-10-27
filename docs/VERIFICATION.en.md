@@ -17,16 +17,30 @@ Start with the current version below, then inspect the relevant evidence categor
 
 ## Current integration and published baseline
 
-The published baseline is [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), exact source `46dcd363b3eafc8ed9b92c7403937cf4d11d65af`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be rolled back to an older binary.
+The published baseline is [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), exact source `fae64878737eddc15a9787aba279f34c98427e36`. It adds automatic browser opening with `soba ui`, explicit `--no-browser` / `--json` modes, manual text selection after startup-guide copy failures, and updated bilingual guides with bundled images. Connection setup and durable file/text queues remain available. Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
+
+[Exact-source full CI 38887472035, attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/38887472035/attempts/2) and [release verification 38899331317, attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/38899331317/attempts/2) passed. The release was published on 2026-10-16 at 13:01 UTC with 19 public assets. All 15 release gates passed, including public signature/provenance verification and actual mise-installed product starts on Linux x64/ARM64, macOS ARM64 and Windows x64. The four distribution archives include documentation SVGs and PNGs.
+
+Actual OS default-browser launch, including that operation from an installed distribution binary, remains unverified. Linux CLI process tests replace the OS opener, and Chromium tests use isolated fixtures. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate. These published results apply only to the exact source above, not later changes.
+
+### Unreleased local UI recovery
+
+This source's [reopening after stop](GENERIC.en.md#unreleased-reopen-the-ui-after-stopping) is not included in 0.5.1-alpha.1. Interactive UI commands attempt offline local management startup for a validated existing profile when the local control endpoint is known to be absent. Endpoint absence alone does not establish that a process has finished stopping; startup or shutdown may still be in progress. `ui --json` does not start the application.
+
+Local focused checks for UI recovery, existing profiles, startup state and endpoint-absence classification passed, including race detection. Targeted `go vet` and Windows amd64 test-binary cross-compilation also passed. Native IPC execution remains unverified: Linux process checks were blocked by socket-creation restrictions, and Windows named-pipe and repeated stop/UI-recovery tests were added but not executed on Windows. Final-source native execution, OS-browser behavior, signed distribution and physical-device acceptance still need separate verification; the published baseline's results do not qualify this change.
+
+### Historical 0.5.0-alpha.1 release record
+
+The earlier release is [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), exact source `46dcd363b3eafc8ed9b92c7403937cf4d11d65af`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be rolled back to an older binary.
 
 [Exact-source full CI 38666924688](https://github.com/webkaz-labs/sobalink/actions/runs/38666924688) and [release verification 38671902508](https://github.com/webkaz-labs/sobalink/actions/runs/38671902508) passed. The release was published on 2026-10-15 at 03:19 UTC with 19 public assets; all 15 release gates passed, including public signature/provenance verification and actual mise-installed product starts on all four native targets. Full CI's repeated-build check covers macOS; the separate release run repeats identical-input builds and bilingual archive smoke tests on all four targets. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate and unverified. These results apply to this exact source, not later edits.
 
-### Unresolved historical failures before the current release
+### Unresolved historical failures before 0.5.0-alpha.1
 
 - Earlier macOS source `3ad02e28`: one execution did not observe guest-stream closure within five seconds after successful revocation and verified removal of host trust and active service grants. That read observed no post-revocation data, but later target-release and new-message-denial checks were not reached. A later full run on that earlier source passed; the cause remains unknown. This is neither a confirmed authorization bypass nor a resolved defect.
 - Earlier Windows source `e33d390f`: one execution failed a wire command while checking hidden-text replay. A subsequent required full run on that source passed, but the cause remains unknown and no process-cleanup leak was established.
 
-The current exact-source CI/release results above are separate. They do not identify the causes of these earlier failures. See the [release record](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) for the source-specific caveats.
+The source-specific CI/release results above are separate. They do not identify the causes of these earlier failures. See the [release record](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) for the source-specific caveats.
 
 ### Historical 0.3-series records
 

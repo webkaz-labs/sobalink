@@ -2,7 +2,7 @@
 
 [English](ROADMAP.en.md) · [概要](../README.md) · [確認範囲](VERIFICATION.md) · [開発方針](DEVELOPMENT_PRINCIPLES.ja.md)
 
-公開基準は [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)、正確なソースは `46dcd363b3eafc8ed9b92c7403937cf4d11d65af` です。[ファイルの永続送信待ち](DURABLE_OUTBOX.ja.md)、[テキストの永続送信待ち](DURABLE_TEXT.ja.md)、[依頼と承認による接続設定](CONNECTION_SETUP.ja.md)を含みます。profile 形式 3 は 0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` を使ってください。自動移行・消去はなく、同じ保存先で旧版には戻せません。
+公開基準は [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)、正確なソースは `fae64878737eddc15a9787aba279f34c98427e36` です。[ファイルの永続送信待ち](DURABLE_OUTBOX.ja.md)、[テキストの永続送信待ち](DURABLE_TEXT.ja.md)、[依頼と承認による接続設定](CONNECTION_SETUP.ja.md)を含みます。profile 形式 3 は 0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` を使ってください。自動移行・消去はなく、同じ保存先で旧形式のバイナリには戻せません。
 
 公開ソース・CI・配布ゲートの正確な結果は[現在の検証記録](VERIFICATION.md#現在の統合と公開済みの基準)を参照してください。結果は記録されたソースに限られ、後の編集には引き継ぎません。物理2端末間の探索・実ネットワーク・OS ログイン／休止・電源断の受入は別途必要で未検証です。
 

@@ -116,7 +116,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 		_, e := fmt.Fprintln(out, text(ja, helpEN, helpJA))
 		return e
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" && command != "outbox" && command != "nearby" && command != "message" {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") && command != "network" && command != "startup" && command != "proxy" && command != "doctor" && command != "login" && command != "start" && command != "run" && command != "autostart" && command != "setup" && command != "share" && command != "connect" && command != "autosave" && command != "lan" && command != "direct-lan" && command != "mixed" && command != "service" && command != "profile" && command != "group" && command != "services" && command != "task" && command != "wait-ready" && command != "stop-shares" && command != "rules" && command != "settings" && command != "discover" && command != "init" && command != "rustdesk" && command != "favorites" && command != "card" && command != "resource" && command != "send" && command != "outbox" && command != "nearby" && command != "message" {
 		usage, ok := commandUsage[command]
 		if !ok {
 			return fmt.Errorf("%s: %s", text(ja, "Unknown command; use soba help", "不明なコマンドです。soba help を参照してください"), command)
@@ -243,6 +243,8 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 			return servicePortsCommand(args[1:], dir, ja, *dryRun, out, queryAction, request)
 		}
 		return serviceCommand(args, ja, out, query, queryAction, request)
+	case "network":
+		return networkCLI(args, dir, ja, *dryRun, out, queryAction, request)
 	case "setup":
 		payload, e := setupPayload(args, ja, out)
 		if e != nil {
@@ -382,6 +384,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, stdin io.Reader,
 }
 
 var commandUsage = map[string]string{
+	"network": "network resume [--json] [--expected-revision REVISION]",
 	"mixed":   "mixed setup --backends direct-lan,tailnet | mixed show | mixed bind --peer ID --peer ID | mixed unbind --peer ID",
 	"profile": "profile export [--output FILE] | profile import FILE [--apply --review REVISION]",
 	"start":   "start [--offline] [--background]", "run": "run [--offline]", "autostart": "autostart [enable|disable] [--startup saved|offline] [--json] [--apply --review TOKEN]", "status": "status [--json]", "peers": "peers [--json]", "ui": "ui [--no-browser|--json]", "stop": "stop [--json]",
@@ -531,6 +534,7 @@ const helpEN = `sobalink — Close, even from afar.
   soba run                     Run in the foreground (Ctrl+C stops)
   soba start --background      Start a detached local application
   soba autostart --help        Review optional startup at user sign-in
+  soba network resume         Review the saved connection before resuming
   soba start --offline         Open settings without starting the saved network
   soba ui                      Open the local UI in your browser
   soba status                  Show current state (--json for machines)
@@ -593,6 +597,7 @@ const helpJA = `sobalink — 離れていても、すぐそばに。
   soba run                     フォアグラウンドで実行（Ctrl+C で停止）
   soba start --background      本体をバックグラウンドで起動
   soba autostart --help        サインイン時の起動を確認して任意登録
+  soba network resume         保存済み接続を再開する前に確認
   soba start --offline         保存済みネットワークを開始せず設定画面を開く
   soba ui                      ローカル画面をブラウザーで開く
   soba status                  現在の状態を表示（機械向けは --json）

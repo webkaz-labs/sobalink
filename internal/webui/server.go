@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -120,6 +121,15 @@ func Start(ctx context.Context, assets fs.FS, backend Backend, handoff ...Upgrad
 
 func (s *Server) URL() string  { return s.url }
 func (s *Server) Port() uint16 { ap, _ := netip.ParseAddrPort(s.host); return ap.Port() }
+
+// Cookies are host-scoped, not port-scoped. Distinct listener names prevent
+// simultaneous profiles from overwriting or deleting each other's sessions.
+// This is collision avoidance, not an authentication boundary: Host, Origin,
+// CSRF and this server's private session table are still checked independently.
+func (s *Server) sessionCookieName() string {
+	return "soba_session_" + strconv.Itoa(int(s.Port()))
+}
+
 func (s *Server) IssueCode() (string, error) {
 	code, err := randomToken()
 	if err != nil {
@@ -251,7 +261,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		cookie, err := r.Cookie("soba_session")
+		cookie, err := r.Cookie(s.sessionCookieName())
 		if err != nil {
 			fail(w, 401, "unauthenticated", "Enter the one-time code shown by soba")
 			return
@@ -352,7 +362,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.mu.Lock()
 			delete(s.sessions, cookie.Value)
 			s.mu.Unlock()
-			http.SetCookie(w, &http.Cookie{Name: "soba_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+			http.SetCookie(w, &http.Cookie{Name: s.sessionCookieName(), Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 			jsonReply(w, 200, map[string]bool{"ok": true})
 		default:
 			fail(w, 404, "not_found", "Unknown local API route")
@@ -400,7 +410,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// A fresh one-time code proves local authority even when the browser already
 	// has a session. Consume it without replacing that session or extending its
 	// lifetime. Repeated launches must not exhaust the bounded session table.
-	if cookie, err := r.Cookie("soba_session"); err == nil {
+	if cookie, err := r.Cookie(s.sessionCookieName()); err == nil {
 		if current, ok := s.sessions[cookie.Value]; ok && now.Before(current.expires) {
 			s.code = ""
 			jsonReply(w, 200, map[string]string{"csrfToken": current.csrf})
@@ -428,7 +438,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.code = ""
 	s.sessions[token] = session{csrf: csrf, expires: now.Add(8 * time.Hour)}
-	http.SetCookie(w, &http.Cookie{Name: "soba_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 60 * 60})
+	http.SetCookie(w, &http.Cookie{Name: s.sessionCookieName(), Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 60 * 60})
 	jsonReply(w, 200, map[string]string{"csrfToken": csrf})
 }
 

@@ -89,7 +89,8 @@ func snapshotCommand(ctx context.Context, command string, args []string, dir str
 		ipc = "status"
 	}
 	err := client(ctx, dir, ipc, &raw)
-	if control.Unavailable(err) {
+	unavailable := control.Unavailable(err)
+	if unavailable {
 		raw = []byte(`{"state":"stopped","processId":0,"reason":"No reachable process","application":"unverified"}`)
 	} else if err != nil {
 		return err
@@ -118,7 +119,13 @@ func snapshotCommand(ctx context.Context, command string, args []string, dir str
 		return nil
 	}
 	if command == "stop" {
-		fmt.Fprintln(out, text(ja, "Stopped. Active connections and shares are no longer running.", "停止しました。稼働中の接続と共有は終了しています。"))
+		if snapshot.State == "stopping" {
+			fmt.Fprintln(out, text(ja, "Stop requested. Cleanup and process exit are not yet confirmed.", "停止を要求しました。後始末とプロセスの終了はまだ確認できていません。"))
+		} else if unavailable {
+			fmt.Fprintln(out, text(ja, "The local control endpoint is unavailable. This alone does not confirm process exit.", "ローカル制御の入口がありません。これだけではプロセスの終了を確認できません。"))
+		} else {
+			fmt.Fprintln(out, text(ja, "Stop completion is unconfirmed. Check the application before restarting.", "停止完了は未確認です。再起動する前に本体の状態を確認してください。"))
+		}
 		return nil
 	}
 	state := snapshot.Self.Status

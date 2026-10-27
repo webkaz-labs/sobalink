@@ -1,6 +1,6 @@
 # 固定リソースグループ
 
-[English](RESOURCE_GROUP.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](RESOURCE_GROUP.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 この操作は、明示的な許可のある最大16台の固定選択を確認します。1つのローカル調整処理が確認内容・受付・相手ごとの結果を管理します。全相手の一括トランザクションや厳密に1回の実行を保証しません。ソース実装だけでは、テスト・インストール済みバイナリ・実機での受入完了にはなりません。
 

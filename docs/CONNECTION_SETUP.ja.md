@@ -4,7 +4,7 @@
 
 近くの端末との接続では、範囲を明示した「相手を選んで依頼→相手が承認」と、任意の指紋全文照合を提供します。探索の名前や接続先は本人確認の証拠ではありません。初回に受け入れた鍵を記憶する方式（TOFU）は、最初の交換時の能動的ななりすましを防げません。アプリの権限は別途許可します。
 
-依頼して承認する手順は [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) に含まれます。[検証記録](VERIFICATION.md)で同一ソースの CI と署名付き配布を区別します。同一ホストの探索や制御されたブラウザー・ループバック試験は、物理端末間の探索・実登録・アプリ互換性の合格を示しません。
+依頼して承認する手順は [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) で導入され、現在の公開版 0.5.1-alpha.1 でも利用できます。[検証記録](VERIFICATION.md)で同一ソースの CI と署名付き配布を区別します。同一ホストの探索や制御されたブラウザー・ループバック試験は、物理端末間の探索・実登録・アプリ互換性の合格を示しません。
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/pairing-exchange-ja-dark-narrow.svg">

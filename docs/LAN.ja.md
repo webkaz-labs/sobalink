@@ -1,6 +1,6 @@
 # Tailcat LAN の設定と復旧
 
-[English](LAN.en.md) · [基本手順](GENERIC.ja.md) · [安全性](SECURITY.ja.md) · [確認範囲](VERIFICATION.md#tailcat-の条件) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](LAN.en.md) · [基本手順](GENERIC.ja.md) · [安全性](SECURITY.ja.md) · [確認範囲](VERIFICATION.md#tailcat-の条件) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 通常の初回設定は[依頼して相手が承認する手順](CONNECTION_SETUP.ja.md)から始めます。以下の公開 ID・招待を明示する手順も、その方式を選ぶ場合に利用できます。通常の初回設定は TOFU で、名前や探索は本人確認ではなく、初回の中間者攻撃を防ぐ保証はありません。必要に応じ、信頼できる方法で完全な指紋を照合してください。
 

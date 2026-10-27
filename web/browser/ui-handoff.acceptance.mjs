@@ -37,7 +37,7 @@ try {
   await launch(first)
   requireSafe(posts === 1 && !stateBeforeSession && !leaked)
   stage = 'cookie'
-  const cookie = (await context.cookies()).find(value => value.name === 'soba_session')
+  const cookie = (await context.cookies()).find(value => value.name === `soba_session_${new URL(first.url).port}`)
   requireSafe(cookie?.httpOnly && cookie.sameSite === 'Strict')
   stage = 'history'
   await page.reload(); await page.locator('.workspace').waitFor()
@@ -49,7 +49,7 @@ try {
   // test page would exercise same-document navigation instead of startup.
   await page.goto('about:blank')
   await launch(second)
-  const reused = (await context.cookies()).find(value => value.name === 'soba_session')
+  const reused = (await context.cookies()).find(value => value.name === `soba_session_${new URL(first.url).port}`)
   requireSafe(posts === 2 && reused?.value === cookie.value && reused.expires === cookie.expires)
   stage = 'replay'
   const fresh = await browser.newContext({ locale: 'en-US' })
@@ -69,6 +69,26 @@ try {
   await other.getByRole('button', { name: 'Open sobalink', exact: true }).click()
   await other.locator('.workspace').waitFor({ timeout: 10000 })
   requireSafe(!leaked && runtimeErrors === 0)
+  stage = 'profiles'
+  console.log('other-profile'); const profile = await read()
+  codes.push(profile.code)
+  const profilePage = await context.newPage()
+  await profilePage.goto(`${profile.url}/#handoff=${profile.code}`)
+  await profilePage.locator('.workspace').waitFor({ timeout: 10000 })
+  requireSafe(profilePage.url() === `${profile.url}/`)
+  requireSafe((await context.cookies()).filter(value => value.name === cookie.name).length === 1)
+  await page.reload(); await page.locator('.workspace').waitFor()
+  requireSafe((await context.cookies()).find(value => value.name === cookie.name)?.value === cookie.value)
+  // Logout is scoped to the selected profile even though the browser sends
+  // loopback cookies to both ports. Never expose the session or CSRF values.
+  requireSafe(await profilePage.evaluate(async () => {
+    const state = await (await fetch('/api/state')).json()
+    const response = await fetch('/api/session', { method: 'DELETE', headers: { 'X-CSRF-Token': state.csrfToken } })
+    return response.ok && (await fetch('/api/state')).status === 401
+  }))
+  await page.reload(); await page.locator('.workspace').waitFor()
+  requireSafe((await context.cookies()).find(value => value.name === cookie.name)?.value === cookie.value)
+  await profilePage.reload(); await profilePage.locator('.login-panel').waitFor()
   await fresh.close(); await context.close()
   console.log('pass')
 } catch {

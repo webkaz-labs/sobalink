@@ -47,7 +47,7 @@ func uiCommand(ctx context.Context, args []string, dir string, ja, dryRun bool, 
 	if *machine {
 		var raw json.RawMessage
 		if err := client(ctx, dir, "ui", &raw); err != nil {
-			return err
+			return uiUnavailableError(err, dir, ja, "--json")
 		}
 		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
@@ -57,7 +57,11 @@ func uiCommand(ctx context.Context, args []string, dir string, ja, dryRun bool, 
 		URL  string `json:"url"`
 		Code string `json:"code"`
 	}
-	if err := client(ctx, dir, "ui", &access); err != nil {
+	var recoveryMode []string
+	if *manual {
+		recoveryMode = []string{"--no-browser"}
+	}
+	if err := uiAccessWithRecovery(ctx, dir, ja, out, client, &access, recoveryMode...); err != nil {
 		return err
 	}
 	target, err := uiHandoffURL(access.URL, access.Code)

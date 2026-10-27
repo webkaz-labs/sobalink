@@ -4,7 +4,7 @@
 
 This is an experimental open-source project; no user support is provided. These self-service notes do not promise responses, fixes or compatibility.
 
-Use this order for v0.5.0-alpha.1. Stop at the first failed stage; a successful earlier stage does not prove the next one.
+Use this order for v0.5.1-alpha.1. Stop at the first failed stage; a successful earlier stage does not prove the next one.
 
 ```mermaid
 flowchart TD
@@ -34,6 +34,12 @@ flowchart TD
 | Permission reduction/revocation could not be saved | Stop `soba`; reconcile saved state before restart, because older permissions may remain on disk | Assuming stopped connections prove durable revocation |
 
 The stages in the diagram mean: open local management, establish a reachable authenticated network, verify the relevant permission, inspect the operation's state, then verify its real result. They are diagnostic checkpoints, not a guaranteed successful sequence.
+
+## UI access after stopping
+
+In published 0.5.1-alpha.1, `soba stop` removes the local control endpoint. A missing named pipe or socket from a later `soba ui` does not by itself mean the profile was lost. Run `soba status` with the same profile. If it is stopped, use `soba start --offline --background`, then `soba ui`; inspect any permission or saved-state error instead of deleting state. Use the same `--state-dir` throughout when selected.
+
+The [unreleased offline UI recovery](GENERIC.en.md#unreleased-reopen-the-ui-after-stopping) shortens this path for interactive commands with an existing profile. It is not available in the published 0.5.1-alpha.1 binary, does not start saved networks, and does not change the query-only behavior of `ui --json`.
 
 ## Use the focused guide
 

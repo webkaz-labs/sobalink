@@ -1,3 +1,4 @@
+import { fixtureStartDiagnostic, readFixtureStartDiagnostic } from './fixture-start-diagnostics.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -62,12 +63,13 @@ test('result reports omit private error details and never mark discovery-only ru
     await reporter.onEnd({ status: 'passed' })
     const path = join(directory, 'playwright-report.json')
     assert.equal(JSON.parse(await readFile(path, 'utf8')).requiredCoverageComplete, false)
-    reporter.onTestEnd({ titlePath: () => ['fixture privacy'], location: { file: '/private/workspace/workflows.spec.mjs', line: 10 } }, { status: 'failed', duration: 1, errors: [{ message: sentinel, stack: `${sentinel}\n    at Object.test (/private/workspace/workflows.spec.mjs:123:7)\n    at privateValue (/private/workspace/${sentinel}.mjs:9:9)\n    at another (/private/workspace/other.spec.mjs:4:5)` }], attachments: [{ body: sentinel }] })
+    reporter.onTestEnd({ titlePath: () => ['fixture privacy'], location: { file: '/private/workspace/workflows.spec.mjs', line: 10 }, annotations: [{ type: 'fixture-start-diagnostic', description: JSON.stringify(fixtureStartDiagnostic({ code: 1, signal: null, error: sentinel })) }] }, { status: 'failed', duration: 1, errors: [{ message: sentinel, stack: `${sentinel}\n    at Object.test (/private/workspace/workflows.spec.mjs:123:7)\n    at privateValue (/private/workspace/${sentinel}.mjs:9:9)\n    at another (/private/workspace/other.spec.mjs:4:5)` }], attachments: [{ body: sentinel }] })
     await reporter.onEnd({ status: 'failed' })
     const result = await readFile(path, 'utf8')
     assert.equal(result.includes(sentinel), false)
     assert.equal(result.includes('/private/workspace'), false)
     assert.equal(JSON.parse(result).requiredCoverageComplete, false)
+    assert.deepEqual(JSON.parse(result).tests[0].fixtureStart, { stage: 'session-wait', outcome: 'exited', code: 1, signal: 'none' })
     assert.deepEqual(JSON.parse(result).tests[0].failureLocations, [{ file: 'workflows.spec.mjs', line: 123, column: 7 }])
     assert.ok(outputLines.includes('DIAGNOSTIC fixture-or-test-error workflows.spec.mjs:123:7'))
     const consoleOutput = outputLines.join('\n')
@@ -365,4 +367,24 @@ test('saved-host review cannot install the offline synthetic pairing interceptor
   let routes = 0
   await assert.rejects(interceptor.install({ route: async () => { routes++ } }, async () => ({ status: 200, body: '{}' })))
   assert.equal(routes, 0)
+})
+
+test('startup diagnostics preserve only exit facts and reject poisoned records', () => {
+  const read = value => readFixtureStartDiagnostic([{ type: 'fixture-start-diagnostic', description: JSON.stringify(value) }])
+  for (const [exit, outcome, code, signal] of [
+    [{ code: 1, signal: null }, 'exited', 1, 'none'],
+    [{ code: null, signal: 'SIGKILL' }, 'exited', null, 'SIGKILL'],
+    [{ code: null, signal: 'spawn-error', message: sentinel }, 'spawn-error', null, 'none'],
+    [{ code: sentinel, signal: sentinel }, 'exited', null, 'other'],
+  ]) {
+    const value = fixtureStartDiagnostic(exit)
+    assert.deepEqual(read(value), { stage: 'session-wait', outcome, code, signal })
+    assert.equal(JSON.stringify(value).includes(sentinel), false)
+  }
+  assert.deepEqual(read(fixtureStartDiagnostic(null, true)), { stage: 'session-wait', outcome: 'timeout', code: null, signal: 'none' })
+  const valid = fixtureStartDiagnostic({ code: 1 })
+  for (const poisoned of [null, [], { ...valid, private: sentinel }, { ...valid, stage: sentinel }, { ...valid, signal: sentinel }, { ...valid, code: sentinel }, { ...valid, code: -1 }, { ...valid, code: 256 }, { ...valid, outcome: 'timeout' }]) assert.equal(read(poisoned), undefined)
+  const annotation = { type: 'fixture-start-diagnostic', description: JSON.stringify(valid) }
+  assert.equal(readFixtureStartDiagnostic([annotation, annotation]), undefined)
+  assert.equal(readFixtureStartDiagnostic([{ ...annotation, description: sentinel }]), undefined)
 })

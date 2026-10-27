@@ -1,6 +1,6 @@
 # Fixed resource groups
 
-[日本語](RESOURCE_GROUP.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](RESOURCE_GROUP.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 This workflow reviews a fixed selection of at most 16 explicitly permitted peers. One local coordinator owns the prepared review, acceptance and independent results. It does not promise an atomic multi-peer transaction or exactly-once execution. Source implementation alone does not establish tested, installed-binary or real-device acceptance.
 

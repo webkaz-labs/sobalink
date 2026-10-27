@@ -1,3 +1,4 @@
+import { readFixtureStartDiagnostic } from './fixture-start-diagnostics.mjs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -40,12 +41,13 @@ export default class SafeReporter {
   onBegin(_config, suite) { this.expectedTests = suite.allTests().length; console.log(`Collected ${this.expectedTests} browser acceptance tests`) }
   onTestEnd(test, result) {
     const artifacts = (test.annotations || []).filter(annotation => annotation.type === 'safe-artifact' && /^[a-z0-9][a-z0-9_.-]*\.(png|json)$/i.test(annotation.description || '') && !annotation.description.includes('..')).map(annotation => annotation.description)
-    const record = { name: test.titlePath().filter(Boolean).join(' > '), status: result.status, durationMs: result.duration, file: basename(test.location.file), line: test.location.line, failureCategory: failureCategory(result.errors), failureLocations: failureLocations(result.errors, test.location.file), artifacts }
+    const record = { name: test.titlePath().filter(Boolean).join(' > '), status: result.status, durationMs: result.duration, file: basename(test.location.file), line: test.location.line, failureCategory: failureCategory(result.errors), fixtureStart: readFixtureStartDiagnostic(test.annotations), failureLocations: failureLocations(result.errors, test.location.file), artifacts }
     this.tests.push(record)
     console.log(`${result.status.toUpperCase()} ${record.name}`)
     if (record.failureCategory) {
       const locations = record.failureLocations.map(location => `${location.file}:${location.line}:${location.column}`).join(',')
       console.log(`DIAGNOSTIC ${record.failureCategory}${locations ? ` ${locations}` : ''}`)
+      if (record.fixtureStart) console.log(`FIXTURE_START ${JSON.stringify(record.fixtureStart)}`)
     }
   }
   async onEnd(result) {

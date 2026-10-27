@@ -114,6 +114,31 @@ test.describe('whole-application shutdown', () => {
     // All assertions after Stop observe the loaded page or process lifecycle;
     // no live-state HTTP request is used as proof of shutdown.
     await app.expectStopped()
+    // The fixture observes actual exit; the browser cannot. Keep its wording
+    // honest after losing HTTP, and retain it after dismissing the dialog.
+    await expect(page.locator('dialog [role=status]')).toContainText('プロセスの終了')
+    await expect(page.locator('dialog [role=status]')).toContainText('操作画面は切断されました')
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    const stopStatus = page.getByRole('status', { name: '本体の停止状態', exact: true })
+    await expect(stopStatus).toBeVisible()
+    await expect(stopStatus).toContainText('操作画面は切断されました')
+    await expect(stopStatus).toContainText('プロセスの終了')
+    await expect(stopStatus).toContainText('soba ui')
+    await expect(page.locator('.stale-banner')).toHaveCount(0)
+    await app.capture('application-stop-dismissed-ja-dark-390')
+    await page.locator('.devices-view-button').click()
+    await expect(page.locator('.devices-view-button')).toHaveAttribute('aria-current', 'page')
+    await expect(stopStatus).toBeVisible()
+    await app.capture('application-stop-device-list-ja-dark-390')
+    // The top-level list is a main-panel map view. Its mobile Back control
+    // returns to the sidebar route where the main panel is actually hidden.
+    await page.locator('.map-mobile-nav').getByRole('button', { name: 'デバイス一覧へ', exact: true }).click()
+    await expect(page.locator('.workspace')).not.toHaveClass(/device-selected/)
+    await expect(page.locator('.main-panel')).toBeHidden()
+    await expect(stopStatus).toBeVisible()
+    await expect(stopStatus).toContainText('操作画面は切断されました')
+    await app.capture('application-stop-sidebar-ja-dark-390')
   })
 })
 

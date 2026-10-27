@@ -1,6 +1,6 @@
 # Direct LAN without a relay
 
-[日本語](DIRECT_LAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](DIRECT_LAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 For normal first-use setup, start with [request and accept](CONNECTION_SETUP.en.md). The explicit identity/invitation workflow below remains available when you want that path. Normal first-use setup uses TOFU: names and discovery do not authenticate a person or prevent a first-use man-in-the-middle attack. Compare the full fingerprint through a trusted channel when needed.
 

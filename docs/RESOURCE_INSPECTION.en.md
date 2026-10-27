@@ -1,6 +1,6 @@
 # Inspect one peer's transfer settings
 
-[日本語](RESOURCE_INSPECTION.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](RESOURCE_INSPECTION.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 The current release permits one managed DirectLAN peer to read exactly two transfer settings and their effective values. This inspect-only scope does not expose a catalog, operation history, arbitrary commands, or remote changes. Separately confirmed [management](RESOURCE_MANAGEMENT.en.md) is a distinct permission scope; it never upgrades an inspection grant implicitly. Normal agent startup enables the implementation, but creates no permission or inspection listener without an eligible confirmed grant. Exact-source and release evidence are recorded in [verification](VERIFICATION.en.md).
 

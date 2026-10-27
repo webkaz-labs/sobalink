@@ -2,9 +2,9 @@
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
-**Connect devices and use explicitly scoped application services.** This guide targets the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), including durable file and text queues. [Verification](VERIFICATION.en.md#current-integration-and-published-baseline) separates exact-source CI and signed distribution from physical-device/application acceptance, which remains open.
+**Connect devices and use explicitly scoped application services.** This guide targets the experimental [0.5.1-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), including durable file and text queues. [Verification](VERIFICATION.en.md#current-integration-and-published-baseline) separates exact-source CI and signed distribution from physical-device/application acceptance, which remains open.
 
-**Keep old state untouched.** Profile format 3 is incompatible with 0.4.0-alpha.4 and earlier. Select a separate empty `--state-dir`; there is no migration, wipe or same-profile downgrade.
+**Keep old state untouched.** Profile format 3 is incompatible with 0.4.0-alpha.4 and earlier. Select a separate empty `--state-dir`; there is no migration or wipe, and an older-format binary cannot reuse this profile.
 
 The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
@@ -33,10 +33,10 @@ In this example both devices use sobalink. An ordinary Tailnet application targe
 
 ## Start and open the local UI
 
-Use mise **2026.9.18** to select the published 0.5.0-alpha.1 prerelease, verify the version, then start it. Keep signature verification enabled:
+Use mise **2026.9.18** to select the published 0.5.1-alpha.1 prerelease, verify the version, then start it. Keep signature verification enabled:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.1-alpha.1"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -66,6 +66,28 @@ soba --state-dir ./sample-state status
 ```
 
 A fresh profile starts with no network selected. UI preferences, trust and service definitions are saved. Ordinary saved definitions remain stopped after a process restart; immediate transfer progress does not resume. Explicit durable file requests, and durable text requests, have a separate original-ID/deadline/evidence recovery contract. Separately reviewed [outbound startup and private proxy profiles](STARTUP.en.md) can opt into a future online launch. Inbound shares remain manual.
+
+### Unreleased: reopen the UI after stopping
+
+This source change is **not included in the published 0.5.1-alpha.1 binary**. For that release, start local management explicitly with `soba start --offline --background`, then run `soba ui`. This does not reconnect the saved network.
+
+In this source, interactive `soba ui` and `soba ui --no-browser` can reopen an existing profile after `soba stop`. When the local control endpoint is known to be absent and the existing profile passes validation, they attempt an offline background start and wait for local readiness. A newly started offline instance is reported explicitly. Endpoint absence alone does not prove process shutdown: startup or shutdown may still be in progress. A running application keeps its existing mode.
+
+This recovery preserves the saved network configuration without starting saved networking, shares, outbound startup selections or queue delivery. Normal startup checks and reconciliation still run and may update saved records, such as removing stale trust.
+
+`ui --json` remains a query and never starts the application. Noninteractive output still requires explicit `--json`; headless/SSH access still requires explicit `--no-browser`. If you already use another state directory, select that same directory rather than creating a new profile. For first use, run `soba init`, then `soba ui` (or `soba ui --no-browser` for manual access); initialization is never automatic. Permission errors, damaged state and uncertain control failures do not trigger automatic startup. Use the displayed next step; do not remove the profile or repeatedly start another process to hide an error.
+
+Keep the same `--state-dir` in every command when using a custom profile. In this unreleased source, open **Review network setup → Review saved connection** to inspect the saved method, endpoints, permissions and automatic receive destinations, then explicitly resume that connection. Opening the review or cancelling it does not start networking. Changed settings or permissions require a fresh review. The running local management session is retained; separately suppressed automatic service connections and saved proxies stay stopped. Previous transfers and inbound shares do not restart.
+
+CLI users can review and apply the same saved scope:
+
+```sh
+soba --state-dir ./sample-state network resume
+# Only after checking the displayed scope, use its exact revision:
+soba --state-dir ./sample-state network resume --expected-revision REVIEW_REVISION
+```
+
+The review prints the exact apply command; `REVIEW_REVISION` above is a placeholder. `start --background` remains idempotent for an already-running owner and does not implicitly resume its network. Resuming can enable existing automatic receive permissions and, for Tailnet, external control communication. A start acknowledgement does not prove network, peer or application readiness. After an interrupted response, inspect `soba status` before doing anything else. [Startup and recovery boundaries](LIFECYCLE.en.md)
 
 ## Choose a connection mode
 
@@ -379,10 +401,10 @@ soba stop
 
 Use current IDs from state. `soba stop-shares` stops every inbound share, including task-owned shares, while leaving the network node and outbound connections running. `soba revoke PEER_ID` removes application trust and any inspection permission; [LAN pair revocation](LAN.en.md#revoke-recover-and-stop) also removes the transport pairing. Individual stop closes that service's active connections. Stop or Ctrl+C shuts down the agent, network and active work; private settings and identity remain. Expiry stops the grant and its tracked connections but does not recall sent data or cancel a remote application job.
 
-Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the 0.5.0-alpha.1 release's signed assets and successful verification before using this pin. Moving from profile format 2 to format 3 requires separate empty state, with no migration or wipe; do not assume prerelease state is compatible with every upgrade or downgrade:
+Updates are explicit. Stop the matching instance first and keep any state backup private because it contains identity and peer information. Check the 0.5.1-alpha.1 release's signed assets and successful verification before using this pin. Moving from profile format 2 to format 3 requires separate empty state, with no migration or wipe; do not assume prerelease state is compatible with every upgrade or downgrade:
 
 ```sh
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.0-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.1-alpha.1"
 mise exec -- soba version
 mise exec -- soba start --offline
 ```

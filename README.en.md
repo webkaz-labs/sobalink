@@ -8,7 +8,7 @@ This is an experimental open-source project; no user support is provided. These 
 
 **Share only the services you choose, without requiring administrator privileges or router port forwarding.** sobalink runs as an ordinary user process without requiring TUN, OS route/firewall changes, or router port-forwarding setup. Choose the peers, ports and lifetime of each share. The selected network still needs a reachable path; existing firewalls or client isolation can prevent connections. Application/server installation and authentication have their own requirements.
 
-**v0.5.0-alpha.1 · Experimental software.** Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a published version's source, signed assets and verification results. Source feature descriptions alone do not establish acceptance for that version. Real-device enrollment, application compatibility, phone QR, native IME, OS sign-in and sleep/wake need separate checks. [Exact-source verification results](docs/VERIFICATION.en.md)
+**v0.5.1-alpha.1 · Experimental software.** Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a published version's source, signed assets and verification results. Source feature descriptions alone do not establish acceptance for that version. Real-device enrollment, application compatibility, phone QR, native IME, OS sign-in and sleep/wake need separate checks. [Exact-source verification results](docs/VERIFICATION.en.md)
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 959px)" srcset="docs/assets/visuals/connection-en-dark-narrow.svg">

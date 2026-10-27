@@ -1,6 +1,6 @@
 # Local resource catalog
 
-[日本語](RESOURCE_CATALOG.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](RESOURCE_CATALOG.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 `soba resource catalog` presents a bounded local composition of existing observations. It does not add a peer-wire catalog, remotely enumerate resources, grant permission or perform changes. This describes source behavior; tests, real devices, installed binaries and distribution require separate acceptance.
 

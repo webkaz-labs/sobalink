@@ -1,6 +1,6 @@
 # Local relay setup and recovery
 
-[日本語](RELAY_OPERATIONS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](RELAY_OPERATIONS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 Choose this device's private address explicitly, start its relay, and privately pair the other devices. A saved configuration, a running listener, and successful peer/application traffic are different states. Native loopback tests do not establish physical LAN reachability, sleep/wake behavior, or application compatibility.
 

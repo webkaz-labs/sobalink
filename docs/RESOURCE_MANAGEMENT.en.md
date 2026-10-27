@@ -1,6 +1,6 @@
 # Review and manage one peer's transfer settings
 
-[日本語](RESOURCE_MANAGEMENT.ja.md) · [Read-only inspection](RESOURCE_INSPECTION.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](RESOURCE_MANAGEMENT.ja.md) · [Read-only inspection](RESOURCE_INSPECTION.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 The current release supports explicitly permitted management of exactly `transferConcurrentFiles` and `transferConcurrentPerPeer` on one paired DirectLAN peer. The pure fence/epoch tests do not establish end-to-end management, distribution, physical-device, application, OS-login or suspend acceptance. Published-release claims remain governed by the [verification record](VERIFICATION.en.md).
 

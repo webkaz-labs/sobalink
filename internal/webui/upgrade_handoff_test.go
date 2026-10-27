@@ -33,7 +33,7 @@ func TestWebUpgradeHandoffRequiresCurrentSessionAndCSRF(t *testing.T) {
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("X-CSRF-Token", "synthetic-csrf")
 			if variant != "missing-session" {
-				r.AddCookie(&http.Cookie{Name: "soba_session", Value: "synthetic-session"})
+				r.AddCookie(&http.Cookie{Name: s.sessionCookieName(), Value: "synthetic-session"})
 			}
 			switch variant {
 			case "expired-session":

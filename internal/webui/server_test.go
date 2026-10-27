@@ -115,7 +115,7 @@ func signIn(t *testing.T, s *Server) (*http.Cookie, string) {
 		t.Fatalf("cookies: %v", cookies)
 	}
 	c := cookies[0]
-	if c.Name != "soba_session" || c.Value == "" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.Domain != "" || c.MaxAge != 8*60*60 {
+	if c.Name != s.sessionCookieName() || c.Value == "" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.Domain != "" || c.MaxAge != 8*60*60 {
 		t.Fatalf("unsafe or incomplete session cookie: %+v", c)
 	}
 	var result struct {

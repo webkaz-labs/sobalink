@@ -670,6 +670,8 @@ func (c *Core) command(ctx context.Context, cmd webui.Command) (any, error) {
 			return nil, err
 		}
 		return c.stopApplication(), nil
+	case "network.resume.preview", "network.resume":
+		return c.networkResumeCommand(ctx, cmd.Name, cmd.Payload)
 	case "network.configure":
 		var v struct {
 			Mode                     string              `json:"mode"`

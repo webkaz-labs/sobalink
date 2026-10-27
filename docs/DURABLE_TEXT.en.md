@@ -4,7 +4,7 @@
 
 Explicitly queue one immutable text message for one exact recipient, including an offline recipient. Acceptance is local; completion means the receiving device durably saved the text. It never means a person read it.
 
-Available in the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1). It uses **profile format 3**, incompatible with 0.4.0-alpha.4 and older formats. Preserve existing state and select a separate empty `--state-dir`; there is no migration, automatic deletion or same-profile downgrade. [Published verification](VERIFICATION.en.md) does not establish physical-device, power-loss, OS-login or suspend qualification.
+Introduced in the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), and available in the current 0.5.1-alpha.1 release. It uses **profile format 3**, incompatible with 0.4.0-alpha.4 and older formats. Preserve existing state and select a separate empty `--state-dir`; there is no migration, automatic deletion or same-profile downgrade. [Published verification](VERIFICATION.en.md) does not establish physical-device, power-loss, OS-login or suspend qualification.
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/durable-save-gates-en-dark-narrow.svg">

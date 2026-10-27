@@ -1,6 +1,6 @@
 # 相手1台の転送設定を参照する
 
-[English](RESOURCE_INSPECTION.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](RESOURCE_INSPECTION.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 現在の公開版では、管理対象の DirectLAN の相手1台に、転送設定の2項目と実効値の参照を許可できます。この参照のみの範囲では、一覧・操作履歴・任意のコマンド・遠隔での変更操作は公開しません。別途確認する[管理許可](RESOURCE_MANAGEMENT.ja.md)は異なる許可範囲で、参照許可を暗黙に更新しません。通常の本体起動で機能を利用できますが、有効な確認済み許可がなければ、許可を作成したり参照用の接続口を開始したりしません。正確なソースと公開版の証拠は[検証記録](VERIFICATION.md)に示します。
 

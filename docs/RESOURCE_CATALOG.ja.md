@@ -1,6 +1,6 @@
 # ローカルリソースカタログ
 
-[English](RESOURCE_CATALOG.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](RESOURCE_CATALOG.en.md) · [開発原則](DEVELOPMENT_PRINCIPLES.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 `soba resource catalog` は、既存の観測を上限内でローカルにまとめて表示します。相手向けのカタログ通信方式・遠隔のリソース列挙・新しい許可・変更操作は追加しません。ソースの動作を説明する文書です。テスト・実機・インストール済みバイナリ・配布には別々の受入確認が必要です。
 

@@ -1,6 +1,6 @@
 # Local transfer settings resource
 
-[日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 This guide covers the local resource foundation: inspection, preview, explicitly bound apply and durable operation evidence for two transfer-admission settings. It is available in the current release. For separately authorized [remote management](RESOURCE_MANAGEMENT.en.md) and [group/Web workflows](RESOURCE_GROUP.en.md), see those guides for their own scope and evidence.
 

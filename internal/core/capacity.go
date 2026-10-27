@@ -73,13 +73,17 @@ func readBoundedPrivateJSON(path string, limit int64, out any) error {
 		return err
 	}
 	defer f.Close()
-	r := &io.LimitedReader{R: f, N: limit + 1}
+	return decodeBoundedPrivateJSON(f, limit, out)
+}
+
+func decodeBoundedPrivateJSON(reader io.Reader, limit int64, out any) error {
+	r := &io.LimitedReader{R: reader, N: limit + 1}
 	d := json.NewDecoder(r)
 	d.DisallowUnknownFields()
-	if err = d.Decode(out); err != nil {
+	if err := d.Decode(out); err != nil {
 		return err
 	}
-	if err = d.Decode(new(any)); err != io.EOF {
+	if err := d.Decode(new(any)); err != io.EOF {
 		return errors.New("unexpected data after private state")
 	}
 	if r.N <= 0 {

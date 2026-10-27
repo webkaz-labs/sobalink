@@ -49,33 +49,42 @@ func TestUILaunchRealBrowser(t *testing.T) {
 	if err = command.Start(); err != nil {
 		t.Fatal("browser fixture unavailable")
 	}
-	send := func(expired bool) {
-		code, e := server.IssueCode()
+	send := func(target *Server, expired bool) {
+		code, e := target.IssueCode()
 		if e != nil {
 			t.Error("fixture code unavailable")
 			return
 		}
 		if expired {
-			server.mu.Lock()
-			server.codeUntil = time.Now().Add(-time.Second)
-			server.mu.Unlock()
+			target.mu.Lock()
+			target.codeUntil = time.Now().Add(-time.Second)
+			target.mu.Unlock()
 		}
-		if e = json.NewEncoder(input).Encode(map[string]string{"url": server.URL(), "code": code}); e != nil {
+		if e = json.NewEncoder(input).Encode(map[string]string{"url": target.URL(), "code": code}); e != nil {
 			t.Error("fixture input failed")
 		}
 	}
-	send(false)
+	send(server, false)
 	scanner := bufio.NewScanner(output)
 	passed := false
 	for scanner.Scan() {
 		switch strings.TrimSpace(scanner.Text()) {
 		case "rotate":
-			send(false)
+			send(server, false)
+		case "other-profile":
+			other, e := Start(ctx, os.DirFS(filepath.Join("..", "..", "web", "dist")), uiBrowserBackend{})
+			if e != nil {
+				t.Error("could not start second isolated UI server")
+				cancel()
+				continue
+			}
+			defer other.Close(context.Background())
+			send(other, false)
 		case "expire":
-			send(true)
+			send(server, true)
 		case "pass":
 			passed = true
-		case "fail:launch", "fail:context", "fail:initial", "fail:cookie", "fail:history", "fail:reuse", "fail:replay", "fail:expiry", "fail:manual":
+		case "fail:launch", "fail:context", "fail:initial", "fail:cookie", "fail:history", "fail:reuse", "fail:replay", "fail:expiry", "fail:manual", "fail:profiles":
 			t.Error("browser fixture stage:", scanner.Text())
 		default:
 			t.Error("unexpected browser fixture report; details withheld")

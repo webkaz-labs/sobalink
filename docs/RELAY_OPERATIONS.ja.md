@@ -1,6 +1,6 @@
 # ローカルリレーの設定と復旧
 
-[English](RELAY_OPERATIONS.en.md) · [利用ガイド](GENERIC.ja.md) · [v0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)
+[English](RELAY_OPERATIONS.en.md) · [利用ガイド](GENERIC.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
 
 このデバイスのプライベートアドレスを明示的に選び、リレーを起動して相手を非公開でペアリングします。設定の保存、待ち受けの準備完了、相手やアプリとの通信成功は別の状態です。ネイティブのループバック試験だけでは、実際のLAN到達性、スリープ復帰、アプリ互換性は確認できません。
 
