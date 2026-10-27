@@ -39,7 +39,7 @@ The stages in the diagram mean: open local management, establish a reachable aut
 
 In published 0.5.1-alpha.1, `soba stop` removes the local control endpoint. A missing named pipe or socket from a later `soba ui` does not by itself mean the profile was lost. Run `soba status` with the same profile. If it is stopped, use `soba start --offline --background`, then `soba ui`; inspect any permission or saved-state error instead of deleting state. Use the same `--state-dir` throughout when selected.
 
-The [unreleased offline UI recovery](GENERIC.en.md#unreleased-reopen-the-ui-after-stopping) shortens this path for interactive commands with an existing profile. It is not available in the published 0.5.1-alpha.1 binary, does not start saved networks, and does not change the query-only behavior of `ui --json`.
+The [candidate offline UI recovery](GENERIC.en.md#candidate-reopen-the-ui-after-stopping) shortens this path for interactive commands with an existing profile. It is not available in the published 0.5.1-alpha.1 binary, does not start saved networks, and does not change the query-only behavior of `ui --json`.
 
 ## Use the focused guide
 

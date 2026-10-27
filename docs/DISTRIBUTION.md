@@ -32,7 +32,7 @@ Text equivalent: reviewed source must pass exact-source full CI, native packagin
 
 ## Install a signed prerelease
 
-The published baseline is [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), exact source `fae64878737eddc15a9787aba279f34c98427e36`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
+The previously verified published baseline recorded here is [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), exact source `fae64878737eddc15a9787aba279f34c98427e36`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
 
 See the [current verification record](VERIFICATION.en.md#current-integration-and-published-baseline) for the exact published source, CI results and release gates. Results apply only to their recorded source, not later edits. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate and unverified.
 
@@ -52,6 +52,18 @@ mise exec -- soba
 `mise use -g` selects this version in the global mise configuration. `mise exec --` runs it without depending on shell activation; with mise already activated, use `soba` directly. The manifest selects `bin/soba` or `bin/soba.exe` for the [native target](#native-targets). Keep signature, identity and digest checks enabled; do not use an age override, test signing key or verification bypass.
 
 The workflow uses `mise where` with this exact pin and [verify-installed.py](https://github.com/webkaz-labs/sobalink/blob/main/.github/scripts/verify-installed.py) to inspect the actual installation. It checks the native target, version, source commit, binary and frontend-lock digests, SBOM and retained notices, then executes the installed binary. These checks do not establish real enrollment, application compatibility, native IME, OS sign-in or suspend behavior. [Source-specific evidence and remaining acceptance](VERIFICATION.en.md)
+
+## Install the 0.5.2-alpha.1 candidate only after publication
+
+This checkout prepares the 0.5.2-alpha.1 UX release. The 0.5.1-alpha.1 record above remains historical verified evidence; it does not verify this candidate. First confirm that the exact 0.5.2-alpha.1 signed prerelease is published and its distribution and actual-installation gates passed. Only then use this explicit pin (signature checks remain enabled):
+
+```sh
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.2-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.2-alpha.1"
+mise exec -- soba version
+```
+
+日本語: このチェックアウトは 0.5.2-alpha.1 の UX 改善版を準備します。上の 0.5.1-alpha.1 の成功を候補版に流用しません。正確な 0.5.2-alpha.1 の署名付き公開資材と配布・実導入ゲートの成功を確認してから、上の固定バージョンを指定してください。`mise use -g` はグローバル選択を変更します。署名検査を無効にせず、`soba version` で版を確認します。公開前はこの手順で導入済みとは扱わず、必要ならソースをビルドします。
 
 ## Build this checkout
 

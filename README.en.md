@@ -1,5 +1,7 @@
 # sobalink
 
+**0.5.2-alpha.1 release candidate (this checkout).** Adds offline UI reopening, reviewed saved-connection resume, truthful stop status and simultaneous-profile browser sessions. The previously verified published baseline is 0.5.1-alpha.1. Candidate source is not evidence of publication: check the signed release and its exact-source verification before installing. Physical-device acceptance remains separate.
+
 [日本語](README.md) · [User guide](docs/GENERIC.en.md) · [Verification](docs/VERIFICATION.en.md)
 
 This is an experimental open-source project; no user support is provided. These self-service notes do not promise responses, fixes or compatibility.
