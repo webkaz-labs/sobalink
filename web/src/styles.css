@@ -248,7 +248,7 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .error-banner > span, .stale-banner > span { flex: 1; }
 .error-banner .icon-button { color: inherit; }
 .error-banner { margin: 10px 0; }
-.main-alerts .error-banner, .main-alerts .stale-banner { margin: 12px 20px; }
+.main-alerts .error-banner, .main-alerts .stale-banner, .app-shell > .application-stop-notice { margin: 12px 20px; }
 .stale-banner { background: var(--amber-soft); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 20%, var(--border)); }
 .loading-screen { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; min-height: 65vh; color: var(--muted); font-size: 15px; padding: 30px; }
 .welcome-layout { max-width: 1030px; margin: 0 auto; padding: 48px 32px; display: grid; grid-template-columns: 1.1fr 1fr; align-items: center; gap: 64px; min-height: calc(100dvh - 68px); }
@@ -463,7 +463,8 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 /* One scroll frame per screen; the header and closing control remain reachable. */
 .app-shell:has(> .app-header.has-navigation) { height: 100dvh; display: flex; flex-direction: column; }
 .app-header.has-navigation { flex: 0 0 auto; }
-.app-header.has-navigation + .workspace { flex: 1; height: auto; min-height: 0; }
+.app-shell > .application-stop-notice { flex: 0 0 auto; }
+.app-header.has-navigation ~ .workspace { flex: 1; height: auto; min-height: 0; }
 .modal[open] { display: flex; flex-direction: column; }
 html:has(dialog[open]) { overflow: hidden; }
 .modal-heading h2 { min-width: 0; overflow-wrap: anywhere; }
@@ -624,7 +625,7 @@ html:has(dialog[open]) { overflow: hidden; }
   .peer-notice p { flex-basis: calc(100% - 32px); }
   .peer-notice .button { margin-left: 25px; }
   .background-upload { margin: 8px; padding: 10px; }
-  .main-alerts .error-banner, .main-alerts .stale-banner { margin: 8px; font-size: 14px; }
+  .main-alerts .error-banner, .main-alerts .stale-banner, .app-shell > .application-stop-notice { margin: 8px; font-size: 14px; }
   .welcome-layout { grid-template-columns: minmax(0, 1fr); padding: 24px 16px; gap: 20px; max-width: 520px; min-height: 0; }
   .welcome-story h1 { font-size: 26px; max-width: 100%; letter-spacing: -.4px; }
   .welcome-kicker { margin-bottom: 6px; }

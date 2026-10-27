@@ -6,5 +6,5 @@ import { lanTranslator } from '../lan-i18n'
 // A browser can observe loss of contact, but cannot attest to process exit.
 export function ApplicationStopNotice({ phase, locale }: { phase: ApplicationStopPhase; locale: Locale }) {
   const lt = lanTranslator(locale)
-  return <div className="scope-note" role="status"><div><p>{lt(phase === 'disconnected' ? 'stopDisconnected' : phase === 'unconfirmed' ? 'stopUnconfirmed' : 'stopping')}</p><p>{lt('stopRecovery')}</p></div></div>
+  return <div className="scope-note application-stop-notice" role="status" aria-label={lt('stopStatus')}><div><p>{lt(phase === 'disconnected' ? 'stopDisconnected' : phase === 'unconfirmed' ? 'stopUnconfirmed' : 'stopping')}</p><p>{lt('stopRecovery')}</p></div></div>
 }
