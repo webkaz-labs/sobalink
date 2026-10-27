@@ -128,10 +128,17 @@ test.describe('whole-application shutdown', () => {
     await expect(page.locator('.stale-banner')).toHaveCount(0)
     await app.capture('application-stop-dismissed-ja-dark-390')
     await page.locator('.devices-view-button').click()
+    await expect(page.locator('.devices-view-button')).toHaveAttribute('aria-current', 'page')
+    await expect(stopStatus).toBeVisible()
+    await app.capture('application-stop-device-list-ja-dark-390')
+    // The top-level list is a main-panel map view. Its mobile Back control
+    // returns to the sidebar route where the main panel is actually hidden.
+    await page.locator('.map-mobile-nav').getByRole('button', { name: 'デバイス一覧へ', exact: true }).click()
     await expect(page.locator('.workspace')).not.toHaveClass(/device-selected/)
+    await expect(page.locator('.main-panel')).toBeHidden()
     await expect(stopStatus).toBeVisible()
     await expect(stopStatus).toContainText('操作画面は切断されました')
-    await app.capture('application-stop-device-list-ja-dark-390')
+    await app.capture('application-stop-sidebar-ja-dark-390')
   })
 })
 
