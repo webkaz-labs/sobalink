@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test as base, expect } from '@playwright/test'
-import { fixtureStartDiagnostic } from './fixture-start-diagnostics.mjs'
+import { fixtureStartDiagnostic, readStartupSidecar } from './fixture-start-diagnostics.mjs'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
 import { createSyntheticPairingInterception, verifyCommandsBeforeCleanup } from './synthetic-pairing.mjs'
 import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
@@ -66,7 +66,8 @@ export const test = base.extend({
     await mkdir(output, { recursive: true, mode: 0o700 })
     assertSeparateArtifacts(await realpath(output), await realpath(privateRoot))
     const sessionFile = join(privateRoot, 'session.json')
-    const child = spawn(binary, ['--scenario', scenario, '--session-file', sessionFile], { stdio: ['ignore', 'ignore', 'ignore'] })
+    const diagnosticFile = join(privateRoot, 'startup-diagnostic.json')
+    const child = spawn(binary, ['--scenario', scenario, '--session-file', sessionFile, '--startup-diagnostic-file', diagnosticFile], { stdio: ['ignore', 'ignore', 'ignore'] })
     let exited = false
     const exit = new Promise(resolveExit => {
       child.once('error', () => { exited = true; resolveExit({ code: null, signal: 'spawn-error' }) })
@@ -86,7 +87,7 @@ export const test = base.extend({
       await page.addInitScript(installInstrumentation)
       for (let attempt = 0; attempt < 200; attempt++) {
         if (exited) {
-          testInfo.annotations.push({ type: 'fixture-start-diagnostic', description: JSON.stringify(fixtureStartDiagnostic(await exit)) })
+          testInfo.annotations.push({ type: 'fixture-start-diagnostic', description: JSON.stringify(fixtureStartDiagnostic(await exit, false, await readStartupSidecar(diagnosticFile))) })
           throw new Error('The isolated Go harness exited before its private session was ready')
         }
         try {
