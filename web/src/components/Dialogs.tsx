@@ -1,3 +1,4 @@
+import { setupText } from '../setup-guide'
 import { ResumeConnection } from './ResumeConnection'
 import { ApplicationStopNotice } from './ApplicationStopNotice'
 import { NearbySetup, type NearbySetupHandle } from './NearbySetup'
@@ -54,7 +55,7 @@ export function NetworkDialog({ t, onClose, server, locale, lanDraft, setLanDraf
   const configure = async (event: FormEvent) => { event.preventDefault(); if (blocked) return; await server.run('network.configure', { mode, hostname: hostname.trim() }) }
   return <Modal title={t('chooseNetwork')} t={t} onClose={() => void close()}>
     {view === 'options' && server.state && <ResumeConnection server={server} state={server.state} locale={locale} t={t} blocked={blocked} />}
-    {view === 'options' ? <div className="nearby-entry"><p className="muted">{nearbyText(locale, 'entryIntro')}</p><Button variant="primary" onClick={() => setView('nearby')}>{nearbyText(locale, 'open')}</Button><Button onClick={() => setView('advanced')}>{nearbyText(locale, 'advanced')}</Button></div> : <Button variant="ghost" onClick={() => void back()}>{nearbyText(locale, 'back')}</Button>}
+    {view === 'options' ? <div className="nearby-entry"><p className="muted">{nearbyText(locale, 'entryIntro')}</p><Button variant="primary" onClick={() => setView('nearby')}>{nearbyText(locale, 'open')}</Button><Button disabled={blocked} onClick={() => { setMode('tailnet'); setView('advanced') }}>{setupText(locale, 'tailnet')}</Button><p className="small muted">{setupText(locale, 'tailnetHint')}</p><Button onClick={() => setView('advanced')}>{nearbyText(locale, 'advanced')}</Button></div> : <Button variant="ghost" onClick={() => void back()}>{nearbyText(locale, 'back')}</Button>}
     {view === 'nearby' && <NearbySetup ref={nearby} server={server} locale={locale} disabled={blocked} />}
     {view === 'advanced' && <><p className="muted">{t('networkHint')}</p>
     {server.state && <div className="network-current"><span>{t(server.state.settings?.network === 'mixed' ? 'mixed' : server.state.settings?.network === 'direct-lan' ? 'direct-lan' : server.state.settings?.network === 'lan' ? 'lan' : server.state.settings?.network === 'tailnet' ? 'tailnet' : 'disabledNetwork')}</span><Badge>{networkLabel(server.state.self.status, t)}</Badge>{server.state.self.error && <div className="error-copy field-error"><p>{server.state.self.errorCode ? errorText({ code: server.state.self.errorCode }, t) : t('networkProblem')}</p><details><summary>{t('technicalDetails')}</summary><p>{server.state.self.error}</p></details></div>}</div>}

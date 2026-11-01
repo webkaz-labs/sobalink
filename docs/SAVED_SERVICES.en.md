@@ -61,6 +61,14 @@ matches to the current selection. Hidden selections remain counted and are
 included in the complete start/stop review. Selecting a group uses its current
 exact membership; reloading reconciles changed or removed groups.
 
+In this checkout, **Filter by device** narrows the list to definitions containing
+that exact device ID. It does not change your selection or the full start/stop
+review: hidden selected services remain included. Duplicate device names include
+their IDs to distinguish them. A saved ID absent from the current device list
+is labeled as such, not assumed offline or revoked. Choosing a group,
+**Show selection** or **Show all services** clears the device filter; it does not
+silently shrink the group to the previous filter.
+
 Open **Favorites** to mark a saved service or group, select it, or show only
 favorite services. Marks are private preferences shared with the CLI. They do
 not duplicate group membership, create startup approval, start a listener,
