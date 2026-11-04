@@ -1,0 +1,63 @@
+name: Native UI PoC validation
+
+on:
+  pull_request:
+    paths:
+      - 'poc/native/**'
+      - '.github/workflows/native-poc.yml'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-poc-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-native:
+    name: PoC / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-26, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: poc/native
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,native_integration
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          check-latest: false
+          cache-dependency-path: |
+            go.sum
+            poc/native/go.sum
+      - name: Install headless renderer system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libgtk-3-0 libgl1 fonts-noto-core fonts-noto-cjk
+      - name: Prepare checksum-verified engine adaptations
+        working-directory: .
+        run: |
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+      - name: Test protected IPC, Core protocol fixtures and UI safety
+        run: go test -race -count=1 -timeout=15m ./...
+      - name: Vet isolated module
+        run: go vet ./...
+      - name: Compile native UI
+        run: go build -trimpath -o native-poc-check .
