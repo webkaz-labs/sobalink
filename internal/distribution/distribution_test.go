@@ -285,6 +285,7 @@ func mockTool(t *testing.T) (*Tool, *int) {
 		}
 		return nil, errors.New("unexpected command")
 	}
+	installNativeUIFixture(t, tool)
 	return tool, builds
 }
 func TestBuildDeterministicAndManifestComplete(t *testing.T) {

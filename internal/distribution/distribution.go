@@ -75,6 +75,7 @@ type Tool struct {
 	nativeProbe     func() (*NativeBuild, []string, error)
 	nativeInventory func([]goPackage) ([]NativePackage, []Notice, error)
 	nativeLinks     func(string, string) ([]string, error)
+	nativeUIRun     func([]string, ...string) ([]byte, error)
 }
 
 func New(root string) (*Tool, error) {
@@ -300,6 +301,11 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if err != nil {
 		return err
 	}
+	uiBuild, uiNotices, uiBOM, err := t.buildNativeUI(version, target, commit, stage)
+	if err != nil {
+		return err
+	}
+	licenses.NativeUI = uiNotices
 	if err = writeJSON(filepath.Join(share, "third-party-notices.json"), licenses); err != nil {
 		return err
 	}
@@ -339,10 +345,15 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 	if native != nil {
 		metadata["native_build"] = native
 	}
+	if uiBuild != nil {
+		metadata["native_ui"] = uiBuild
+	}
 	if err = writeJSON(filepath.Join(share, "build.json"), metadata); err != nil {
 		return err
 	}
-	if err = writeJSON(filepath.Join(share, "bom.cdx.json"), makeSBOM(packages, licenses, version, target, commit, binaryHash)); err != nil {
+	bom := makeSBOM(packages, licenses, version, target, commit, binaryHash)
+	mergeNativeUISBOM(bom, uiBOM)
+	if err = writeJSON(filepath.Join(share, "bom.cdx.json"), bom); err != nil {
 		return err
 	}
 	dist := filepath.Join(t.Root, "dist")

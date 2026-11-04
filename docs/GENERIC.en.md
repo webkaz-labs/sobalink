@@ -2,7 +2,7 @@
 
 **0.5.2-alpha.1 release candidate (this checkout).** Adds offline UI reopening, reviewed saved-connection resume, truthful stop status and simultaneous-profile browser sessions. The previously verified published baseline is 0.5.1-alpha.1. Candidate source is not evidence of publication: check the signed release and its exact-source verification before installing. Physical-device acceptance remains separate.
 
-For the candidate version, use the [publication-gated 0.5.2-alpha.1 installation instructions](DISTRIBUTION.md#install-the-052-alpha1-candidate-only-after-publication). The baseline commands below deliberately remain pinned to the previously verified release.
+For the candidate version, use the [publication-gated 0.5.4-alpha.1 installation instructions](DISTRIBUTION.md#install-the-054-alpha1-candidate-only-after-publication). The baseline commands below deliberately remain pinned to the previously verified release.
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 

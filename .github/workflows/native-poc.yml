@@ -1,0 +1,111 @@
+name: Native UI PoC validation
+
+on:
+  pull_request:
+    paths:
+      - 'poc/native/**'
+      - '.github/workflows/native-poc.yml'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-poc-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-native:
+    name: PoC / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-26, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: poc/native
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,native_integration
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          check-latest: false
+          cache-dependency-path: |
+            go.sum
+            poc/native/go.sum
+      - name: Install headless renderer system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libgtk-3-0 libgl1 fonts-noto-core fonts-noto-cjk
+      - name: Prepare checksum-verified engine adaptations
+        working-directory: .
+        run: |
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+      - name: Test protected IPC, Core protocol fixtures and UI safety
+        run: go test -race -v -count=1 -timeout=15m ./...
+      - name: Vet isolated module
+        run: go vet ./...
+      - name: Test deterministic kit packaging
+        run: python -B packaging_test.py
+      - name: Compile native UI
+        run: go build -trimpath -o "$RUNNER_TEMP/native-poc-check" .
+
+      - name: Build and smoke the exact device-test binaries
+        if: runner.os == 'Windows' || runner.os == 'macOS'
+        env:
+          KIT_ROOT: ${{ runner.temp }}/native-device-kit
+        run: |
+          mkdir -p "$KIT_ROOT/bin" "$KIT_ROOT/smoke" "$KIT_ROOT/packages"
+          suffix=""
+          gui=""
+          if [ "$RUNNER_OS" = "Windows" ]; then suffix=".exe"; gui="-H=windowsgui"; fi
+          source_commit="$(git rev-parse HEAD)"
+          CGO_ENABLED=0 go build -buildvcs=true -trimpath -ldflags="-s -w $gui" -o "$KIT_ROOT/bin/soba-native$suffix" .
+          (cd ../.. && CGO_ENABLED=0 go build -buildvcs=true -trimpath -ldflags="-s -w -X main.version=0.0.0-native-poc.${source_commit:0:12}" -o "$KIT_ROOT/bin/soba$suffix" ./cmd/soba)
+          "$KIT_ROOT/bin/soba-native$suffix" --demo --locale ja --render "$KIT_ROOT/smoke/demo.png"
+          "$KIT_ROOT/bin/soba-native$suffix" --demo --locale ja --render-pane messages --render "$KIT_ROOT/smoke/messages.png"
+          "$KIT_ROOT/bin/soba-native$suffix" --demo --locale ja --render-pane files --render "$KIT_ROOT/smoke/files.png"
+          "$KIT_ROOT/bin/soba$suffix" --help > "$KIT_ROOT/smoke/daemon-help.txt"
+          "$KIT_ROOT/bin/soba$suffix" --version > "$KIT_ROOT/smoke/daemon-version.txt"
+          python -c 'import pathlib,struct,os; root=pathlib.Path(os.environ["KIT_ROOT"])/"smoke"; files=[root/n for n in ("demo.png","messages.png","files.png")]; assert all(p.read_bytes()[:8]==b"\x89PNG\r\n\x1a\n" and struct.unpack(">II",p.read_bytes()[16:24])==(460,560) for p in files)'
+          target="$(go env GOOS)-$(go env GOARCH)"
+          python package_test_build.py --binary "$KIT_ROOT/bin/soba-native$suffix" --daemon-binary "$KIT_ROOT/bin/soba$suffix" --target "$target" --output-dir "$KIT_ROOT/packages" --source-commit "$source_commit"
+      - name: Inspect Windows test-binary signing state
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          KIT_ROOT: ${{ runner.temp }}/native-device-kit
+        run: |
+          foreach ($name in @("soba-native.exe", "soba.exe")) {
+            $signature = Get-AuthenticodeSignature -FilePath (Join-Path $env:KIT_ROOT "bin/$name")
+            if ($signature.Status -ne "NotSigned") { throw "Unexpected signing state; inspect before distributing" }
+            Write-Output "$name : NotSigned"
+          }
+      - name: Inspect macOS test-binary signing state
+        if: runner.os == 'macOS'
+        env:
+          KIT_ROOT: ${{ runner.temp }}/native-device-kit
+        run: |
+          for name in soba-native soba; do
+            codesign -dv --verbose=2 "$KIT_ROOT/bin/$name" 2> "$KIT_ROOT/smoke/$name-signature.txt"
+            grep -q 'Signature=adhoc' "$KIT_ROOT/smoke/$name-signature.txt"
+            grep -q 'TeamIdentifier=not set' "$KIT_ROOT/smoke/$name-signature.txt"
+            echo "$name : ad-hoc only; no authenticated developer signature"
+          done
+      # Test kits stay local to the runner. Distributable archives are produced
+      # only by the prerelease pipeline with complete notices and provenance.

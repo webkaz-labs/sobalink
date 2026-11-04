@@ -264,6 +264,14 @@ def workflow_metadata(workflow):
     return result
 
 
+NATIVE_COMPANION_STEP = '      - name: Test experimental native companion\n        if: matrix.goos == \'windows\' || matrix.goos == \'darwin\'\n        working-directory: poc/native\n        run: |\n          set -euo pipefail\n          unset GOROOT\n          test "$("$SOBALINK_NATIVE_GO" env GOVERSION)" = go1.27.3\n          "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...\n          "$SOBALINK_NATIVE_GO" vet ./...\n          test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"\n'
+
+
+def validate_native_companion_workflow(data):
+    workflow = data.decode("utf-8")
+    require(workflow.count(NATIVE_COMPANION_STEP) == 1, "native companion test gate differs")
+
+
 def validate_parallel_workflow(data):
     """Fail closed on changes to the deliberately narrow native async region.
 
@@ -289,7 +297,7 @@ def validate_parallel_workflow(data):
     fence = (marker + 'Wait for real-time lifecycle and lease checks\n'
              '        wait: [natural-lifecycle, guarded-lease, relay-only-lease]\n')
     package = marker + 'Build native package and smoke archive contents\n'
-    require(workflow.count(fence + package) == 1, 'missing real-time wait before packaging')
+    require(workflow.count(fence + NATIVE_COMPANION_STEP + package) == 1, 'missing real-time wait before packaging')
     end = workflow.index(fence)
     require(starts == sorted(starts) and starts[-1] < end, 'invalid real-time step order')
     region = workflow[starts[0]:end]
@@ -872,6 +880,8 @@ def validate_native_packages_workflow(sources):
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_native_packages_workflow(sources)
+    validate_native_companion_workflow(sources[WORKFLOW])
+    validate_native_companion_workflow(sources[".github/workflows/prerelease.yml"])
     validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
     validate_durable_text_workflow(sources[WORKFLOW])
@@ -884,7 +894,7 @@ def required_jobs(sources):
     validate_resource_inspection_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
-             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS'}
+             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS', 'NATIVE_UI_STEPS'}
     values = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -933,13 +943,14 @@ def required_jobs(sources):
             'overlapping macOS nearby gate')
     for target in values['MACOS_NEARBY_TARGETS']:
         result[TARGETS[target][0]] += values['MACOS_NEARBY_STEPS']
+    require(values['NATIVE_UI_STEPS'] == ('Test experimental native companion',), 'unexpected companion gate policy')
     require(values['NATIVE_PACKAGE_TARGETS'] == ('windows-amd64', 'darwin-arm64')
             and values['NATIVE_PACKAGE_STEPS'] == ('Collect required whole-Core race evidence',
                 'Verify remaining native package race coverage', 'Preserve required native package proof'),
             'unexpected native package coverage policy')
     require(not set(native_steps).intersection(values['NATIVE_PACKAGE_STEPS']), 'overlapping native package gate')
     for target in values['NATIVE_PACKAGE_TARGETS']:
-        result[TARGETS[target][0]] += values['NATIVE_PACKAGE_STEPS']
+        result[TARGETS[target][0]] += values['NATIVE_PACKAGE_STEPS'] + values['NATIVE_UI_STEPS']
     result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
     result.update({
         'impact': ('Select minimum CI scope',),

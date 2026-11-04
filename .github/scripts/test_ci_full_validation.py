@@ -1059,3 +1059,19 @@ class ParallelWorkflowPolicyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NativeCompanionGateTests(unittest.TestCase):
+    def test_exact_step_in_both_workflows(self):
+        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+            data = (ROOT / path).read_bytes()
+            full.validate_native_companion_workflow(data)
+            for before, after in [(b'-count=1', b'-count=0'), (b'test -race', b'test'), (b'go1.27.3', b'go1.27.1')]:
+                with self.subTest(path=path, mutation=before), self.assertRaises(ValueError):
+                    full.validate_native_companion_workflow(data.replace(before, after))
+
+    def test_only_supported_targets_require_success(self):
+        sources = {p: (ROOT / p).read_bytes() for p in full.SOURCES}
+        required = full.required_jobs(sources)
+        for target, (name, _) in full.TARGETS.items():
+            self.assertEqual('Test experimental native companion' in required[name], target in ('darwin-arm64', 'windows-amd64'))

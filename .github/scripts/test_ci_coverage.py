@@ -37,7 +37,7 @@ def jobs(scope="full"):
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             if target in coverage.NATIVE_PACKAGE_TARGETS:
-                steps += coverage.NATIVE_PACKAGE_STEPS
+                steps += coverage.NATIVE_PACKAGE_STEPS + coverage.NATIVE_UI_STEPS
             result.append(job(name, steps))
             if scope == "native-short":
                 for item in result[-1]["steps"]:
@@ -60,11 +60,14 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_companion_is_required_on_supported_targets(self):
+        self.assertEqual(coverage.NATIVE_UI_STEPS, ('Test experimental native companion',))
+
     def test_native_package_execution_and_receipt_are_required_on_both_targets(self):
         self.assertEqual(coverage.NATIVE_PACKAGE_STEPS, ('Collect required whole-Core race evidence', 'Verify remaining native package race coverage', 'Preserve required native package proof'))
         for scope in ('native-short', 'full'):
             coverage.evaluate_jobs(jobs(scope), scope)
-            for gate in coverage.NATIVE_PACKAGE_STEPS:
+            for gate in coverage.NATIVE_PACKAGE_STEPS + coverage.NATIVE_UI_STEPS:
                 for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
                     data = jobs(scope)
                     selected = next(j for j in data if j['name'] == coverage.TARGETS['windows-amd64'])
