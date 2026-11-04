@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"image/png"
@@ -13,6 +14,13 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+var version = "dev"
+var sourceCommit = "unknown"
+
+func versionInfo() map[string]any {
+	return map[string]any{"product": "soba-native", "version": version, "commit": sourceCommit, "go_version": runtime.Version(), "goos": runtime.GOOS, "goarch": runtime.GOARCH, "experimental": true}
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -20,6 +28,7 @@ func main() {
 	}
 }
 func run() error {
+	showVersion := flag.Bool("version", false, "Print version and source identity / バージョンとソース情報を表示")
 	demo := flag.Bool("demo", false, "Use fictional data / 架空のデータを使用")
 	dir := flag.String("state-dir", "", "Existing profile for read-only IPC / 読取専用IPCの既存プロファイル")
 	tray := flag.Bool("tray", false, "Use a menu-bar / tray window")
@@ -32,6 +41,9 @@ func run() error {
 	scale := flag.Int("render-scale", 1, "Headless scale 1 or 2 / 描画倍率")
 	details := flag.Bool("render-details", false, "Expand fictional detail in rendered demo / 架空デモの詳細を表示")
 	flag.Parse()
+	if *showVersion {
+		return json.NewEncoder(os.Stdout).Encode(versionInfo())
+	}
 	if *height < 440 || *height > 1600 || *scale < 1 || *scale > 2 {
 		return fmt.Errorf("invalid render height or scale")
 	}

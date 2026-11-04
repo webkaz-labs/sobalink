@@ -91,6 +91,7 @@ type NoticeInventory struct {
 	Frontend        []FrontendModule  `json:"frontend_modules"`
 	Sources         []SourceComponent `json:"source_components"`
 	Native          *NativeBuild      `json:"native_build,omitempty"`
+	NativeUI        *NoticeInventory  `json:"native_ui,omitempty"`
 }
 
 func noticeName(name string) bool {
@@ -275,7 +276,7 @@ func purl(path, version string) string {
 func makeSBOM(packages []goPackage, notices NoticeInventory, version string, target Target, commit, binaryHash string) map[string]any {
 	root := "application:sobalink"
 	goRef := "golang:stdlib"
-	components := []any{map[string]any{"type": "library", "bom-ref": goRef, "name": "Go standard library", "version": GoVersion, "licenses": []any{map[string]any{"license": map[string]string{"name": "See licenses/go/ and third-party-notices.json"}}}}}
+	components := []any{map[string]any{"type": "library", "bom-ref": goRef, "name": "Go standard library", "version": notices.Go.Version, "licenses": []any{map[string]any{"license": map[string]string{"name": "See licenses/go/ and third-party-notices.json"}}}}}
 	for _, m := range notices.Modules {
 		components = append(components, map[string]any{"type": "library", "bom-ref": "golang:" + moduleKey(m.Module, m.Version), "name": m.Module, "version": m.Version, "purl": purl(m.Module, m.Version), "properties": []any{map[string]string{"name": "go:module:sum", "value": m.Sum}}, "licenses": []any{map[string]any{"license": map[string]string{"name": "See third-party-notices.json for original notices (not classified)"}}}})
 	}

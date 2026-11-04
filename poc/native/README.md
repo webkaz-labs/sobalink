@@ -1,10 +1,13 @@
 # Native UI PoC / Native UI 試作
 
-An isolated MyGo v0.7.4 prototype, read-only by default. The existing daemon, CLI, React UI,
-root Go module and release process are unchanged. This is not a replacement UI.
+An optional, separate `soba-native` client using MyGo v0.7.4, read-only by default.
+The prerelease integration is being prepared; this document does not certify a published asset.
+The existing `soba` CLI, daemon and React Web UI remain available. This is not a replacement UI.
+See the [English usage guide](../../docs/NATIVE_UI.en.md) and [日本語ガイド](../../docs/NATIVE_UI.ja.md).
 
-既存の本体・CLI・React画面を変更しない、MyGo v0.7.4の試作です。既定では読み取り専用です。
-接続・共有・許可・停止・更新の操作は実装していません。
+MyGo v0.7.4を使う、任意起動の別クライアント `soba-native` です。プレリリースへの
+統合を準備中であり、公開済み配布物の合格を示す文書ではありません。既定は読み取り専用で、
+既存の `soba` CLI・本体・Web UIは引き続き使えます。設定・接続・許可・本体停止・更新は既存UI/CLIで扱います。
 
 ## Compact desktop layout / コンパクト表示
 
@@ -18,14 +21,14 @@ explanation lives under About. A separate messages/files pane keeps interactive 
 ## Run / 起動
 
 Go 1.27.3 or later is required **only for this nested module**. Build from this
-folder. Its local replace imports the repository's actual internal/control code;
+repository root for preparation, then enter this folder. Its local replace imports the repository's actual internal/control code;
 no copied IPC implementation or new authentication boundary is introduced.
 
 ```sh
 go run ./cmd/prepare-engine
 go run ./cmd/prepare-engine --verify
 cd poc/native
-go run . --demo
+go run . --demo --tray --locale auto
 go run . --demo --locale ja
 go run . --demo --tray
 go run . --state-dir /path/to/existing/profile
@@ -84,7 +87,9 @@ Remaining: real daemon integration; Windows named-pipe run; macOS and Windows
 window operation; native Japanese IME and screen readers; GPU/high-DPI behavior;
 suspend/resume; long sessions; signing and installed-distribution verification;
 real startup latency, idle CPU and process memory. Cross-compilation is not a
-runtime check. No signed installer or updater is included. Tray/panel code is implemented but native execution remains unverified.
+runtime check. Distribution signature/provenance verification is separate from OS
+developer signing/notarization. No signed OS installer or updater is included,
+and historical unsigned test kits are not release assets. Tray/panel code is implemented but native execution remains unverified.
 
 未確認: 実本体との統合、Windows named pipe、各OSの実ウィンドウ、日本語IME、
 スクリーンリーダー、GPU・高DPI、休止復帰、長時間動作、署名・実導入、起動時間・

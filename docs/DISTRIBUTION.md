@@ -53,17 +53,17 @@ mise exec -- soba
 
 The workflow uses `mise where` with this exact pin and [verify-installed.py](https://github.com/webkaz-labs/sobalink/blob/main/.github/scripts/verify-installed.py) to inspect the actual installation. It checks the native target, version, source commit, binary and frontend-lock digests, SBOM and retained notices, then executes the installed binary. These checks do not establish real enrollment, application compatibility, native IME, OS sign-in or suspend behavior. [Source-specific evidence and remaining acceptance](VERIFICATION.en.md)
 
-## Install the 0.5.2-alpha.1 candidate only after publication
+## Install the 0.5.4-alpha.1 candidate only after publication
 
-This checkout prepares the 0.5.2-alpha.1 UX release. The 0.5.1-alpha.1 record above remains historical verified evidence; it does not verify this candidate. First confirm that the exact 0.5.2-alpha.1 signed prerelease is published and its distribution and actual-installation gates passed. Only then use this explicit pin (signature checks remain enabled):
+This checkout prepares the 0.5.4-alpha.1 native companion and lifecycle-fix release. The 0.5.1-alpha.1 record above remains historical verified evidence; it does not verify this candidate. First confirm that the exact 0.5.4-alpha.1 signed prerelease is published and its distribution and actual-installation gates passed. Only then use this explicit pin (signature checks remain enabled):
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.2-alpha.1"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.2-alpha.1"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.4-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.4-alpha.1"
 mise exec -- soba version
 ```
 
-日本語: このチェックアウトは 0.5.2-alpha.1 の UX 改善版を準備します。上の 0.5.1-alpha.1 の成功を候補版に流用しません。正確な 0.5.2-alpha.1 の署名付き公開資材と配布・実導入ゲートの成功を確認してから、上の固定バージョンを指定してください。`mise use -g` はグローバル選択を変更します。署名検査を無効にせず、`soba version` で版を確認します。公開前はこの手順で導入済みとは扱わず、必要ならソースをビルドします。
+日本語: このチェックアウトは 0.5.4-alpha.1 の Native UI と終了同期の改善版を準備します。上の 0.5.1-alpha.1 の成功を候補版に流用しません。正確な 0.5.4-alpha.1 の署名付き公開資材と配布・実導入ゲートの成功を確認してから、上の固定バージョンを指定してください。`mise use -g` はグローバル選択を変更します。署名検査を無効にせず、`soba version` で版を確認します。公開前はこの手順で導入済みとは扱わず、必要ならソースをビルドします。
 
 ## Build this checkout
 
@@ -103,6 +103,14 @@ Run `go run ./cmd/prepare-engine` before direct Go builds, tests or packaging. I
 Preparation is idempotent. `go run ./cmd/prepare-engine --verify` checks all three manifests, original checksums, checkout overlays and complete generated trees without downloading or changing files. Existing changed output is rejected rather than repaired silently; inspect it, explicitly remove the affected generated directory, then prepare again. With the pinned Go toolchain and all three original archives cached, `GOPROXY=off go run ./cmd/prepare-engine` reproduces the same source offline. Partial preparation is not a complete build configuration. Production routing depends on the adapted APIs.
 
 The only permitted replacements are `tailscale.com v1.104.0 => ./.sobalink-deps/tailscale`, `github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226 => ./.sobalink-deps/wireguard`, and `gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 => ./.sobalink-deps/gvisor`. The package tool rejects alternate paths, versions, extra replacements, links and source drift. Its SBOM identifies each adapted component separately, retaining upstream only as an ancestor. Packages keep complete module notices, manifests, overlays and preparation recipes; metadata records original checksums, actual target-linked build inputs and complete adapted-tree digests. Smoke and actual-installed-binary verification check these retained records as well as the binary digest. Source verification does not establish lifecycle or application acceptance. All native test, repeated-build, signing, provenance, public-download and installation gates still apply.
+
+## Optional experimental native companion
+
+Windows x64 and macOS ARM64 archives also contain `bin/soba-native.exe` or `bin/soba-native`. Linux archives remain CLI/Web-only. Packslip continues to export `soba`; installing the archive does not start the companion, register login items or replace the Web UI. See the [Japanese](NATIVE_UI.ja.md) / [English](NATIVE_UI.en.md) instructions for explicit invocation and profile selection.
+
+The companion is built from the same source commit using a separately pinned official Go **1.27.3** toolchain. The daemon retains Go **1.27.1** and its native platform requirements. Companion metadata, target-filtered notices and dependency inventory are retained separately and covered by the final archive's checksums, release signature and provenance. An archive integrity signature is not Windows Authenticode or Apple Developer ID/notarization. No OS trust bypass is part of installation.
+
+The native companion's automated evidence covers headless rendering and isolated protected IPC/Core fixtures, not physical-device tray, IME, screen-reader, network or suspend acceptance. Historic unsigned PoC test kits are not signed prerelease artifacts. Publication results apply only to the exact released source and must be verified by the ordinary release gates below.
 
 ## Native targets
 

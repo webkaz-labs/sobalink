@@ -5,7 +5,7 @@ import pathlib
 import platform
 import subprocess
 import sys
-from source_provenance import read_json, verify_native, verify_sources
+from source_provenance import read_json, verify_native_companion, verify_native, verify_sources
 
 root = pathlib.Path(sys.argv[1])
 version, commit, target = sys.argv[2:]
@@ -39,6 +39,14 @@ for module in notices["modules"] + notices["frontend_modules"] + [notices["go_st
         assert hashlib.sha256(notice.read_bytes()).hexdigest() == entry["sha256"]
 verify_native(meta, notices, bom, binary)
 verify_sources(share, meta, notices, bom)
+native_ui = verify_native_companion(meta, notices, bom, root)
+if native_ui is not None:
+    companion = root / native_ui["binary"]["path"]
+    companion.chmod(0o755)
+    result = subprocess.run([str(companion), "--version"], check=True, capture_output=True, text=True, timeout=30)
+    identity = read_json(result.stdout)
+    assert identity == {"product": "soba-native", "version": meta["version"], "commit": meta["source_commit"], "go_version": "go1.27.3", "goos": meta["target"].split("-")[0], "goarch": meta["target"].split("-")[1], "experimental": True}, "installed companion identity differs"
+    subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("offline-smoke.py")), "--native-companion", str(companion)], check=True)
 result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
 assert result.stdout.strip() == "sobalink " + version + " (soba)"
 subprocess.run([str(binary), "--help"], check=True)

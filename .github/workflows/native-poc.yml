@@ -107,11 +107,5 @@ jobs:
             grep -q 'TeamIdentifier=not set' "$KIT_ROOT/smoke/$name-signature.txt"
             echo "$name : ad-hoc only; no authenticated developer signature"
           done
-      - name: Upload reviewed device-test kit only
-        if: runner.os == 'Windows' || runner.os == 'macOS'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: native-device-test-${{ runner.os }}-${{ runner.arch }}
-          path: ${{ runner.temp }}/native-device-kit/packages/*
-          if-no-files-found: error
-          retention-days: 14
+      # Test kits stay local to the runner. Distributable archives are produced
+      # only by the prerelease pipeline with complete notices and provenance.

@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 import zipfile
 from document_images import verify_document_images
-from source_provenance import read_json, verify_native, verify_sources
+from source_provenance import read_json, verify_native_companion, verify_native, verify_sources
 
 archive = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
@@ -63,6 +63,14 @@ with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
             assert hashlib.sha256(notice.read_bytes()).hexdigest() == entry["sha256"]
     verify_native(build, notices, bom, binary)
     verify_sources(share, build, notices, bom)
+    native_ui = verify_native_companion(build, notices, bom, root)
+    if native_ui is not None:
+        companion = root / native_ui["binary"]["path"]
+        companion.chmod(0o755)
+        result = subprocess.run([str(companion), "--version"], check=True, capture_output=True, text=True, timeout=30)
+        identity = read_json(result.stdout)
+        assert identity == {"product": "soba-native", "version": build["version"], "commit": build["source_commit"], "go_version": "go1.27.3", "goos": build["target"].split("-")[0], "goarch": build["target"].split("-")[1], "experimental": True}, "installed companion identity differs"
+        subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("offline-smoke.py")), "--native-companion", str(companion)], check=True)
     binary.chmod(0o755)
     result = subprocess.run([str(binary), "--version"], check=True, capture_output=True, text=True)
     assert version in result.stdout, result.stdout

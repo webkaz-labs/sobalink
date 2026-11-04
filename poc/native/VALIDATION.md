@@ -1,4 +1,26 @@
-# PoC validation / 試作の確認結果
+# Native UI validation / Native UI の確認結果
+
+## Current prerelease integration / 今回の統合
+
+The current integration starts from main `64a92eeb`, which includes PR #66,
+and incorporates the Native UI from PR #67. This is source preparation, not a
+published-release or installed-binary receipt. Exact-source full CI, packaging,
+signatures/provenance, public-asset retrieval and installed-binary checks must be
+recorded for the final release source. Historical unsigned device-test kits are
+not release assets. Distribution integrity signatures are not OS developer
+signing, Windows publisher trust or macOS notarization.
+
+今回の統合は PR #66 を含む main と PR #67 のNative UIを対象に準備しています。
+以下の古いソースの検証結果は今回の合格証跡ではありません。最終ソースのCI・配布・
+実導入の結果を別途確認してください。実GUI、IME、読み上げ、実ネットワーク通信の
+合格は未確認です。OSの保護機能を回避して試験しません。
+
+## Historical prototype evidence / 過去の試作の証跡
+
+The sections below preserve the original source-specific record, including its
+pending and blocked states. Those states describe that recorded attempt, not a
+claim about the final prerelease. Later CI results must identify their own source.
+
 
 2026-11-04, Linux x64 build environment. Original local prototype base commit:
 `a08b2cb0d257db7ea2fb4be29e7abd88619a9fb5`. MyGo v0.7.4, Go 1.27.3.

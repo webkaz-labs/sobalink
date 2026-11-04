@@ -2,7 +2,7 @@
 
 **0.5.2-alpha.1 リリース候補（このチェックアウト）。** オフラインでの画面再表示、確認付きの保存済み接続再開、停止状態の正確な表示、複数プロファイルのブラウザー利用を追加します。以前に公開・検証した基準は 0.5.1-alpha.1 です。候補のソースだけでは公開済みとは判断せず、導入前に署名付きリリースと同一ソースの検証結果を確認してください。実機での受入は別途必要です。
 
-候補版の導入は、[公開・検証を前提にした 0.5.2-alpha.1 の導入手順](DISTRIBUTION.md#install-the-052-alpha1-candidate-only-after-publication)を参照してください。以下の基準版のコマンドは、以前に公開・検証した版を明示的に指定しています。
+候補版の導入は、[公開・検証を前提にした 0.5.4-alpha.1 の導入手順](DISTRIBUTION.md#install-the-054-alpha1-candidate-only-after-publication)を参照してください。以下の基準版のコマンドは、以前に公開・検証した版を明示的に指定しています。
 
 [English](GENERIC.en.md) · [概要](../README.md) · [安全性](SECURITY.ja.md) · [確認範囲](VERIFICATION.md)
 

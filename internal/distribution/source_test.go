@@ -407,17 +407,25 @@ func TestBuildIncludesSourceNoticesMetadataAndSBOMForAllTargets(t *testing.T) {
 					t.Fatal("local checkout path leaked")
 				}
 			}
+			expectedBinaries := map[string]bool{"bin/" + target.Binary(): true}
+			if nativeUITarget(target) {
+				name := "bin/soba-native"
+				if target.OS == "windows" {
+					name += ".exe"
+				}
+				expectedBinaries[name] = true
+			}
 			binaryCount := 0
 			for name := range archive {
 				if strings.HasPrefix(name, "bin/") {
 					binaryCount++
-					if name != "bin/"+target.Binary() {
+					if !expectedBinaries[name] {
 						t.Fatal("unexpected binary")
 					}
 				}
 			}
-			if binaryCount != 1 {
-				t.Fatal("single executable layout changed")
+			if binaryCount != len(expectedBinaries) {
+				t.Fatal("platform executable inventory changed")
 			}
 		})
 	}
