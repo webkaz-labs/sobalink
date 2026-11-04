@@ -80,6 +80,34 @@ def run(source: Path, go: str):
             raise SystemExit('static endpoint negative control did not reach the expected reader/setter race')
         print('static endpoint snapshot negative control: expected reader/setter race detected')
 
+
+        # The invariant is intentionally deterministic: restore the old unlocked
+        # publisher in a private source input, then require its exact assertion.
+        # Runtime constructor stress separately exercises the actual lifecycle.
+        derp = source / 'wgengine/magicsock/derp.go'
+        completion = derp.read_text(encoding='utf-8')
+        locked = ('\t\t\tc.mu.Lock()\n'
+                  '\t\t\tclose(c.derpStarted)\n'
+                  '\t\t\tc.muCond.Broadcast()\n'
+                  '\t\t\tc.mu.Unlock()')
+        if completion.count(locked) != 1:
+            raise SystemExit('unexpected DERP completion source')
+        (temporary / 'derp.go').write_text(completion.replace(locked,
+            '\t\t\tclose(c.derpStarted)\n\t\t\tc.muCond.Broadcast()'), encoding='utf-8')
+        binary = temporary / ('completion.test.exe' if os.name == 'nt' else 'completion.test')
+        subprocess.run([go, 'test', '-c', '-mod=readonly',
+            '-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy',
+            '-o', str(binary), './wgengine/magicsock'], cwd=source, env=env,
+            check=True, capture_output=True, text=True, timeout=300)
+        test = 'TestSobalinkDERPCompletionNotificationLocked'
+        result = subprocess.run([str(binary), '-test.run=^' + test + '$', '-test.timeout=45s'],
+            cwd=temporary, env=env, capture_output=True, text=True, timeout=60)
+        output = result.stdout + result.stderr
+        marker = 'DERP completion notification must hold the Close predicate mutex'
+        if result.returncode == 0 or ('--- FAIL: ' + test) not in output or marker not in output:
+            raise SystemExit('DERP completion negative control did not reach the expected invariant assertion')
+        print('DERP completion negative control: expected synchronization invariant failed')
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)

@@ -78,6 +78,7 @@ func runForegroundWithProfile(ctx context.Context, dir string, offline, existing
 	var ipc *control.Server
 	var handoff *upgradeStop
 	defer func() {
+		bodyErr := err
 		// Typed nil pointers must not be converted to non-nil io.Closer values.
 		var application, controlOwner io.Closer
 		if app != nil {
@@ -89,9 +90,12 @@ func runForegroundWithProfile(ctx context.Context, dir string, offline, existing
 		closeErr, lockErr := shutdownManagedOwners(controlOwner, application, lock)
 		resourceacceptance.ProcessOwnersClosed(app, closeErr == nil, lockErr == nil)
 		err = errors.Join(err, closeErr, lockErr)
+		var acknowledgementErr error
 		if handoff != nil {
-			err = errors.Join(err, acknowledgeUpgradeShutdown(*handoff, errors.Join(err, closeErr), lockErr))
+			acknowledgementErr = acknowledgeUpgradeShutdown(*handoff, errors.Join(err, closeErr), lockErr)
+			err = errors.Join(err, acknowledgementErr)
 		}
+		observeForegroundExit(bodyErr, closeErr, lockErr, acknowledgementErr)
 	}()
 	opts := foregroundCoreOptions(dir, offline, lock)
 	opts.RequireExistingProfile = existingOnly

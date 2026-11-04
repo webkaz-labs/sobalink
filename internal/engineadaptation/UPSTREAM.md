@@ -93,3 +93,12 @@ network discovery, changing endpoint priorities, or changing the module graph.
 The concurrent regression uses the actual endpoint reader with fresh immutable
 IPv4/IPv6 views and synthetic, non-network socket state; the existing native
 race suite also retains its live guarded direct TCP/UDP and relay-removal checks.
+
+
+First-DERP connection completion now publishes its completion channel and
+condition notification while holding the same mutex used by connection close.
+This prevents a notification from being lost between the close predicate check
+and its wait. The connection attempt finishes before acquiring that mutex, so
+client/connection lock ordering is preserved. A deterministic source-invariant
+regression and its removal control complement the actual constructor lifecycle
+test; they do not claim to identify a past CI timeout without its runtime stack.
