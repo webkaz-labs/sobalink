@@ -124,7 +124,22 @@ func TestNativeProtectedIPCCoreExchange(t *testing.T) {
 		waitTransfer := func(dir, expected string) exchangeTransfer {
 			t.Helper()
 			var result exchangeTransfer
+			lastSenderState := ""
+			observations := 0
 			nativeAwait(t, ctx, "transfer "+expected, func() bool {
+				for _, sender := range load(t, aDir).Transfers {
+					if sender.ID != id {
+						continue
+					}
+					if sender.Status != lastSenderState && observations < 8 {
+						t.Logf("fixture sender state=%s completed_bytes=%d", sender.Status, sender.CompletedBytes)
+						lastSenderState = sender.Status
+						observations++
+					}
+					if sender.Status == "failed" || sender.Status == "cancelled" || sender.Status == "declined" {
+						t.Fatalf("sender terminated before expected receiver state: %s", sender.Status)
+					}
+				}
 				for _, row := range load(t, dir).Transfers {
 					if row.ID == id {
 						result = row
@@ -307,48 +322,7 @@ func nativeAwait(t *testing.T, ctx context.Context, label string, ready func() b
 
 func nativeCoreEndpoint(t *testing.T, ctx context.Context, node *nativePeerNode) string {
 	t.Helper()
-	// Short private path keeps Unix socket addresses below the native path limit.
-	dir, err := os.MkdirTemp("", "soba-native-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Error(err)
-		}
-	})
-	if err := config.SecureDir(dir); err != nil {
-		t.Fatal(err)
-	}
-	epoch := sha256.Sum256([]byte(node.ip.String()))
-	profile := core.Profile{Version: 3, DurableFiles: &core.DurableProfile{Version: 1, Epoch: hex.EncodeToString(epoch[:16]), Phase: "initializing"},
-		Settings: core.Settings{Locale: "auto", Theme: "system", Network: "tailnet", Hostname: "native-fixture"},
-		Peers:    []core.Trust{{ID: node.peerID, Network: "tailnet", Generation: 1}}, Services: []core.ServiceSpec{}}
-	encoded, err := json.Marshal(profile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := config.AtomicWritePrivate(filepath.Join(dir, "sobalink.json"), encoded); err != nil {
-		t.Fatal(err)
-	}
-	lock, err := config.AcquireLock(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := lock.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	app, err := core.Open(ctx, core.Options{Directory: dir, Version: "native-fixture", LifecycleLock: lock, NodeFactory: func(string, string) (core.NetworkBackend, error) { return node, nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := app.Close(); err != nil {
-			t.Error(err)
-		}
-	})
+	dir, app := nativeOpenCore(t, ctx, node)
 	server, err := control.ServeWithLimits(ctx, dir, app.IPC, app.LocalControlLimits)
 	if err != nil {
 		t.Fatal("real protected IPC endpoint unavailable:", err)
@@ -368,6 +342,77 @@ func nativeCoreEndpoint(t *testing.T, ctx context.Context, node *nativePeerNode)
 		}
 	}
 	return dir
+}
+
+func nativeOpenCore(t *testing.T, ctx context.Context, node *nativePeerNode) (string, *core.Core) {
+	t.Helper()
+	// Short private path keeps Unix socket addresses below the native path limit.
+	dir, err := os.MkdirTemp("", "soba-native-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := config.SecureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	// Start from a genuinely fresh profile. Prewriting only sobalink.json makes
+	// Core treat absent receive-accounting state as legacy recovery, correctly
+	// refusing file offers. Let Core create its complete owned state instead.
+	lock, err := config.AcquireLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := lock.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	app, err := core.Open(ctx, core.Options{Directory: dir, Version: "native-fixture", LifecycleLock: lock, NodeFactory: func(string, string) (core.NetworkBackend, error) { return node, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := app.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, command := range []struct {
+		ID, Name string
+		Payload  any
+	}{
+		{"fixture-network", "network.configure", map[string]any{"mode": "tailnet"}},
+		{"fixture-trust", "peer.trust", map[string]any{"peerId": node.peerID, "trusted": true}},
+	} {
+		raw, err := json.Marshal(map[string]any{"requestId": command.ID, "name": command.Name, "payload": command.Payload})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := app.IPC(ctx, string(raw)); err != nil {
+			t.Fatal("fresh fixture setup:", err)
+		}
+	}
+	value, err := app.IPC(ctx, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readiness struct {
+		ReceiveRecovery struct{ State, Code string } `json:"receiveRecovery"`
+	}
+	if err := json.Unmarshal(raw, &readiness); err != nil {
+		t.Fatal(err)
+	}
+	if readiness.ReceiveRecovery.State != "ready" || readiness.ReceiveRecovery.Code != "" {
+		t.Fatalf("fresh fixture receive accounting is blocked: state=%s code=%s", readiness.ReceiveRecovery.State, readiness.ReceiveRecovery.Code)
+	}
+	return dir, app
 }
 
 // The fixture transports bytes only. It does not implement any peer HTTP route,
@@ -478,3 +523,107 @@ type nativePeerConn struct {
 
 func (c *nativePeerConn) LocalAddr() net.Addr  { return net.TCPAddrFromAddrPort(c.local) }
 func (c *nativePeerConn) RemoteAddr() net.Addr { return net.TCPAddrFromAddrPort(c.remote) }
+
+// Explicit weaker diagnostic test; never substituted for protected IPC acceptance.
+// It proves fixture initialization and genuine peer file protocol without a socket.
+func TestNativeInProcessCoreProtocolDiagnostic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	hub := &nativePeerHub{listeners: make(map[netip.AddrPort]*nativePeerListener)}
+	aIP, bIP := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.0.2")
+	aDir, aCore := nativeOpenCore(t, ctx, &nativePeerNode{hub: hub, ip: aIP, peerIP: bIP, peerID: "fixture-b"})
+	bDir, bCore := nativeOpenCore(t, ctx, &nativePeerNode{hub: hub, ip: bIP, peerIP: aIP, peerID: "fixture-a"})
+	caller := func(ctx context.Context, dir, command string, out any) error {
+		app := aCore
+		if dir == bDir {
+			app = bCore
+		} else if dir != aDir {
+			return errors.New("unknown fixture profile")
+		}
+		value, err := app.IPC(ctx, command)
+		if err != nil {
+			return err
+		}
+		if out == nil {
+			return nil
+		}
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, out)
+	}
+	a, b := newExchangeClient(aDir, true, caller), newExchangeClient(bDir, true, caller)
+	nativeAwait(t, ctx, "peer listeners", func() bool { hub.mu.Lock(); defer hub.mu.Unlock(); return len(hub.listeners) == 4 })
+	load := func(dir string) snapshot {
+		t.Helper()
+		var state snapshot
+		if err := caller(ctx, dir, "status", &state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	source := filepath.Join(t.TempDir(), "fixture.txt")
+	payload := []byte("fictional protocol fixture")
+	if err := os.WriteFile(source, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	review, err := a.PrepareFiles(ctx, "diag-prepare", load(aDir).ResourceCatalogProcessID, []string{"fixture-b"}, []string{source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := a.CommitFiles(ctx, "diag-commit", review, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := receipt.Children[0].TransferID
+	wait := func(dir, expected string) exchangeTransfer {
+		t.Helper()
+		var result exchangeTransfer
+		nativeAwait(t, ctx, "protocol "+expected, func() bool {
+			for _, row := range load(aDir).Transfers {
+				if row.ID == id && (row.Status == "failed" || row.Status == "cancelled") {
+					t.Fatalf("sender failed: %s", row.Status)
+				}
+			}
+			for _, row := range load(dir).Transfers {
+				if row.ID == id {
+					result = row
+					return row.Status == expected
+				}
+			}
+			return false
+		})
+		return result
+	}
+	wait(bDir, "awaiting-acceptance")
+	destination := t.TempDir()
+	if err := b.AcceptFiles(ctx, "diag-accept", id, destination, true); err != nil {
+		t.Fatal(err)
+	}
+	received := wait(bDir, "completed")
+	wait(aDir, "completed")
+	if received.CompletedBytes != int64(len(payload)) || len(received.Entries) != 1 {
+		t.Fatal("protocol completion mismatch")
+	}
+	count := 0
+	err = filepath.WalkDir(destination, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && entry.Name() == "fixture.txt" {
+			count++
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(data, payload) {
+				return errors.New("protocol fixture saved wrong bytes")
+			}
+		}
+		return nil
+	})
+	if err != nil || count != 1 {
+		t.Fatal("protocol saved-file verification failed", err)
+	}
+}

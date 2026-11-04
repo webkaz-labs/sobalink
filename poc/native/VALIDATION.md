@@ -120,3 +120,12 @@ The runner draft is based independently on main commit
 `dbd50b0ecb9a4c8b6f1d1b182b78fcd445432579`; unrelated diagnostic changes
 from the original prototype base are not included. Core/IPC sources are identical
 between these bases.
+
+First runner attempt on commit `905bc60` reached the real IPC/Core message path,
+but the file subtest failed on all four platforms. The synthetic profile had been
+written before first Core startup without receive-accounting state, correctly
+triggering the existing legacy receive-recovery guard. The fixture now starts a
+fresh Core and configures its fictional network/trust through ordinary Core
+commands. No receive guard or production code is weakened. A separate explicitly
+in-process diagnostic reproduces the issue without sockets; it is not a substitute
+for the corrected cross-process runner test. Corrected runner results are pending.
