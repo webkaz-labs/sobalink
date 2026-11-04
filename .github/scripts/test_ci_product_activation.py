@@ -128,26 +128,69 @@ class ProductActivationPolicyTests(unittest.TestCase):
     def test_exact_race_binary_runs_status_ownership_regressions_before_browser(self):
         source = Path(gate.__file__).read_text()
         regression = source.index("run_command([str(binary), '-test.run=' + FIXTURE_REGRESSIONS")
-        self.assertEqual(gate.FIXTURE_REGRESSIONS, '^TestProduct(ParentWait|MissingParentWait|WaitRejects|LauncherWait|FinalOwner|CleanupDiagnostic|EvidenceWriters)')
+        self.assertEqual(gate.FIXTURE_REGRESSIONS, '^TestProduct(ParentWait|MissingParentWait|WaitRejects|LauncherWait|FinalOwner|ForegroundExit|CleanupDiagnostic|EvidenceWriters)')
         self.assertIn("'fixtureRegressions': FIXTURE_REGRESSIONS, 'fixtureRegressionsPassed': False", source)
         self.assertLess(regression, source.index("provenance['fixtureRegressionsPassed'] = True"))
         self.assertLess(source.index("provenance['fixtureSha256'] = digest(binary)"), regression)
         self.assertLess(regression, source.index("provenance['stage'] = 'runtime'"))
         self.assertIn("log, env=dict(env, GORACE='halt_on_error=1 exitcode=66 atexit_sleep_ms=0'), timeout=60)", source)
 
-    def test_owner_final_failure_components_survive_reconstruction(self):
-        for key in ('foregroundFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'):
+    def test_owner_and_foreground_components_survive_reconstruction(self):
+        self.assertEqual(gate.NATIVE_BOOLS, ('failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'))
+        for key in gate.NATIVE_BOOLS:
             value = gate.empty_lifecycle()
-            value['native']['successor'].update(available=True, failed=True, stage='proof-written', **{key: True})
-            self.assertTrue(gate.validate_lifecycle(value)['native']['successor'][key])
-            for invalid in (0, 1, 'synthetic-private-detail', None, {}):
+            value['native']['successor'].update({'available': True, 'failed': True, 'stage': 'proof-written', key: True})
+            copied = gate.validate_lifecycle(gate.strict_json(json.dumps(value)))
+            self.assertEqual(copied, value)
+            self.assertTrue(copied['native']['successor'][key])
+            self.assertIsNot(copied['native']['successor'], value['native']['successor'])
+            for invalid in (0, 1, 'synthetic-private-detail', '/private/path', 'https://example.invalid/private', None, {}, []):
                 value['native']['successor'][key] = invalid
                 with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
                     gate.validate_lifecycle(value)
-            value = gate.empty_lifecycle()
-            value['native']['successor'][key] = True
-            with self.assertRaises(ValueError):
-                gate.validate_lifecycle(value)
+            for role in gate.NATIVE_ROLES:
+                for invalid in (False, True):
+                    value = gate.empty_lifecycle()
+                    value['native'][role].update({'invalid': invalid, key: True})
+                    with self.subTest(key=key, role=role, invalid=invalid), self.assertRaises(ValueError):
+                        gate.validate_lifecycle(value)
+                value = gate.empty_lifecycle()
+                self.assertFalse(value['native'][role][key])
+                del value['native'][role][key]
+                with self.subTest(key=key, role=role), self.assertRaises(ValueError):
+                    gate.validate_lifecycle(value)
+
+    def test_foreground_components_roundtrip_without_new_acceptance_gates(self):
+        value = self.passing()
+        for case in value['diagnostics']['cases']:
+            for row in case['lifecycle']['native'].values():
+                row.update(available=True, stage='proof-written', **dict.fromkeys(gate.NATIVE_BOOLS, True))
+        result = gate.validate_report(gate.strict_json(json.dumps(value)))
+        self.assertTrue(result['accepted'])
+        self.assertEqual(result, value)
+        failed = gate.failed_report(result['diagnostics'])
+        self.assertFalse(failed['accepted'])
+        self.assertEqual(failed['diagnostics'], value['diagnostics'])
+        self.assertLessEqual(len(json.dumps(result).encode()), 16384)
+
+    def test_foreground_private_and_unknown_fields_are_rejected(self):
+        for key in ('foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'foregroundError'):
+            value = self.passing()
+            value['diagnostics']['cases'][0]['lifecycle']['native']['successor'].update({'available': True, key: 'synthetic-private-detail'})
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                gate.validate_report(value)
+
+    def test_native_fixed_schema_matches_go_source(self):
+        source = (ROOT / 'cmd/soba/upgrade_product_diagnostics_test.go').read_text()
+        block = re.search(r'type productNativeObservation struct \{([^}]+)\}', source)
+        self.assertIsNotNone(block)
+        fields = re.findall(r'\b(int|bool|string)\s+`json:"([^"]+)"`', block.group(1))
+        expected = {'schema': 'int', 'stage': 'string', 'ownerStatus': 'string', 'peerStatus': 'string',
+                    **dict.fromkeys(gate.NATIVE_BOOLS, 'bool')}
+        self.assertEqual(len(fields), len(expected))
+        self.assertEqual({name: kind for kind, name in fields}, expected)
+        self.assertEqual(gate.NATIVE_KEYS - {'available', 'invalid'}, set(expected) - {'schema'})
+        self.assertIn('productNativeObservation{Schema: 1,', source)
 
     def test_work_and_cleanup_failures_stay_separate_and_evidence_only(self):
         value = self.passing()
@@ -206,6 +249,7 @@ class ProductActivationPolicyTests(unittest.TestCase):
                      'cleanupPhases': gate.CLEANUP_PHASES, 'exits': gate.EXITS, 'nativeStages': gate.NATIVE_STAGES,
                      'supervisorFailures': gate.SUPERVISOR_FAILURES, 'resourceFailures': gate.RESOURCE_FAILURES,
                      'nativeStatuses': gate.NATIVE_STATUSES, 'nativeRoles': gate.NATIVE_ROLES,
+                     'nativeBooleanKeys': gate.NATIVE_BOOLS,
                      'booleanKeys': gate.LIFECYCLE_BOOLS, 'counterKeys': gate.LIFECYCLE_COUNTS}
         for name, expected in constants.items():
             match = re.search(r'export const ' + name + r' = Object\.freeze\(\[(.*?)\]\)', source, re.S)

@@ -4,6 +4,16 @@ package main
 
 import "os"
 
+// Only booleans cross this test-only seam. The original component errors and
+// joined return value stay with the foreground owner; no error is formatted.
+var observeForegroundExitResult func(body, ownersClose, lockClose, acknowledgement bool)
+
+func observeForegroundExit(body, ownersClose, lockClose, acknowledgement error) {
+	if os.Getenv("SOBA_PRODUCT_ACTIVATION_ACCEPTANCE") == "1" && observeForegroundExitResult != nil {
+		observeForegroundExitResult(body != nil, ownersClose != nil, lockClose != nil, acknowledgement != nil)
+	}
+}
+
 // Test-only observation, not a registration/authority setter. No code, token,
 // receipt or Core pointer crosses this seam. Ordinary builds compile a no-op.
 var observeForegroundWebURL func(string)
