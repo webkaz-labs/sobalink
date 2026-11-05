@@ -226,7 +226,15 @@ func TestOutboxProcessRestart(t *testing.T) {
 		if err != nil || len(roots) != 1 || !roots[0].IsDir() || roots[0].Name() != filepath.Base(completed.Destination) {
 			t.Fatal("restart created missing or duplicate batch roots")
 		}
-		output := assertOutboxSavedInventory(t, completed.Destination, entry)
+		output, inventoryErr := outboxSavedInventory(completed.Destination, entry)
+		if inventoryErr != nil {
+			t.Logf("original saved inventory failure before diagnostic collection: %s", inventoryErr)
+			// Observe only after the unchanged assertion fails. This is not an
+			// atomic snapshot and never retries the assertion or runs cleanup.
+			evidence := observeOutboxSavedInventory(dirs[1], destinations[review.OutboxID], completed.Destination, review.Children[0].DeliveryID, entry)
+			t.Logf("post_failure_saved_inventory=%+v", evidence)
+			t.Fatal(inventoryErr)
+		}
 		if i == 0 {
 			data, err := os.ReadFile(output)
 			if err != nil || string(data) != "synthetic-original-outbox-content" {
