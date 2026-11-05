@@ -2,7 +2,29 @@
 
 package main
 
-import "os"
+import (
+	"github.com/webkaz-labs/sobalink/internal/core"
+	"io"
+	"os"
+)
+
+// Only fixed booleans and closed categories cross this test-only seam. The
+// original errors remain in shutdownManagedOwners and its returned join.
+var observeForegroundOwnersCloseResult func(ipcFailed, coreFailed bool, ipcClass, coreFirstComponent, coreFirstClass string)
+
+func observeForegroundOwnersClose(ipcErr, coreErr error, app io.Closer) {
+	if os.Getenv("SOBA_PRODUCT_ACTIVATION_ACCEPTANCE") != "1" || observeForegroundOwnersCloseResult == nil {
+		return
+	}
+	component, class := "none", "none"
+	if coreErr != nil {
+		component, class = "other", core.ProductCloseErrorClass(coreErr)
+		if owner, ok := app.(*core.Core); ok && owner != nil {
+			component, class = owner.ProductCloseFailure()
+		}
+	}
+	observeForegroundOwnersCloseResult(ipcErr != nil, coreErr != nil, core.ProductCloseErrorClass(ipcErr), component, class)
+}
 
 // Only booleans cross this test-only seam. The original component errors and
 // joined return value stay with the foreground owner; no error is formatted.

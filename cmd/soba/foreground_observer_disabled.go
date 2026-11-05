@@ -2,7 +2,12 @@
 
 package main
 
-import "os"
+import (
+	"io"
+	"os"
+)
+
+func observeForegroundOwnersClose(error, error, io.Closer) {}
 
 func observeForegroundWeb(string) {}
 

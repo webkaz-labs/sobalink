@@ -136,7 +136,7 @@ class ProductActivationPolicyTests(unittest.TestCase):
         self.assertIn("log, env=dict(env, GORACE='halt_on_error=1 exitcode=66 atexit_sleep_ms=0'), timeout=60)", source)
 
     def test_owner_and_foreground_components_survive_reconstruction(self):
-        self.assertEqual(gate.NATIVE_BOOLS, ('failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'))
+        self.assertEqual(gate.NATIVE_BOOLS, ('failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundIPCCloseFailed', 'foregroundCoreCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'))
         for key in gate.NATIVE_BOOLS:
             value = gate.empty_lifecycle()
             value['native']['successor'].update({'available': True, 'failed': True, 'stage': 'proof-written', key: True})
@@ -173,8 +173,31 @@ class ProductActivationPolicyTests(unittest.TestCase):
         self.assertEqual(failed['diagnostics'], value['diagnostics'])
         self.assertLessEqual(len(json.dumps(result).encode()), 16384)
 
+    def test_owner_close_categories_are_closed_and_evidence_only(self):
+        for key, choices in gate.NATIVE_CLOSE_ENUMS.items():
+            for choice in choices:
+                value = self.passing()
+                row = value['diagnostics']['cases'][0]['lifecycle']['native']['successor']
+                row.update({'available': True, key: choice})
+                self.assertTrue(gate.validate_report(value)['accepted'])
+                row['available'] = False
+                if choice != 'none':
+                    with self.assertRaises(ValueError):
+                        gate.validate_report(value)
+            for invalid in ('synthetic-private-detail', '/private/path', 'https://example.invalid/private', True, 1, None, [], {}):
+                value = self.passing()
+                value['diagnostics']['cases'][0]['lifecycle']['native']['successor'].update({'available': True, key: invalid})
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    gate.validate_report(value)
+            value = gate.empty_lifecycle()
+            del value['native']['successor'][key]
+            with self.assertRaises(ValueError):
+                gate.validate_lifecycle(value)
+        source = Path(gate.__file__).read_text()
+        self.assertLess(source.index("'-run=^TestProductCoreClose'"), source.index("'-test.run=' + FIXTURE_REGRESSIONS"))
+
     def test_foreground_private_and_unknown_fields_are_rejected(self):
-        for key in ('foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'foregroundError'):
+        for key in ('foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundIPCCloseFailed', 'foregroundCoreCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'foregroundError'):
             value = self.passing()
             value['diagnostics']['cases'][0]['lifecycle']['native']['successor'].update({'available': True, key: 'synthetic-private-detail'})
             with self.subTest(key=key), self.assertRaises(ValueError):
@@ -186,7 +209,7 @@ class ProductActivationPolicyTests(unittest.TestCase):
         self.assertIsNotNone(block)
         fields = re.findall(r'\b(int|bool|string)\s+`json:"([^"]+)"`', block.group(1))
         expected = {'schema': 'int', 'stage': 'string', 'ownerStatus': 'string', 'peerStatus': 'string',
-                    **dict.fromkeys(gate.NATIVE_BOOLS, 'bool')}
+                    **dict.fromkeys(gate.NATIVE_BOOLS, 'bool'), **dict.fromkeys(gate.NATIVE_CLOSE_ENUMS, 'string')}
         self.assertEqual(len(fields), len(expected))
         self.assertEqual({name: kind for kind, name in fields}, expected)
         self.assertEqual(gate.NATIVE_KEYS - {'available', 'invalid'}, set(expected) - {'schema'})
@@ -249,7 +272,8 @@ class ProductActivationPolicyTests(unittest.TestCase):
                      'cleanupPhases': gate.CLEANUP_PHASES, 'exits': gate.EXITS, 'nativeStages': gate.NATIVE_STAGES,
                      'supervisorFailures': gate.SUPERVISOR_FAILURES, 'resourceFailures': gate.RESOURCE_FAILURES,
                      'nativeStatuses': gate.NATIVE_STATUSES, 'nativeRoles': gate.NATIVE_ROLES,
-                     'nativeBooleanKeys': gate.NATIVE_BOOLS,
+                     'nativeBooleanKeys': gate.NATIVE_BOOLS, 'closeErrorClasses': gate.CLOSE_ERROR_CLASSES,
+                     'coreCloseComponents': gate.CORE_CLOSE_COMPONENTS,
                      'booleanKeys': gate.LIFECYCLE_BOOLS, 'counterKeys': gate.LIFECYCLE_COUNTS}
         for name, expected in constants.items():
             match = re.search(r'export const ' + name + r' = Object\.freeze\(\[(.*?)\]\)', source, re.S)
