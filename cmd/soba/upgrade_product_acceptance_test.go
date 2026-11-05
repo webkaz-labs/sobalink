@@ -270,6 +270,13 @@ func runProductOwner(dir string, successor bool) (result error) {
 	diagnostic.stage("foreground")
 	// The observer runs synchronously in this owner. Keep the snapshot local
 	// until the monitor joins, since that goroutine also updates diagnostic.view.
+	var ipcCloseFailed, coreCloseFailed bool
+	ipcCloseClass, coreFirstCloseComponent, coreFirstCloseClass := "none", "none", "none"
+	observeForegroundOwnersCloseResult = func(ipcFailed, coreFailed bool, ipcClass, component, class string) {
+		ipcCloseFailed, coreCloseFailed = ipcFailed, coreFailed
+		ipcCloseClass, coreFirstCloseComponent, coreFirstCloseClass = ipcClass, component, class
+	}
+	defer func() { observeForegroundOwnersCloseResult = nil }()
 	var exitObserved, bodyFailed, ownersCloseFailed, lockCloseFailed, ackFailed bool
 	observeForegroundExitResult = func(body, ownersClose, lockClose, acknowledgement bool) {
 		exitObserved = true
@@ -292,6 +299,11 @@ func runProductOwner(dir string, successor bool) (result error) {
 	diagnostic.view.ForegroundExitObserved = exitObserved
 	diagnostic.view.ForegroundBodyFailed = bodyFailed
 	diagnostic.view.ForegroundOwnersCloseFailed = ownersCloseFailed
+	diagnostic.view.ForegroundIPCCloseFailed = ipcCloseFailed
+	diagnostic.view.ForegroundCoreCloseFailed = coreCloseFailed
+	diagnostic.view.ForegroundIPCCloseClass = ipcCloseClass
+	diagnostic.view.ForegroundCoreFirstCloseComponent = coreFirstCloseComponent
+	diagnostic.view.ForegroundCoreFirstCloseClass = coreFirstCloseClass
 	diagnostic.view.ForegroundLockCloseFailed = lockCloseFailed
 	diagnostic.view.ForegroundAckFailed = ackFailed
 	diagnostic.view.ForegroundFailed = err != nil

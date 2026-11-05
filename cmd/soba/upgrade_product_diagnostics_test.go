@@ -15,20 +15,25 @@ import (
 // grant authority, drive readiness or add any acceptance/cleanup predicate.
 // Each record has one writer; the owner joins its monitor before final flush.
 type productNativeObservation struct {
-	Schema                      int    `json:"schema"`
-	Stage                       string `json:"stage"`
-	Failed                      bool   `json:"failed"`
-	ForegroundFailed            bool   `json:"foregroundFailed"`
-	ForegroundExitObserved      bool   `json:"foregroundExitObserved"`
-	ForegroundBodyFailed        bool   `json:"foregroundBodyFailed"`
-	ForegroundOwnersCloseFailed bool   `json:"foregroundOwnersCloseFailed"`
-	ForegroundLockCloseFailed   bool   `json:"foregroundLockCloseFailed"`
-	ForegroundAckFailed         bool   `json:"foregroundAckFailed"`
-	MonitorFailed               bool   `json:"monitorFailed"`
-	PeerCloseFailed             bool   `json:"peerCloseFailed"`
-	LockCloseFailed             bool   `json:"lockCloseFailed"`
-	OwnerStatus                 string `json:"ownerStatus"`
-	PeerStatus                  string `json:"peerStatus"`
+	Schema                            int    `json:"schema"`
+	Stage                             string `json:"stage"`
+	Failed                            bool   `json:"failed"`
+	ForegroundFailed                  bool   `json:"foregroundFailed"`
+	ForegroundExitObserved            bool   `json:"foregroundExitObserved"`
+	ForegroundBodyFailed              bool   `json:"foregroundBodyFailed"`
+	ForegroundOwnersCloseFailed       bool   `json:"foregroundOwnersCloseFailed"`
+	ForegroundIPCCloseFailed          bool   `json:"foregroundIPCCloseFailed"`
+	ForegroundCoreCloseFailed         bool   `json:"foregroundCoreCloseFailed"`
+	ForegroundIPCCloseClass           string `json:"foregroundIPCCloseClass"`
+	ForegroundCoreFirstCloseComponent string `json:"foregroundCoreFirstCloseComponent"`
+	ForegroundCoreFirstCloseClass     string `json:"foregroundCoreFirstCloseClass"`
+	ForegroundLockCloseFailed         bool   `json:"foregroundLockCloseFailed"`
+	ForegroundAckFailed               bool   `json:"foregroundAckFailed"`
+	MonitorFailed                     bool   `json:"monitorFailed"`
+	PeerCloseFailed                   bool   `json:"peerCloseFailed"`
+	LockCloseFailed                   bool   `json:"lockCloseFailed"`
+	OwnerStatus                       string `json:"ownerStatus"`
+	PeerStatus                        string `json:"peerStatus"`
 }
 type productNativeDiagnostic struct {
 	path string
@@ -38,7 +43,7 @@ type productNativeDiagnostic struct {
 var productNativeStages = []string{"not-started", "owner-start", "peer-open", "peer-review", "peer-apply", "foreground", "identity", "management-announced", "cli-launch", "review-read", "owner-status", "peer-status", "review-binding", "network-ready", "persisted-context", "pair-binding", "proof-written", "cli-terminal", "cli-review", "cli-review-binding", "cli-apply", "cli-complete"}
 
 func newProductNativeDiagnostic(dir, role string) *productNativeDiagnostic {
-	d := &productNativeDiagnostic{path: filepath.Join(activationEvidenceDir(dir, role), "native.json"), view: productNativeObservation{Schema: 1, Stage: "not-started", OwnerStatus: "unobserved", PeerStatus: "unobserved"}}
+	d := &productNativeDiagnostic{path: filepath.Join(activationEvidenceDir(dir, role), "native.json"), view: productNativeObservation{Schema: 1, Stage: "not-started", ForegroundIPCCloseClass: "none", ForegroundCoreFirstCloseComponent: "none", ForegroundCoreFirstCloseClass: "none", OwnerStatus: "unobserved", PeerStatus: "unobserved"}}
 	d.flush()
 	return d
 }
