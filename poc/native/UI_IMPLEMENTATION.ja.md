@@ -15,9 +15,11 @@
 - 一覧のコントロールには構築前に安定した key を渡します。`Element` の寿命は 1 回の build です。build 値をアプリ状態や worker に保持せず、持続する識別やサービスには `Handle` / `Services` を使います。
 - UI の状態はメインスレッドで読みます。`Window.Update` はそこで状態を更新します。invalidate だけでは保護されていない共有状態を同期できません。
 - テーマを変更するときはコピーします。色や寸法には `Context.Theme`、`Theme.Space`、`Theme.Rem` を使い、独自の部品もテーマに従わせます。
+- `Context.Preferences` は OS のアクセント、高コントラスト、文字拡大、動きの軽減を提供します。既定テーマにはこれらが反映されます。
+- `ui.Tabs` は支援技術へ選択状態を持つタブ一覧を公開し、矢印 / Home / End による移動と、Tab キーでの 1 つの停止位置を提供します。
 - `mygo vet` は Go vet に加えて native UI の build 値の寿命を検査します。
 
-出典: [view と寿命](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/views.md)、[スタイルとテーマ](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/styling.md)、[アクセシビリティ](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/accessibility.md)、[テスト](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/testing.md)、[vet の実装](https://github.com/egoist/mygo/blob/v0.7.4/cmd/mygo/vet_ui.go)。
+出典: [view と寿命](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/views.md)、[スタイルとテーマ](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/styling.md)、[アクセシビリティ](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/accessibility.md)、[テスト](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/testing.md)、[タブ](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/tabs.md)、[vet の実装](https://github.com/egoist/mygo/blob/v0.7.4/cmd/mygo/vet_ui.go)、[OS 設定の反映実装](https://github.com/egoist/mygo/blob/v0.7.4/ui/preferences.go)。
 
 **以下の分離は Sobalink の実装方針です。** MyGo が MVVM、特定のディレクトリ構成、別の component framework を要求しているという意味ではありません。小さな値の binding や表示条件は通常の Go で記述します。単一の widget を別名で包むだけの抽象化や、画面構成を分かりにくくする仕組みは避けます。
 
@@ -28,7 +30,7 @@
 - **アプリ状態と操作:** `app.go`、`messagepane.go`、`filepane.go`。画面遷移、端末ごとの下書き、不変の確認内容、実行中状態、リクエスト識別、操作条件、結果の反映を担当します。コントロールは名前付きメソッドを呼びます。ボタンを無効表示するだけでなく、操作メソッド自身でも条件を確認します。
 - **ネイティブダイアログ:** `filepane_dialog.go`。UI スレッドで親ウィンドウを取得し、ダイアログ設定を画面構成から分離します。worker へ渡すのは通常の値と callback であり、build 中の element や context は渡しません。
 - **通信境界:** `exchange.go` と `model.go` の IPC loader。プロトコル検証、確認、保護された IPC の契約を維持します。リファクタリングでネットワークアクセスや許可範囲を広げません。
-- **テーマ:** `theme.go`。色と用途別の文字・余白の指定を集約します。システムテーマをコピーし、寸法とダーク表示を保持し、独自部品にもテーマ色を使います。view ファイルに色のリテラルを分散させません。追加の視覚効果は別途評価し、この方針だけでプラグインを必須にはしません。
+- **テーマ:** `theme.go`。色と用途別の文字・余白の指定を集約します。システムテーマをコピーし、寸法とダーク表示を保持し、独自部品にもテーマ色を使います。OS の高コントラスト調整はアプリの配色全体より優先します。OS で指定したアクセントは文字色・hover / pressed・選択色・フォーカス色と一緒に保持し、一部だけを置き換えません。画面・カード・行の共通余白、節・項目・操作間隔、角丸には名前付きの指定を使い、角丸はテーマの radius に従わせます。入力欄の行数や native window の配置制限といった機能上の寸法は見た目のテーマと分けます。view ファイルに色のリテラルを分散させません。追加の視覚効果は別途評価し、この方針だけでプラグインを必須にはしません。
 
 ## 状態・並行処理・安全性
 
@@ -39,13 +41,14 @@ worker は容量を制限した channel に完了イベントを送り、UI ス�
 - pane ごとの操作は同時に 1 件までです。連打で変更操作を重複させません。
 - 送信、受信、辞退は明示的な確認を経ます。該当する操作では、確認した相手・プロセス・revision・内容・受信オファーが現在も一致することを確認します。
 - 確定前の cancel / back は送信しません。アプリの context がキャンセル済みなら、新しい処理を開始しません。
+- native のメッセージ入力は、確認・送信の前に画面の上限である UTF-8 16,384 バイトを検証し、超過時も下書きを編集可能に保ちます。Core の設定上限は異なる場合があります。送信要求後に編集を許可するのは、Core が送信処理前に直接返す `message_too_large` に限ります。その他の通信・相手側・応答のエラーは結果不明のままです。これは入力段階の保護であり、IPC 上限の動的取得ではありません。
 - 結果不明の変更操作はリクエスト識別を保持し、自動・手動の再送をロックします。読み取り専用の状態照会だけでロックを解除しません。
 - デモは実通信を呼びません。実操作には送信の明示指定と、許可済みで一時停止していない対象端末が必要です。
 - 通信の生エラーや実プロファイル情報をテスト画像へ出しません。架空の fixture と headless の `--demo` 描画を使います。
 
 ## アクセシビリティと検証
 
-native button / input の振る舞い、アクセス可能な名前、行の role、展開状態、安定した key、キーボードのフォーカスと操作を維持します。状態変化の読み上げは変化時に 1 回だけ行い、build ごとに繰り返しません。日英表示と日本語フォントの fallback を保ちます。テーマを変更したら狭幅、明色・暗色の画面を確認します。
+native button / input の振る舞い、アクセス可能な名前、行の role、展開状態、安定した key、キーボードのフォーカスと操作を維持します。状態変化の読み上げは変化時に 1 回だけ行い、build ごとに繰り返しません。日英表示と日本語フォントの fallback を保ちます。メッセージ / ファイルの切り替えには標準の `ui.Tabs` を使い、選択状態やキーボード操作をボタンで独自に再実装しません。テーマを変更したら、狭幅、明色・暗色、高コントラスト、OS アクセントの切り替え、文字拡大を確認します。headless のキーボードテストは矢印 / Home / End / Tab のフォーカス移動を検証しますが、実機の読み上げ受入を証明するものではありません。
 
 リポジトリの checksum 検証付き engine adaptation を準備し、`poc/native` で実行します。
 

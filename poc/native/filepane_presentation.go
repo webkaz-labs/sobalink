@@ -26,14 +26,14 @@ func (p *filePane) noticeText(demo bool, t fileText) string {
 	}
 	return ""
 }
-func dispatchChildStatus(child fileChild, a fileActions, t fileText) string {
+func dispatchChildStatus(child fileChild, a fileActions, t fileText, ja bool) string {
 	status := t("Not yet in refreshed history", "更新した履歴に未反映")
 	if a.demo {
 		status = t("Simulated", "シミュレーション")
 	}
 	for _, v := range a.transfers {
 		if v.Direction == "outgoing" && v.ID == child.TransferID && v.PeerID == child.PeerID {
-			return v.Status
+			return exchangeStatus(v.Status, ja)
 		}
 	}
 	return status

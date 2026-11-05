@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/webkaz-labs/sobalink/internal/control"
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 )
 
 // A pane belongs to one peer. Reviewed values are immutable until explicitly
@@ -30,11 +33,22 @@ func (p *messagePane) beginReview(peerID, peerName string) {
 	if p.busy || p.uncertain || p.review != nil || peerID == "" || strings.TrimSpace(p.draft) == "" || !utf8.ValidString(p.draft) {
 		return
 	}
+	if len(p.draft) > messageframe.TextBytes {
+		p.notice = "too_large"
+		return
+	}
 	p.review = &messageReview{requestID: newExchangeRequestID(), peerID: peerID, peerName: peerName, text: p.draft}
 	p.notice = ""
 }
 func (p *messagePane) send(ctx context.Context, wake func(), demo, enabled bool, client *exchangeClient, peerID string) {
 	if !enabled || p.busy || p.uncertain || p.review == nil || p.review.attempted || p.review.peerID != peerID || ctx.Err() != nil || !demo && client == nil {
+		return
+	}
+	// Reject locally before marking the immutable review as attempted. All
+	// other errors after dispatch remain uncertain unless Core explicitly
+	// confirms its pre-dispatch text-budget rejection.
+	if len(p.review.text) > messageframe.TextBytes {
+		p.notice = "too_large"
 		return
 	}
 	r := *p.review
@@ -66,6 +80,15 @@ func (p *messagePane) drain() {
 		if p.review == nil || p.review.requestID != e.requestID {
 			p.uncertain = true
 			p.notice = "uncertain"
+			return
+		}
+		// For immediate message.send, Core emits this code before creating an
+		// operation or contacting the peer. Peer-side size failures use a
+		// different code. Do not generalize to request/response size errors,
+		// wrapped errors, or other remote failures with uncertain outcomes.
+		if remote, ok := e.err.(*control.RemoteError); ok && remote.Code == "message_too_large" {
+			p.review.attempted = false
+			p.notice = "configured_too_large"
 			return
 		}
 		if e.err != nil {

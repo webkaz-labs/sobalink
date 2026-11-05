@@ -12,7 +12,7 @@ func (p *messagePane) view(c *ui.Context, ctx context.Context, ja, demo, enabled
 		c.Announce(t("Action status changed. Review the status below.", "操作状況が変わりました。下の結果を確認してください。"))
 	}
 	allowed := enabled && peerID != "" && (demo || client != nil)
-	ui.Column(c).FillWidth().Gap(c.Theme().Space(1.75)).Children(func() {
+	ui.Column(c).FillWidth().Gap(nativeStyles(c).itemGap).Children(func() {
 		ui.Text(c, t("Messages", "メッセージ")).Bold()
 		if demo {
 			ui.Text(c, t("SIMULATED · No message is sent", "送信シミュレーション · 実際には送信しません")).FontSize(nativeStyles(c).caption)
@@ -62,7 +62,7 @@ func (p *messagePane) reviewView(c *ui.Context, ja, allowed bool, peerID string,
 	ui.Text(c, t("To: ", "送信先: ")+r.peerName).FontSize(style.caption)
 	ui.Text(c, r.peerID).FontSize(style.metadata).FillWidth()
 	ui.Text(c, r.text).FillWidth().FontSize(style.body)
-	ui.Row(c).Gap(c.Theme().Space(1.5)).Children(func() {
+	ui.Row(c).Gap(style.actionGap).Children(func() {
 		if ui.Button(c, t("Confirm message send", "メッセージ送信を確定")).Disabled(!allowed || !p.canSend(peerID)).Clicked() {
 			confirm()
 		}

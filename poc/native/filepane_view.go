@@ -17,7 +17,7 @@ func (p *filePane) view(c *ui.Context, ctx context.Context, ja, demo, enabled bo
 	}
 	a := fileActions{ctx: ctx, wake: c.Services().Invalidate, demo: demo, enabled: enabled, client: client, process: processID, peer: peerID, transfers: transfers}
 	a.pick = nativeFilePicker(t)
-	ui.Column(c).FillWidth().Gap(c.Theme().Space(1.75)).Children(func() {
+	ui.Column(c).FillWidth().Gap(nativeStyles(c).itemGap).Children(func() {
 		p.filePickerView(c, a, t)
 		if p.review.PreparationID != "" {
 			p.outgoingReviewView(c, a, t)
@@ -31,7 +31,7 @@ func (p *filePane) view(c *ui.Context, ctx context.Context, ja, demo, enabled bo
 			p.incomingReviewView(c, a, t)
 		}
 		p.fileStatusView(c, a, t)
-		p.dispatchReceiptView(c, a, t)
+		p.dispatchReceiptView(c, a, t, ja)
 		p.transferHistoryView(c, a, t, ja)
 	})
 }
@@ -56,7 +56,7 @@ func (p *filePane) outgoingReviewView(c *ui.Context, a fileActions, t fileText) 
 	if a.peer != p.peer || a.process != p.process {
 		fileDetail(c, t("Selection changed. Return to the reviewed recipient, or discard.", "選択が変わりました。確認した送信先に戻るか、破棄してください。"))
 	}
-	ui.Row(c).Gap(c.Theme().Space(1.5)).Children(func() {
+	ui.Row(c).Gap(nativeStyles(c).actionGap).Children(func() {
 		if ui.Button(c, t("Confirm send", "送信を確定")).Disabled(!p.canCommit(a)).Clicked() {
 			p.commitFiles(a)
 		}
@@ -105,13 +105,13 @@ func (p *filePane) fileStatusView(c *ui.Context, a fileActions, t fileText) {
 		fileDetail(c, t("Request: ", "リクエスト: ")+p.actionID)
 	}
 }
-func (p *filePane) dispatchReceiptView(c *ui.Context, a fileActions, t fileText) {
+func (p *filePane) dispatchReceiptView(c *ui.Context, a fileActions, t fileText, ja bool) {
 	if len(p.receipt.Children) == 0 {
 		return
 	}
 	ui.Text(c, t("Last dispatch recipients", "直近の送信先別状況")).Bold()
 	for _, child := range p.receipt.Children {
-		fileDetail(c, child.PeerID+" · "+child.TransferID+" · "+dispatchChildStatus(child, a, t))
+		fileDetail(c, child.PeerID+" · "+child.TransferID+" · "+dispatchChildStatus(child, a, t, ja))
 	}
 }
 func (p *filePane) transferHistoryView(c *ui.Context, a fileActions, t fileText, ja bool) {
@@ -126,7 +126,7 @@ func (p *filePane) transferHistoryView(c *ui.Context, a fileActions, t fileText,
 }
 func (p *filePane) transferRowView(c *ui.Context, a fileActions, t fileText, ja bool, v exchangeTransfer) {
 	summary := fmt.Sprintf("%s · %s · %d/%d B", v.ID, exchangeStatus(v.Status, ja), v.CompletedBytes, v.TotalBytes)
-	ui.Column(c).FillWidth().Gap(c.Theme().Space(1)).Children(func() {
+	ui.Column(c).FillWidth().Gap(nativeStyles(c).detailGap).Children(func() {
 		fileDetail(c, summary)
 		for _, f := range v.Entries {
 			fileDetail(c, fileLabel(f.Path))
@@ -137,7 +137,7 @@ func (p *filePane) transferRowView(c *ui.Context, a fileActions, t fileText, ja 
 	})
 }
 func (p *filePane) offerActionsView(c *ui.Context, a fileActions, t fileText, v exchangeTransfer) {
-	ui.Row(c).Gap(c.Theme().Space(1.5)).Children(func() {
+	ui.Row(c).Gap(nativeStyles(c).actionGap).Children(func() {
 		if ui.Button(c, t("Review accept", "受信を確認")).Disabled(!p.canReviewIncoming(a, v)).Clicked() {
 			p.reviewIncoming(a, v, false)
 		}

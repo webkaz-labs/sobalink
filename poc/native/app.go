@@ -67,10 +67,9 @@ func (a *app) togglePeer(id string) {
 		a.selected = id
 	}
 }
-func (a *app) openConversation()  { a.conversation = a.selected }
-func (a *app) closeConversation() { a.conversation = "" }
-func (a *app) showMessages()      { a.filesTab = false }
-func (a *app) showFiles()         { a.filesTab = true }
+func (a *app) openConversation()             { a.conversation = a.selected }
+func (a *app) closeConversation()            { a.conversation = "" }
+func (a *app) selectConversationTab(tab int) { a.filesTab = tab == 1 }
 
 // Conversation state lives with the app, never with a build-pass element.
 func (a *app) prepareConversation() {

@@ -120,6 +120,13 @@ type conversationPresentation struct {
 	enabled        bool
 }
 
+func (a *app) conversationTab() int {
+	if a.filesTab {
+		return 1
+	}
+	return 0
+}
+
 func (a *app) conversationPresentation() conversationPresentation {
 	v := conversationPresentation{id: a.conversation, name: a.t("Device unavailable", "端末を取得できません"), mode: a.modeLabel(true)}
 	for _, p := range a.state.Peers {

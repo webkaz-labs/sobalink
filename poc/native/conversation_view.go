@@ -5,7 +5,7 @@ import "github.com/egoist/mygo/ui"
 func (a *app) exchangeView(c *ui.Context) {
 	v := a.conversationPresentation()
 	theme, style := c.Theme(), nativeStyles(c)
-	ui.Column(c).Fill().Lang(a.t("en", "ja")).Font(uiFont(a.ja)).Background(theme.Background).TextColor(theme.Text).Padding(theme.Space(4)).Gap(theme.Space(2.5)).Children(func() {
+	ui.Column(c).Fill().Lang(a.t("en", "ja")).Font(uiFont(a.ja)).Background(theme.Background).TextColor(theme.Text).Padding(style.screenPadding).Gap(style.paneGap).Children(func() {
 		a.conversationHeader(c, v)
 		ui.Text(c, v.mode).FontSize(style.caption).Bold()
 		if !v.enabled {
@@ -17,7 +17,7 @@ func (a *app) exchangeView(c *ui.Context) {
 	})
 }
 func (a *app) conversationHeader(c *ui.Context, v conversationPresentation) {
-	ui.Row(c).FillWidth().Gap(c.Theme().Space(2)).Children(func() {
+	ui.Row(c).FillWidth().Gap(nativeStyles(c).controlGap).Children(func() {
 		if ui.Button(c, a.t("Back", "戻る")).Clicked() {
 			a.closeConversation()
 		}
@@ -28,14 +28,10 @@ func (a *app) conversationHeader(c *ui.Context, v conversationPresentation) {
 	})
 }
 func (a *app) conversationTabs(c *ui.Context) {
-	ui.Row(c).Gap(c.Theme().Space(2)).Children(func() {
-		if ui.Button(c, a.t("Messages", "メッセージ")).Clicked() {
-			a.showMessages()
-		}
-		if ui.Button(c, a.t("Files", "ファイル")).Clicked() {
-			a.showFiles()
-		}
-	})
+	selected := a.conversationTab()
+	if ui.Tabs(c, &selected, a.t("Messages", "メッセージ"), a.t("Files", "ファイル")).Changed() {
+		a.selectConversationTab(selected)
+	}
 }
 func (a *app) conversationContent(c *ui.Context, v conversationPresentation) {
 	id := v.id

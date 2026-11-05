@@ -15,9 +15,11 @@ The following behavior is documented by **MyGo v0.7.4**, the version pinned in t
 - Give list controls stable keys before construction. An `Element` belongs to one build pass. Do not keep build values in application state or background workers; use `Handle` or `Services` for persistent identities and services.
 - UI state is read on the main thread. `Window.Update` schedules changes there; invalidation alone does not synchronize unguarded shared state.
 - Copy the theme before changing it. Read colors and metrics through `Context.Theme`, `Theme.Space` and `Theme.Rem` so custom elements follow the theme.
+- `Context.Preferences` exposes desktop accent, high contrast, text scale and reduced motion. The default theme applies these settings.
+- `ui.Tabs` exposes a selected tab list to assistive technology and provides arrow/Home/End navigation with one Tab stop.
 - `mygo vet` checks native build-value lifetimes in addition to running Go vet.
 
-Sources: [views and lifetimes](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/views.md), [styling and themes](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/styling.md), [accessibility](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/accessibility.md), [testing](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/testing.md), [vet implementation](https://github.com/egoist/mygo/blob/v0.7.4/cmd/mygo/vet_ui.go).
+Sources: [views and lifetimes](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/views.md), [styling and themes](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/styling.md), [accessibility](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/accessibility.md), [testing](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/testing.md), [tabs](https://github.com/egoist/mygo/blob/v0.7.4/docs/ui/tabs.md), [vet implementation](https://github.com/egoist/mygo/blob/v0.7.4/cmd/mygo/vet_ui.go), [desktop preference implementation](https://github.com/egoist/mygo/blob/v0.7.4/ui/preferences.go).
 
 **The separation below is Sobalink's implementation policy**, not a claim that MyGo requires MVVM, a particular directory structure, or a separate component framework. Small direct bindings and presentation conditions remain ordinary Go. Avoid wrappers that only rename a single widget or obscure the screen's structure.
 
@@ -28,7 +30,7 @@ Sources: [views and lifetimes](https://github.com/egoist/mygo/blob/v0.7.4/docs/u
 - **Application state and operations:** `app.go`, `messagepane.go`, `filepane.go`. Own navigation, retained peer-specific drafts, immutable reviewed values, busy state, request identity, operation guards and result handling. Controls call named methods. Guard the operation itself as well as showing a disabled control.
 - **Native dialog adapter:** `filepane_dialog.go`. Capture window ownership on the UI thread; keep dialog configuration outside screen composition. Workers receive ordinary values and callbacks, never build-pass elements or contexts.
 - **Transport boundary:** `exchange.go` and the IPC loader in `model.go`. Keep protocol validation, confirmation and protected IPC contracts here. A refactor must not broaden network access or permission scope.
-- **Theme:** `theme.go`. Centralize the companion palette and semantic typography/spacing tokens. Copy the system theme, retain its metrics and dark appearance, and use its colors in custom components. Do not scatter color literals through view files. Optional visual effects require separate evaluation; no plugin is required by this policy.
+- **Theme:** `theme.go`. Centralize the companion palette and semantic typography/spacing tokens. Copy the system theme, retain its metrics and dark appearance, and use its colors in custom components. Desktop high-contrast adaptations take precedence over the whole companion palette. Preserve an explicit desktop accent together with its text, hover/pressed, selection and focus colors; never replace only part of that set. Use named tokens for shared screen/card/row padding, section/item/action gaps and corner radii; corner radii follow the theme radius. Keep functional limits such as text-input line counts and native window placement bounds outside the visual theme. Do not scatter color literals through view files. Optional visual effects require separate evaluation; no plugin is required by this policy.
 
 ## State, concurrency and safety
 
@@ -39,13 +41,14 @@ Keep these invariants in named operation methods:
 - At most one operation per pane at a time. Double clicks must not duplicate a mutation.
 - Explicit review precedes send, accept or decline. The reviewed recipient, process, revision, contents and incoming offer must still match where applicable.
 - Cancel/back before submission must not submit. A cancelled application context must not start new work.
+- The native message composer checks its 16,384 UTF-8 byte limit before review and dispatch; oversize drafts remain editable. Core can have a different configured limit. Only its direct, pre-dispatch `message_too_large` rejection permits editing after a submission. Other transport, peer and response errors remain uncertain. This is a local admission safeguard, not IPC-budget negotiation.
 - An uncertain mutation keeps its request identity and stays locked against automatic or manual resend. Read-only status checks must not silently unlock it.
 - Demo mode never invokes real transport. Live mutation requires the explicit sending flag and an eligible, trusted, unpaused peer.
 - Do not expose raw transport errors or real profile data in test images. Use fictional fixtures and headless `--demo` rendering.
 
 ## Accessibility and validation
 
-Keep native button/input behavior, accessible names, row roles, expanded state, stable keys, keyboard focus and activation. Status changes should be announced once, not on every build pass. Maintain Japanese and English labels and Japanese font fallback. Exercise narrow layouts and dark/light appearance when theme tokens change.
+Keep native button/input behavior, accessible names, row roles, expanded state, stable keys, keyboard focus and activation. Status changes should be announced once, not on every build pass. Maintain Japanese and English labels and Japanese font fallback. Use the standard `ui.Tabs` for message/file selection rather than reproducing its selected state and keyboard behavior with buttons. Exercise narrow layouts, dark/light appearance, high contrast, desktop accent changes and text enlargement when theme tokens change. Headless keyboard tests verify arrows, Home/End and Tab focus; they do not establish real screen-reader acceptance.
 
 From `poc/native`, with the repository's checksum-verified engine adaptations prepared:
 
