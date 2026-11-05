@@ -562,11 +562,6 @@ func (c *Core) close() error {
 	if ps != nil {
 		errs = append(errs, c.observeProductClose("peer-server", ps.Close()))
 	}
-	if web != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		errs = append(errs, c.observeProductClose("web", web.Close(ctx)))
-		cancel()
-	}
 	errs = append(errs, c.observeProductClose("transfers", c.transfers.Close()))
 	if node != nil {
 		errs = append(errs, c.observeProductClose("node", node.Close()))
@@ -574,6 +569,13 @@ func (c *Core) close() error {
 	// Inspection can be queued on op for its owned disclosure snapshot.
 	// Its canceled owner is joined only after releasing this mutation lock.
 	c.op.Unlock()
+	// An admitted HTTP handler may be waiting for op, even after its client
+	// disconnects or the Core context is canceled. Never join it under op.
+	if web != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		errs = append(errs, c.observeProductClose("web", web.Close(ctx)))
+		cancel()
+	}
 	if inspection != nil {
 		<-inspection.done
 	}
