@@ -11,6 +11,9 @@ MyGo v0.7.4 を使う、必要なときに起動する別クライアント `sob
 リリースごとの結果は[検証状況](../../docs/VERIFICATION.md)を参照してください。既定は読み取り専用で、
 既存の `soba` CLI・本体・Web UIは引き続き使えます。設定・接続・許可・本体停止・更新は既存UI/CLIで扱います。
 
+Implementation policy: [English](UI_IMPLEMENTATION.en.md) / [日本語](UI_IMPLEMENTATION.ja.md).
+画面定義・表示用の計算・操作処理の分離、部品化、テーマ、検査の方針を記載しています。
+
 ## Compact desktop layout / コンパクト表示
 
 The normal window is 460×560 DIPs (display-independent size units), with a
@@ -74,7 +77,7 @@ not validate GPU rendering, native IME, accessibility bridges or window chrome.
 
 ```sh
 go test -race ./...
-go vet ./...
+go run github.com/egoist/mygo/cmd/mygo vet .
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags='-H=windowsgui' .
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build .
 ```

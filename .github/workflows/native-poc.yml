@@ -58,8 +58,8 @@ jobs:
           go run ./cmd/prepare-engine --verify
       - name: Test protected IPC, Core protocol fixtures and UI safety
         run: go test -race -v -count=1 -timeout=15m ./...
-      - name: Vet isolated module
-        run: go vet ./...
+      - name: Vet Go code and MyGo build lifetimes
+        run: go run github.com/egoist/mygo/cmd/mygo vet .
       - name: Test deterministic kit packaging
         run: python -B packaging_test.py
       - name: Compile native UI
