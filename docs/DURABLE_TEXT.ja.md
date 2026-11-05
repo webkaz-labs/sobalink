@@ -4,13 +4,13 @@
 
 正確な相手1台に、変更しない本文を明示的に送信予約できます。相手がオフラインでも予約できます。受付はローカルでの受付、完了は受信側での本文の永続保存を表します。人が読んだことは表しません。
 
-実験的な [0.5.0-alpha.1 公開版](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)で導入され、現在の公開版 0.5.1-alpha.1 でも利用できます。**profile 形式 3** は 0.4.0-alpha.4 と旧形式に非互換です。既存の状態を保管し、別の空の `--state-dir` を選びます。移行・自動消去・同じプロフィールでのダウングレードは行いません。[公開版の検証](VERIFICATION.md)は実機・電源断・OS ログイン・休止復帰の合格を意味しません。
+実験的な [0.5.0-alpha.1 公開版](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1)で導入され、現在の公開版 0.5.4-alpha.1 でも利用できます。**プロファイル形式 3** は 0.4.0-alpha.4 と旧形式に非互換です。既存の状態を保管し、別の空の `--state-dir` を選びます。移行・自動消去・同じプロフィールでのダウングレードは行いません。[公開版の検証](VERIFICATION.md)は実機・電源断・OS ログイン・休止復帰の合格を意味しません。
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/durable-save-gates-ja-dark-narrow.svg">
   <source media="(max-width: 839px)" srcset="assets/visuals/durable-save-gates-ja-light-narrow.svg">
   <source media="(prefers-color-scheme: dark)" srcset="assets/visuals/durable-save-gates-ja-dark-wide.svg">
-  <img src="assets/visuals/durable-save-gates-ja-light-wide.svg" alt="文字とファイルは現在の相手の信頼が必要です。ファイルには保存同意も必要。保存ACK喪失時は元のIDで確認します。" width="960">
+  <img src="assets/visuals/durable-save-gates-ja-light-wide.svg" alt="文字とファイルは現在の相手の信頼が必要です。ファイルには保存同意も必要。保存確認の応答が失われた場合は元のIDで確認します。" width="960">
 </picture>
 
 [図を元の大きさで開く（横長）](assets/visuals/durable-save-gates-ja-light-wide.svg) · [縦長版](assets/visuals/durable-save-gates-ja-light-narrow.svg)
@@ -47,7 +47,7 @@ soba message peer-a 'Send this now'
 
 受付後は送信側の再起動後も、元の期限まで自動で送信を試みられます。送信には両端末の Sobalink 起動、接続可能な経路、現在の識別情報と信頼、適用される一時停止や取消がないこと、認証済みの `durable_text_v1` 対応が必要です。オフライン時には接続するまで対応状況が未確認の場合があります。永続送信に未対応でも旧方式の即時送信へ切り替えません。
 
-形式 3 のプロファイルでも、相手への最初のアプリ信頼承認より先に、その相手の起動時接続／プロキシの範囲を別途確認・保存している場合があります。その保存済み範囲が空の相手 epoch を記録していた場合、最初のアプリ承認で空でない epoch を永続化すると、同じ相手の保存済み範囲は古い状態になります。引き続き必要なら、その別の範囲を再確認して明示的に保存してください。既存の空でない epoch や無関係な相手の範囲を書き換えず、アプリの信頼だけで起動／プロキシの許可を暗黙に更新しません。
+形式 3 のプロファイルでも、相手への最初のアプリ信頼承認より先に、その相手の起動時接続／プロキシの範囲を別途確認・保存している場合があります。その保存済み範囲が空の相手の信頼世代（epoch） を記録していた場合、最初のアプリ承認で空でない epoch を永続化すると、同じ相手の保存済み範囲は古い状態になります。引き続き必要なら、その別の範囲を再確認して明示的に保存してください。既存の空でない epoch や無関係な相手の範囲を書き換えず、アプリの信頼だけで起動／プロキシの許可を暗黙に更新しません。
 
 ## JSON と明示承認
 
@@ -79,7 +79,7 @@ soba message queue discard OUTBOX_ID --process PROCESS_ID --json
 
 `show` と `status` は同じ操作です。discard は準備にだけ適用し、受付済みのメッセージには cancel を使います。停止は追加送信を止め、実行中の処理の終了を待ちます。`cancel_requested` は停止処理の途中です。停止しても相手に保存済みの本文を回収せず、判明した保存の記録を未到着の主張に変えません。
 
-詳細コマンドは version 1 の `text_outbox` 記録を直接返します。元の各 ID、正確な相手、変更しない本文のバイト数とハッシュ、元の作成日時と期限、確認リビジョン、受付状態、処理状態、到着結果、理由コードを含みます。保持されている詳細・確認には本文も含みます。任意の receipt が正確な受信保存の記録を示します。承認された履歴整理の後は、元の識別情報・ハッシュ・receipt を残して本文を省略する場合があります。
+詳細コマンドは version 1 の `text_outbox` 記録を直接返します。元の各 ID、正確な相手、変更しない本文のバイト数とハッシュ、元の作成日時と期限、確認リビジョン、受付状態、処理状態、到着結果、理由コードを含みます。保持されている詳細・確認には本文も含みます。任意の保存確認記録（receipt）が正確な受信保存の記録を示します。承認された履歴整理の後は、元の識別情報・ハッシュ・receipt を残して本文を省略する場合があります。
 
 一覧は上限付きの1ページです。`version`・`kind`・`status`・`reasonCode`・`items`・`revision`・`total` と、続きがあれば `nextCursor` を返します。一覧の status は `ready` または `blocked` です。各項目の `id` は元の `outboxId` と同じで、一覧に本文は含みません。確定前に元の記録を開き、本文を確認してください。返されたカーソルと同じページリビジョンで続けます。
 
@@ -101,7 +101,7 @@ soba message queue list --cursor NEXT_CURSOR --revision PAGE_REVISION --json
 | `expired` | 元の送信期限切れ |
 | `paused` / `blocked` / `needs_review` | 一時停止・送信不可・要確認。理由を確認 |
 
-到着結果は `not_attempted`・`unknown`・`confirmed` です。`unknown` はすでに届いている可能性を表します。`confirmed` は受信保存の記録で、既読状態ではありません。処理の終端状態だけでは未到着を証明できません。到着結果と正確な receipt を確認してください。
+到着結果は `not_attempted`・`unknown`・`confirmed` です。`unknown` はすでに届いている可能性を表します。`confirmed` は受信保存の記録で、既読状態ではありません。処理の終端状態だけでは未到着を証明できません。到着結果と正確な保存確認記録 を確認してください。
 
 ## 応答消失・保存処理の競合・復旧
 
@@ -133,4 +133,4 @@ soba --dry-run message queue cancel OUTBOX_ID
 
 dry run はローカル構文の検査だけで、本体への呼出しはゼロです。名前の解決、接続機能の識別情報・信頼・対応状況・容量の確認、準備、送信は行いません。受付や到着が成功する証明ではありません。
 
-決定的な CLI 試験の対象は言語／JSON の挙動、厳密な DTO、元の識別情報による復旧、応答消失、busy の再試行案内、停止、ページ継続、本体呼出しゼロの dry run です。通信、再起動、実際の ACK 消失、インストール済みバイナリの受入には Core／プロセス／配布の別の証拠が必要です。モック CLI 試験でそれらの結果を証明したとは扱いません。
+同じ入力から同じ結果を再現できる CLI 試験の対象は言語／JSON の挙動、厳密なデータ交換形式（DTO）、元の識別情報による復旧、応答消失、busy の再試行案内、停止、ページ継続、本体呼出しゼロの dry run です。通信、再起動、実際の確認応答の消失、インストール済みバイナリの受入には Core／プロセス／配布の別の証拠が必要です。モック CLI 試験でそれらの結果を証明したとは扱いません。

@@ -1,8 +1,8 @@
 # Local resource catalog
 
-[日本語](RESOURCE_CATALOG.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](RESOURCE_CATALOG.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-`soba resource catalog` presents a bounded local composition of existing observations. It does not add a peer-wire catalog, remotely enumerate resources, grant permission or perform changes. This describes source behavior; tests, real devices, installed binaries and distribution require separate acceptance.
+`soba resource catalog` combines existing observations into a local view with fixed limits. It does not add a peer-wire catalog, remotely enumerate resources, grant permission or perform changes. This describes source behavior; tests, real devices, installed binaries and distribution require separate acceptance.
 
 The separate [shared-service catalog view](CATALOG_VIEW_CONTRACT.en.md) is implemented: it uses explicit peer-specific viewing consent, a bounded remote list and fresh connection review through `resource catalog view` and the Web services flow. The legacy-cache restrictions below apply to `resource catalog`, not to every service-listing capability.
 
@@ -33,11 +33,11 @@ Any source flag replaces the default source set. Combine flags only for sources 
 - `--discovery-peer PEER_ID` selects existing service-discovery observations for one exact peer.
 - `--remote-version 1|2 --peer PEER_KEY --id RESOURCE_ID --grant-id GRANT_ID --grant-revision N` selects one exact remote settings inspection through the existing authorized protocol. v1 requires the appropriate inspect-only grant; v2 uses a management grant only for inspection.
 
-At most one remote identity is selected. Combining discovery and remote settings requires the same exact peer identifier, not a display-name or backend alias. There is no all-peers fan-out, automatic protocol fallback, arbitrary command name or JSON patch. The command does not create a listener or change trust.
+At most one remote identity is selected. Combining discovery and remote settings requires the same exact peer identifier, not a display-name or backend alias. It does not query all peers at once, automatic protocol fallback, arbitrary command name or JSON patch. The command does not create a listener or change trust.
 
 ## Read observations accurately
 
-Read each source's scope, state, observation time, completeness and next workflow separately. Settings, services and transfers can have different observation times within one response. `current` means successfully observed at that source's stated time, not continuously watched, reachable now or atomically read with every other source.
+Read each source's scope, state, observation time, completeness and next workflow separately. Settings, services and transfers can have different observation times within one response. `current` means successfully observed at that source's stated time, not continuously watched, reachable now or read at exactly the same time as every other source.
 
 | Source at its own observation time | What the row establishes | Next check, and why |
 | --- | --- | --- |
@@ -64,7 +64,7 @@ Catalog only suggests next steps. It never applies settings, starts/stops servic
 - Discovery: use explicit `discover --peer PEER_ID`, then the existing connect workflow with its normal local-port and lifetime review. The catalog limitation above still applies.
 - Transfers: open the existing local UI and locate the same peer, direction and original batch ID. Restarted or missing activity is no longer the same process-local item; no action is automatically triggered.
 
-Prior observation age never replaces fresh provider authorization or review. Snapshot IDs, epochs, scope IDs, digests and finite limits are correlation/presentation data, not authority.
+Prior observation age never replaces fresh provider authorization or review. Snapshot IDs, epochs (state generations), scope IDs, digests (content fingerprints) and finite limits help match or display data; they do not grant permission.
 
 ## Local Web navigation
 

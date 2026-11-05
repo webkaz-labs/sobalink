@@ -1,8 +1,8 @@
 # Local transfer settings resource
 
-[日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](RESOURCE_SETTINGS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-This guide covers the local resource foundation: inspection, preview, explicitly bound apply and durable operation evidence for two transfer-admission settings. It is available in the current release. For separately authorized [remote management](RESOURCE_MANAGEMENT.en.md) and [group/Web workflows](RESOURCE_GROUP.en.md), see those guides for their own scope and evidence.
+This guide covers the local resource foundation: inspection, preview, application of the exact reviewed choices and durably saved operation records for two transfer-admission settings. It is available in the current release. For separately authorized [remote management](RESOURCE_MANAGEMENT.en.md) and [group/Web workflows](RESOURCE_GROUP.en.md), see those guides for their own scope and evidence.
 
 **Upgrading:** profile 3 is incompatible with v0.4.0-alpha.4 and earlier. Keep old state untouched and start with a separate empty `--state-dir`; there is no automatic migration or deletion. Per-feature format histories below do not override this profile boundary.
 
@@ -25,7 +25,20 @@ Preview is read-only and binds both choices. Apply or status returns three indep
 
 ## Review, apply and check
 
-Start the local agent and use the same profile selection in another terminal. Follow the [command workflow](GENERIC.en.md#local-transfer-settings-operations-source-build): list the resource, preview both choices, review the response, apply its exact binding, then check status if needed.
+Start the local agent and use the same `--state-dir` in each command when selecting a custom profile. Use the resource ID returned by `list` without interpreting or changing it, then review both settings together:
+
+```sh
+soba resource list --json
+soba resource inspect --id RESOURCE_ID --json
+soba resource preview --id RESOURCE_ID --concurrent-files default --concurrent-per-peer 2 --json
+```
+
+Review the preview and retain its exact `operationId`, `baseRevision`, `revision` and both choices. Substitute those values below; `apply` never performs an implicit new preview:
+
+```sh
+soba resource apply --id RESOURCE_ID --operation-id OPERATION_ID --base-revision BASE_REVISION --revision REVIEW_REVISION --concurrent-files default --concurrent-per-peer 2 --json
+soba resource status --id RESOURCE_ID --operation-id OPERATION_ID --json
+```
 
 `list`, `inspect`, `preview`, `apply` and `status` return language-independent JSON; `--json` is accepted explicitly. CLI `status` sends `resource.operation.status`. Human help and errors follow `--locale auto|ja|en`. Use the exact opaque resource ID from `list`. Both settings require `default` or a positive finite integer no greater than 9007199254740991. `unlimited`, zero and negative values are rejected. The provider also validates the complete proposed capacity policy. `requested` retains the choices and `effective` shows resolved values. Lower limits govern admission rather than canceling active transfers.
 
@@ -57,7 +70,7 @@ The operation response contains `operationId`, historical `outcome`, `evidenceDu
 
 The private journal has fixed bounds of 128 records and 256 KiB (262144 bytes) for its serialized envelope. Admission reserves room for the completed record before invoking the provider; the byte bound can limit admission before 128 records. `journal` reports `records`, `bytes`, `maxRecords`, `maxBytes` and `writable`. `writable` reports whether uncertainty has frozen admission, not a guarantee that storage or space is available.
 
-Intent, canonical configuration and result are separate writes, not a multi-file transaction. A durably saved intent precedes the provider call, and a result write follows it. Completed known outcomes may be evicted oldest-first within the bounds; unfinished intents and unknown outcomes are pinned. No automatic replay or forced eviction resolves them. If only pinned records remain and capacity is exhausted, new operations return `resource_journal_full`.
+Intent, canonical configuration and result are separate writes, not a multi-file transaction. A durably saved intent precedes the provider call, and a result write follows it. Completed known outcomes may be evicted oldest-first within the bounds; unfinished intents and unknown outcomes must be retained. No automatic replay or forced eviction resolves them. If only records that must be retained remain and capacity is exhausted, new operations return `resource_journal_full`.
 
 An intent write that did not publish returns `resource_journal_write_failed` without attempting settings changes. Uncertain intent publication or a failed result write returns unknown evidence and freezes new applies. A later owned startup validates and durably republishes available disk evidence before enabling the resource; it never replays settings operations. If startup cannot certify that evidence, the resource remains unavailable. Status/current observations do not automatically repair an unknown outcome.
 

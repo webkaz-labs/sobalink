@@ -31,7 +31,10 @@ RESOURCE_FAILURES = ('none', 'slave-close', 'master-close', 'capture-error', 'he
 NATIVE_STAGES = ('not-started', 'owner-start', 'peer-open', 'peer-review', 'peer-apply', 'foreground', 'identity', 'management-announced', 'cli-launch', 'review-read', 'owner-status', 'peer-status', 'review-binding', 'network-ready', 'persisted-context', 'pair-binding', 'proof-written', 'cli-terminal', 'cli-review', 'cli-review-binding', 'cli-apply', 'cli-complete')
 NATIVE_STATUSES = ('unobserved', 'idle', 'restart-required', 'preparing', 'exchanging', 'local-confirmed', 'connected', 'network-started', 'failed', 'cancelled', 'other')
 NATIVE_ROLES = ('old', 'successor', 'cli')
-NATIVE_BOOLS = ('failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed')
+CLOSE_ERROR_CLASSES = ('none', 'context-canceled', 'context-deadline', 'net-closed', 'http-closed', 'file-closed', 'closed-pipe', 'eof', 'multiple', 'other')
+CORE_CLOSE_COMPONENTS = ('none', 'prepared-transfer', 'resource-groups', 'context-control', 'peer-server', 'web', 'transfers', 'node', 'message-store', 'outbox-root', 'other')
+NATIVE_CLOSE_ENUMS = {'foregroundIPCCloseClass': CLOSE_ERROR_CLASSES, 'foregroundCoreFirstCloseComponent': CORE_CLOSE_COMPONENTS, 'foregroundCoreFirstCloseClass': CLOSE_ERROR_CLASSES}
+NATIVE_BOOLS = ('failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundIPCCloseFailed', 'foregroundCoreCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed')
 LIFECYCLE_BOOLS = ('workCompleted', 'workFailed', 'cleanupFailed', 'oldReadyObserved', 'oldExitObserved', 'successorStartObserved', 'cliCompleteObserved', 'controllerProofObserved', 'peerConfirmed', 'ownerConfirmed', 'ordinaryReady', 'originalReviewPreserved', 'supervisorStarted', 'supervisorExited', 'proofRead', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected')
 LIFECYCLE_COUNTS = ('registeredChildren', 'observedExits', 'reaped', 'blockedRequests', 'runtimeErrors')
 LIFECYCLE_ENUMS = {'workPhase': WORK_PHASES, 'firstFailurePhase': FAILURE_PHASES, 'cleanupPhase': CLEANUP_PHASES,
@@ -39,7 +42,7 @@ LIFECYCLE_ENUMS = {'workPhase': WORK_PHASES, 'firstFailurePhase': FAILURE_PHASES
                    'supervisorFailure': SUPERVISOR_FAILURES, 'resourceFailure': RESOURCE_FAILURES,
                    'helperExit': EXITS, 'successorExit': EXITS}
 LIFECYCLE_KEYS = {*LIFECYCLE_ENUMS, *LIFECYCLE_BOOLS, *LIFECYCLE_COUNTS, 'native'}
-NATIVE_KEYS = {'available', 'invalid', 'stage', *NATIVE_BOOLS, 'ownerStatus', 'peerStatus'}
+NATIVE_KEYS = {'available', 'invalid', 'stage', *NATIVE_BOOLS, *NATIVE_CLOSE_ENUMS, 'ownerStatus', 'peerStatus'}
 CASE_KEYS = {'id', 'started', 'status', 'diagnosticAvailable', 'diagnosticRejected', 'lifecycle'}
 DIAGNOSTIC_KEYS = {'summaryAvailable', 'selectionValid', 'unexpected', 'globalErrors', 'observed', 'passed', 'cases'}
 
@@ -50,7 +53,7 @@ def empty_lifecycle():
             'supervisorFailure': 'none', 'resourceFailure': 'none', 'helperExit': 'not-observed', 'successorExit': 'not-observed',
             **dict.fromkeys(LIFECYCLE_BOOLS, False), **dict.fromkeys(LIFECYCLE_COUNTS, 0),
             'native': {role: {'available': False, 'invalid': False, 'stage': 'not-started', **dict.fromkeys(NATIVE_BOOLS, False),
-                              'ownerStatus': 'unobserved', 'peerStatus': 'unobserved'} for role in NATIVE_ROLES}}
+                              **dict.fromkeys(NATIVE_CLOSE_ENUMS, 'none'), 'ownerStatus': 'unobserved', 'peerStatus': 'unobserved'} for role in NATIVE_ROLES}}
 
 
 def empty_diagnostics():
@@ -75,9 +78,9 @@ def validate_lifecycle(value):
         row = native[role]
         if type(row) is not dict or set(row) != NATIVE_KEYS:
             raise ValueError('invalid fixed native schema')
-        if any(type(row[key]) is not bool for key in ('available', 'invalid', *NATIVE_BOOLS)) or type(row['stage']) is not str or row['stage'] not in NATIVE_STAGES or any(type(row[key]) is not str or row[key] not in NATIVE_STATUSES for key in ('ownerStatus', 'peerStatus')):
+        if any(type(row[key]) is not bool for key in ('available', 'invalid', *NATIVE_BOOLS)) or any(type(row[key]) is not str or row[key] not in choices for key, choices in NATIVE_CLOSE_ENUMS.items()) or type(row['stage']) is not str or row['stage'] not in NATIVE_STAGES or any(type(row[key]) is not str or row[key] not in NATIVE_STATUSES for key in ('ownerStatus', 'peerStatus')):
             raise ValueError('invalid fixed native value')
-        if row['available'] and row['invalid'] or not row['available'] and (row['stage'] != 'not-started' or any(row[key] for key in NATIVE_BOOLS) or row['ownerStatus'] != 'unobserved' or row['peerStatus'] != 'unobserved'):
+        if row['available'] and row['invalid'] or not row['available'] and (row['stage'] != 'not-started' or any(row[key] for key in NATIVE_BOOLS) or any(row[key] != 'none' for key in NATIVE_CLOSE_ENUMS) or row['ownerStatus'] != 'unobserved' or row['peerStatus'] != 'unobserved'):
             raise ValueError('inconsistent fixed native observation')
         observations[role] = {key: row[key] for key in sorted(NATIVE_KEYS)}
     return {**{key: value[key] for key in sorted(LIFECYCLE_KEYS - {'native'})}, 'native': observations}
@@ -334,8 +337,11 @@ def _main(cancellation, argv=None):
         env = dict(preparation_env, GOTOOLCHAIN='local', GOWORK='off', GOPROXY='off', GOSUMDB='off', GOTELEMETRY='off', GOFLAGS='-mod=readonly -buildvcs=false')
         run_command(['go', 'test', '-race', '-tags=' + TAGS, '-c', '-o', str(binary), './cmd/soba'], log, env=env)
         provenance['fixtureSha256'] = digest(binary)
+        # Check the opt-in cleanup classifier with an offline Core and fake backend.
+        run_command(['go', 'test', '-race', '-count=1', '-timeout=30s', '-tags=' + TAGS,
+                     '-run=^TestProductCoreClose', './internal/core'], log, env=env, timeout=120)
         # Exercise status ownership on the exact race binary before browser work.
-        # These regressions use synthetic child exits and files, never Core/network.
+        # These regressions use synthetic child exits and files, never network.
         run_command([str(binary), '-test.run=' + FIXTURE_REGRESSIONS, '-test.count=1'],
                     log, env=dict(env, GORACE='halt_on_error=1 exitcode=66 atexit_sleep_ms=0'), timeout=60)
         provenance['fixtureRegressionsPassed'] = True

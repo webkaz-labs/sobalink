@@ -1,12 +1,11 @@
 # Public device cards
 
-[日本語](DEVICE_CARDS.ja.md) · [0.3-series planning history](CONVENIENCE_PLAN.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](DEVICE_CARDS.ja.md) · [0.3-series planning history](history/CONVENIENCE_PLAN.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
 **Read-only Web and CLI controls make public keys easier to exchange.** A card
 contains a public key, an explicitly chosen alias and optional address hints.
 It does not pair devices, enable a network, update an endpoint or grant
-application access. The Web UI can copy a reviewed key and alias into an inert
-recipient draft; invitation creation stays separate. Static PNG QR reading is
+application access. The Web UI can copy a reviewed key and alias into a recipient draft that performs no action; invitation creation stays separate. Static PNG QR reading is
 available locally in browsers with worker-side image decoding.
 
 A public key is not a secret, but it can identify the same device across copies.
@@ -82,7 +81,7 @@ text metadata. If reading fails, use a clearer single-card image or card text.
 These admission bounds do not guarantee a fixed browser-memory maximum.
 
 Component tests cover both languages, bounded parsing, strict QR bitmap and
-quiet-zone checks, cancellation, stale responses and key/name-only draft writes.
+quiet-zone (QR border) checks, cancellation, stale responses and key/name-only draft writes.
 The dedicated browser specification uses the actual local Core with isolated
 synthetic fixtures: LAN export/QR/text-file delivery and recipient review, plus
 direct-LAN review before identity setup. It does not simulate an existing
@@ -175,7 +174,7 @@ from a source rebuild. The exact fetched stb revision, native function link map,
 and complete historical mapping-input provenance are not established; a
 byte-identical source rebuild has not been demonstrated. The retained notice
 inventory explains these limits and includes conservative runtime attributions;
-it is not a claim of an exhaustive function-level SBOM.
+it is not a claim of an exhaustive function-level software bill of materials (SBOM).
 
 ## Version 1 format
 

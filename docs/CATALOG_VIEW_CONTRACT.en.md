@@ -1,9 +1,10 @@
 # Shared-service catalog view contract
 
-[日本語](CATALOG_VIEW_CONTRACT.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](CATALOG_VIEW_CONTRACT.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-This implementation adds eligibility data, owned private storage, explicit local
-approval/revocation and a bounded peer list exchange. It retains original transport
+This implementation lets an explicitly approved peer view selected shared services.
+It adds data that identifies eligible selections, ownership-checked private storage, explicit local
+approval/revocation and a list exchange with fixed limits. It retains original transport
 attribution and implements Web/CLI review flows. Native DirectLAN tests exercise
 list/connect over genuine transports within one test process and independent child
 processes. Linux CI verifies the actual browser workflow against those child
@@ -41,7 +42,7 @@ creates catalog authority. Approval and revocation preserve the existing grant f
 
 Each catalog record selects one managed DirectLAN `Relationship` (target key,
 peer key and immutable pair binding), one resource target, and a sorted, unique
-list of 1–16 shared-service activation IDs. Those IDs are minted by the existing
+list of 1–16 shared-service activation IDs. Those IDs are created by the existing
 share activation, not saved service configuration IDs. Restarting a share produces
 a different ID and requires a new explicit selection. No wildcard, connection,
 settings inspection or management action can be represented in this model.
@@ -73,8 +74,8 @@ Preview selects target, peer key, exact service IDs and finite expiry without
 writing. Confirm requires the unchanged review and explicit `confirm: true`;
 revoke requires exact target, grant ID/revision and confirmation. Review hashes
 are bound to this process. Saving failure freezes catalog access before activation.
-Reopen preserves the absolute expiry and anchors a new boot's remaining monotonic
-cutoff; it never gives another full lifetime. Clock uncertainty denies disclosure.
+Reopening preserves the absolute expiry and measures the remaining time with the new boot's monotonic
+clock (which does not move backward); it never gives another full lifetime. Clock uncertainty denies disclosure.
 
 List selects one remote peer and an exact versioned target/grant selector. The
 peer POST `/v1/catalog/services` accepts no self-claimed peer identity. It uses the
@@ -82,7 +83,7 @@ existing owned DirectLAN HTTP connection, managed relationship and original orig
 Only granted, active share generations are returned. `connectAllowed` separately
 reports the current share's peer membership; viewing never changes that membership.
 After final ownership, grant and service checks, the same revocable fence admits
-one precomputed bounded response. A response admitted before revocation may finish;
+one precomputed response within the size limit. A response admitted before revocation may finish;
 revocation closes the fence before fallible persistence and denies later admission.
 
 The receiver retains one explicitly selected view and original attribution in

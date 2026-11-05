@@ -4,6 +4,8 @@
 
 Run the checks affected by the complete change. Ordinary documentation does not need an application build or four operating systems. Frontend changes need frontend and browser checks. Sensitive, shared or uncertain changes keep the complete native matrix. Every prerelease still runs the independent full validation and distribution/signature/install gates.
 
+Here, a **native matrix** is the set of OS/CPU targets tested. A **gate** is a check that must pass before proceeding. A **receipt** records the source, checks and results; it does not replace executing those checks. **Provenance** records where build inputs and artifacts came from.
+
 ## Choose a check, then read its scope
 
 1. Classify the **complete** PR/main change using the scope table below. Unknown, policy or provenance paths stay full.

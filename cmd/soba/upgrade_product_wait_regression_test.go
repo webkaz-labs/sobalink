@@ -224,6 +224,11 @@ func TestProductFinalOwnerFailureDiagnosticIsClosed(t *testing.T) {
 	d.view.ForegroundExitObserved = true
 	d.view.ForegroundBodyFailed = true
 	d.view.ForegroundOwnersCloseFailed = true
+	d.view.ForegroundIPCCloseFailed = true
+	d.view.ForegroundCoreCloseFailed = true
+	d.view.ForegroundIPCCloseClass = "net-closed"
+	d.view.ForegroundCoreFirstCloseComponent = "web"
+	d.view.ForegroundCoreFirstCloseClass = "context-deadline"
 	d.view.ForegroundLockCloseFailed = true
 	d.view.ForegroundAckFailed = true
 	d.view.MonitorFailed = true
@@ -239,6 +244,9 @@ func TestProductFinalOwnerFailureDiagnosticIsClosed(t *testing.T) {
 	}
 	if !result.ForegroundExitObserved || !result.ForegroundBodyFailed || !result.ForegroundOwnersCloseFailed || !result.ForegroundLockCloseFailed || !result.ForegroundAckFailed {
 		t.Fatal("foreground exit components lost during serialization")
+	}
+	if !result.ForegroundIPCCloseFailed || !result.ForegroundCoreCloseFailed || result.ForegroundIPCCloseClass != "net-closed" || result.ForegroundCoreFirstCloseComponent != "web" || result.ForegroundCoreFirstCloseClass != "context-deadline" {
+		t.Fatal("owner close details lost during serialization")
 	}
 	raw, err := os.ReadFile(d.path)
 	if err != nil {

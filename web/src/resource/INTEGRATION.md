@@ -1,6 +1,14 @@
 # Transfer-settings Web integration
 
-**Integration checkpoint record.** The standalone W1 controller, decoders, and dialog passed whole-Web typecheck and 59 focused tests at that checkpoint. The App/API hookup and integration tests below were then authored pending their separate reviewed execution gate. This module covers local settings plus inspection v1 or management v2 for one explicitly selected remote device. Later catalog and group UI integration are documented separately in [catalog](../catalog/INTEGRATION.md) and [group](../group/INTEGRATION.md); those modules do not imply that all original remote-provider scope is complete.
+**Integration checkpoint record.** The standalone single-device settings controller (called W1 in the source), response validators, and dialog passed whole-Web typecheck and 59 focused tests at that checkpoint. The App/API hookup and integration tests below were then authored pending their separate reviewed execution gate. This module covers local settings plus inspection v1 or management v2 for one explicitly selected remote device. Later catalog and group UI integration are documented separately in [catalog](../catalog/INTEGRATION.md) and [group](../group/INTEGRATION.md); those modules do not imply that all original remote-provider scope is complete.
+
+## Terms used here
+
+A **selector** identifies the exact device, resource and permission to use. A
+**revision** identifies the reviewed version of that state. An **attempt claim**
+keeps another change to the same target blocked while an earlier outcome is
+unknown. These checks do not grant permission; Core, the Go application logic,
+makes the final permission decision.
 
 ## Operation and recovery at a glance
 
@@ -24,12 +32,12 @@ The counts and pending execution statements below are integration-checkpoint rec
 
 ## Existing contract
 
-- `types.ts`: closed current resource command payloads, now included in `api.CommandPayloads`. No arbitrary command string, provider, listener, grant operation, or wire field is introduced.
-- `decode.ts`: closed object readers, exact schema/target/action/selector/operation correspondence, finite safe integers, complete provider outcome validation, and immutable returned values. Malformed success is not operation evidence. The existing authenticated API remains the only transport/JSON owner.
-- `controller.ts`: one app-lifetime `ResourceSettingsController`, one current selection, frozen review, abortable explicit operations, and at most 64 non-evicted attempts. No constructor, timer, React effect, status response, or reconnect dispatches an apply. Synchronous ownership checks cover reentrant invalidation immediately before transport.
+- `types.ts`: resource command payloads with only the defined fields, now included in `api.CommandPayloads`. No arbitrary command string, provider, listener, grant operation, or wire field is introduced.
+- `decode.ts`: object readers that reject unexpected fields, exact schema/target/action/selector/operation correspondence, finite safe integers, complete provider outcome validation, and immutable returned values. Malformed success is not operation evidence. The existing authenticated API remains the only transport/JSON owner.
+- `controller.ts`: one app-lifetime `ResourceSettingsController`, one current selection, frozen review, abortable explicit operations, and at most 64 retained attempts, without automatically dropping old entries. No constructor, timer, React effect, status response, or reconnect dispatches an apply. Synchronous ownership checks cover reentrant invalidation immediately before transport.
 - `ResourceSettingsDialog.tsx`: explicit local list/inspect and advanced manual remote selector; requested/effective values; exact two-field review and checkbox confirmation; one-shot apply; independent historical evidence/current observation; manual status recovery. Existing Modal handles Escape/focus isolation and opener restoration. The entry uses the app's effective EN/JA locale.
 
-## Shared App/API hookup
+## App and API integration
 
 1. `api.ts` adds only the closed resource payload map and optional numeric `State.processId`, matching the field Core already emits. Endpoint, envelope, CSRF, same-origin, redirects, timeout and error behavior remain unchanged.
 2. `App.tsx` creates one controller in a ref above authentication and dialog branches. The adapter uses `api.command(name, payload, api.requestID(), signal)` and returns `.result` to the strict decoders. The current error-handler ref forwards to the existing `server.handleError`. No `server.run`, reused uncertain request ID, fallback, or retry is used.
@@ -39,7 +47,7 @@ The counts and pending execution statements below are integration-checkpoint rec
 6. Preferences exposes a localized Transfer settings entry while keeping Capacity and history unchanged. Peer navigation, Back/Forward, dialog replacement and modal cleanup invalidate the current review/selection and abort waiting. Mounting the settings dialog performs no network operation automatically.
 7. Authentication loss clears visible resource data and previews. The same App instance retains attempted identities privately in memory across login/modal transitions. Checking status after a context change requires explicit reselection of the same peer/resource/grant identity. A current status grant revision never rewrites the original attempted selector or review. No resource data is put in storage, history or URLs. Full reload history/recovery is not implemented or claimed.
 
-The exact authenticated local `ApiError('resource_revision_conflict')` is a definite pre-admission rejection under the current provider. It permits a new explicit review/confirmation, never an automatic retry. The rejected historical attempt remains visible. A different fresh review can use the same unconsumed local operation ID. Remote generic errors, arbitrary text, timeout, abort, malformed replies and synchronous transport throws never use this exception.
+The exact authenticated local `ApiError('resource_revision_conflict')` is a definite rejection before the operation is accepted under the current provider. It permits a new explicit review/confirmation, never an automatic retry. The rejected historical attempt remains visible. A different fresh review can use the same unconsumed local operation ID. Remote generic errors, arbitrary text, timeout, abort, malformed replies and synchronous transport throws never use this exception.
 
 ## Integration-test source
 
@@ -53,4 +61,4 @@ These are authored tests, not passed results for this integration. Exact executi
 
 ## Remaining evidence gates
 
-The standalone 59-case pass does not establish this shared integration, production authentication/CSRF, Go-backed browser behavior, keyboard focus cycling, narrow/light/dark readability, native lifecycle, physical devices, installed binaries, distribution, or release acceptance. Those remain separate gates. No live grants, security settings, provider runtime, publication or release action is part of this source hookup.
+The standalone 59-case pass does not establish this shared integration, production authentication/CSRF, Go-backed browser behavior, keyboard focus cycling, narrow/light/dark readability, native lifecycle, physical devices, installed binaries, distribution, or release acceptance. Those remain separate gates. No live grants, security settings, provider runtime, publication or release action is part of this integration.

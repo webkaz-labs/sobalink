@@ -1,10 +1,12 @@
 # Endpoint metadata contracts
 
+An endpoint is an IP address and port. A pair context ties updates to one authenticated pairing; endpoint following lets that pair use an updated address only under separately reviewed permission. A snapshot is an isolated saved copy of the metadata, not a second live profile.
+
 This package provides data contracts for authenticated endpoint updates. Core
-uses its records and validators for private direct-LAN state v3, stopped-state
+uses its records and validators for private direct-LAN state v3/v4, stopped-state
 transactions and the managed context/endpoint-following candidate. Source
 integration is distinct from exact-source runtime and release acceptance; see
-the [historical integration snapshot](../../docs/CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
+the [historical integration snapshot](../../docs/history/CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
 
 ## Read the contract by operation
 
@@ -15,7 +17,7 @@ the [historical integration snapshot](../../docs/CONVENIENCE_PLAN.en.md#current-
 | Save an isolated snapshot | Positive byte budget and exclusive ownership | Published-but-uncertain durability and recovery requirement |
 | Follow a managed endpoint | Current context and reviewed authority | Pending recovery; no legacy fallback |
 
-日本語: 既存状態は形式と読取り版を確認し、自動移行しません。停止中の移行は現在のプロセス・ファイル・版を確認し、ペア文脈や許可を暗黙に追加しません。独立した snapshot 保存は容量上限と排他的所有を必要とし、保存済みでも永続性が不明なら復旧待ちを保持します。管理対象の端点追従は現在の文脈と確認済み許可を使い、従来方式へ自動で戻しません。
+日本語: 既存状態は形式と読取り版を確認し、自動移行しません。停止中の移行は現在のプロセス・ファイル・版を確認し、ペア文脈や許可を暗黙に追加しません。独立したスナップショット保存は容量上限と排他的所有を必要とし、保存済みでも永続性が不明なら復旧待ちを保持します。管理対象の接続先追従は現在の文脈と確認済み許可を使い、従来方式へ自動で戻しません。
 
 The detailed English/Japanese contracts below remain authoritative. Current release evidence is in [verification](../../docs/VERIFICATION.en.md); the convenience-plan link records the earlier integration checkpoint.
 Core still owns one `direct-lan.json` file, its identity and selected endpoint.
@@ -25,7 +27,7 @@ review revision bound to the current process, exact file and state. Migration
 wraps existing peers without creating pair contexts, following consent or
 application grants. The v3 file requires a v3 reader; older binaries must not
 strip its metadata or downgrade it. No real profile has been migrated as part
-of this source work.
+of this source work. Version 4 adds saved pair-removal records and requires a v4-capable reader; do not downgrade it to v3.
 
 Legacy-only v3 records use the existing exact-endpoint path. Managed records
 require current context, reviewed authority and the managed activation path;
@@ -93,10 +95,12 @@ or synthetic data; they are not credentials for a running service.
 
 ## 日本語
 
-このpackageは認証済み接続先更新のデータ契約を提供します。
-Coreの非公開direct LAN状態v3、停止中の保存操作、管理対象の文脈と端点追従の候補に、
-記録と検証処理を組み込んでいます。ソース統合と同一sourceの実行・配布受入は区別し、
-[過去の統合時点の証拠](../../docs/CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
+接続先は IP アドレスとポートの組です。ペア文脈は、更新情報を一つの認証済みペアに結び付ける情報を指します。接続先追従は、別途確認した許可に従って変更後の接続先を使う機能です。スナップショットは情報を独立して保存したコピーであり、別の稼働用プロファイルではありません。
+
+このパッケージは認証済み接続先更新のデータ契約を提供します。
+Coreの非公開直接LAN状態v3/v4、停止中の保存操作、管理対象の文脈と接続先追従の候補に、
+記録と検証処理を組み込んでいます。ソース統合と同一ソースの実行・配布受入は区別し、
+[過去の統合時点の証拠](../../docs/history/CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
 
 Coreは引き続き1個の `direct-lan.json` と、識別情報・選択済み接続先を管理します。
 有効なv2ファイルは自動で書き換えずに読み込みます。停止・オフライン状態での
@@ -104,12 +108,12 @@ Coreは引き続き1個の `direct-lan.json` と、識別情報・選択済み�
 ファイル全体・保存状態に結び付いた確認リビジョンを必要とします。移行は既存ペアを
 新しい記録形式で包むだけで、ペア文脈・接続先追従・アプリの許可を作りません。
 v3ファイルにはv3対応の読取り実装が必要です。古い実装のために情報を削除したり、
-形式を戻したりしてはいけません。このソース作業で実際のプロファイルは移行していません。
+形式を戻したりしてはいけません。このソース作業で実際のプロファイルは移行していません。v4 は保存するペア削除記録を追加した形式で、v4 対応の読み取り実装が必要です。v3 へ戻してはいけません。
 
 従来ペアだけを含むv3は既存の固定接続先経路を使います。管理対象の記録には、
 現在の文脈・確認済み許可・管理対象の有効化経路が必要で、従来方式の変更処理へ
 自動で戻しません。Coreには認証付き文脈交換、永続的なペア削除記録、署名付き
-端点操作を組み込んでいます。復旧待ちは自動解除しません。端点の撤回、追従無効化、
+接続先操作を組み込んでいます。復旧待ちは自動解除しません。接続先の撤回、追従無効化、
 アプリ許可解除、ペアの最終削除は別の操作です。
 
 厳密で容量制限のある交換形式、組合せに結び付く署名と固定テストデータ、変更候補の
@@ -158,7 +162,7 @@ flowchart TB
 
 Coreの組込みは既存の保存ロックとプロファイルの排他的所有を使い、AtomicWriteの
 書換え済み・永続性未確認という結果を保持し、書込みエラー後は復旧待ちにします。
-このpackageの独立したファイルアダプターを2個目の保存先として使いません。
+このパッケージの独立したファイルアダプターを2個目の保存先として使いません。
 文脈の確立、現在の許可確認、有効化はCoreが管理し、その統合受入は別に記録します。
 合成データの保存試験は実通信や異常終了後の復旧保証ではありません。
 古いプロファイル全体の復元を検出できる保証もありません。

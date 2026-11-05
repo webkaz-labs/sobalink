@@ -171,15 +171,19 @@ func validUpgradeStop(dir string, identity upgradeIdentity, request upgradeStop)
 // shutdownManagedOwners is deliberately ordered and error-returning. Releasing
 // the lock does not erase a failed Core/IPC close. The launcher requires both.
 func shutdownManagedOwners(ipc, app, lock io.Closer) (closeErr, lockErr error) {
+	var ipcErr, coreErr error
 	if ipc != nil {
-		closeErr = errors.Join(closeErr, ipc.Close())
+		ipcErr = ipc.Close()
+		closeErr = errors.Join(closeErr, ipcErr)
 	}
 	if app != nil {
-		closeErr = errors.Join(closeErr, app.Close())
+		coreErr = app.Close()
+		closeErr = errors.Join(closeErr, coreErr)
 	}
 	if lock != nil {
 		lockErr = lock.Close()
 	}
+	observeForegroundOwnersClose(ipcErr, coreErr, app)
 	return closeErr, lockErr
 }
 

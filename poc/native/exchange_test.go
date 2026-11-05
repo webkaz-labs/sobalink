@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/webkaz-labs/sobalink/internal/control"
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
@@ -147,5 +150,56 @@ func TestExchangeCancelledNoCall(t *testing.T) {
 	_, err := c.SendMessage(ctx, "id", "peer", "text")
 	if !errors.Is(err, context.Canceled) || len(*calls) != 0 {
 		t.Fatal(err)
+	}
+}
+
+func TestExchangeMessageByteLimit(t *testing.T) {
+	for _, unit := range []string{"x", "界", "😀", "&"} {
+		t.Run(unit, func(t *testing.T) {
+			text := strings.Repeat(unit, messageframe.TextBytes/len(unit))
+			text += strings.Repeat("x", messageframe.TextBytes-len(text))
+			c, calls := exchangeFixture(t, true, exchangeMessage{ID: "message", PeerID: "fictional-peer", Direction: "outgoing", Text: text, Status: "sent"}, nil)
+			if _, err := c.SendMessage(t.Context(), "boundary-id", "fictional-peer", text); err != nil || len(*calls) != 1 {
+				t.Fatalf("exact byte boundary rejected: %v", err)
+			}
+			if (*calls)[0].RequestID != "boundary-id" {
+				t.Fatal("request identity changed")
+			}
+			if _, err := c.SendMessage(t.Context(), "oversize-id", "fictional-peer", text+unit); !errors.Is(err, errExchangeMessageSize) || len(*calls) != 1 {
+				t.Fatalf("oversize message reached IPC: %v", err)
+			}
+			p := &messagePane{draft: text}
+			p.beginReview("fictional-peer", "Device")
+			if p.review == nil || p.review.text != text {
+				t.Fatal("exact byte boundary cannot be reviewed")
+			}
+		})
+	}
+}
+
+func TestExchangeMessageBoundaryFitsControlEnvelope(t *testing.T) {
+	for _, unit := range []string{"&", "\x01", "\n", "\"", "\\", "界", "😀"} {
+		t.Run(unit, func(t *testing.T) {
+			text := "x" + strings.Repeat(unit, (messageframe.TextBytes-1)/len(unit))
+			text += strings.Repeat("x", messageframe.TextBytes-len(text))
+			peerID := strings.Repeat("a", messageframe.IDBytes)
+			requestID := strings.Repeat("&", messageframe.RequestIDBytes)
+			c, calls := exchangeFixture(t, true, exchangeMessage{ID: "message", PeerID: peerID, Direction: "outgoing", Text: text, Status: "sent"}, nil)
+			if _, err := c.SendMessage(t.Context(), requestID, peerID, text); err != nil {
+				t.Fatal(err)
+			}
+			command, err := json.Marshal((*calls)[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := json.Marshal(control.Request{Command: string(command)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			limits := control.DefaultLimits()
+			if int64(len(command)) > limits.CommandBytes || int64(len(request))+1 > limits.RequestBytes {
+				t.Fatal("native text boundary exceeds control envelope")
+			}
+		})
 	}
 }

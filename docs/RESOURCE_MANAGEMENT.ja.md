@@ -1,8 +1,8 @@
 # 相手1台の転送設定を確認して管理する
 
-[English](RESOURCE_MANAGEMENT.en.md) · [参照のみの許可](RESOURCE_INSPECTION.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[English](RESOURCE_MANAGEMENT.en.md) · [参照のみの許可](RESOURCE_INSPECTION.ja.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-現在の公開版では、ペアになった DirectLAN の相手1台について、`transferConcurrentFiles` と `transferConcurrentPerPeer` の2項目だけを、明示的な管理許可で変更できます。純粋なフェンス・世代の試験だけでは、遠隔管理の全体動作、配布、実端末、アプリ、OS ログイン、スリープからの復帰の受入は確認できません。公開版の検証状況は[検証記録](VERIFICATION.md)に従います。
+現在の公開版では、ペアになった DirectLAN の相手1台について、`transferConcurrentFiles` と `transferConcurrentPerPeer` の2項目だけを、明示的な管理許可で変更できます。実行を制限する仕組み（フェンス）と状態の世代だけを調べる単体試験では、遠隔管理の全体動作、配布、実端末、アプリ、OS ログイン、スリープからの復帰の受入は確認できません。公開版の検証状況は[検証記録](VERIFICATION.md)に従います。
 
 ## 最初に許可し、次に正確な変更案を確認する
 
@@ -48,7 +48,7 @@ soba resource remote manage inspect --peer TARGET_PEER_KEY --id RESOURCE_ID --gr
 soba resource remote manage preview --peer TARGET_PEER_KEY --id RESOURCE_ID --grant-id GRANT_ID --grant-revision REVISION --concurrent-files default --concurrent-per-peer 2
 ```
 
-inspect は指定値と実効値だけを返します。preview は読み取り専用で、操作枠を予約しません。両項目の指定値・実効値を確認してください。不透明な `operationId`・`baseRevision`・`reviewRevision` は範囲・現在の状態・認証済みの世代に結び付き、特定の TCP 接続には依存しません。
+inspect は指定値と実効値だけを返します。preview は読み取り専用で、操作枠を予約しません。両項目の指定値・実効値を確認してください。内容を読み取れない識別値 `operationId`・`baseRevision`・`reviewRevision` は範囲・現在の状態・認証済みの世代に結び付き、特定の TCP 接続には依存しません。
 
 ```text
 soba resource remote manage apply --peer TARGET_PEER_KEY --id RESOURCE_ID --grant-id GRANT_ID --grant-revision REVISION --operation-id OPERATION_ID --base-revision BASE_REVISION --revision REVIEW_REVISION --concurrent-files default --concurrent-per-peer 2 --confirm
@@ -64,7 +64,7 @@ preview の正確な値と両項目を指定します。`--revision` は `review
 soba resource remote manage status --peer TARGET_PEER_KEY --id RESOURCE_ID --grant-id GRANT_ID --grant-revision REVISION --operation-id OPERATION_ID
 ```
 
-apply の応答を失った場合や結果が不明な場合は、同じ不透明な操作 ID を使います。失敗したと決め付けたり、別の操作を勝手に作ったり、確認せず適用し直したりしないでください。保持済みの同一要求は過去の記録を返し、設定変更を再実行しません。同じ ID に別の内容を指定すると拒否します。現在の status の指定で、保存済みの元の許可主体を書き換えません。
+apply の応答を失った場合や結果が不明な場合は、同じ操作 ID を使います。失敗したと決め付けたり、別の操作を勝手に作ったり、確認せず適用し直したりしないでください。保持済みの同一要求は過去の記録を返し、設定変更を再実行しません。同じ ID に別の内容を指定すると拒否します。現在の status の指定で、保存済みの元の許可主体を書き換えません。
 
 操作応答は過去の結果と `evidenceDurable` だけを含みます。このフラグは確定した記録の永続化を示し、設定適用やファイル転送の成功を保証しません。`unknown` は成功でも元への復元でもありません。status は現在の設定を追加しません。別途 inspect で確認します。未作成・保持対象外・ローカル主体・別範囲の記録は、同じ取得不可として扱います。新しい許可や別のペアは以前の範囲の履歴を引き継ぎません。
 
@@ -73,7 +73,7 @@ apply の応答を失った場合や結果が不明な場合は、同じ不透�
 ## 期限・取り消し・境界
 
 - 通常のメッセージ・ファイルの許可で管理許可を作成しません。相手への許可全体を取り消す revoke は管理許可も失効させます。メッセージ・ファイルの一時停止やサービス共有の停止は対象外です。
-- 元の有限の期限と起動時の単調時計の上限を再接続後も維持します。再ペアリングで許可を再利用しません。検出した時計の巻き戻りや保存状態の不確実性・置換により、新規処理と開示を拒否します。停止中の期限は対象端末の時計に依存し、保存状態全体の巻き戻しは確実に検出できません。
+- 元の有限の期限と起動時に、巻き戻らない単調時計で定めた期限を再接続後も維持します。再ペアリングで許可を再利用しません。検出した時計の巻き戻りや保存状態の不確実性・置換により、新規処理と開示を拒否します。停止中の期限は対象端末の時計に依存し、保存状態全体の巻き戻しは確実に検出できません。
 - 操作予定を永続化した後、設定変更の実行を1回だけ受け付けます。受付前の失効や取り消しは実行を拒否します。受付済みの作業は失効・切断後も完了して結果を同期的に保存する場合があります。別途確認する応答は、その後に開示されない場合があります。
 - 接続の復旧を含め、固定の合計15秒以内にアプリケーション要求を最大1件だけ送ります。apply の自動再送や OS の通信経路への切り替えは行いません。
 - 所有するユーザー空間の接続口は参照用とポート54546を共有し、既存の所有者を維持します。ローカル管理 API は公開しません。任意のコマンド・パス・認証情報・主体の自己申告・一覧・操作記録全体の件数・ローカル操作 ID は受け付けたり開示したりしません。

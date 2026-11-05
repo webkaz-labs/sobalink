@@ -84,7 +84,7 @@ func TestRepeatedRefreshSingleFlight(t *testing.T) {
 	}
 }
 func demoApp() *app {
-	return &app{demo: true, loaded: true, state: demoSnapshot(), results: make(chan result, 1)}
+	return &app{ctx: context.Background(), demo: true, loaded: true, state: demoSnapshot(), results: make(chan result, 1)}
 }
 func TestViewInteractions(t *testing.T) {
 	a := demoApp()

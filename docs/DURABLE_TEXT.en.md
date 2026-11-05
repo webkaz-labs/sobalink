@@ -4,7 +4,7 @@
 
 Explicitly queue one immutable text message for one exact recipient, including an offline recipient. Acceptance is local; completion means the receiving device durably saved the text. It never means a person read it.
 
-Introduced in the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), and available in the current 0.5.1-alpha.1 release. It uses **profile format 3**, incompatible with 0.4.0-alpha.4 and older formats. Preserve existing state and select a separate empty `--state-dir`; there is no migration, automatic deletion or same-profile downgrade. [Published verification](VERIFICATION.en.md) does not establish physical-device, power-loss, OS-login or suspend qualification.
+Introduced in the experimental [0.5.0-alpha.1 release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1), and available in the current 0.5.4-alpha.1 release. It uses **profile format 3**, incompatible with 0.4.0-alpha.4 and older formats. Preserve existing state and select a separate empty `--state-dir`; there is no migration, automatic deletion or same-profile downgrade. [Published verification](VERIFICATION.en.md) does not establish physical-device, power-loss, OS-login or suspend qualification.
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/durable-save-gates-en-dark-narrow.svg">
@@ -47,7 +47,7 @@ The local agent and selected network backend must run with a known local identit
 
 After acceptance, automatic attempts can resume after sender restart until the original deadline. Delivery still requires both devices running Sobalink, connectivity, current identities and trust, no applicable pause or revocation, and authenticated `durable_text_v1` support. Offline compatibility may be unverified until connection. There is no downgrade to legacy immediate messaging when durable support is missing.
 
-A format-3 profile can have a separately reviewed startup/proxy scope for a peer before that peer's first app-trust approval. If that saved scope captured an empty peer epoch, the first app approval creates a nonempty persisted epoch and the same-peer saved scope becomes stale. Review and explicitly save that separate scope again if still wanted. Existing nonempty epochs and unrelated peers are not rewritten; app trust never silently renews startup/proxy approval.
+A format-3 profile can have a separately reviewed startup/proxy scope for a peer before that peer's first app-trust approval. If that saved scope captured an empty peer epoch (trust generation), the first app approval creates a nonempty persisted epoch and the same-peer saved scope becomes stale. Review and explicitly save that separate scope again if still wanted. Existing nonempty epochs and unrelated peers are not rewritten; app trust never silently renews startup/proxy approval.
 
 ## JSON and explicit approval
 
@@ -77,7 +77,7 @@ soba message queue cancel OUTBOX_ID --json
 soba message queue discard OUTBOX_ID --process PROCESS_ID --json
 ```
 
-`show` and `status` are equivalent. Discard applies only to a preparation; use cancel for an enqueued message. Cancellation stops additional sending and joins active work. `cancel_requested` means stopping is still in progress. Cancellation cannot recall text already saved by the recipient, and never changes known saved evidence into a non-delivery claim.
+`show` and `status` are equivalent. Discard applies only to a preparation; use cancel for an enqueued message. Cancellation stops additional sending and waits for active work to finish. `cancel_requested` means stopping is still in progress. Cancellation cannot recall text already saved by the recipient, and never changes known saved evidence into a non-delivery claim.
 
 Detail commands return a version-1 `text_outbox` record directly. It includes original IDs, exact peer, immutable content byte count/hash, original creation/expiry, review revision, admission, work status, delivery outcome and reason code. Retained detail/review includes the text. An optional receipt carries exact receiver-save evidence. After authorized history cleanup, retained detail may omit the body while preserving the exact identity/hash/receipt.
 
@@ -133,4 +133,4 @@ soba --dry-run message queue cancel OUTBOX_ID
 
 Dry run validates local syntax only and makes zero agent calls. It does not resolve names, check backend identity/trust/capability/capacity, prepare or send. It is not evidence that enqueue or delivery will succeed.
 
-Deterministic CLI tests cover locale/JSON behavior, strict DTOs, original-identity recovery, lost replies, busy retry guidance, cancellation, pagination and zero-IPC dry run. Transport, restart, real ACK loss and installed-binary acceptance require their separate Core/process/distribution evidence; mocked CLI tests do not establish those outcomes.
+Deterministic CLI tests cover locale/JSON behavior, strict data-transfer formats (DTOs), original-identity recovery, lost replies, busy retry guidance, cancellation, pagination and zero-IPC dry run. Transport, restart, real acknowledgement loss and installed-binary acceptance require their separate Core/process/distribution evidence; mocked CLI tests do not establish those outcomes.

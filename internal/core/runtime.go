@@ -28,8 +28,14 @@ func (c *Core) StartWeb(assets fs.FS, handoff ...webui.UpgradeHandoff) (string, 
 	c.op.Lock()
 	defer c.op.Unlock()
 	c.mu.RLock()
+	stopping := c.closing || c.ctx.Err() != nil
 	web := c.web
 	c.mu.RUnlock()
+	// A caller queued behind Close must not recreate the detached server or
+	// issue a fresh access code after shutdown admission has closed.
+	if stopping {
+		return "", "", errors.New("application is stopping")
+	}
 	if web == nil {
 		var e error
 		web, e = webui.Start(c.ctx, assets, c, handoff...)

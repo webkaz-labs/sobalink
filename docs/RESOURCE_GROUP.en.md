@@ -1,8 +1,8 @@
 # Fixed resource groups
 
-[日本語](RESOURCE_GROUP.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](RESOURCE_GROUP.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-This workflow reviews a fixed selection of at most 16 explicitly permitted peers. One local coordinator owns the prepared review, acceptance and independent results. It does not promise an atomic multi-peer transaction or exactly-once execution. Source implementation alone does not establish tested, installed-binary or real-device acceptance.
+This workflow reviews a fixed selection of at most 16 explicitly permitted peers. One local coordinator owns the prepared review, acceptance and independent results. It does not promise an all-or-nothing change across peers or exactly-once execution. Source implementation alone does not establish tested, installed-binary or real-device acceptance.
 
 ## Review every row, keep every result
 
@@ -31,7 +31,7 @@ Start the owning local agent. Each target must already have explicitly granted m
 
 1. Run `soba resource group preview --member PEER_KEY,RESOURCE_ID,GRANT_ID,GRANT_REVISION --concurrent-files default --concurrent-per-peer 2`. Repeat `--member` for each exact peer. No labels, wildcard, saved dynamic group or discovery search determines membership.
 2. Review every row, including failures, requested and effective settings, explicit overrides, and the proposed execution subset. Human output gives the exact subsequent apply command with the selected profile preserved.
-3. If needed, use `soba resource group select --review-id REVIEW_ID --revision REVIEW_REVISION --execute-peer PEER_KEY`, repeating `--execute-peer` for every chosen ready peer. This replaces the execution subset, not the resource selection or settings. Failed rows remain visible. `--exclude-all` makes an explicit empty, non-executable review. A changed subset rotates the opaque review ID and content revision; an unchanged subset retains both after the owning coordinator checks its context.
+3. If needed, use `soba resource group select --review-id REVIEW_ID --revision REVIEW_REVISION --execute-peer PEER_KEY`, repeating `--execute-peer` for every chosen ready peer. This replaces the execution subset, not the resource selection or settings. Failed rows remain visible. `--exclude-all` makes an explicit empty, non-executable review. A changed subset replaces the review ID and content revision; an unchanged subset retains both after the owning coordinator checks its context.
 4. Apply only the exact returned review and complete execution subset: `soba resource group apply --review-id REVIEW_ID --revision REVIEW_REVISION --execute-peer PEER_KEY --confirm`. Repeat every reviewed execution peer. Apply does not create a preview or silently drop another peer.
 5. Use `soba resource group status --run-id RUN_ID` to read local historical evidence without contacting peers.
 
@@ -84,11 +84,11 @@ Earlier focused Go recovery/CLI tests and mounted synthetic Web tests passed on 
 
 Later bounded results establish separate claims:
 
-- **Core reopen (N4):** `TestResourceGroupNativePostGroupCoreReopenNoReplay` passed once on Linux amd64 with CGO disabled. After a completed group, joined controller Core.Close/Open preserved original history and grant expiry, rejected the unused review and did not replay operations. This stayed within one OS process.
+- **Core reopen (N4):** `TestResourceGroupNativePostGroupCoreReopenNoReplay` passed once on Linux amd64 with CGO disabled. After a completed group, controller Core.Close/Open with shutdown completion awaited preserved original history and grant expiry, rejected the unused review and did not replay operations. This stayed within one OS process.
 - **Graceful process replacement (P1):** [run 38059289220](https://github.com/webkaz-labs/sobalink/actions/runs/38059289220) passed actual source-built controller-process replacement on Linux amd64 with CGO disabled, preserving original history/expiry without replay. It did not exercise abrupt process death.
-- **Pre-acceptance refusal (F-S1):** [run 38064320241](https://github.com/webkaz-labs/sobalink/actions/runs/38064320241) passed refusal before the new group's acceptance/intents. The separate browser case failed in that run; this is not an all-pass receipt. The later local-browser B1 pass is described in the [catalog guide](RESOURCE_CATALOG.en.md#local-web-navigation).
+- **Pre-acceptance refusal (F-S1):** [run 38064320241](https://github.com/webkaz-labs/sobalink/actions/runs/38064320241) passed refusal before the new group's acceptance/intents. The separate browser case failed in that run; this is not a record of every test passing. The later local-browser B1 pass is described in the [catalog guide](RESOURCE_CATALOG.en.md#local-web-navigation).
 - **Post-intent provider refusal (F-S2):** [run 38073401977](https://github.com/webkaz-labs/sobalink/actions/runs/38073401977) passed once after real controller/target durable intents: target A applied, target B's provider refused before configuration publication, B's settings stayed unchanged with a durable `failed`/`not_published` result, and history/repeated requests caused no replay.
-- **Real-browser two-target apply (B2):** the same run passed once for authenticated retrieval of a Core-prepared review, explicit confirmation, two-provider apply and local status. It verified two applied targets, 17 native events and successful browser/Core/outer-process joins. The browser did not author the draft or preview.
+- **Real-browser two-target apply (B2):** the same run passed once for authenticated retrieval of a Core-prepared review, explicit confirmation, two-provider apply and local status. It verified two applied targets, 17 native events and successful waits for browser, Core and outer-process shutdown. The browser did not author the draft or preview.
 
 F-S2/B2 ran at source `168a7fff4036f3aa89be7f118872ee15617dacd8`, tree `f03e0b427cb5a4c2ef990f9fc77810d357c9bc66`, using managed Chromium headless-shell revision 1243 with the CI SDK's default sandbox-disabled route. Earlier cases were not rerun in that invocation; their receipts remain historical evidence for their own sources.
 
