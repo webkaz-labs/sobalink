@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/webkaz-labs/sobalink/internal/control"
+	"github.com/webkaz-labs/sobalink/internal/messageframe"
 	"github.com/webkaz-labs/sobalink/internal/webui"
 )
 
@@ -30,6 +31,8 @@ func newExchangeClient(dir string, enabled bool, call exchangeCaller) *exchangeC
 	return &exchangeClient{dir: dir, enabled: enabled, call: call}
 }
 func newExchangeRequestID() string { return "native-" + rand.Text() }
+
+var errExchangeMessageSize = errors.New("message exceeds the native UI UTF-8 byte limit")
 
 var errExchangeReadOnly = errors.New("sending is disabled")
 var errExchangeReview = errors.New("explicit current review is required")
@@ -69,6 +72,12 @@ func (c *exchangeClient) SendMessage(ctx context.Context, id, peerID, text strin
 	var out exchangeMessage
 	if peerID == "" || strings.TrimSpace(text) == "" || !utf8.ValidString(text) {
 		return out, errExchangeReview
+	}
+	// This UI uses the shared default text budget; Core may be configured
+	// differently. Reject before IPC rather than interpreting remote errors
+	// as proof that a request was never delivered.
+	if len(text) > messageframe.TextBytes {
+		return out, errExchangeMessageSize
 	}
 	err := c.command(ctx, id, "message.send", map[string]string{"peerId": peerID, "text": text}, &out, true)
 	if err == nil && (out.ID == "" || out.PeerID != peerID || out.Text != text || out.Direction != "outgoing" || out.Status != "sent") {
