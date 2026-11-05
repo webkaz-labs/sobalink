@@ -216,7 +216,7 @@ func (f *resourceInspectionNativePair) local(i int, name string, input any) (any
 		observed, log := directlan.WithInspectionObservation(ctx)
 		value, err := f.cores[i].Command(observed, webui.Command{RequestID: "synthetic-resource-inspection", Name: name, Payload: raw})
 		if event, seen := log.Result(); seen {
-			f.t.Logf("inspection phase=%s code=%s elapsed=%s dial=%s ready_before=%t authenticated_before=%t", event.Phase, event.Code, event.Elapsed, event.DialPhase, event.ReadyBeforeEnsure, event.AuthenticatedBeforeEnsure)
+			f.t.Logf("inspection phase=%s code=%s elapsed=%s dial=%s ready_before=%t authenticated_before=%t dial_result=%s dial_code=%s tcp_connected=%t", event.Phase, event.Code, event.Elapsed, event.DialPhase, event.ReadyBeforeEnsure, event.AuthenticatedBeforeEnsure, event.DialResultStage, event.DialResultCode, event.TCPConnected)
 		} else {
 			f.t.Log("inspection phase=before_transport")
 		}

@@ -16,6 +16,7 @@ func (n *Node) dialInspectionPeer(ctx context.Context, g *runtimeGeneration, p *
 	dialCtx, cancelDial := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancelDial()
 	if err := n.wakeInspectionSession(dialCtx, authentication); err != nil {
+		markInspectionDialResult(ctx, "initial_wake", err, false)
 		return nil, err
 	}
 	// Space our second attempt from completion of the first, not from the
@@ -42,22 +43,29 @@ func (n *Node) dialInspectionPeer(ctx context.Context, g *runtimeGeneration, p *
 		}
 	}()
 	connection, err := n.dialCapturedPeer(dialCtx, g, p, "tcp", ResourceInspectPort)
+	connected := err == nil && connection != nil
+	resultStage := "tcp_dial"
 	stopWorker()
 	<-done                      // no Node/generation/session lock; join before exposing the flow
 	contextErr := dialCtx.Err() // Cleanup cannot carry success past the fixed cutoff.
 	if workerErr != nil {
 		err = workerErr
+		resultStage = "wake_worker"
 	} else if err == nil && contextErr != nil {
 		err = contextErr
+		resultStage = "context_done"
 	} else if err == nil && !n.inspectionAuthenticationCurrent(authentication, true) {
 		err = ErrUntrusted
+		resultStage = "authentication"
 	}
 	if err != nil {
+		markInspectionDialResult(ctx, resultStage, err, connected)
 		if connection != nil {
 			_ = connection.Close()
 		}
 		return nil, err
 	}
+	markInspectionDialResult(ctx, "complete", nil, connected)
 	return connection, nil
 }
 

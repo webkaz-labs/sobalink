@@ -17,7 +17,7 @@ Eleven distinct explanatory themes, each with Japanese/English, light/dark and w
 | `durable-save-gates` | How do text and files differ before receiver saving? [Durable text](../../DURABLE_TEXT.en.md) |
 | `restart-state` | What returns in saved-network versus offline startup? [Lifecycle](../../LIFECYCLE.en.md) |
 | `api-boundary` | Why can a peer not use the local browser management API? [API](../../../web/API.md) |
-| `resource-gates` | Why does logical unlimited not provide unlimited resources? [Capacity](../../CAPACITY.en.md) |
+| `resource-gates` | Why does an “unlimited” setting still have resource limits? [Capacity](../../CAPACITY.en.md) |
 | `port-observation` | Why is an observed free port not reserved for a later start? [Port proposals](../../PORT_PROPOSALS.en.md) |
 
 The document-specific Mermaid figures cover branches, mappings and operation contracts where a compact relationship diagram is clearer than another illustration. Reference tables remain preferable for exact commands, fields, historical evidence and comparison data. Reuse a theme only when it answers the same question; link to the relevant explanation instead of adding the same generic picture to every guide.
@@ -40,8 +40,8 @@ XDG_CACHE_HOME=/tmp python3 render.py
 XDG_CACHE_HOME=/tmp python3 verify.py
 ```
 
-Generation uses only the Python standard library. `semantic.py` contains shared inert SVG primitives and the document-specific layouts. `build.py` produces the device overview; `explainers.py` produces the three existing explanatory themes. Commit generators and changed SVG variants together. Generator changes need full validation; adding a new theme also requires explicit CI image-name registration rather than a wildcard allowance.
+Generation uses only the Python standard library. `semantic.py` contains shared SVG elements that do not execute code and the document-specific layouts. `build.py` produces the device overview; `explainers.py` produces the three existing explanatory themes. Commit generators and changed SVG variants together. Generator changes need full validation; adding a new theme also requires explicit CI image-name registration rather than a wildcard allowance.
 
-Optional PNG rendering uses librsvg and Cairo; contact sheets also need Pillow. Review sheets and PNGs remain untracked. The verifier measures each SVG's text bounds, explicit label widths encoded in inert IDs, and text-to-text collisions. These checks do not detect every arrow/label collision: inspect all language/theme/layout variants as rendered images. Mermaid sources use inert, plain labels without HTML, custom styles or executable configuration.
+Optional PNG rendering uses librsvg and Cairo; contact sheets also need Pillow. Review sheets and PNGs remain untracked. The verifier measures each SVG's text bounds, explicit label widths encoded in non-executable IDs, and text-to-text collisions. These checks do not detect every arrow/label collision: inspect all language/theme/layout variants as rendered images. Mermaid sources use plain, non-executable labels without HTML, custom styles or executable configuration.
 
 Review in three passes: implementation meaning and structure; visual hierarchy and narrow readability; first-read comprehension in the actual document and rendered output. Record concrete changes and any remaining limits. Image rendering does not establish screen-reader behavior, browser zoom acceptance, physical-device networking, application compatibility or OS-login/suspend qualification.

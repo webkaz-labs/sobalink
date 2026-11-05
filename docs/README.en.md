@@ -6,7 +6,7 @@ This is an experimental open-source project; no user support is provided. These 
 
 Start with the [user guide](GENERIC.en.md). The [verification record](VERIFICATION.en.md) is authoritative for published versions, development sources and executed checks. Each workflow identifies its target version and limitations; automated tests do not establish physical-device acceptance.
 
-This index routes readers to the right document. Dedicated guides own workflows, contracts own guarantees and limits, verification owns executed evidence, and the roadmap owns remaining work. Japanese and English pages are paired views of the same role. Architecture, distribution and the Web acceptance proposal use shared English documents.
+Use this index to find the right document. Guides explain operations, specifications describe behavior and limits, verification records show completed checks, and the roadmap lists remaining work. Japanese and English pages cover the same topics. Architecture, distribution and the Web acceptance proposal use shared English documents.
 
 ## Choose your next step
 
@@ -24,13 +24,14 @@ This index routes readers to the right document. Dedicated guides own workflows,
 - [First start, send and stop](GENERIC.en.md)
 - [Guided CLI and automation](CLI_GUIDE.en.md)
 - [Local Web controls](WEB_CONTROLS.en.md)
+- [Optional desktop client](NATIVE_UI.en.md)
 - [Private sign-in and cancellation](SIGN_IN.en.md)
 - [SSH/HTTP settings and RustDesk](CLIENT_HELPERS.en.md)
 - [Saved definitions, groups and tasks](SAVED_SERVICES.en.md)
 - [Run, stop, sign out and OS sign-in](LIFECYCLE.en.md)
 - [Explicit startup and private proxy profiles](STARTUP.en.md)
 - [Durable files and folders](DURABLE_OUTBOX.en.md)
-- [Capacity, budgets and history](CAPACITY.en.md)
+- [Capacity, resource limits and history](CAPACITY.en.md)
 - [Scoped proxies and diagnostics](PROXY_DIAGNOSTICS.en.md)
 - [Use cases](USE_CASES.en.md)
 - [Common questions](FAQ.en.md)
@@ -71,15 +72,33 @@ These workflows are described for v0.5.1-alpha.1. Their inclusion in the release
 - [Installation, build and signed distribution](DISTRIBUTION.md)
 - [Change-aware CI](CI_EFFICIENCY.en.md)
 
-## Evidence, remaining acceptance and history
+<a id="evidence-remaining-acceptance-and-history"></a>
+
+## Verification and remaining acceptance
 
 - [Published baseline and exact-source run results](VERIFICATION.en.md)
 - [Implementation and remaining acceptance](ROADMAP.en.md)
 - [Reproducible browser acceptance procedure](../web/BROWSER_ACCEPTANCE.md)
-- [Dated UI review history](../web/UX_ACCEPTANCE.md)
 - [Batch-send acceptance conditions](BATCH_SEND_ACCEPTANCE.en.md)
 - [Published-binary resource observations](RESOURCE_MEASUREMENT.en.md)
 - [Isolated relay traffic observations](RELAY_TRAFFIC_MEASUREMENT.en.md)
-- [0.3-series feature parity history](FEATURE_PARITY.en.md)
-- [0.3-series convenience planning and evidence](CONVENIENCE_PLAN.en.md)
 - [Web acceptance design and source-specific history](WEB_ACTIVATION_ACCEPTANCE_PROPOSAL.md)
+
+## Historical records
+
+[History index](history/README.en.md) separates the 0.3-series parity/plan snapshots and dated Web UI reviews from current instructions. Source IDs, failures and then-pending gates remain available. The original top-level paths and section links still lead to the retained records.
+
+## Where to maintain documentation
+
+| Content | Authoritative location |
+| --- | --- |
+| First steps and navigation | Root README, this index and the user guide; summarize and link to details |
+| A complete operation or feature contract | Its dedicated guide above; keep executable recipes with the contract they depend on |
+| Current implementation structure | Architecture, local API and the relevant `internal/`, `web/` or `poc/native/` document beside the code |
+| Executed checks and publication evidence | Verification record; link detailed source-specific reports rather than copying a pass into every guide |
+| Remaining work | Roadmap; do not use an old plan's open items as today's backlog |
+| Historical snapshots | `docs/history/`; existing code-local review records can stay beside their implementation |
+
+Current guides retain their stable paths. Do not move every file solely to create more folders. Retain short task-specific safety reminders where needed, but keep full commands, limits and recovery contracts in one owning guide. Japanese/English counterparts are intentional translations, not duplicate documents to remove.
+
+Before merging documentation changes, follow the [development principles](DEVELOPMENT_PRINCIPLES.en.md) and [document CI contract](CI_EFFICIENCY.en.md#required-document-checks). Update both languages and inbound links together. Keep old section anchors when consolidating published pages. Check repository-wide links and images, and check packaged relative links when changing layout. Packaging intentionally includes only top-level Markdown in `docs/`, `docs/history/` and `web/`; code-local development notes are not installed guides. Nested or unknown changes retain conservative CI classification.

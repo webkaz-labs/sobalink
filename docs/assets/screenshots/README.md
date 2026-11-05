@@ -9,7 +9,7 @@ These are real UI captures with synthetic demo data. They are not evidence of ph
 - Base source: `7f2f79880f3ebd4689b642a6dc9c2d367c0a8e46`. Existing isolated Go browser fixtures, embedded production UI, and pinned Chromium 155.0.8059.79.
 - Message examples omit only the fixture's initial message/offer seeds. The product UI is unchanged; the capture does not send a message.
 - Recovery examples remain blocked and unchecked. No recovery approval, service start/save, invitation creation or OS registration is performed by these captures.
-- `setup-fixed-*` shows the **entry-wording correction included with these documentation changes**, using demo data. It explains default request/TOFU and optional full-fingerprint verification. The capture source is the baseline above plus the three source changes and hashes recorded in `manifest.json`; this is not a released-build claim.
+- `setup-fixed-*` shows the **entry-wording correction from the recorded capture change**, using demo data. It explains default request/TOFU and optional full-fingerprint verification. The capture source is the baseline above plus the three source changes and hashes recorded in `manifest.json`; this is not a released-build claim.
 - No authentication URL/code/QR, proxy credential form, private invitation, or real personal information is included. Names and addresses are fictional fixture values.
 - Exact selected image hashes and source scope: [manifest](manifest.json).
 
@@ -17,11 +17,11 @@ These are real UI captures with synthetic demo data. They are not evidence of ph
 
 - [Web controls](../../WEB_CONTROLS.en.md) / [Web操作](../../WEB_CONTROLS.ja.md): navigation, message/receive controls, stopped-save/start review, recovery and startup guidance.
 - [Direct LAN](../../DIRECT_LAN.en.md) / [直接LAN](../../DIRECT_LAN.ja.md): exact endpoint/prefix review before start.
-- [Connection setup](../../CONNECTION_SETUP.en.md) / [接続設定](../../CONNECTION_SETUP.ja.md): entry-copy correction from the same change set, labeled with its capture source.
+- [Connection setup](../../CONNECTION_SETUP.en.md) / [接続設定](../../CONNECTION_SETUP.ja.md): entry-wording correction from the recorded change set, labeled with its capture source.
 
 Each placement retains text steps, alt text and a full-size link. Narrow command fields may scroll; copyable command text remains the primary command source. A screenshot does not prove that the shown operation completed.
 
-各配置には手順・代替テキスト・原寸リンクを併記します。狭い画面のコマンド欄は横スクロールするため、コピー可能な本文を正本にします。画面の表示は操作完了を意味しません。
+各配置には手順・代替テキスト・原寸リンクを併記します。狭い画面のコマンド欄は横スクロールするため、コピー可能な本文のコマンドを使ってください。画面の表示は操作完了を意味しません。
 
 ## Local sign-in and copy changes / ローカルログインとコピーの変更
 

@@ -4,12 +4,14 @@ macOS アダプターは、明示的に選択したインターフェースで O
 
 ## provider の結果を確認する
 
+DNS-SD は DNS を使ってサービスを探す仕組みです。この文書では、プロバイダーは macOS 用の探索処理、所有者はセッションと関連リソースを管理するオブジェクトを指します。検証結果記録（receipt）は、使用ソースと実行に結び付いた構造化された試験結果です。
+
 1. 明示的に選択したインターフェースと現在のランダム探索セッションを確認します。
 2. 返された記録は、以下の OS から観測できる範囲に限ったセットアップ候補として扱います。
 3. 選択した接続先を別途認証し、既存の承認を取得します。
-4. 権限や provider が利用できない場合は利用不可と表示し、手動設定を使います。範囲を広げたり OS 設定を自動変更したりしません。
+4. 権限やプロバイダーが利用できない場合は利用不可と表示し、手動設定を使います。範囲を広げたり OS 設定を自動変更したりしません。
 
-[provider の選択と共通上限](README.md) · [現在の検証](../../docs/VERIFICATION.md)
+[プロバイダーの選択と共通上限](README.md) · [現在の検証](../../docs/VERIFICATION.md)
 
 ## 範囲とプライバシー
 
@@ -63,9 +65,9 @@ C は Go ポインターやハンドルを保持しません。受理予算を�
 
 Darwin+cgo、システム SDK の dns_sd.h・dispatch ヘッダーと、DNS-SD・dispatch を再エクスポートする自動リンクの libSystem を使います。パッケージ固有のリンクフラグや単独の libdns_sd SDK スタブは使いません。外部 FFI は追加しません。cgo なしの Darwin ビルドは明示的に利用不可です。配布物はコンパイラー・SDK・システム入力と対象の cgo モードを記録します。Linux 上で cgo なしの代替処理をクロスコンパイルしても、このアダプターの実動作検証にはなりません。
 
-必須の macOS CI は race 有効の nearby テストバイナリーを一度だけコンパイルし、通常の Terminal 起動一回で五つの範囲を各一回実行します。すべてに正確な RUN/PASS と verified の閉じた receipt が必要で、unavailable や skip は必須ゲートを通過しません。receipt は実際の CI commit/tree（PR では test merge）、生成元 run/attempt、追跡ソース一覧と準備済み入力の除外範囲、コンパイラー・SDK・バイナリー・起動・parser・native driver のポリシーハッシュに結び付きます。ソースとツールチェーンの再確認、native/converter の終了コード 0、所有リソースの join が必須です。coverage とリリースの検証は、正確な単一ファイル artifact と成功した native job を要求します。再実行に引き継がれた成功は元の生成 attempt と実行時刻を保持します。
+必須の macOS CI は race 有効の nearby テストバイナリーを一度だけコンパイルし、通常の Terminal 起動一回で五つの範囲を各一回実行します。すべてに正確な RUN/PASS と verified の閉じた検証結果記録が必要で、利用不可や skip は必須ゲートを通過しません。検証結果記録は実際の CI commit/tree（PR では test merge）、生成元 run/attempt、追跡ソース一覧と準備済み入力の除外範囲、コンパイラー・SDK・バイナリー・起動・解析処理・ネイティブドライバーのポリシーハッシュに結び付きます。ソースとツールチェーンの再確認、native/converter の終了コード 0、所有リソースの終了確認 が必須です。coverage とリリースの検証は、正確な単一ファイル成果物と成功したネイティブジョブを要求します。再実行に引き継がれた成功は元の生成時の実行回 と実行時刻を保持します。
 
-これは同一ホスト内の証拠です。選択した OS 範囲では OS-backed Session の相互候補、lookup、Close による無効化を確認します。受信専用 UDP は送信元ポート 5353、承認済み private family/prefix、選択 interface、宛先、TTL 255 を要求し、変更のない製品の `validatePacket` → `decodeRecordPacket` → `recordAssembler`/store に通して PTR/SRV/TXT/A の mask 15 を確認します。証明するのは OS 公開データ → 製品 raw parser の方向だけです。legacy native-C の一回の query と selected-interface response は別のテスト専用経路です。製品 raw mDNS 送信 → OS resolver、二つの OS／物理端末、Core/browser の自動発見、TCC の原因・responsible-code identity は証明しません。通常の Terminal 起動は権限・設定を変更せず、prompt を承認せず、拒否や有限時間内に完了しない実行では安全に失敗します。所有する子処理の join は Terminal アプリ／window の終了を意味しません。任意の create-event 診断は別に残し、unavailable をそのまま報告できます。
+これは同一ホスト内の証拠です。選択した OS 範囲では OS-backed Session の相互候補、lookup、Close による無効化を確認します。受信専用 UDP は送信元ポート 5353、承認済みプライベートアドレスの系統と範囲、選択インターフェース、宛先、TTL 255 を要求し、変更のない製品の `validatePacket` → `decodeRecordPacket` → `recordAssembler`/store に通して PTR/SRV/TXT/A の mask 15 を確認します。証明するのは OS 公開データ → 製品のパケット解析処理の方向だけです。legacy native-C の一回の問い合わせと selected-interface response は別のテスト専用経路です。製品の mDNS パケット送信 → OS resolver、二つの OS／物理端末、Core/browser の自動発見、TCC の原因・responsible-code 識別情報は証明しません。通常の Terminal 起動は権限・設定を変更せず、確認画面を承認せず、拒否や有限時間内に完了しない実行では安全に失敗します。所有する子処理の終了確認 は Terminal アプリ／ウィンドウの終了を意味しません。任意の create-event 診断は別に残し、利用不可をそのまま報告できます。
 
 
 ### 各ネイティブ試験はどの方向を確認するか
@@ -88,23 +90,23 @@ sequenceDiagram
     O-->>F: 正確な legacy ユニキャスト応答を検証
 ```
 
-文章での説明: 1～3は OS API と Session の観測、4は OS 広告から変更のない製品 raw parser への受信方向です。5はテスト専用のネイティブ C による一回の legacy 問い合わせとユニキャスト応答です。同一ホスト内に限り、製品 raw 送信から OS・別の物理端末・Core やブラウザーの証明にはなりません。
+文章での説明: 1～3は OS API と Session の観測、4は OS 広告から変更のない製品のパケット解析処理への受信方向です。5はテスト専用のネイティブ C による一回の legacy 問い合わせとユニキャスト応答です。同一ホスト内に限り、製品のパケット送信から OS・別の物理端末・Core やブラウザーの証明にはなりません。
 
 実装参照: [dnssd_native_acceptance_test.go](dnssd_native_acceptance_test.go) · [dnssd_raw_receive_test.go](dnssd_raw_receive_test.go) · [dnssd_legacy_native_test.go](dnssd_legacy_native_test.go) · [dnssd_socket_native_test.go](dnssd_socket_native_test.go).
 
-各範囲は独立した明示的な opt-in と証明方向を持ちます。番号は図と対応します。
+各範囲は独立した明示的な有効化と証明方向を持ちます。番号は図と対応します。
 
-| 範囲 | 明示的な opt-in | 確認する境界と条件 |
+| 範囲 | 明示的な有効化 | 確認する境界と条件 |
 | --- | --- | --- |
 | 1. LocalOnly | `SOBALINK_DNSSD_LOCAL_ONLY=1` | 同一ホストの LocalOnly で2登録・正確な相互通知・削除 |
-| 2. 選択 loopback | `SOBALINK_DNSSD_SELECTED_LOOPBACK=1` | 正確な loopback binding 上の2 provider と Session。非対応は利用不可 |
-| 3. 選択 interface | `SOBALINK_DNSSD_SELECTED_INTERFACE=1` | 別途承認したホスト型 CI の既存 private IPv4 multicast 範囲1個で架空データを確認。曖昧なら利用不可・代替なし |
-| 4. 受信専用 raw reception | `SOBALINK_DNSSD_RAW_RECEIVE=1` | 厳密に選択したホスト型 CI 範囲で OS 広告から製品 metadata 判定・record assembler への受信だけ |
-| 5. Legacy serialization | `SOBALINK_DNSSD_LEGACY_SERIALIZATION=1` | テスト専用 native C による一回の問い合わせと正確な legacy ユニキャスト応答。独立した条件と上限は後述 |
+| 2. 選択ループバック | `SOBALINK_DNSSD_SELECTED_LOOPBACK=1` | 正確なループバックアドレスを使う二つのプロバイダーと Session。非対応は利用不可 |
+| 3. 選択インターフェース | `SOBALINK_DNSSD_SELECTED_INTERFACE=1` | 別途承認したホスト型 CI の既存プライベート IPv4 マルチキャスト範囲1個で架空データを確認。曖昧なら利用不可・代替なし |
+| 4. 受信専用のパケット処理 | `SOBALINK_DNSSD_RAW_RECEIVE=1` | 厳密に選択したホスト型 CI 範囲で OS 広告から製品メタデータ判定・レコードの組み立て処理 への受信だけ |
+| 5. Legacy serialization | `SOBALINK_DNSSD_LEGACY_SERIALIZATION=1` | テスト専用ネイティブ C による一回の問い合わせと正確な legacy ユニキャスト応答。独立した条件と上限は後述 |
 
-有限時間の終了確認後に、この4テストが独立した `NEARBY_DNSSD_CAPABILITY` を出力します。受信専用テストは、受信パケット数、コピー済みバイト数、メタデータの受理・拒否、デコード結果、レート制限数、架空の正確な4レコード種別を表すビットマスクも記録します。`receivedBytes` は有限長のバッファーにコピーした量であり、切り詰められたデータグラムの完全な通信量ではありません。受信専用・legacy ソケットはそれぞれ、所有期間全体で512回の受信、614,912コピー済みバイト（512 × 1201）を上限とします。プロバイダーの受理レコード予算とは別です。不正・切り詰め済みのメタデータを持つパケットはデコードしません。
+有限時間の終了確認後に、最初の4テストが独立した `NEARBY_DNSSD_CAPABILITY` を出力します。受信専用テストは、受信パケット数、コピー済みバイト数、メタデータの受理・拒否、デコード結果、レート制限数、架空の正確な4レコード種別を表すビットマスクも記録します。`receivedBytes` は有限長のバッファーにコピーした量であり、切り詰められたデータグラムの完全な通信量ではありません。受信専用・legacy ソケットはそれぞれ、所有期間全体で512回の受信、614,912コピー済みバイト（512 × 1201）を上限とします。プロバイダーの受理レコード予算とは別です。不正・切り詰め済みのメタデータを持つパケットはデコードしません。
 
-独立した5番目の opt-in `SOBALINK_DNSSD_LEGACY_SERIALIZATION=1` は `TestDNSServiceLegacySerializationCapability` を実行します。正確な架空の4レコードを API で確認してから、選択したローカルアドレスの一時 UDP ポートより、固定マルチキャスト宛先へ圧縮した [RFC 6762 の legacy 問い合わせ](https://www.rfc-editor.org/rfc/rfc6762.html#section-6.7)を1回だけ送信します。現在の比較は、既存の正確にバインドした非ブロッキングの記述子で、ネイティブ C の `sendto` を1回だけ実行します。その前に Go や補助制御データ付きの送信を行ったり、失敗後に代替送信したりしません。以前の Go の `host_unreachable` は過去の観測として保持し、原因が証明済みとは扱いません。テスト専用ヘルパーパッケージは製品のインポート・リンク対象に入らず、ポインターを保持せず、ソケットも作りません。送信直前に、正確なバインド先、`IP_BOUND_IF`、`IP_MULTICAST_IFINDEX`、`IP_MULTICAST_IF`、マルチキャスト TTL 255、ループバック、`O_NONBLOCK` を読み戻します。必須設定を確認できない・一致しない場合は送信しません。マルチキャストの正のインデックスは選択値との一致を必須とします。アドレス形式の読み戻しはインターフェースの主アドレスの場合もあるため参考値とし、正確な送信元は `getsockname` で確認します。直接の C 呼び出しは非ブロッキングと呼び出し前の期限確認で制限し、Go の書き込み期限だけで取り消せるとは扱いません。EINTR・EAGAIN を含むエラーで終了し、再試行しません。
+独立した5番目の明示的な有効化 `SOBALINK_DNSSD_LEGACY_SERIALIZATION=1` は `TestDNSServiceLegacySerializationCapability` を実行します。正確な架空の4レコードを API で確認してから、選択したローカルアドレスの一時 UDP ポートから、固定マルチキャスト宛先へ圧縮した [RFC 6762 の legacy 問い合わせ](https://www.rfc-editor.org/rfc/rfc6762.html#section-6.7)を1回だけ送信します。現在の比較は、既存の正確にバインドした非ブロッキングの記述子で、ネイティブ C の `sendto` を1回だけ実行します。その前に Go や補助制御データ付きの送信を行ったり、失敗後に代替送信したりしません。以前の Go の `host_unreachable` は過去の観測として保持し、原因が証明済みとは扱いません。テスト専用ヘルパーパッケージは製品のインポート・リンク対象に入らず、ポインターを保持せず、ソケットも作りません。送信直前に、正確なバインド先、`IP_BOUND_IF`、`IP_MULTICAST_IFINDEX`、`IP_MULTICAST_IF`、マルチキャスト TTL 255、ループバック、`O_NONBLOCK` を読み戻します。必須設定を確認できない・一致しない場合は送信しません。マルチキャストの正のインデックスは選択値との一致を必須とします。アドレス形式の読み戻しはインターフェースの主アドレスの場合もあるため参考値とし、正確な送信元は `getsockname` で確認します。直接の C 呼び出しは非ブロッキングと呼び出し前の期限確認で制限し、Go の書き込み期限だけで取り消せるとは扱いません。EINTR・EAGAIN を含むエラーで終了し、再試行しません。
 
 元の選択インターフェース上の `224.0.0.251` だけを対象に、`/sbin/route -n get -ifscope` で有限の読み取り専用照会を1回行います。元の所有期間内の1秒の短い期限、非公開出力8192バイトの上限を設け、成功の結果には子プロセス・ワーカーの終了確認を必須とします。終了未確認では所有者を保持した失敗の結果とします。出力は固定の状態、一致・不一致の真偽値、許可したフラグだけで、アドレス、インターフェース名、経路文字列、生のエラーは公開しません。経路がない場合も参考情報です。[固定版 XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/netinet/ip_output.c#L646-L657)は、マルチキャストインターフェース指定時に通常の経路検索を省略します。経路照会の成功や `host_unreachable` から、ローカルネットワーク権限やマルチキャスト到達性の原因を断定しません。結果はソケットの読み戻し、経路の観測、ネイティブ送信を実際に試みたか、期限・送信の段階、固定エラー分類を分けて記録します。
 

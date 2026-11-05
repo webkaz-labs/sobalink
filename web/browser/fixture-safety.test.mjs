@@ -1,7 +1,7 @@
-import { fixtureStartDiagnostic, readFixtureStartDiagnostic } from './fixture-start-diagnostics.mjs'
+import { fixtureStartDiagnostic, readFixtureStartDiagnostic, readStartupSidecar } from './fixture-start-diagnostics.mjs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile, chmod, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
@@ -63,13 +63,13 @@ test('result reports omit private error details and never mark discovery-only ru
     await reporter.onEnd({ status: 'passed' })
     const path = join(directory, 'playwright-report.json')
     assert.equal(JSON.parse(await readFile(path, 'utf8')).requiredCoverageComplete, false)
-    reporter.onTestEnd({ titlePath: () => ['fixture privacy'], location: { file: '/private/workspace/workflows.spec.mjs', line: 10 }, annotations: [{ type: 'fixture-start-diagnostic', description: JSON.stringify(fixtureStartDiagnostic({ code: 1, signal: null, error: sentinel })) }] }, { status: 'failed', duration: 1, errors: [{ message: sentinel, stack: `${sentinel}\n    at Object.test (/private/workspace/workflows.spec.mjs:123:7)\n    at privateValue (/private/workspace/${sentinel}.mjs:9:9)\n    at another (/private/workspace/other.spec.mjs:4:5)` }], attachments: [{ body: sentinel }] })
+    reporter.onTestEnd({ titlePath: () => ['fixture privacy'], location: { file: '/private/workspace/workflows.spec.mjs', line: 10 }, annotations: [{ type: 'fixture-start-diagnostic', description: JSON.stringify(fixtureStartDiagnostic({ code: 1, signal: null, error: sentinel }, false, { stage: 'primary-core', category: 'permission' })) }] }, { status: 'failed', duration: 1, errors: [{ message: sentinel, stack: `${sentinel}\n    at Object.test (/private/workspace/workflows.spec.mjs:123:7)\n    at privateValue (/private/workspace/${sentinel}.mjs:9:9)\n    at another (/private/workspace/other.spec.mjs:4:5)` }], attachments: [{ body: sentinel }] })
     await reporter.onEnd({ status: 'failed' })
     const result = await readFile(path, 'utf8')
     assert.equal(result.includes(sentinel), false)
     assert.equal(result.includes('/private/workspace'), false)
     assert.equal(JSON.parse(result).requiredCoverageComplete, false)
-    assert.deepEqual(JSON.parse(result).tests[0].fixtureStart, { stage: 'session-wait', outcome: 'exited', code: 1, signal: 'none' })
+    assert.deepEqual(JSON.parse(result).tests[0].fixtureStart, { stage: 'session-wait', outcome: 'exited', code: 1, signal: 'none', startup: { stage: 'primary-core', category: 'permission' } })
     assert.deepEqual(JSON.parse(result).tests[0].failureLocations, [{ file: 'workflows.spec.mjs', line: 123, column: 7 }])
     assert.ok(outputLines.includes('DIAGNOSTIC fixture-or-test-error workflows.spec.mjs:123:7'))
     const consoleOutput = outputLines.join('\n')
@@ -387,4 +387,38 @@ test('startup diagnostics preserve only exit facts and reject poisoned records',
   const annotation = { type: 'fixture-start-diagnostic', description: JSON.stringify(valid) }
   assert.equal(readFixtureStartDiagnostic([annotation, annotation]), undefined)
   assert.equal(readFixtureStartDiagnostic([{ ...annotation, description: sentinel }]), undefined)
+})
+
+
+test('startup sidecars carry only closed-vocabulary failure facts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'soba-startup-diagnostic-'))
+  const path = join(dir, 'diagnostic.json')
+  try {
+    const startup = { stage: 'network-configure', category: 'lan_listener_conflict' }
+    await writeFile(path, JSON.stringify(startup), { mode: 0o600 })
+    assert.deepEqual(await readStartupSidecar(path), startup)
+    const record = fixtureStartDiagnostic({ code: 1 }, false, startup)
+    const read = value => readFixtureStartDiagnostic([{ type: 'fixture-start-diagnostic', description: JSON.stringify(value) }])
+    assert.deepEqual(read(record), { stage: 'session-wait', outcome: 'exited', code: 1, signal: 'none', startup })
+    for (const poisoned of [null, [], { ...startup, private: sentinel }, { ...startup, stage: sentinel }, { ...startup, category: sentinel }]) {
+      await writeFile(path, JSON.stringify(poisoned))
+      assert.equal(await readStartupSidecar(path), undefined)
+      assert.equal(read({ ...record, startup: poisoned }), undefined)
+      assert.equal(JSON.stringify(fixtureStartDiagnostic({ code: 1 }, false, poisoned)).includes(sentinel), false)
+    }
+    await writeFile(path, ' '.repeat(257) + JSON.stringify(startup))
+    assert.equal(await readStartupSidecar(path), undefined)
+    await writeFile(path, sentinel)
+    assert.equal(await readStartupSidecar(path), undefined)
+    assert.equal(await readStartupSidecar(join(dir, 'missing')), undefined)
+    assert.equal(await readStartupSidecar(dir), undefined)
+    await writeFile(path, JSON.stringify(startup))
+    await chmod(path, 0o644)
+    assert.equal(await readStartupSidecar(path), undefined)
+    await chmod(path, 0o600)
+    const linked = join(dir, 'linked')
+    await symlink(path, linked)
+    assert.equal(await readStartupSidecar(linked), undefined)
+    assert.equal(read({ ...record, outcome: 'timeout', code: null }), undefined)
+  } finally { await rm(dir, { recursive: true, force: true }) }
 })

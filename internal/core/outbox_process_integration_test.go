@@ -68,21 +68,32 @@ func TestOutboxProcessRestart(t *testing.T) {
 	commit := func(review browserOutboxRecord, phase string) browserOutboxRecord {
 		t.Helper()
 		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
-		started, attempts := time.Now(), 0
+		started, attempts, maxCommand := time.Now(), 0, time.Duration(0)
 		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
 			attempts++
+			commandStarted := time.Now()
 			reply := peers[0].invokeResult(t, "outbox.commit", payload)
+			maxCommand = max(maxCommand, time.Since(commandStarted))
 			return reply.Value, reply.Error
 		})
 		if err != nil || code != "" {
 			elapsed := time.Since(started)
-			t.Logf("original outbox commit failure before diagnostic collection: phase=%s retry_stopped=%t command=%q attempts=%d elapsed=%s", phase, err != nil, outboxProcessCommitDiagnosticCode(code), min(attempts, 1000), outboxProcessRetryDuration(elapsed))
+			kind := "other"
+			if len(review.Entries) == 1 {
+				switch review.Entries[0].Kind {
+				case transfer.File:
+					kind = "file"
+				case transfer.Directory:
+					kind = "directory"
+				}
+			}
+			t.Logf("original outbox commit failure before diagnostic collection: phase=%s entry=%s retry_stopped=%t command=%q attempts=%d elapsed=%s max_command=%s", phase, kind, err != nil, outboxProcessCommitDiagnosticCode(code), min(attempts, 1000), outboxProcessRetryDuration(elapsed), outboxProcessRetryDuration(maxCommand))
 			// Read-only observation only after the original bounded retry fails.
 			// Do not issue another commit or change its deadline to collect evidence.
 			observation, stopObservation := context.WithTimeout(ctx, time.Second)
 			lifecycle := observeRouteLifecycle(observation, peers[0])
 			stopObservation()
-			t.Fatalf("original outbox commit failed: phase=%s retry_stopped=%t command=%q attempts=%d elapsed=%s post_retry_lifecycle=%+v; runtime diagnostics:\n%s", phase, err != nil, outboxProcessCommitDiagnosticCode(code), min(attempts, 1000), outboxProcessRetryDuration(elapsed), lifecycle, peers[0].diagnostics.safeSummary())
+			t.Fatalf("original outbox commit failed: phase=%s entry=%s retry_stopped=%t command=%q attempts=%d elapsed=%s max_command=%s post_retry_lifecycle=%+v; runtime diagnostics:\n%s", phase, kind, err != nil, outboxProcessCommitDiagnosticCode(code), min(attempts, 1000), outboxProcessRetryDuration(elapsed), outboxProcessRetryDuration(maxCommand), lifecycle, peers[0].diagnostics.safeSummary())
 		}
 		return catalogProcessDecode[browserOutboxRecord](t, reply)
 	}

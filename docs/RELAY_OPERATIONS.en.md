@@ -1,6 +1,6 @@
 # Local relay setup and recovery
 
-[日本語](RELAY_OPERATIONS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](RELAY_OPERATIONS.ja.md) · [User guide](GENERIC.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
 Choose this device's private address explicitly, start its relay, and privately pair the other devices. A saved configuration, a running listener, and successful peer/application traffic are different states. Native loopback tests do not establish physical LAN reachability, sleep/wake behavior, or application compatibility.
 
@@ -90,7 +90,9 @@ Prefixes describe destination addresses, not physical interface binding. A match
 
 There is no fixed four-candidate permission limit. More than four exact candidates may be saved, exchanged and explicitly approved. Saved metadata must fit `lanStateBytes`; the unchanged signed exchange format supports 24 KiB of plaintext within a 64 KiB envelope, and DERP uses nonzero 16-bit region IDs. These are storage/protocol bounds, not statements about what NATs support. Older releases still reject offers containing more than four candidates; upgrade both ends before using larger offers. They also do not recognize explicitly saved new relay-resource keys; review compatibility before downgrading that state. Existing pairs, finite/permanent lifetimes, pins and explicit grants do not change when loading old state.
 
-The server keeps a presence connection for every configured relay. Its active relay map also bounds relay-diagnostic destinations. Starting more relays than the selected presence budget fails before networking starts, with saved metadata and grants intact. Raise the budget explicitly rather than treating it as permission to contact new destinations.
+The server keeps a presence connection for every configured relay.
+
+A presence connection keeps the server registered with that relay so peers can find it. A certificate pin is the expected certificate's SHA-256 fingerprint; a different certificate is rejected. Its active relay map also bounds relay-diagnostic destinations. Starting more relays than the selected presence budget fails before networking starts, with saved metadata and grants intact. Raise the budget explicitly rather than treating it as permission to contact new destinations.
 
 ```sh
 soba lan resources show
@@ -103,10 +105,10 @@ First stop networking and reopen with `soba start --offline`. Add the same `--st
 | Resource key | Safe default | Effect |
 | --- | ---: | --- |
 | `relayPresenceConnections` | 4 | Maximum simultaneous configured server relay-presence connections and relay-map diagnostic targets; increase explicitly for a larger active map |
-| `relayCandidateAttempts` | 4 | Maximum sequential approved candidates attempted by one managed dial; the cursor advances fairly after typed availability failures so later candidates can be tried on another call |
+| `relayCandidateAttempts` | 4 | Maximum sequential approved candidates attempted by one managed dial; after a confirmed availability failure, the next call continues through the candidates rather than always restarting at the first one |
 | `relayTLSConnections` | 64 | Maximum accepted TLS connections to this device's embedded relay |
 | `relayAdmissionConnections` | 16 | Maximum accepted connections to its private loopback admission controller |
 
 Budgets require finite positive integers. Presence and attempt budgets cannot exceed the nonzero 16-bit DERP identifier space (65535); connection counts must fit the platform counter and JSON integer representation. An exhausted inbound slot closes only the excess connection, and closure returns its slot. Existing handshake/header timeouts and the two-minute relay-connection lease remain in force. Raising a budget can increase socket, memory and CPU use; it does not enable startup installation, new relay endpoints, OS routes, or external discovery.
 
-Recovery is availability-only, sequential and still bounded by the existing caller deadlines. Explicit TCP refusal/unreachable/reset errors may select another approved candidate. A generic timeout, unknown proof error, cancellation, pin/authentication/permission error, or a joined error containing any of those is terminal. The maintained engine reports typed dial, TLS and protocol failures for the current connection epoch. Only positively classified dial failures permit another candidate; TLS, admission and protocol failures stay terminal. Stale callbacks cannot replace current state, and an observed terminal failure survives internal reconnects until actual relay admission succeeds. Without a classified cause, recovery stops rather than guessing. Native failure-delivery and final-source recovery tests remain required release gates.
+Recovery is availability-only, sequential and still bounded by the existing caller deadlines. Explicit TCP refusal/unreachable/reset errors may select another approved candidate. A generic timeout, unknown verification error, cancellation, or certificate-pin/authentication/permission error stops the attempt. A combined error containing any of these also stops it. The maintained engine reports typed dial, TLS and protocol failures for the current connection epoch. Only positively classified dial failures permit another candidate; TLS, admission and protocol failures stay terminal. Stale callbacks cannot replace current state, and an observed terminal failure survives internal reconnects until actual relay admission succeeds. Without a classified cause, recovery stops rather than guessing. Native failure-delivery and final-source recovery tests remain required release gates.

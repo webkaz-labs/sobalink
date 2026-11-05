@@ -314,18 +314,8 @@ func (t *Tool) Build(version string, target Target, commit string, out io.Writer
 			return err
 		}
 	}
-	// Preserve the relative layout used by guides, including their Web API
-	// and browser-acceptance references. Never collect runtime state or caches.
-	for _, directory := range []string{"docs", "web"} {
-		docs, err := filepath.Glob(filepath.Join(t.Root, directory, "*.md"))
-		if err != nil {
-			return err
-		}
-		for _, doc := range docs {
-			if err = copyFile(doc, filepath.Join(share, directory, filepath.Base(doc))); err != nil {
-				return err
-			}
-		}
+	if err = copyDocumentationMarkdown(t.Root, share); err != nil {
+		return err
 	}
 	if err = copyDocumentationVisuals(t.Root, share); err != nil {
 		return err

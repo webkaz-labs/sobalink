@@ -1,8 +1,8 @@
 # Explicit LAN destination admission
 
-[日本語](LAN_DESTINATIONS.ja.md) · [LAN setup](LAN.en.md) · [Relay operations](RELAY_OPERATIONS.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](LAN_DESTINATIONS.ja.md) · [LAN setup](LAN.en.md) · [Relay operations](RELAY_OPERATIONS.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-**Available in the current release, with exact-source automated and distribution evidence in [verification](VERIFICATION.en.md). Physical-device network acceptance remains pending.** The optional `allowed-lan-destinations` policy restricts this LAN transport's UDP writes to explicitly selected private/ULA/loopback CIDRs and its DERP TCP connections to exact configured numeric relay endpoints within those CIDRs. It does not bind a physical interface or prove same-link, VPN isolation, or whole-host/process zero egress. A matching destination can still be routed through another interface or VPN.
+**Available in the current release, with exact-source automated and distribution evidence in [verification](VERIFICATION.en.md). Physical-device network acceptance remains pending.** The optional `allowed-lan-destinations` policy restricts this LAN transport's UDP writes to selected address ranges in CIDR notation, such as `192.168.50.0/24`. These ranges can contain private IPv4 addresses, IPv6 unique local addresses (ULA), or loopback addresses on the same device. DERP, the encrypted-traffic relay protocol, may connect over TCP only to the configured numeric relay addresses and ports within those ranges. It does not bind a physical interface or prove same-link, VPN isolation, or whole-host/process zero egress. A matching destination can still be routed through another interface or VPN.
 
 Administrator rights and LAN-router changes are not required or performed. The feature uses ordinary userspace sockets; it does not install a TUN driver, modify routes/firewalls, enable UPnP/NAT mappings or bypass a network policy. If the selected network blocks the needed traffic, report the failure and choose another explicitly allowed configuration.
 
@@ -42,15 +42,20 @@ soba setup --network lan --host 192.168.50.10:48443 --policy-mode allowed-lan-de
 
 Use `soba setup --help` for the exact host/relay flags supported by the current CLI. A prefix applies to destinations, not the source interface. IPv6 ULA prefixes are supported; link-local addresses with zone identifiers and IPv4-mapped IPv6 addresses are rejected. A loopback prefix is useful for same-device testing only.
 
-Inspect or change saved policy while the backend is stopped:
+Stop the running application, then start local management without the saved network:
+
+```sh
+soba start --offline
+```
+
+Leave it running. In another terminal, inspect and change the saved policy:
 
 ```sh
 soba lan policy show
-soba start --offline
 soba lan policy set --mode allowed-lan-destinations --prefix 192.168.50.0/24 --prefix fd50::/64
 ```
 
-Stop the running process before the offline launch. Restart normally after saving the reviewed policy. The selected relay and all locally prepared relay candidates must fit. Existing remote route grants are intersected with the policy: an out-of-policy route cannot become fallback. Choosing `trusted-relay` explicitly restores ordinary direct peer destinations and selected-relay diagnostics; it does not select a public relay automatically.
+Restart normally after saving the reviewed policy. The selected relay and all locally prepared relay candidates must fit. Existing remote route grants are intersected with the policy: an out-of-policy route cannot become fallback. Choosing `trusted-relay` explicitly restores ordinary direct peer destinations and selected-relay diagnostics; it does not select a public relay automatically.
 
 ## Enforcement and lifetime
 

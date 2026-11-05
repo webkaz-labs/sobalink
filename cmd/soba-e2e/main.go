@@ -349,8 +349,16 @@ func main() {
 }
 func run() (runErr error) {
 	file := flag.String("session-file", "", "private output file read by the browser test")
+	diagnosticFile := flag.String("startup-diagnostic-file", "", "private fixed-category startup failure record")
 	scenario := flag.String("scenario", "studio", "browser fixture: studio, offline, saved-host, routes, receive-legacy or receive-damaged")
 	flag.Parse()
+	stage, ready := "arguments", false
+	defer func() {
+		if !ready && runErr != nil && *diagnosticFile != "" {
+			// Best effort: never replace the original failure or write raw errors.
+			_ = writeStartupDiagnostic(*diagnosticFile, stage, runErr)
+		}
+	}()
 	if *file == "" {
 		return errors.New("--session-file is required")
 	}
@@ -359,11 +367,13 @@ func run() (runErr error) {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	stage = "temporary-directory"
 	dir, e := os.MkdirTemp("", "sobalink-browser-")
 	if e != nil {
 		return e
 	}
 	defer os.RemoveAll(dir)
+	stage = "fixture-files"
 	receiveDir := filepath.Join(dir, "received")
 	if e := os.Mkdir(receiveDir, 0700); e != nil {
 		return e
@@ -391,11 +401,13 @@ func run() (runErr error) {
 	aIP, bIP := netip.MustParseAddr("100.64.0.1"), netip.MustParseAddr("100.64.0.2")
 	aNode := &node{network: netw, ip: aIP, remoteIP: bIP, id: "fixture-notebook", remoteID: "fixture-studio", remoteName: "Studio", managementPort: managementPort}
 	bNode := &node{network: netw, ip: bIP, remoteIP: aIP, id: "fixture-studio", remoteID: "fixture-notebook", remoteName: "Notebook"}
+	stage = "primary-lock"
 	aOwner, e := config.AcquireLock(filepath.Join(dir, "notebook"))
 	if e != nil {
 		return e
 	}
 	defer func() { runErr = errors.Join(runErr, aOwner.Close()) }()
+	stage = "primary-core"
 	a, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "notebook"), LifecycleLock: aOwner, Version: "browser-acceptance", SkipNetworkStart: true, NodeFactory: func(string, string) (core.NetworkBackend, error) {
 		if offlineScenario(*scenario) {
 			return nil, errors.New("offline browser fixture cannot activate a network")
@@ -406,15 +418,18 @@ func run() (runErr error) {
 		return e
 	}
 	defer func() { runErr = errors.Join(runErr, a.Close()) }()
+	stage = "receive-settings"
 	if e := command(ctx, a, "settings.update", map[string]string{"receiveDirectory": receiveDir}); e != nil {
 		return e
 	}
 	if !offlineScenario(*scenario) {
+		stage = "secondary-lock"
 		bOwner, e := config.AcquireLock(filepath.Join(dir, "studio"))
 		if e != nil {
 			return e
 		}
 		defer func() { runErr = errors.Join(runErr, bOwner.Close()) }()
+		stage = "secondary-core"
 		b, e := core.Open(ctx, core.Options{Directory: filepath.Join(dir, "studio"), LifecycleLock: bOwner, Version: "browser-acceptance", NodeFactory: func(string, string) (core.NetworkBackend, error) { return bNode, nil }})
 		if e != nil {
 			return e
@@ -424,13 +439,16 @@ func run() (runErr error) {
 			app        *core.Core
 			name, peer string
 		}{{a, "Notebook", "fixture-studio"}, {b, "Studio", "fixture-notebook"}} {
+			stage = "network-configure"
 			if e := command(ctx, item.app, "network.configure", map[string]string{"mode": "tailnet", "hostname": item.name}); e != nil {
 				return e
 			}
+			stage = "peer-trust"
 			if e := command(ctx, item.app, "peer.trust", map[string]any{"peerId": item.peer, "trusted": true}); e != nil {
 				return e
 			}
 		}
+		stage = "peer-reconnect"
 		deadline := time.Now().Add(15 * time.Second)
 		for {
 			e = command(ctx, a, "peer.reconnect", map[string]string{"peerId": "fixture-studio"})
@@ -446,12 +464,14 @@ func run() (runErr error) {
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
+		stage = "seed-messages"
 		if e := command(ctx, b, "message.send", map[string]string{"peerId": "fixture-notebook", "text": "Here are the notes for review."}); e != nil {
 			return e
 		}
 		if e := command(ctx, a, "message.send", map[string]string{"peerId": "fixture-studio", "text": "Thanks. I will review the batch before saving."}); e != nil {
 			return e
 		}
+		stage = "seed-transfer"
 		if *scenario == "studio" {
 			notes := filepath.Join(dir, "design-notes.txt")
 			if e := os.WriteFile(notes, []byte("Fictional design notes for browser acceptance.\n"), 0600); e != nil {
@@ -461,17 +481,21 @@ func run() (runErr error) {
 				return e
 			}
 		}
+		stage = "seed-share"
 		if e := command(ctx, b, "service.share", map[string]any{"name": "sample-web", "network": "tcp", "ports": "8080", "peerIds": []string{"fixture-notebook"}, "lifetime": "finite", "ttlSeconds": 3600, "purpose": "web", "discoverable": true}); e != nil {
 			return e
 		}
+		stage = "discovery-refresh"
 		if e := command(ctx, a, "discovery.refresh", map[string]string{"peerId": "fixture-studio"}); e != nil {
 			return e
 		}
 	} else if *scenario != "routes" && *scenario != "saved-host" {
+		stage = "network-configure"
 		if e := command(ctx, a, "network.configure", map[string]string{"mode": "none", "hostname": "Notebook"}); e != nil {
 			return e
 		}
 	}
+	stage = "assets"
 	files, e := assets.Assets()
 	if e != nil {
 		return e
@@ -480,6 +504,7 @@ func run() (runErr error) {
 	if !offlineScenario(*scenario) {
 		// Reserve a numeric loopback port until the exact UI connect action.
 		// Core then owns the real listener and its ordinary stop lifecycle.
+		stage = "service-reservation"
 		reservation, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
 			return err
@@ -488,6 +513,7 @@ func run() (runErr error) {
 		backend.serviceReservation = reservation
 		backend.servicePort = reservation.Addr().(*net.TCPAddr).AddrPort().Port()
 	}
+	stage = "web-server"
 	server, e := webui.Start(ctx, files, backend)
 	if e != nil {
 		return e
@@ -498,14 +524,17 @@ func run() (runErr error) {
 		runErr = errors.Join(runErr, server.Close(closeCtx))
 	}()
 	managementPort.Store(uint32(server.Port()))
+	stage = "access-code"
 	code, e := server.IssueCode()
 	if e != nil {
 		return e
 	}
 	metadata := privateSession{URL: server.URL(), Code: code, ReceiveDirectory: receiveDir, Scenario: *scenario, Capabilities: scenarioCapabilities(*scenario), LocalServicePort: backend.servicePort, RoutePeerID: routePeerID, RouteUpdateFile: routeUpdateFile}
+	stage = "session-write"
 	if e := config.WriteJSON(*file, metadata); e != nil {
 		return e
 	}
+	ready = true
 	defer os.Remove(*file)
 	fmt.Println("Production UI acceptance server ready with isolated fixtures")
 	select {

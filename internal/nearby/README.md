@@ -2,6 +2,8 @@
 
 [日本語](#日本語)
 
+mDNS discovers services on the selected local network without a central DNS server. A provider is the platform adapter used for discovery. An owner is the object responsible for closing a discovery session and all its resources.
+
 This package implements an opt-in, finite mDNS discovery adapter. A discovered
 candidate is an **unauthenticated hint**, never a peer identity, permission,
 certificate pin, trust grant, or evidence of connectivity. Core must consent to
@@ -51,11 +53,11 @@ OS hints carry no invented packet metadata and may come from a daemon cache.
   Record bundles bind their actual observation provenance; this does **not**
   authenticate an advertised endpoint or equate its ownership with packet source.
   OS observations instead bind the exact selected interface and live queries.
-- A candidate ID binds the entire advertisement, observed source, selected scope
+- A candidate ID binds the entire advertisement, observed source, selected scope,
   a fresh local discovery generation and an observation revision. A changed advertisement invalidates its old
   ID. Replaying an older advertisement, or returning after expiry, cannot revive
   a previously selected ID, including across local discovery restarts. Raw
-  observations never merge cross-source session collisions. OS bundles bind the
+  observations never merge cross-source session collisions. OS から取得したレコードの組s bind the
   selected interface and session and reject conflicting records; they cannot
   attribute records to distinct packet sources. An alias never establishes identity.
 - Sessions last at most 120 seconds; raw candidate TTL is at most 30 seconds from
@@ -133,53 +135,55 @@ Platform implementation evidence:
 
 ## 日本語
 
+mDNS は、中央の DNS サーバーを使わずにローカルネットワークのサービスを探す仕組みです。プロバイダーは OS ごとの探索処理、所有オブジェクトは探索セッションと関連リソースの終了を管理するものです。
+
 このパッケージは、明示的に選んだ一つの範囲で、短時間だけ mDNS 探索を行う。
-候補は未認証の手掛かりであり、相手の identity、権限、証明書 pin、信頼、接続成功
-の証明ではない。Core が bootstrap 待受への同意と寿命を管理し、選択した候補 ID
-を直前に再確認してから、その正確な端点を別途認証する。
+候補は未認証の手掛かりであり、相手の識別情報、権限、証明書の指紋、信頼、接続成功
+の証明ではない。Core が初期接続待受への同意と有効期間を管理し、選択した候補 ID
+を直前に再確認してから、その正確な接続先を別途認証する。
 
-- 広告は一時的な 256-bit session ID、利用者が選んだ alias、固定 protocol と
-  capability、数値 bootstrap 端点だけ。alias は探索中に選択範囲へ公開される。
-  OS hostname、恒久 identity、招待、pin、ファイル情報は含まない。
-- raw packet の送信元と広告端点は、それぞれ選択 prefix 内である必要がある。
-  interface、宛先、送信元 port、TTL と record の観測由来を検証するが、広告端点の
-  所有者や送信元の真正性は保証しない。OS 観測は選択 interface と継続中の正確な
-  query に結び付け、packet metadata を捏造しない。
+- 広告は一時的な 256ビットのセッション ID、利用者が選んだ表示名、固定プロトコルと
+  対応機能の情報、数値指定の初期接続先だけ。表示名は探索中に選択範囲へ公開される。
+  OS ホスト名、恒久識別情報、招待、証明書の指紋、ファイル情報は含まない。
+- 受信パケットの送信元と広告接続先は、それぞれ選択アドレス範囲内である必要がある。
+  インターフェース、宛先、送信元ポート、TTL とレコードの観測由来を検証するが、広告接続先の
+  所有者や送信元の真正性は保証しない。OS 観測は選択インターフェースと継続中の正確な
+  問い合わせに結び付け、パケットメタデータを捏造しない。
 - 候補の変更・失効で古い選択 ID は無効になる。古い広告が再送されても ID は
-  復活しない。raw 観測は送信元の違う同一 session を統合しない。OS bundle は
-  選択 interface と session に結び付けて矛盾する record を拒否するが、異なる
-  packet 送信元を識別できない。alias の一致を identity の証明にしない。
-- session は最大120秒、raw 候補は同じ有効な広告の最終観測から最大30秒、最大64件。
-  OS cache の候補は正確な query の継続中かつ元の session 期限内だけ保持する。
-  どちらも失効・無効化した ID を復活させない。以下の packet 上限は raw 経路のもの。
-  datagram は最大 1,200 bytes、受信 512 件で停止、解析は毎秒最大 16 件、
-  送信は session 全体で最大 64 件。応答は multicast のみで毎秒最大 1 回。
+  復活しない。生の観測は送信元の違う同一セッションを統合しない。OS から取得したレコードの組 は
+  選択インターフェースとセッションに結び付けて矛盾するレコードを拒否するが、異なる
+  パケット送信元を識別できない。表示名の一致を識別情報の証明にしない。
+- セッションは最大120秒、直接受信したパケットに基づく候補は同じ有効な広告の最終観測から最大30秒、最大64件。
+  OS キャッシュの候補は正確な問い合わせの継続中かつ元のセッション期限内だけ保持する。
+  どちらも失効・無効化した ID を復活させない。以下のパケット上限は直接パケットを扱う経路のもの。
+  データグラムは最大 1,200 バイト、受信 512 件で停止、解析は毎秒最大 16 件、
+  送信はセッション全体で最大 64 件。応答はマルチキャストのみで毎秒最大 1 回。
 - Cancel・期限切れは候補を即座に無効化して I/O の終了を要求する。正常終了は
-  goroutine と timer の終了まで確認する。Close は最大 2 秒で、不確定なら owner を
-  保持して再開始を止める。Start が owner と error の両方を返した場合も owner を
-  捨てない。候補は保存せず、能動 bootstrap 接続はこの package の対象外。
+  goroutine とタイマーの終了まで確認する。Close は最大 2 秒で、不確定なら所有オブジェクトを
+  保持して再開始を止める。Start が所有オブジェクトとエラーの両方を返した場合も所有オブジェクトを
+  捨てない。候補は保存せず、初期接続の試行はこのパッケージの対象外。
 
-Core は同意後に StartNative を使う。Linux は正確な multicast group bind と選択
-interface、Windows は選択したローカル数値 address bind と interface 制限を用いる。
-macOS+cgo は選択 interface のシステム DNS-SD API を使う。広告端点は IPv4 だが、
-API は daemon の packet family や wire metadata を証明しない。詳細は
-[API 契約](DNSSD.ja.md)を参照。cgo なしは unavailable とする。
-raw 経路を wildcard bind、別 NIC、全 IP/port scan、OS/FW/経路変更へ拡張しない。
-安全な socket を作れない場合は停止し、Core の手動/QR 導線を利用できる状態にする。
-Unix では Go の通常 UDP listener が multicast bind を wildcard に変更するため、
-native socket を正確な group に bind した後だけ `net.FilePacketConn` に渡す。
-診断専用の旧 macOS raw factory は受信用の正確な group bind と送信用の選択 address:5353 bind を分離し、
-両方に `IP_BOUND_IF` を設定する。送信は固定 multicast interface・TTL255 と、
-source-only pktinfo を用い、選択 address と interface を維持する。片方の準備失敗も
-両方を終了し、不確定なら全 owner を保持して代替・再開始を止める。
-実際の close worker が終了する前に `Done` を閉じない。Session と constructor の
-有限待機を超えた close は owner に保持し、同じ descriptor の終了を再試行しない。
-元の descriptor と Go が複製した descriptor を個別に管理し、元の終了が不確定なら
-起動成功とせず owner を保持する。close-on-exec・nonblocking を必須とする。
+Core は同意後に StartNative を使う。Linux は正確なマルチキャストグループへのバインドと選択
+インターフェース、Windows は選択したローカル数値アドレス待受設定とインターフェース制限を用いる。
+macOS+cgo は選択インターフェースのシステム DNS-SD API を使う。広告接続先は IPv4 だが、
+API は デーモンのパケットのアドレス系統や通信時のメタデータを証明しない。詳細は
+[API 契約](DNSSD.ja.md)を参照。cgo なしは利用不可とする。
+直接パケットを扱う経路をワイルドカード待受設定、別 NIC、全 IP・ポートの探索、OS・ファイアウォール・経路の変更へ拡張しない。
+安全なソケットを作れない場合は停止し、Core の手動/QR 導線を利用できる状態にする。
+Unix では Go の通常の UDP 待受がマルチキャストのバインド先をワイルドカードに変更するため、
+OS のソケットを正確なグループにバインドした後だけ `net.FilePacketConn` に渡す。
+診断専用の旧 macOS パケット処理の生成関数 は受信用の正確なグループ待受設定と送信用の選択アドレス:5353 待受設定を分離し、
+両方に `IP_BOUND_IF` を設定する。送信は固定したマルチキャストインターフェース・TTL255 と、
+送信元だけを指定したパケット補助情報（pktinfo）を用い、選択アドレスとインターフェースを維持する。片方の準備失敗も
+両方を終了し、不確定なら全所有オブジェクトを保持して代替・再開始を止める。
+実際にソケットを閉じる処理 が終了する前に `Done` を閉じない。Session と生成処理 の
+制限時間を超えた終了処理 は所有オブジェクトに保持し、同じ記述子の終了を再試行しない。
+元の記述子と Go が複製した記述子を個別に管理し、元の終了が不確定なら
+起動成功とせず所有オブジェクトを保持する。別プログラム実行時の自動クローズ（close-on-exec）と非ブロッキング設定を必須とする。
 
-模擬 transport・偽時計の試験や他 OS 向けコンパイルは、native multicast の実動
-確認ではない。native 通信と範囲制限、実機の探索・ペアリング・アプリ互換性は、
-別途その source の試験結果が記録されるまで未検証として扱う。
+模擬通信基盤・偽時計の試験や他 OS 向けコンパイルは、OS 上のマルチキャストの実動
+確認ではない。ネイティブ通信と範囲制限、実機の探索・ペアリング・アプリ互換性は、
+別途そのソースの試験結果が記録されるまで未検証として扱う。
 
 ## Opt-in raw native loopback capability test
 
@@ -207,7 +211,7 @@ fallback. Both native transports are fully opened before announcements (Darwin o
 four sockets across the two transports); observation is
 limited to eight seconds and owner cleanup/join to two seconds.
 
-A `NEARBY_NATIVE_CAPABILITY` JSON marker reports `verified`, `unavailable`,
+A `NEARBY_NATIVE_CAPABILITY` JSON の結果記録 reports `verified`, `unavailable`,
 `not_run`, or `failed`. Only `verified`, with bidirectional current candidates
 and both owners joined, counts as capability evidence. A skipped test can still
 leave the enclosing Go package with a `PASS` exit status: **a runner must check
@@ -223,17 +227,17 @@ Those acceptance results remain separate.
 
 ### native loopback 試験について
 
-通常の試験では socket を開かず、この試験を skip する。別途許可された native
-runner だけが上の環境変数で実行する。対象は実際に `127.0.0.1` を持つ up 状態の
-loopback interface 一つと `/32` の試験範囲だけ。製品 API の loopback 拒否は変えず、
-interface flag・経路・FW・全体設定を変更しない。別 NIC への代替や TCP 接続はない。
+通常の試験ではソケットを開かず、この試験を実行しない。別途許可されたネイティブ
+実行環境だけが上の環境変数で実行する。対象は実際に `127.0.0.1` を持つ稼働中の
+ループバックインターフェース一つと `/32` の試験範囲だけ。製品 API のループバック拒否は変えず、
+インターフェースのフラグ・経路・ファイアウォール・全体設定を変更しない。別 NIC への代替や TCP 接続はない。
 
-専用 JSON marker の `verified` と、双方向の候補確認・両 owner の終了確認だけを
-能力試験の根拠にする。`unavailable` / `not_run` による skip は、Go package 全体が
-`PASS` と表示されても合格証拠ではない。metadata の範囲不一致や終了不能は失敗。
-`socketFailureStage` は固定 enum で失敗段階を示し、失敗がなければ `none` とする。
-OS の生 error、interface の識別情報、address は出力しない。
-loopback 上の合格は、実 NIC・別端末の探索、bootstrap 認証、手動導線の合格とは別。
+専用 JSON の結果記録 の `verified` と、双方向の候補確認・両所有オブジェクトの終了確認だけを
+能力試験の根拠にする。`unavailable` / `not_run` による未実行 は、Go パッケージ全体が
+`PASS` と表示されても合格証拠ではない。メタデータの範囲不一致や終了不能は失敗。
+`socketFailureStage` は固定の選択肢 で失敗段階を示し、失敗がなければ `none` とする。
+OS の生エラー、インターフェースの識別情報、アドレスは出力しない。
+ループバック上の合格は、実 NIC・別端末の探索、初期接続認証、手動導線の合格とは別。
 
 ## Platform diagnosis boundary
 
@@ -276,33 +280,33 @@ automatic setup remain distinct acceptance results.
 
 ### プラットフォーム別の診断範囲
 
-診断専用の旧 macOS raw 経路の送受信分離は上記の固定 XNU source の bound-source 検証順序と、pktinfo の
-interface 指定が source 指定に優先する動作に基づく修正である。source 調査だけで
-実行環境の error 原因や native 動作確認の完了を断定しない。
+診断専用の旧 macOS 直接パケットを扱う経路の送受信分離は上記の固定 XNU ソースの bound-source 検証順序と、pktinfo の
+インターフェース指定がソース指定に優先する動作に基づく修正である。ソース調査だけで
+実行環境のエラー原因やネイティブ動作確認の完了を断定しない。
 
-bind 失敗は `bindSocketRole` と `bindFailureKind` の固定値で受信 group / 送信 local
-socket と error 分類を区別し、address・識別子・生の errno は出力しない。
-選択 IPv4 と port 5353、既存の所有権確認は維持する。上記 XNU bind 規則では、
-所有 UID が異なる既存 socket との正確な local address の port 共有が reuse 設定下
+待受設定失敗は `bindSocketRole` と `bindFailureKind` の固定値で受信グループ / 送信ローカル
+ソケットとエラー分類を区別し、アドレス・識別子・生の errno は出力しない。
+選択 IPv4 とポート 5353、既存の所有権確認は維持する。上記 XNU 待受設定規則では、
+所有 UID が異なる既存ソケットとの正確なローカルアドレスのポート共有が reuse 設定下
 でも拒否され得る。これは共存制限の候補であり、個別実行の原因を断定するものではない。
-競合が確認された場合はプラットフォーム・設計上の blocker とし、service・port・bind
+競合が確認された場合はプラットフォーム・設計上の阻害要因とし、サービス・ポート・待受設定
 範囲の変更で代替しない。
 
-Windows の固定 Go 1.27.1 `WriteMsgInet4` は `WSASendMsg` に同期 byte count の出力先を
-渡さず、即時成功時に零 byte を返し得る。実際に未送信だったとは断定できない。
-同じ loopback 範囲の `WriteToUDP` 補助試験では正確な metadata と終了を確認したため、
-製品経路もこの exact bind の送信 primitive を使用する。送信直前の binding 確認、
-送信・membership とも network byte order の24-bit interface index で指定し、同じ
-local IP を持つ別 interface と区別する。零・表現範囲外の index は unsupported とする。
-TTL 255、一秒 deadline、全 byte count 必須、retry なしを維持する。
+Windows の固定 Go 1.27.1 `WriteMsgInet4` は `WSASendMsg` に同期バイト数の出力先を
+渡さず、即時成功時に零バイトを返し得る。実際に未送信だったとは断定できない。
+同じループバック範囲の `WriteToUDP` 補助試験では正確なメタデータと終了を確認したため、
+製品経路もこの正確なアドレスにバインドした送信処理を使用する。送信直前の関連付け確認、
+送信・グループへの参加ともネットワークバイト順の24ビットのインターフェースインデックスで指定し、同じ
+ローカル IP を持つ別インターフェースと区別する。零・表現範囲外のインデックスは未対応とする。
+TTL 255、一秒期限、全バイト数の一致必須、再試行なしを維持する。
 修正後の製品確認には新しい双方向 Session 結果が必要で、補助試験だけでは完了としない。
 
-`sendFailureKind` は既知の OS error 分類と payload/control の不足だけを固定値で示す。
-従来の試験専用結果を扱う `windowsNoAncillaryProbe` の閉じた schema と、製品確認へ
-昇格させない検証は維持する。製品が同じ送信 primitive を採用したため、追加 probe は
+`sendFailureKind` は既知の OS エラー分類と転送データ・制御データの不足だけを固定値で示す。
+従来の試験専用結果を扱う `windowsNoAncillaryProbe` の閉じたデータ形式と、製品確認へ
+昇格させない検証は維持する。製品が同じ送信処理を採用したため、追加接続検査は
 廃止し、現在の実行では null とする。同一経路の冗長な再送は行わない。
 過去の補助結果を製品探索の動作確認として扱わない。
 
-Linux の結果を macOS/Windows の対応証拠として流用しない。`unavailable` は job が
-緑でも自動探索未確認である。loopback 探索、手動 contact の Core/browser 接続、
+Linux の結果を macOS/Windows の対応証拠として流用しない。`unavailable` はジョブが
+緑でも自動探索未確認である。ループバック探索、手動連絡先の Core・ブラウザーの接続、
 実 LAN の自動セットアップはそれぞれ別の確認結果として扱う。

@@ -13,3 +13,5 @@ func beginInspectionObservation(context.Context) inspectionObservation {
 func (inspectionObservation) finish(string, error, error) {}
 
 func markInspectionDial(context.Context, string, bool, bool) {}
+
+func markInspectionDialResult(context.Context, string, error, bool) {}

@@ -47,7 +47,7 @@ go vet ./cmd/soba ./internal/core ./internal/webui ./internal/capacity
 ```
 
 `TestTransferDispatchCLIProtectedIPC` exercises the real CLI, private native
-socket or named pipe, production command routing, actual staging and Core DTOs
+socket or named pipe, production command routing, actual staging and Core data-transfer formats (DTOs)
 in both locales. Peer inventory and transport are bounded fixtures; this test
 does not establish delivery.
 
@@ -110,7 +110,7 @@ replace real-device or installed-package acceptance.
 ## Frontend and remaining acceptance
 
 After the source is stable, run `npm --prefix web run build`, then
-`python .github/scripts/check-frontend.py`. The latter installs the exact lock
+`python .github/scripts/check-frontend.py`. The latter installs the exact dependencies recorded in the lockfile
 twice, runs the frontend tests, and compares both rebuilds to checked-in assets.
 Retain the existing browser configuration and run its normal acceptance job for
 the final commit. Unit checks are not a substitute for real browser acceptance.

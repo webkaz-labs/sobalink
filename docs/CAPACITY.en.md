@@ -2,7 +2,7 @@
 
 [日本語](CAPACITY.ja.md) · [User guide](GENERIC.en.md) · [Security](../SECURITY.md) · [API contract](../web/API.md)
 
-Limits describe different things. Removing a logical limit does not allocate unlimited memory, disk, sockets or time in the underlying operating system. Review the requested choice, effective value and current usage together.
+Logical limits control accepted work, while resource budgets limit the resources that work can use. Removing a logical limit does not allocate unlimited memory, disk, sockets or time in the underlying operating system. Review the requested choice, effective value and current usage together.
 
 | Kind | Choices | Meaning |
 | --- | --- | --- |
@@ -67,7 +67,7 @@ Resource budgets are independently adjustable and always finite. Representative 
 | `stagingInventoryEntries`, `stagingInventoryDepth` | 100,000 inspected staging entries, 64 inventory levels |
 | `discoveryBytes`, `pageBytes`, `pageEntries` | 256 KiB discovery response, 1 MiB / 128 entries per local page |
 
-Actual available disk, memory, descriptors and platform limits can reject work below a chosen budget. These are accounted resource bounds, not a promise to cap the process's total heap or RSS. Path depth and total UTF-8 length are logical choices, with defaults of 16 levels and 4096 bytes. Their unlimited modes still fit within the finite manifest budget: effective path bytes cannot exceed `transferManifestBytes`, and effective depth also cannot exceed the number of components that fit those bytes. The whole manifest and retained metadata need their own space. Portable components remain limited to 255 bytes and reject unsafe/reserved names, rooting, traversal, NUL, backslashes and links. These safety rules do not change with capacity. Native OS/filesystem limits may still reject a path accepted by policy; larger-policy tests do not prove every platform accepts long paths. The local absolute receive-destination field currently has a separate 4096-byte validation limit; `pathBytes` applies to offered relative paths, not that destination. The staging inventory depth is a separate finite traversal budget.
+Actual available disk, memory, descriptors and platform limits can reject work below a chosen budget. These are accounted resource bounds, not a promise to cap the process's total heap (dynamically allocated memory) or RSS (memory currently held in RAM). Path depth and total UTF-8 length are logical choices, with defaults of 16 levels and 4096 bytes. Their unlimited modes still fit within the finite manifest budget: effective path bytes cannot exceed `transferManifestBytes`, and effective depth also cannot exceed the number of components that fit those bytes. The whole manifest and retained metadata need their own space. Portable components remain limited to 255 bytes and reject unsafe/reserved names, rooting, traversal, NUL, backslashes and links. These safety rules do not change with capacity. Native OS/filesystem limits may still reject a path accepted by policy; larger-policy tests do not prove every platform accepts long paths. The local absolute receive-destination field currently has a separate 4096-byte validation limit; `pathBytes` applies to offered relative paths, not that destination. The staging inventory depth is a separate finite traversal budget.
 
 `profileBytes` also bounds each private startup-approval, saved-proxy and revocation file separately. Usage reports their individual byte counts without serializing secrets. A policy change cannot shrink this limit below any retained file; it is not one aggregate directory-size limit.
 
@@ -150,7 +150,7 @@ For a missing legacy index, run `soba receive recovery confirm` to preview, then
 5. Previously saved output, keeping those files
 6. Resolution of unfinished old receives so no untracked partial data remains
 
-Unknown or unavailable old locations must be reviewed before confirmation; recovery cannot discover unrecorded leftovers. Delete only exact known unfinished staging files if manual cleanup is needed, never ordinary files or saved output. Once all six checks are complete, run `soba receive recovery confirm --reviewed`. It attests to the review and persists the missing index; it does not delete files, recalculate previous output or resume old transfers. Inspect current recovery status after an error or uncertain response. [Security boundaries](../SECURITY.md#trust-and-receiving)
+Unknown or unavailable old locations must be reviewed before confirmation; recovery cannot discover unrecorded leftovers. Delete only exact known unfinished staging files if manual cleanup is needed, never ordinary files or saved output. Once all six checks are complete, run `soba receive recovery confirm --reviewed`. It records that you completed the review and saves the missing index; it does not delete files, recalculate previous output or resume old transfers. Inspect current recovery status after an error or uncertain response. [Security boundaries](../SECURITY.md#trust-and-receiving)
 
 ## Reviewed history cleanup
 

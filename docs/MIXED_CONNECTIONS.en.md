@@ -1,6 +1,6 @@
 # Mixed connections
 
-[日本語](MIXED_CONNECTIONS.ja.md) · [Direct LAN](DIRECT_LAN.en.md) · [Capacity](CAPACITY.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](MIXED_CONNECTIONS.ja.md) · [Direct LAN](DIRECT_LAN.en.md) · [Capacity](CAPACITY.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
 Mixed mode explicitly runs selected connection backends together. A new profile still selects no network. This is a userspace application transport, not a gateway between unrelated single-backend devices. It changes no OS routes, firewall rules or router settings and needs no administrator privileges.
 
@@ -19,7 +19,7 @@ Mixed mode explicitly runs selected connection backends together. A new profile 
 | --- | --- | --- |
 | Enable backends | Exact modes and preference order | Enrollment/pairing for each mode |
 | Bind routes | Authenticated identities for the same application | Application and service permissions |
-| Use another route | Positively classified availability and current grants | Reconnecting the application; existing TCP is not migrated |
+| Use another route | Confirmed route availability and current permissions | Reconnecting the application; existing TCP is not migrated |
 
 Start with the normal setup below. If availability is unknown or authorization fails, resolve that condition instead of assuming another route is safe.
 
@@ -42,7 +42,7 @@ Start with the normal setup below. If availability is unknown or authorization f
    ```
 
    The application verifies a fresh signed challenge through both authenticated connections. A matching display name or IP is never sufficient. Repeat the review independently on the other device when it should use the same association in the reverse direction.
-5. Review a new application/service approval for the resulting logical peer. Older approvals are paused and saved-startup epochs retired; they are never copied onto the new identity. Pairing, binding and application approval remain separate operations.
+5. Review a new application/service approval for the resulting logical peer. Older approvals are paused and their saved startup permissions invalidated; they are never copied onto the new identity. Pairing, binding and application approval remain separate operations.
 
 ## Switching and limits
 
@@ -72,7 +72,7 @@ flowchart TD
  Next --> Exhausted["No approved route left: stop"]
 ```
 
-Only a positively classified availability failure permits the next approved route. Identity, same-peer binding and exact resource permission are checked on every attempt and again after dialing. Denial, revocation, a generation change or exhausted routes stop the attempt. Existing streams are not replayed.
+Only an error confirmed to mean that the route is unavailable permits trying the next approved route. Identity, same-peer binding and exact resource permission are checked on every attempt and again after dialing. Denial, revocation, a generation change or exhausted routes stop the attempt. Existing streams are not replayed.
 
 ## Removing authority
 

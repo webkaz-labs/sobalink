@@ -2,7 +2,7 @@
 
 [日本語](SAVED_SERVICES.ja.md) · [User guide](GENERIC.en.md)
 
-Saved definitions work with the agent stopped or with its selected network offline. Saving or importing never opens a listener or restores an old permission. Use the global `--offline` flag to edit only saved metadata under an exclusive profile lock, without starting the agent, generating network credentials, or loading transfer and pairing state. If the agent is already running, omit that flag. `soba start --offline` instead opens the local management UI without connecting a network.
+Saved definitions work with the agent stopped or with its selected network offline. Saving or importing never opens a listener or restores an old permission. Use the global `--offline` flag to edit only saved metadata under a profile lock that prevents concurrent changes, without starting the agent, generating network credentials, or loading transfer and pairing state. If the agent is already running, omit that flag. `soba start --offline` instead opens the local management UI without connecting a network.
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 839px)" srcset="assets/visuals/saved-and-running-en-dark-narrow.svg">
@@ -92,9 +92,9 @@ Favorites are not included in portable definition exports. Their protected
 storage uses the existing finite `resources.profileBytes` budget. A corrupt or
 unavailable favorites file affects favorites only. After a failed or uncertain
 write, reload and review the actual marks; a failed response is not proof of
-rollback. The uncertainty flag records an observed durability error in the
+rollback. The uncertainty flag records an observed error while saving data in the
 current process, not a persistent recovery journal. Restart reads the actual
-published preference file without reviving any permission.
+saved preference file without reviving any permission.
 
 ## Groups and readiness
 
@@ -116,7 +116,7 @@ Readiness means the authorized listeners are ready. It does not prove applicatio
 soba task --group example --confirm -- APPLICATION ARGUMENT...
 ```
 
-Why does renewing the task lease not extend permission? The task starts only the reviewed selection, waits for listener readiness and runs the exact local command directly. The two deadlines below are independent.
+The task starts only the reviewed services, waits for their listeners to be ready, then runs the specified local command directly. A short-lived permission (lease) checks that the task is still running. The service lifetime (TTL) is separate: renewing the lease does not extend the TTL.
 
 ```mermaid
 sequenceDiagram
@@ -136,7 +136,7 @@ sequenceDiagram
     end
     alt Local exit, failure or cancellation
         T->>S: Attempt owned cleanup
-    else Wrapper lost or cleanup unreachable
+    else Task-management command lost or cleanup unreachable
         S->>S: A expires after last renewal
     else Finite permission expires first
         S->>S: B stops permission even if A was renewed
@@ -144,9 +144,9 @@ sequenceDiagram
     Note over R: Cancel with the application's own controls
 ```
 
-Text equivalent: the task renews its 30-second lease every 10 seconds while running; the saved permission lifetime, or this invocation’s `--ttl`, does not move. Local exit, failure or cancellation triggers owned cleanup. If the wrapper disappears or cleanup cannot reach the agent, the successfully leased permission expires no later than 30 seconds after its last renewal. An earlier finite permission deadline still wins. `--owner` alone scopes operations and creates no renewable lease.
+Text equivalent: the task renews its 30-second lease every 10 seconds while running; the saved permission lifetime, or this invocation’s `--ttl`, does not move. Local exit, failure or cancellation triggers owned cleanup. If the task-management command disappears or cleanup cannot reach the agent, the successfully leased permission expires no later than 30 seconds after its last renewal. An earlier finite permission deadline still wins. `--owner` alone scopes operations and creates no renewable lease.
 
-Unix cancellation terminates the local process group. Windows cancellation follows direct-child process semantics. Stopping transport does not promise to cancel a job already submitted remotely; use that application's own cancellation mechanism.
+Unix cancellation terminates the local process group. On Windows, cancellation terminates the direct child process. Stopping transport does not promise to cancel a job already submitted remotely; use that application's own cancellation mechanism.
 
 ## Stop or remove
 
@@ -171,7 +171,7 @@ Exports contain only saved service scopes and groups. They exclude local node id
 
 Import previews replacement of saved definitions. Its review binds both the destination's current profile and the incoming definitions, so changing either requires another preview. Stop active services before applying an import. The existing local identity, network settings, trust, and received data are preserved, and every imported service remains stopped.
 
-Groups and group membership obey the configured `groups` and `groupMembers` admission choices. Lower choices retain saved groups and members; they constrain growth. Native tests cover disabled persistence, revision guards, rollback, ownership, lease expiry, and process cancellation. Real enrollment and application compatibility still require real-device acceptance.
+Groups and group membership obey the configured `groups` and `groupMembers` limits. Lower choices retain saved groups and members; they constrain growth. Native tests cover saving stopped definitions, revision checks, stopping newly started services on failure, ownership, lease expiry, and process cancellation. Real enrollment and application compatibility still require real-device acceptance.
 
 ## Distinguish save from start in actual CLI output
 

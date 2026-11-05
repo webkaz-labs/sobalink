@@ -1,6 +1,6 @@
 # Unified local resource view
 
-This source connects the authenticated-local `resource.catalog.snapshot` command to a bounded EN/JA settings, saved-service and transfer-activity dialog. The Core command and opaque `State.resourceCatalogProcessId` are required. Existing inspection/management grants do not establish a remote catalog capability.
+This source connects the authenticated-local `resource.catalog.snapshot` command to a Japanese/English dialog for settings, saved services and transfer activity, with explicit size limits. The Core command and `State.resourceCatalogProcessId` are required. This process token identifies the current Core instance; the browser treats it as an uninterpreted value. Existing inspection/management grants do not establish a remote catalog capability.
 
 ## Follow a catalog action
 
@@ -10,7 +10,7 @@ flowchart TD
  accDescr: Selecting a row does not create a grant or apply a change.
  A["Open dialog: no request"] --> B["Explicit snapshot request"]
  B --> C{"Observation complete?"}
- C -->|Yes| D["Bounded current rows, possibly empty"]
+ C -->|Yes| D["Current rows within the limits, possibly empty"]
  C -->|No| E["Show unavailable or partial state"]
  D --> F["Select current row"]
  F --> G["Existing reviewed workflow"]
@@ -18,7 +18,7 @@ flowchart TD
  LIMIT["Selecting a row does not create a grant or apply a change."]
 ```
 
-Text equivalent: opening is inert; explicit refresh obtains bounded observations; a current row navigates to an existing workflow whose own fresh review remains required. A row does not create a grant or perform an action.
+Text equivalent: opening sends no request; explicit refresh obtains observations within the configured limits; a current row navigates to an existing workflow whose own fresh review remains required. A row does not create a grant or perform an action.
 
 For integration review, inspect explicit reads first, invalidation second, and the existing destination workflow last. Failed or stale observations must stay distinguishable from a complete empty result.
 
@@ -33,10 +33,10 @@ For integration review, inspect explicit reads first, invalidation second, and t
 - Saved-service navigation preselects exactly one saved ID. Existing definition/configuration and selection reviews obtain their own current evidence; the user still confirms mutations.
 - A separate generic **Open service connections** control opens the ordinary blank manual form for one explicitly selected current peer. It carries no catalog service ID, advertisement, revision, ports or lifetime and makes no discovery or connection request. Existing user-controlled review remains authoritative; stale rows still have no connection action.
 - Transfer navigation uses the opaque boot token, current peer, original batch ID and direction. It focuses the existing card without invoking any transfer action. Catalog navigation does not add IDs to browser history.
-- Authentication, stale state, backend/key/peer identity or boot-token changes invalidate visible catalog data synchronously. The boot token additionally invalidates W1 previews without deleting retained ambiguous attempts. Subscriber reentrancy and late replies are guarded.
+- Authentication, stale state, backend/key/peer identity or boot-token changes invalidate visible catalog data synchronously. The boot token additionally invalidates single-device settings (W1) previews without deleting retained ambiguous attempts. The controller rechecks state after subscriber callbacks and ignores replies that no longer belong to the current request.
 
 ## Boundaries and acceptance
 
-Cached discovery observations are always stale and have no connection action until publication-origin validation is separately implemented. Transfer activity is not a durable file-share provider. Remote catalog disclosure/capability, group UI, production browser/Core/provider behavior, full native CI, real devices, installed binaries and signed release remain independent acceptance gates. This local view does not complete original stage 4.
+Cached discovery observations are always stale and have no connection action until publication-origin validation is separately implemented. Transfer activity is not a durable file-share provider. Remote catalog disclosure/capability, group UI, production browser/Core/provider behavior, full native CI, real devices, installed binaries and signed release remain independent acceptance gates. This local view alone does not establish those broader results.
 
-Focused synthetic tests are authored alongside the module and in `App.catalog.test.tsx`; an independent frozen-source gate must establish execution results. The prior settings App gate applies only to its earlier source. No tests or real-provider behavior are implied by this document.
+Focused synthetic tests are authored alongside the module and in `App.catalog.test.tsx`; a separate test run against a fixed source revision must establish execution results. The prior settings App gate applies only to its earlier source. No tests or real-provider behavior are implied by this document.

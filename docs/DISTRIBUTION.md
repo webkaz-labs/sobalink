@@ -32,19 +32,21 @@ Text equivalent: reviewed source must pass exact-source full CI, native packagin
 
 ## Install a signed prerelease
 
-The previously verified published baseline recorded here is [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), exact source `fae64878737eddc15a9787aba279f34c98427e36`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
+The current published prerelease is [0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1), exact source `b35463ce2c0121166190585e7ecd621153c11086`. [Release verification 41899170128](https://github.com/webkaz-labs/sobalink/actions/runs/41899170128) passed all 15 jobs, including public signature/provenance checks and actual mise installation on all four native targets. Windows x64 and macOS ARM64 packages include the optional experimental [native companion](NATIVE_UI.en.md).
+
+Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
 
 See the [current verification record](VERIFICATION.en.md#current-integration-and-published-baseline) for the exact published source, CI results and release gates. Results apply only to their recorded source, not later edits. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate and unverified.
 
 The commands below pin this release. Earlier 0.3/0.4-series results remain historical evidence; they do not qualify later source.
 
-A complete release includes four native archives and each target's SBOM, build metadata and notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub provenance is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
+A complete release includes four native archives and each target's software bill of materials (SBOM, an inventory of included software), build metadata and license-notice inventory, plus `packslip.toml`, `SHA256SUMS` and `packslip.sigstore.json`. The signed bundle must match the archives, SBOMs and manifest; GitHub build provenance, the record linking an artifact to its source and build, is checked separately. A tag, unsigned archive or checksum file alone is insufficient.
 
 With mise **2026.9.18** available, the same explicit prerelease pin used by the publication workflow is:
 
 ```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.1-alpha.1"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.1-alpha.1"
+mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.4-alpha.1"
+mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.4-alpha.1"
 mise exec -- soba version
 mise exec -- soba
 ```
@@ -53,17 +55,7 @@ mise exec -- soba
 
 The workflow uses `mise where` with this exact pin and [verify-installed.py](https://github.com/webkaz-labs/sobalink/blob/main/.github/scripts/verify-installed.py) to inspect the actual installation. It checks the native target, version, source commit, binary and frontend-lock digests, SBOM and retained notices, then executes the installed binary. These checks do not establish real enrollment, application compatibility, native IME, OS sign-in or suspend behavior. [Source-specific evidence and remaining acceptance](VERIFICATION.en.md)
 
-## Install the 0.5.4-alpha.1 candidate only after publication
-
-This checkout prepares the 0.5.4-alpha.1 native companion and lifecycle-fix release. The 0.5.1-alpha.1 record above remains historical verified evidence; it does not verify this candidate. First confirm that the exact 0.5.4-alpha.1 signed prerelease is published and its distribution and actual-installation gates passed. Only then use this explicit pin (signature checks remain enabled):
-
-```sh
-mise install "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.4-alpha.1"
-mise use -g "packslip:github.com/webkaz-labs/sobalink[prerelease=true]@0.5.4-alpha.1"
-mise exec -- soba version
-```
-
-日本語: このチェックアウトは 0.5.4-alpha.1 の Native UI と終了同期の改善版を準備します。上の 0.5.1-alpha.1 の成功を候補版に流用しません。正確な 0.5.4-alpha.1 の署名付き公開資材と配布・実導入ゲートの成功を確認してから、上の固定バージョンを指定してください。`mise use -g` はグローバル選択を変更します。署名検査を無効にせず、`soba version` で版を確認します。公開前はこの手順で導入済みとは扱わず、必要ならソースをビルドします。
+日本語: 0.5.4-alpha.1 は公開済みで、署名・来歴と4対象の mise 導入検査も成功しています。上のコマンドはこの版を固定して導入します。`mise use -g` はグローバル設定の選択を変更します。署名検査を無効にせず、`soba version` で版を確認してください。実機のトレイ・IME・読み上げ・ネットワーク・スリープ復帰は別途未検証です。
 
 ## Build this checkout
 
@@ -98,9 +90,9 @@ The frontend check uses the pinned environment to reproduce assets from the lock
 
 ## Reviewed engine preparation
 
-Run `go run ./cmd/prepare-engine` before direct Go builds, tests or packaging. It obtains the three original module archives pinned in `go.mod` (or uses the warm module cache), independently checks their original Go archive and go.mod checksums, and applies only hash-pinned source changes. Tailscale uses `internal/engineadaptation/manifest.json`; WireGuard and gVisor use `internal/lifecycleadaptation/{wireguard,gvisor}.json` and readable overlays. Each generated module is atomically installed in its exact `.sobalink-deps/{tailscale,wireguard,gvisor}` directory outside `GOMODCACHE`. No downloaded source is patched in place. Every manifest records original/adapted file hashes and complete tree digests. The preparation command uses only local preparation packages and the standard library, so missing replacement directories do not block bootstrap.
+Run `go run ./cmd/prepare-engine` before direct Go builds, tests or packaging. It obtains the three original module archives pinned in `go.mod` (or uses the previously populated module cache), independently checks their original Go archive and go.mod checksums, and applies only hash-pinned source changes. Tailscale uses `internal/engineadaptation/manifest.json`; WireGuard and gVisor use `internal/lifecycleadaptation/{wireguard,gvisor}.json` and readable overlays. Each generated module is atomically installed in its exact `.sobalink-deps/{tailscale,wireguard,gvisor}` directory outside `GOMODCACHE`. No downloaded source is patched in place. Every manifest records original/adapted file hashes and complete tree digests. The preparation command uses only local preparation packages and the standard library, so missing replacement directories do not block bootstrap.
 
-Preparation is idempotent. `go run ./cmd/prepare-engine --verify` checks all three manifests, original checksums, checkout overlays and complete generated trees without downloading or changing files. Existing changed output is rejected rather than repaired silently; inspect it, explicitly remove the affected generated directory, then prepare again. With the pinned Go toolchain and all three original archives cached, `GOPROXY=off go run ./cmd/prepare-engine` reproduces the same source offline. Partial preparation is not a complete build configuration. Production routing depends on the adapted APIs.
+Repeating preparation with unchanged inputs produces the same result (idempotence). `go run ./cmd/prepare-engine --verify` checks all three manifests, original checksums, checkout overlays and complete generated trees without downloading or changing files. Existing changed output is rejected rather than repaired silently; inspect it, explicitly remove the affected generated directory, then prepare again. With the pinned Go toolchain and all three original archives cached, `GOPROXY=off go run ./cmd/prepare-engine` reproduces the same source offline. Partial preparation is not a complete build configuration. Production routing depends on the adapted APIs.
 
 The only permitted replacements are `tailscale.com v1.104.0 => ./.sobalink-deps/tailscale`, `github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226 => ./.sobalink-deps/wireguard`, and `gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 => ./.sobalink-deps/gvisor`. The package tool rejects alternate paths, versions, extra replacements, links and source drift. Its SBOM identifies each adapted component separately, retaining upstream only as an ancestor. Packages keep complete module notices, manifests, overlays and preparation recipes; metadata records original checksums, actual target-linked build inputs and complete adapted-tree digests. Smoke and actual-installed-binary verification check these retained records as well as the binary digest. Source verification does not establish lifecycle or application acceptance. All native test, repeated-build, signing, provenance, public-download and installation gates still apply.
 
@@ -151,6 +143,7 @@ share/sobalink/README.md
 share/sobalink/README.en.md
 share/sobalink/SECURITY.md
 share/sobalink/docs/*.md
+share/sobalink/docs/history/*.md
 share/sobalink/web/*.md
 share/sobalink/go.mod
 share/sobalink/go.sum
@@ -160,11 +153,13 @@ share/sobalink/third-party-notices.json
 share/sobalink/licenses/...
 ```
 
+Markdown is selected only from the three directories listed above, without recursive copying. Historical records and compatibility pages keep their relative links; scripts, caches and deeper directories are not documentation inputs. Code-local development notes are not part of this main package.
+
 The embedded frontend is included in the binary; build metadata records its lockfile and asset hashes. The runtime inventory includes locked production npm dependencies and their notices alongside target-filtered Go modules. It must not silently omit production frontend dependencies because tree shaking removed some output.
 
 The SBOM, build metadata and notices index are also emitted as assets. `SHA256SUMS` records present regular distribution files, excluding itself. The later signature bundle is independently verified and receives its own provenance. Checksums establish integrity, not publisher identity. Do not distribute private node state or generic-looking fixtures that reveal personal context.
 
-The route source includes a modified internal Tailcat component. When it is in a target's runtime package closure, packaging retains its original license, provenance metadata and [adaptation record (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/routecat/UPSTREAM.md), and records upstream and adapted input hashes separately. This does not change the normal single-executable package or establish route acceptance. No strict-egress helper executable is distributed.
+The route source includes a modified internal Tailcat component. When it is among the packages linked into a target, packaging retains its original license, provenance metadata and [adaptation record (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/routecat/UPSTREAM.md), and records upstream and adapted input hashes separately. This does not change the normal single-executable package or establish route acceptance. No strict-egress helper executable is distributed.
 
 The relayless direct LAN adapter also contains a narrowly adapted WireGuard userspace stack in `internal/directlan/stack.go`. Its separate source component records the original `github.com/tailscale/wireguard-go` version, module checksums, original stack/license hashes, and every selected local runtime input. Packaging verifies the independent original pin and exact MIT license, checks the runtime input inventory before and after compilation, and retains the attribution-bearing adapted `stack.go`, `WIREGUARD_LICENSE`, `UPSTREAM.json` and `UPSTREAM.md`. This preserves original and modified identities without treating the adapted stack as an unmodified upstream package or requiring a kernel TUN, administrator access or OS/router changes.
 
@@ -176,7 +171,7 @@ The release workflow builds each native target twice and compares all archive/SB
 
 Darwin build metadata records bounded host OS/architecture/version/build facts, Apple clang and Xcode versions/build identifiers, compiler/linker hashes, SDK version/build and selected header/link-stub hashes, explicit compile/link flags, selected native source inputs and actual system library install names. It omits developer paths, usernames and environment dumps. The selected SDK records are a finite identity check, not a digest of every SDK file. Toolchain and native input identities are rechecked after compilation. The compiler uses `-O2 -g0`, an explicit SDK and `-mmacosx-version-min=13.0`; external linking retains `-trimpath` and `-buildid=` and supplies a deterministic UUIDv8 through the Go linker’s supported `-B=0x…` option. The identifier hashes the version, source commit, target, pinned Go version/build tags, and canonical recorded native identity, with the reviewed system-library list normalized before compilation. The resulting binary must contain exactly that UUID and the independently inspected library list. The UUID identifies those build inputs; the archive/binary SHA-256 digests remain the integrity authority. Go emits the UUID before its ordinary ARM64 ad-hoc signature; ad-hoc validity is separate from release identity signing and notarization. Inherited compiler/search-path overrides are cleared. Archive and installed-binary checks inspect bounded Mach-O commands, architecture, deployment target, exact UUID and library commands, and reject runtime search paths, malformed command bounds, and duplicate UUID, deployment or library entries.
 
-DNS-SD and dispatch use the system umbrella that Apple clang links automatically, with no package-specific linker flag. Apple documents [automatic libSystem linkage](https://developer.apple.com/library/archive/documentation/Porting/Conceptual/PortingUnix/compiling/compiling.html); its [required libraries](https://github.com/apple-oss-distributions/Libsystem/blob/main/requiredlibs) and [reexport build rules](https://github.com/apple-oss-distributions/Libsystem/blob/main/xcodescripts/linker_arguments.sh) identify DNS-SD and dispatch beneath that umbrella. The selected SDK input is `usr/lib/libSystem.tbd`; an SDK alias must resolve to a regular file within that SDK, and its resolved contents are hashed. The direct Mach-O inventory requires `/usr/lib/libSystem.B.dylib`, not a separate `libdns_sd` dependency. These umbrella transitives are not separate direct loads or redistributed components. Exact native linking remains a required check; no missing standalone stub is synthesized or accepted as a substitute.
+DNS-SD and dispatch use the system umbrella that Apple clang links automatically, with no package-specific linker flag. Apple documents [automatic libSystem linkage](https://developer.apple.com/library/archive/documentation/Porting/Conceptual/PortingUnix/compiling/compiling.html); its [required libraries](https://github.com/apple-oss-distributions/Libsystem/blob/main/requiredlibs) and [reexport build rules](https://github.com/apple-oss-distributions/Libsystem/blob/main/xcodescripts/linker_arguments.sh) identify DNS-SD and dispatch beneath that umbrella. The selected SDK input is `usr/lib/libSystem.tbd`; an SDK alias must resolve to a regular file within that SDK, and its resolved contents are hashed. The direct Mach-O inventory requires `/usr/lib/libSystem.B.dylib`, not a separate `libdns_sd` dependency. These libraries linked through libSystem are not separate direct loads or redistributed components. Exact native linking remains a required check; no missing standalone stub is synthesized or accepted as a substitute.
 
 Enabling Darwin cgo also selects the already-pinned `github.com/tailscale/certstore` source through Tailscale controlclient. Its reviewed Darwin files have no Go initializer or C constructor that accesses identities. The product's no-policy client returns an empty certificate subject before the credential-enumeration/signing path. Packaging positively checks the cgo package set, the sole certstore importer, the reviewed policy-client importer set, absence of policy/posture providers, and hashes of the credential boundary. A changed boundary fails packaging rather than silently enabling credential behavior. CoreFoundation and Security frameworks are recorded alongside libSystem (including DNS-SD/dispatch) and the Go resolver’s libresolv as OS-provided dynamic dependencies; no SDK headers or system libraries are redistributed. Module notices still retain the certstore license. These source checks do not authorize or exercise real keychain operations.
 

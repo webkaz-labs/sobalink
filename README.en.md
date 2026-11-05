@@ -1,8 +1,8 @@
 # sobalink
 
-**Optional native UI (prerelease integration in progress).** Windows x64 / macOS ARM64 packages prepare a small, separately launched UI alongside the existing CLI / Web UI. It provides a tray panel and reviewed message/file actions. Actual-device IME, screen readers and tray operation remain unverified. [Usage and limitations](docs/NATIVE_UI.en.md)
+**Optional desktop client (native UI, experimental).** Windows x64 / macOS ARM64 packages include a small, separately launched UI alongside the existing CLI / Web UI. It provides a tray panel and reviewed message/file actions. Actual-device IME, screen readers and tray operation remain unverified. [Usage and limitations](docs/NATIVE_UI.en.md)
 
-**0.5.4-alpha.1 release candidate (this checkout).** Adds offline UI reopening, reviewed saved-connection resume, truthful stop status and simultaneous-profile browser sessions. The previously verified published baseline is 0.5.1-alpha.1. Candidate source is not evidence of publication: check the signed release and its exact-source verification before installing. Physical-device acceptance remains separate.
+**Current published release: 0.5.4-alpha.1.** Supports offline UI reopening, reviewed saved-connection resume, stop-status reporting and browser sessions for multiple profiles. Check the [published release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1) and verification record for the matching source and packages. Publication and package checks do not establish real-device compatibility.
 
 [日本語](README.md) · [User guide](docs/GENERIC.en.md) · [Verification](docs/VERIFICATION.en.md)
 
@@ -10,9 +10,9 @@ This is an experimental open-source project; no user support is provided. These 
 
 **Close, even from afar.** Connect devices and use their applications through selected TCP/UDP services. Start `soba`, choose a peer in its local Web UI, then connect to SSH/SFTP, web, database or other application ports. Share a local service with explicit peers and a chosen lifetime. Text, images, files and folders are also available. The embedded React UI and CLI use the same Go authorization checks.
 
-**Share only the services you choose, without requiring administrator privileges or router port forwarding.** sobalink runs as an ordinary user process without requiring TUN, OS route/firewall changes, or router port-forwarding setup. Choose the peers, ports and lifetime of each share. The selected network still needs a reachable path; existing firewalls or client isolation can prevent connections. Application/server installation and authentication have their own requirements.
+**Share only the services you choose, without requiring administrator privileges or router port forwarding.** sobalink runs as an ordinary user process without requiring TUN (a virtual network device), OS route/firewall changes, or router port-forwarding setup. Choose the peers, ports and lifetime of each share. The selected network still needs a reachable path; existing firewalls or client isolation can prevent connections. Application/server installation and authentication have their own requirements.
 
-**v0.5.1-alpha.1 · Experimental software.** Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a published version's source, signed assets and verification results. Source feature descriptions alone do not establish acceptance for that version. Real-device enrollment, application compatibility, phone QR, native IME, OS sign-in and sleep/wake need separate checks. [Exact-source verification results](docs/VERIFICATION.en.md)
+**Earlier published and verified baseline: v0.5.1-alpha.1. Experimental software.** Check [sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) for a published version's source, signed assets and verification results. Source feature descriptions alone do not establish acceptance for that version. Real-device enrollment, application compatibility, phone QR, native IME, OS sign-in and sleep/wake need separate checks. [Exact-source verification results](docs/VERIFICATION.en.md)
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 959px)" srcset="docs/assets/visuals/connection-en-dark-narrow.svg">
@@ -50,7 +50,7 @@ Examples use `soba` as an executable on PATH. Substitute `./bin/soba`, or `./bin
 | --- | --- |
 | Service sharing | Explicit peers; finite 1-hour default or explicit until-revoked; compact TCP ranges, with reserved endpoints excluded |
 | Connections | Until-stopped by default; ordinary Tailnet services work without sobalink on the target |
-| Saved workflows | Stopped definitions, profiles, groups, reviewed import/export and leased local tasks; saving never starts a listener |
+| Saved workflows | Stopped definitions, profiles, groups, reviewed import/export and local tasks with a short-lived permission that must be renewed (a lease); saving never starts a listener |
 | Capacity | Explicit default/limited/unlimited logical choices, separate adjustable finite resource budgets |
 | Text, images, files and folders | Explicit send, reviewable batches and manual text copying |
 | Receiving | Per-batch acceptance by default; per-peer autosave to a fixed destination is optional |
@@ -66,7 +66,7 @@ Direct and Relay describe the encrypted traffic's route; reconnecting means comm
 
 ## Choose a connection method
 
-Outside the LAN, normally use Tailscale. For LAN use, see [explicit relay pairing and route preparation](docs/LAN.en.md), [relayless LAN](docs/DIRECT_LAN.en.md), and [mixed connections](docs/MIXED_CONNECTIONS.en.md). Optional WAN candidates require an already reachable compatible pinned relay. Use [request-and-accept connection setup](docs/CONNECTION_SETUP.en.md) for the shortest supported pairing path. First-use key acceptance (TOFU) does not prove the intended physical device; independently compare the full fingerprint when stronger initial verification is needed.
+Outside the LAN, normally use Tailscale. For LAN use, see [explicit relay pairing and route preparation](docs/LAN.en.md), [relayless LAN](docs/DIRECT_LAN.en.md), and [mixed connections](docs/MIXED_CONNECTIONS.en.md). Optional WAN candidates require an already reachable compatible relay with a fixed certificate identifier (pin). Use [request-and-accept connection setup](docs/CONNECTION_SETUP.en.md) for the shortest supported pairing path. First-use key acceptance (TOFU) does not prove the intended physical device; compare the full key identifier (fingerprint) using a separate trusted source, such as the other device’s screen, when stronger initial verification is needed.
 
 Prepared routes do not promise seamless migration of existing TCP or physical-NIC isolation. Application reconnection, immediate-file retry and explicit durable queues are separate workflows. [Route contract](docs/ROUTE_RECOVERY_DESIGN.en.md) · [Evidence and limits](docs/VERIFICATION.en.md#route-recovery-gate)
 
@@ -115,7 +115,7 @@ Use the local UI or [guided CLI](docs/CLI_GUIDE.en.md) to select, edit and revie
 
 An optional [authenticated TCP proxy and diagnostics](docs/PROXY_DIAGNOSTICS.en.md) are also available. [Explicitly permitted transfer-setting management](docs/RESOURCE_MANAGEMENT.en.md) is a separate, limited feature. Broadcast delivery and remote filesystem browsing are not included.
 
-[Explicit startup and private proxy profiles](docs/STARTUP.en.md) · [Application settings and RustDesk](docs/CLIENT_HELPERS.en.md) · [Local Web controls](docs/WEB_CONTROLS.en.md) · [0.3-series feature parity history](docs/FEATURE_PARITY.en.md) · [Documentation index](docs/README.en.md)
+[Explicit startup and private proxy profiles](docs/STARTUP.en.md) · [Application settings and RustDesk](docs/CLIENT_HELPERS.en.md) · [Local Web controls](docs/WEB_CONTROLS.en.md) · [Historical documentation](docs/history/README.en.md) · [Documentation index](docs/README.en.md)
 
 [Common questions](docs/FAQ.en.md) · [Things to check yourself](docs/TROUBLESHOOTING.en.md)
 
@@ -123,4 +123,4 @@ An optional [authenticated TCP proxy and diagnostics](docs/PROXY_DIAGNOSTICS.en.
 
 Follow the shared [development and usability principles](docs/DEVELOPMENT_PRINCIPLES.en.md). See [architecture](docs/ARCHITECTURE.md), [distribution](docs/DISTRIBUTION.md), [verification](docs/VERIFICATION.en.md), and [roadmap](docs/ROADMAP.en.md).
 
-Retain Go race/vet checks and frontend unit tests, native Linux x64/ARM64, macOS ARM64 and Windows x64 CI, reproduction of locked frontend assets, repeated package builds, signing, provenance and actual installed-binary verification. Results from earlier releases are not evidence for this source.
+Retain Go race/vet checks and frontend unit tests, native Linux x64/ARM64, macOS ARM64 and Windows x64 CI, reproduction of locked frontend assets, repeated package builds, signing, build-origin evidence (provenance) and actual installed-binary verification. Results from earlier releases are not evidence for this source.
