@@ -13,23 +13,27 @@ export const resourceFailures = Object.freeze(['none', 'slave-close', 'master-cl
 export const nativeStages = Object.freeze(['not-started', 'owner-start', 'peer-open', 'peer-review', 'peer-apply', 'foreground', 'identity', 'management-announced', 'cli-launch', 'review-read', 'owner-status', 'peer-status', 'review-binding', 'network-ready', 'persisted-context', 'pair-binding', 'proof-written', 'cli-terminal', 'cli-review', 'cli-review-binding', 'cli-apply', 'cli-complete'])
 export const nativeStatuses = Object.freeze(['unobserved', 'idle', 'restart-required', 'preparing', 'exchanging', 'local-confirmed', 'connected', 'network-started', 'failed', 'cancelled', 'other'])
 export const nativeRoles = Object.freeze(['old', 'successor', 'cli'])
-export const nativeBooleanKeys = Object.freeze(['failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'])
+export const closeErrorClasses = Object.freeze(['none', 'context-canceled', 'context-deadline', 'net-closed', 'http-closed', 'file-closed', 'closed-pipe', 'eof', 'multiple', 'other'])
+export const coreCloseComponents = Object.freeze(['none', 'prepared-transfer', 'resource-groups', 'context-control', 'peer-server', 'web', 'transfers', 'node', 'message-store', 'outbox-root', 'other'])
+const nativeCloseKeys = ['foregroundIPCCloseClass', 'foregroundCoreFirstCloseComponent', 'foregroundCoreFirstCloseClass']
+function validCloseCategories(value) { return closeErrorClasses.includes(value.foregroundIPCCloseClass) && coreCloseComponents.includes(value.foregroundCoreFirstCloseComponent) && closeErrorClasses.includes(value.foregroundCoreFirstCloseClass) }
+export const nativeBooleanKeys = Object.freeze(['failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundIPCCloseFailed', 'foregroundCoreCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'])
 export const booleanKeys = Object.freeze(['workCompleted', 'workFailed', 'cleanupFailed', 'oldReadyObserved', 'oldExitObserved', 'successorStartObserved', 'cliCompleteObserved', 'controllerProofObserved', 'peerConfirmed', 'ownerConfirmed', 'ordinaryReady', 'originalReviewPreserved', 'supervisorStarted', 'supervisorExited', 'proofRead', 'stopRequested', 'supervisorDeadlineExpired', 'noWaitableChildren', 'allDescendantsReaped', 'registeredNativeExits', 'successorRegistered', 'contextClosed', 'profileRemoved', 'outputOverflow', 'privateOutputDetected'])
 export const counterKeys = Object.freeze(['registeredChildren', 'observedExits', 'reaped', 'blockedRequests', 'runtimeErrors'])
 const lifecycleKeys = ['workPhase', 'firstFailurePhase', 'cleanupPhase', 'firstCleanupFailurePhase', 'supervisorExit', 'oldExit', 'helperExit', 'successorExit', 'supervisorFailure', 'resourceFailure', ...booleanKeys, ...counterKeys, 'native']
-const nativeKeys = ['available', 'invalid', 'stage', ...nativeBooleanKeys, 'ownerStatus', 'peerStatus']
+const nativeKeys = ['available', 'invalid', 'stage', ...nativeBooleanKeys, ...nativeCloseKeys, 'ownerStatus', 'peerStatus']
 function exact(value, keys) { return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) }
 export function counter(value) { return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 255) : 0 }
-export function nativeObservation() { return { available: false, invalid: false, stage: 'not-started', ...Object.fromEntries(nativeBooleanKeys.map(key => [key, false])), ownerStatus: 'unobserved', peerStatus: 'unobserved' } }
+export function nativeObservation() { return { available: false, invalid: false, stage: 'not-started', ...Object.fromEntries(nativeBooleanKeys.map(key => [key, false])), ...Object.fromEntries(nativeCloseKeys.map(key => [key, 'none'])), ownerStatus: 'unobserved', peerStatus: 'unobserved' } }
 export function readNativeObservation(value) {
-  if (!exact(value, ['schema', 'stage', ...nativeBooleanKeys, 'ownerStatus', 'peerStatus']) || value.schema !== 1 || !nativeStages.includes(value.stage) || nativeBooleanKeys.some(key => typeof value[key] !== 'boolean') || !nativeStatuses.includes(value.ownerStatus) || !nativeStatuses.includes(value.peerStatus)) throw Error('Invalid fixed native observation')
-  return { available: true, invalid: false, stage: value.stage, ...Object.fromEntries(nativeBooleanKeys.map(key => [key, value[key]])), ownerStatus: value.ownerStatus, peerStatus: value.peerStatus }
+  if (!exact(value, ['schema', 'stage', ...nativeBooleanKeys, ...nativeCloseKeys, 'ownerStatus', 'peerStatus']) || value.schema !== 1 || !nativeStages.includes(value.stage) || nativeBooleanKeys.some(key => typeof value[key] !== 'boolean') || !validCloseCategories(value) || !nativeStatuses.includes(value.ownerStatus) || !nativeStatuses.includes(value.peerStatus)) throw Error('Invalid fixed native observation')
+  return { available: true, invalid: false, stage: value.stage, ...Object.fromEntries(nativeBooleanKeys.map(key => [key, value[key]])), ...Object.fromEntries(nativeCloseKeys.map(key => [key, value[key]])), ownerStatus: value.ownerStatus, peerStatus: value.peerStatus }
 }
 function validateNative(value) {
   if (!exact(value, nativeRoles)) throw Error('Invalid fixed native inventory')
   return Object.fromEntries(nativeRoles.map(role => {
     const row = value[role]
-    if (!exact(row, nativeKeys) || ['available', 'invalid', ...nativeBooleanKeys].some(key => typeof row[key] !== 'boolean') || !nativeStages.includes(row.stage) || !nativeStatuses.includes(row.ownerStatus) || !nativeStatuses.includes(row.peerStatus) || (row.available && row.invalid) || (!row.available && (row.stage !== 'not-started' || nativeBooleanKeys.some(key => row[key]) || row.ownerStatus !== 'unobserved' || row.peerStatus !== 'unobserved'))) throw Error('Invalid fixed native status')
+    if (!exact(row, nativeKeys) || ['available', 'invalid', ...nativeBooleanKeys].some(key => typeof row[key] !== 'boolean') || !nativeStages.includes(row.stage) || !validCloseCategories(row) || !nativeStatuses.includes(row.ownerStatus) || !nativeStatuses.includes(row.peerStatus) || (row.available && row.invalid) || (!row.available && (row.stage !== 'not-started' || nativeBooleanKeys.some(key => row[key]) || nativeCloseKeys.some(key => row[key] !== 'none') || row.ownerStatus !== 'unobserved' || row.peerStatus !== 'unobserved'))) throw Error('Invalid fixed native status')
     return [role, Object.fromEntries(nativeKeys.map(key => [key, row[key]]))]
   }))
 }

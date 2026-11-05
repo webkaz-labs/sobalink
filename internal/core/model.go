@@ -208,6 +208,7 @@ type Core struct {
 	closing                    bool
 	closeOnce                  sync.Once
 	closeErr                   error
+	closeObservation           productCloseObservation
 	directLAN                  *directLANStore
 	contextControl             *contextControlOwner
 	contextUpgrade             *contextUpgradeJob
@@ -522,8 +523,8 @@ func (c *Core) close() error {
 		peerHTTP.close()
 	}
 	c.cancel()
-	preparedCloseErr := c.discardPreparedForPeer("")
-	groupCloseErr := c.stopResourceGroups()
+	preparedCloseErr := c.observeProductClose("prepared-transfer", c.discardPreparedForPeer(""))
+	groupCloseErr := c.observeProductClose("resource-groups", c.stopResourceGroups())
 	// Join the bounded controller before taking its mutation lock.
 	if upgrade != nil {
 		upgrade.cancel()
@@ -557,18 +558,18 @@ func (c *Core) close() error {
 	c.mu.Unlock()
 	var errs []error
 	errs = append(errs, groupCloseErr, preparedCloseErr)
-	errs = append(errs, c.stopContextControlLocked())
+	errs = append(errs, c.observeProductClose("context-control", c.stopContextControlLocked()))
 	if ps != nil {
-		errs = append(errs, ps.Close())
+		errs = append(errs, c.observeProductClose("peer-server", ps.Close()))
 	}
 	if web != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		errs = append(errs, web.Close(ctx))
+		errs = append(errs, c.observeProductClose("web", web.Close(ctx)))
 		cancel()
 	}
-	errs = append(errs, c.transfers.Close())
+	errs = append(errs, c.observeProductClose("transfers", c.transfers.Close()))
 	if node != nil {
-		errs = append(errs, node.Close())
+		errs = append(errs, c.observeProductClose("node", node.Close()))
 	}
 	// Inspection can be queued on op for its owned disclosure snapshot.
 	// Its canceled owner is joined only after releasing this mutation lock.
@@ -584,12 +585,12 @@ func (c *Core) close() error {
 		<-joined
 	}
 	c.mu.Lock()
-	errs = append(errs, c.closeMessageStoreLocked())
+	errs = append(errs, c.observeProductClose("message-store", c.closeMessageStoreLocked()))
 	c.mu.Unlock()
 	if o := c.outboxCopy(); o != nil {
 		o.mu.Lock()
 		if o.root != nil {
-			errs = append(errs, o.root.Close())
+			errs = append(errs, c.observeProductClose("outbox-root", o.root.Close()))
 			o.root = nil
 		}
 		o.mu.Unlock()

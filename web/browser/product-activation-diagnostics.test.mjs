@@ -3,7 +3,7 @@ import test from 'node:test'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { caseIds, lifecycle, validateLifecycle, validateCases, emptyDiagnostics, validateDiagnostics, counter, phase, failWork, cleanupPhase, failCleanup, nativeObservation, readNativeObservation, nativeBooleanKeys, nativeRoles, exitCategory, exits, supervisorFailures, resourceFailures } from './product-activation-diagnostics.mjs'
+import { caseIds, lifecycle, validateLifecycle, validateCases, emptyDiagnostics, validateDiagnostics, counter, phase, failWork, cleanupPhase, failCleanup, nativeObservation, readNativeObservation, nativeBooleanKeys, nativeRoles, closeErrorClasses, coreCloseComponents, exitCategory, exits, supervisorFailures, resourceFailures } from './product-activation-diagnostics.mjs'
 import { productActivationCases } from './product-activation-contract.mjs'
 import Reporter from './product-activation-reporter.mjs'
 
@@ -36,7 +36,7 @@ test('cleanup observations accept only fixed failure and role-exit categories', 
 })
 
 test('native files have exact closed shapes and unavailable is distinct from failed', () => {
-  const valid = { schema: 1, stage: 'owner-status', failed: false, foregroundFailed: false, foregroundExitObserved: false, foregroundBodyFailed: false, foregroundOwnersCloseFailed: false, foregroundLockCloseFailed: false, foregroundAckFailed: false, monitorFailed: false, peerCloseFailed: false, lockCloseFailed: false, ownerStatus: 'network-started', peerStatus: 'exchanging' }
+  const valid = { schema: 1, stage: 'owner-status', failed: false, foregroundFailed: false, foregroundExitObserved: false, foregroundBodyFailed: false, foregroundOwnersCloseFailed: false, foregroundIPCCloseFailed: false, foregroundCoreCloseFailed: false, foregroundIPCCloseClass: 'none', foregroundCoreFirstCloseComponent: 'none', foregroundCoreFirstCloseClass: 'none', foregroundLockCloseFailed: false, foregroundAckFailed: false, monitorFailed: false, peerCloseFailed: false, lockCloseFailed: false, ownerStatus: 'network-started', peerStatus: 'exchanging' }
   assert.deepEqual(readNativeObservation(valid), { available: true, invalid: false, ...Object.fromEntries(Object.entries(valid).filter(([key]) => key !== 'schema')) })
   for (const patch of [{ schema: true }, { token: 'SYNTHETIC-PRIVATE' }, { stage: '/private/file' }, { ownerStatus: 'secret' }, { peerStatus: 1 }, { failed: 'false' }]) assert.throws(() => readNativeObservation({ ...valid, ...patch }))
   for (const key of Object.keys(valid)) { const value = { ...valid }; delete value[key]; assert.throws(() => readNativeObservation(value)) }
@@ -163,7 +163,7 @@ test('unknown selections and duplicate or oversized annotations remain bounded',
 
 
 test('final owner and foreground components survive reconstruction and remain closed', () => {
-  assert.deepEqual(nativeBooleanKeys, ['failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'])
+  assert.deepEqual(nativeBooleanKeys, ['failed', 'foregroundFailed', 'foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundIPCCloseFailed', 'foregroundCoreCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'monitorFailed', 'peerCloseFailed', 'lockCloseFailed'])
   for (const key of nativeBooleanKeys) {
     const value = { schema: 1, ...nativeObservation(), stage: 'proof-written', failed: true, [key]: true }
     delete value.available; delete value.invalid
@@ -206,7 +206,7 @@ test('foreground observations survive reporter JSON without adding acceptance ga
 
 test('reporter rejects private foreground component values and unknown fields', async () => {
   const secret = 'SYNTHETIC-PRIVATE-DO-NOT-EXPORT'
-  for (const key of ['foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'foregroundError']) {
+  for (const key of ['foregroundExitObserved', 'foregroundBodyFailed', 'foregroundOwnersCloseFailed', 'foregroundIPCCloseFailed', 'foregroundCoreCloseFailed', 'foregroundLockCloseFailed', 'foregroundAckFailed', 'foregroundError']) {
     const life = lifecycle(); Object.assign(life.native.successor, { available: true, [key]: secret })
     const { raw, result } = await reported((reporter, items) => items.forEach(item => complete(reporter, item, 'failed', life)))
     assert.equal(raw.includes(secret), false)
@@ -216,4 +216,35 @@ test('reporter rejects private foreground component values and unknown fields', 
       assert.deepEqual(row.lifecycle.native.successor, nativeObservation())
     }
   }
+})
+
+
+test('owner close categories remain closed, bounded and observation-only', async () => {
+  for (const [key, choices] of [['foregroundIPCCloseClass', closeErrorClasses], ['foregroundCoreFirstCloseComponent', coreCloseComponents], ['foregroundCoreFirstCloseClass', closeErrorClasses]]) {
+    for (const choice of choices) {
+      const life = lifecycle(); Object.assign(life.native.successor, { available: true, [key]: choice })
+      assert.equal(validateLifecycle(life).native.successor[key], choice)
+      const value = { schema: 1, ...life.native.successor }; delete value.available; delete value.invalid
+      assert.equal(readNativeObservation(value)[key], choice)
+      life.native.successor.available = false
+      if (choice !== 'none') assert.throws(() => validateLifecycle(life))
+    }
+    for (const invalid of ['SYNTHETIC-PRIVATE', '/private/path', 'https://example.invalid/private', 1, true, null, {}, []]) {
+      const life = lifecycle(); Object.assign(life.native.successor, { available: true, [key]: invalid })
+      assert.throws(() => validateLifecycle(life))
+      const value = { schema: 1, ...life.native.successor }; delete value.available; delete value.invalid
+      assert.throws(() => readNativeObservation(value))
+    }
+    const life = lifecycle(); Object.assign(life.native.successor, { available: true, [key]: 'SYNTHETIC-PRIVATE' })
+    const rejected = await reported((reporter, items) => items.forEach(item => complete(reporter, item, 'failed', life)))
+    assert.equal(rejected.raw.includes('SYNTHETIC-PRIVATE'), false)
+    assert.equal(rejected.result.diagnostics.cases[0].diagnosticRejected, true)
+  }
+  const life = lifecycle()
+  for (const role of nativeRoles) Object.assign(life.native[role], { available: true, ...Object.fromEntries(nativeBooleanKeys.map(key => [key, true])), foregroundIPCCloseClass: 'context-deadline', foregroundCoreFirstCloseComponent: 'prepared-transfer', foregroundCoreFirstCloseClass: 'context-deadline' })
+  assert.ok(Buffer.byteLength(JSON.stringify(life)) <= 4096)
+  const result = await reported((reporter, items) => items.forEach(item => complete(reporter, item, 'passed', life)))
+  assert.equal(result.result.accepted, true)
+  assert.deepEqual(result.result.diagnostics.cases[0].lifecycle.native, life.native)
+  assert.ok(Buffer.byteLength(result.raw) <= 16384)
 })
