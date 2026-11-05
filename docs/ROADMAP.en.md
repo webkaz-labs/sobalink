@@ -62,7 +62,7 @@ The earlier 0.3-series CI optimization plan is historical. Any further CI change
 
 ### Remaining feature scope and historical plans
 
-The [0.3-series convenience plan](CONVENIENCE_PLAN.en.md) is historical; its then-unimplemented items are not a current backlog. In particular, [nearby setup](CONNECTION_SETUP.en.md) provides request, receive and outbound-only roles, with explicit permission for the receiver to relay. Legacy full-fingerprint setup retains QR/text exchange and selection of a permitted reachable relay role. Neither workflow deploys software to another host or provides general unattended relay election/operation.
+The [0.3-series convenience plan](history/CONVENIENCE_PLAN.en.md) is historical; its then-unimplemented items are not a current backlog. In particular, [nearby setup](CONNECTION_SETUP.en.md) provides request, receive and outbound-only roles, with explicit permission for the receiver to relay. Legacy full-fingerprint setup retains QR/text exchange and selection of a permitted reachable relay role. Neither workflow deploys software to another host or provides general unattended relay election/operation.
 
 The following remain outside the current implementation scope, without a promised release date:
 

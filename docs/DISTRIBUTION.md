@@ -143,6 +143,7 @@ share/sobalink/README.md
 share/sobalink/README.en.md
 share/sobalink/SECURITY.md
 share/sobalink/docs/*.md
+share/sobalink/docs/history/*.md
 share/sobalink/web/*.md
 share/sobalink/go.mod
 share/sobalink/go.sum
@@ -151,6 +152,8 @@ share/sobalink/bom.cdx.json
 share/sobalink/third-party-notices.json
 share/sobalink/licenses/...
 ```
+
+Markdown is selected only from the three directories listed above, without recursive copying. Historical records and compatibility pages keep their relative links; scripts, caches and deeper directories are not documentation inputs. Code-local development notes are not part of this main package.
 
 The embedded frontend is included in the binary; build metadata records its lockfile and asset hashes. The runtime inventory includes locked production npm dependencies and their notices alongside target-filtered Go modules. It must not silently omit production frontend dependencies because tree shaking removed some output.
 

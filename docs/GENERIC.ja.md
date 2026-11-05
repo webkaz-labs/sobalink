@@ -12,7 +12,7 @@
 
 普段のサービス操作はローカル画面や案内付き CLI で行い、繰り返す操作や自動処理には明示した CLI コマンドを使えます。どちらも Go の共通処理で許可と保存先を検査します。中心となる操作は端末同士の接続とアプリのサービス利用です。[共有](#この端末のサービスを共有する)・[接続](#相手のサービスを使う)から始め、必要に応じて文字・ファイルを送れます。旧 `tsnet-bridge` 公開版とはコマンドと設定形式が異なります。
 
-[案内付き CLI](CLI_GUIDE.ja.md) · [アプリ設定・RustDesk](CLIENT_HELPERS.ja.md) · [ローカル画面の操作](WEB_CONTROLS.ja.md) · [0.3 系列の機能対応履歴](FEATURE_PARITY.ja.md) · [文書一覧](README.md)
+[案内付き CLI](CLI_GUIDE.ja.md) · [アプリ設定・RustDesk](CLIENT_HELPERS.ja.md) · [ローカル画面の操作](WEB_CONTROLS.ja.md) · [文書一覧](README.md)
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 959px)" srcset="assets/visuals/connection-ja-dark-narrow.svg">
@@ -509,27 +509,6 @@ soba --json-errors service show SERVICE_ID
 
 ## ローカル転送設定の操作（ソースビルド）
 
-[ローカル転送設定リソース](RESOURCE_SETTINGS.ja.md)はローカルの内容確認・変更案の確認・確認内容に結び付いた適用・操作結果の照会に対応します。遠隔管理や相手への許可は追加しません。以下の手順で操作します。既存の認証付きローカル IPC とローカル Web のコマンド接続口を使います。
+ローカル転送設定は現在の公開版で利用できます。担当ガイドの[確認・適用・結果照会の手順](RESOURCE_SETTINGS.ja.md#確認適用結果照会)に、CLI の例、確認内容の厳密な対応、結果の意味、復旧の条件をまとめています。
 
-先にローカルの本体を起動します。`list` が返すリソース ID は、内容を解釈・変更せずに使ってください。両方の設定をまとめて確認します。
-
-```sh
-soba resource list --json
-soba resource inspect --id RESOURCE_ID --json
-soba resource preview --id RESOURCE_ID --concurrent-files default --concurrent-per-peer 2 --json
-```
-
-変更案を確認し、正確な `operationId`・`baseRevision`・`revision` と両項目を保持します。次の例では、それぞれを返された値に置き換えてください。`apply` は暗黙に変更案を作り直しません。
-
-```sh
-soba resource apply --id RESOURCE_ID --operation-id OPERATION_ID --base-revision BASE_REVISION --revision REVIEW_REVISION --concurrent-files default --concurrent-per-peer 2 --json
-soba resource status --id RESOURCE_ID --operation-id OPERATION_ID --json
-```
-
-値は `default` または正の有限整数で、両項目が必須です。片方でも変える場合は新しい preview が必要です。確認内容が古くなると `resource_revision_conflict` を返します。新しい変更案を確認してから適用してください。出力キー・ID・状態の列挙値は言語によらず安定した JSON です。共通オプション `--dry-run` は入力を検査して要求を表示するだけで、本体への接続・操作枠の予約・現在の状態に対する確認内容の検証・適用は行いません。`--offline` は使えません。
-
-操作の `outcome` は過去の記録です。別に返す `current` は現在の設定の観測値で、過去に成功した操作の設定が現在も有効とは限りません。`evidenceDurable` は確実に保存した結果と不確かな記録を区別します。`saved_not_applied` は設定を保存したものの実行時の段階で失敗したことを、`unknown` は成功も巻き戻しも断定できないことを示します。次の行動を決める前に、現在の設定と各段階の結果を確認してください。
-
-同じ操作 ID と同一の確認済み要求で再試行すると、保持中の記録を返し、設定処理を再実行しません。同じ ID に異なる内容を指定すると拒否します。上限付きの操作記録は未完了・結果不明の操作を保持し続け、自動削除も再実行もしません。削除済みの古い記録は `resource_operation_not_retained` として返し、再実行しません。記録が見つからないことは成功・失敗の証拠になりません。記録が不確かな場合、新しい適用を停止します。後の所有者による起動で記録を検証し、確実に再保存する必要がありますが、起動時に設定操作を再実行することはありません。保持必須の記録で上限に達した場合は新しい操作を拒否します。厳密に1回の実行を保証するものではなく、ローカルの番号ではプロファイル全体の巻き戻しを防げません。
-
-操作記録が入った状態で以前の PR1 読み取り専用リソース実装へ戻すと、リソースの操作口は利用できなくなります。従来の設定コマンドは継続します。リソース機能を復旧するために非公開の保存状態を削除しないでください。ここで述べるのはソース実装とモック試験の範囲であり、実際の電源断に対する耐久性や公開版の受入確認の証拠ではありません。
+応答を失った場合も元の操作 ID を使います。過去の結果、記録の永続性、現在の設定は別の観測です。復旧のために非公開の状態を削除したり、黙って別の操作を作ったりしません。これはローカル操作であり、相手への管理許可ではありません。

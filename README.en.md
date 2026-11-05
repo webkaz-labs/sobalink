@@ -115,7 +115,7 @@ Use the local UI or [guided CLI](docs/CLI_GUIDE.en.md) to select, edit and revie
 
 An optional [authenticated TCP proxy and diagnostics](docs/PROXY_DIAGNOSTICS.en.md) are also available. [Explicitly permitted transfer-setting management](docs/RESOURCE_MANAGEMENT.en.md) is a separate, limited feature. Broadcast delivery and remote filesystem browsing are not included.
 
-[Explicit startup and private proxy profiles](docs/STARTUP.en.md) · [Application settings and RustDesk](docs/CLIENT_HELPERS.en.md) · [Local Web controls](docs/WEB_CONTROLS.en.md) · [0.3-series feature parity history](docs/FEATURE_PARITY.en.md) · [Documentation index](docs/README.en.md)
+[Explicit startup and private proxy profiles](docs/STARTUP.en.md) · [Application settings and RustDesk](docs/CLIENT_HELPERS.en.md) · [Local Web controls](docs/WEB_CONTROLS.en.md) · [Historical documentation](docs/history/README.en.md) · [Documentation index](docs/README.en.md)
 
 [Common questions](docs/FAQ.en.md) · [Things to check yourself](docs/TROUBLESHOOTING.en.md)
 

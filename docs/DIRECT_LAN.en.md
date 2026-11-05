@@ -153,7 +153,7 @@ content or stop work already launched inside a remote application.
   virtual listeners and the existing scoped TCP dispatcher receive application
   streams; existing service authorization controls the permitted loopback target
 - Paired state is durably saved through the protected Core store before
-  activation. Fixed-endpoint WireGuard state uses version 2; managed metadata uses later formats described in the [endpoint metadata contract](../internal/endpointmeta/README.md). Comparison-only version-1
+  activation. Fixed-endpoint WireGuard state uses version 2; managed metadata uses later formats described in the [endpoint metadata contract (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/endpointmeta/README.md). Comparison-only version-1
   state is rejected, including unpaired state. Uncertain writes fail closed and require saved-state recovery.
   Lost pairing replies may leave only the remote side paired; inspect/revoke
   that remote approval before retrying. If revocation cannot be written, the old
@@ -171,7 +171,7 @@ pairs and pairing again; an invitation does not silently broaden local policy.
 
 ### Who starts a new tunnel session
 
-This diagram covers pairs with fixed endpoints. Managed pairs also require separate authorization checks and saved removal records that prevent a removed pair from returning; see the [endpoint metadata contract](../internal/endpointmeta/README.md).
+This diagram covers pairs with fixed endpoints. Managed pairs also require separate authorization checks and saved removal records that prevent a removed pair from returning; see the [endpoint metadata contract (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/endpointmeta/README.md).
 
 The application requester and the WireGuard initiator are different roles.
 
@@ -201,7 +201,7 @@ The lower Ed25519 identity key starts WireGuard, regardless of which device requ
 
 ### Pairing and revocation have different save boundaries
 
-This diagram covers pairs with fixed endpoints. Managed pairs also require separate authorization checks and saved removal records that prevent a removed pair from returning; see the [endpoint metadata contract](../internal/endpointmeta/README.md).
+This diagram covers pairs with fixed endpoints. Managed pairs also require separate authorization checks and saved removal records that prevent a removed pair from returning; see the [endpoint metadata contract (online source)](https://github.com/webkaz-labs/sobalink/blob/main/internal/endpointmeta/README.md).
 
 A closed runtime connection does not establish durable revocation.
 

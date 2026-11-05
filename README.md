@@ -115,7 +115,7 @@ soba send RECEIVER_PEER_ID ./image.png ./notes.txt ./sample-folder
 
 任意の[認証付き TCP プロキシと診断](docs/PROXY_DIAGNOSTICS.ja.md)も用意しています。[明示的に許可した転送設定の管理](docs/RESOURCE_MANAGEMENT.ja.md)は限定した別機能です。ブロードキャスト送信や遠隔ファイル一覧は含みません。
 
-[明示的な起動時接続・非公開プロキシ設定](docs/STARTUP.ja.md) · [アプリ設定・RustDesk](docs/CLIENT_HELPERS.ja.md) · [ローカル画面の操作](docs/WEB_CONTROLS.ja.md) · [0.3 系列の機能対応履歴](docs/FEATURE_PARITY.ja.md) · [文書一覧](docs/README.md)
+[明示的な起動時接続・非公開プロキシ設定](docs/STARTUP.ja.md) · [アプリ設定・RustDesk](docs/CLIENT_HELPERS.ja.md) · [ローカル画面の操作](docs/WEB_CONTROLS.ja.md) · [文書の履歴](docs/history/README.md) · [文書一覧](docs/README.md)
 
 [よくある疑問](docs/FAQ.ja.md) · [自分で確認できること](docs/TROUBLESHOOTING.ja.md)
 

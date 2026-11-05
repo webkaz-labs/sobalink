@@ -6,7 +6,7 @@ This package provides data contracts for authenticated endpoint updates. Core
 uses its records and validators for private direct-LAN state v3/v4, stopped-state
 transactions and the managed context/endpoint-following candidate. Source
 integration is distinct from exact-source runtime and release acceptance; see
-the [historical integration snapshot](../../docs/CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
+the [historical integration snapshot](../../docs/history/CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
 
 ## Read the contract by operation
 
@@ -100,7 +100,7 @@ or synthetic data; they are not credentials for a running service.
 このパッケージは認証済み接続先更新のデータ契約を提供します。
 Coreの非公開直接LAN状態v3/v4、停止中の保存操作、管理対象の文脈と接続先追従の候補に、
 記録と検証処理を組み込んでいます。ソース統合と同一ソースの実行・配布受入は区別し、
-[過去の統合時点の証拠](../../docs/CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
+[過去の統合時点の証拠](../../docs/history/CONVENIENCE_PLAN.ja.md#alpha6の現在の証拠)を参照してください。
 
 Coreは引き続き1個の `direct-lan.json` と、識別情報・選択済み接続先を管理します。
 有効なv2ファイルは自動で書き換えずに読み込みます。停止・オフライン状態での

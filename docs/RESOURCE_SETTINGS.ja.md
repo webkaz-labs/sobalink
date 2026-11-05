@@ -25,9 +25,22 @@ preview は読取専用で、両項目の指定値に結び付きます。apply 
 
 ## 確認・適用・結果照会
 
-ローカルの本体を起動し、別の端末ウィンドウで同じプロファイルを指定します。[コマンドの手順](GENERIC.ja.md#ローカル転送設定の操作ソースビルド)に従い、一覧取得、両項目の preview、結果の確認、正確な確認内容での apply、必要に応じた status の順に進めてください。
+先にローカルの本体を起動します。独自のプロファイルを選ぶ場合は、各コマンドで同じ `--state-dir` を指定します。`list` が返すリソース ID は、内容を解釈・変更せずに使ってください。両方の設定をまとめて確認します。
 
-`list`・`inspect`・`preview`・`apply`・`status` は言語によらず安定した JSON を返し、明示的な `--json` も使えます。CLI の `status` は `resource.operation.status` を送ります。ヘルプとエラーは `--locale auto|ja|en` に従います。`list` が返した返されたままの ID を使ってください。両項目とも `default` または 9007199254740991 以下の正の有限整数が必要です。`unlimited`・ゼロ・負数は拒否します。提供側でも容量設定全体の変更案を検証します。`requested` は指定値、`effective` は解決後の値です。制限を下げても進行中の転送を中止せず、新規受付に反映します。
+```sh
+soba resource list --json
+soba resource inspect --id RESOURCE_ID --json
+soba resource preview --id RESOURCE_ID --concurrent-files default --concurrent-per-peer 2 --json
+```
+
+変更案を確認し、正確な `operationId`・`baseRevision`・`revision` と両項目を保持します。次の例では、それぞれを返された値に置き換えてください。`apply` は暗黙に変更案を作り直しません。
+
+```sh
+soba resource apply --id RESOURCE_ID --operation-id OPERATION_ID --base-revision BASE_REVISION --revision REVIEW_REVISION --concurrent-files default --concurrent-per-peer 2 --json
+soba resource status --id RESOURCE_ID --operation-id OPERATION_ID --json
+```
+
+`list`・`inspect`・`preview`・`apply`・`status` は言語によらず安定した JSON を返し、明示的な `--json` も使えます。CLI の `status` は `resource.operation.status` を送ります。ヘルプとエラーは `--locale auto|ja|en` に従います。`list` が返した ID を使ってください。両項目とも `default` または 9007199254740991 以下の正の有限整数が必要です。`unlimited`・ゼロ・負数は拒否します。提供側でも容量設定全体の変更案を検証します。`requested` は指定値、`effective` は解決後の値です。制限を下げても進行中の転送を中止せず、新規受付に反映します。
 
 preview は設定変更・転送開始・操作枠の予約を行いません。共通オプション `--dry-run` は本体に接続せず入力検査と要求の表示だけを行い、現在の状態の検証や正式な変更確認はしません。共通オプション `--offline` による停止中の設定編集は非対応です。`start --offline` で起動した本体では、保存済みネットワークを開始せずローカル設定を操作できます。
 

@@ -12,7 +12,7 @@ For the current version, use the [0.5.4-alpha.1 installation instructions](DISTR
 
 The local Web UI and guided CLI support normal service workflows; explicit CLI commands support repeated actions and automation. Both use the same Go authorization and storage boundaries. Device connectivity and application services are the main workflow; messages and files are additional operations. Start with [sharing](#share-a-local-service) or [connecting](#connect-to-a-peers-service), and use the transfer steps when needed. Legacy `tsnet-bridge` releases use different commands and configuration.
 
-[Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [0.3-series feature parity history](FEATURE_PARITY.en.md) · [All guides](README.en.md)
+[Guided CLI](CLI_GUIDE.en.md) · [Application settings and RustDesk](CLIENT_HELPERS.en.md) · [Local Web controls](WEB_CONTROLS.en.md) · [All guides](README.en.md)
 
 <picture>
   <source media="(prefers-color-scheme: dark) and (max-width: 959px)" srcset="assets/visuals/connection-en-dark-narrow.svg">
@@ -510,27 +510,6 @@ A recipient may temporarily refuse an update while another operation is running.
 
 ## Local transfer settings operations (source build)
 
-The [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and uses existing authenticated local IPC and the local Web command dispatcher. Use the steps below.
+Local transfer settings are available in the current release. Follow the [complete review, apply and status workflow](RESOURCE_SETTINGS.en.md#review-apply-and-check) in the owning guide. It contains the CLI examples, exact review binding, outcome meanings and recovery rules.
 
-Start the local agent first. Use the resource ID returned by `list` without interpreting or changing it, then review both settings together:
-
-```sh
-soba resource list --json
-soba resource inspect --id RESOURCE_ID --json
-soba resource preview --id RESOURCE_ID --concurrent-files default --concurrent-per-peer 2 --json
-```
-
-Review the preview and retain its exact `operationId`, `baseRevision`, `revision` and both choices. Substitute those values below; `apply` never performs an implicit new preview:
-
-```sh
-soba resource apply --id RESOURCE_ID --operation-id OPERATION_ID --base-revision BASE_REVISION --revision REVIEW_REVISION --concurrent-files default --concurrent-per-peer 2 --json
-soba resource status --id RESOURCE_ID --operation-id OPERATION_ID --json
-```
-
-`default` and positive finite integers are supported; both choices are mandatory. Changing either choice requires a new preview. A stale review returns `resource_revision_conflict`; review the new preview before applying it. All output keys, IDs and status enums are stable JSON across locales. Global `--dry-run` validates inputs and prints the request without contacting the agent, reserving an operation, validating a review against current state or applying anything. `--offline` is unsupported.
-
-An operation's `outcome` is historical evidence. Its separately returned `current` descriptor is the current settings observation; a successful older operation does not mean its settings are still current. `evidenceDurable` distinguishes durably recorded outcomes from uncertain evidence. `saved_not_applied` means configuration was saved but a runtime stage failed; `unknown` means success or rollback cannot be asserted. Inspect the current descriptor and stage fields before deciding what to do next.
-
-Retries with the same operation ID and identical bound request return retained evidence without replaying the provider. Different content with the same ID is rejected. The bounded journal pins unfinished and unknown operations; they are not evicted or automatically replayed. Older evicted evidence is reported as `resource_operation_not_retained`, not executed again. Missing evidence is not proof of success or failure. Journal uncertainty blocks new applies until a later owned startup validates and durably republishes the evidence; startup does not replay the settings operation. Full pinned journals reject new operations. This is not an exactly-once guarantee, and local counters do not prevent whole-profile rollback.
-
-Downgrading to the earlier PR1 read-only resource implementation makes the resource interface unavailable when the operation journal is populated; legacy settings commands continue. Do not delete private state to restore resource availability. These are source-level implementation and mock-test boundaries, not evidence of real power-loss durability or published-release acceptance.
+Keep the original operation ID after a lost reply. Historical outcome, durable evidence and current settings are separate observations; do not delete private state or silently create a replacement operation to recover. This is a local operation, not a remote-management grant.

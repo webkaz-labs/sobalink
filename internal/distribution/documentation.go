@@ -6,6 +6,32 @@ import (
 	"path/filepath"
 )
 
+// copyDocumentationMarkdown preserves guide links with an explicit, nonrecursive
+// set of directories. Do not include scripts, caches or other nested inputs.
+func copyDocumentationMarkdown(root, share string) error {
+	for _, directory := range []string{"docs", "docs/history", "web"} {
+		files, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(directory), "*.md"))
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			rel := directory + "/" + filepath.Base(file)
+			data, err := readSourceFile(root, rel)
+			if err != nil {
+				return fmt.Errorf("documentation Markdown: %w", err)
+			}
+			destination := filepath.Join(share, filepath.FromSlash(rel))
+			if err = os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+				return err
+			}
+			if err = os.WriteFile(destination, data, 0o644); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // copyDocumentationVisuals includes only the rendered SVGs used by the shipped
 // guides. Do not recursively copy assets: generators, previews and caches are
 // development inputs, not offline documentation. readSourceFile rejects links
