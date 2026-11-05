@@ -1,6 +1,8 @@
-# Menu-bar / tray feasibility
+# Menu-bar and tray design
 
-Implemented behind --tray; native OS behavior has not been run in this environment.
+The `--tray` option is implemented. Native OS behavior has not been verified by
+the checks recorded here. See [device test steps](DEVICE_TEST.ja.md) for the
+remaining manual checks.
 
 MyGo v0.7.4's [official tray guide](https://mygo.egoist.dev/docs/menus)
 supports macOS menu-bar status items and Windows notification-area icons through
@@ -13,7 +15,7 @@ application's presence, not the independent soba daemon. On Windows, an icon may
 be in overflow rather than visibly on the taskbar; a stable TrayOptions.ID helps
 preserve the user's visibility choice. Do not promise an always-visible icon.
 
-A tray icon alone does not keep MyGo alive. User close must hide the window rather
+A tray icon alone does not keep the MyGo event loop running. User close must hide the window rather
 than destroy the last window, while explicit UI Quit must bypass that interception.
 An explicit menu action should say "Quit UI (daemon continues)" rather than imply
 that all soba activity stops. Read-only status continues using the existing control
@@ -24,7 +26,7 @@ MyGo's [Windows distribution](https://mygo.egoist.dev/docs/distribution) uses a
 per-user installer. Signing, execution policy and device restrictions still apply.
 
 Pending real-device checks: activation/focus, Escape/hide, multiple displays,
-DPI, light/dark icon contrast, Windows overflow and Explorer restart, macOS menu
+display scaling (DPI), light/dark icon contrast, Windows overflow and Explorer restart, macOS menu
 bar placement, UI quit versus daemon lifetime. Linux has additional AppIndicator
 requirements and should not silently lose the only way to reopen the GUI.
 
@@ -38,4 +40,4 @@ popover: MyGo flyouts may dismiss on focus loss, interfering with IME/file picke
 No OnBlur handler is installed. Explicit Escape, Hide, close and tray toggle retain
 the same app state. Linux/tray failure opens a visible normal-window fallback.
 No OS auto-start or global setting is changed. Unit geometry and lifecycle policy
-tests are not a replacement for native multi-display/IME/dialog acceptance.
+tests are not a replacement for real-device checks of multiple displays, Japanese input (IME) and file dialogs.

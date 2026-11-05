@@ -1,8 +1,8 @@
 # Review and manage one peer's transfer settings
 
-[日本語](RESOURCE_MANAGEMENT.ja.md) · [Read-only inspection](RESOURCE_INSPECTION.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](RESOURCE_MANAGEMENT.ja.md) · [Read-only inspection](RESOURCE_INSPECTION.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-The current release supports explicitly permitted management of exactly `transferConcurrentFiles` and `transferConcurrentPerPeer` on one paired DirectLAN peer. The pure fence/epoch tests do not establish end-to-end management, distribution, physical-device, application, OS-login or suspend acceptance. Published-release claims remain governed by the [verification record](VERIFICATION.en.md).
+The current release supports explicitly permitted management of exactly `transferConcurrentFiles` and `transferConcurrentPerPeer` on one paired DirectLAN peer. Unit tests of the execution guard and state generations (fence/epoch) do not establish end-to-end management, distribution, physical-device, application, OS-login or suspend acceptance. Published-release claims remain governed by the [verification record](VERIFICATION.en.md).
 
 ## Permission first, exact review second
 
@@ -56,7 +56,7 @@ soba resource remote manage apply --peer TARGET_PEER_KEY --id RESOURCE_ID --gran
 
 Supply the exact preview values and choices. `--revision` means `reviewRevision`. Apply never silently creates a new preview or substitutes current revisions. Another operation, restart, or relevant authenticated-generation change can invalidate an unused review. A changed choice requires a new review. `--dry-run` performs local input validation only; it does not establish remote authorization or readiness. Commands retain language-independent JSON with English/Japanese help and errors.
 
-The first accepted fresh remote apply converts the operation journal from v1 to v2, preserving all retained local records and high-water. This is separate from grant-store migration. The conversion is durably published before the new intent; conversion alone is not evidence that settings changed. Older v1-only agents cannot read that journal. Ordinary local operations, inspect, preview and status never trigger this conversion.
+The first accepted fresh remote apply converts the operation journal from v1 to v2, preserving all retained local records and the highest sequence number reached. This is separate from grant-store migration. The conversion is durably published before the new intent; conversion alone is not evidence that settings changed. Older v1-only agents cannot read that journal. Ordinary local operations, inspect, preview and status never trigger this conversion.
 
 ## Check an uncertain reply
 
@@ -68,7 +68,7 @@ Use the same opaque operation ID after a lost or uncertain apply reply. Do not i
 
 An operation response contains only the historical outcome and `evidenceDurable`. This flag describes durable terminal evidence, not whether configuration application or a file transfer succeeded. `unknown` is neither success nor rollback. Status does not add current settings; inspect them separately. Missing, evicted, local-owned and other-scope records all produce the same unavailable status. A replacement grant or changed pair cannot inherit older scope history.
 
-The private journal shares one sequence and fixed bounds across local and remote evidence. Unresolved intent/unknown records are pinned. Storage uncertainty freezes new applies; do not delete state or treat an unavailable response as permission to recreate an operation.
+The private journal shares one sequence and fixed bounds across local and remote evidence. Unresolved intent and unknown-result records are retained and cannot be evicted. Storage uncertainty freezes new applies; do not delete state or treat an unavailable response as permission to recreate an operation.
 
 ## Lifetime, cancellation and boundaries
 

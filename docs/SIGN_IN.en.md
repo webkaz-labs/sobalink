@@ -2,7 +2,7 @@
 
 [日本語](SIGN_IN.ja.md) · [Startup](LIFECYCLE.en.md) · [Nearby setup](CONNECTION_SETUP.en.md)
 
-Start the local application and select Tailnet. The local Web settings provide an official sign-in link. Pairing through a selected relay is a separate setup flow and does not use this login.
+Start the local application and select Tailnet (the device network managed by Tailscale). The local Web settings provide an official sign-in link. Pairing through a selected relay is a separate setup flow and does not use this login.
 
 ## Choose a sign-in method
 
@@ -18,7 +18,7 @@ An already connected node or one awaiting administrator approval does not restar
 
 Plain `soba login` keeps the machine JSON interface. `soba login --wait` waits and returns a final state as JSON. Use `--state-dir PATH` before the command to retain the selected profile.
 
-Mocked tests cover URL validation, repeated requests, pending approval, cancellation and QR pixels/display restoration. Phone scanning, real enrollment, native IME and terminal/font combinations require real-device acceptance.
+Mocked tests cover URL validation, repeated requests, pending approval, cancellation and QR rendering and terminal-display restoration. Phone scanning, real enrollment, native text input (IME) and terminal/font combinations require real-device acceptance.
 
 ## Read the outcome
 

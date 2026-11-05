@@ -2,9 +2,9 @@
 
 [日本語](STARTUP.ja.md) · [User guide](GENERIC.en.md)
 
-Saved definitions remain inert by default. Optional startup selections authorize
+Saved definitions do not start connections by default. Optional startup selections authorize
 only the exact reviewed outbound connections on future online process launches.
-These startup approvals start neither inbound shares nor new file transfers. Previously accepted durable queues have their own original-ID/deadline recovery contract. These controls are
+These startup approvals start neither inbound shares nor new file transfers. Previously accepted durable queues have their own recovery rules that preserve the original ID and deadline. These controls are
 implemented and covered by synthetic tests; installed-device, enrollment and
 application acceptance still require real-device verification.
 
@@ -51,7 +51,7 @@ revoking a target makes old approvals invalid. Review again explicitly to enable
 the changed scope. An imported profile never supplies a startup approval.
 
 The online process captures enabled approvals at launch and attempts each once
-after network readiness. Startup uses the same reviewed multi-service admission,
+after network readiness. Startup uses the same reviewed checks before starting multiple services,
 listener readiness checks and rollback as an explicit group start. A failed
 attempt stays failed until an explicit action or a new process launch. An explicit
 stop does not immediately restart it. `soba start --offline` suppresses all
@@ -64,7 +64,9 @@ is a separate optional setting: `soba autostart --help`.
 
 ## Private SOCKS profiles
 
-What changes when a proxy is saved, stopped, disabled or deleted? Read private credentials, future-launch approval and the current session separately.
+SOCKS is a proxy protocol that forwards connections for compatible applications. These profiles restrict which peers and ports the proxy can reach.
+
+Saving, stopping, disabling and deleting affect different parts of a proxy. Check stored credentials, future-start permission and the current connection separately.
 
 ```mermaid
 flowchart TB
@@ -72,7 +74,7 @@ flowchart TB
         Stored["Save or generate: credentials stored"] --> Delete["saved-delete"] --> Removed["Credentials removed"]
     end
     subgraph Launch["Future process launches"]
-        Enabled["Explicit launch approval"] --> Disable["saved-disable"] --> Off["Future launch off; old recovery disarmed"]
+        Enabled["Explicit launch approval"] --> Disable["saved-disable"] --> Off["Future launch off; old recovery disabled"]
     end
     subgraph Session["Current session: independent of storage"]
         Start["Explicit start or approved online launch"] --> Live["Listener running"]
@@ -93,7 +95,7 @@ flowchart TB
 
 Text equivalent: save alone opens nothing. Explicit saved start or a separately approved future online launch can create a session. Transient transport recovery keeps the original ID and expiry while its approval remains valid. Stop, expiry or invalidation never silently renews permission. Initially saving with `startOnLaunch: false` still permits an explicitly started saved session to recover; `saved-disable` invalidates recovery from the previous stored revision. Offline launch suppresses automatic starts. After an uncertain save, reload the saved and runtime lists before retrying.
 
-The ordinary `soba proxy start` command remains ephemeral. Optional saving uses
+The ordinary `soba proxy start` command lasts only for the current run. Optional saving uses
 only private input files or a pipe:
 
 - `soba proxy preview --name example --peer PEER_ID --ports 443,8443`
@@ -120,8 +122,9 @@ output cannot bypass this destination requirement. Keep revealed files private.
 Use `soba proxy stop ID` to stop the running listener separately.
 
 Saved scopes retain exact peer identities, TCP ports, loopback endpoint, network,
-node hostname and lifetime. All current-identity/netstack/loopback restrictions still
-apply. Revocation invalidates old approvals across restarts; re-trusting does not
+node hostname and lifetime. The application still verifies the current peer identity, uses only its built-in
+network stack (netstack), and restricts the local entry to an address on this device
+(loopback). Revocation invalidates old approvals across restarts; re-trusting does not
 restore them. If durable revocation cannot be confirmed, relevant active work is
 stopped and startup is suppressed in the current process. The error requires
 repairing private storage before restarting; no successful durable revocation is
@@ -129,14 +132,14 @@ claimed when storage fails.
 
 Startup approvals, revocation metadata and SOCKS secrets are stored separately
 from portable profile exports, using `profileBytes` as a finite per-file storage budget and
-atomic private writes (current-user ACL on Windows). Normal status, history,
-logs, errors and dry-run output omit credentials. Do not put credentials in argv,
+private writes that replace the file without exposing a partial update (a current-user-only access control list, or ACL, on Windows). Normal status, history,
+logs, errors and dry-run output omit credentials. Do not put credentials in command arguments,
 shared configuration, source code or exported profiles.
 
 ## Verification boundary
 
 Synthetic Core/CLI tests cover frozen selections, stale reviews, changed groups,
-inbound rejection, offline suppression, exactly-once launch admission, disabling,
+inbound rejection, offline suppression, one start attempt per approved selection on launch, disabling,
 explicit stops, durable peer revoke, failure handling, credential generation,
 private reveal, redaction, and saved-proxy recovery without expiry renewal. They
 do not establish real enrollment, OS-login/suspend behavior, installed ACLs or

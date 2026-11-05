@@ -6,7 +6,7 @@
 
 ## Start with a fictional demo
 
-After verifying the target release's signatures, provenance and digests, open a terminal in the extracted archive's `bin` directory. Go is not required to run the binaries.
+After verifying the target release's signatures, build-origin evidence (provenance) and file checksums (digests), open a terminal in the extracted archive's `bin` directory. Go is not required to run the binaries.
 
 Windows PowerShell:
 
@@ -32,7 +32,7 @@ Prepare and start the daemon separately using the [CLI guide](CLI_GUIDE.en.md). 
 ./soba-native --state-dir "TEST_PROFILE_DIRECTORY" --tray --locale auto
 ```
 
-On Windows, use `& .\soba-native.exe` with the same arguments. Choose exactly one of `--demo` and `--state-dir`; no profile is selected implicitly. Live mode is read-only by default. Press **Refresh status** to request a snapshot over the existing user-private local IPC. There is no automatic refresh, daemon startup or configuration change. IPC success does not establish network health or delivery. Failed refresh clears stale displayed state.
+On Windows, use `& .\soba-native.exe` with the same arguments. Choose exactly one of `--demo` and `--state-dir`; no profile is selected implicitly. Live mode is read-only by default. Press **Refresh status** to request a snapshot over the existing user-private communication channel between local processes (IPC). There is no automatic refresh, daemon startup or configuration change. IPC success does not establish network health or delivery. Failed refresh clears stale displayed state.
 
 ## Send only with opt-in and review
 
@@ -46,13 +46,13 @@ Requests can fail after being accepted. An uncertain result is not proof of non-
 
 ## Hide and quit
 
-With `--tray`, the menu-bar/notification-area icon toggles the panel. Close, Hide or an unconsumed Escape hides it; **Quit UI (daemon continues)** exits only `soba-native`. The daemon is neither started nor stopped by this client. Drafts survive hiding, but are lost on UI exit. The panel does not dismiss automatically on focus loss, to avoid interrupting IME or file pickers. If tray setup fails, a normal window opens; closing that fallback exits the UI. No login item, service or automatic startup is installed.
+With `--tray`, the menu-bar/notification-area icon toggles the panel. Close, Hide or Escape when it is not being handled by an input control hides it; **Quit UI (daemon continues)** exits only `soba-native`. The daemon is neither started nor stopped by this client. Drafts survive hiding, but are lost on UI exit. The panel does not dismiss automatically on focus loss, to avoid interrupting IME or file pickers. If tray setup fails, a normal window opens; closing that fallback exits the UI. No login item, service or automatic startup is installed.
 
 ## Verification boundaries
 
 - Release signature/provenance checks establish distribution integrity and source identity. They are separate from Windows developer/publisher signing and macOS Developer ID signing/notarization. A checksum alone establishes neither.
 - If OS or administrator policy blocks execution, stop and record the block. Do not disable protections, remove quarantine attributes, bypass Gatekeeper/SmartScreen, or retry with administrator privileges.
-- Native windows, tray interaction, Japanese IME, screen readers, GPU/high-DPI, suspend/resume, long sessions and real two-device network exchange still require physical-device acceptance. Cross-builds, headless images and protected IPC/Core fixtures are not substitutes.
+- Native windows, tray interaction, Japanese text input (IME), screen readers, GPU/high-DPI, suspend/resume, long sessions and real two-device network exchange still require physical-device acceptance. Cross-builds, images rendered without a display and tests with simulated data for protected IPC and shared application logic are not substitutes.
 - The integrated source includes PR #66. Earlier unsigned PR #67 test kits without that change remain historical artifacts, not release assets or evidence for the new source. No final release version or passing release result is asserted here.
 - Share only generalized findings and fictional data. Do not distribute real account/device names, paths, workplace information, logs or screenshots that identify a person or their usage environment.
 

@@ -1,6 +1,8 @@
 # GUI workflow acceptance
 
-This log separates the current UI refinement from earlier workflow checkpoints. Earlier test counts and open integration notes below describe their dated candidates, not the released product or this later UI change.
+This log preserves dated UI reviews. Test counts, “current” descriptions and open
+integration notes below refer to each recorded candidate, not automatically to
+the latest source or release.
 
 Apply the [development and usability principles](../docs/DEVELOPMENT_PRINCIPLES.en.md) ([日本語](../docs/DEVELOPMENT_PRINCIPLES.ja.md)). This document records workflow effort, evidence, and remaining acceptance work rather than duplicating those principles.
 
@@ -44,9 +46,9 @@ The final presentation was inspected with a synthetic, private preview adapter. 
 | Capacity form, 13 forward controls at each mobile/landscape size | Controls remained visible; 12 reverse steps also checked at 375 px |
 | Service form, 14 reachable controls at 375 px | No viewport or sticky-footer occlusion; final labels and action area visually inspected |
 
-This is not the full Cartesian product of languages, counts and sizes. The 844 px frame had an 829 px document client width after its scrollbar. List, topology, details, services, exchange/receive offer, preferences, capacity and service forms were visually inspected, including a desktop dark graph. Saved services, client/RustDesk entry, startup guidance and advanced proxy review were checked through DOM/interaction in the synthetic adapter. Actual authentication/QR, native file chooser/drop/paste, OS actions and live network probes were not exercised. The embedding frame's focus boundary prevents accepting complete modal focus trapping; the formal top-level Go-backed Playwright cases remain required.
+This does not cover every combination of language, device count and screen size. The 844 px frame had an 829 px document client width after its scrollbar. List, topology, details, services, exchange/receive offer, preferences, capacity and service forms were visually inspected, including a desktop dark graph. Saved services, client/RustDesk entry, startup guidance and advanced proxy review were checked through DOM/interaction in the synthetic adapter. Actual authentication/QR, native file chooser/drop/paste, OS actions and live network probes were not exercised. The embedding frame's focus boundary prevents accepting complete modal focus trapping; the formal top-level Go-backed Playwright cases remain required.
 
-### Topology evidence contract
+### What the network diagram could establish at this checkpoint
 
 | State | Current source can establish | UI boundary |
 | --- | --- | --- |
@@ -108,7 +110,7 @@ Counts are source-derived control activations, not timed usability measurements.
 
 The first host setup does not require typing a relay address or certificate fingerprint: the selected local address and reviewed listener are sufficient. Joining uses the inspected invitation rather than asking for those values again. Manual relay fields remain an advanced alternative. Device names and host ports are editable defaults, not additional required typing on the normal path.
 
-## Earlier findings and current resolution
+## Earlier findings and resolution at the checkpoint
 
 | Earlier finding | Current implementation | Evidence and remaining gate |
 | --- | --- | --- |
@@ -131,9 +133,9 @@ Repeated clipboard images now keep separate reviewed filenames, such as `image.p
 
 Unfinished receiving-directory edits now stay in authenticated-session memory, separately for Preferences, each peer’s automatic policy, and each incoming batch. Closing or changing peers does not save the draft or enable receiving. Successful saves and session expiry clear the relevant state; per-batch Use default folder explicitly discards that override. DOM regressions verify separate destinations, navigation, no accidental command, and authentication clearing.
 
-### P3 — Upgrade instructions are not reachable from the GUI
+### Upgrade instructions were not reachable from the reviewed GUI
 
-The inspected interface has no version/help/upgrade-instructions route and no update command. The user guide explicitly says no released upgrade path exists yet; development rebuild instructions already exist in [Stop, revoke and upgrade](../docs/GENERIC.en.md#stop-revoke-and-upgrade) and [Distribution](../docs/DISTRIBUTION.md).
+At this checkpoint, the inspected interface had no version/help/upgrade-instructions route or update command. The guide then described development rebuilds rather than a released upgrade path. Consult the current [Stop, revoke and upgrade](../docs/GENERIC.en.md#stop-revoke-and-upgrade) and [Distribution](../docs/DISTRIBUTION.md).
 
 Minimal follow-up: expose a read-only version and clearly labeled link to the supported instructions once a stable documentation destination is available. State that installation/rebuild is external to the GUI. Do not add a pretend Check for updates/Install button, invent an updater API, or claim migration/rollback compatibility.
 
@@ -146,7 +148,7 @@ Minimal follow-up: expose a read-only version and clearly labeled link to the su
 
 ## Readability and density checkpoint — 2026-10-03
 
-The current UI candidate retains readable text, permanent search/composer labels, grouped service/preferences forms, full Japanese lifetime values and separate service/exchange action groups. It removes repeated toolbar headings, widespread button/icon frames and action underlines. Service name and kind share a line; compact sidebar rows retain the same font sizes. Selected tabs use a fill and type weight, secondary actions use a quiet tonal surface, and utilities use recognizable icons and readable text. Decorative separators remain subtle; editable fields retain a purposeful boundary and keyboard focus has its own indicator. These changes are not present in the published alpha.1 binary.
+The UI candidate reviewed at this checkpoint retained readable text, permanent search/composer labels, grouped service/preferences forms, full Japanese lifetime values and separate service/exchange action groups. It removes repeated toolbar headings, widespread button/icon frames and action underlines. Service name and kind share a line; compact sidebar rows retain the same font sizes. Selected tabs use a fill and type weight, secondary actions use a quiet tonal surface, and utilities use recognizable icons and readable text. Decorative separators remain subtle; editable fields retain a purposeful boundary and keyboard focus has its own indicator. These changes were not present in the alpha.1 binary published at that checkpoint.
 
 Verified locally against the final runtime candidate: 521 DOM/token tests, typecheck, nine evidence-safety tests, two fresh exact-lock builds matching all three committed assets, and compilation of the Go embedded-UI fixture. The 65 formal Playwright cases run in exact-source CI; the restricted local environment cannot execute Chromium. Six new cases exercise rendered control states at desktop, 375px touch and 1024px coarse-pointer/no-hover. They check actually painted text or icons at rest and accessible names, rather than demanding a contrasting perimeter around every button. Inputs, field text size, touch targets and keyboard focus remain checked. Compact cases also check complete tab labels and selected lifetime values. These remain an integration gate.
 

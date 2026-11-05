@@ -2,8 +2,8 @@
 
 [日本語](RELAY_TRAFFIC_MEASUREMENT.ja.md) · [Published-binary offline resources](RESOURCE_MEASUREMENT.en.md)
 
-This workflow measures stock Tailcat/DERP transport with a synthetic TCP echo
-workload. It builds source `8e6cbb00d60757f701d7d453adb92590cc5d2544` with test-only
+This workflow measures the standard Tailcat/DERP transport by sending generated
+test data over TCP and echoing it back unchanged. It builds source `8e6cbb00d60757f701d7d453adb92590cc5d2544` with test-only
 instrumentation and OS UDP transport compiled out. It does not measure the
 published executable, sobalink's file/message protocol, discovery, or Web UI
 polling. A completed hosted run and its aggregate artifact are required before
@@ -29,9 +29,11 @@ flowchart LR
 
 Text equivalent: synthetic peer A reaches peer B through a pinned loopback relay; the proxy counts encrypted bytes on each peer-to-relay leg in both directions. It does not count outer packet headers.
 
-Read the result in this order: verify source and fixture identity, select one phase, check successful payload/digest evidence, then interpret its counters. An N-byte echo contributes 2N to payload P; two relay legs explain the 2P comparison baseline. For idle phases, use bytes per second rather than a payload ratio.
+Read the result in this order: verify source and fixture identity, select one phase, check successful payload/digest evidence, then interpret its counters. Sending N bytes and echoing them back contributes 2N to payload P; two relay legs explain the 2P comparison baseline. For idle phases, use bytes per second rather than a payload ratio.
 
 ## Fixture and phases
+
+The fixture is the controlled set of peers, relay and test data used for this measurement.
 
 The job independently checks out that exact source, adds three test-only files,
 and verifies that tracked production source remains unchanged. Stock pairing,

@@ -2,7 +2,9 @@
 
 [日本語ガイド](GENERIC.ja.md) · [English guide](GENERIC.en.md) · [Security](../SECURITY.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-sobalink connects devices to their selected application services, with explicit text and file transfer as additional operations. It combines an embedded React UI and a Go agent. Human interaction and agent CLI requests share one application boundary. A peer can exchange authorized messages, batches and service metadata; it cannot operate the local administration API.
+sobalink connects devices to selected application services and supports explicit text and file transfers. It combines an embedded React UI and a Go background process. User actions and automated CLI requests reach the same application core. Another device (a peer) can exchange permitted messages, groups of files and service information. It cannot use the local administration API.
+
+This document describes the implementation for developers. For installation and everyday use, start with the [English guide](GENERIC.en.md) or [日本語ガイド](GENERIC.ja.md). A *backend* is the selected networking implementation; a *resource budget* is a limit on memory, storage or concurrent work.
 
 ```mermaid
 flowchart TD
@@ -28,7 +30,7 @@ The local browser and owner-only CLI reach the same Go core. Peer traffic uses a
 - Which path carries application traffic? [Network boundaries](#network-boundaries) and [prepared routes](#prepared-routes-and-stable-service-entrances).
 - Which authority permits a request? [Management and peer surfaces](#management-and-peer-surfaces) and [trust and storage](#trust-batches-and-storage).
 - What survives a restart? [Saved workflows](#capacity-saved-workflows-and-local-tools) and [private-state persistence](#bounded-private-state-persistence).
-- What has actually been tested? [Exact-source verification](VERIFICATION.en.md). This describes v0.5.1-alpha.1 source `fae64878`; old observations below remain tied to their original version.
+- What has actually been tested? [Source-specific verification](VERIFICATION.en.md). The current prerelease is v0.5.4-alpha.1, source `b35463ce`; historical observations below remain tied to their recorded versions.
 
 ## Source map
 
@@ -160,7 +162,7 @@ Receiver quota recovery uses a private index of receiver-owned staging roots (v1
 
 An existing profile with a missing legacy index remains receive-blocked until explicit local review. `soba receive recovery confirm` previews status; `soba receive recovery confirm --reviewed` records review of all previous default, per-peer and manual destinations, unfinished staging and saved output, then initializes the absent index and inventories only what can be proven owned. Before confirming, resolve unfinished old receives so no untracked partial data remains; keep saved files. Unknown or unavailable old locations must be reviewed before confirmation. --reviewed attests that this review and cleanup are complete; it does not delete files or discover arbitrary unrecorded legacy leftovers. This does not add partial-byte or restart resume.
 
-Retry starts each unfinished file again from byte zero. There is no byte-offset resume, durable progress journal or restart resume. Saved data survives cancellation and process shutdown; active batch state does not. A new batch after restart may create unique-name duplicates, which the user must review.
+For immediate transfers, retry starts each unfinished file again from byte zero. There is no byte-offset resume, saved progress journal or restart resume for that mode. Saved files survive cancellation and process shutdown; active batch state does not. A new batch after restart may create uniquely named duplicates, which the user must review. The explicit [durable file queue](DURABLE_OUTBOX.en.md) saves pending jobs across restarts under its separate permission and duplicate-detection rules; it also retries whole files.
 
 The embedded relay forces a fresh admission check through a two-minute connection lease. Removed relay sessions may remain for that lease, and temporary bootstrap admission plus a lease can last about four minutes from initial bootstrap. Application revocation closes its own flows immediately. The native fixture passed its 130-second existing-TCP test across a real relay lease on all four targets at the recorded commit; this is a bounded scenario, not a general TCP continuity guarantee.
 
@@ -188,7 +190,7 @@ Stopped service definitions and groups are separate from live grants. Saving and
 
 The optional SOCKS5 tool authenticates clients and supports only TCP CONNECT to reviewed peer/port targets through the chosen userspace backend. Each dial rechecks current identity. Ordinary starts are ephemeral; explicit saved/generated profiles use a separate protected, revision-bound store, excluded from portable exports and routine state. Private reveal is an explicit operation. Durable peer-revocation epochs prevent saved approvals from reviving after restart; failed persistence stops related work and suppresses startup until storage is repaired. It has no OS target dialing/DNS fallback, BIND or UDP ASSOCIATE. Its listener shares resource accounting and cannot be exposed through a service share. Diagnostics optionally open one explicit approved TCP connection, preserve the last failure code/time in runtime, and leave application/TLS/host-key health unverified. [Proxy and diagnostics](PROXY_DIAGNOSTICS.en.md)
 
-Bulk remote administration, remote filesystem browsing, broadcast delivery and a durable offline outbox are not implemented. A broader resource-management foundation belongs to a separate milestone; ordinary service transport does not imply those capabilities.
+General-purpose bulk remote administration, remote filesystem browsing and broadcast delivery are not implemented. The separate [resource-management protocol](RESOURCE_MANAGEMENT.en.md) and [fixed resource groups](RESOURCE_GROUP.en.md) can change only two transfer settings, with explicit permission from each target. They do not permit arbitrary remote commands or file operations. Explicit [file](DURABLE_OUTBOX.en.md) and [text](DURABLE_TEXT.en.md) queues can retain pending work while the recipient is offline; delivery waits for an authorized connection.
 
 ## Bounded private-state persistence
 

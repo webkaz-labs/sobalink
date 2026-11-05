@@ -1,6 +1,6 @@
 # Explicit alternate-port checks
 
-[日本語](PORT_PROPOSALS.ja.md) · [CLI guide](CLI_GUIDE.en.md) · [Capacity](CAPACITY.en.md) · [API](../web/API.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](PORT_PROPOSALS.ja.md) · [CLI guide](CLI_GUIDE.en.md) · [Capacity](CAPACITY.en.md) · [API](../web/API.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
 A stopped saved outbound TCP/UDP connection can explicitly check alternate local entry ports. The existing fixed port stays unchanged until a separate reviewed save or restart. In the local Web UI, open **Saved services → Manage service → Check alternate ports** for a stopped connection. Opening the view reads its source only; **Check loopback ports now** explicitly performs the transient checks.
 
@@ -11,7 +11,7 @@ soba --dry-run service restart NAME_OR_ID --local-port PORT --expected-revision 
 soba service restart NAME_OR_ID --local-port PORT --expected-revision REVISION
 ```
 
-The Web view shows the exact source ID/revision, protocol, loopback family, original mapping, effective remote ports, exclusions and checking time. Count and attempt inputs use the current finite capacity settings when zero; bind and time budgets remain configurable through **Preferences → Capacity and history**. Candidate lists are paged without additional checks. Select a candidate explicitly, then choose **Edit draft with selected port**. The saved-definition editor rereads the source and rejects a changed revision before seeding the candidate. Review the complete stopped definition and save it separately; starting remains another reviewed action. Reloading the source discards the candidate instead of applying it to a newer revision. Closing, changing source or losing contact discards pending results. These observations use fresh request identities outside mutating retry guards.
+The Web view shows the exact source ID/revision, protocol, loopback family, original mapping, effective remote ports, exclusions and checking time. Count and attempt inputs use the current finite capacity settings when zero; bind and time budgets remain configurable through **Preferences → Capacity and history**. Candidate lists are paged without additional checks. Select a candidate explicitly, then choose **Edit draft with selected port**. The saved-definition editor rereads the source and rejects a changed revision before inserting the candidate into the draft. Review the complete stopped definition and save it separately; starting remains another reviewed action. Reloading the source discards the candidate instead of applying it to a newer revision. Closing, changing source or losing contact discards pending results. These observations use fresh request identities outside mutating retry guards.
 
 Use the revision and chosen port returned by `service ports`, and retain the same `--state-dir` throughout. Review the entire saved scope and lifetime before restarting: normal explicit restart begins the reviewed permission lifetime. An active service must first be stopped explicitly. Shares and application-side target ports are outside this proposal command.
 
@@ -29,10 +29,10 @@ The check first attempts the saved numeric loopback mapping. Only an OS address-
 
 ## Check → review → save or restart
 
-A candidate is a momentary bind observation, not a reservation. Keep the returned source revision with your chosen port; review the complete mapping and lifetime before applying it. A later start checks the port again and may still fail.
+A candidate records whether a port could be opened at the time of the check, not a reservation. Keep the returned source revision with your chosen port; review the complete mapping and lifetime before applying it. A later start checks the port again and may still fail.
 
 - **Web:** check explicitly, select one candidate, review the edited stopped definition, then save. Start separately when ready.
-- **CLI:** inspect and check first; the final restart command below is a separate mutating action, not part of the check.
+- **CLI:** inspect and check first; the final restart command above is a separate mutating action, not part of the check.
 - **No conflict:** keep the original mapping. `listener_no_conflict` does not restart the service.
 
 ## Mapping and review
