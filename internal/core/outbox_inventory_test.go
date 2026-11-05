@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,16 +23,26 @@ func assertOutboxSavedInventory(t *testing.T, root string, expected transfer.Ent
 // succeeds (directory-only /start does not run file-receive cleanup). Its exact
 // reserved name is allowed, never arbitrary dotfiles or extra user outputs.
 func outboxSavedInventory(root string, expected transfer.Entry) (string, error) {
+	return outboxSavedInventoryReadDir(root, expected, os.ReadDir)
+}
+
+func outboxSavedInventoryReadDir(root string, expected transfer.Entry, readDir func(string) ([]os.DirEntry, error)) (string, error) {
 	const stageName = ".sobalink-durable-stage-v1"
 	if expected.Path == "" || filepath.Base(expected.Path) != expected.Path || expected.Path == stageName {
 		return "", errors.New("fixture expected output is not one reviewed top-level entry")
 	}
 	rootInfo, err := os.Lstat(root)
-	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+	if err != nil {
+		return "", fmt.Errorf("completed batch root inspection failed: class=%s", outboxInventoryErrorClass(err))
+	}
+	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
 		return "", errors.New("completed batch root is not a real directory")
 	}
-	entries, err := os.ReadDir(root)
-	if err != nil || len(entries) < 1 || len(entries) > 2 {
+	entries, err := readDir(root)
+	if err != nil {
+		return "", fmt.Errorf("completed batch inventory read failed: class=%s", outboxInventoryErrorClass(err))
+	}
+	if len(entries) < 1 || len(entries) > 2 {
 		return "", errors.New("missing or duplicate actual saved outputs")
 	}
 	found := false
@@ -42,7 +53,10 @@ func outboxSavedInventory(root string, expected transfer.Entry) (string, error) 
 		if entry.Name() == stageName && errors.Is(err, os.ErrNotExist) {
 			continue
 		}
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		if err != nil {
+			return "", fmt.Errorf("saved inventory entry inspection failed: reserved_stage=%t class=%s", entry.Name() == stageName, outboxInventoryErrorClass(err))
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
 			return "", errors.New("saved inventory contains an unreadable or symbolic entry")
 		}
 		switch entry.Name() {
@@ -59,12 +73,15 @@ func outboxSavedInventory(root string, expected transfer.Entry) (string, error) 
 			if !info.IsDir() {
 				return "", errors.New("reserved durable stage is not a real directory")
 			}
-			staged, err := os.ReadDir(filepath.Join(root, stageName))
+			staged, err := readDir(filepath.Join(root, stageName))
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			if err != nil || len(staged) != 0 {
-				return "", errors.New("completed durable stage retained unexpected entries")
+			if err != nil {
+				return "", fmt.Errorf("completed durable stage read failed: class=%s", outboxInventoryErrorClass(err))
+			}
+			if len(staged) != 0 {
+				return "", fmt.Errorf("completed durable stage retained unexpected entries: count=%s", outboxInventoryCount(len(staged)))
 			}
 		default:
 			return "", errors.New("completed batch retained an unreviewed output")

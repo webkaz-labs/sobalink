@@ -95,6 +95,8 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		var value any
 		var callErr error
 		switch request.Name {
+		case "fixture.lifecycle-evidence":
+			value = captureRouteLifecycleEvidence()
 		case "fixture.text-fault", "fixture.text-evidence", "fixture.text-wire":
 			value, callErr = textFixture.command(ctx, request.Name, request.Payload)
 		case "fixture.send-paths":

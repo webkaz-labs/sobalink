@@ -13,6 +13,34 @@ import (
 	"time"
 )
 
+// Timing is diagnostic only and never changes retry admission or deadlines.
+func outboxProcessRetryDuration(elapsed time.Duration) string {
+	switch {
+	case elapsed < 20*time.Millisecond:
+		return "under_20ms"
+	case elapsed < 500*time.Millisecond:
+		return "under_500ms"
+	case elapsed < 2*time.Second:
+		return "under_2s"
+	case elapsed < 5*time.Second:
+		return "under_5s"
+	default:
+		return "at_least_5s"
+	}
+}
+
+func TestOutboxProcessRetryDurationClasses(t *testing.T) {
+	for elapsed, want := range map[time.Duration]string{
+		0: "under_20ms", 20 * time.Millisecond: "under_500ms",
+		500 * time.Millisecond: "under_2s", 2 * time.Second: "under_5s",
+		5 * time.Second: "at_least_5s", time.Hour: "at_least_5s",
+	} {
+		if outboxProcessRetryDuration(elapsed) != want {
+			t.Fatal("retry elapsed time escaped fixed duration buckets")
+		}
+	}
+}
+
 // A lifecycle owner can refuse an initial or already-admitted commit before
 // entering its callback. Retry only that closed pre-admission code, through the same
 // serial command stream and immutable payload. This bounds retry admission;

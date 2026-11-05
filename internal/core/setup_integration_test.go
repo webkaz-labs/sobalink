@@ -3,8 +3,6 @@
 package core
 
 import (
-	"context"
-	"errors"
 	"net"
 	"os"
 	"strings"
@@ -34,20 +32,30 @@ func TestLANCoreNearbySetupManualIntegration(t *testing.T) {
 	activationFailures := make(chan activationFailure, 4)
 	scope := SetupScope{InterfaceIndex: 1, Interface: "synthetic-loopback", LocalAddress: "127.0.0.1", Prefix: "127.0.0.0/8", linkBinding: "isolated-test"}
 	scope.ScopeID = setupScopeID(scope)
-	for _, c := range []*Core{a, b} {
+	for i, c := range []*Core{a, b} {
+		diagnostics := new(setupTestDiagnostics)
+		defer func() {
+			if t.Failed() {
+				t.Logf("setup peer=%s stages (construct/start/issue_invitation/pair_invitation): %q", [2]string{"a", "b"}[i], diagnostics.snapshot())
+				logSetupTestSession(t, c)
+			}
+		}()
 		c.setupScopeRead = func() ([]SetupScope, error) { return []SetupScope{scope}, nil }
-		// Observe existing real factory/start results without replacing the
-		// engine, relay, listener or persistence behavior. Never print raw errors.
+		// Observe the real factory, engine and start results without changing
+		// relay, listener or persistence behavior. Never print raw errors.
 		c.lanFactory = func(store *lanStore) (lanNetworkBackend, error) {
 			n, err := c.newLANBackend(store)
+			diagnostics.record("construct", setupTestCause(err))
 			if err != nil {
 				activationFailures <- activationFailure{"construct", err}
 				return n, err
 			}
 			backend := n.(*lanBackend)
+			backend.lanEngine = &setupTestObservedEngine{lanEngine: backend.lanEngine, diagnostics: diagnostics}
 			start := backend.start
 			backend.start = func() (hostedLANRelay, error) {
 				relay, err := start()
+				diagnostics.record("start", setupTestCause(err))
 				if err != nil {
 					activationFailures <- activationFailure{"start", err}
 				}
@@ -82,7 +90,7 @@ func TestLANCoreNearbySetupManualIntegration(t *testing.T) {
 			}
 			select {
 			case failure := <-activationFailures:
-				t.Fatalf("native setup activation %s failed (type=%T permission=%t canceled=%t timeout=%t)", failure.stage, failure.err, errors.Is(failure.err, os.ErrPermission), errors.Is(failure.err, context.Canceled), errors.Is(failure.err, context.DeadlineExceeded))
+				t.Fatalf("native setup activation %s failed (cause=%s)", failure.stage, setupTestCause(failure.err))
 			default:
 			}
 			time.Sleep(100 * time.Millisecond)
