@@ -2,7 +2,7 @@
 
 [日本語](PROXY_DIAGNOSTICS.ja.md) · [Generic guide](GENERIC.en.md) · [Security](../SECURITY.md)
 
-The advanced SOCKS5 entry point and explicit TCP diagnostics are available through `soba` and the authenticated local command API. They use the same current peer identity and transport policy as service connections. New logic is covered by mock and in-memory transport tests; native socket, actual-device and application compatibility checks are separate acceptance gates.
+The advanced SOCKS5 proxy entry point (a local connection address for compatible applications) and explicit TCP diagnostics are available through `soba` and the authenticated local command API. They use the same current peer identity and transport policy as service connections. New logic is covered by mock and in-memory transport tests; native socket, actual-device and application compatibility checks are separate acceptance gates.
 
 ## Diagnose before changing settings
 
@@ -35,13 +35,13 @@ soba proxy list
 soba proxy stop PROXY_ID
 ```
 
-Multiple peers are supported by `soba proxy preview --json-file SCOPE_FILE` or `--stdin`. The JSON input is an object containing `scope`; its `targets` is an array of objects with exactly `peerId` and `port`. The logical `sharePeers` policy counts distinct peer identities, while the finite local command envelope bounds target metadata. Active proxy listeners and TCP flows share the normal resource controller's listener, connection, policy and peer budgets. Lowered admission settings apply to new scopes and connections.
+Multiple peers are supported by `soba proxy preview --json-file SCOPE_FILE` or `--stdin`. The JSON input is an object containing `scope`; its `targets` is an array of objects with exactly `peerId` and `port`. The logical `sharePeers` policy counts distinct peer identities, while the local command size limit bounds target metadata. Active proxy listeners and TCP flows share the normal resource controller's listener, connection, policy and peer budgets. Lowered admission settings apply to new scopes and connections.
 
-The local command API has `proxy.preview`, `proxy.start`, `proxy.list` and `proxy.stop`. It never returns credentials in ordinary status, review, list or start responses. CLI dry runs omit credentials, including unknown extra fields. Ordinary `proxy start` is ephemeral and never saves credentials. Explicit [saved proxy profiles](STARTUP.en.md) provide reviewed save/generate, private-file reveal and opt-in future launch through a separate protected store. Portable profile exports still exclude credentials and startup approvals.
+The local command API has `proxy.preview`, `proxy.start`, `proxy.list` and `proxy.stop`. It never returns credentials in ordinary status, review, list or start responses. CLI dry runs omit credentials, including unknown extra fields. Ordinary `proxy start` lasts only for the current process and never saves credentials. Explicit [saved proxy profiles](STARTUP.en.md) provide reviewed save/generate, private-file reveal and opt-in future launch through a separate protected store. Portable profile exports still exclude credentials and startup approvals.
 
 The listener uses exactly `127.0.0.1` or `::1`, with username/password authentication and TCP CONNECT only. BIND and UDP ASSOCIATE are unsupported. Dialing uses the selected userspace backend, current approved peer identity and exact allowed TCP ports. Unrecognized names never reach OS DNS or an OS connection fallback. Management ports cannot be targets. An active proxy listener cannot be exposed through a service share, including a mapped share; a port already covered by a share cannot become a proxy listener.
 
-An ephemeral proxy stops on network loss, revocation, identity change, expiry, logout, listener failure or process exit; restart requires fresh review and runtime credentials. Saved-profile recovery and the effects of stop, disable and delete are shown in [private proxy state and actions](STARTUP.en.md#private-socks-profiles). Stopping a proxy closes tracked connections; it does not cancel work an application has already accepted.
+A temporary proxy stops on network loss, revocation, identity change, expiry, logout, listener failure or process exit; restart requires fresh review and runtime credentials. Saved-profile recovery and the effects of stop, disable and delete are shown in [private proxy state and actions](STARTUP.en.md#private-socks-profiles). Stopping a proxy closes tracked connections; it does not cancel work an application has already accepted.
 
 ## Inspect failures and check one TCP target
 

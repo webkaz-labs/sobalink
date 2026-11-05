@@ -1,6 +1,6 @@
 # Web and CLI initial activation
 
-[日本語](WEB_ACTIVATION_HANDOFF.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](WEB_ACTIVATION_HANDOFF.ja.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
 The current release includes Web-requested restart in the reviewed Direct LAN activation controller. Both Web and CLI initial activation passed the real-Core product cases at `719d6bfa`, with original review, ordinary readiness, bilateral native confirmation and complete cleanup preserved. The seven synthetic-owner helper cases also passed on that source. These bounded historical Linux loopback results do not establish later-source or physical-device acceptance. Current native/browser and distribution results are recorded separately in [verification](VERIFICATION.en.md). See the historical [exact-source evidence and limits](CONVENIENCE_PLAN.en.md#current-alpha6-evidence-snapshot).
 
@@ -32,7 +32,7 @@ Keep the temporary restart window open until it finishes. The original session m
 3. Keep the restart window open. It waits for successful IPC/Core close, profile-lock release and native old-process exit before starting a fresh offline successor. The successor rechecks the original review, without refreshing its deadline.
 4. Use the separate Open button in that window to request the device’s normal browser launcher, then enter the fresh one-time code in the ordinary login screen. If opening is unavailable or uncertain, copy the displayed bare URL into the browser address bar. A direct cross-origin navigation link is deliberately not used. The old browser session is not transferred. Check activation progress and independent network, listener and application readiness there.
 
-The original deadline bounds the helper. Cancellation, page dismissal, loss of the temporary page's short lease or expiry stops further work where it has not already been admitted. A pagehide cancellation request is best effort; lease expiry is the fallback. Already saved confirmation is not undone. Browser throttling or an interrupted response can therefore stop continuation. Reopen current local management and inspect state before reviewing again; a new explicit review is required to try again, and an uncertain private code is not redelivered. The original page recovers after a blocked popup, declined or closed continuation, or expiry; recovery does not automatically restart anything.
+The original deadline bounds the helper. Cancellation, page dismissal, loss of the temporary page's short lease or expiry stops further work where it has not already been admitted. The cancellation request sent when the page closes may not arrive; expiry of the page’s short lease stops further work if needed. Already saved confirmation is not undone. Browser throttling or an interrupted response can therefore stop continuation. Reopen current local management and inspect state before reviewing again; a new explicit review is required to try again, and an uncertain private code is not redelivered. The original page recovers after a blocked popup, declined or closed continuation, or expiry; recovery does not automatically restart anything.
 
 ## CLI alternative
 

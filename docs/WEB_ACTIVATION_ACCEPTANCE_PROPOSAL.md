@@ -12,7 +12,7 @@ This document retains the **Linux-only synthetic-owner acceptance design**, orig
 
 For reproduction, review the prerequisites and use the bounded runner below. Treat the opening run history as its original checkpoint; later publication does not rewrite those failures or turn synthetic ownership into production-network evidence.
 
-## What the proposed suite genuinely executes
+## What this suite actually executes
 
 - Real Chromium pages against real numeric-loopback HTTP listeners.
 - Production `webui.Server` origin/Fetch Metadata/session/CSRF/login and one-use session authorization code.
@@ -54,13 +54,13 @@ Use the repository's already reviewed offline dependency preparation and pinned 
 
    From `web`: `node node_modules/vite/bin/vite.js build --config playwright.activation.vite.config.mjs`
 
-3. After explicit browser/native authorization, execute exactly:
+3. After explicit browser/native authorization, prepare the runner environment:
 
-   From `web`, set `SOBA_WEB_ACTIVATION_ACCEPTANCE=1`, `SOBA_WEB_ACTIVATION_BINARY` to the absolute reviewed fixture binary and `SOBA_WEB_ACTIVATION_ASSETS` to the absolute `.activation-browser-assets` directory. Then run:
+   From `web`, set `SOBA_WEB_ACTIVATION_ACCEPTANCE=1`, `SOBA_WEB_ACTIVATION_BINARY` to the absolute reviewed fixture binary and `SOBA_WEB_ACTIVATION_ASSETS` to the absolute `.activation-browser-assets` directory. Set the Chromium path as described below, then run:
 
-   `node node_modules/@playwright/test/cli.js test --config playwright.activation.config.mjs`
+   `node browser/activation-runner.mjs`
 
-Use `node browser/activation-runner.mjs` as the sole execution entry instead of invoking Playwright directly. It fixes selection and flags, creates a 0700 private run directory, uses a restricted child environment and writes only the fixed sanitized report outside that directory. Set `SOBA_ACTIVATION_CHROMIUM` to the absolute independently verified installed Chromium executable and optionally `SOBA_ACTIVATION_REPORT` to a sanitized-result destination. The direct Playwright command above describes the wrapper’s fixed child invocation, not an alternative authorized entry.
+Use `node browser/activation-runner.mjs` as the sole execution entry instead of invoking Playwright directly. It fixes selection and flags, creates a 0700 private run directory, uses a restricted child environment and writes only the fixed sanitized report outside that directory. Set `SOBA_ACTIVATION_CHROMIUM` to the absolute independently verified installed Chromium executable and optionally `SOBA_ACTIVATION_REPORT` to a sanitized-result destination. The wrapper invokes Playwright with `playwright.activation.config.mjs`; do not run that child command directly.
 
 The selected file is `browser/activation-native.acceptance.mjs`. Its suffix deliberately does not match the ordinary browser suite's `*.spec.mjs`. Both Go build tags and Linux are required. The fixture TestMain dispatch is absent from ordinary product builds. The original standalone proposal changed no CI selector. PR #26 adds the separate `web-activation` job and its bounded wrapper; it does not add the opt-in endpoint-following native selectors to CI.
 
@@ -89,7 +89,7 @@ flowchart LR
     CASE --> RUN
 ```
 
-Text equivalent: native observer completion plus all-descendant reaping must be established before a case profile can be removed. The wrapper deletes its private run directory only after runner success, exact-seven acceptance and profile cleanup; uncertainty fails and retains private data. Only the fixed sanitized summary and independent hashes may leave that boundary. Observers cover the old owner and any created helper/successor; unregistered orphaned starts remain covered by subreaping. Native observer handles close only after their workers join; a cancellation or closers marker alone is never exit proof.
+Text equivalent: completion of native exit observers plus confirmation that all descendants have exited and been reaped (`wait4` reaches `ECHILD`) must be established before a case profile can be removed. The wrapper deletes its private run directory only after runner success, exact-seven acceptance and profile cleanup; uncertainty fails and retains private data. Only the fixed sanitized summary and independent hashes may leave that boundary. Observers cover the old owner and any created helper/successor; unregistered orphaned starts remain covered by subreaping (collecting exited orphan descendants). Native observer handles close only after their workers join; a cancellation or closers marker alone is never exit proof.
 
 Implementation references: [upgrade_web_supervisor_test.go (online source)](https://github.com/webkaz-labs/sobalink/blob/main/cmd/soba/upgrade_web_supervisor_test.go) · [activation-fixtures.mjs (online source)](https://github.com/webkaz-labs/sobalink/blob/main/web/browser/activation-fixtures.mjs) · [activation-runner.mjs (online source)](https://github.com/webkaz-labs/sobalink/blob/main/web/browser/activation-runner.mjs).
 
@@ -98,7 +98,7 @@ Implementation references: [upgrade_web_supervisor_test.go (online source)](http
 - Playwright has a 20-minute global timeout; the private wrapper requests termination of its exact Playwright child at 21 minutes and gives up with failed/retained-private-state at 23 minutes. The integrated CI compile/run step has a 40-minute timeout and its whole job a 55-minute timeout; these outer limits do not extend the wrapper or case deadlines. A timeout never authorizes profile deletion or a passing summary.
 - A 45-second original review and the product ten-second helper lease are unchanged. Synthetic owners have a 70-second cooperative lifetime and an 80-second fixture-only self-exit watchdog. These do not add a product force-kill fallback.
 - Each case creates a fresh protected `sr-` profile inside the wrapper’s 0700 `sa-` private directory. Cleanup ownership begins with allocation, including setup failures. Child environments contain fixture paths, temporary home and race options, not account credentials.
-- The Linux test-only supervisor enables child subreaping before spawning the old owner, verifies role/parent registrations and opens native exit observers before owner work. The diagram distinguishes registered-owner observations from orphaned descendants, including starts that fail before registration/readiness.
+- The Linux test-only supervisor enables child subreaping (collecting exited orphan descendants) before spawning the old owner, verifies role/parent registrations and opens native exit observers before owner work. The diagram distinguishes registered-owner observations from orphaned descendants, including starts that fail before registration/readiness.
 - Browser cancellation and a fixture-only stop marker request cooperative shutdown; they do not bypass either deletion gate above. No-successor cases check the final registered-owner result after cleanup, not just immediate marker absence after Cancel.
 - Each actual HTTP owner publishes its exact numeric-loopback origin through the protected supervisor channel before the browser receives readiness. The helper origin is registered from its real private-pipe descriptor. Origins are revoked when their native owner exits. Browser HTTP is denied by default unless its exact live origin is registered; credentials/query/fragment URLs are rejected. Service workers are blocked and all WebSockets are denied. Only sanitized violation counts are retained.
 - Reviewed browser controls combine the pinned Chromium launch defaults that suppress background networking, the exact owned-origin routes above, and existing executor restrictions. Playwright routing is not an OS-wide firewall. Preserve these controls without changing OS firewall or network settings; no new outward-network-denied environment is required by this source review.

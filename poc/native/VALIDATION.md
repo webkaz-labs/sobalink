@@ -1,21 +1,25 @@
 # Native UI validation / Native UI の確認結果
 
-## Current prerelease integration / 今回の統合
+## Prerelease integration record / プレリリース統合時の記録
 
-The current integration starts from main `64a92eeb`, which includes PR #66,
-and incorporates the Native UI from PR #67. This is source preparation, not a
+The integration recorded here started from main `64a92eeb`, which includes PR #66,
+and incorporated the Native UI from PR #67. This is source preparation, not a
 published-release or installed-binary receipt. Exact-source full CI, packaging,
 signatures/provenance, public-asset retrieval and installed-binary checks must be
 recorded for the final release source. Historical unsigned device-test kits are
 not release assets. Distribution integrity signatures are not OS developer
 signing, Windows publisher trust or macOS notarization.
 
-今回の統合は PR #66 を含む main と PR #67 のNative UIを対象に準備しています。
-以下の古いソースの検証結果は今回の合格証跡ではありません。最終ソースのCI・配布・
+ここに記録した統合は、PR #66 を含む main と PR #67 のネイティブ UI を対象にしたものです。
+以下の古いソースの検証結果は、新しいソースの合格を示すものではありません。最終ソースの CI・配布・
 実導入の結果を別途確認してください。実GUI、IME、読み上げ、実ネットワーク通信の
 合格は未確認です。OSの保護機能を回避して試験しません。
 
-## Historical prototype evidence / 過去の試作の証跡
+For current release status, see [verification](../../docs/VERIFICATION.en.md)
+([日本語](../../docs/VERIFICATION.md)). The pending and blocked results below
+belong to the recorded source and test attempt, not automatically to later builds.
+
+## Historical prototype evidence / 過去の試作の検証記録
 
 The sections below preserve the original source-specific record, including its
 pending and blocked states. Those states describe that recorded attempt, not a
@@ -28,7 +32,7 @@ claim about the final prerelease. Later CI results must identify their own sourc
 ## Local baseline passed / ローカル基準結果
 
 - 39 focused UI/model, tray, message and file tests with `-race`: locale rules, failure clears old data,
-  single-flight refresh, filter/details/language interactions, narrow empty state,
+  one status refresh at a time, filter/details/language interactions, narrow empty state,
   successful IPC response carrying failed network state remains visible, compact peer/detail bounds, About disclosure, row keyboard activation, and whole-row edge click/hover.
 - `go vet ./...` and gofmt.
 - CGO-disabled cross-builds, stripped with `-s -w`:
@@ -112,12 +116,13 @@ Japanese font faces for the whole text run. Language tagging alone was insuffici
 in the Linux renderer. See TYPOGRAPHY.md for the exact evidence and font licensing.
 
 
-## Runner validation / ランナー検証
+## CI runner validation / CI 実行環境での検証
 
 The dedicated Native UI PoC workflow uses isolated temporary profiles and fictional
 test peers only. It runs the nested module on Linux x64/ARM64, macOS ARM64 and
 Windows x64. No credentials, enrollment, user profile or actual devices are used.
-Runner results are pending; creating a workflow is not a passing receipt.
+At this checkpoint, runner results were pending. Creating a workflow is not
+evidence that it passed.
 
 Protocol fixtures must distinguish actual protected local IPC and unchanged Core
 message/file handlers from the injected peer transport. These do not demonstrate
@@ -150,4 +155,4 @@ triggering the existing legacy receive-recovery guard. The fixture now starts a
 fresh Core and configures its fictional network/trust through ordinary Core
 commands. No receive guard or production code is weakened. A separate explicitly
 in-process diagnostic reproduces the issue without sockets; it is not a substitute
-for the corrected cross-process runner test. Corrected runner results are pending.
+for the corrected cross-process runner test. Corrected runner results were pending at this checkpoint.

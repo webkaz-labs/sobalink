@@ -8,7 +8,7 @@ These answers describe v0.5.1-alpha.1. For executed checks and remaining real-de
 
 ## Do I need administrator rights or a VPN driver?
 
-sobalink runs as an ordinary user process with a userspace network stack. It does not install a TUN driver or change OS routes/firewalls. This does not bypass blocked networks or remove an application's own installation/authentication requirements. [Network boundaries](ARCHITECTURE.md#network-boundaries)
+sobalink runs as an ordinary application and handles networking within that application. It does not install a virtual-network-device (TUN) driver or change OS routes/firewalls. This does not bypass blocked networks or remove an application's own installation/authentication requirements. [Network boundaries](ARCHITECTURE.md#network-boundaries)
 
 ## Does the other device need sobalink?
 
@@ -16,7 +16,7 @@ Ordinary Tailnet service targets do not. sobalink-to-sobalink sharing, messages,
 
 ## Is nearby discovery proof of who I am connecting to?
 
-No. Names and addresses are hints. Normal first-use setup accepts and pins a key (TOFU), which cannot guarantee protection against an active attacker during the first exchange. Use independent full-fingerprint comparison when stronger initial verification is needed. A later changed key is not silently accepted. [Connection setup](CONNECTION_SETUP.en.md)
+No. Names and addresses are hints. Normal first-use setup accepts and pins a key (TOFU), which cannot guarantee protection against an active attacker during the first exchange. For stronger initial verification, compare the complete key identifier (fingerprint) using a separate trusted source, such as the other device’s screen. A later changed key is not silently accepted. [Connection setup](CONNECTION_SETUP.en.md)
 
 ## Does connecting allow files or share all ports?
 
@@ -40,4 +40,4 @@ Profile format 3 is incompatible with v0.4.0-alpha.4 and earlier. Preserve old d
 
 ## Does a signed release mean every device combination works?
 
-No. Signature/provenance and installed-binary checks establish their recorded distribution properties. Physical two-device and cross-OS discovery, real networks, application compatibility, OS sign-in and suspend/wake require separate acceptance. [Evidence and limits](VERIFICATION.en.md)
+No. Signature and build-origin evidence (provenance) checks verify where the package came from. Installation checks cover only the recorded environments. Physical two-device and cross-OS discovery, real networks, application compatibility, OS sign-in and suspend/wake require separate acceptance. [Evidence and limits](VERIFICATION.en.md)

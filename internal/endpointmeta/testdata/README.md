@@ -1,6 +1,6 @@
 # Synthetic metadata vectors
 
-`pair.json` and `update.json` contain canonical JSON without a final newline.
+`pair.json` and `update.json` contain canonical JSON (the exact normalized byte representation) without a final newline.
 `vector.json` records the expected context, scope and envelope SHA-256 digests
 and Ed25519 signature.
 
@@ -16,7 +16,7 @@ network, pairing, migration, transport or application behavior.
 
 ## Verify without changing the vectors
 
-1. Preserve the canonical JSON bytes, including the absence of a final newline.
+1. Preserve the canonical JSON (the exact normalized byte representation) bytes, including the absence of a final newline.
 2. Compare context, scope, envelope digests and signature against `vector.json`.
 3. Run the package checks described in the [contract](../README.md).
 

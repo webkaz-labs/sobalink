@@ -69,11 +69,11 @@ Read baseline, sampled maximum and end inside each live phase. The source also o
 ## Report and limits
 
 The uploaded JSON includes release/source/binary identity and aggregate counters:
-RSS, kernel RSS high-water mark, descriptor/thread count, liveness, regular-file
+resident memory (RSS), kernel-recorded peak RSS, file-descriptor/thread count, liveness, regular-file
 count, logical bytes, allocated file blocks, and background log size. Each live
 phase records baseline, sampled maximum, end, and elapsed time. Disk checkpoints
 remain available across restarts until the fixture ends. The `outgoing` counters
-are a subset of `state`; do not add them together.
+are included in `state`; do not add them together.
 
 Only the selected aggregate JSON is uploaded. Private state, command output,
 filenames, fixture paths, logs, access codes, keys, and environment variables are

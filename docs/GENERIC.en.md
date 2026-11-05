@@ -1,8 +1,8 @@
 # Use sobalink
 
-**0.5.2-alpha.1 release candidate (this checkout).** Adds offline UI reopening, reviewed saved-connection resume, truthful stop status and simultaneous-profile browser sessions. The previously verified published baseline is 0.5.1-alpha.1. Candidate source is not evidence of publication: check the signed release and its exact-source verification before installing. Physical-device acceptance remains separate.
+**Current published release: 0.5.4-alpha.1.** Supports offline UI reopening, reviewed saved-connection resume, stop-status reporting and browser sessions for multiple profiles. Check the [published release](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1) and verification record for the matching source and packages. Publication and package checks do not establish real-device compatibility.
 
-For the candidate version, use the [publication-gated 0.5.4-alpha.1 installation instructions](DISTRIBUTION.md#install-the-054-alpha1-candidate-only-after-publication). The baseline commands below deliberately remain pinned to the previously verified release.
+For the current version, use the [0.5.4-alpha.1 installation instructions](DISTRIBUTION.md#install-a-signed-prerelease). The baseline commands below deliberately remain pinned to the previously verified release.
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
@@ -24,6 +24,8 @@ The local Web UI and guided CLI support normal service workflows; explicit CLI c
 [Open full-size diagram (wide)](assets/visuals/connection-en-light-wide.svg) · [Narrow version](assets/visuals/connection-en-light-narrow.svg)
 
 In this example both devices use sobalink. An ordinary Tailnet application target does not need it. Set up the network first, then review the service scope and use the displayed local endpoint.
+
+In this guide, a **peer** is another device, a **profile** stores settings and identity, and a **backend** handles a connection method. A **listener** accepts connections; a **local endpoint** is the address and port that an application on this device uses.
 
 ## Choose your next step
 
@@ -114,7 +116,7 @@ A fresh profile starts with no network selected. UI preferences, trust and servi
 
 ### Candidate: reopen the UI after stopping
 
-This 0.5.2-alpha.1 candidate change is **not included in the published 0.5.1-alpha.1 binary**. For that release, start local management explicitly with `soba start --offline --background`, then run `soba ui`. This does not reconnect the saved network.
+This change was added in the candidate and is included in 0.5.4-alpha.1. It is **not included in the published 0.5.1-alpha.1 binary**. For that release, start local management explicitly with `soba start --offline --background`, then run `soba ui`. This does not reconnect the saved network.
 
 In this source, interactive `soba ui` and `soba ui --no-browser` can reopen an existing profile after `soba stop`. When the local control endpoint is known to be absent and the existing profile passes validation, they attempt an offline background start and wait for local readiness. A newly started offline instance is reported explicitly. Endpoint absence alone does not prove process shutdown: startup or shutdown may still be in progress. A running application keeps its existing mode.
 
@@ -122,7 +124,7 @@ This recovery preserves the saved network configuration without starting saved n
 
 `ui --json` remains a query and never starts the application. Noninteractive output still requires explicit `--json`; headless/SSH access still requires explicit `--no-browser`. If you already use another state directory, select that same directory rather than creating a new profile. For first use, run `soba init`, then `soba ui` (or `soba ui --no-browser` for manual access); initialization is never automatic. Permission errors, damaged state and uncertain control failures do not trigger automatic startup. Use the displayed next step; do not remove the profile or repeatedly start another process to hide an error.
 
-Keep the same `--state-dir` in every command when using a custom profile. In the 0.5.2-alpha.1 candidate, open **Review network setup → Review saved connection** to inspect the saved method, endpoints, permissions and automatic receive destinations, then explicitly resume that connection. Opening the review or cancelling it does not start networking. Changed settings or permissions require a fresh review. The running local management session is retained; separately suppressed automatic service connections and saved proxies stay stopped. Previous transfers and inbound shares do not restart.
+Keep the same `--state-dir` in every command when using a custom profile. In 0.5.4-alpha.1, open **Review network setup → Review saved connection** to inspect the saved method, endpoints, permissions and automatic receive destinations, then explicitly resume that connection. Opening the review or cancelling it does not start networking. Changed settings or permissions require a fresh review. The running local management session is retained; separately suppressed automatic service connections and saved proxies stay stopped. Previous transfers and inbound shares do not restart.
 
 CLI users can review and apply the same saved scope:
 
@@ -229,11 +231,11 @@ soba connect --preset web --ports 3000 --local-port 8081 --peer PEER_ID
 
 Connections default to `until-stopped`; use `--ttl` for a finite lifetime. Connect listeners bind numeric loopback, use local ports 1024–65535 and consume the adjustable finite listener budget, initially 64. `--local-port` maps sorted effective remote ports to consecutive local ports; review the displayed mapping. It does not change the provider's application-target mapping.
 
-A ready listener is only transport readiness. Verify authentication and an actual operation in the target app. Preserve TLS certificate names, SSH host-key verification, origin rules and the app's own authorization. A tunnel does not adapt stdio protocols into HTTP or run remote jobs.
+A ready listener is only transport readiness. Verify authentication and an actual operation in the target app. Preserve TLS certificate names, SSH host-key verification, origin rules and the app's own authorization. A tunnel does not adapt standard input/output (stdio) protocols into HTTP or run remote jobs.
 
 ### When advertised information changes
 
-Can a connection still start after time spent reviewing? For an ordinary advertised service, freeze the peer ID, grant ID, purpose, protocol, complete port scope and lifetime mode from the same refreshed row.
+Before starting, check whether the reviewed service information has changed. For an ordinary advertised service, freeze the peer ID, grant ID, purpose, protocol, complete port scope and lifetime mode from the same refreshed row.
 
 ```mermaid
 flowchart TB
@@ -254,7 +256,7 @@ Scripts must compare all reviewed fields before accepting a newer revision. Save
 
 ## Reuse saved service settings
 
-Save stopped definitions without starting listeners, including while offline, then group or export them and explicitly start reviewed selections. `soba --offline service save ...` and `soba --offline profile ...` work while the agent is stopped; `soba start --offline` instead starts local management. Groups start with rollback of newly started members on failure. `soba task` owns temporary services with a renewable 30-second lease and cleans them up after the local command exits. See [saved services, groups and tasks](SAVED_SERVICES.en.md) for complete commands, private exports, revision checks and cancellation boundaries.
+Save stopped definitions without starting listeners, including while offline, then group or export them and explicitly start reviewed selections. `soba --offline service save ...` and `soba --offline profile ...` work while the agent is stopped; `soba start --offline` instead starts local management. Groups start with rollback of newly started members on failure. `soba task` owns temporary services with a renewable 30-second permission (lease) and cleans them up after the local command exits. See [saved services, groups and tasks](SAVED_SERVICES.en.md) for complete commands, private exports, revision checks and cancellation boundaries.
 
 Find the current ID in `soba status`, then inspect its complete saved configuration. These details are available only to authenticated local management, never as peer discovery metadata:
 
@@ -473,9 +475,9 @@ soba --state-dir ./sample-state status
 soba --json-errors service show SERVICE_ID
 ```
 
-Language follows `LC_ALL`, `LC_MESSAGES`, `LANG`, then the OS preference; Japanese uses Japanese messages and other locales fall back to English. The UI has language and theme controls. Command names, IDs, endpoint values and machine JSON are stable across languages. `status`, `peers`, groups, service workflows, guided `connect`/`share`, saved `rules` and application `settings` provide localized human views. Use `--json` for structured output; advanced typed actions retain structured results. Explicit login display modes provide private human-oriented output.
+Language follows `LC_ALL`, `LC_MESSAGES`, `LANG`, then the OS preference; Japanese uses Japanese messages and other locales fall back to English. The UI has language and theme controls. Command names, IDs, endpoint values and machine JSON are stable across languages. `status`, `peers`, groups, service workflows, guided `connect`/`share`, saved `rules` and application `settings` provide localized human views. Use `--json` for structured output; advanced API actions retain structured results. Explicit login display modes provide private human-oriented output.
 
-Normal typed commands need no JSON editing. Use `soba help examples`, `soba lan --help` and `soba service --help` for short recipes.
+Dedicated CLI commands need no JSON editing. Use `soba help examples`, `soba lan --help` and `soba service --help` for short recipes.
 
 `--dry-run` returns JSON containing `applied: false`, the command, payload and `validation: "local-input-only"` without applying an action. It may read a running agent to choose unused names or reuse saved settings. To check inputs without an agent, supply an explicit name, for example `soba --dry-run share --name review-ssh --preset ssh --peers PEER_ID`. This does not verify identity, network reachability, free ports or later execution success. Invitation contents are redacted. It is unavailable for `start`, `ui` and `stop`.
 
@@ -496,7 +498,7 @@ Advanced `soba command NAME JSON_PAYLOAD` accepts nonsecret literal JSON. For in
 | Socket operation not permitted | Run native/socket checks in an environment that permits listeners; baseline CI passed, but a local mock result does not establish live LAN connectivity |
 | Unknown route or reconnect | Inspect current state and retry the app connection; do not assume a relay or uninterrupted TCP |
 
-Report errors with secrets, local identity state, pairing capabilities and private endpoints removed. [Acceptance gates](VERIFICATION.en.md) distinguish source checks from real-device results.
+For your own diagnostic notes, omit login codes, identity state, pairing material and private endpoints. See [safe self-check notes](TROUBLESHOOTING.en.md#keep-safe-notes-for-your-own-checks). [Verification](VERIFICATION.en.md) distinguishes source checks from real-device results.
 
 ### Direct LAN endpoint update delivery
 
@@ -506,13 +508,11 @@ A recipient may temporarily refuse an update while another operation is running.
 
 “Saved” and “active” describe the local result. “Unconfirmed” does not prove that the recipient accepted or rejected the update. If the bounded attempts are exhausted, review the existing proof and current destination through the separate delivery preview/apply action before retrying. That explicit retry reuses the proof without changing its sequence or lifetime. It never discovers a new address automatically.
 
-For your own diagnostic notes, omit login codes, identity state, pairing material and private endpoints. See [safe self-check notes](TROUBLESHOOTING.en.md#keep-safe-notes-for-your-own-checks).
-
 ## Local transfer settings operations (source build)
 
-The [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and uses existing authenticated local IPC and the local Web command dispatcher. See [the local operation workflow](#local-transfer-settings-operations-source-build).
+The [local transfer settings resource](RESOURCE_SETTINGS.en.md) supports local inspection, preview, explicitly bound apply and operation status. It adds no remote management or peer grant and uses existing authenticated local IPC and the local Web command dispatcher. Use the steps below.
 
-Start the local agent first. Use the opaque resource ID returned by `list`, then review both settings together:
+Start the local agent first. Use the resource ID returned by `list` without interpreting or changing it, then review both settings together:
 
 ```sh
 soba resource list --json

@@ -1,12 +1,12 @@
 # Inspect one peer's transfer settings
 
-[日本語](RESOURCE_INSPECTION.ja.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](RESOURCE_INSPECTION.ja.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
 The current release permits one managed DirectLAN peer to read exactly two transfer settings and their effective values. This inspect-only scope does not expose a catalog, operation history, arbitrary commands, or remote changes. Separately confirmed [management](RESOURCE_MANAGEMENT.en.md) is a distinct permission scope; it never upgrades an inspection grant implicitly. Normal agent startup enables the implementation, but creates no permission or inspection listener without an eligible confirmed grant. Exact-source and release evidence are recorded in [verification](VERIFICATION.en.md).
 
 ## What exactly is readable?
 
-The target confirms one finite inspection grant; the permitted peer then requests its exact resource, grant ID and revision. Those selectors do not authenticate a peer or create permission. Check the complete read-only scope:
+The target confirms one inspection grant with an expiry; the permitted peer then requests its exact resource, grant ID and revision. Those selectors do not authenticate a peer or create permission. Check the complete read-only scope:
 
 | Boundary | Permitted read | Excluded by this grant |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ The fixed, selector-free hello checks protocol compatibility on an authenticated
 ## Lifetime and readiness
 
 - Saved permission survives restart only until its original absolute expiry, with the same target identity, resource, peer, and immutable pair context. Restart and reconnect never renew it.
-- Owned private-state recertification and current relationship validation precede runtime activation. Each boot retains a monotonic cutoff; retries cannot extend it.
+- Before runtime activation, the agent revalidates ownership and durability of private state and checks the current relationship. Each boot retains a deadline measured with a monotonic clock, which does not move backward; retries cannot extend it.
 - `activation` and `listenerReady` distinguish saved permission from an owned listener. A ready listener does not prove successful remote access.
 - The userspace inspection port is 54546. It remains available to ordinary services when inspection is inactive. An existing owner is preserved; a collision reports saved-but-inactive permission instead of replacing that service.
 - Revocation, expiry, uncertain state, or detected clock rollback denies new disclosure. One bounded response admitted before revocation may finish afterward; bytes already written cannot be retracted.

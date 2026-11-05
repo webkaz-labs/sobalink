@@ -30,8 +30,8 @@ flowchart TD
 | Started, but application fails | Use the actual endpoint and check the application's process, authentication, TLS/host keys and result | Calling listener readiness application success |
 | File batch waits | Receiver chooses a destination and accepts, unless exact per-peer autosave was explicitly enabled | Assuming sender trust implies autosave |
 | Durable job accepted or result unknown | Inspect the original job's deadline, current identity, state and save evidence. Both agents and a reachable route are needed for progress | Creating a new job merely because the reply was lost |
-| Receiving is blocked after restart | Follow the bounded receiver-recovery workflow; verify the configured destination | Deleting private state or scanning arbitrary destination trees to force recovery |
-| Permission reduction/revocation could not be saved | Stop `soba`; reconcile saved state before restart, because older permissions may remain on disk | Assuming stopped connections prove durable revocation |
+| Receiving is blocked after restart | Follow the receiver-recovery steps for the recorded files; verify the configured destination | Deleting private state or scanning arbitrary destination trees to force recovery |
+| Permission reduction/revocation could not be saved | Stop `soba`; check and repair saved state before restart, because older permissions may remain on disk | Assuming stopped connections prove that revocation was saved |
 
 The stages in the diagram mean: open local management, establish a reachable authenticated network, verify the relevant permission, inspect the operation's state, then verify its real result. They are diagnostic checkpoints, not a guaranteed successful sequence.
 
@@ -50,4 +50,4 @@ The [candidate offline UI recovery](GENERIC.en.md#candidate-reopen-the-ui-after-
 
 ## Keep safe notes for your own checks
 
-For your own investigation, note the exact version/source, OS family, selected backend, attempted action, first failing stage and stable error code. These notes are not a request to submit a support report. Distinguish an automated fixture from a physical-device test. Use fictional peer labels and minimal redacted excerpts; exclude login codes, auth URLs, keys, capabilities, credentials, private paths, real addresses, organization/device names and personal usage details. Do not attach the whole profile or raw logs. [Verification boundaries](VERIFICATION.en.md) · [Security](../SECURITY.md)
+For your own investigation, note the exact version/source, OS family, selected backend, attempted action, first failing stage and stable error code. These notes are not a request to submit a support report. Distinguish tests with simulated data from physical-device tests. Use fictional peer labels and minimal redacted excerpts; exclude login codes, sign-in URLs, keys, invitation permissions, credentials, private paths, real addresses, organization/device names and personal usage details. Do not attach the whole profile or raw logs. [Verification boundaries](VERIFICATION.en.md) · [Security](../SECURITY.md)

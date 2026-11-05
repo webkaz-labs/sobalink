@@ -4,6 +4,8 @@
 
 **Verification applies to an exact source and version.** Device/service connectivity, transfers, saved workflows, capacity controls, private sign-in, the optional proxy and diagnostics are implemented. Implementation, local logic tests, native CI, browser execution, signed distribution and actual-device acceptance are separate results. For a published prerelease, also inspect its linked release workflow results.
 
+In this guide, **native checks** run on the target operating system and architecture. A **fixture** is a controlled test setup, often using synthetic peers. **Loopback** traffic stays on the same host. None of these terms means that two physical devices were tested.
+
 ## Read the evidence before the history
 
 | Evidence | What it answers | What it does not establish |
@@ -17,19 +19,27 @@ Start with the current version below, then inspect the relevant evidence categor
 
 ## Current integration and published baseline
 
+The current published prerelease is [0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1), exact source `b35463ce2c0121166190585e7ecd621153c11086`. It includes the optional experimental [native companion](NATIVE_UI.en.md) for Windows x64 and macOS ARM64, plus shutdown coordination fixes. The CLI and Web UI remain available on all four supported targets.
+
+[Release verification 41899170128](https://github.com/webkaz-labs/sobalink/actions/runs/41899170128) passed all 15 jobs. The release was published on 2026-11-04 at 20:24:25 UTC with 19 public assets. Its public-download signature/provenance checks and actual mise installation checks passed on Linux x64/ARM64, macOS ARM64 and Windows x64. The release entry and publication steps also passed their exact-source full-CI checks. These results were checked against the GitHub release and job records on 2026-11-05.
+
+These results verify the recorded automated checks and distribution, not physical-device acceptance. Native tray behavior, actual IME and screen-reader use, physical-peer communication, OS browser launch, login/suspend and power-loss recovery remain unverified. Profile format 3 remains incompatible with 0.4.0-alpha.4 and older profiles: preserve old state and use a separate empty `--state-dir`; do not open the same state with an older-format binary.
+
+### Historical 0.5.1-alpha.1 release record
+
 The previously verified published baseline recorded here is [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), exact source `fae64878737eddc15a9787aba279f34c98427e36`. It adds automatic browser opening with `soba ui`, explicit `--no-browser` / `--json` modes, manual text selection after startup-guide copy failures, and updated bilingual guides with bundled images. Connection setup and durable file/text queues remain available. Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
 
 [Exact-source full CI 38887472035, attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/38887472035/attempts/2) and [release verification 38899331317, attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/38899331317/attempts/2) passed. The release was published on 2026-10-16 at 13:01 UTC with 19 public assets. All 15 release gates passed, including public signature/provenance verification and actual mise-installed product starts on Linux x64/ARM64, macOS ARM64 and Windows x64. The four distribution archives include documentation SVGs and PNGs.
 
 Actual OS default-browser launch, including that operation from an installed distribution binary, remains unverified. Linux CLI process tests replace the OS opener, and Chromium tests use isolated fixtures. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate. These published results apply only to the exact source above, not later changes.
 
-### 0.5.2-alpha.1 candidate: local UI and lifecycle UX
+### Historical 0.5.2-alpha.1 candidate: local UI and lifecycle UX
 
-This source's [reopening after stop](GENERIC.en.md#candidate-reopen-the-ui-after-stopping) is not included in 0.5.1-alpha.1. Interactive UI commands attempt offline local management startup for a validated existing profile when the local control endpoint is known to be absent. Endpoint absence alone does not establish that a process has finished stopping; startup or shutdown may still be in progress. `ui --json` does not start the application.
+The candidate’s [reopening after stop](GENERIC.en.md#candidate-reopen-the-ui-after-stopping) is not included in 0.5.1-alpha.1. Interactive UI commands attempt offline local management startup for a validated existing profile when the local control endpoint is known to be absent. Endpoint absence alone does not establish that a process has finished stopping; startup or shutdown may still be in progress. `ui --json` does not start the application.
 
 [PR CI 40465281801, attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/40465281801/attempts/2) passed for PR head `7618c6fe4ee4f4d7932069acd12bd833f3adf82d` using merge ref `fe8b5bec0538753d9abae0231f1baa2b4c97a3d4`. Its native Linux x64/ARM64, macOS ARM64 and Windows x64 lanes, browser, activation and required aggregate checks passed, including native IPC recovery and the two-profile browser-session regression. The browser coverage verifies reviewed resume, stop/cancel, disconnection wording and retained stop status after dialog dismissal and narrow-screen navigation. These are automated synthetic/loopback results, not physical-device acceptance.
 
-This checkout prepares 0.5.2-alpha.1 with offline UI recovery, explicit saved-network resume, truthful stop status and per-listener session cookies. The documentation edits after that PR proof are not covered by it. Before publication, the final main commit must pass a new manual full CI (`force_full=true`) and the signed distribution/public-download/actual-installation gates. Check [Releases](https://github.com/webkaz-labs/sobalink/releases) for the exact published source and release run; this preparation record does not claim publication or installed-binary verification. Actual OS browser launch, physical networks, OS login/suspend and power-loss acceptance remain separate.
+At that checkpoint, the checkout prepared 0.5.2-alpha.1 with offline UI recovery, explicit saved-network resume, truthful stop status and per-listener session cookies. The documentation edits after that PR proof are not covered by it. Before publication, that candidate still needed a new manual full CI on its final main commit (`force_full=true`) and the signed distribution/public-download/actual-installation gates. Check [Releases](https://github.com/webkaz-labs/sobalink/releases) for the exact published source and release run; this preparation record does not claim publication or installed-binary verification. Actual OS browser launch, physical networks, OS login/suspend and power-loss acceptance remain separate.
 
 ### Historical 0.5.0-alpha.1 release record
 

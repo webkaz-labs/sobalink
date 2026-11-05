@@ -2,7 +2,7 @@
 
 [日本語](CLI_GUIDE.ja.md) · [Principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-`soba connect` and `soba share` offer guided terminal selection, editing and review. `status`, `peers`, saved-service workflows and group operations use readable output by default; add `--json` for stable machine output. Explicit connect/share configuration flags and dry-run previews retain their JSON results. The checks below cover synthetic peers and service metadata; they do not establish actual enrollment, real-device application compatibility or OS lifecycle behavior.
+`soba connect` and `soba share` offer guided terminal selection, editing and review. `status`, `peers`, saved-service workflows and group operations use readable output by default; add `--json` for stable machine output. Explicit connect/share configuration flags and dry-run previews retain their JSON results. The checks below cover synthetic peers and service metadata; they do not establish actual enrollment, real-device application compatibility or OS sign-in or sleep/wake behavior.
 
 ## Start with the shortest path
 
@@ -14,7 +14,7 @@ soba login --link --wait
 soba connect
 ```
 
-`init` creates inert local metadata only. Repeating it preserves the existing profile; it does not enroll a network or create credentials. Use `init --name example-node --json` for an explicit name and stable output.
+`init` creates local settings only; it starts no connections. Repeating it preserves the existing profile; it does not enroll a network or create credentials. Use `init --name example-node --json` for an explicit name and stable output.
 
 The connect picker first refreshes services advertised to this node through authenticated peer responses. Select a service by number, refresh with `r`, choose `m` for a known service's manual configuration, or cancel with `q`. An ordinary Tailscale application can use manual configuration without installing sobalink on its host.
 
@@ -37,7 +37,7 @@ Use the same global `--state-dir PATH` throughout a workflow. A preview is not p
 
 ## Nearby LAN setup
 
-For a nearby-device connection, start with `soba init`, `soba start --offline --background`, then `soba nearby` on both devices. Have the receiving device explicitly open requests and review the requester’s immutable plan before approval. Review [request-and-accept setup](CONNECTION_SETUP.en.md#request-and-accept-v2), including TOFU versus full-fingerprint verification; message/file trust remains separate. The legacy full-fingerprint flow and its relay-role choices are documented separately there.
+For a nearby-device connection, start with `soba init`, `soba start --offline --background`, then `soba nearby` on both devices. Have the receiving device explicitly open requests and review the requester’s immutable plan before approval. Review [request-and-accept setup](CONNECTION_SETUP.en.md#request-and-accept-v2), including first-use key acceptance (TOFU) versus comparison of the complete key identifier (fingerprint); message/file trust remains separate. The legacy full-fingerprint flow and its relay-role choices are documented separately there.
 
 ## Explicit agent commands
 
@@ -60,7 +60,7 @@ soba discover --json
 soba connect --json --name advertised-api --peer PEER_ID --network tcp --ports 8080 --purpose web --local-port 18080 --service-id GRANT_ID --service-revision REVIEWED_REVISION
 ```
 
-The revision is opaque review metadata. See [when advertised information changes](GENERIC.en.md#when-advertised-information-changes) for the freshness decision. Scripts must compare every reviewed field before accepting a newer revision.
+The revision identifies the version of the settings you reviewed. Use it unchanged; do not interpret its contents. See [when advertised information changes](GENERIC.en.md#when-advertised-information-changes) for the freshness decision. Scripts must compare every reviewed field before accepting a newer revision.
 
 ## Saved definitions, endpoints and stopping
 
@@ -95,7 +95,7 @@ Group lists and share confirmations show service names and scope as readable tex
 
 ## Review startup effects
 
-`soba autostart --json` shows the exact user-level sign-in registration and its public launch effects. Saved mode may reconnect the selected network, approved autosave receivers, valid explicitly enabled outbound startup selections and saved proxies. It lists their scopes and validity without credentials. Changed scope, stored credential revision or revocation requires a new review token. `--startup offline` suppresses those effects. Inbound shares and ordinary immediate transfers do not resume. Explicitly approved durable outbox requests have their own bounded restart authority; see [durable outbox](DURABLE_OUTBOX.en.md).
+`soba autostart --json` shows the exact user-level sign-in registration and its startup effects, with credentials omitted. Saved mode may reconnect the selected network, approved autosave receivers, valid explicitly enabled outbound startup selections and saved proxies. It lists their scopes and validity without credentials. Changed scope, stored credential revision or revocation requires a new review token. `--startup offline` suppresses those effects. Inbound shares and ordinary immediate transfers do not resume. Explicitly approved durable outbox requests have their own bounded restart authority; see [durable outbox](DURABLE_OUTBOX.en.md).
 
 See the [startup guide](STARTUP.en.md) for reviewing and managing those separate approvals. Registration preview does not change the OS or start the application.
 
@@ -107,6 +107,6 @@ Credentials and private invitations do not belong in command arguments, shell hi
 
 ## Opt-in durable file outbox
 
-`soba send --queue --peer PEER_ID --expires-in 24h --json PATH` prepares a queue review without sending. The Web UI has the same explicit mode and deadline review. Queued means local acceptance, not delivered; unknown outcomes must be looked up by their original request ID. See [durable outbox](DURABLE_OUTBOX.en.md) for confirmation, restart, cancellation and the additive API contract.
+`soba send --queue --peer PEER_ID --expires-in 24h --json PATH` prepares a queue review without sending. The Web UI has the same explicit mode and deadline review. Queued means local acceptance, not delivered; unknown outcomes must be looked up by their original request ID. See [durable outbox](DURABLE_OUTBOX.en.md) for confirmation, restart, cancellation and the additional API operations.
 
 See the [actual CLI save-versus-start output](SAVED_SERVICES.en.md#distinguish-save-from-start-in-actual-cli-output).

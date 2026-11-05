@@ -6,7 +6,7 @@ This is an experimental open-source project; no user support is provided. These 
 
 Start with the [user guide](GENERIC.en.md). The [verification record](VERIFICATION.en.md) is authoritative for published versions, development sources and executed checks. Each workflow identifies its target version and limitations; automated tests do not establish physical-device acceptance.
 
-This index routes readers to the right document. Dedicated guides own workflows, contracts own guarantees and limits, verification owns executed evidence, and the roadmap owns remaining work. Japanese and English pages are paired views of the same role. Architecture, distribution and the Web acceptance proposal use shared English documents.
+Use this index to find the right document. Guides explain operations, specifications describe behavior and limits, verification records show completed checks, and the roadmap lists remaining work. Japanese and English pages cover the same topics. Architecture, distribution and the Web acceptance proposal use shared English documents.
 
 ## Choose your next step
 
@@ -24,13 +24,14 @@ This index routes readers to the right document. Dedicated guides own workflows,
 - [First start, send and stop](GENERIC.en.md)
 - [Guided CLI and automation](CLI_GUIDE.en.md)
 - [Local Web controls](WEB_CONTROLS.en.md)
+- [Optional desktop client](NATIVE_UI.en.md)
 - [Private sign-in and cancellation](SIGN_IN.en.md)
 - [SSH/HTTP settings and RustDesk](CLIENT_HELPERS.en.md)
 - [Saved definitions, groups and tasks](SAVED_SERVICES.en.md)
 - [Run, stop, sign out and OS sign-in](LIFECYCLE.en.md)
 - [Explicit startup and private proxy profiles](STARTUP.en.md)
 - [Durable files and folders](DURABLE_OUTBOX.en.md)
-- [Capacity, budgets and history](CAPACITY.en.md)
+- [Capacity, resource limits and history](CAPACITY.en.md)
 - [Scoped proxies and diagnostics](PROXY_DIAGNOSTICS.en.md)
 - [Use cases](USE_CASES.en.md)
 - [Common questions](FAQ.en.md)

@@ -2,14 +2,16 @@
 
 [English](VERIFICATION.en.md) · [使い方](GENERIC.ja.md) · [配布](DISTRIBUTION.md)
 
-**検証結果は正確なソースと版に対応します。** 端末・サービス接続、転送、保存した操作、容量設定、非公開の認証、任意のプロキシ・診断は実装済みです。実装、ローカルのロジック試験、ネイティブ CI、ブラウザー実行、署名付き配布、実端末の受入は別の結果です。公開されたプレリリースでは、リンクされた配布 workflow の結果も確認してください。
+**検証結果は正確なソースと版に対応します。** 端末・サービス接続、転送、保存した操作、容量設定、非公開の認証、任意のプロキシ・診断は実装済みです。実装、ローカルのロジック試験、ネイティブ CI、ブラウザー実行、署名付き配布、実端末の受入は別の結果です。公開されたプレリリースでは、リンクされた配布ワークフローの結果も確認してください。
+
+この文書の「ネイティブ検査」は、対象の OS と CPU 構成で実行する検査です。「試験用環境（fixture）」は、模擬の相手などを使う管理されたテスト環境を指します。「ループバック」は同じ端末内の通信です。いずれも実端末2台での検証を意味しません。
 
 ## 過去の記録より先に、証拠の範囲を読む
 
 | 証拠 | 分かること | それだけでは分からないこと |
 | --- | --- | --- |
-| ソースと単体 fixture | 実装の有無とロジックの検査 | 実際の登録や製品の通信 |
-| native・製品 browser 検査 | 正確なソース・対象で指定した試験が成功したか | すべての実機・ネットワーク・アプリ |
+| ソースと単体試験用環境 | 実装の有無とロジックの検査 | 実際の登録や製品の通信 |
+| ネイティブ・製品のブラウザー検査 | 正確なソース・対象で指定した試験が成功したか | すべての実機・ネットワーク・アプリ |
 | 署名付き配布と導入 | 取得・導入した実行ファイルが検証した版と一致するか | OS ログイン・休止・電源断からの復旧 |
 | 実端末の受入 | 記録した実際のシナリオが動いたか | 未記録の環境や新しいソース |
 
@@ -17,25 +19,33 @@
 
 ## 現在の統合と公開済みの基準
 
-ここに記録する以前の公開・検証済み基準は [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)、正確なソースは `fae64878737eddc15a9787aba279f34c98427e36` です。`soba ui` の自動ブラウザー起動、明示的な `--no-browser` / `--json`、起動ガイドのコピー失敗時の文字選択、日英ガイドと同梱画像の更新を含みます。接続設定とファイル・テキストの永続送信待ちも引き続き利用できます。profile 形式 3 は 0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` を使ってください。自動移行・消去はなく、同じ保存先で旧形式のバイナリには戻せません。
+現在の公開プレリリースは [0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)、正確なソースは `b35463ce2c0121166190585e7ecd621153c11086` です。Windows x64・macOS ARM64 向けの実験的な[ネイティブ画面](NATIVE_UI.ja.md)と、終了処理の同期修正を含みます。CLI と Web 画面は引き続き4対象すべてで利用できます。
 
-[同一ソースの全体 CI 38887472035、attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/38887472035/attempts/2) と[配布検証 38899331317、attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/38899331317/attempts/2) は成功しました。公開時刻は 2026-10-16 13:01 UTC、公開資材は19個です。全15配布ゲートが成功し、公開物の署名・来歴の検証と、Linux x64/ARM64・macOS ARM64・Windows x64 の実際の mise 導入済み製品の起動を確認しました。4対象の配布アーカイブにはガイド用の SVG・PNG を同梱しています。
+[配布検証 41899170128](https://github.com/webkaz-labs/sobalink/actions/runs/41899170128)の全15ジョブが成功しました。公開時刻は 2026-11-04 20:24:25 UTC、公開資材は19個です。公開物の再取得、署名・来歴の検証、Linux x64/ARM64・macOS ARM64・Windows x64 での実際の mise 導入検査が成功しています。配布開始時と公開直前の、同一ソースの全件 CI 確認も成功しました。これらは 2026-11-05 に GitHub の公開記録とジョブ結果で確認しました。
 
-OS の標準ブラウザーが実際に開くこと、および配布バイナリからのその操作は未検証です。Linux の CLI プロセス試験は OS opener を差し替え、Chromium の試験は分離した fixture を使います。物理2端末間の探索・実ネットワーク・OS ログイン／休止・電源断の受入も別途必要です。これらの公開結果は上の正確なソースだけに対応し、後の変更には引き継ぎません。
+これは記録された自動試験と配布の確認であり、実機の受入完了ではありません。トレイ操作、実際の日本語入力（IME）と読み上げ、実端末間通信、OS のブラウザー起動・ログイン・スリープ復帰・電源断からの復旧は未検証です。プロフィール形式 3 は 0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` を使ってください。同じ保存先を旧形式の実行ファイルで開かないでください。
 
-### 0.5.2-alpha.1 候補：ローカル画面と起動・停止の UX
+### 過去の 0.5.1-alpha.1 の公開記録
 
-このソースの[停止後の画面復旧](GENERIC.ja.md#候補版停止後に画面を開き直す)は、0.5.1-alpha.1 には含まれません。ローカル制御の入口がないと判定でき、既存プロフィールの検査を通過した場合に、対話型の UI 操作からオフラインのローカル管理の起動を試みます。入口がないことだけではプロセスの停止完了を示さず、起動・終了処理の途中の場合もあります。`ui --json` は本体を起動しません。
+ここに記録する以前の公開・検証済み基準は [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)、正確なソースは `fae64878737eddc15a9787aba279f34c98427e36` です。`soba ui` の自動ブラウザー起動、明示的な `--no-browser` / `--json`、起動ガイドのコピー失敗時の文字選択、日英ガイドと同梱画像の更新を含みます。接続設定とファイル・テキストの永続送信待ちも引き続き利用できます。プロフィール形式 3 は 0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` を使ってください。自動移行・消去はなく、同じ保存先で旧形式のバイナリには戻せません。
 
-[PR CI 40465281801、attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/40465281801/attempts/2) は PR head `7618c6fe4ee4f4d7932069acd12bd833f3adf82d` に対応する merge ref `fe8b5bec0538753d9abae0231f1baa2b4c97a3d4` で成功しました。Linux x64/ARM64・macOS ARM64・Windows x64 の native、ブラウザー、activation、必須集約チェックが成功し、native IPC の画面復旧と複数プロファイルのブラウザーセッションも確認しました。ブラウザー試験は確認付き再開、停止・取消、切断時の表示、ダイアログを閉じた後や狭い画面で移動した後の停止状態表示を対象とします。模擬状態と loopback による自動試験であり、実機の受入ではありません。
+[同一ソースの全体 CI 38887472035、試行 2](https://github.com/webkaz-labs/sobalink/actions/runs/38887472035/attempts/2) と[配布検証 38899331317、試行 2](https://github.com/webkaz-labs/sobalink/actions/runs/38899331317/attempts/2) は成功しました。公開時刻は 2026-10-16 13:01 UTC、公開資材は19個です。全15配布ゲートが成功し、公開物の署名・来歴の検証と、Linux x64/ARM64・macOS ARM64・Windows x64 の実際の mise 導入済み製品の起動を確認しました。4対象の配布アーカイブにはガイド用の SVG・PNG を同梱しています。
 
-このチェックアウトは、オフラインでの画面復旧、保存済み接続の明示的な再開、正確な停止表示、待受ごとのセッション Cookie を含む 0.5.2-alpha.1 を準備します。上記 PR の証拠は、その後の文書編集には適用されません。公開前に最終 main コミットで手動の全件 CI（`force_full=true`）と、署名付き配布・公開物の再取得・実際の導入検証ゲートが必要です。公開された正確なソースと配布実行は [Releases](https://github.com/webkaz-labs/sobalink/releases) で確認してください。この準備記録は公開や導入済みバイナリーの検証成功を主張しません。OS の実際のブラウザー起動、実ネットワーク、OS ログイン・休止・電源断の受入は別途必要です。
+OS の標準ブラウザーが実際に開くこと、および配布バイナリからのその操作は未検証です。Linux の CLI プロセス試験は OS のブラウザー起動処理を差し替え、Chromium の試験は分離した試験用環境を使います。物理2端末間の探索・実ネットワーク・OS ログイン／休止・電源断の受入も別途必要です。これらの公開結果は上の正確なソースだけに対応し、後の変更には引き継ぎません。
+
+### 過去の 0.5.2-alpha.1 候補：ローカル画面と起動・停止の操作
+
+当時の候補の[停止後の画面復旧](GENERIC.ja.md#候補版停止後に画面を開き直す)は、0.5.1-alpha.1 には含まれません。ローカル制御の入口がないと判定でき、既存プロフィールの検査を通過した場合に、対話型の UI 操作からオフラインのローカル管理の起動を試みます。入口がないことだけではプロセスの停止完了を示さず、起動・終了処理の途中の場合もあります。`ui --json` は本体を起動しません。
+
+[PR CI 40465281801、試行 2](https://github.com/webkaz-labs/sobalink/actions/runs/40465281801/attempts/2) は PR head `7618c6fe4ee4f4d7932069acd12bd833f3adf82d` に対応する merge ref `fe8b5bec0538753d9abae0231f1baa2b4c97a3d4` で成功しました。Linux x64/ARM64・macOS ARM64・Windows x64 のネイティブ、ブラウザー、activation、必須集約チェックが成功し、ネイティブ IPC の画面復旧と複数プロファイルのブラウザーセッションも確認しました。ブラウザー試験は確認付き再開、停止・取消、切断時の表示、ダイアログを閉じた後や狭い画面で移動した後の停止状態表示を対象とします。模擬状態とループバックによる自動試験であり、実機の受入ではありません。
+
+当時のチェックアウトは、オフラインでの画面復旧、保存済み接続の明示的な再開、正確な停止表示、待受ごとのセッション Cookie を含む 0.5.2-alpha.1 を準備していました。上記 PR の証拠は、その後の文書編集には適用されません。この時点では、公開前に最終 main コミットで手動の全件 CI（`force_full=true`）と、署名付き配布・公開物の再取得・実際の導入検証ゲートが必要です。公開された正確なソースと配布実行は [Releases](https://github.com/webkaz-labs/sobalink/releases) で確認してください。この準備記録は公開や導入済みバイナリーの検証成功を主張しません。OS の実際のブラウザー起動、実ネットワーク、OS ログイン・休止・電源断の受入は別途必要です。
 
 ### 過去の 0.5.0-alpha.1 の公開記録
 
-以前の公開版 [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) の正確なソースは `46dcd363b3eafc8ed9b92c7403937cf4d11d65af` です。[ファイルの永続送信待ち](DURABLE_OUTBOX.ja.md)、[テキストの永続送信待ち](DURABLE_TEXT.ja.md)、[依頼と承認による接続設定](CONNECTION_SETUP.ja.md)を含みます。profile 形式 3 は 0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` を使ってください。自動移行・消去はなく、同じ保存先で旧版には戻せません。
+以前の公開版 [0.5.0-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.0-alpha.1) の正確なソースは `46dcd363b3eafc8ed9b92c7403937cf4d11d65af` です。[ファイルの永続送信待ち](DURABLE_OUTBOX.ja.md)、[テキストの永続送信待ち](DURABLE_TEXT.ja.md)、[依頼と承認による接続設定](CONNECTION_SETUP.ja.md)を含みます。プロフィール形式 3 は 0.4.0-alpha.4 以前と非互換です。旧状態を保管し、別の空の `--state-dir` を使ってください。自動移行・消去はなく、同じ保存先で旧版には戻せません。
 
-[同一ソースの全体 CI 38666924688](https://github.com/webkaz-labs/sobalink/actions/runs/38666924688) と[配布検証 38671902508](https://github.com/webkaz-labs/sobalink/actions/runs/38671902508) は成功しました。公開時刻は 2026-10-15 03:19 UTC、公開資材は19個です。全15配布ゲートが成功し、公開物の署名・来歴の検証と、4対象すべてで実際の mise 導入済み製品の起動を確認しました。全体 CI の同一入力の反復ビルドは macOS が対象で、別の配布実行では4対象の反復ビルドと日英の archive smoke test が成功しています。物理2端末間の探索・実ネットワーク・OS ログイン／休止・電源断の受入は別途必要で未検証です。これらの結果は正確な当該ソースだけに対応し、後の編集には引き継ぎません。
+[同一ソースの全体 CI 38666924688](https://github.com/webkaz-labs/sobalink/actions/runs/38666924688) と[配布検証 38671902508](https://github.com/webkaz-labs/sobalink/actions/runs/38671902508) は成功しました。公開時刻は 2026-10-15 03:19 UTC、公開資材は19個です。全15配布ゲートが成功し、公開物の署名・来歴の検証と、4対象すべてで実際の mise 導入済み製品の起動を確認しました。全体 CI の同一入力の反復ビルドは macOS が対象で、別の配布実行では4対象の反復ビルドと日英の配布アーカイブの基本動作検査が成功しています。物理2端末間の探索・実ネットワーク・OS ログイン／休止・電源断の受入は別途必要で未検証です。これらの結果は正確な当該ソースだけに対応し、後の編集には引き継ぎません。
 
 ### 0.5.0-alpha.1 より前の、原因未特定の試験失敗
 
@@ -52,18 +62,18 @@ OS の標準ブラウザーが実際に開くこと、および配布バイナ�
 
 | ソース・区分 | 結果と限界 |
 | --- | --- |
-| 公開済み alpha.5 | ソース `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6`。[同一main CI 37421937582](https://github.com/webkaz-labs/sobalink/actions/runs/37421937582) の全6ジョブが合格。[公開run 37423908236](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236) の全15ゲートで、4対象native package、署名・provenance、認証なし公開取得、実mise導入を確認。公開版と全ゲートの完了確認時刻は `2026-10-06 06:54 UTC`。実端末・アプリ・OSライフサイクルの受入は未完了 |
-| 過去の公開済み alpha.4 | [公開 run 37269441102、attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102/attempts/2) の全15ゲートが成功し19資材を公開。4対象の native package、署名・provenance、認証なし取得、実 mise 導入を確認。[同一 main CI 37268364810](https://github.com/webkaz-labs/sobalink/actions/runs/37268364810) も全6ジョブ成功。初回は draft 取得の競合で失敗し、ソース tag を動かさず失敗段階だけ再試行。実端末は別の受入 |
-| 過去の公開済み alpha.2 | [公開 run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格。4対象の native race/vet/package、署名・provenance、認証なしの公開取得、Linux x64/ARM64・macOS ARM64・Windows x64 の実 mise 導入を確認。正確な main の CI 成功ゲートも合格。実端末・実アプリ受入は別 |
-| 公開済み alpha.2 の資源観測。統合済み [PR #7](https://github.com/webkaz-labs/sobalink/pull/7)、merge `11cd8285607c220962c97db725f36fdd00d653d7` | [確認報告](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [観測 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) で正確な公開 Linux amd64 バイナリを15分オフライン待機、10回正常再起動、待機中の強制終了・復旧で検査。[CI 37183542586 attempt 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) は Windows frontend の非決定的な1アサーションをコード変更なしで再実行し、4対象・ブラウザー・manifest が合格。受信中の異常終了、packet capture、電源断、後続経路の受入ではない |
-| alpha.5で公開した接続方式の統合 | [PR #11](https://github.com/webkaz-labs/sobalink/pull/11)と後続のレビュー済み修正は、上記の正確なalpha.5ソースに含まれます。ローカルcross-build・制御したloopback試験は、hosted native／browser CI・署名付き配布・実端末受入とは区別します。PR #8の準備済み経路復旧はalpha.4にも含まれます |
-| 統合CI `1da932ca` | [run 37396023044](https://github.com/webkaz-labs/sobalink/actions/runs/37396023044) の4 nativeジョブが失敗。Windowsは時刻由来のrequest ID重複、Linux／macOSはdirect fixture／通知のIPv6ソケットポート選択を検出。browser73件は合格し、選択した32画像と日本語フォント証拠を確認。修正したID・family別ポート・型付きDERP失敗通知・mixed利用不能判定・中継資源・追加WAN設定ケースには、新しい正確なソースのrunが必要 |
-| 修正CI `ab095063` | [run 37403561750](https://github.com/webkaz-labs/sobalink/actions/runs/37403561750) は修正したguarded直接IPv4／IPv6 TCP／UDPと型付きDERP失敗通知の段階が成功しましたが、後段の入場済み中継停止後のmanaged経路復旧が4 native対象すべてで失敗。実DERPの再現で、入場後EOFが後続の接続拒否を隠す原因を確認。browserは73/77成功で、追加WAN4件は非同期readbackとstatus locatorの競合。限定した修正の独立レビューと新しい最終ソースの全試験が必要で、配布受入の成功とは扱わない |
-| main fixture競合 `0d86eda20079a1fece8bd286e729f186df8bc204` | [run 37410352799](https://github.com/webkaz-labs/sobalink/actions/runs/37410352799) は3 native対象とbrowserが合格し、Windowsの[job 112097184103](https://github.com/webkaz-labs/sobalink/actions/runs/37410352799/job/112097184103) がmixed試験fixtureの構築・並行公開の競合で失敗。manifestはskipされ、全体の合格ではない |
-| fixture修正 `308d25294ff7f916fa6ccc0a4cc118b0daaf0e06` | 試験のみの構築・公開順序修正は[run 37412218933](https://github.com/webkaz-labs/sobalink/actions/runs/37412218933) の全6ジョブが合格。その後の[レビュー指摘](https://github.com/webkaz-labs/sobalink/pull/11#discussion_r4191331472)で、CI成功にもかかわらず隔離LAN workerが保存済み容量ポリシーをLAN状態・実行時へ適用していない製品上の欠落を確認 |
-| 保存済み容量の修正 `7917eada58fb1d1f9cf40f59af36c537460db7f0` | engine開始前に保存済みポリシーを読み込み検証し、LAN状態・実行時の予算に適用。明示IPC予算の上書きとは分離する。回帰試験と[main CI 37418018354](https://github.com/webkaz-labs/sobalink/actions/runs/37418018354) の全6ジョブが合格。署名付きalpha.5公開の証拠は上表で別に記録 |
-| alpha.5公開試行の失敗 `7917eada58fb1d1f9cf40f59af36c537460db7f0` | [公開run 37420055312](https://github.com/webkaz-labs/sobalink/actions/runs/37420055312) は公開前に失敗。ほかの3 native対象は合格しましたが、Windowsの `TestFixturePortsNativeRepeated` はUDPで選んだ候補のTCP bindが許可されず、100候補を使い切りました。後続の公開段階はskipされ、このrunによるalpha.5のtag・公開版はありません。修正対象は試験fixtureに限定し、runtime修正とは扱いません |
-| fixtureのみの修正 `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6` | 1つのfixture試験ファイルで候補ポートの選択を分散し、プロトコルごとの除外範囲への偏りを避けます。独立した重点確認はrace 20反復、native-preflight 500反復、negative controlを含みます。これらの模擬確認は正規の[CI 37421937582](https://github.com/webkaz-labs/sobalink/actions/runs/37421937582)や上表の修正後署名付き公開ゲートとは区別し、新しいruntime機能や実端末受入の主張を加えません |
+| 公開済み alpha.5 | ソース `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6`。[同一main CI 37421937582](https://github.com/webkaz-labs/sobalink/actions/runs/37421937582) の全6ジョブが合格。[公開run 37423908236](https://github.com/webkaz-labs/sobalink/actions/runs/37423908236) の全15ゲートで、4対象ネイティブパッケージ、署名・来歴、認証なし公開取得、実mise導入を確認。公開版と全ゲートの完了確認時刻は `2026-10-06 06:54 UTC`。実端末・アプリ・OSライフサイクルの受入は未完了 |
+| 過去の公開済み alpha.4 | [公開 run 37269441102、試行 2](https://github.com/webkaz-labs/sobalink/actions/runs/37269441102/attempts/2) の全15ゲートが成功し19資材を公開。4対象のネイティブパッケージ、署名・来歴、認証なし取得、実 mise 導入を確認。[同一 main CI 37268364810](https://github.com/webkaz-labs/sobalink/actions/runs/37268364810) も全6ジョブ成功。初回は draft 取得の競合で失敗し、ソース tag を動かさず失敗段階だけ再試行。実端末は別の受入 |
+| 過去の公開済み alpha.2 | [公開 run 37178488713](https://github.com/webkaz-labs/sobalink/actions/runs/37178488713) の全15ジョブが合格。4対象のネイティブ race/vet/package、署名・来歴、認証なしの公開取得、Linux x64/ARM64・macOS ARM64・Windows x64 の実 mise 導入を確認。正確な main の CI 成功ゲートも合格。実端末・実アプリ受入は別 |
+| 公開済み alpha.2 の資源観測。統合済み [PR #7](https://github.com/webkaz-labs/sobalink/pull/7)、merge `11cd8285607c220962c97db725f36fdd00d653d7` | [確認報告](https://github.com/webkaz-labs/sobalink/pull/7#issuecomment-5977603260): [観測 37183542583](https://github.com/webkaz-labs/sobalink/actions/runs/37183542583) で正確な公開 Linux amd64 バイナリを15分オフライン待機、10回正常再起動、待機中の強制終了・復旧で検査。[CI 37183542586 試行 2](https://github.com/webkaz-labs/sobalink/actions/runs/37183542586/attempts/2) は Windows フロントエンドの非決定的な1アサーションをコード変更なしで再実行し、4対象・ブラウザー・マニフェストが合格。受信中の異常終了、packet capture、電源断、後続経路の受入ではない |
+| alpha.5で公開した接続方式の統合 | [PR #11](https://github.com/webkaz-labs/sobalink/pull/11)と後続のレビュー済み修正は、上記の正確なalpha.5ソースに含まれます。ローカルcross-build・制御したループバック試験は、hosted ネイティブ／ブラウザー CI・署名付き配布・実端末受入とは区別します。PR #8の準備済み経路復旧はalpha.4にも含まれます |
+| 統合CI `1da932ca` | [run 37396023044](https://github.com/webkaz-labs/sobalink/actions/runs/37396023044) の4対象 OS のジョブが失敗。Windowsは時刻由来のrequest ID重複、Linux／macOSはdirect 試験用環境／通知のIPv6ソケットポート選択を検出。ブラウザー73件は合格し、選択した32画像と日本語フォント証拠を確認。修正したID・family別ポート・型付きDERP失敗通知・mixed利用不能判定・中継資源・追加WAN設定ケースには、新しい正確なソースのrunが必要 |
+| 修正CI `ab095063` | [run 37403561750](https://github.com/webkaz-labs/sobalink/actions/runs/37403561750) は修正したguarded直接IPv4／IPv6 TCP／UDPと型付きDERP失敗通知の段階が成功しましたが、後段の入場済み中継停止後のmanaged経路復旧が4ネイティブ対象すべてで失敗。実DERPの再現で、入場後EOFが後続の接続拒否を隠す原因を確認。ブラウザーは73/77成功で、追加WAN4件は非同期readbackと状態 locatorの競合。限定した修正の独立レビューと新しい最終ソースの全試験が必要で、配布受入の成功とは扱わない |
+| main 試験用環境競合 `0d86eda20079a1fece8bd286e729f186df8bc204` | [run 37410352799](https://github.com/webkaz-labs/sobalink/actions/runs/37410352799) は3ネイティブ対象とブラウザーが合格し、Windowsの[ジョブ 112097184103](https://github.com/webkaz-labs/sobalink/actions/runs/37410352799/job/112097184103) がmixed試験用環境の構築・並行公開の競合で失敗。マニフェストは省略され、全体の合格ではない |
+| 試験用環境修正 `308d25294ff7f916fa6ccc0a4cc118b0daaf0e06` | 試験のみの構築・公開順序修正は[run 37412218933](https://github.com/webkaz-labs/sobalink/actions/runs/37412218933) の全6ジョブが合格。その後の[レビュー指摘](https://github.com/webkaz-labs/sobalink/pull/11#discussion_r4191331472)で、CI成功にもかかわらず隔離LAN 処理担当が保存済み容量ポリシーをLAN状態・実行時へ適用していない製品上の欠落を確認 |
+| 保存済み容量の修正 `7917eada58fb1d1f9cf40f59af36c537460db7f0` | 通信エンジン開始前に保存済みポリシーを読み込み検証し、LAN状態・実行時の予算に適用。明示IPC予算の上書きとは分離する。回帰試験と[main CI 37418018354](https://github.com/webkaz-labs/sobalink/actions/runs/37418018354) の全6ジョブが合格。署名付きalpha.5公開の証拠は上表で別に記録 |
+| alpha.5公開試行の失敗 `7917eada58fb1d1f9cf40f59af36c537460db7f0` | [公開run 37420055312](https://github.com/webkaz-labs/sobalink/actions/runs/37420055312) は公開前に失敗。ほかの3ネイティブ対象は合格しましたが、Windowsの `TestFixturePortsNativeRepeated` はUDPで選んだ候補のTCP bindが許可されず、100候補を使い切りました。後続の公開段階は省略され、このrunによるalpha.5のtag・公開版はありません。修正対象は試験用環境に限定し、runtime修正とは扱いません |
+| 試験用環境のみの修正 `0b14fcfb3e49a7ad6c99bed8e4c67a5e577878d6` | 1つの試験用環境試験ファイルで候補ポートの選択を分散し、プロトコルごとの除外範囲への偏りを避けます。独立した重点確認はrace 20反復、native-preflight 500反復、negative controlを含みます。これらの模擬確認は正規の[CI 37421937582](https://github.com/webkaz-labs/sobalink/actions/runs/37421937582)や上表の修正後署名付き公開ゲートとは区別し、新しいruntime機能や実端末受入の主張を加えません |
 
 ## ソースごとの記録
 
@@ -75,19 +85,19 @@ OS の標準ブラウザーが実際に開くこと、および配布バイナ�
 | ソース・区分 | 結果と限界 |
 | --- | --- |
 | ソース `20dac52` | [run 37104195732](https://github.com/webkaz-labs/sobalink/actions/runs/37104195732) が終了し、Linux x64/ARM64・macOS ARM64 のネイティブジョブは合格、Windows x64 とブラウザーのジョブは失敗。ブラウザーは45ケース中36件が合格。run 全体は不合格で、後続修正の受入、署名付き配布、実端末の受入の証拠にはしない |
-| 過去の公開 `1027f04a` | [run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635) で正式な Playwright 23ケースを実行し、20合格・3失敗。2件は中継入力の位置依存のテスト指定、1件は空文字の自動保存先を既定フォルダーへ戻す実装。後続修正には、そのソースでの別の検証が必要。Linux x64/ARM64・macOS ARM64・Windows x64 の4対象で race/vet・隔離中継 fixture・パッケージを含むジョブとマニフェストは合格。ブラウザー失敗のため run 全体は不合格 |
+| 過去の公開 `1027f04a` | [run 37095653635](https://github.com/webkaz-labs/sobalink/actions/runs/37095653635) で正式な Playwright 23ケースを実行し、20合格・3失敗。2件は中継入力の位置依存のテスト指定、1件は空文字の自動保存先を既定フォルダーへ戻す実装。後続修正には、そのソースでの別の検証が必要。Linux x64/ARM64・macOS ARM64・Windows x64 の4対象で race/vet・隔離中継試験用環境・パッケージを含むジョブとマニフェストは合格。ブラウザー失敗のため run 全体は不合格 |
 | 過去の公開 `1c5c195` | [run 37085369977](https://github.com/webkaz-labs/sobalink/actions/runs/37085369977) の Linux x64/ARM64・macOS ARM64・Windows x64 とマニフェストは合格。旧 agent-script ブラウザー検査はローカルログイン前に失敗。この run 全体の合格ではない |
 | 過去の `5dd6b8c99b8e0167924b38411889e3a0092ac4af` | [run 37046723268](https://github.com/webkaz-labs/sobalink/actions/runs/37046723268) の全6ジョブが合格。その版の Go 本体を使う Chromium smoke を含むが、後続のフォームや復元した操作の証拠にはしない |
 | 後続のサービス・容量・プロフィール | 論理設定、有限の保存・通信予算、有効期間と解除、保存定義、グループ、リース付きタスク、ロールバック、オフライン設定、確認付き削除・取込みをローカルの重点 race 試験で確認。最終統合ソースのネイティブ CI は別途必要 |
-| 認証 CLI `7076dcb` | 公式 URL、ブラウザー・リンク・QR、既存フロー再利用、承認待ち、待機・取消、QR 表示と復元を mock／メモリー内試験で確認。実認証やスマートフォンでの読取りは未実施 |
+| 認証 CLI `7076dcb` | 公式 URL、ブラウザー・リンク・QR、既存フロー再利用、承認待ち、待機・取消、QR 表示と復元を模擬／メモリー内試験で確認。実認証やスマートフォンでの読取りは未実施 |
 | 復元した画面 `1c977c9` | 14ファイル・274 DOM 試験、型検査・ビルド、fixture-safety 7試験がローカルで合格。最終本番資材の2回ビルドは SHA が一致。パスポリシーを使う画面処理を含む。DOM 試験は実 Core／ブラウザーフロー、ネイティブ IME、実認証、実端末の受入ではない |
 | 復元した画面操作 `c9a30e7` / 資材 `04085f1` | 389 DOM試験、8 capture-safety試験、型検査・本番資材の再現ビルドがローカルで合格。アプリ設定・今回だけの期間・探索更新を含む。新ブラウザーケースは作成・構文確認のみで実行していない。最終Go本体ブラウザーとネイティブ検査は未完了 |
 | 後続ローカルの Playwright Test | 後続画面で本番 Go プロセスを使う28ケースを列挙したが、そこでの実行は未実施。上の23ケースの実行は `1027f04a` の結果で、後続画面や修正の受入ではない |
-| プロキシ・診断 | ローカルの重点 race・vet・Windows 向けコンパイルは合格。認証付き TCP 限定範囲、現在の ID、終了処理、秘密の除外、明示的診断を mock／メモリー内通信で確認。ネイティブソケットと実アプリは未確認 |
+| プロキシ・診断 | ローカルの重点 race・vet・Windows 向けコンパイルは合格。認証付き TCP 限定範囲、現在の ID、終了処理、秘密の除外、明示的診断を模擬／メモリー内通信で確認。ネイティブソケットと実アプリは未確認 |
 | 明示起動・非公開設定 `c148f85` / `50d0f00` | 外向き選択の固定、古い許可、オフライン抑止、非公開保存・生成・表示、永続的取消し・失敗処理、有限保存・期限を延ばさない復旧を重点Core/CLI模擬race・vetで確認。ネイティブ実導入ACL・実OSサインイン/復帰・実認証・実プロキシアプリの証拠ではない |
-| 配布準備 `d74d815` | 候補 `0.3.0-alpha.1` 向けに、手動の正確な main CI ゲート、4対象パッケージ、反復ビルド、Packslip 署名・provenance、4対象の mise 実導入検査を準備した時点の記録。workflow の準備だけでは公開や実行成功の証拠にならない |
+| 配布準備 `d74d815` | 候補 `0.3.0-alpha.1` 向けに、手動の正確な main CI ゲート、4対象パッケージ、反復ビルド、Packslip 署名・来歴、4対象の mise 実導入検査を準備した時点の記録。ワークフローの準備だけでは公開や実行成功の証拠にならない |
 
-サーバー起動やログイン前のブラウザー失敗はゲートの失敗であり、その後の画面の受入ではありません。変更したソースへ過去の結果を流用せず、影響する確認をやり直します。クロスコンパイルはネイティブ実行ではありません。ネイティブ loopback fixture も実端末、direct LAN/WAN/NAT、スリープ復帰、OS サインイン、ネイティブ IME、アプリ互換性の確認ではありません。
+サーバー起動やログイン前のブラウザー失敗はゲートの失敗であり、その後の画面の受入ではありません。変更したソースへ過去の結果を流用せず、影響する確認をやり直します。クロスコンパイルはネイティブ実行ではありません。ネイティブループバック試験用環境も実端末、direct LAN/WAN/NAT、スリープ復帰、OS サインイン、ネイティブ IME、アプリ互換性の確認ではありません。
 
 [機能対応表](FEATURE_PARITY.ja.md)でalpha.2の固定機能行すべてを現在の操作経路と残る条件へ対応付けています。後続CLI `7263310` はローカルの模擬操作・Linux PTY試験に合格しましたが、実macOS/Windows端末・ネイティブIME・認証は未確認です。模擬データのホスト型接続図プレビュー `d52a975` は9レイアウトの画像確認に合格しましたが、実バックエンドやGo本体ブラウザーの証拠ではありません。最終統合ソースの集約・ネイティブ・ブラウザー検査とレビューは未完了です。
 
@@ -127,9 +137,9 @@ OS の標準ブラウザーが実際に開くこと、および配布バイナ�
 
 明示中継先、ペアに結び付けた別々のサーバー・クライアント鍵、sealed bootstrap、成功応答前の秘密状態の atomic 保存、UDP 多重化、永続的解除を実装しています。[LAN の操作と復旧](LAN.ja.md)では、ペアリング・アプリ信頼・自動保存・サービス許可を分けます。ペア受付は選んだ論理設定に従い、秘密状態の保存容量は別の有限予算です。件数を下げても既存ペアは残します。
 
-依存先は Tailscale `v1.104.0`、Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89` です。記録した alpha.2 のネイティブ fixture は実 stock Tailcat/WireGuard と TLS ピン付き loopback DERP を使います。記録した4対象 CI は、不正招待・不明鍵、双方向 TCP/UDP、実際の2分リースをまたぐ130秒の既存 TCP と再認可、稼働中の解除・片付け、Core の2ピア文字・ファイル・共有を含みます。UDP underlay は除き、外部中継は使いません。
+依存先は Tailscale `v1.104.0`、Tailcat `v0.7.1-0.20260929145319-b4dc28e8aa89` です。記録した alpha.2 のネイティブ試験用環境は実 stock Tailcat/WireGuard と TLS ピン付きループバック DERP を使います。記録した4対象 CI は、不正招待・不明鍵、双方向 TCP/UDP、実際の2分リースをまたぐ130秒の既存 TCP と再認可、稼働中の解除・片付け、Core の2ピア文字・ファイル・共有を含みます。UDP underlay は除き、外部中継は使いません。
 
-この fixture は実 direct UDP、LAN/WAN/NAT の移動、中継先変更、速度、既存 TCP 全般の維持を証明しません。本番は相手への直接通信、明示した信頼済み中継への暗号化ペイロードと HTTPS/ICMP 診断を許します。loopback 限定の fixture は外部通信ゼロの保証ではありません。
+この試験用環境は実 direct UDP、LAN/WAN/NAT の移動、中継先変更、速度、既存 TCP 全般の維持を証明しません。本番は相手への直接通信、明示した信頼済み中継への暗号化ペイロードと HTTPS/ICMP 診断を許します。ループバック限定の試験用環境は外部通信ゼロの保証ではありません。
 
 既定の公開中継一覧・DNS bootstrap の不使用、必須タグ、別中継 capability・未対応 proxy/backend 上書きの拒否を確認します。多数の相手への探索は有限数ずつ巡回し、図の線・速度は実際の証拠から作ります。
 
@@ -141,25 +151,25 @@ OS の標準ブラウザーが実際に開くこと、および配布バイナ�
 
 以下の試作履歴は alpha.4 公開前のものです。現在の公開版は上の正確なソース表を参照し、新しい送信先制限の受入とは区別してください。
 
-新ソースは改変した transport、認証済み情報、永続的なペアごとの経路状態、独立した明示期間の許可、Core/CLI、ローカル画面を含みます。実装と統合受入は別です。[契約](ROUTE_RECOVERY_DESIGN.ja.md) · [操作](LAN.ja.md#別の経路を準備する)
+新ソースは改変した通信処理、認証済み情報、永続的なペアごとの経路状態、独立した明示期間の許可、Core/CLI、ローカル画面を含みます。実装と統合受入は別です。[契約](ROUTE_RECOVERY_DESIGN.ja.md) · [操作](LAN.ja.md#別の経路を準備する)
 
 | 証拠の段階 | 現在の結果と限界 |
 | --- | --- |
-| 純粋 helper・模擬状態・経路制御試験 | 以前の有限期間だけの試験は候補、ペア対応、改ざん・再送・期限、正確な確認、保存失敗、中断、有限の試行を対象にした。過去の CLI/Core の重点試験成功は、新しい明示期間v2や独立したアプリ2プロセスを検証しない |
+| 純粋補助処理・模擬状態・経路制御試験 | 以前の有限期間だけの試験は候補、ペア対応、改ざん・再送・期限、正確な確認、保存失敗、中断、有限の試行を対象にした。過去の CLI/Core の重点試験成功は、新しい明示期間v2や独立したアプリ2プロセスを検証しない |
 | 初回のネイティブ経路試作 `967fa58` | [run 37218261408](https://github.com/webkaz-labs/sobalink/actions/runs/37218261408) は中継間復旧の時間切れで失敗。既存ブラウザー・旧単一中継の成功を run 全体の成功としない |
 | 修正後のネイティブ試作 `52b72b22868fe52261118675ba46555ea02cc756` | [run 37219113173](https://github.com/webkaz-labs/sobalink/actions/runs/37219113173) は2026-10-04に成功。正確なソースのネイティブ試作の証拠であり、後続の Core/CLI/UI・経路状態を含む完全統合の結果ではない |
-| 以前の統合ソース `10e836cadf827cb9bf433c8faacd5f5198c04127` | [run 37250381716](https://github.com/webkaz-labs/sobalink/actions/runs/37250381716) は全体で不合格。4ネイティブジョブとmanifestは合格し、実Go本体ブラウザー69件中67件が合格、経路候補のselectorに関する2件が時間切れ。ローカルのselector修正には別のCIが必要。このソースは後続の明示期間への再設計や新しい2Coreプロセスfixtureを含まない |
-| 明示期間の統合 `15d878eaf78ffab13875e3282fc23c71d7a575cf` | [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553) の全6ジョブが合格。4ネイティブ対象、実Go本体Playwright69/69、manifestを確認。[2Coreプロセスfixture（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/core/route_process_integration_test.go)は全4対象のUDP省略版と通常UDP有効版で実行し、保護されたペア・経路状態の再起動、代替候補が停止中のLAN内起動、同じlocalhostサービス入口での実echo、主リレー停止、手元取消を確認。リレー停止後も直接UDPが生きる場合があり、物理WAN移動の証拠ではない。後続の正確なgrant/serviceID比較の強化には別の実行結果が必要 |
+| 以前の統合ソース `10e836cadf827cb9bf433c8faacd5f5198c04127` | [run 37250381716](https://github.com/webkaz-labs/sobalink/actions/runs/37250381716) は全体で不合格。4ネイティブジョブとマニフェストは合格し、実Go本体ブラウザー69件中67件が合格、経路候補の対象指定に関する2件が時間切れ。ローカルの要素指定の修正には別のCIが必要。このソースは後続の明示期間への再設計や新しい2Coreプロセス試験用環境を含まない |
+| 明示期間の統合 `15d878eaf78ffab13875e3282fc23c71d7a575cf` | [CI 37252690553](https://github.com/webkaz-labs/sobalink/actions/runs/37252690553) の全6ジョブが合格。4ネイティブ対象、実Go本体Playwright69/69、マニフェストを確認。[2Coreプロセス試験用環境（オンラインのソース）](https://github.com/webkaz-labs/sobalink/blob/main/internal/core/route_process_integration_test.go)は全4対象のUDP省略版と通常UDP有効版で実行し、保護されたペア・経路状態の再起動、代替候補が停止中のLAN内起動、同じlocalhostサービス入口での実echo、主リレー停止、手元取消を確認。リレー停止後も直接UDPが生きる場合があり、物理WAN移動の証拠ではない。後続の正確なgrant/serviceID比較の強化には別の実行結果が必要 |
 | 最終アプリ統合 | 正確なソースの2プロセス・実ソケットで、外部不通時の準備済み LAN 起動、同じペアの経路断・復旧、ローカルアプリ入口、取消・期限、移行、後片付けが必要。その後に4対象と実 Go 本体の経路ブラウザー操作を確認 |
 | 実端末 | LAN/WAN/NAT の変化、実端末のオフライン LAN 起動、実アプリ認証・再接続、OS スリープ復帰は未実施 |
 
-製品は direct を有効にした通常の単一バイナリです。UDP を除いた隔離 fixture は狭い証拠であり、通常の直接通信や外向き通信を厳密に限定する製品を検証しません。ネイティブ受入は制御した中継 fixture と実際の製品構成の両方を必要とします。過去の経路復旧だけのソースには厳密な送信先制限はありませんでした。現在の統合では明示した送信先の許可を追加しますが、物理NICの隔離や端末全体の外部通信ゼロではありません。local中継の区分だけでは相手への公開された直接経路を止めません。
+製品は direct を有効にした通常の単一バイナリです。UDP を除いた隔離試験用環境は狭い証拠であり、通常の直接通信や外向き通信を厳密に限定する製品を検証しません。ネイティブ受入は制御した中継試験用環境と実際の製品構成の両方を必要とします。過去の経路復旧だけのソースには厳密な送信先制限はありませんでした。現在の統合では明示した送信先の許可を追加しますが、物理NICの隔離や端末全体の外部通信ゼロではありません。local中継の区分だけでは相手への公開された直接経路を止めません。
 
 明示したプレリリースの前に、統合自動試験、認証・許可・非公開情報のレビュー、最終ソースの native/browser、署名付き実導入を通します。実端末受入は未実施と明示して残し、その試験のために mise 導入を提供できます。既存 TCP の維持、任意要求の再実行、ファイルの途中バイト再開や即時送信の再起動後再開を宣伝しません。明示的な永続送信待ちの再起動復旧は、元の要求と保存の記録を維持する別の契約で、正確なソースごとの証拠が必要です。待受準備、認証済み経路の証拠、アプリ成功、遠隔ジョブ完了を区別します。
 
 ## 公開の条件
 
-[配布](DISTRIBUTION.md)では、公開に選んだ正確な main の CI、実ブラウザー受入、反復ビルド、署名・provenance、独立した公開取得、4ネイティブ対象での実導入を必要とします。[sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) で、選んだ版の資材・ソース・リンクされた workflow の結果を確認してください。準備した workflow、ドラフト PR、条件付きの導入例、候補番号だけでは公開の証拠になりません。
+[配布](DISTRIBUTION.md)では、公開に選んだ正確な main の CI、実ブラウザー受入、反復ビルド、署名・来歴、独立した公開取得、4ネイティブ対象での実導入を必要とします。[sobalink Releases](https://github.com/webkaz-labs/sobalink/releases) で、選んだ版の資材・ソース・リンクされたワークフローの結果を確認してください。準備したワークフロー、ドラフト PR、条件付きの導入例、候補番号だけでは公開の証拠になりません。
 
 過去の [tsnet-bridge 公開版](https://github.com/webkaz-labs/tsnet-bridge/releases) は当時の実行ファイル・設定・署名情報を保持します。その導入結果や特定アプリの結果を、この製品の証拠にはしません。
 

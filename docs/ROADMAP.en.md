@@ -2,7 +2,7 @@
 
 [日本語](ROADMAP.ja.md) · [Overview](../README.en.md) · [Verification](VERIFICATION.en.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-The published baseline is [0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1), exact source `fae64878737eddc15a9787aba279f34c98427e36`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md) and [request-and-accept connection setup](CONNECTION_SETUP.en.md). Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
+The published baseline is [0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1), exact source `b35463ce2c0121166190585e7ecd621153c11086`. It includes [durable file queueing](DURABLE_OUTBOX.en.md), [durable text queueing](DURABLE_TEXT.en.md), [request-and-accept connection setup](CONNECTION_SETUP.en.md), and the optional experimental [native companion](NATIVE_UI.en.md) for Windows x64 and macOS ARM64. Profile format 3 is incompatible with 0.4.0-alpha.4 and older profiles: preserve existing state and use a separate empty `--state-dir`. There is no automatic migration or deletion, and the same state directory cannot be used with an older-format binary.
 
 See the [current verification record](VERIFICATION.en.md#current-integration-and-published-baseline) for the exact published source, CI results and release gates. Results apply only to their recorded source, not later edits. Physical two-device discovery, actual networks, OS login/suspend and power-loss acceptance remain separate and unverified.
 
@@ -28,7 +28,7 @@ Feature work outside the current scope is listed later. A missing physical test 
 | Durable queues | Released explicit file queue and single-recipient text prepare/review/commit, original IDs/deadlines and exact save evidence | Final-source results for ACK loss, restart, history cleanup and cancellation are recorded separately from physical power-loss/OS-lifecycle acceptance |
 | Nearby connection setup | [Scoped request-and-accept pairing](CONNECTION_SETUP.en.md), receiving and outbound-only modes, explicit first-use key acceptance (TOFU) or independent full-fingerprint verification, and exact-key re-enrollment | TOFU does not independently verify first-use identity. Exact-source native/browser results remain separate from physical two-device/two-OS discovery and discovery-to-browser acceptance |
 | Shared-service access | [Separate catalog-view consent, peer list exchange and fresh connection review](CATALOG_VIEW_CONTRACT.en.md), alongside local catalog observations | Exact-source process/browser results and physical-device acceptance are distinct; historical cached observations remain stale |
-| Human interfaces | Japanese/English guided CLI, local UI, services, graph, route review, private sign-in | Physical phone QR, actual native IME/fonts and terminal input remain unverified |
+| Human interfaces | Japanese/English guided CLI, local Web UI, experimental native companion, services, graph, route review, private sign-in | Physical phone QR, actual native IME/fonts, terminal input, tray behavior and screen readers remain unverified |
 | Lifecycle | Explicit startup approvals, offline suppression, saved settings and per-user OS startup | Actual OS sign-in and suspend/wake, real proxy/application reconnect |
 | Distribution | Existing reproducible packages, signing/provenance, public retrieval and four-target mise checks | Published results are source-specific; later source changes need their own final native/browser/distribution gates |
 
@@ -68,7 +68,7 @@ The following remain outside the current implementation scope, without a promise
 
 - Persistent shared folders and synchronization, automatic clipboard synchronization, and remote filesystem browsing. Explicit file/text delivery is separate from continuous access or synchronization.
 - Remote management across connection backends. The implemented [management contract](RESOURCE_MANAGEMENT.en.md) is limited to a managed DirectLAN peer and exact settings; it is not general remote execution.
-- Byte-offset transfer resume and additional TUI/native interfaces. Durable queue restart recovery already exists and must not be listed as an entirely deferred feature.
+- Resuming transfers from an interrupted byte position and additional terminal-based (TUI) or native interfaces. The experimental native companion already exists. Durable queue restart recovery already exists and must not be listed as an entirely deferred feature.
 - Public-relay deployment and a dedicated public-relay daemon. Tailscale remains the normal outside-LAN recommendation; optional WAN controls require an already reachable compatible pinned relay.
 - MCP and agent-tool execution, discussed below. Their architecture and acceptance are separate from this release's connection and queue work.
 

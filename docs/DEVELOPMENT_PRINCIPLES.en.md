@@ -6,9 +6,9 @@
 
 ## First-class Japanese and English
 
-- Automatically select from the OS/runtime locale; use Japanese for Japanese locales and English as the safe fallback. Allow an explicit override
+- Automatically select the language from the OS/runtime locale. Use Japanese for Japanese locales and English for other or unknown locales. Let the user override that choice
 - Cover onboarding, prompts, confirmations, status, errors and next actions, not just help
-- Keep command/flag names and the machine JSON contract language-independent. Never translate endpoints, identifiers or user-supplied values
+- Keep command/flag names and the format and meaning of machine-readable JSON language-independent. Never translate endpoints, identifiers or user-supplied values
 - Offer usable alternatives when browser launch, QR scanning or terminal width is unsuitable
 
 ## Simple and flexible
@@ -22,7 +22,7 @@
 ## Clear state and next actions
 
 - Show peer, selected service, actual endpoint, lifetime and started/stopped state
-- Explain what is known about a failure and a concrete next step; do not invent its cause
+- Explain what is known about a failure and give a specific next action; do not invent its cause
 - Distinguish saved configuration, listener readiness, application success and remote-job completion. Report partial results honestly
 - Preserve the selected profile in suggested follow-up commands
 - For graphical interfaces, verify information hierarchy, controls, back navigation, narrow layouts, contrast and readable text

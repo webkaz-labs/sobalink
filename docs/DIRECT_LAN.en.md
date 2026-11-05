@@ -1,8 +1,8 @@
 # Direct LAN without a relay
 
-[日本語](DIRECT_LAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.1-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.1-alpha.1)
+[日本語](DIRECT_LAN.ja.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md) · [v0.5.4-alpha.1](https://github.com/webkaz-labs/sobalink/releases/tag/v0.5.4-alpha.1)
 
-For normal first-use setup, start with [request and accept](CONNECTION_SETUP.en.md). The explicit identity/invitation workflow below remains available when you want that path. Normal first-use setup uses TOFU: names and discovery do not authenticate a person or prevent a first-use man-in-the-middle attack. Compare the full fingerprint through a trusted channel when needed.
+For normal first-use setup, start with [request and accept](CONNECTION_SETUP.en.md). The explicit identity/invitation workflow below remains available when you want that path. Normal first-use setup uses TOFU (trust on first use), which accepts the first key received: names and discovery do not authenticate a person or prevent a first-use man-in-the-middle attack. Compare the full fingerprint through a trusted channel when needed.
 
 `direct-lan` provides recipient-authenticated pairing
 at an exact numeric private-network address, followed by WireGuard-encrypted TCP
@@ -153,7 +153,7 @@ content or stop work already launched inside a remote application.
   virtual listeners and the existing scoped TCP dispatcher receive application
   streams; existing service authorization controls the permitted loopback target
 - Paired state is durably saved through the protected Core store before
-  activation. The private WireGuard state is version 2; comparison-only version-1
+  activation. Fixed-endpoint WireGuard state uses version 2; managed metadata uses later formats described in the [endpoint metadata contract](../internal/endpointmeta/README.md). Comparison-only version-1
   state is rejected, including unpaired state. Uncertain writes fail closed and require saved-state recovery.
   Lost pairing replies may leave only the remote side paired; inspect/revoke
   that remote approval before retrying. If revocation cannot be written, the old
@@ -171,7 +171,7 @@ pairs and pairing again; an invitation does not silently broaden local policy.
 
 ### Who starts a new tunnel session
 
-Schematic for fixed-endpoint pairs. Additional managed-context authorization and terminal tombstones are separate implementation contracts.
+This diagram covers pairs with fixed endpoints. Managed pairs also require separate authorization checks and saved removal records that prevent a removed pair from returning; see the [endpoint metadata contract](../internal/endpointmeta/README.md).
 
 The application requester and the WireGuard initiator are different roles.
 
@@ -201,7 +201,7 @@ The lower Ed25519 identity key starts WireGuard, regardless of which device requ
 
 ### Pairing and revocation have different save boundaries
 
-Schematic for fixed-endpoint pairs. Additional managed-context authorization and terminal tombstones are separate implementation contracts.
+This diagram covers pairs with fixed endpoints. Managed pairs also require separate authorization checks and saved removal records that prevent a removed pair from returning; see the [endpoint metadata contract](../internal/endpointmeta/README.md).
 
 A closed runtime connection does not establish durable revocation.
 
