@@ -130,28 +130,12 @@ func normalNativeWindow(content mygo.Content, height int) *mygo.Window {
 func (s *nativeShell) hideOnClose() bool { return s.tray != nil && !s.quitting }
 
 func (s *nativeShell) openFallback(a *app) {
-	s.window = normalNativeWindow(ui.View(func(c *ui.Context) {
-		ui.Column(c).Fill().Lang(a.t("en", "ja")).Font(uiFont(a.ja)).Background(ui.Hex("#f4f7f5")).Children(func() {
-			ui.Text(c, a.t("Tray unavailable. Using a normal window; close it to quit the UI. The daemon is unchanged.", "トレイを利用できないため通常表示です。ウィンドウを閉じるとUIを終了します。本体の状態は変わりません。")).FillWidth().Padding(12).FontSize(13).TextColor(ui.Hex("#172e34"))
-			ui.Column(c).FillWidth().Grow(1).Children(func() { a.view(c) })
-		})
-	}), 640)
+	s.window = normalNativeWindow(ui.View(func(c *ui.Context) { s.fallbackView(a, c) }), 640)
 }
-
-func (s *nativeShell) view(a *app, c *ui.Context) {
-	ui.Column(c).Fill().Lang(a.t("en", "ja")).Font(uiFont(a.ja)).Background(ui.Hex("#f4f7f5")).Children(func() {
-		ui.Column(c).FillWidth().Grow(1).Children(func() { a.view(c) })
-		ui.Row(c).FillWidth().Padding(12).Gap(8).Children(func() {
-			if ui.Button(c, a.t("Hide", "隠す")).Clicked() {
-				s.window.Hide()
-			}
-			ui.Text(c, "").Grow(1)
-			if ui.Button(c, a.t("Quit UI (daemon continues)", "UIを終了（本体は継続）")).Clicked() {
-				s.quitting = true
-				mygo.App.Quit()
-			}
-		})
-	})
+func (s *nativeShell) hideWindow() { s.window.Hide() }
+func (s *nativeShell) quitUI() {
+	s.quitting = true
+	mygo.App.Quit()
 }
 
 // nativeTrayIcon creates a neutral, original two-link mark. It contains no
