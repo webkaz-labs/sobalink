@@ -92,17 +92,26 @@ func (f *nativeLANCoreFixture) must(c *Core, name string, payload any) any {
 	f.t.Helper()
 	value, err := f.invoke(c, name, payload)
 	if err != nil {
-		code := "unclassified"
-		switch candidate := networkErrorCode(err); candidate {
-		case "lan_saved_start_changed", "lan_start_failed", "lan_environment_proxy", "lan_environment_override", "lan_relay_mismatch", "network_restart_required", "lan_state_capacity", "lan_recovery_required":
-			code = candidate
-		}
+		code := nativeLANCommandErrorCode(err)
 		// Report only fixed classifications, never payloads, raw errors,
 		// identities, addresses, protected file paths or authorization material.
 		f.t.Fatalf("native Core command %s failed (code=%s permission=%t canceled=%t timeout=%t)", name, code,
 			errors.Is(err, os.ErrPermission), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded))
 	}
 	return value
+}
+
+// Keep this allowlist independent of error text: even a coded error can carry
+// private or unexpected content. Include the existing production listener codes
+// so a classified bind failure does not collapse into "unclassified" in CI.
+func nativeLANCommandErrorCode(err error) string {
+	switch code := networkErrorCode(err); code {
+	case "lan_saved_start_changed", "lan_start_failed", "lan_environment_proxy", "lan_environment_override", "lan_relay_mismatch", "network_restart_required", "lan_state_capacity", "lan_recovery_required",
+		"lan_listener_conflict", "lan_listener_address_unavailable", "lan_listener_permission_denied", "lan_listener_capacity":
+		return code
+	default:
+		return "unclassified"
+	}
 }
 
 func (f *nativeLANCoreFixture) relayAddress() netip.AddrPort {

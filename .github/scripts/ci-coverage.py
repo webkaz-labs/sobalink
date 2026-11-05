@@ -76,6 +76,7 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 DOCUMENT_STEPS = ("Verify document selection and static content", "Require document checks and selected rendering")
 SCOPES = {"docs", "frontend", "go", "native-short", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
+                 "Verify privacy-safe fixture diagnostics",
                  "Verify actual UI workflows with isolated Playwright fixtures",
                  "Verify synthetic request pairing UI without skips",
                  "Verify durable outbox recovery with separate agents and actual browser",
