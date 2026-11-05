@@ -184,5 +184,23 @@ def check_web(ui, binary):
         assert json.loads(request("/api/session", {"code": ui["code"]}, {"Origin": base}, status=401))["code"] == "invalid_code"
 
 
+def check_native_companion(binary):
+    """Headless fictional render only; this is not native-window acceptance."""
+    import struct
+    binary = str(pathlib.Path(binary).resolve())
+    with tempfile.TemporaryDirectory(prefix="sobalink-native-smoke-") as tmp:
+        for language in ("en", "ja"):
+            image = pathlib.Path(tmp) / (language + ".png")
+            subprocess.run([binary, "--demo", "--locale", language, "--render", str(image)],
+                           check=True, capture_output=True, text=True, timeout=60)
+            raw = image.read_bytes()
+            assert raw[:16] == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "invalid native demo PNG"
+            assert struct.unpack(">II", raw[16:24]) == (460, 560), "unexpected native demo dimensions"
+        print("Native companion fictional headless render verified (en/ja); GUI interaction not tested")
+
+
 if __name__ == "__main__":
-    check(sys.argv[1])
+    if len(sys.argv) == 3 and sys.argv[1] == "--native-companion":
+        check_native_companion(sys.argv[2])
+    else:
+        check(sys.argv[1])

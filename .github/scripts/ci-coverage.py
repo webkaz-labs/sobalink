@@ -66,6 +66,7 @@ FAST_STEPS = (
 )
 LINUX_NEARBY_TARGETS = ('linux-amd64', 'linux-arm64')
 LINUX_NEARBY_STEPS = ('Verify Linux nearby native discovery without skips',)
+NATIVE_UI_STEPS = ('Test experimental native companion',)
 NATIVE_PACKAGE_TARGETS = ('windows-amd64', 'darwin-arm64')
 NATIVE_PACKAGE_STEPS = ('Collect required whole-Core race evidence', 'Verify remaining native package race coverage', 'Preserve required native package proof')
 MACOS_NEARBY_TARGETS = ('darwin-arm64',)
@@ -75,6 +76,7 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 DOCUMENT_STEPS = ("Verify document selection and static content", "Require document checks and selected rendering")
 SCOPES = {"docs", "frontend", "go", "native-short", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
+                 "Verify privacy-safe fixture diagnostics",
                  "Verify actual UI workflows with isolated Playwright fixtures",
                  "Verify synthetic request pairing UI without skips",
                  "Verify durable outbox recovery with separate agents and actual browser",
@@ -202,7 +204,7 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
             if target == "windows-amd64":
                 steps += ("Verify Windows receive-retirement directory barriers",)
             if target in NATIVE_PACKAGE_TARGETS:
-                steps += NATIVE_PACKAGE_STEPS
+                steps += NATIVE_PACKAGE_STEPS + NATIVE_UI_STEPS
             passed(name, steps)
             if scope == "native-short":
                 for full_step in LONG_STEPS + FULL_ONLY_STEPS:
@@ -262,7 +264,7 @@ def job_timings(jobs):
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
     names = {*TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke"}
-    steps = {*DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS,
+    steps = {*DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}

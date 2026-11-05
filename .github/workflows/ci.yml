@@ -158,6 +158,20 @@ jobs:
       - name: Validate impact plan or require full coverage
         id: ci-plan
         run: python .github/scripts/ci-coverage.py resolve --input "$RUNNER_TEMP/ci-plan/ci-impact-plan.json" --output "$RUNNER_TEMP/ci-impact-plan.json"
+      - name: Set up isolated native UI toolchain
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Retain native UI toolchain path
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.3
+          native_go="$(go env GOROOT)/bin/go"
+          if [[ "$RUNNER_OS" == Windows ]]; then native_go="$native_go.exe"; fi
+          echo "SOBALINK_NATIVE_GO=$native_go" >> "$GITHUB_ENV"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27.1'
@@ -747,6 +761,16 @@ jobs:
           PYTHON
       - name: Wait for real-time lifecycle and lease checks
         wait: [natural-lifecycle, guarded-lease, relay-only-lease]
+      - name: Test experimental native companion
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        working-directory: poc/native
+        run: |
+          set -euo pipefail
+          unset GOROOT
+          test "$("$SOBALINK_NATIVE_GO" env GOVERSION)" = go1.27.3
+          "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
+          "$SOBALINK_NATIVE_GO" vet ./...
+          test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"
       - name: Build native package and smoke archive contents
         run: |
           set -euo pipefail
@@ -1060,13 +1084,62 @@ jobs:
           set -euo pipefail
           node web/node_modules/@playwright/test/cli.js install --with-deps chromium
           sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
-      - name: Verify actual UI workflows with isolated Playwright fixtures
-        timeout-minutes: 15
+      - name: Verify privacy-safe fixture diagnostics
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           go mod verify
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          # Browser fixtures use POSIX private-file permissions. Keep these
+          # bounded diagnostic regressions on the existing Linux browser lane.
+          actual = subprocess.check_output(["go", "env", "GOVERSION", "GOOS", "GOARCH"], text=True, timeout=30).splitlines()
+          if actual != ["go1.27.1", "linux", "amd64"]:
+              raise SystemExit("Fixture diagnostics require the exact browser toolchain and target")
+          groups = (
+              ("cmd/soba-e2e", "soba_e2e", (
+                  "TestStartupDiagnosticClosedVocabulary",
+                  "TestStartupArgumentFailureWritesDiagnostic",
+              )),
+              ("internal/core", "lanlink_integration,ts_omit_udptransport", (
+                  "TestNativeLANCommandDiagnosticRetainsOnlyAllowedCodes",
+                  "TestNativeLANCommandDiagnosticPreservesProductionListenClassification",
+                  "TestNativeLANHeldRelayPortDiagnosticIntegration",
+              )),
+              ("internal/directlan", "resource_inspection_native", (
+                  "TestInspectionDialResultClassifications",
+                  "TestInspectionDialResultStagesAndPrivacy",
+                  "TestInspectionDialResultFirstTerminalResult",
+                  "TestInspectionDialResultNoObservation",
+                  "TestInspectionDialInitialWakeObservation",
+                  "TestInspectionDialResultNeverFormatsError",
+              )),
+          )
+          for package, tags, tests in groups:
+              # Only each child receives the isolated environment. The held-port
+              # negative control uses an owned numeric loopback listener.
+              env = {key: value for key, value in os.environ.items()
+                     if key.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                     and not key.upper().startswith("TS_")}
+              if package == "internal/core":
+                  env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+              command = [sys.executable, ".github/scripts/ci-go-test.py"]
+              for name in tests:
+                  command += ["--expect", "github.com/webkaz-labs/sobalink/" + package + ":" + name]
+              command += ["--", "go", "test", "-race", "-count=1", "-v", "-timeout=2m",
+                          "-tags=" + tags + ",ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+                          "-run=^(" + "|".join(tests) + ")$", "./" + package]
+              subprocess.run(command, env=env, check=True, timeout=3 * 60)
+          PYTHON
+      - name: Verify actual UI workflows with isolated Playwright fixtures
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
           go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
           npm --prefix web run test:browser:safety
           node --test web/browser/nearby-native-selectors.test.mjs web/browser/nearby-native-diagnostics.test.mjs web/browser/text-native-contract.test.mjs

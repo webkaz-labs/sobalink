@@ -16,6 +16,7 @@ import textwrap
 import unittest
 from unittest.mock import patch
 from test_source_provenance import add_native_fixture
+from test_native_companion import add_companion_fixture
 
 spec = importlib.util.spec_from_file_location("release_checks", pathlib.Path(__file__).with_name("release-validation.py"))
 checks = importlib.util.module_from_spec(spec)
@@ -956,6 +957,7 @@ class ArtifactGuards(unittest.TestCase):
             notices = json.loads((self.root / (stem + ".notices.json")).read_text())
             bom = json.loads((self.root / (stem + ".cdx.json")).read_text())
             add_native_fixture(build, notices, bom, target)
+            add_companion_fixture(build, notices, bom)
             for suffix, value in ((".build.json", build), (".notices.json", notices), (".cdx.json", bom)):
                 self.write(stem + suffix, value)
         self.checksums()

@@ -11,7 +11,7 @@ ADAPTED_MODULES = {
     "tailscale.com": {
         "name": "tailscale", "source_path": "internal/engineadaptation",
         "manifest_path": "internal/engineadaptation/manifest.json",
-        "manifest_sha256": "e9554c46a24480e22e50e55b2c2474736284505b03f60120496ddb9ad63f2aa2",
+        "manifest_sha256": "3f4f2facd7250254e2d00d4c39a4507abd1ea27a2d940555d9465d794baa8f32",
         "version": "v1.104.0", "license": "BSD-3-Clause",
         "module_sum": "h1:7LgglawekeutAexqXUzSxP/Kqo3HHwF/SkcbX5HpiU4=",
         "go_mod_sum": "h1:Cb1XjScRgSOeRD7NW6uCEznme782WiOU9IxqyTWoRf0=",
@@ -478,3 +478,115 @@ def read_macho_libraries(path, expected_uuid):
         offset += length
     assert offset == size and deployment and found_uuid and sorted(libraries) == list(DARWIN_LIBRARIES), 'invalid Mach-O inventory'
     return sorted(libraries)
+
+
+NATIVE_UI_PROJECT = 'github.com/webkaz-labs/sobalink/poc/native'
+NATIVE_UI_REF = 'native-ui:application:sobalink'
+
+
+def verify_native_companion(build, notices, bom, root=None):
+    """Admit the companion without changing any daemon provenance policy."""
+    target = build['target']
+    supported = target in ('darwin-arm64', 'windows-amd64')
+    if root is not None:
+        suffix = '.exe' if target == 'windows-amd64' else ''
+        expected_bins = {'soba' + suffix} | ({'soba-native' + suffix} if supported else set())
+        assert {p.name for p in (root / 'bin').iterdir()} == expected_bins, 'unexpected installed executable inventory'
+    ui_components = [c for c in bom.get('components', []) if c.get('bom-ref', '').startswith('native-ui:')]
+    if not supported:
+        assert 'native_ui' not in build and 'native_ui' not in notices and not ui_components, 'native companion on unsupported target'
+        assert not any(e.get('ref', '').startswith('native-ui:') or any(d.startswith('native-ui:') for d in e['dependsOn']) for e in bom.get('dependencies', [])), 'unsupported native companion edges'
+        if root is not None:
+            assert not (root / 'share/sobalink/native-ui').exists(), 'unsupported native companion files'
+            assert not any((root / 'bin' / n).exists() for n in ('soba-native', 'soba-native.exe')), 'unsupported native companion executable'
+        return None
+    ui, inventory = build['native_ui'], notices['native_ui']
+    expected_keys = {'project', 'product', 'version', 'source_commit', 'target', 'go_version', 'build_tags', 'cgo_enabled', 'trimpath', 'buildvcs', 'ldflags', 'go_mod_sha256', 'go_sum_sha256', 'binary', 'source_inputs', 'source_inputs_sha256', 'sbom_sha256', 'notices_sha256'}
+    assert set(ui) == expected_keys, 'unexpected companion build fields'
+    assert ui['project'] == NATIVE_UI_PROJECT and ui['product'] == 'soba-native', 'companion identity differs'
+    for key in ('version', 'source_commit', 'target', 'build_tags'):
+        assert ui[key] == build[key], 'companion source/target identity differs'
+    assert ui['go_version'] == 'go1.27.3' and ui['cgo_enabled'] is False and ui['trimpath'] is True and ui['buildvcs'] is False, 'companion toolchain differs'
+    flags = '-s -w -buildid= -X main.version=' + build['version'] + ' -X main.sourceCommit=' + build['source_commit']
+    if target == 'windows-amd64':
+        flags += ' -H=windowsgui'
+    assert ui['ldflags'] == flags, 'companion linker flags differ'
+    binary = 'bin/soba-native' + ('.exe' if target == 'windows-amd64' else '')
+    assert set(ui['binary']) == {'path', 'sha256'} and ui['binary']['path'] == binary, 'companion binary path differs'
+    for value in [ui['binary']['sha256'], *(ui[k] for k in ('go_mod_sha256', 'go_sum_sha256', 'source_inputs_sha256', 'sbom_sha256', 'notices_sha256'))]:
+        assert isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value), 'invalid companion digest'
+    inputs = record_hashes(ui['source_inputs'])
+    assert inputs and ui['source_inputs'] == sorted(ui['source_inputs'], key=lambda x: x['path']), 'companion source inputs unsorted'
+    assert inputs.get('poc/native/go.mod') == ui['go_mod_sha256'] and inputs.get('poc/native/go.sum') == ui['go_sum_sha256'], 'companion module inputs missing'
+    assert 'poc/native/main.go' in inputs and not any(p.endswith('_test.go') for p in inputs), 'companion runtime source missing or includes tests'
+    assert digest(json.dumps(ui['source_inputs'], ensure_ascii=False, separators=(',', ':')).encode()) == ui['source_inputs_sha256'], 'companion source digest differs'
+    assert inventory['archive_base_path'] == 'share/sobalink/native-ui' and 'CGO_ENABLED=0' in inventory['scope'], 'companion inventory scope differs'
+    assert inventory['go_standard_library']['version'] == 'go1.27.3' and inventory['go_standard_library']['module'] == 'Go standard library', 'companion stdlib differs'
+    assert not inventory.get('frontend_modules') and not inventory.get('native_build'), 'unexpected companion native/frontend inventory'
+    assert not inventory.get('source_components'), 'unreviewed companion adapted-source closure'
+    modules = inventory['modules']
+    assert modules and len({m['module'] for m in modules}) == len(modules), 'missing or duplicate companion modules'
+    components = {c['bom-ref']: c for c in ui_components}
+    assert len(components) == len(ui_components), 'duplicate companion SBOM component'
+    app = components[NATIVE_UI_REF]
+    assert app['type'] == 'application' and app['name'] == 'soba-native' and app['version'] == build['version'], 'companion SBOM application differs'
+    assert app['hashes'] == [{'alg': 'SHA-256', 'content': ui['binary']['sha256']}], 'companion SBOM executable differs'
+    stdlib = components['native-ui:golang:stdlib']
+    assert stdlib['version'] == 'go1.27.3' and stdlib['name'] == 'Go standard library', 'companion SBOM stdlib differs'
+    retained = {}
+    for module in [*modules, inventory['go_standard_library']]:
+        hashes = record_hashes(module['notices'])
+        assert hashes, 'companion notices missing'
+        if module is inventory['go_standard_library']:
+            prefix = 'licenses/go/'
+        else:
+            key = digest((module['module'] + '@' + module['version']).encode())
+            prefix = 'licenses/' + key + '/'
+            component = components['native-ui:golang:' + key]
+            assert component['name'] == module['module'] and component['version'] == module['version'], 'companion dependency identity differs'
+            assert re.fullmatch(r'h1:[A-Za-z0-9+/]{43}=', module['go_module_sum']), 'invalid companion module sum'
+            assert source_properties(component)['go:module:sum'] == module['go_module_sum'], 'companion dependency sum differs'
+        assert all(p.startswith(prefix) for p in hashes), 'companion notice outside module'
+        assert not set(retained).intersection(hashes), 'duplicate companion retained notice'
+        retained.update(hashes)
+    for source in inventory.get('source_components') or []:
+        retained.update(record_hashes(source['notices']))
+    expected_refs = {NATIVE_UI_REF, 'native-ui:golang:stdlib'} | {'native-ui:golang:' + digest((m['module'] + '@' + m['version']).encode()) for m in modules}
+    assert set(components) == expected_refs, 'unreviewed companion SBOM component'
+    dependencies = bom['dependencies']
+    roots = [e for e in dependencies if e['ref'] == 'application:sobalink']
+    assert len(roots) == 1 and NATIVE_UI_REF in roots[0]['dependsOn'], 'companion absent from package SBOM graph'
+    edges = [e for e in dependencies if e['ref'].startswith('native-ui:')]
+    assert len({e['ref'] for e in edges}) == len(edges) and {e['ref'] for e in edges} == set(components), 'companion SBOM graph differs'
+    assert all(len(e['dependsOn']) == len(set(e['dependsOn'])) and set(e['dependsOn']) <= set(components) for e in edges), 'companion SBOM dangling dependency'
+    if root is None:
+        return ui
+    share = root / 'share/sobalink/native-ui'
+    assert digest(read_regular(root, binary)) == ui['binary']['sha256'], 'installed companion binary differs'
+    assert read_json(read_regular(share, 'build.json')) == ui, 'retained companion build differs'
+    for name, key in (('go.mod', 'go_mod_sha256'), ('go.sum', 'go_sum_sha256'), ('bom.cdx.json', 'sbom_sha256'), ('third-party-notices.json', 'notices_sha256')):
+        assert digest(read_regular(share, name)) == ui[key], 'retained companion metadata digest differs'
+    assert read_json(read_regular(share, 'third-party-notices.json')) == inventory, 'retained companion notices differ'
+    nested = read_json(read_regular(share, 'bom.cdx.json'))
+    assert nested['bomFormat'] == 'CycloneDX' and nested['specVersion'] == '1.5', 'invalid companion SBOM'
+    assert nested['metadata']['component'] == app, 'retained companion SBOM application differs'
+    assert {c['bom-ref']: c for c in nested['components']} == {k: v for k, v in components.items() if k != NATIVE_UI_REF}, 'retained companion SBOM components differ'
+    assert sorted(nested['dependencies'], key=lambda e: e['ref']) == sorted(edges, key=lambda e: e['ref']), 'retained companion SBOM edges differ'
+    props = source_properties(nested['metadata'])
+    assert props['build:target'] == target and props['source:commit'] == build['source_commit'] and props['build:cgo'] == '0' and props['inventory:scope'] == inventory['scope'], 'companion SBOM provenance differs'
+    locks = {tuple(line.split()[:2]): line.split()[2] for line in read_regular(share, 'go.sum').decode().splitlines() if len(line.split()) == 3}
+    for module in modules:
+        assert locks.get((module['module'], module['version'])) == module['go_module_sum'], 'companion dependency differs from retained lock'
+    retained.update({'source/' + p: sha for p, sha in inputs.items()})
+    for path, sha in retained.items():
+        assert digest(read_regular(share, path)) == sha, 'retained companion input/notice differs'
+    expected = {'build.json', 'bom.cdx.json', 'third-party-notices.json', 'go.mod', 'go.sum', 'LICENSE', *retained}
+    actual = set()
+    for path in share.rglob('*'):
+        assert not path.is_symlink(), 'linked companion artifact'
+        if not path.is_dir():
+            assert path.is_file(), 'special companion artifact'
+            actual.add(path.relative_to(share).as_posix())
+    assert actual == expected, 'unexpected companion archive file inventory'
+    assert read_regular(share, 'LICENSE') == read_regular(root / 'share/sobalink', 'LICENSE'), 'companion project license differs'
+    return ui

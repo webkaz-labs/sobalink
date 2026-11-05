@@ -2,7 +2,7 @@
 
 **0.5.2-alpha.1 release candidate (this checkout).** Adds offline UI reopening, reviewed saved-connection resume, truthful stop status and simultaneous-profile browser sessions. The previously verified published baseline is 0.5.1-alpha.1. Candidate source is not evidence of publication: check the signed release and its exact-source verification before installing. Physical-device acceptance remains separate.
 
-For the candidate version, use the [publication-gated 0.5.2-alpha.1 installation instructions](DISTRIBUTION.md#install-the-052-alpha1-candidate-only-after-publication). The baseline commands below deliberately remain pinned to the previously verified release.
+For the candidate version, use the [publication-gated 0.5.4-alpha.1 installation instructions](DISTRIBUTION.md#install-the-054-alpha1-candidate-only-after-publication). The baseline commands below deliberately remain pinned to the previously verified release.
 
 [日本語](GENERIC.ja.md) · [Overview](../README.en.md) · [Security](../SECURITY.md) · [Verification](VERIFICATION.en.md)
 
@@ -34,6 +34,47 @@ In this example both devices use sobalink. An ordinary Tailnet application targe
 | Let a peer use your application | [Share](#share-a-local-service) | Exact peers, ports and expiry |
 | Reuse an earlier setup | [Saved services](SAVED_SERVICES.en.md) | Saved versus running state |
 | Send something | [Text and files](#send-text-images-and-files) | Receiver evidence, not local acceptance |
+
+## This checkout: a guided path to your application
+
+After building this checkout, start local management and open its browser UI:
+
+```sh
+soba start --background
+soba ui
+```
+
+Use the built executable in place of `soba` if it is not on your path. Keep the
+same `--state-dir` on both commands when using a custom profile. Background
+startup confirms local management readiness, not a working network connection.
+For local management without reconnecting the saved network, use
+`soba start --offline --background` instead.
+
+The home guide, **Connect in three steps**, separates these actions. You can also
+open it from the sidebar, including on narrow screens:
+
+1. **Prepare the connection.** Open network setup. For an existing Tailnet,
+   choose **Tailscale setup & sign-in**, activate the embedded node if needed,
+   then explicitly sign in to Tailscale and complete any device approval. Opening the guide does
+   not enroll a device. For a stopped saved network, review its existing scope
+   before resuming; do not replace the configuration to recover it.
+2. **Choose a device and purpose.** Select a device and connect to its service,
+   or choose **Choose saved connections** to open **Saved services** and reuse a
+   service or group. Filter by device and search by name or port; review the complete selection and lifetime before
+   starting. Saving a definition alone does not start it.
+3. **Check the application.** Use the actual displayed local endpoint in your
+   application. A ready listener is not proof that the remote application works.
+   If status is unavailable, refresh it before repeating an action. An expired or
+   explicitly stopped service requires another reviewed start; it does not
+   silently renew its permission.
+
+This is a local, service-scoped workflow: no VM, administrator-installed driver,
+TUN or OS route changes are required. Client entry points remain numeric loopback
+(`127.0.0.1` or `::1`), on ports 1024–65535. It does not give every application
+transparent access to every remote IP. The guide itself starts nothing and
+changes no permissions. UI language follows the runtime locale by default,
+with Japanese and English overrides. Real enrollment and application
+compatibility still require testing in the intended environment.
 
 ## Start and open the local UI
 

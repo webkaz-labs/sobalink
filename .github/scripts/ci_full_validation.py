@@ -264,6 +264,14 @@ def workflow_metadata(workflow):
     return result
 
 
+NATIVE_COMPANION_STEP = '      - name: Test experimental native companion\n        if: matrix.goos == \'windows\' || matrix.goos == \'darwin\'\n        working-directory: poc/native\n        run: |\n          set -euo pipefail\n          unset GOROOT\n          test "$("$SOBALINK_NATIVE_GO" env GOVERSION)" = go1.27.3\n          "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...\n          "$SOBALINK_NATIVE_GO" vet ./...\n          test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"\n'
+
+
+def validate_native_companion_workflow(data):
+    workflow = data.decode("utf-8")
+    require(workflow.count(NATIVE_COMPANION_STEP) == 1, "native companion test gate differs")
+
+
 def validate_parallel_workflow(data):
     """Fail closed on changes to the deliberately narrow native async region.
 
@@ -289,7 +297,7 @@ def validate_parallel_workflow(data):
     fence = (marker + 'Wait for real-time lifecycle and lease checks\n'
              '        wait: [natural-lifecycle, guarded-lease, relay-only-lease]\n')
     package = marker + 'Build native package and smoke archive contents\n'
-    require(workflow.count(fence + package) == 1, 'missing real-time wait before packaging')
+    require(workflow.count(fence + NATIVE_COMPANION_STEP + package) == 1, 'missing real-time wait before packaging')
     end = workflow.index(fence)
     require(starts == sorted(starts) and starts[-1] < end, 'invalid real-time step order')
     region = workflow[starts[0]:end]
@@ -310,6 +318,72 @@ def validate_parallel_workflow(data):
     require(region.count('.github/scripts/ci-metrics.py run') == 1
             and region.count('--suite natural-lifecycle --') == 1,
             'parallel timing writers require isolated storage')
+
+
+def validate_fixture_diagnostics_workflow(data):
+    """Require all eleven privacy regressions before browser acceptance."""
+    workflow = data.decode('utf-8')
+    expected = """      - name: Verify privacy-safe fixture diagnostics
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          # Browser fixtures use POSIX private-file permissions. Keep these
+          # bounded diagnostic regressions on the existing Linux browser lane.
+          actual = subprocess.check_output(["go", "env", "GOVERSION", "GOOS", "GOARCH"], text=True, timeout=30).splitlines()
+          if actual != ["go1.27.1", "linux", "amd64"]:
+              raise SystemExit("Fixture diagnostics require the exact browser toolchain and target")
+          groups = (
+              ("cmd/soba-e2e", "soba_e2e", (
+                  "TestStartupDiagnosticClosedVocabulary",
+                  "TestStartupArgumentFailureWritesDiagnostic",
+              )),
+              ("internal/core", "lanlink_integration,ts_omit_udptransport", (
+                  "TestNativeLANCommandDiagnosticRetainsOnlyAllowedCodes",
+                  "TestNativeLANCommandDiagnosticPreservesProductionListenClassification",
+                  "TestNativeLANHeldRelayPortDiagnosticIntegration",
+              )),
+              ("internal/directlan", "resource_inspection_native", (
+                  "TestInspectionDialResultClassifications",
+                  "TestInspectionDialResultStagesAndPrivacy",
+                  "TestInspectionDialResultFirstTerminalResult",
+                  "TestInspectionDialResultNoObservation",
+                  "TestInspectionDialInitialWakeObservation",
+                  "TestInspectionDialResultNeverFormatsError",
+              )),
+          )
+          for package, tags, tests in groups:
+              # Only each child receives the isolated environment. The held-port
+              # negative control uses an owned numeric loopback listener.
+              env = {key: value for key, value in os.environ.items()
+                     if key.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                     and not key.upper().startswith("TS_")}
+              if package == "internal/core":
+                  env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+              command = [sys.executable, ".github/scripts/ci-go-test.py"]
+              for name in tests:
+                  command += ["--expect", "github.com/webkaz-labs/sobalink/" + package + ":" + name]
+              command += ["--", "go", "test", "-race", "-count=1", "-v", "-timeout=2m",
+                          "-tags=" + tags + ",ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+                          "-run=^(" + "|".join(tests) + ")$", "./" + package]
+              subprocess.run(command, env=env, check=True, timeout=3 * 60)
+          PYTHON
+"""
+    marker = '      - name: Verify privacy-safe fixture diagnostics\n'
+    require(workflow.count(marker) == 1, 'missing or duplicate fixture diagnostic gate')
+    browser = workflow.index('\n  browser:\n')
+    start = workflow.index(marker)
+    next_job = re.search(r'^  [A-Za-z0-9_-]+:\n', workflow[browser + len('\n  browser:\n'):], re.M)
+    browser_end = browser + len('\n  browser:\n') + next_job.start() if next_job else len(workflow)
+    require(browser < start < browser_end and workflow.count(expected + '      - name: Verify actual UI workflows with isolated Playwright fixtures\n') == 1,
+            'invalid fixture diagnostic execution policy')
 
 
 def validate_resource_inspection_workflow(data):
@@ -872,6 +946,8 @@ def validate_native_packages_workflow(sources):
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_native_packages_workflow(sources)
+    validate_native_companion_workflow(sources[WORKFLOW])
+    validate_native_companion_workflow(sources[".github/workflows/prerelease.yml"])
     validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
     validate_durable_text_workflow(sources[WORKFLOW])
@@ -882,9 +958,10 @@ def required_jobs(sources):
     validate_pairing_ui_workflow(sources[WORKFLOW])
     validate_request_setup_workflow(sources['.github/workflows/prerelease.yml'])
     validate_resource_inspection_workflow(sources[WORKFLOW])
+    validate_fixture_diagnostics_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
-             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS'}
+             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS', 'NATIVE_UI_STEPS'}
     values = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -901,6 +978,8 @@ def required_jobs(sources):
         require(isinstance(value, tuple) and value and all(isinstance(v, str) and v for v in value)
                 and len(set(value)) == len(value), 'invalid required-step policy')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
+    require(values['BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,
+            'missing fixture diagnostic required gate')
     require(values['FAST_STEPS'].count('Verify durable outbox restart across Core processes') == 1
             and values['BROWSER_STEPS'].count('Verify durable outbox recovery with separate agents and actual browser') == 1,
             'missing durable outbox required gates')
@@ -933,13 +1012,14 @@ def required_jobs(sources):
             'overlapping macOS nearby gate')
     for target in values['MACOS_NEARBY_TARGETS']:
         result[TARGETS[target][0]] += values['MACOS_NEARBY_STEPS']
+    require(values['NATIVE_UI_STEPS'] == ('Test experimental native companion',), 'unexpected companion gate policy')
     require(values['NATIVE_PACKAGE_TARGETS'] == ('windows-amd64', 'darwin-arm64')
             and values['NATIVE_PACKAGE_STEPS'] == ('Collect required whole-Core race evidence',
                 'Verify remaining native package race coverage', 'Preserve required native package proof'),
             'unexpected native package coverage policy')
     require(not set(native_steps).intersection(values['NATIVE_PACKAGE_STEPS']), 'overlapping native package gate')
     for target in values['NATIVE_PACKAGE_TARGETS']:
-        result[TARGETS[target][0]] += values['NATIVE_PACKAGE_STEPS']
+        result[TARGETS[target][0]] += values['NATIVE_PACKAGE_STEPS'] + values['NATIVE_UI_STEPS']
     result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
     result.update({
         'impact': ('Select minimum CI scope',),

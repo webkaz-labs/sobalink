@@ -221,6 +221,11 @@ func TestProductFinalOwnerFailureDiagnosticIsClosed(t *testing.T) {
 	dir := t.TempDir()
 	d := newProductNativeDiagnostic(dir, "successor")
 	d.view.ForegroundFailed = true
+	d.view.ForegroundExitObserved = true
+	d.view.ForegroundBodyFailed = true
+	d.view.ForegroundOwnersCloseFailed = true
+	d.view.ForegroundLockCloseFailed = true
+	d.view.ForegroundAckFailed = true
 	d.view.MonitorFailed = true
 	d.view.PeerCloseFailed = true
 	d.view.LockCloseFailed = true
@@ -231,6 +236,9 @@ func TestProductFinalOwnerFailureDiagnosticIsClosed(t *testing.T) {
 	}
 	if !result.Failed || !result.ForegroundFailed || !result.MonitorFailed || !result.PeerCloseFailed || !result.LockCloseFailed {
 		t.Fatal("final owner error components lost")
+	}
+	if !result.ForegroundExitObserved || !result.ForegroundBodyFailed || !result.ForegroundOwnersCloseFailed || !result.ForegroundLockCloseFailed || !result.ForegroundAckFailed {
+		t.Fatal("foreground exit components lost during serialization")
 	}
 	raw, err := os.ReadFile(d.path)
 	if err != nil {

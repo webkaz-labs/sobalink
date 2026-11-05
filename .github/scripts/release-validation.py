@@ -16,7 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from source_provenance import read_json, verify_native
+from source_provenance import read_json, verify_native_companion, verify_native
 
 _FULL_SPEC = importlib.util.spec_from_file_location("ci_full_validation", pathlib.Path(__file__).with_name("ci_full_validation.py"))
 full_validation = importlib.util.module_from_spec(_FULL_SPEC)
@@ -168,6 +168,7 @@ def check_assets(root, version, commit, bundle=False):
         require(bool(notices["modules"]) and bool(notices["frontend_modules"]), "empty dependency notices")
         try:
             verify_native(meta, notices, bom)
+            verify_native_companion(meta, notices, bom)
         except (AssertionError, KeyError, TypeError, ValueError) as exc:
             raise ValueError("invalid native package provenance: " + target) from exc
         for module in notices["modules"] + notices["frontend_modules"] + [notices["go_standard_library"]]:

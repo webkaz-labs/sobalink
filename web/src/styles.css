@@ -880,3 +880,16 @@ textarea.code-value, .client-copy textarea.code-value, .composer textarea { font
 .text-queue-consent { display: flex; align-items: flex-start; gap: .6rem; line-height: 1.6; }
 .text-queue-consent input { flex: 0 0 auto; margin-top: .35rem; }
 .text-outbox-view { display: grid; gap: .75rem; min-width: 0; }
+
+/* First-use guidance remains in the existing bounded home scroll frame. */
+.setup-guide { width: min(100%, 620px); text-align: left; padding: 20px; border: 1px solid var(--border); border-radius: 16px; }
+.setup-guide h3 { margin: 0 0 16px; }
+.setup-guide h4 { margin: 0 0 6px; }
+.setup-guide ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 20px; }
+.setup-guide li { display: flex; align-items: flex-start; gap: 12px; }
+.setup-guide li > div { min-width: 0; flex: 1; }
+.setup-guide p { margin: 0 0 12px; max-width: none; overflow-wrap: anywhere; }
+.setup-guide > p { margin: 20px 0 0; }
+.setup-step { flex: 0 0 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; font-weight: 700; }
+.setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 520px) { .setup-guide { padding: 14px; } .setup-guide .button { white-space: normal; } }

@@ -136,3 +136,25 @@ class LocalWebTransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeCompanionSmokeTests(unittest.TestCase):
+    def test_only_fictional_headless_render_is_invoked(self):
+        calls = []
+        def run(args, **kwargs):
+            import struct
+            calls.append(args)
+            self.assertEqual(args[1:3], ['--demo', '--locale'])
+            self.assertNotIn('--state-dir', args)
+            self.assertTrue(kwargs['check'])
+            self.assertEqual(kwargs['timeout'], 60)
+            pathlib.Path(args[-1]).write_bytes(b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + struct.pack('>II', 460, 560))
+        with patch.object(smoke.subprocess, 'run', side_effect=run):
+            smoke.check_native_companion('soba-native')
+        self.assertEqual([a[3] for a in calls], ['en', 'ja'])
+
+    def test_invalid_render_fails(self):
+        def run(args, **kwargs):
+            pathlib.Path(args[-1]).write_bytes(b'not an image')
+        with patch.object(smoke.subprocess, 'run', side_effect=run), self.assertRaises(AssertionError):
+            smoke.check_native_companion('soba-native')

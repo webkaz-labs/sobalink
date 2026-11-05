@@ -5,6 +5,7 @@ import { portProposalText } from '../port-proposals-i18n'
 import type { PortProposalChoice } from '../port-proposals'
 import { SavedFavorites } from './SavedFavorites'
 import { favoriteText } from '../favorites-i18n'
+import { savedPeerText, savedServicePeers } from '../saved-peer-filter'
 import { filterSavedServices } from '../saved-service-navigation'
 import { StartupProfilesDialog } from './StartupProfilesDialog'
 import { startupText } from '../startup-i18n'
@@ -58,6 +59,7 @@ export function SavedServicesDialog({ server, locale, t, onClose, initialSelecti
   const initialTarget = useRef(initialSelection?.length === 1 ? initialSelection[0] : null)
   const [missingInitial, setMissingInitial] = useState(false)
   const [query, setQuery] = useState('')
+  const [peerFilter, setPeerFilter] = useState('')
   const [selectedOnly, setSelectedOnly] = useState(Boolean(initialSelection?.length === 1))
   const [favoritesOpen, setFavoritesOpen] = useState(false)
   const [favoriteIds, setFavoriteIds] = useState<string[]>()
@@ -111,14 +113,15 @@ export function SavedServicesDialog({ server, locale, t, onClose, initialSelecti
   const active = [...(server.state?.services || []), ...(server.state?.shares || [])].some(service => ['active', 'reconnecting'].includes(service.status))
   const updateSelection = (ids: string[], nextGroup = '') => { setSelected(ids); setGroup(nextGroup); invalidateReview(); setLifetimeChoice('saved'); setStatus(''); setReplaceGroup(false) }
   const peerName = (id: string) => server.state?.peers.find(peer => peer.id === id)?.name || id
-  const visibleServices = filterSavedServices(services, groups, query, selectedOnly ? selected : undefined, peerName).filter(service => favoriteIds === undefined || favoriteIds.includes(service.id))
+  const peerOptions = [...new Set([...services.flatMap(savedServicePeers), ...(peerFilter ? [peerFilter] : [])])]
+  const visibleServices = filterSavedServices(services, groups, query, selectedOnly ? selected : undefined, peerName).filter(service => (!peerFilter || savedServicePeers(service).includes(peerFilter)) && (favoriteIds === undefined || favoriteIds.includes(service.id)))
   const visibleIds = new Set(visibleServices.map(service => service.id))
   const hiddenSelected = selected.filter(id => !visibleIds.has(id)).length
-  const filtered = Boolean(query.trim()) || selectedOnly || favoriteIds !== undefined
-  const showSelection = () => { setQuery(''); setSelectedOnly(true); setFavoriteIds(undefined) }
+  const filtered = Boolean(peerFilter) || Boolean(query.trim()) || selectedOnly || favoriteIds !== undefined
+  const showSelection = () => { setPeerFilter(''); setQuery(''); setSelectedOnly(true); setFavoriteIds(undefined) }
   const chooseGroup = (name: string) => {
     updateSelection([...(groups.find(item => item.name === name)?.serviceIds || [])], name)
-    setGroupName(name); setQuery(''); setSelectedOnly(Boolean(name)); setFavoriteIds(undefined)
+    setGroupName(name); setPeerFilter(''); setQuery(''); setSelectedOnly(Boolean(name)); setFavoriteIds(undefined)
   }
   const mappings = (service: ServiceConfiguration) => {
     try {
@@ -243,9 +246,10 @@ export function SavedServicesDialog({ server, locale, t, onClose, initialSelecti
       <section className="definition-navigation" aria-label={d('browseSaved')}>
         <div className="definition-navigation-fields">
           <label className="field">{d('search')}<input type="search" value={query} placeholder={d('searchHint')} onChange={event => setQuery(event.target.value)} /></label>
+          <label className="field">{savedPeerText(locale, 'label')}<select aria-label={savedPeerText(locale, 'label')} value={peerFilter} onChange={event => setPeerFilter(event.target.value)}><option value="">{savedPeerText(locale, 'all')}</option>{peerOptions.map(id => { const peer = server.state?.peers.find(item => item.id === id); return <option key={id} value={id}>{peer ? (server.state?.peers.some(item => item.id !== id && item.name === peer.name) ? `${peer.name} · ${id}` : peer.name) : `${savedPeerText(locale, 'unavailable')} · ${id}`}</option> })}</select><small className="muted">{savedPeerText(locale, 'hint')}</small></label>
           {groups.length > 0 && <label className="field">{d('group')}<select value={group} disabled={blocked} onChange={event => chooseGroup(event.target.value)}><option value="">{d('manual')}</option>{groups.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>}
         </div>
-        <div className="definition-navigation-actions"><Button type="button" disabled={blocked && !favoritesOpen} aria-expanded={favoritesOpen} onClick={() => { setFavoritesOpen(value => !value); setFavoriteIds(undefined) }}>{favoriteText(locale, 'title')}</Button><Button type="button" aria-pressed={selectedOnly} onClick={() => setSelectedOnly(value => !value)}>{d('selectedOnly')}</Button>{filtered && <Button type="button" variant="ghost" onClick={() => { setQuery(''); setSelectedOnly(false); setFavoriteIds(undefined) }}>{d('resetFilters')}</Button>}<Button type="button" disabled={blocked || !visibleServices.length} onClick={() => updateSelection([...new Set([...selected, ...visibleServices.map(service => service.id)])])}>{d(filtered ? 'selectVisible' : 'selectAll')}</Button><Button type="button" disabled={blocked || !selected.length} onClick={() => updateSelection([])}>{d('clear')}</Button></div>
+        <div className="definition-navigation-actions"><Button type="button" disabled={blocked && !favoritesOpen} aria-expanded={favoritesOpen} onClick={() => { setFavoritesOpen(value => !value); setFavoriteIds(undefined) }}>{favoriteText(locale, 'title')}</Button><Button type="button" aria-pressed={selectedOnly} onClick={() => setSelectedOnly(value => !value)}>{d('selectedOnly')}</Button>{filtered && <Button type="button" variant="ghost" onClick={() => { setPeerFilter(''); setQuery(''); setSelectedOnly(false); setFavoriteIds(undefined) }}>{d('resetFilters')}</Button>}<Button type="button" disabled={blocked || !visibleServices.length} onClick={() => updateSelection([...new Set([...selected, ...visibleServices.map(service => service.id)])])}>{d(filtered ? 'selectVisible' : 'selectAll')}</Button><Button type="button" disabled={blocked || !selected.length} onClick={() => updateSelection([])}>{d('clear')}</Button></div>
         <p className="small muted" role="status">{d('shown')}: {visibleServices.length} / {services.length} · {d('selected')}: {selected.length}{hiddenSelected > 0 && <> · {d('hiddenSelected')}: {hiddenSelected}</>}</p>
         {hiddenSelected > 0 && <div className="definition-selection-notice"><p className="small">{d('hiddenHint')}</p><Button type="button" variant="ghost" onClick={showSelection}>{d('showSelection')}</Button></div>}
         {favoritesOpen && <SavedFavorites server={server} locale={locale} services={services} groups={groups} blocked={blocked} filterIds={favoriteIds} onFilterChange={setFavoriteIds} onNavigate={reference => { if (blocked) return; if (reference.kind === 'group') chooseGroup(reference.groupName); else { updateSelection([reference.serviceId]); showSelection() } }} />}

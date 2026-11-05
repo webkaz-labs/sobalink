@@ -6,4 +6,6 @@ import "os"
 
 func observeForegroundWeb(string) {}
 
+func observeForegroundExit(error, error, error, error) {}
+
 func observeBackgroundExit(int, *os.ProcessState, error) {}

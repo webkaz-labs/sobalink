@@ -268,6 +268,14 @@ func runProductOwner(dir string, successor bool) (result error) {
 		}
 	}
 	diagnostic.stage("foreground")
+	// The observer runs synchronously in this owner. Keep the snapshot local
+	// until the monitor joins, since that goroutine also updates diagnostic.view.
+	var exitObserved, bodyFailed, ownersCloseFailed, lockCloseFailed, ackFailed bool
+	observeForegroundExitResult = func(body, ownersClose, lockClose, acknowledgement bool) {
+		exitObserved = true
+		bodyFailed, ownersCloseFailed, lockCloseFailed, ackFailed = body, ownersClose, lockClose, acknowledgement
+	}
+	defer func() { observeForegroundExitResult = nil }()
 	monitorDone := make(chan error, 1)
 	go func() {
 		err := monitorProductOwner(ctx, cancel, dir, successor, manifest, peer, &observationFailed, diagnostic)
@@ -281,6 +289,11 @@ func runProductOwner(dir string, successor bool) (result error) {
 	err := runForeground(ctx, dir, successor, false, io.Discard)
 	cancel()
 	monitorErr := <-monitorDone
+	diagnostic.view.ForegroundExitObserved = exitObserved
+	diagnostic.view.ForegroundBodyFailed = bodyFailed
+	diagnostic.view.ForegroundOwnersCloseFailed = ownersCloseFailed
+	diagnostic.view.ForegroundLockCloseFailed = lockCloseFailed
+	diagnostic.view.ForegroundAckFailed = ackFailed
 	diagnostic.view.ForegroundFailed = err != nil
 	diagnostic.view.MonitorFailed = monitorErr != nil
 	return errors.Join(err, monitorErr)

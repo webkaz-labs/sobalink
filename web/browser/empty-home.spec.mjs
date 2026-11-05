@@ -88,7 +88,7 @@ for (const locale of ['en', 'ja']) {
         await expectUncovered(sidebarControls.nth(index), app, `empty-home-geometry-${locale}-${viewport.width}x${viewport.height}-${index}`)
         if (index < count - 1) await page.keyboard.press('Tab')
       }
-      await expect(sidebar.locator('.sidebar-footer button')).toBeFocused()
+      await expect(sidebar.locator('.sidebar-footer button').last()).toBeFocused()
       await expectFrame(page)
       await app.capture(`empty-home-sidebar-${locale}-${viewport.width}x${viewport.height}`)
       if (viewport.width > 800) {

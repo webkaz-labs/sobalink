@@ -15,15 +15,20 @@ import (
 // grant authority, drive readiness or add any acceptance/cleanup predicate.
 // Each record has one writer; the owner joins its monitor before final flush.
 type productNativeObservation struct {
-	Schema           int    `json:"schema"`
-	Stage            string `json:"stage"`
-	Failed           bool   `json:"failed"`
-	ForegroundFailed bool   `json:"foregroundFailed"`
-	MonitorFailed    bool   `json:"monitorFailed"`
-	PeerCloseFailed  bool   `json:"peerCloseFailed"`
-	LockCloseFailed  bool   `json:"lockCloseFailed"`
-	OwnerStatus      string `json:"ownerStatus"`
-	PeerStatus       string `json:"peerStatus"`
+	Schema                      int    `json:"schema"`
+	Stage                       string `json:"stage"`
+	Failed                      bool   `json:"failed"`
+	ForegroundFailed            bool   `json:"foregroundFailed"`
+	ForegroundExitObserved      bool   `json:"foregroundExitObserved"`
+	ForegroundBodyFailed        bool   `json:"foregroundBodyFailed"`
+	ForegroundOwnersCloseFailed bool   `json:"foregroundOwnersCloseFailed"`
+	ForegroundLockCloseFailed   bool   `json:"foregroundLockCloseFailed"`
+	ForegroundAckFailed         bool   `json:"foregroundAckFailed"`
+	MonitorFailed               bool   `json:"monitorFailed"`
+	PeerCloseFailed             bool   `json:"peerCloseFailed"`
+	LockCloseFailed             bool   `json:"lockCloseFailed"`
+	OwnerStatus                 string `json:"ownerStatus"`
+	PeerStatus                  string `json:"peerStatus"`
 }
 type productNativeDiagnostic struct {
 	path string
