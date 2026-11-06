@@ -22,13 +22,22 @@ CI_FONT_POLICY_SHA256 = {
     '.github/scripts/ci-fonts.py': 'eb5c56f0019098330250157818838f3f9d1b40447c75682e1ca7e34460cbe33e',
 }
 
+# Reviewed complete official dependency installer and mandatory calling steps.
+CI_PLAYWRIGHT_HELPER = '.github/scripts/ci-playwright.py'
+CI_PLAYWRIGHT_SHA256 = 'bb87c90acc14984424e91cb26f4666fd7cd9500b6ff2742551675e8749e69237'
+CI_PLAYWRIGHT_STEPS = {
+    'browser': ('Install official Chromium and fonts', '8b82237ac17e66fd7d3c7451dcd2b2b5dfdb2d29b7f6409c65dd4a06f8009d07'),
+    'web-activation': ('Prepare locked dependencies and official Chromium', '025f8ac94378b357c7cb3b5fca6f282c666a94389b6e7216955792efdf31c6dc'),
+    'product-activation': ('Prepare locked dependencies and official Chromium', '5abc2d197032c35bbd871ae9d24070c101bd65a1be95f07941f292b1f225b685'),
+}
+
 # Reviewed reusable execution and source-mode boundary; never grants full credit.
 NATIVE_UI_POLICY_SHA256 = {
     '.github/workflows/native-ui-checks.yml': '7596e04c5751d5ada7aae0c96088db27e491722101359dc4db96eb5ec0605ae6',
     '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
     '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
 }
-SOURCES = (WORKFLOW, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+SOURCES = (WORKFLOW, CI_PLAYWRIGHT_HELPER, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
            '.github/scripts/native_ui_smoke.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -1118,9 +1127,30 @@ def validate_font_workflow(sources):
                 'Japanese font setup or failure policy differs')
 
 
+def validate_playwright_workflow(sources):
+    """Changing mirrors must retain the official dependency and browser gates."""
+    require(digest(sources[CI_PLAYWRIGHT_HELPER]) == CI_PLAYWRIGHT_SHA256,
+            'Playwright dependency source policy differs')
+    workflow = sources[WORKFLOW].decode('utf-8')
+    jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    for name, (gate, expected) in CI_PLAYWRIGHT_STEPS.items():
+        positions = [pos for pos, key in jobs if key == name]
+        require(len(positions) == 1, 'missing Playwright dependency consumer')
+        start = positions[0]
+        end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+        job = workflow[start:end]
+        marker = '      - name: ' + gate + '\n'
+        require(job.count(marker) == 1, 'missing or duplicate Playwright dependency gate')
+        start = job.index(marker)
+        end = job.find('      - ', start + len(marker))
+        block = job[start:end if end >= 0 else len(job)]
+        require(digest(block.encode('utf-8')) == expected, 'Playwright dependency execution differs')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_font_workflow(sources)
+    validate_playwright_workflow(sources)
     validate_native_ui_workflow(sources)
     validate_regression_workflow(sources)
     validate_frontend_workflow(sources)
@@ -1161,6 +1191,8 @@ def required_jobs(sources):
     require(values['FAST_STEPS'].count('Reproduce locked frontend assets') == 1
             and values['BROWSER_STEPS'].count('Test and reproduce locked frontend assets') == 1,
             'native reproduction and common frontend tests are required')
+    require(values['BROWSER_STEPS'].count('Install official Chromium and fonts') == 1,
+            'missing official Playwright required gate')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
     require(values['BROWSER_STEPS'].count('Prepare verified Japanese fonts') == 1,
             'missing Japanese font required gate')

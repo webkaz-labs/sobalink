@@ -24,6 +24,57 @@ def run(identifier=10, start='2026-01-01T00:00:00Z', event='workflow_dispatch', 
 
 
 class FullProofTests(unittest.TestCase):
+    def test_playwright_installer_source_and_execution_are_bound(self):
+        original = self.sources[full.CI_PLAYWRIGHT_HELPER]
+        self.assertIn(full.CI_PLAYWRIGHT_HELPER, full.SOURCES)
+        self.sources[full.CI_PLAYWRIGHT_HELPER] = b'print("synthetic skip")\n'
+        with self.assertRaisesRegex(ValueError, 'Playwright dependency source'):
+            full.required_jobs(self.sources)
+        self.sources[full.CI_PLAYWRIGHT_HELPER] = original
+        original = self.sources[full.WORKFLOW]
+        marker = b'          python3 -B .github/scripts/ci-playwright.py\n'
+        self.assertEqual(original.count(marker), 3)
+        positions = [i for i in range(len(original)) if original.startswith(marker, i)]
+        for start in positions:
+            for after in (b'', marker.replace(b'ci-playwright.py', b'other.py'),
+                          marker.rstrip() + b' || true\n', marker + marker):
+                self.sources[full.WORKFLOW] = original[:start] + original[start:].replace(marker, after, 1)
+                with self.subTest(start=start, after=after), self.assertRaises(ValueError):
+                    full.required_jobs(self.sources)
+        for gate in ('Install official Chromium and fonts', 'Prepare locked dependencies and official Chromium'):
+            marker = ('      - name: ' + gate + '\n').encode()
+            for after in (marker + b'        if: false\n', marker + b'        continue-on-error: true\n'):
+                self.sources[full.WORKFLOW] = original.replace(marker, after)
+                with self.subTest(gate=gate, after=after), self.assertRaises(ValueError):
+                    full.required_jobs(self.sources)
+
+    def test_playwright_install_step_cannot_be_removed_from_coverage(self):
+        path = '.github/scripts/ci-coverage.py'
+        marker = b'                 "Install official Chromium and fonts",\n'
+        self.assertEqual(self.sources[path].count(marker), 1)
+        self.sources[path] = self.sources[path].replace(marker, b'')
+        with self.assertRaisesRegex(ValueError, 'Playwright required gate'):
+            full.required_jobs(self.sources)
+
+    def test_playwright_setup_must_actually_succeed(self):
+        original = copy.deepcopy(self.jobs)
+        for name, (gate, _) in full.CI_PLAYWRIGHT_STEPS.items():
+            self.assertIn(gate, self.required[name])
+            for mode in ('missing', 'skipped', 'failure', 'in_progress', 'duplicate'):
+                self.jobs = copy.deepcopy(original)
+                job = next(job for job in self.jobs if job['name'] == name)
+                step = next(step for step in job['steps'] if step['name'] == gate)
+                if mode == 'missing':
+                    job['steps'].remove(step)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(step))
+                elif mode == 'in_progress':
+                    step['status'] = mode
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(job=name, mode=mode), self.assertRaises(ValueError):
+                    full.audit_jobs(self.api, self.runs[0], self.required)
+
     def test_japanese_font_sources_are_reviewed_not_just_inventory_bound(self):
         for path in full.CI_FONT_POLICY_SHA256:
             original = self.sources[path]

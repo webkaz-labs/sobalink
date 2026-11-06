@@ -93,6 +93,7 @@ DOCUMENT_STEPS = ("Verify document selection and static content", "Require docum
 SCOPES = {"docs", "frontend", "go", "native-short", "native-ui", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Prepare verified Japanese fonts",
+                 "Install official Chromium and fonts",
                  "Verify privacy-safe fixture diagnostics",
                  "Verify actual UI workflows with isolated Playwright fixtures",
                  "Verify synthetic request pairing UI without skips",

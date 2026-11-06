@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           # Fetch only the versions explicitly pinned in the main module.
@@ -116,7 +116,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           # Fetch only the versions explicitly pinned in the main module.
@@ -173,7 +173,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           go mod download
@@ -297,7 +297,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           go mod download
