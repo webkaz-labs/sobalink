@@ -295,6 +295,7 @@ class GitHistoryTests(unittest.TestCase):
         self.write("internal/boundedlog/writer.go", 'package boundedlog\nimport "os"\nvar _ *os.File\n')
         self.write("web/src/App.tsx", "export const fixture = 1\n")
         self.write("cmd/soba/errors.go", "package main\n")
+        self.write("poc/native/theme.go", "package main\n")
         self.base = self.commit()
 
     def git(self, *args):
@@ -349,6 +350,37 @@ class GitHistoryTests(unittest.TestCase):
                 "pull_request": {"merge_commit_sha": head,
                     "base": {"sha": self.base, "ref": "main", "repo": {"full_name": impact.REPOSITORY}},
                     "head": {"sha": source, "repo": {"full_name": "fixture-fork/sobalink"}}}}
+
+    def test_native_ui_merge_main_identity_and_head_only_rejection(self):
+        event = self.pull_request_event(lambda: self.write("poc/native/theme.go", 'package main\nimport "github.com/egoist/mygo/ui"\n'))
+        report = self.classify(event=event, name="pull_request")
+        self.assertEqual(report["scope"], "native-ui")
+        self.assertEqual(report["head_sha"], self.git("rev-parse", "HEAD"))
+        self.assertEqual(report["head_tree"], self.git("rev-parse", "HEAD^{tree}"))
+        self.assertEqual(report["changed_paths"], ["poc/native/theme.go"])
+        self.assertEqual(self.classify()["scope"], "native-ui")
+        self.assertEqual(self.classify(event=event, name="pull_request", force_full=True)["scope"], "full")
+        self.git("checkout", "--detach", event["pull_request"]["head"]["sha"])
+        self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
+
+    def test_native_ui_import_directive_content_and_modes_fail_closed(self):
+        for source, reason in (
+                ('package main\nimport "net/http"\n', 'unreviewed_go_dependency'),
+                ('//go:build windows\npackage main\n', 'platform_or_special_go_source'),
+                ('//go:embed fixture\npackage main\n', 'platform_or_special_go_source'),
+                ('package main\nimport "unsafe"\n', 'platform_or_special_go_source'),
+                ('package main\n\x00', 'non_text_content')):
+            self.write("poc/native/theme.go", source)
+            self.commit()
+            with self.subTest(source=source):
+                result = self.classify()
+                self.assertEqual(result["scope"], "full")
+                self.assertEqual(result["reason"], reason)
+        self.write("poc/native/theme.go", "package main\n// changed\n")
+        self.git("add", "--all")
+        self.git("update-index", "--chmod=+x", "poc/native/theme.go")
+        self.git("commit", "-qm", "Synthetic executable fixture")
+        self.assertEqual(self.classify()["scope"], "full")
 
     def test_native_short_pr_and_authenticated_main_delta_match(self):
         event = self.pull_request_event(lambda: self.write("cmd/soba/errors.go", 'package main\nimport "errors"\nvar _ = errors.New\n'))

@@ -53,7 +53,7 @@ class FullProofTests(unittest.TestCase):
                          (b'check-frontend.py\n', b'check-frontend.py --build-only\n'),
                          (b'check-frontend.py\n', b'check-frontend.py || true\n'),
                          (b'  browser:\n', b'  ignored-browser:\n'),
-                         (b"scope != 'docs' && needs.impact.outputs.scope != 'go'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25",
+                         (b"scope != 'docs' && needs.impact.outputs.scope != 'go' && needs.impact.outputs.scope != 'native-ui'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25",
                           b"scope == 'frontend'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25")):
             self.sources[full.WORKFLOW] = original.replace(old, new, 1)
             self.assertNotEqual(self.sources[full.WORKFLOW], original)
@@ -586,6 +586,39 @@ class FullProofTests(unittest.TestCase):
             sources[path] = sources[path].replace(before, after)
             with self.assertRaises(ValueError):
                 full.required_jobs(sources)
+
+    def test_reusable_native_ui_sources_are_bound_without_granting_full_credit(self):
+        paths = ('.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+                 '.github/scripts/native_ui_smoke.py')
+        proof = self.audit(local_root=ROOT)
+        for path in paths:
+            self.assertIn(path, full.SOURCES)
+            self.assertEqual(proof['source_sha256'][path], hashlib.sha256((ROOT / path).read_bytes()).hexdigest())
+            original = self.sources[path]
+            self.sources[path] += b'\n# synthetic source mutation\n'
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'checkout policy differs'):
+                self.audit(local_root=ROOT)
+            self.sources[path] = original
+        self.assertFalse(any('companion (' in name for name in self.required))
+
+    def test_reusable_native_ui_contract_rejects_caller_mode_commands_and_names(self):
+        changes = (
+            (full.WORKFLOW, b'      mode: scope', b'      mode: smoke'),
+            ('.github/workflows/native-poc.yml', b'      mode: smoke', b'      mode: scope'),
+            ('.github/workflows/native-ui-checks.yml', b'go test -race', b'go test'),
+            ('.github/workflows/native-ui-checks.yml', b'python -X utf8 -B ../../.github/scripts/ci-go-test.py', b'python -B ../../.github/scripts/ci-go-test.py'),
+            ('.github/scripts/ci-native-ui-source.py', b"plan['scope'] != 'native-ui'", b'False'),
+            ('.github/scripts/native_ui_smoke.py', b"('devices', 'messages', 'files')", b"('devices',)"),
+            ('.github/scripts/ci-coverage.py', b'native-ui / companion (linux-amd64)', b'ci-lane-smoke / companion (linux-amd64)'),
+            ('.github/scripts/ci-coverage.py', b'"Validate native UI source and required scope",', b''),
+        )
+        for path, before, after in changes:
+            original = self.sources[path]
+            self.assertIn(before, original)
+            self.sources[path] = original.replace(before, after, 1)
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+            self.sources[path] = original
 
     def test_full_proof_binds_source_jobs_and_policy(self):
         proof = self.audit(local_root=ROOT)

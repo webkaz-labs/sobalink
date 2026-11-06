@@ -45,19 +45,19 @@ class ActivationScopeTests(unittest.TestCase):
         self.assertTrue(all(isinstance(node, allowed) for node in ast.walk(expression)))
         return eval(compile(expression, '<activation condition>', 'eval'), {'__builtins__': {}})
 
-    def test_only_verified_docs_prs_skip_both_suites(self):
+    def test_only_verified_docs_or_native_ui_prs_skip_both_suites(self):
         for name in JOBS:
             self.assertEqual(re.findall(r'^    needs: (.+)$', self.jobs[name], re.M), ['impact'])
-            for scope in ('docs', 'go', 'frontend', 'native-short', 'full', '', None, 'unrecognized'):
+            for scope in ('docs', 'native-ui', 'go', 'frontend', 'native-short', 'full', '', None, 'unrecognized'):
                 for result in ('success', 'failure', 'cancelled', 'skipped', ''):
                     with self.subTest(job=name, scope=scope, impact=result):
                         self.assertEqual(self.enabled(name, **{
                             'needs.impact.outputs.scope': scope, 'needs.impact.result': result,
-                        }), not (scope == 'docs' and result == 'success'))
+                        }), not (scope in ('docs', 'native-ui') and result == 'success'))
 
     def test_forced_and_exact_schedule_runs_ignore_pr_scope_optimization(self):
         for name in JOBS:
-            for scope in ('docs', 'go', 'frontend', 'native-short', 'full', '', None, 'unrecognized'):
+            for scope in ('docs', 'native-ui', 'go', 'frontend', 'native-short', 'full', '', None, 'unrecognized'):
                 for result in ('success', 'failure', 'cancelled', 'skipped', ''):
                     values = {'needs.impact.outputs.scope': scope, 'needs.impact.result': result}
                     with self.subTest(job=name, scope=scope, impact=result):

@@ -12,6 +12,9 @@ from source_provenance import read_json, verify_native_companion, verify_native,
 
 archive = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
+if sys.argv[3:] not in ([], ["--native-ui-scope"]):
+    raise ValueError("unknown smoke scope")
+native_ui_scope = sys.argv[3:] == ["--native-ui-scope"]
 with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
     root = pathlib.Path(tmp)
 
@@ -77,4 +80,9 @@ with tempfile.TemporaryDirectory(prefix="sobalink-smoke-") as tmp:
     subprocess.run([str(binary), "--help"], check=True)
     subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("offline-smoke.py")), str(binary)], check=True)
     subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("pty-smoke.py")), str(binary)], check=True)
+    if native_ui_scope:
+        if native_ui is None:
+            raise ValueError("native UI scope requires a packaged companion")
+        from native_ui_smoke import verify_scope
+        verify_scope(companion, binary, build["target"])
     print(f"Packaged executable, SBOM and {len(notices['modules'])} module notice sets verified")

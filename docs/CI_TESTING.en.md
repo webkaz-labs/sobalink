@@ -5,7 +5,10 @@
 CI policy fixtures run once in a shared Linux job, in parallel with native
 product checks. Native lanes keep the Python checks that exercise actual file,
 process, permission and cleanup behavior. This does not reduce Go product race
-tests, native discovery, browser acceptance or package validation.
+tests, native discovery, browser acceptance or package validation within a selected scope.
+The separate [native UI-only scope](CI_EFFICIENCY.en.md#native-ui-only-changes) keeps
+the complete companion race suite on four targets and Windows/macOS product
+packages, while omitting unrelated backend qualification and browser jobs.
 
 - For ordinary product source edits, the shared job discovers the complete
   Python suite. Native lanes select the reviewed OS contracts: 49 on Windows,

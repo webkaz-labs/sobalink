@@ -438,7 +438,7 @@ class ProductActivationPolicyTests(unittest.TestCase):
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', job)
         self.assertIn("github.event_name == 'workflow_dispatch' && inputs.force_full", job)
         self.assertEqual(re.findall(r'^    needs: (.+)$', job, re.M), ['impact'])
-        self.assertIn("needs.impact.result != 'success' || needs.impact.outputs.scope != 'docs'", job)
+        self.assertIn("needs.impact.result != 'success' || (needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'native-ui')", job)
         self.assertIn('if: always() && !cancelled()', job)
         self.assertNotIn('endpoint_following_acceptance', job)
         self.assertIn('timeout-minutes: 40', job)
