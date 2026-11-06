@@ -524,36 +524,46 @@ func TestParentCancellationImmediatelyHidesHints(t *testing.T) {
 
 // Reaching a terminal error invalidates admission before the asynchronous
 // reader/watcher/close owners have joined. Do not equate Err with Done.
+// Call inside synctest.Test with no held startup or observation gates.
 func driveQueryFloodToTerminal(t *testing.T, s *Session, clock *fakeClock, tr *fakeTransport) {
 	t.Helper()
+	// The initial writes precede rate-window initialization in Session.run.
+	// Drain startup before advancing time, not just before counting writes.
+	synctest.Wait()
+	if tr.count() != 2 {
+		t.Fatal("initial query and advertisement missing")
+	}
 	query := testPacket(t, testAd(1))
 	query.Data = packQuery()
 	for i := 0; i < MaxSentDatagrams && s.Err() == nil; i++ {
 		before := tr.count()
 		clock.advance(time.Second)
 		tr.incoming <- query
-		eventually(t, func() bool { return tr.count() > before || s.Err() != nil })
+		// A periodic write is not an acknowledgement of this query. Drain
+		// both the reader and consumer before opening the next time window.
+		synctest.Wait()
+		if tr.count() <= before && s.Err() == nil {
+			t.Fatal("query did not advance the send budget")
+		}
 	}
-	eventually(t, func() bool { return s.Err() != nil })
 	if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams {
 		t.Fatal("query flood did not reach exact send budget")
 	}
 }
 
 func TestSessionSendBudgetClosesQueryFlood(t *testing.T) {
-	s, clock, tr := startFake(t)
-	driveQueryFloodToTerminal(t, s, clock, tr)
-	eventually(t, func() bool {
+	synctest.Test(t, func(t *testing.T) {
+		s, clock, tr := startFake(t)
+		driveQueryFloodToTerminal(t, s, clock, tr)
 		select {
 		case <-s.Done():
-			return true
 		default:
-			return false
+			t.Fatal("query flood left owners unjoined")
+		}
+		if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams || s.Close() != nil || clock.active() != 0 {
+			t.Fatal("query flood did not join with exact send budget")
 		}
 	})
-	if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams || s.Close() != nil {
-		t.Fatal("query flood did not join with exact send budget")
-	}
 }
 func TestOwnAdvertisementsNeverBecomeCandidates(t *testing.T) {
 	s, _, tr := startFake(t)
