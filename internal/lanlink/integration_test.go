@@ -246,8 +246,10 @@ func runTrustedRelayTwoPeerIntegration(t *testing.T, policy lanpolicy.Config, ve
 			accepted <- c
 			io.Copy(c, c)
 		}()
+		dialStarted := time.Now()
 		conn, err := consumer.DialPeer(ctx, provider.PublicKey(), "tcp", 32101)
 		if err != nil {
+			t.Log(pairedTCPDialDiagnostic(ctx, len(streams), time.Since(dialStarted), err))
 			t.Fatal("dial TCP")
 		}
 		closers = append(closers, conn)

@@ -15,13 +15,20 @@ WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb
 # Admit only the reviewed read-only cache prelude before CI's first workload.
 # This binds its action pins, paths, trust scopes, keys, and event predicates.
 CI_NATIVE_CACHE_PRELUDE_SHA256 = 'bb94e3f3a0c80c0ae92b64c0e8e1dfa8b081462a8ff254bcd2b7a109e31f2eea'
+# Reviewed upstream bytes and installer; cache hits never bypass verification.
+CI_FONT_POLICY_SHA256 = {
+    '.github/actions/japanese-fonts/action.yml': '800ce0427f95dfd4c4fd93a20df0beba15edf4337975646d558a524855653508',
+    '.github/fonts/noto-cjk-jp.json': 'd699e475e98fe6ac65a64d4735a8f59413e6250f8ab902bd6325999a34b41ebc',
+    '.github/scripts/ci-fonts.py': 'eb5c56f0019098330250157818838f3f9d1b40447c75682e1ca7e34460cbe33e',
+}
+
 # Reviewed reusable execution and source-mode boundary; never grants full credit.
 NATIVE_UI_POLICY_SHA256 = {
-    '.github/workflows/native-ui-checks.yml': 'b4c87d03faf5f3dc7897cc40c419759c79959fb829f99de4b1f225fdc776c189',
+    '.github/workflows/native-ui-checks.yml': '7596e04c5751d5ada7aae0c96088db27e491722101359dc4db96eb5ec0605ae6',
     '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
     '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
 }
-SOURCES = (WORKFLOW, '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+SOURCES = (WORKFLOW, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
            '.github/scripts/native_ui_smoke.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -1090,8 +1097,30 @@ def validate_native_ui_workflow(sources):
             'native UI required job or step identity differs')
 
 
+def validate_font_workflow(sources):
+    """Require the reviewed installer and successful, non-optional font setup."""
+    for path, expected in CI_FONT_POLICY_SHA256.items():
+        require(digest(sources[path]) == expected, 'Japanese font source policy differs')
+    workflow = sources[WORKFLOW].decode('utf-8')
+    jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    marker = '      - name: Prepare verified Japanese fonts\n'
+    for name, conditional, consumer in (
+            ('documents', "        if: steps.document-selection.outputs.render_required == 'true'\n",
+             '      - name: Install isolated locked document rendering dependencies\n'),
+            ('browser', '', '      - name: Install official Chromium and fonts\n')):
+        positions = [pos for pos, key in jobs if key == name]
+        require(len(positions) == 1, 'missing Japanese font consumer job')
+        start = positions[0]
+        end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+        job = workflow[start:end]
+        expected = marker + conditional + '        timeout-minutes: 5\n        uses: ./.github/actions/japanese-fonts\n'
+        require(job.count(marker) == job.count(consumer) == 1 and job.count(expected + consumer) == 1,
+                'Japanese font setup or failure policy differs')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
+    validate_font_workflow(sources)
     validate_native_ui_workflow(sources)
     validate_regression_workflow(sources)
     validate_frontend_workflow(sources)
@@ -1133,6 +1162,8 @@ def required_jobs(sources):
             and values['BROWSER_STEPS'].count('Test and reproduce locked frontend assets') == 1,
             'native reproduction and common frontend tests are required')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
+    require(values['BROWSER_STEPS'].count('Prepare verified Japanese fonts') == 1,
+            'missing Japanese font required gate')
     require(values['BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,
             'missing fixture diagnostic required gate')
     require(values['FAST_STEPS'].count('Verify durable outbox restart across Core processes') == 1
@@ -1178,6 +1209,8 @@ def required_jobs(sources):
     result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
     result.update({
         'impact': ('Select minimum CI scope',),
+        'documents': ('Verify document selection and static content', 'Prepare verified Japanese fonts',
+                      'Require document checks and selected rendering'),
         'policy-regressions': values['REGRESSION_STEPS'],
         'browser': values['BROWSER_STEPS'],
         'manifest-smoke': ('Exercise signing and verification offline with a disposable test key',),

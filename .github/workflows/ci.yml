@@ -85,6 +85,10 @@ jobs:
           node-version: '24.19.0'
           check-latest: false
           package-manager-cache: false
+      - name: Prepare verified Japanese fonts
+        if: steps.document-selection.outputs.render_required == 'true'
+        timeout-minutes: 5
+        uses: ./.github/actions/japanese-fonts
       - name: Install isolated locked document rendering dependencies
         env:
           DOCS_RENDER_ROOT: ${{ runner.temp }}/docs-render
@@ -93,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y librsvg2-2 libcairo2 python3-pil fonts-noto-core fonts-noto-cjk
+          sudo apt-get install --no-install-recommends -y librsvg2-2 libcairo2 python3-pil
           /usr/bin/python3 -I -c 'from PIL import Image'
           npm install --global npm@11.9.0 --registry=https://registry.npmjs.org --no-audit --no-fund
           test "$(node --version)" = v24.19.0
@@ -1122,11 +1126,13 @@ jobs:
           npm install --global npm@11.9.0 --no-audit --no-fund
           python .github/scripts/check-frontend.py
           git diff --exit-code -- web/dist
+      - name: Prepare verified Japanese fonts
+        timeout-minutes: 5
+        uses: ./.github/actions/japanese-fonts
       - name: Install official Chromium and fonts
         run: |
           set -euo pipefail
           node web/node_modules/@playwright/test/cli.js install --with-deps chromium
-          sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
       - name: Verify privacy-safe fixture diagnostics
         timeout-minutes: 10
         run: |

@@ -183,6 +183,31 @@ The earlier real-time-only optimization was measured before this scope policy: f
 
 The warm run's longest job was Windows at 11m46s: ordinary/native test stages took 7m31s, frontend checks 1m41s, and cache restoration/saving 1m09s. This is why prose changes now avoid those application jobs instead of relying on more caching.
 
+### Japanese rendering fonts
+
+Linux diagram, browser and companion checks share the `japanese-fonts` action.
+It downloads only **Noto Sans CJK JP 2.004 Regular and Bold** and the SIL Open Font
+License from the [official upstream commit](https://github.com/notofonts/noto-cjk/tree/523d033d6cb47f4a80c58a35753646f5c3608a78).
+The manifest pins each file's SHA-256 and size. These two JP OTF faces retain the
+family and glyph metrics of the same-version JP faces in the much larger Ubuntu
+multi-language CJK collection. No font is bundled into product archives.
+
+The 33,504,657-byte cold download avoids the Ubuntu mirror's full CJK and core
+font packages. An exact manifest-key cache stores only these upstream files;
+every hit is rehashed before installation, followed by fontconfig family, style,
+version and exact selected-file checks. Missing or corrupt files are fetched
+with bounded HTTPS retries; a failed download or mismatched font fails the step.
+No previous image, test result or acceptance receipt is reused. Existing diagram,
+Playwright typography/screenshot and native checks remain required.
+
+Hosted runner inventories do not promise this CJK family. Trusting any preinstalled
+font would make rendering depend on image updates. Switching apt mirrors would
+still download the full collection on a cold runner; caching that collection
+would retain unnecessary languages. The pinned two-face source keeps cold bytes
+smaller and warm runs independent of the apt font mirror. Other system libraries
+and Chromium's official dependencies still use their existing installers. Compare
+actual cold and warm runner timings before claiming an end-to-end speedup.
+
 ## Native fixture and release coverage
 
 Full native validation retains race detection, vet, Windows retirement barriers, repeated IPC cleanup, synthetic key checks, engine negative controls, native discovery, direct/relay recovery and the original natural lifecycle/lease waits. Production timers, payloads, assertions and test timeouts are not shortened by scope selection.
