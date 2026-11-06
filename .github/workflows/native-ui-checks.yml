@@ -81,7 +81,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum poc/native/go.mod poc/native/go.sum
       - name: Run complete companion race suite with protected IPC evidence
         working-directory: poc/native
-        run: python -B ../../.github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/poc/native:TestNativeProtectedIPCCoreExchange -- go test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
+        run: python -X utf8 -B ../../.github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/poc/native:TestNativeProtectedIPCCoreExchange -- go test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
       - name: Vet MyGo lifetimes and check companion formatting
         working-directory: poc/native
         run: |

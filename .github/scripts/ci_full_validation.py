@@ -17,7 +17,7 @@ WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb
 CI_NATIVE_CACHE_PRELUDE_SHA256 = 'bb94e3f3a0c80c0ae92b64c0e8e1dfa8b081462a8ff254bcd2b7a109e31f2eea'
 # Reviewed reusable execution and source-mode boundary; never grants full credit.
 NATIVE_UI_POLICY_SHA256 = {
-    '.github/workflows/native-ui-checks.yml': 'f8ad067b651b95188abd2ecbaedfa71760f1c74cb5324e2fc4b187c94ac5b809',
+    '.github/workflows/native-ui-checks.yml': 'b4c87d03faf5f3dc7897cc40c419759c79959fb829f99de4b1f225fdc776c189',
     '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
     '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
 }

@@ -1,6 +1,10 @@
 """Offline native UI selection, merge coverage and release-boundary contracts."""
 import copy
+import os
 import pathlib
+import subprocess
+import sys
+import textwrap
 import unittest
 
 from test_ci_impact import impact, classify_paths, blob
@@ -101,6 +105,55 @@ class NativeUIScopeTests(unittest.TestCase):
         self.assertNotIn('npm --prefix web run', lane)
         self.assertNotIn('continue-on-error:', lane)
         self.assertNotIn('actions/upload-artifact', lane)
+
+    def test_race_wrapper_uses_utf8_and_still_requires_valid_ipc_pass(self):
+        lane = (ROOT / '.github/workflows/native-ui-checks.yml').read_text(encoding='utf-8')
+        command = next(line.strip().removeprefix('run: ') for line in lane.splitlines()
+                       if 'run: python' in line and 'ci-go-test.py' in line)
+        flags = command.split()[1:4]
+        self.assertEqual(flags, ['-X', 'utf8', '-B'])
+        self.assertIn('--expect github.com/webkaz-labs/sobalink/poc/native:TestNativeProtectedIPCCoreExchange -- go test', command)
+        # Use the caller's interpreter flags, not this test runner's locale.
+        # These subtest names are emitted by exchange_test.go on every OS.
+        code = textwrap.dedent('''\
+            import io, json, sys
+            from unittest import mock
+            from test_ci_go_test import ci_go_test
+            assert sys.flags.utf8_mode == 1 and sys.stdout.encoding == 'utf-8'
+            package = 'github.com/webkaz-labs/sobalink/poc/native'
+            test = 'TestNativeProtectedIPCCoreExchange'
+            output = '=== RUN   TestExchangeMessageByteLimit/界\\n=== RUN   TestExchangeMessageByteLimit/😀\\n'
+            events = [{'Action': 'start', 'Package': package},
+                      {'Action': 'run', 'Package': package, 'Test': test},
+                      {'Action': 'output', 'Package': package, 'Output': output},
+                      {'Action': 'pass', 'Package': package, 'Test': test},
+                      {'Action': 'pass', 'Package': package}]
+            if sys.argv[1] == 'skip': events[-2]['Action'] = 'skip'
+            if sys.argv[1] == 'missing': del events[-2]
+            raw = b''.join((json.dumps(e, ensure_ascii=False) + '\\n').encode('utf-8') for e in events)
+            if sys.argv[1] == 'malformed': raw += b'{bad JSON}\\n'
+            process = mock.Mock(stdout=io.BytesIO(raw))
+            process.wait.return_value = 0
+            with mock.patch.object(ci_go_test.subprocess, 'Popen', return_value=process):
+                status = ci_go_test.run_tests([(package, test)], ['go', 'test', '-race', '-count=1', './...'])
+            raise SystemExit(status)
+        ''')
+        env = dict(os.environ, PYTHONUTF8='0', PYTHONCOERCECLOCALE='0', LC_ALL='C',
+                   PYTHONPATH=str(ROOT / '.github/scripts'))
+        env.pop('PYTHONIOENCODING', None)
+        for mode in ('pass', 'malformed', 'skip', 'missing'):
+            with self.subTest(mode=mode):
+                result = subprocess.run([sys.executable, *flags, '-c', code, mode],
+                                        env=env, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, 0 if mode == 'pass' else 1, result.stderr)
+                self.assertEqual(result.stdout.decode('utf-8'),
+                                 '=== RUN   TestExchangeMessageByteLimit/界\n=== RUN   TestExchangeMessageByteLimit/😀\n')
+                if mode == 'malformed':
+                    self.assertIn(b'Go test JSON output was malformed.', result.stderr)
+                elif mode in ('skip', 'missing'):
+                    self.assertIn(b'Required Go tests did not all pass', result.stderr)
+                else:
+                    self.assertEqual(result.stderr, b'')
 
     def test_head_only_duplicate_requires_verified_merge_scope(self):
         workflow = (ROOT / '.github/workflows/native-poc.yml').read_text(encoding='utf-8')

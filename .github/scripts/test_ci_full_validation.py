@@ -555,6 +555,7 @@ class FullProofTests(unittest.TestCase):
             (full.WORKFLOW, b'      mode: scope', b'      mode: smoke'),
             ('.github/workflows/native-poc.yml', b'      mode: smoke', b'      mode: scope'),
             ('.github/workflows/native-ui-checks.yml', b'go test -race', b'go test'),
+            ('.github/workflows/native-ui-checks.yml', b'python -X utf8 -B ../../.github/scripts/ci-go-test.py', b'python -B ../../.github/scripts/ci-go-test.py'),
             ('.github/scripts/ci-native-ui-source.py', b"plan['scope'] != 'native-ui'", b'False'),
             ('.github/scripts/native_ui_smoke.py', b"('devices', 'messages', 'files')", b"('devices',)"),
             ('.github/scripts/ci-coverage.py', b'native-ui / companion (linux-amd64)', b'ci-lane-smoke / companion (linux-amd64)'),
