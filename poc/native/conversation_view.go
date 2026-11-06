@@ -5,7 +5,7 @@ import "github.com/egoist/mygo/ui"
 func (a *app) exchangeView(c *ui.Context) {
 	v := a.conversationPresentation()
 	theme, style := c.Theme(), nativeStyles(c)
-	ui.Column(c).Fill().Lang(a.t("en", "ja")).Font(uiFont(a.ja)).Background(theme.Background).TextColor(theme.Text).Padding(style.screenPadding).Gap(style.paneGap).Children(func() {
+	nativeScreen(c, style.paneGap, func() {
 		a.conversationHeader(c, v)
 		ui.Text(c, v.mode).FontSize(style.caption).Bold()
 		if !v.enabled {
@@ -17,11 +17,11 @@ func (a *app) exchangeView(c *ui.Context) {
 	})
 }
 func (a *app) conversationHeader(c *ui.Context, v conversationPresentation) {
-	ui.Row(c).FillWidth().Gap(nativeStyles(c).controlGap).Children(func() {
+	nativeHeader(c, v.name, c.Theme().FontSize, func() {
 		if ui.Button(c, a.t("Back", "戻る")).Clicked() {
 			a.closeConversation()
 		}
-		ui.Text(c, v.name).Bold().Grow(1)
+	}, func() {
 		if !a.demo && ui.Button(c, a.t("Refresh", "更新")).Disabled(a.busy).Clicked() {
 			a.refresh(c.Services().Invalidate)
 		}

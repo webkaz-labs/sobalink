@@ -2,7 +2,7 @@
 
 [日本語](DEVELOPMENT_PRINCIPLES.ja.md) · [User guide](GENERIC.en.md) · [Architecture](ARCHITECTURE.md)
 
-**Make common goals take few steps, with detail available when needed.** Apply these principles to implementation, review and documentation. They govern both the CLI and local Web UI.
+**Make common goals take few steps, with detail available when needed.** Apply these principles to implementation, review and documentation. They govern the CLI, local Web UI and optional native companion.
 
 ## First-class Japanese and English
 
@@ -18,6 +18,7 @@
 - Show common actions first, then advanced configuration and diagnostics. Avoid an overwhelming initial help screen
 - Repeated actions must not unexpectedly recreate state, request redundant approval or expand scope. Make consequential target/lifetime changes explicit
 - Recover from typing errors in place where possible; support edit, back and cancellation before applying changes
+- Share visual structure where responsibilities match, while keeping screen composition separate from state and operations. The [native UI policy](../poc/native/UI_IMPLEMENTATION.en.md) records the applied theme, frame/header boundaries and future menu policy
 
 ## Clear state and next actions
 
