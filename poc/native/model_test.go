@@ -154,7 +154,8 @@ func TestCompactPeerBoundsAndDetails(t *testing.T) {
 		a.selected = "demo-alpha"
 		tt.Frame()
 		tt.SetScale(2)
-		for _, name := range []string{"Demo laptop", "⌄", "サービスの許可は別です。アプリの動作は未確認です。"} {
+		// The shared SVG chevron is decorative, not a font glyph or label.
+		for _, name := range []string{"Demo laptop", "サービスの許可は別です。アプリの動作は未確認です。"} {
 			r, ok := tt.Find(name)
 			if !ok || r.X < 0 || r.X+r.W > float32(width) || r.Y+r.H > 500 {
 				t.Fatalf("details width %d: %s out of bounds: %+v (%v)", width, name, r, ok)

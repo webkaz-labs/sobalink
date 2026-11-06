@@ -1,4 +1,5 @@
 @import "tailwindcss" source("./");
+@import "./brand-tokens.css";
 @source not "./**/*.test.*";
 @source not "./test-setup.ts";
 
@@ -6,34 +7,15 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Noto Sans CJK JP", "Noto Sans JP", Meiryo, sans-serif;
   font-size: 16px;
   line-height: 1.6;
-  color: #272c38;
-  background: #f6f6f9;
+  color: var(--text);
+  background: var(--background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --surface: #fff;
-  --surface-subtle: #f8f8fb;
-  --surface-hover: #f0eff6;
-  --text: #272c38;
-  --muted: #596172;
-  --control-border: #7f8799;
-  --on-primary: #fff;
-  --disabled-text: #596172;
-  --border: #e6e7ed;
-  --primary: #6550d8;
-  --primary-hover: #5440c3;
-  --primary-soft: #f0edff;
-  --primary-text: #5844bf;
-  --green: #217b5c;
-  --green-soft: #e9f6ef;
-  --amber: #8b6015;
-  --amber-soft: #fbf2db;
-  --red: #b43f4f;
-  --red-soft: #fff0f2;
   --shadow: 0 16px 64px #24203914;
 }
-html[data-theme="dark"] { color-scheme: dark; --surface: #1d202a; --surface-subtle: #191c24; --surface-hover: #292d39; --text: #e8e9f0; --muted: #bdc5d8; --control-border: #818ba0; --on-primary: #191c24; --disabled-text: #bdc5d8; --border: #343846; --primary: #a18bff; --primary-hover: #b29fff; --primary-soft: #30294b; --primary-text: #c0aeff; --green: #8bd6b5; --green-soft: #223e34; --amber: #e3c077; --amber-soft: #443921; --red: #ffb0bd; --red-soft: #442d35; --shadow: 0 16px 64px #0005; background: #14171f; color: var(--text); }
-@media (prefers-color-scheme: dark) { html[data-theme="system"] { color-scheme: dark; --surface: #1d202a; --surface-subtle: #191c24; --surface-hover: #292d39; --text: #e8e9f0; --muted: #bdc5d8; --control-border: #818ba0; --on-primary: #191c24; --disabled-text: #bdc5d8; --border: #343846; --primary: #a18bff; --primary-hover: #b29fff; --primary-soft: #30294b; --primary-text: #c0aeff; --green: #8bd6b5; --green-soft: #223e34; --amber: #e3c077; --amber-soft: #443921; --red: #ffb0bd; --red-soft: #442d35; --shadow: 0 16px 64px #0005; background: #14171f; color: var(--text); } }
+html[data-theme="dark"] { color-scheme: dark; --shadow: 0 16px 64px #0005; }
+@media (prefers-color-scheme: dark) { html[data-theme="system"] { color-scheme: dark; --shadow: 0 16px 64px #0005; } }
 * { box-sizing: border-box; }
 body { margin: 0; color: var(--text); }
 small { font-size: 14px; font-weight: 400; }
@@ -82,10 +64,8 @@ progress::-moz-progress-bar { background: var(--primary); border-radius: 9px; }
 .app-header { min-height: 68px; display: flex; align-items: center; gap: 20px; padding: 10px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 24px; letter-spacing: -1.2px; font-weight: 750; color: var(--text); }
 .brand-dot { color: var(--primary); }
-.brand-mark { display: flex; align-items: center; gap: 3px; height: 28px; transform: rotate(-23deg); }
-.brand-mark i { display: block; width: 7px; height: 25px; border-radius: 7px; background: var(--primary); }
-.brand-mark i:nth-child(2) { height: 16px; }
-.brand-mark i:nth-child(3) { height: 22px; opacity: .6; }
+.brand-mark { display: block; flex: none; width: 27px; height: 28px; position: relative; }
+.brand-mark::before { content: ""; position: absolute; width: 36px; height: 36px; left: -4.5px; top: -4px; background: var(--primary); mask: url("../../internal/uibrand/mark.svg") center / contain no-repeat; }
 .header-tagline { font-size: 13px; color: var(--muted); flex: 0 1 30ch; min-width: 0; line-height: 1.5; }
 .header-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
 .self-status { display: flex; gap: 7px; align-items: center; margin-right: 15px; max-width: 210px; font-size: 13px; color: var(--muted); }
@@ -542,7 +522,7 @@ html:has(dialog[open]) { overflow: hidden; }
 @media (max-width: 800px) {
   .app-header { min-height: 60px; padding: 6px 12px; gap: 10px; }
   .brand { font-size: 22px; gap: 8px; }
-  .brand-mark { transform: scale(.85) rotate(-23deg); }
+  .brand-mark { transform: scale(.85); }
   .header-actions { gap: 2px; }
   .self-status { max-width: 88px; margin-right: 2px; font-size: 13px; }
   .icon-button, .locale-toggle { width: 44px; height: 44px; min-height: 44px; }
@@ -893,3 +873,7 @@ textarea.code-value, .client-copy textarea.code-value, .composer textarea { font
 .setup-step { flex: 0 0 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; font-weight: 700; }
 .setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 520px) { .setup-guide { padding: 14px; } .setup-guide .button { white-space: normal; } }
+
+@media (forced-colors: active) {
+  .brand-mark::before { background: CanvasText; forced-color-adjust: none; }
+}

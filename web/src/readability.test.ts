@@ -4,14 +4,15 @@ import { describe, expect, it } from 'vitest'
 const fileSystemModule = 'node:fs'
 const { readFileSync } = await import(fileSystemModule) as { readFileSync(path: string, encoding: 'utf8'): string }
 const styles = readFileSync('src/styles.css', 'utf8')
+const brandStyles = readFileSync('src/brand-tokens.css', 'utf8')
 
 // Test the shipped theme values, rather than a second palette in test fixtures.
 // Browser acceptance covers the cascade and the surfaces rendered by components.
 function tokens(block: string) {
   return Object.fromEntries([...block.matchAll(/(--[\w-]+)\s*:\s*(#[\da-f]{3,8})\s*;/gi)].map(match => [match[1], match[2]]))
 }
-const light = tokens(styles.match(/:root\s*\{([^}]+)\}/)![1])
-const darkBlocks = [...styles.matchAll(/html\[data-theme="(?:dark|system)"\]\s*\{([^}]+)\}/g)].map(match => tokens(match[1]))
+const light = tokens(brandStyles.match(/:root\s*\{([^}]+)\}/)![1])
+const darkBlocks = [...brandStyles.matchAll(/html\[data-theme="(?:dark|system)"\]\s*\{([^}]+)\}/g)].map(match => tokens(match[1]))
 const themes = { light, dark: { ...light, ...darkBlocks[0] }, systemDark: { ...light, ...darkBlocks[1] } }
 
 function luminance(hex: string) {

@@ -1,0 +1,69 @@
+/* Generated from internal/uibrand/palette.json; run npm run brand:generate. */
+:root {
+  --background: #f6f6f9;
+  --surface: #ffffff;
+  --surface-subtle: #f8f8fb;
+  --surface-hover: #f0eff6;
+  --text: #272c38;
+  --muted: #596172;
+  --control-border: #7f8799;
+  --on-primary: #ffffff;
+  --disabled-text: #596172;
+  --border: #e6e7ed;
+  --primary: #6550d8;
+  --primary-hover: #5440c3;
+  --primary-soft: #f0edff;
+  --primary-text: #5844bf;
+  --green: #217b5c;
+  --green-soft: #e9f6ef;
+  --amber: #8b6015;
+  --amber-soft: #fbf2db;
+  --red: #b43f4f;
+  --red-soft: #fff0f2;
+}
+html[data-theme="dark"] {
+  --background: #14171f;
+  --surface: #1d202a;
+  --surface-subtle: #191c24;
+  --surface-hover: #292d39;
+  --text: #e8e9f0;
+  --muted: #bdc5d8;
+  --control-border: #818ba0;
+  --on-primary: #191c24;
+  --disabled-text: #bdc5d8;
+  --border: #343846;
+  --primary: #a18bff;
+  --primary-hover: #b29fff;
+  --primary-soft: #30294b;
+  --primary-text: #c0aeff;
+  --green: #8bd6b5;
+  --green-soft: #223e34;
+  --amber: #e3c077;
+  --amber-soft: #443921;
+  --red: #ffb0bd;
+  --red-soft: #442d35;
+}
+@media (prefers-color-scheme: dark) {
+html[data-theme="system"] {
+  --background: #14171f;
+  --surface: #1d202a;
+  --surface-subtle: #191c24;
+  --surface-hover: #292d39;
+  --text: #e8e9f0;
+  --muted: #bdc5d8;
+  --control-border: #818ba0;
+  --on-primary: #191c24;
+  --disabled-text: #bdc5d8;
+  --border: #343846;
+  --primary: #a18bff;
+  --primary-hover: #b29fff;
+  --primary-soft: #30294b;
+  --primary-text: #c0aeff;
+  --green: #8bd6b5;
+  --green-soft: #223e34;
+  --amber: #e3c077;
+  --amber-soft: #443921;
+  --red: #ffb0bd;
+  --red-soft: #442d35;
+}
+}
