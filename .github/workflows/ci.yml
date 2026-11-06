@@ -526,9 +526,16 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite managed-restart -- python .github/scripts/ci-managed-activation.py restart
+      # One background gate overlaps the sequential process-recovery checks.
+      # Each fixture owns its temporary profiles and dynamic loopback ports.
+      # Join before any nearby, long-running lease, package or cache work.
       - name: Verify direct LAN WireGuard and Core native applications
+        id: directlan-applications
+        background: true
         if: matrix.suite == 'integration'
         timeout-minutes: 9
+        env:
+          SOBALINK_CI_METRICS: ${{ runner.temp }}/sobalink-ci-directlan-metrics.jsonl
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite directlan-repeat-race -- go test -race -count=2 -v -timeout=3m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
@@ -558,6 +565,8 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite durable-text-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'
+      - name: Wait for direct LAN application checks
+        wait: directlan-applications
       - name: Verify manual nearby setup across native Core peers
         if: matrix.suite == 'integration'
         timeout-minutes: 6
@@ -964,7 +973,7 @@ jobs:
           retention-days: 14
       - name: Summarize measured native suites
         if: always()
-        run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/ci-suite-metrics.json"
+        run: python .github/scripts/ci-metrics.py summary --include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" --output "$RUNNER_TEMP/ci-suite-metrics.json"
       - name: Preserve native suite timings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
