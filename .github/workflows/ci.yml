@@ -147,7 +147,7 @@ jobs:
   native:
     # Unknown or failed selection defaults to the full native matrix.
     needs: impact
-    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go' && needs.impact.outputs.scope != 'native-ui'
     strategy:
       fail-fast: false
       matrix:
@@ -880,6 +880,15 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  native-ui:
+    # The reusable jobs retain the verified merge scope and exact source.
+    name: native-ui
+    needs: impact
+    if: needs.impact.outputs.scope == 'native-ui' && github.event.repository.private == false
+    uses: ./.github/workflows/native-ui-checks.yml
+    with:
+      mode: scope
+
   manifest-smoke:
     needs: native
     runs-on: ubuntu-24.04
@@ -976,7 +985,8 @@ jobs:
     # Separate exact two-case real Core/CLI/panel composition; the seven-case
     # synthetic-owner job below remains unchanged. Hard runner termination is
     # failed/unjoined containment, never successful native cleanup evidence.
-    if: github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
+    needs: impact
+    if: always() && !cancelled() && (needs.impact.result != 'success' || needs.impact.outputs.scope != 'native-ui') && github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -1032,7 +1042,8 @@ jobs:
     # Independent draft-PR validation; no default-branch registration required.
     # The existing workflow_dispatch/force_full route is an additional entry.
     # Endpoint-following acceptance is deliberately excluded from this job.
-    if: github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
+    needs: impact
+    if: always() && !cancelled() && (needs.impact.result != 'success' || needs.impact.outputs.scope != 'native-ui') && github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     permissions:
@@ -1087,7 +1098,7 @@ jobs:
   browser:
     # Real Go management HTTP and embedded assets; networking peers are fixtures.
     needs: impact
-    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'go'
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'go' && needs.impact.outputs.scope != 'native-ui'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -1350,7 +1361,7 @@ jobs:
 
   ci-required:
     # Require this aggregate in branch protection; a skipped job alone is green.
-    needs: [impact, documents, policy-regressions, native, browser, go-unit, manifest-smoke]
+    needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10

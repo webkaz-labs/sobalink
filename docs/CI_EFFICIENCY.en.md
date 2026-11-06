@@ -37,6 +37,7 @@ Text equivalent: classify the complete change; run only a recognized narrower su
 | Accompanying generated `web/dist` changes | Included in frontend scope only with a frontend source change; regeneration must match |
 | Reviewed Go-only changes in `internal/servicepresets` or `internal/boundedlog`, optionally with ordinary prose | Changed packages and transitive reverse dependencies, including test imports, tested with race detection and vet on Linux |
 | Reviewed CLI presentation changes on PRs or main, optionally with ordinary prose | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates and native resource inspection, management and fixed-group catalog are not run |
+| Reviewed existing native companion UI files, optionally with ordinary prose | Documents and shared policy checks, all four companion race suites with protected IPC pass evidence, MyGo vet/format/compile and Windows/macOS product package build/smoke; backend qualification and browser/manifest checks are not run |
 | Transport, authentication, Core, configuration, timers, shared helpers, dependencies, lockfiles, build configuration, CI policy/workflows, or any unknown path | Full native Linux amd64/arm64, macOS arm64, Windows amd64, browser and package/manifest validation |
 | Combinations of the reviewed CLI presentation, frontend and scoped-Go domains | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates and native resource inspection, management and fixed-group catalog are not run |
 | Platform-specific Go, cgo, unreviewed imports, policy/provenance Markdown, unsafe modes/types or unverifiable input | Full |
@@ -56,11 +57,77 @@ The `native-short` allowlist contains exactly `cmd/soba/help.go`, `cmd/soba/erro
 
 This scope omits natural direct-LAN rekey/idle lifecycle, guarded relay real-time lease continuity, relay-only real-time lease/idle continuity, and the separate full-only native resource inspection, management and fixed-group catalog gates. Four-target race/vet, repeated IPC, Windows directory barriers, context TCP/TLS control, managed activation/restart, functional direct/relay recovery, synthetic expiry/rekey, browser, packages and manifest validation remain. The independent seven-case Web and two-case product jobs retain their PR/manual entry conditions and failure behavior; scheduled full runs require both. Test repetition counts and production timers are unchanged.
 
-Authenticated main pushes can use the same closed native-short selection as PRs. Created/deleted/forced main pushes and unsupported events still require full validation. Keep the exact-source full validation gate below in place before deploying this main-shortening policy; a short green workflow cannot establish release eligibility. Related transport/lifecycle changes remain full; no new file allowlist, per-family long-test routing or test-count reduction is introduced. Daily full runs are described below.
+Authenticated main pushes can use the same closed native-short selection as PRs. Created/deleted/forced main pushes and unsupported events still require full validation. Keep the exact-source full validation gate below in place before deploying this main-shortening policy; a short green workflow cannot establish release eligibility. Related transport/lifecycle changes remain full; the native-short allowlist, per-family long-test routing and test repetition counts are unchanged. Daily full runs are described below.
 
 The Go allowlist is deliberately small. It is not permission to run any Go change on one operating system. OS-specific files, build constraints and dependencies outside the reviewed package boundary require the full matrix. The scoped runner uses current Go import graphs, including integration-tag variants for reverse-dependency selection, but executes ordinary Linux tests rather than the long native integration suites. If graph discovery is uncertain, it runs all ordinary Go packages. Failed commands and missing actual test passes remain failures.
 
 Markdown used as development policy or upstream source provenance is not ordinary prose. The required root documents must remain present. Guides are included in release archives, but that alone does not require rebuilding the application for every prose edit. Code and release validations continue checking the package contents. The separate resource and relay measurement workflows are triggered by their implementation inputs, not wording changes in their reports.
+
+### Native UI-only changes
+
+`native-ui` accepts modifications of the exact files in `NATIVE_UI_IMPORTS` in
+`.github/scripts/ci-impact.py`: ten existing view/theme/presentation files and
+three individually reviewed UI test files. Both old and new blobs must remain
+regular text with reviewed imports and no build/embed/link directives. Added,
+deleted, renamed or unknown files stay full. Operational files (`app.go`,
+`model.go`, `exchange.go`, pane operations, `tray.go`, `filepane_dialog.go`),
+module manifests, packaging and UI policy documents stay full. A native UI edit
+combined with Web, scoped-Go or CLI changes also stays full initially.
+
+These files share `package main` and can invoke operations without a new import.
+This is a reviewed coverage boundary, not proof of pure presentation. The
+required `native-ui` lane checks the exact PR merge/main tree on Linux x64/ARM64,
+macOS ARM64 and Windows x64. Each target runs the complete companion race suite
+with `native_integration`; `ci-go-test.py` must observe an actual successful
+`TestNativeProtectedIPCCoreExchange`. Go 1.27.3 and the module-pinned MyGo tool
+perform vet, formatting and compilation checks. Windows/macOS additionally use
+the normal Go 1.27.1 product packager, its nested native module toolchain and the
+archive smoke verifier, including companion identity and offline execution.
+Pinned Node/npm and locked `npm ci` supply package/license inventory only; Web
+tests and builds are not repeated. The extracted archive binaries also retain
+the old device/message/file pane renders and both binaries’ unsigned Windows or
+ad-hoc macOS signature-state checks. The checks do not sign binaries.
+Documents and the common policy job must also succeed.
+
+Only a separately proven native UI merge scope suppresses duplicate HEAD-only
+`native-poc` work. All other scopes, manual runs and uncertain classification
+retain that workflow's existing checks. UI-only PRs build/smoke product archives
+locally instead of producing the separate device-test kit. Manual `native-poc`
+still creates and tests its runner-local kit; neither route uploads downloadable
+kits or archives. This output change is separate from the test scope reduction.
+Native UI-only PRs also omit the
+independent Web/product activation jobs; other existing entry conditions remain.
+Scheduled and manual full CI, dependency/policy changes and release qualification
+retain complete coverage. No previous run, cached test result or HEAD-only job
+is used as merge evidence.
+
+A UI-only receipt sets `full_native=false`, records the four `native_ui` targets
+and two `native_ui_packages` targets, binds the reusable workflow hash in
+`native_ui_workflow_sha256`, and leaves backend `targets`,
+`long_checks`, browser and manifest as `not_run`. These UI-only fields are
+absent from other scope receipts. Timings describe this attempt, not a claimed
+speedup or a sum of parallel job times. This does not establish real enrollment,
+installed UI interaction, OS-login/suspend or authenticated-signing acceptance.
+
+### Manually exercise the native UI lane
+
+Main CI and the opt-in manual check call the same
+`.github/workflows/native-ui-checks.yml`; its pinned commands are not copied.
+In the existing **Native UI PoC validation** workflow, choose the source branch
+and set **ci_lane_smoke** to true. The default false preserves the existing
+standalone kit validation. Selecting smoke instead runs the reusable four-target
+checks without also running those standalone jobs. No unrelated full PR gains
+an extra four-job matrix.
+
+The manual route verifies its caller, selected commit/tree and clean checkout,
+then runs the actual companion tests and product archive checks. It does not
+classify the change as UI-only, download a CI impact plan, emit a coverage
+receipt or create `ci-required`. Its `ci-lane-smoke / companion (<target>)` jobs
+cannot satisfy the main aggregate, which requires the separately verified
+`native-ui / companion (<target>)` jobs from the same main CI attempt. A successful
+manual smoke is command-execution evidence only, never branch-protection,
+UI-scope or full-release qualification. Actual runner results must be checked
+before claiming this new route has passed.
 
 ## Complete diffs and an honest required check
 
@@ -88,7 +155,7 @@ GitHub's effective current-attempt jobs can include carried-forward successful w
 
 The proof binds exact commit/tree, workflow and policy source hashes, current effective attempt, all four native runner targets and every required named step, including real-time gates, native resource inspection, management and fixed-group catalog gates on every target, browser, manifest, ci-required, Web7 and product2. The exact Go event helper source is also hash-bound. The proof statically requires the literal three-member full-only tuple and each reviewed serial workflow invocation; missing, duplicated, skipped or non-successful native resource steps cannot qualify. Both the entry gate and publication-time check independently query read-only GitHub APIs. A saved JSON receipt cannot authorize a pass by itself. Publication can use a newer successful full attempt for the same source, but cannot ignore a newer failure. Proof artifacts are retained for 90 days; they are audit evidence, not additional signed release assets. Distribution signing and installed-package checks remain independent and unchanged.
 
-Docs/frontend/scoped-Go/native-short successes all fail full-release eligibility until a complete explicit full run is established. Scheduled runs add coverage but do not replace this manual release proof.
+Docs/frontend/scoped-Go/native-short/native-ui successes all fail full-release eligibility until a complete explicit full run is established. Scheduled runs add coverage but do not replace this manual release proof.
 
 ## Daily full validation
 

@@ -4,7 +4,9 @@
 
 CIの共通fixture検査はLinuxの独立jobで1回実行し、native製品検査と並列に進めます。
 各native laneには実際のファイル、子process、権限、終了処理を確認するPython検査を残します。
-Go製品のrace検査、native discovery、ブラウザー受入検査、パッケージ検証は削減しません。
+選択されたscope内のGo製品race検査、native discovery、ブラウザー受入検査、パッケージ検証は削減しません。
+別の[native UI限定scope](CI_EFFICIENCY.ja.md#ネイティブuiのみの変更)は4対象のcompanion全race suiteと
+Windows/macOS製品パッケージを維持し、関連しないバックエンド全件検証とブラウザーjobを省略します。
 
 - 通常の製品ソース変更では、共通jobがPython全suiteを検出・実行します。
   nativeは確認済みのOS契約を選びます。内部で再実行するfixtureを除き、

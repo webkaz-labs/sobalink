@@ -38,6 +38,29 @@ NATIVE_SHORT_IMPORTS = {
                                                "github.com/webkaz-labs/sobalink/internal/core")),
 }
 
+
+# Reviewed companion composition and its existing UI tests only. This is not a
+# pure-presentation sandbox: package main can call operations without imports.
+# Every eligible edit still requires the complete four-platform companion race
+# suite, protected Core IPC, MyGo vet/compile and Windows/macOS product packages.
+# New files, operational code, policy, build inputs and mixed runtime domains
+# stay full. Keep each import budget explicit; never glob *_view.go.
+NATIVE_UI_IMPORTS = {
+    "poc/native/frame_view.go": frozenset(("github.com/egoist/mygo/ui",)),
+    "poc/native/view.go": frozenset(("github.com/egoist/mygo/ui",)),
+    "poc/native/conversation_view.go": frozenset(("github.com/egoist/mygo/ui",)),
+    "poc/native/messagepane_view.go": frozenset(("context", "github.com/egoist/mygo/ui")),
+    "poc/native/filepane_view.go": frozenset(("context", "fmt", "github.com/egoist/mygo/ui")),
+    "poc/native/tray_view.go": frozenset(("github.com/egoist/mygo/ui",)),
+    "poc/native/theme.go": frozenset(("github.com/egoist/mygo/ui",)),
+    "poc/native/presentation.go": frozenset(("fmt", "strings")),
+    "poc/native/messagepane_presentation.go": frozenset(("fmt", "github.com/webkaz-labs/sobalink/internal/messageframe")),
+    "poc/native/filepane_presentation.go": frozenset(("path", "strings")),
+    "poc/native/frame_view_test.go": frozenset(("errors", "fmt", "image/png", "os", "path/filepath", "testing", "github.com/egoist/mygo/ui")),
+    "poc/native/theme_view_test.go": frozenset(("fmt", "image/png", "os", "path/filepath", "testing", "github.com/egoist/mygo/ui")),
+    "poc/native/presentation_test.go": frozenset(("context", "fmt", "testing", "github.com/egoist/mygo/ui")),
+}
+
 GO_PLATFORMS = frozenset("""
     aix android darwin dragonfly freebsd hurd illumos ios js linux nacl netbsd
     openbsd plan9 solaris wasip1 windows zos 386 amd64 amd64p32 arm arm64 arm64be
@@ -242,6 +265,8 @@ def path_kind(path):
             and parts[:3] == ["web", "dist", "assets"]
             and path.endswith((".js", ".css"))):
         return "dist"
+    if path in NATIVE_UI_IMPORTS:
+        return "native-ui"
     if path in NATIVE_SHORT_IMPORTS:
         return "native-short"
     package, _, filename = path.rpartition("/")
@@ -261,6 +286,14 @@ def classify_delta(changes, before, after):
     kinds = {path_kind(path) for path in paths}
     if "full" in kinds:
         return "full", "unproven_or_shared_runtime_path", []
+    if "native-ui" in kinds:
+        # Only modifications of existing reviewed files qualify. A UI + Web,
+        # scoped-Go or CLI union conservatively retains all full coverage.
+        if kinds - {"native-ui", "docs"} or any(
+                change["status"] != "M" and any(path in NATIVE_UI_IMPORTS for path in change["paths"])
+                for change in changes):
+            return "full", "unproven_native_ui_union_or_path", []
+        return "native-ui", "reviewed_native_ui", []
     if "dist" in kinds and "frontend" not in kinds:
         return "full", "generated_assets_without_source_change", []
     # Join only already-reviewed domains. Keep changed Go packages even when
@@ -283,7 +316,7 @@ def validate_contents(root, changes, before, after, packages):
     # Inspect both old and new blobs, including deleted/renamed prose. Inspect
     # whole eligible Go packages so an unchanged platform file cannot hide.
     paths = {path for change in changes for path in change["paths"]
-             if path_kind(path) in ("docs", "frontend", "browser", "dist", "native-short")} | ROOT_DOCS
+             if path_kind(path) in ("docs", "frontend", "browser", "dist", "native-short", "native-ui")} | ROOT_DOCS
     for tree in (before, after):
         for package in packages:
             prefix = package.removeprefix("./") + "/"
@@ -309,7 +342,7 @@ def validate_contents(root, changes, before, after, packages):
             if any(ord(char) < 32 and char not in "\t\r\n" or ord(char) == 127
                    for char in content):
                 raise FailClosed("non_text_content")
-            if path_kind(path) in ("go", "native-short"):
+            if path_kind(path) in ("go", "native-short", "native-ui"):
                 # Directives can introduce platform, embed or link dependencies.
                 # Reject C/unsafe imports conservatively, even inside comments.
                 if re.search(r"//\s*(?:go:|\+build\b)|[\"`]C[\"`]|[\"`]unsafe[\"`]",
@@ -324,7 +357,7 @@ def validate_go_imports(path, content):
     tokens = re.findall(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|`[^`]*`|[A-Za-z_][A-Za-z_0-9]*|[^\s]',
                         content, flags=re.DOTALL)
     tokens = [token for token in tokens if not token.startswith(("//", "/*"))]
-    allowed = NATIVE_SHORT_IMPORTS.get(path)
+    allowed = NATIVE_UI_IMPORTS.get(path, NATIVE_SHORT_IMPORTS.get(path))
     if allowed is None:
         allowed = GO_IMPORTS[path.rpartition("/")[0]]
     for index, token in enumerate(tokens):

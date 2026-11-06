@@ -15,7 +15,14 @@ WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb
 # Admit only the reviewed read-only cache prelude before CI's first workload.
 # This binds its action pins, paths, trust scopes, keys, and event predicates.
 CI_NATIVE_CACHE_PRELUDE_SHA256 = 'bb94e3f3a0c80c0ae92b64c0e8e1dfa8b081462a8ff254bcd2b7a109e31f2eea'
-SOURCES = (WORKFLOW, '.github/scripts/test_check_frontend.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
+# Reviewed reusable execution and source-mode boundary; never grants full credit.
+NATIVE_UI_POLICY_SHA256 = {
+    '.github/workflows/native-ui-checks.yml': 'f8ad067b651b95188abd2ecbaedfa71760f1c74cb5324e2fc4b187c94ac5b809',
+    '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
+    '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
+}
+SOURCES = (WORKFLOW, '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+           '.github/scripts/native_ui_smoke.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
            '.github/scripts/ci-nearby-screenshots.py',
@@ -999,13 +1006,13 @@ def validate_frontend_workflow(sources):
     browser_header = """  browser:
     # Real Go management HTTP and embedded assets; networking peers are fixtures.
     needs: impact
-    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'go'
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'go' && needs.impact.outputs.scope != 'native-ui'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
 """
     require(sources[WORKFLOW].decode('utf-8').count(browser_header) == 1,
-            'common frontend tests must run for every native scope')
+            'common frontend tests must run for full and native-short scopes')
 
 
 def validate_regression_workflow(sources):
@@ -1024,12 +1031,73 @@ def validate_regression_workflow(sources):
     require(workflow.count('python -B .github/scripts/ci-regressions.py common --plan') == 1
             and workflow.count('python -B .github/scripts/ci-regressions.py native --plan') == 1,
             'regression execution escaped its required steps')
-    require(workflow.count('needs: [impact, documents, policy-regressions, native, browser, go-unit, manifest-smoke]') == 1,
+    require(workflow.count('needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]') == 1,
             'aggregate must wait for shared regressions')
+
+
+def validate_native_ui_workflow(sources):
+    """Bind the shared commands and caller/source boundary, not manual success."""
+    for path, expected in NATIVE_UI_POLICY_SHA256.items():
+        require(digest(sources[path]) == expected, 'native UI reusable policy differs')
+    callers = (
+        (WORKFLOW, 'native-ui', """  native-ui:
+    # The reusable jobs retain the verified merge scope and exact source.
+    name: native-ui
+    needs: impact
+    if: needs.impact.outputs.scope == 'native-ui' && github.event.repository.private == false
+    uses: ./.github/workflows/native-ui-checks.yml
+    with:
+      mode: scope
+
+"""),
+        ('.github/workflows/native-poc.yml', 'ci-lane-smoke', """  ci-lane-smoke:
+    name: ci-lane-smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.ci_lane_smoke && github.event.repository.private == false
+    uses: ./.github/workflows/native-ui-checks.yml
+    with:
+      mode: smoke
+
+"""),
+    )
+    for path, name, expected in callers:
+        workflow = sources[path].decode('utf-8')
+        # The PoC trigger has scalar path-filter lists outside this mapping.
+        headers = list(re.finditer(r'^jobs:[ \t]*\n', workflow, re.M))
+        require(len(headers) == 1, 'native UI workflow needs one jobs mapping')
+        workflow = workflow[headers[0].end():]
+        jobs = [(offset, key) for offset, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+        starts = [offset for offset, key in jobs if key == name]
+        require(len(starts) == 1, 'missing or duplicate native UI caller')
+        start = starts[0]
+        end = next((offset for offset, _ in jobs if offset > start), len(workflow))
+        require(workflow[start:end] == expected, 'native UI caller qualification differs')
+    expected = {
+        'NATIVE_UI_TARGETS': {target: 'native-ui / companion (' + target + ')' for target in TARGETS},
+        'NATIVE_UI_SCOPE_STEPS': ('Validate native UI source and required scope',
+            'Check companion toolchain and prepare verified engine',
+            'Run complete companion race suite with protected IPC evidence',
+            'Vet MyGo lifetimes and check companion formatting',
+            'Compile companion and check deterministic kit packaging'),
+        'NATIVE_UI_PRODUCT_STEPS': ('Prepare locked frontend package inventory for native UI',
+            'Build product package for native UI', 'Smoke product package for native UI'),
+    }
+    tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
+    values = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            if name in expected:
+                require(name not in values, 'duplicate native UI aggregate policy')
+                values[name] = ast.literal_eval(node.value)
+    bindings = [node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Store) and node.id in expected]
+    require(values == expected and len(bindings) == len(expected),
+            'native UI required job or step identity differs')
 
 
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
+    validate_native_ui_workflow(sources)
     validate_regression_workflow(sources)
     validate_frontend_workflow(sources)
     validate_native_packages_workflow(sources)
