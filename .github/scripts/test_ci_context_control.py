@@ -128,8 +128,8 @@ class ContextControlGateTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             run.assert_not_called()
 
-    def test_both_workflows_require_each_gate_only_in_native_tests(self):
-        for workflow in ("ci", "prerelease"):
+    def test_canonical_ci_requires_each_gate_only_in_native_tests(self):
+        for workflow in ("ci",):
             content = (ROOT / ".github/workflows" / (workflow + ".yml")).read_text(encoding="utf-8")
             native = re.search(r"^  native:\n(.*?)(?=^  [\w-]+:|\Z)", content, re.MULTILINE | re.DOTALL)[0]
             for suite, minutes in (("core-tls", 5), ("fixed-tcp", 2)):

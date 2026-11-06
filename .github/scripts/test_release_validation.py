@@ -219,7 +219,7 @@ class WorkflowCachePolicy(unittest.TestCase):
                 source = self.job(workflow, job)
                 self.assertLess(source.index("go run ./cmd/prepare-engine\n"), source.index("go mod verify"))
                 self.assertIn("go run ./cmd/prepare-engine --verify", source)
-        for workflow in ("ci", "prerelease"):
+        for workflow in ("ci",):
             step = self.step(workflow, "native", "name: Verify guarded production direct and relay underlays")
             self.assertNotIn("        if:", step)
             self.assertNotIn("ts_omit_udptransport", step)
@@ -241,7 +241,7 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn("verify_sources(share,", (scripts / name).read_text())
 
     def test_direct_and_wan_native_extension_gates(self):
-        for workflow in ("ci", "prerelease"):
+        for workflow in ("ci",):
             direct = self.step(workflow, "native", "name: Verify direct LAN WireGuard and Core native applications")
             self.assertNotIn("        if:", direct)
             self.assertIn("timeout-minutes: 9", direct)
@@ -281,7 +281,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         installed = self.job("prerelease", "verify-mise-install")
         self.assertIn("mise exec -- soba version", installed)
         self.assertIn("mise exec -- soba --help", installed)
-        for workflow in ("ci", "prerelease"):
+        for workflow in ("ci",):
             step = self.step(workflow, "native", "name: Verify paired transport")
             self.assertNotIn("        if:", step)
             relay_test = "TestTrustedRelayTwoPeerFunctionalIntegration" if workflow == "ci" else "TestTrustedRelayTwoPeerIntegration"
@@ -289,8 +289,8 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn('env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"', step)
             self.assertIn("ts_omit_udptransport", step)
 
-    def test_request_approval_cases_run_in_all_ci_and_release_native_lanes(self):
-        for workflow in ('ci', 'prerelease'):
+    def test_request_approval_cases_run_in_all_canonical_ci_native_lanes(self):
+        for workflow in ('ci',):
             full = checks.full_validation
             full.validate_request_setup_workflow(self.workflow(workflow).encode())
             native = self.job(workflow, 'native')
@@ -382,8 +382,11 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertEqual(self.development_scope(event_name="schedule", ref="refs/heads/main"), "")
         # Release ordering and exact-key/no-fallback policy stay independent.
         release = self.job("prerelease", "native")
-        self.assertLess(release.index("name: Collect required whole-Core race evidence"),
-                        release.index("name: Restore trusted main Go caches"))
+        self.assertNotIn("name: Collect required whole-Core race evidence", release)
+        self.assertLess(release.index("name: Restore trusted main Go caches"),
+                        release.index("name: Verify source, exact toolchain, native target, and dependencies"))
+        self.assertLess(release.index("name: Verify source, exact toolchain, native target, and dependencies"),
+                        release.index("name: Repeat native IPC cleanup before release packaging"))
 
     def inline_python(self, step):
         match = re.search(r"^          python - <<'PYTHON'\n(.*?)^          PYTHON$", step, re.MULTILINE | re.DOTALL)
@@ -553,7 +556,10 @@ class WorkflowCachePolicy(unittest.TestCase):
 
     def test_tests_and_native_validation_always_execute(self):
         for workflow in ("ci", "prerelease"):
-            for needle in ("go test -race -count=1 -timeout=10m ./...", "go vet ./...", "gofmt -l cmd internal", "python .github/scripts/smoke-package.py"):
+            commands = ("python .github/scripts/smoke-package.py",)
+            if workflow == "ci":
+                commands += ("go test -race -count=1 -timeout=10m ./...", "go vet ./...", "gofmt -l cmd internal")
+            for needle in commands:
                 with self.subTest(workflow=workflow, command=needle):
                     step = self.step(workflow, "native", needle)
                     self.assertNotIn("        if:", step)
@@ -564,7 +570,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
     def test_native_packages_are_exhaustive_and_keep_later_policy_gates(self):
-        for name in ('ci', 'prerelease'):
+        for name in ('ci',):
             early = self.step(name, 'native', 'name: Collect required whole-Core race evidence')
             self.assertIn("        if: matrix.goos == 'windows' || matrix.goos == 'darwin'\n", early)
             self.assertIn('run: python -B .github/scripts/ci-native-core-required.py core', early)
@@ -624,7 +630,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertNotIn("ci-impact", release)
 
     def test_explicit_native_probes_require_actual_go_test_pass_events(self):
-        for workflow in ("ci", "prerelease"):
+        for workflow in ("ci",):
             for title in ("Verify explicit WAN discovery with isolated native STUN",
                           "Verify guarded production direct and relay underlays",
                           "Verify paired transport and Core applications over an isolated relay",
@@ -639,8 +645,7 @@ class WorkflowCachePolicy(unittest.TestCase):
             step = self.step("ci", "native", "name: " + title)
             self.assertIn("ci-go-test.py", step)
             self.assertIn("--expect", step)
-        for workflow, title in (("ci", "Verify direct LAN session natural rekey and idle lifecycle"),
-                                ("prerelease", "Verify direct LAN session rekey and idle lifecycle")):
+        for workflow, title in (("ci", "Verify direct LAN session natural rekey and idle lifecycle"),):
             step = self.step(workflow, "native", "name: " + title)
             for test in ("TestNativeSessionLifecycle/active-through-natural-rekey",
                          "TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial"):

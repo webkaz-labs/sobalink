@@ -4,7 +4,7 @@
 
 CIの共通fixture検査はLinuxの独立jobで1回実行し、native製品検査と並列に進めます。
 各native laneには実際のファイル、子process、権限、終了処理を確認するPython検査を残します。
-選択されたscope内のGo製品race検査、native discovery、ブラウザー受入検査、パッケージ検証は削減しません。
+通常CIで選択されたscope内のGo製品race検査、native discovery、ブラウザー受入検査、パッケージ検証は削減しません。
 別の[native UI限定scope](CI_EFFICIENCY.ja.md#ネイティブuiのみの変更)は4対象のcompanion全race suiteと
 Windows/macOS製品パッケージを維持し、関連しないバックエンド全件検証とブラウザーjobを省略します。
 
@@ -21,7 +21,7 @@ Windows/macOS製品パッケージを維持し、関連しないバックエン�
   既存のscope別検査を維持します。
 
 両方の実行側が、現在のeventに対応する完全なGit差分を独立して再検証します。
-過去のテスト結果を省略の根拠にはしません。nativeが全て成功しても、共通jobが失敗すれば
+通常CIでは過去のテスト結果を省略の根拠にはしません。nativeが全て成功しても、共通jobが失敗すれば
 集約判定とリリース証明は成功しません。cache復元の成功をテスト合格として扱いません。
 
 選択するOS契約は `.github/scripts/ci-regressions.py` にあります。
@@ -65,7 +65,7 @@ nativeのビルド成功や別コミットのcache済み試験結果で代用し
 
 ## 通常Go検査とactivation
 
-CIとprereleaseでは、Linuxの完全なrace suite、またはWindows/macOSの互いに重ならない
+通常のCIでは、Linuxの完全なrace suite、またはWindows/macOSの互いに重ならない
 whole-Coreと残りのpackageの組で、通常のGo試験を1回実行します。同じケースが既に含まれる
 `backendworker`、`connectionroute`、Coreの `TestMixed` 部分集合のcount-one再実行は除きます。
 タグ付き統合検査、IPC・DirectLANの反復、vet、梱包検査は維持します。
@@ -74,3 +74,24 @@ product 2件とWeb 7件のactivationジョブは、同一repositoryのPRで文�
 省略します。impact判定の失敗・不明時は実行します。限定Go変更では、service presetsがCoreの
 snapshotに、bounded loggingがCLIの起動終了処理に使われるため、両方を残します。
 強制fullと定期検証は、このPR向け最適化とは独立して両方のジョブを要求します。
+
+
+## リリースのソース証拠と配布物検証
+
+prereleaseは、現在のmainと正確に同じコミットに対する、既存の手動full CI証拠を
+監査して使います。通常のrace・vet、タグ付きruntime検査、companionのソース試験は
+繰り返しません。4対象と必須CI工程すべての成功は引き続き必要で、ソース方針を変更した
+場合は新しい同一ソースfull実行が必要です。入口・staging・公開前の再確認で、欠落・
+古いソース・失敗の証拠を拒否します。cache、限定scope、異なるrunの成功の組み合わせで
+代用しません。
+
+リリースでは引き続き、locked frontendの再現、正確なソースとtoolchainの確認、
+リリース版パッケージの2回build、実際のarchiveと導入済みbinaryの検査を行います。
+署名・provenance・公開ダウンロードは独立した検査のままです。native IPC終了処理の
+25回反復は、CIの5回とは別の追加stress工程として維持します。これはリリース版の
+情報を書き込んだbinaryの検査ではありません。短いリリースguard自己試験も残します。
+
+実行間にhosted runner image、Python、system libraryが変わる可能性があります。
+ソース証拠の再利用は実行環境の完全一致や実機受入の完了を意味しません。
+今回のnative配布物検証と既存の定期full CIは引き続き必要です。この変更では
+実行頻度を変えず、実測していない待ち時間の短縮量を断定しません。

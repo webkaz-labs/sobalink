@@ -6,6 +6,8 @@ import re
 import textwrap
 import unittest
 
+import ci_full_validation as full
+
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST = "TestLANCoreDeviceCardPairingCompositionIntegration"
@@ -22,8 +24,8 @@ class CardPairingSelectionTests(unittest.TestCase):
         self.assertNotRegex(source, r"(?m)^func (?:init|TestMain)\(")
         self.assertIn("newNativeLANCoreFixture(t)", source)
 
-    def test_both_existing_native_lanes_select_and_require_exact_pass(self):
-        for name in ("ci.yml", "prerelease.yml"):
+    def test_canonical_ci_selects_and_requires_exact_pass(self):
+        for name in ("ci.yml",):
             with self.subTest(workflow=name):
                 source = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
                 marker = "      - name: " + STEP + "\n"
@@ -62,6 +64,19 @@ class CardPairingSelectionTests(unittest.TestCase):
                 self.assertIn('env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"', python)
                 self.assertIn('("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")', python)
                 self.assertIn('not k.upper().startswith("TS_")', python)
+
+    def test_release_reuses_required_pairing_success_on_every_target(self):
+        sources = {path: (ROOT / path).read_bytes() for path in full.SOURCES}
+        release = sources['.github/workflows/prerelease.yml']
+        full.validate_release_reuse_workflow(release)
+        self.assertNotIn(STEP.encode(), release)
+        required = full.required_jobs(sources)
+        owners = [name for name, steps in required.items() if STEP in steps]
+        self.assertEqual(len(owners), len(full.TARGETS))
+        for name, _ in full.TARGETS.values():
+            # The target suffix is stable even when CI splits its suite lanes.
+            suffix = name[name.index(' ('):]
+            self.assertEqual(sum(owner.endswith(suffix) for owner in owners), 1)
 
 
 if __name__ == "__main__":

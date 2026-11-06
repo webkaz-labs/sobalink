@@ -105,7 +105,7 @@ jobs:
             goos: windows
             goarch: amd64
     runs-on: ${{ matrix.runner }}
-    # Preserve per-gate bounds while allowing the complete native/package chain.
+    # Keep the existing bound for native release builds and archive smoke.
     timeout-minutes: 60
     env:
       RELEASE_VERSION: ${{ needs.gate.outputs.version }}
@@ -138,12 +138,6 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - name: Collect required whole-Core race evidence
-        id: native-core
-        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
-        env:
-          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
-        run: python -B .github/scripts/ci-native-core-required.py core
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
@@ -191,255 +185,12 @@ jobs:
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           go mod verify 2>&1 | tee logs/dependencies.txt
-      - name: Verify remaining native package race coverage
-        if: always() && !cancelled() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true'
-        env:
-          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
-        run: python -B .github/scripts/ci-native-core-required.py remaining
-      - name: Preserve required native package proof
-        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: soba-native-core-required-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/soba-native-core-required/receipt.json
-          if-no-files-found: error
-          retention-days: 14
-      - name: Native race tests (local and mocked services only)
+      # Ordinary source regressions are proved by gate's exact-source full CI.
+      # Keep this release-only stress policy separate from CI's count=5 check.
+      - name: Repeat native IPC cleanup before release packaging
         run: |
           set -euo pipefail
-          if [[ '${{ matrix.goos }}' == 'linux' ]]; then
-            go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
-          fi
-          # Enforce offline route-revocation recovery using the real protected fixture.
-          go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core 2>&1 | tee -a logs/race-tests.txt
-          # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
           go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
-      - name: Verify adapted engine admission and native underlay denial
-        timeout-minutes: 20
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-
-          # Upstream test-only dependencies stay in the original immutable
-          # upstream module graph; product tests use the product graph above.
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_UNDERLAY_NATIVE"] = "1"
-          base = ["go", "test", "-mod=readonly", "-race", "-count=1", "-v", "-timeout=5m",
-                  "-tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy"]
-          subprocess.run(base + ["./net/underlayguard"],
-                         cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
-          subprocess.run(base + ["-run=^Test(UnderlayGuard|WANCandidate|Sobalink|GuardedLocalSocketEndpointUsesActualFamilyPort)", "./wgengine", "./wgengine/magicsock", "./derp", "./derp/derphttp", "./net/netcheck"],
-                         cwd=".sobalink-deps/tailscale", env=env, check=True, timeout=5 * 60)
-          PYTHON
-          python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
-          go run ./cmd/prepare-engine --verify
-      - name: Verify Core context control over pinned TLS
-        timeout-minutes: 5
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-context-control.py core-tls 2>&1 | tee logs/context-core-tls.txt
-      - name: Verify context control over fixed loopback TCP
-        timeout-minutes: 2
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-context-control.py fixed-tcp 2>&1 | tee logs/context-fixed-tcp.txt
-      - name: Verify managed session tls
-        timeout-minutes: 4
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-managed-session.py tls 2>&1 | tee logs/managed-session-tls.txt
-      - name: Verify managed session outbound-tcp
-        timeout-minutes: 4
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-managed-session.py outbound-tcp 2>&1 | tee logs/managed-session-outbound-tcp.txt
-      - name: Verify managed session native-caller
-        timeout-minutes: 4
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-managed-session.py native-caller 2>&1 | tee logs/managed-session-native-caller.txt
-      - name: Verify managed session native-simultaneous
-        timeout-minutes: 4
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-managed-session.py native-simultaneous 2>&1 | tee logs/managed-session-native-simultaneous.txt
-      - name: Verify managed session native-udp-capacity
-        timeout-minutes: 4
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-managed-session.py native-udp-capacity 2>&1 | tee logs/managed-session-native-udp-capacity.txt
-      - name: Verify managed activation acceptance
-        timeout-minutes: 10
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-managed-activation.py activation 2>&1 | tee logs/managed-activation.txt
-      - name: Verify managed restart acceptance
-        timeout-minutes: 4
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-managed-activation.py restart 2>&1 | tee logs/managed-restart.txt
-      - name: Verify direct LAN WireGuard and Core native applications
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          go test -race -count=2 -v -timeout=3m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
-          go vet -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
-          go test -race -count=5 -timeout=5m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestDirectLAN' ./internal/core
-      - name: Verify direct LAN session rekey and idle lifecycle
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionSyntheticExpiryRekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSession(SyntheticExpiryRekey|Lifecycle)$' ./internal/directlan
-      - name: Verify explicit WAN discovery with isolated native STUN
-        timeout-minutes: 5
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-          import sys
-
-          # Synthetic native loopback fixture only; this does not establish
-          # real NAT traversal, physical IPv6 routes, or device acceptance.
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestWANCandidateNativeLoopbackSTUN",
-              "--",
-              "go", "test", "-race", "-count=1", "-v", "-timeout=120s",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^TestWANCandidateNativeLoopbackSTUN$", "./internal/routecat",
-          ], env=env, check=True, timeout=4 * 60)
-          PYTHON
-      - name: Verify guarded production direct and relay underlays
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-          import sys
-
-          # Normal production build with explicit synthetic loopback grants.
-          # Clear overrides only for the child test process, never the runner.
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDirectEncryptedTCPUDPIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDERPFailurePropagationIntegration",
-              "--",
-              "go", "test", "-race", "-count=1", "-v",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^(TestGuardedRelayTwoPeerIntegration|TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDERPFailurePropagationIntegration)$",
-              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
-          ], env=env, check=True, timeout=8 * 60)
-          PYTHON
-      - name: Verify paired transport and Core applications over an isolated relay
-        timeout-minutes: 10
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import os
-          import subprocess
-          import sys
-
-          # Only this child test process receives a clean backend environment.
-          # The test compiles out OS UDP and refuses non-loopback listeners.
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCorePeerApplicationsIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCoreSavedHostStartIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestLANCoreDeviceCardPairingCompositionIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestManagedRelayCandidateFailoverIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
-              "--",
-              "go", "test", "-count=1", "-v",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestLANCorePeerApplicationsIntegration|TestLANCoreSavedHostStartIntegration|TestLANCoreDeviceCardPairingCompositionIntegration|TestMultipleRelayPresenceAndFreshClientRecovery|TestManagedRelayCandidateFailoverIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
-              "-timeout=5m", "./internal/lanlink", "./internal/core", "./internal/routecat",
-          ], env=env, check=True, timeout=9 * 60)
-          PY
-      - name: Verify TOFU request approval across native Core peers
-        timeout-minutes: 6
-        env:
-          SOBALINK_RUN_LAN_INTEGRATION: '1'
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite nearby-request-tofu-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestTOFUIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestTOFUIntegration$'
-      - name: Verify full verification request approval across native Core peers
-        timeout-minutes: 6
-        env:
-          SOBALINK_RUN_LAN_INTEGRATION: '1'
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite nearby-request-full-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestFullVerificationIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestFullVerificationIntegration$'
-      - name: Verify request rejection and cancellation across native Core peers
-        timeout-minutes: 6
-        env:
-          SOBALINK_RUN_LAN_INTEGRATION: '1'
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite nearby-request-reject-cancel-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestRejectCancelIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestRejectCancelIntegration$'
-      - name: Verify recovery with the ordinary direct-enabled transport
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-          import sys
-
-          # Real production UDP behavior with synthetic peers and exactly two
-          # pinned loopback TLS relays. No account or public bootstrap map.
-          # This is distinct from the UDP-omitted relay-only proof above.
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_DIRECT_INTEGRATION"] = "1"
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/core:TestCoreTwoProcessRouteRecoveryIntegration",
-              "--",
-              "go", "test", "-race", "-count=1", "-v",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^(TestNormalBuildMultipleRelayTCPUDPRecoveryIntegration|TestCoreTwoProcessRouteRecoveryIntegration)$",
-              "-timeout=5m", "./internal/routecat", "./internal/core",
-          ], env=env, check=True, timeout=8 * 60)
-          PYTHON
-      - name: Test experimental native companion
-        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
-        working-directory: poc/native
-        run: |
-          set -euo pipefail
-          unset GOROOT
-          test "$("$SOBALINK_NATIVE_GO" env GOVERSION)" = go1.27.3
-          "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
-          "$SOBALINK_NATIVE_GO" vet ./...
-          test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"
-      - name: Native vet and formatting
-        run: |
-          set -euo pipefail
-          go vet ./... 2>&1 | tee logs/vet.txt
-          unformatted="$(gofmt -l cmd internal)"
-          test -z "$unformatted" || { printf '%s\n' "$unformatted" >&2; exit 1; }
       - name: Reproducible packages, license notices, and native archive smoke
         run: |
           set -euo pipefail
@@ -470,16 +221,6 @@ jobs:
         with:
           name: prerelease-native-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
-          if-no-files-found: error
-          retention-days: 14
-      - name: Preserve bounded Core failure context
-        if: always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.failure_ready == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: soba-native-core-failure-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/soba-native-core-failure/failure.json
-            ${{ runner.temp }}/soba-native-core-failure/partial-core.json
           if-no-files-found: error
           retention-days: 14
       - name: Preserve independent target logs even after failure
@@ -721,7 +462,7 @@ jobs:
                   "複数バックエンドの切替には明示的な認証済みの相手の対応付けが必要です。同じ名前やIPだけでは同じ相手と判断せず、許可の拒否を別経路への切替理由にしません。",
                   "エンジン変更は元と変更後のハッシュを検証する小さなソース差分として管理します。通常のsoba本体は引き続き単一実行ファイルです。Windows x64/macOS ARM64には任意起動のsoba-nativeを同梱し、通常のCLI/Web UIは置き換えません。",
                   "サービスの公開先・ポート・期限、ファイルの受信先と自動保存は明示的に選びます。保存済みサービスを起動時に自動公開しません。",
-                  "3種類のOS、4対象環境でネイティブのrace test・vet・同一入力2回ビルド・日英の配布物smoke testを実行しました。正確なソースに対するPlaywrightの実ブラウザー試験はリンク先のCIで確認できます。",
+                  "3種類のOS、4対象環境のrace test・vetとPlaywright実ブラウザー試験は、正確な同一ソースのfull CIで確認しています。今回のリリースでは25回のIPC終了検査、リリース版の同一入力2回ビルド、日英の配布物smoke testを別途実行しました。",
                   "実機間のTailnet・ACL・アプリ互換性、スマートフォンQR、実際のIME・フォント、Windows Console／ConPTY、OSログイン・スリープは別途確認が必要です。模擬ピアと隔離されたループバック中継の試験は、実利用環境全体の保証ではありません。",
                   "公開後に4対象環境で実際のmiseインストールと署名・来歴を検証します。実機ネットワークでの確認は公開後も未検証として残ります。結果はこのリリースのActions実行で確認してください。",
                   "",
@@ -743,7 +484,7 @@ jobs:
                   "Mixed-backend routing requires an explicit authenticated peer binding. Matching names or IPs never establish identity, and a denied route never triggers fallback to another backend.",
                   "The engine adaptation is retained as a small source patch with verified original and adapted hashes. The ordinary soba daemon remains a single executable. Windows x64/macOS ARM64 archives also include an optional soba-native companion without replacing the CLI/Web UI.",
                   "Service recipients, ports and lifetimes, receiving destinations and automatic saving are explicit choices. Saved services are not automatically exposed on startup.",
-                  "Native race tests, vet, matching repeated builds and bilingual archive smoke tests ran on four targets across three operating systems. See the linked exact-source CI for Playwright browser acceptance.",
+                  "Native race tests, vet and Playwright browser acceptance passed in the exact-source full CI. This release separately ran 25 IPC cleanup repetitions, matching release-version builds and bilingual archive smoke tests on four targets across three operating systems.",
                   "Real-device Tailnet/ACL/application compatibility, phone QR, actual IME/font combinations, Windows Console/ConPTY, OS login and suspend remain separate acceptance checks. Synthetic peers and an isolated loopback relay do not establish compatibility with every real environment.",
                   "Actual mise installation and public signatures/provenance are checked on all four targets after publication. Physical-device network acceptance remains unverified after release; inspect this release's Actions run for the results.",
                   "",

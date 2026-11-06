@@ -115,8 +115,8 @@ class ManagedActivationPolicyTests(unittest.TestCase):
                 gate.main(args)
             run.assert_not_called()
 
-    def test_both_native_workflows_require_both_gates(self):
-        for workflow in ('ci', 'prerelease'):
+    def test_canonical_ci_native_workflow_requires_both_gates(self):
+        for workflow in ('ci',):
             source = (ROOT / '.github/workflows' / (workflow + '.yml')).read_text(encoding='utf-8')
             native = source.split('  native:\n', 1)[1].split('    steps:', 1)[0]
             self.assertIn('    timeout-minutes: 60', native)
