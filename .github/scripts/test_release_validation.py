@@ -58,6 +58,7 @@ class WorkflowAttestationPolicy(unittest.TestCase):
 class WorkflowCachePolicy(unittest.TestCase):
     CACHE_PIN = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
     MAIN_GUARD = "github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+    MAIN_RESTORE_GUARD = MAIN_GUARD.removesuffix(")") + " || github.event_name == 'schedule')"
     CACHE_PATHS = "\n".join(("          path: |", "            ${{ steps.go-cache-info.outputs.gomodcache }}", "            ${{ steps.go-cache-info.outputs.gocache }}"))
 
     def workflow(self, name):
@@ -348,9 +349,30 @@ class WorkflowCachePolicy(unittest.TestCase):
         native = self.job("ci", "native")
         self.assertGreater(native.index(save), native.index("uses: actions/upload-artifact@"))
         for job in ("native", "manifest-smoke"):
-            self.assertIn("        if: " + self.MAIN_GUARD + "\n", self.step("ci", job, "id: go-cache\n"))
+            guard = self.MAIN_RESTORE_GUARD if job == "native" else self.MAIN_GUARD
+            self.assertIn("        if: " + guard + "\n", self.step("ci", job, "id: go-cache\n"))
         fallback = re.findall(r"^          restore-keys: (.+)$", self.step("ci", "native", "id: go-cache\n"), re.MULTILINE)
         self.assertEqual(fallback, [self.key("ci", "native").removesuffix("${{ github.sha }}")])
+
+    def test_native_ci_restores_before_core_without_widening_scheduled_writes(self):
+        native = self.job("ci", "native")
+        core = native.index("name: Collect required whole-Core race evidence")
+        for marker in ("id: go-cache-info\n", "id: development-go-cache-scope\n",
+                       "id: go-cache\n", "id: development-go-cache\n",
+                       "name: Report Go cache results\n"):
+            with self.subTest(marker=marker):
+                self.assertLess(native.index(self.step("ci", "native", marker)), core)
+        self.assertLess(core, native.index("name: Test and reproduce locked frontend assets"))
+        for name in ("Save Go caches after all native checks pass on main",
+                     "Save development Go caches after all native checks pass"):
+            save = self.step("ci", "native", "name: " + name)
+            self.assertNotIn("'schedule'", save)
+            self.assertGreater(native.index(save), native.index("name: Wait for real-time lifecycle and lease checks"))
+        self.assertEqual(self.development_scope(event_name="schedule", ref="refs/heads/main"), "")
+        # Release ordering and exact-key/no-fallback policy stay independent.
+        release = self.job("prerelease", "native")
+        self.assertLess(release.index("name: Collect required whole-Core race evidence"),
+                        release.index("name: Restore trusted main Go caches"))
 
     def inline_python(self, step):
         match = re.search(r"^          python - <<'PYTHON'\n(.*?)^          PYTHON$", step, re.MULTILINE | re.DOTALL)

@@ -176,21 +176,8 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - name: Collect required whole-Core race evidence
-        id: native-core
-        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
-        env:
-          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
-        run: python -B .github/scripts/ci-native-core-required.py core
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '24.19.0'
-          check-latest: false
-          package-manager-cache: false
-      - name: Test and reproduce locked frontend assets
-        run: |
-          npm install --global npm@11.9.0 --no-audit --no-fund
-          python .github/scripts/check-frontend.py
+      # Restore only dependency and compilation caches before the first workload.
+      # Every test still runs; no cached receipt or test result is reused.
       - name: Locate Go module and compilation caches
         id: go-cache-info
         run: |
@@ -238,9 +225,10 @@ jobs:
           PYTHON
       # Only main CI writes this namespace. Release restores the exact tested SHA;
       # GitHub's branch scope and the release gate exclude PR and branch caches.
+      # Scheduled main runs may restore, but only push/manual CI saves this key.
       - name: Restore trusted main Go caches
         id: go-cache
-        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -292,6 +280,21 @@ jobs:
                   result = "fallback hit"
               print(f"{namespace.lower()} Go cache: {result}\nRequested key: {primary or 'none'}\nMatched key: {matched or 'none'}\nAction exact-hit output: {exact_output or 'unset'}")
           PYTHON
+      - name: Collect required whole-Core race evidence
+        id: native-core
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py core
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Test and reproduce locked frontend assets
+        run: |
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          python .github/scripts/check-frontend.py
       - name: Check exact toolchain and native target
         run: |
           set -euo pipefail

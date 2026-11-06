@@ -179,7 +179,7 @@ class FullProofTests(unittest.TestCase):
                 with self.assertRaises(ValueError):full.required_jobs(self.sources)
             self.sources[path]=original
 
-    def test_early_core_placement_rejects_inserted_work_or_cache_before_collection(self):
+    def test_early_core_placement_rejects_unreviewed_work_or_cache_before_collection(self):
         for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
             original = self.sources[path]
             marker = b'      - name: Collect required whole-Core race evidence\n'
@@ -189,6 +189,56 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(path=path, inserted=inserted), self.assertRaises(ValueError):
                     full.required_jobs(self.sources)
             self.sources[path] = original
+
+    def test_early_ci_cache_policy_rejects_changed_actions_paths_keys_and_guards(self):
+        original = self.sources[full.WORKFLOW]
+        start = original.index(b"      # Restore only dependency and compilation caches")
+        end = original.index(b"      - name: Collect required whole-Core race evidence\n", start)
+        prelude = original[start:end]
+        self.assertEqual(hashlib.sha256(prelude).hexdigest(), full.CI_NATIVE_CACHE_PRELUDE_SHA256)
+        changes = (
+            (b"actions/cache/restore@", b"actions/cache/save@"),
+            (b"55cc8345863c7cc4c66a329aec7e433d2d1c52a9", b"unreviewed"),
+            (b"${{ steps.go-cache-info.outputs.gocache }}", b"${{ github.workspace }}"),
+            (b"trusted-main-go-v1-", b"development-go-v1-"),
+            (b"-${{ matrix.runner }}-go1.27.1-", b"-go1.27.1-"),
+            (b"'cmd/prepare-engine/**'", b"'README.md'"),
+            (b"github.ref == 'refs/heads/main' && ", b""),
+            (b"github.repository == 'webkaz-labs/sobalink' && ", b""),
+            (b" || github.event_name == 'schedule'", b" || github.event_name == 'pull_request'"),
+            (b'and head.get("full_name") == repository', b'and True'),
+            (b'scope = f"pr-{number}"', b'scope = "main"'),
+            (b"if: steps.development-go-cache-scope.outputs.scope != ''", b"if: always()"),
+            (b"          restore-keys: trusted-main-go-v1-", b"          restore-keys: trusted-main-"),
+            (b"        id: go-cache\n", b"        id: go-cache\n        continue-on-error: true\n"),
+        )
+        for old, new in changes:
+            self.assertIn(old, prelude)
+            changed = prelude.replace(old, new, 1)
+            self.sources[full.WORKFLOW] = original[:start] + changed + original[end:]
+            with self.subTest(change=old), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+        # An unreviewed gap after the prelude must not escape the hash check.
+        self.sources[full.WORKFLOW] = original[:end] + b"      - run: echo synthetic\n" + original[end:]
+        with self.assertRaises(ValueError):
+            full.required_jobs(self.sources)
+        self.sources[full.WORKFLOW] = original
+
+    def test_early_cache_prelude_cannot_move_exact_toolchain_after_core(self):
+        original = self.sources[full.WORKFLOW]
+        native = original.index(b"  native:\n")
+        setup = original.index(b"      - uses: actions/setup-go@", native)
+        prelude = original.index(b"      # Restore only dependency and compilation caches", setup)
+        core = original.index(b"      - name: Collect required whole-Core race evidence\n", prelude)
+        exact_setup = original[setup:prelude]
+        alternate_setup = exact_setup.replace(b"go-version: '1.27.1'", b"go-version: '1.27.3'")
+        self.assertNotEqual(exact_setup, alternate_setup)
+        changed = original[:setup] + alternate_setup + original[core:]
+        end = changed.index(b"  manifest-smoke:\n", native)
+        self.sources[full.WORKFLOW] = changed[:end] + original[setup:core] + changed[end:]
+        with self.assertRaises(ValueError):
+            full.required_jobs(self.sources)
+        self.sources[full.WORKFLOW] = original
 
     def test_windows_helper_policy_rejects_altered_flags_missing_phase_or_union(self):
         original = self.sources[full.WINDOWS_PACKAGES_HELPER]
