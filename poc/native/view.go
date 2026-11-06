@@ -2,10 +2,11 @@ package main
 
 import "github.com/egoist/mygo/ui"
 
-// The frame boundary applies worker results before composing the current screen.
 func (a *app) view(c *ui.Context) {
-	a.drain()
-	c.SetTheme(nativeTheme(c.Theme(), c.Preferences()))
+	a.nativeFrame(c, func() { a.currentScreen(c) })
+}
+
+func (a *app) currentScreen(c *ui.Context) {
 	if a.conversation != "" {
 		a.prepareConversation()
 		a.exchangeView(c)
@@ -16,7 +17,7 @@ func (a *app) view(c *ui.Context) {
 
 func (a *app) devicesView(c *ui.Context) {
 	theme, style := c.Theme(), nativeStyles(c)
-	ui.Column(c).Fill().Lang(a.t("en", "ja")).Font(uiFont(a.ja)).Background(theme.Background).Padding(style.screenPadding).Gap(style.sectionGap).TextColor(theme.Text).Children(func() {
+	nativeScreen(c, style.sectionGap, func() {
 		a.devicesHeader(c)
 		ui.Text(c, a.modeLabel(false)).FontSize(style.caption).Bold().TextColor(theme.TextMuted)
 		a.networkCard(c, a.networkPresentation())
@@ -31,8 +32,7 @@ func (a *app) devicesView(c *ui.Context) {
 	})
 }
 func (a *app) devicesHeader(c *ui.Context) {
-	ui.Row(c).FillWidth().Gap(nativeStyles(c).controlGap).Children(func() {
-		ui.Text(c, "soba").FontSize(nativeStyles(c).title).Bold().Grow(1)
+	nativeHeader(c, "soba", nativeStyles(c).title, nil, func() {
 		if ui.Button(c, a.t("日本語", "English")).Clicked() {
 			a.toggleLocale()
 		}

@@ -25,12 +25,22 @@ Sources: [views and lifetimes](https://github.com/egoist/mygo/blob/v0.7.4/docs/u
 
 ## Boundaries and source map
 
-- **Screen composition:** `view.go`, `conversation_view.go`, `messagepane_view.go`, `filepane_view.go`, `tray_view.go`. Keep top-level screens short. Use components with a UI meaning, such as a device row, network card, message history, outgoing review, incoming review and dispatch receipt. Conditional visibility and iteration over prepared display data belong here.
+- **Screen composition:** `frame_view.go`, `view.go`, `conversation_view.go`, `messagepane_view.go`, `filepane_view.go`, `tray_view.go`. Keep top-level screens short. Use components with a UI meaning, such as a device row, network card, message history, outgoing review, incoming review and dispatch receipt. Conditional visibility and iteration over prepared display data belong here.
 - **Presentation:** `presentation.go`, `messagepane_presentation.go`, `filepane_presentation.go`. Derive labels, filtered/recent history, counts, eligibility and display status outside layout nesting. Do not translate raw protocol identifiers, user content or machine JSON.
 - **Application state and operations:** `app.go`, `messagepane.go`, `filepane.go`. Own navigation, retained peer-specific drafts, immutable reviewed values, busy state, request identity, operation guards and result handling. Controls call named methods. Guard the operation itself as well as showing a disabled control.
 - **Native dialog adapter:** `filepane_dialog.go`. Capture window ownership on the UI thread; keep dialog configuration outside screen composition. Workers receive ordinary values and callbacks, never build-pass elements or contexts.
 - **Transport boundary:** `exchange.go` and the IPC loader in `model.go`. Keep protocol validation, confirmation and protected IPC contracts here. A refactor must not broaden network access or permission scope.
 - **Theme:** `theme.go`. Centralize the companion palette and semantic typography/spacing tokens. Copy the system theme, retain its metrics and dark appearance, and use its colors in custom components. Desktop high-contrast adaptations take precedence over the whole companion palette. Preserve an explicit desktop accent together with its text, hover/pressed, selection and focus colors; never replace only part of that set. Use named tokens for shared screen/card/row padding, section/item/action gaps and corner radii; corner radii follow the theme radius. Keep functional limits such as text-input line counts and native window placement bounds outside the visual theme. Do not scatter color literals through view files. Optional visual effects require separate evaluation; no plugin is required by this policy.
+
+## Shared frame, headers and actions
+
+Applied in the current source:
+
+- `nativeFrame` applies pending status results, theme, language and font at one build boundary for normal, tray and fallback windows. `nativeScreen` shares the content inset; each screen retains its own spacing.
+- `nativeHeader` shares title placement and action spacing. The device screen keeps its title and language switch; the conversation keeps Back, the peer name and Refresh. Message/file panes already share that conversation header and the standard tabs. This is shared structure, not identical controls on every screen.
+- `nativeShell` owns window/tray lifetime. Its Hide/Quit controls and fallback notice remain outside screen content. Back changes screens; Hide preserves the app; Quit UI ends the client only. None of these controls changes the daemon or permissions.
+
+For future screens or menus, reuse these boundaries only where responsibilities match. Keep screen actions visible at their point of use and window actions in the shell; introduce a shared menu only when actual repeated actions need it. A global settings/menu framework is not implemented. Do not move navigation state, operation guards or IPC into layout helpers, retain build callbacks, or add a new component framework merely to unify appearance.
 
 ## State, concurrency and safety
 
