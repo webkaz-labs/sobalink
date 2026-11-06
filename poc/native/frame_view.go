@@ -25,7 +25,11 @@ func nativeHeader(c *ui.Context, title string, size float32, leading, trailing f
 		if leading != nil {
 			leading()
 		}
-		ui.Text(c, title).FontSize(size).Bold().Grow(1)
+		if title != "" {
+			ui.Text(c, title).FontSize(size).Bold().Grow(1)
+		} else {
+			ui.Spacer(c) // A supplied wordmark is already the header's title.
+		}
 		if trailing != nil {
 			trailing()
 		}

@@ -1,11 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"os"
 	"runtime"
 
@@ -24,8 +20,15 @@ type nativeShell struct {
 // startNativeUI must run inside App.WhenReady. Keep its result alive until App.Run returns.
 func startNativeUI(a *app, useTray bool) *nativeShell {
 	s := &nativeShell{}
+	if runtime.GOOS == "darwin" {
+		if icon, err := nativeAppIcon(); err == nil {
+			if err = mygo.App.Dock.SetIcon(icon); err != nil {
+				fmt.Fprintln(os.Stderr, a.t("sobalink: could not set the Dock icon", "sobalink: Dockのアイコンを設定できません"))
+			}
+		}
+	}
 	if !useTray {
-		s.window = normalNativeWindow(ui.View(a.view), 560)
+		s.window = normalNativeWindow(ui.View(a.view), 560, a.ja)
 		return s
 	}
 	if !nativeTraySupported(runtime.GOOS) {
@@ -36,7 +39,7 @@ func startNativeUI(a *app, useTray bool) *nativeShell {
 	if err == nil {
 		s.tray, err = mygo.NewTray(mygo.TrayOptions{
 			ID: "soba.native-poc", Icon: icon, IconIsTemplate: true,
-			ToolTip: "soba · Native UI PoC",
+			ToolTip: "sobalink · Native UI PoC",
 		})
 	}
 	if err != nil {
@@ -56,6 +59,7 @@ func startNativeUI(a *app, useTray bool) *nativeShell {
 	// Native picker ownership, IME and multi-display placement still require
 	// real-device acceptance; headless tests cannot establish those behaviors.
 	s.window = mygo.NewWindow(nativeTrayPanelOptions(ui.View(func(c *ui.Context) { s.view(a, c) })))
+	setNativeWindowIcon(s.window, a.ja)
 	s.window.OnClose(func(e *mygo.CloseEvent) {
 		if s.hideOnClose() {
 			e.PreventDefault()
@@ -81,7 +85,7 @@ func startNativeUI(a *app, useTray bool) *nativeShell {
 // dismiss on blur. Never attach an unconditional hide-on-blur listener here.
 func nativeTrayPanelOptions(content mygo.Content) mygo.WindowOptions {
 	return mygo.WindowOptions{
-		Title: "soba · Native UI PoC", Panel: true, Hidden: true,
+		Title: "sobalink · Native UI PoC", Panel: true, Hidden: true,
 		Width: 460, Height: 620, UseContentSize: true,
 		Frameless: true, DisableResize: true, CornerRadius: 12,
 		Content: content,
@@ -120,41 +124,33 @@ func nativeTrayPanelBounds(anchor, work mygo.Rectangle) mygo.Rectangle {
 
 func nativeTraySupported(goos string) bool { return goos == "darwin" || goos == "windows" }
 
-func normalNativeWindow(content mygo.Content, height int) *mygo.Window {
-	return mygo.NewWindow(mygo.WindowOptions{
-		Title: "soba · Native UI PoC", Width: 460, Height: height,
+func normalNativeWindow(content mygo.Content, height int, ja bool) *mygo.Window {
+	w := mygo.NewWindow(mygo.WindowOptions{
+		Title: "sobalink · Native UI PoC", Width: 460, Height: height,
 		MinWidth: 360, MinHeight: 440, Content: content,
 	})
+	setNativeWindowIcon(w, ja)
+	return w
+}
+
+func setNativeWindowIcon(w *mygo.Window, ja bool) {
+	if runtime.GOOS == "darwin" {
+		return // macOS uses the application Dock icon instead.
+	}
+	if icon, err := nativeAppIcon(); err == nil {
+		if err = w.SetIcon(icon); err != nil {
+			fmt.Fprintln(os.Stderr, translator(ja).text("sobalink: could not set the window icon", "sobalink: ウィンドウのアイコンを設定できません"))
+		}
+	}
 }
 
 func (s *nativeShell) hideOnClose() bool { return s.tray != nil && !s.quitting }
 
 func (s *nativeShell) openFallback(a *app) {
-	s.window = normalNativeWindow(ui.View(func(c *ui.Context) { s.fallbackView(a, c) }), 640)
+	s.window = normalNativeWindow(ui.View(func(c *ui.Context) { s.fallbackView(a, c) }), 640, a.ja)
 }
 func (s *nativeShell) hideWindow() { s.window.Hide() }
 func (s *nativeShell) quitUI() {
 	s.quitting = true
 	mygo.App.Quit()
-}
-
-// nativeTrayIcon creates a neutral, original two-link mark. It contains no
-// profile or environment information. Template rendering adapts its black ink
-// to the macOS menu bar and Windows taskbar appearance.
-func nativeTrayIcon() ([]byte, error) {
-	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
-	for y := 0; y < 32; y++ {
-		for x := 0; x < 32; x++ {
-			left := (x-11)*(x-11) + (y-16)*(y-16)
-			right := (x-21)*(x-21) + (y-16)*(y-16)
-			if (left >= 25 && left <= 64) || (right >= 25 && right <= 64) {
-				img.SetNRGBA(x, y, color.NRGBA{A: 255})
-			}
-		}
-	}
-	var out bytes.Buffer
-	if err := png.Encode(&out, img); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
 }

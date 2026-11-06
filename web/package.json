@@ -5,13 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build",
+    "build": "npm run brand:check && tsc -b && vite build",
     "typecheck": "tsc -b",
-    "test": "vitest run",
+    "test": "npm run brand:check && vitest run",
     "test:watch": "vitest",
     "preview": "vite preview --host 127.0.0.1",
     "test:browser": "playwright test --config=playwright.config.mjs",
-    "test:browser:safety": "node --test browser/fixture-safety.test.mjs browser/csp-policy-fixture.test.mjs browser/fixture-parallelism.test.mjs"
+    "test:browser:safety": "node --test browser/fixture-safety.test.mjs browser/csp-policy-fixture.test.mjs browser/fixture-parallelism.test.mjs",
+    "brand:generate": "node build/brand-tokens.mjs",
+    "brand:check": "node build/brand-tokens.mjs --check"
   },
   "dependencies": {
     "react": "19.3.0",

@@ -42,7 +42,7 @@ func (p *filePane) filePickerView(c *ui.Context, a fileActions, t fileText) {
 		fileDetail(c, t("Read only. File actions are disabled.", "読み取り専用です。ファイル操作は無効です。"))
 		return
 	}
-	if ui.Button(c, t("Choose files…", "ファイルを選択…")).Disabled(!p.canChoose(a)).Clicked() {
+	if nativeIconButton(c, "folder", t("Choose files…", "ファイルを選択…")).Disabled(!p.canChoose(a)).Clicked() {
 		p.chooseFiles(a)
 	}
 }
@@ -56,8 +56,8 @@ func (p *filePane) outgoingReviewView(c *ui.Context, a fileActions, t fileText) 
 	if a.peer != p.peer || a.process != p.process {
 		fileDetail(c, t("Selection changed. Return to the reviewed recipient, or discard.", "選択が変わりました。確認した送信先に戻るか、破棄してください。"))
 	}
-	ui.Row(c).Gap(nativeStyles(c).actionGap).Children(func() {
-		if ui.Button(c, t("Confirm send", "送信を確定")).Disabled(!p.canCommit(a)).Clicked() {
+	ui.Row(c).FillWidth().Wrap().Gap(nativeStyles(c).actionGap).Children(func() {
+		if nativePrimaryButton(c, "send", t("Confirm send", "送信を確定")).Disabled(!p.canCommit(a)).Clicked() {
 			p.commitFiles(a)
 		}
 		if ui.Button(c, t("Discard", "破棄")).Disabled(!p.canDiscard(a)).Clicked() {
@@ -99,7 +99,7 @@ func (p *filePane) fileStatusView(c *ui.Context, a fileActions, t fileText) {
 		fileDetail(c, t("Working…", "処理中…"))
 	}
 	if text := p.noticeText(a.demo, t); text != "" {
-		fileDetail(c, text)
+		ui.Text(c, text).FontSize(nativeStyles(c).caption).TextColor(nativeStatusColor(c, p.notice))
 	}
 	if p.uncertain && p.actionID != "" {
 		fileDetail(c, t("Request: ", "リクエスト: ")+p.actionID)
@@ -127,7 +127,7 @@ func (p *filePane) transferHistoryView(c *ui.Context, a fileActions, t fileText,
 func (p *filePane) transferRowView(c *ui.Context, a fileActions, t fileText, ja bool, v exchangeTransfer) {
 	summary := fmt.Sprintf("%s · %s · %d/%d B", v.ID, exchangeStatus(v.Status, ja), v.CompletedBytes, v.TotalBytes)
 	ui.Column(c).FillWidth().Gap(nativeStyles(c).detailGap).Children(func() {
-		fileDetail(c, summary)
+		ui.Text(c, summary).FontSize(nativeStyles(c).caption).TextColor(nativeStatusColor(c, v.Status))
 		for _, f := range v.Entries {
 			fileDetail(c, fileLabel(f.Path))
 		}

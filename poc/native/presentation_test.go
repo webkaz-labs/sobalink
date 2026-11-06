@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/webkaz-labs/sobalink/internal/uibrand"
 )
 
 func TestNativeThemePreservesSystemAppearanceAndMetrics(t *testing.T) {
@@ -19,11 +20,9 @@ func TestNativeThemePreservesSystemAppearanceAndMetrics(t *testing.T) {
 		if got.Dark != base.Dark || got.Spacing != 5 || got.FontSize != 18 {
 			t.Fatal("system appearance or metrics lost")
 		}
-		if base.Dark && *got != before {
-			t.Fatal("light palette applied to dark appearance")
-		}
-		if !base.Dark && (got.Background != ui.Hex("#f4f7f5") || got.Text != ui.Hex("#172e34")) {
-			t.Fatal("light palette changed")
+		palette := uibrand.Palette(base.Dark)
+		if got.Background != ui.Hex(palette.Background) || got.Text != ui.Hex(palette.Text) || got.Accent != ui.Hex(palette.Primary) {
+			t.Fatal("shared light/dark palette not applied")
 		}
 	}
 }
@@ -170,12 +169,12 @@ func TestNativeThemeFollowsDesktopPreferences(t *testing.T) {
 						t.Fatal("high-contrast focus lost opacity")
 					}
 				}
-				if dark || accent.A != 0 || contrast {
+				if accent.A != 0 || contrast {
 					if after.Accent != before.Accent || after.AccentText != before.AccentText || after.AccentHover != before.AccentHover || after.AccentPressed != before.AccentPressed || after.Selection != before.Selection || after.Focus != before.Focus {
 						t.Fatal("desktop accent family was partially replaced")
 					}
 				} else {
-					if after.AccentText != ui.Hex("#ffffff") || after.Selection != after.Accent.Alpha(.25) || after.Focus != after.Accent {
+					if after.AccentText != ui.Hex(uibrand.Palette(dark).OnPrimary) || after.Selection != after.Accent.Alpha(.25) || after.Focus != after.Accent {
 						t.Fatal("companion accent family is inconsistent")
 					}
 				}
@@ -184,7 +183,8 @@ func TestNativeThemeFollowsDesktopPreferences(t *testing.T) {
 	}
 	tt.SetDark(false)
 	tt.SetPreferences(ui.Preferences{})
-	if after.Background != ui.Hex("#f4f7f5") || after.Accent != ui.Hex("#26745b") || after.FontSize != ui.LightTheme().FontSize {
+	palette := uibrand.Palette(false)
+	if after.Background != ui.Hex(palette.Background) || after.Accent != ui.Hex(palette.Primary) || after.FontSize != ui.LightTheme().FontSize {
 		t.Fatal("clearing preferences did not restore companion defaults")
 	}
 }
