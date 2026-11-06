@@ -14,7 +14,7 @@ WINDOWS_PACKAGES_HELPER = '.github/scripts/ci-windows-packages.py'
 WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb731c4f42070'
 # Admit only the reviewed read-only cache prelude before CI's first workload.
 # This binds its action pins, paths, trust scopes, keys, and event predicates.
-CI_NATIVE_CACHE_PRELUDE_SHA256 = 'bb94e3f3a0c80c0ae92b64c0e8e1dfa8b081462a8ff254bcd2b7a109e31f2eea'
+CI_NATIVE_CACHE_PRELUDE_SHA256 = '171cbbb627e6d321d377fbb9442fbcef8b1b8c0b33ec30c697ca8926f85dfef1'
 # Reviewed upstream bytes and installer; cache hits never bypass verification.
 CI_FONT_POLICY_SHA256 = {
     '.github/actions/japanese-fonts/action.yml': '800ce0427f95dfd4c4fd93a20df0beba15edf4337975646d558a524855653508',
@@ -28,7 +28,7 @@ NATIVE_UI_POLICY_SHA256 = {
     '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
     '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
 }
-SOURCES = (WORKFLOW, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+SOURCES = (WORKFLOW, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/ci-browser-cache.py', '.github/scripts/test_ci_browser_cache.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
            '.github/scripts/native_ui_smoke.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -113,6 +113,9 @@ TARGETS = {
     'darwin-arm64': ('native (macos-26, darwin, arm64)', 'macos-26'),
     'windows-amd64': ('native (windows-2025, windows, amd64)', 'windows-2025'),
 }
+INTEGRATION_TARGETS = {target: (name.replace('native (', 'native-integration ('), runner)
+                       for target, (name, runner) in TARGETS.items()}
+
 MAX_PAGES = 10
 
 
@@ -284,9 +287,197 @@ def workflow_metadata(workflow):
 NATIVE_COMPANION_STEP = '      - name: Test experimental native companion\n        if: matrix.goos == \'windows\' || matrix.goos == \'darwin\'\n        working-directory: poc/native\n        run: |\n          set -euo pipefail\n          unset GOROOT\n          test "$("$SOBALINK_NATIVE_GO" env GOVERSION)" = go1.27.3\n          "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...\n          "$SOBALINK_NATIVE_GO" vet ./...\n          test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"\n'
 
 
+# Bind the eight reviewed rows, unchanged unit producer names, target runners,
+# scope predicate, fail-fast:false and job defaults. A new target/lane is reviewable.
+CI_NATIVE_PREPARATION = """      - name: Check exact toolchain and native target
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = '${{ matrix.goos }}'
+          test "$(go env GOARCH)" = '${{ matrix.goarch }}'
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          if [[ '${{ matrix.suite }}' == 'integration' ]]; then
+            # Offline acceptance must not depend on an earlier unit lane.
+            # Fetch the root module's pinned requirements, not broad tool graphs.
+            go mod download
+            git diff --exit-code -- go.mod go.sum
+          fi
+          go mod verify
+          if [[ '${{ matrix.suite }}' == 'unit' ]]; then
+            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
+          fi
+"""
+
+CI_NATIVE_MATRIX_HEADER_SHA256 = '266c44fe500fa47942dd58733089ede7c625cc5870755a42056dbbe51dd0f1c7'
+NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7': '',
+ "Download this run's impact plan": "needs.impact.result == 'success'",
+ 'Validate impact plan or require full coverage': '',
+ 'Set up isolated native UI toolchain': "matrix.suite == 'integration' && (matrix.goos == 'windows' || matrix.goos == 'darwin')",
+ 'Retain native UI toolchain path': "matrix.suite == 'integration' && (matrix.goos == 'windows' || matrix.goos == 'darwin')",
+ 'uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6': '',
+ 'Locate Go module and compilation caches': '',
+ 'Select isolated development Go cache scope': '',
+ 'Restore trusted main Go caches': "github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && "
+                                   "github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name "
+                                   "== 'workflow_dispatch' || github.event_name == 'schedule')",
+ 'Restore isolated development Go caches': "steps.development-go-cache-scope.outputs.scope != ''",
+ 'Restore trusted main seed after development cache miss': "steps.development-go-cache-scope.outputs.scope != '' && "
+                                                           "steps.development-go-cache.outputs.cache-matched-key == ''",
+ 'Report Go cache results': 'always()',
+ 'Collect required whole-Core race evidence': "matrix.suite == 'unit' && (matrix.goos == 'windows' || matrix.goos == 'darwin')",
+ 'uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0': '',
+ 'Reproduce locked frontend assets': '',
+ 'Check exact toolchain and native target': '',
+ 'Verify macOS five-scope discovery without skips': "matrix.suite == 'unit' && (matrix.goos == 'darwin')",
+ 'Preserve required macOS discovery proof': "matrix.suite == 'unit' && (always() && matrix.goos == 'darwin')",
+ 'Verify Windows receive-retirement directory barriers': "matrix.suite == 'unit' && (matrix.goos == 'windows')",
+ 'Verify remaining native package race coverage': "matrix.suite == 'unit' && (always() && !cancelled() && (matrix.goos == 'windows' || "
+                                                  "matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true')",
+ 'Preserve required native package proof': "matrix.suite == 'unit' && (always() && (matrix.goos == 'windows' || matrix.goos == 'darwin'))",
+ 'Local and mock tests, race detector, and vet': "matrix.suite == 'unit'",
+ 'Verify adapted engine admission and native underlay denial': "matrix.suite == 'unit'",
+ 'Verify Core context control over pinned TLS': "matrix.suite == 'integration'",
+ 'Verify context control over fixed loopback TCP': "matrix.suite == 'integration'",
+ 'Verify managed session tls': "matrix.suite == 'integration'",
+ 'Verify managed session outbound-tcp': "matrix.suite == 'integration'",
+ 'Verify managed session native-caller': "matrix.suite == 'integration'",
+ 'Verify managed session native-simultaneous': "matrix.suite == 'integration'",
+ 'Verify managed session native-udp-capacity': "matrix.suite == 'integration'",
+ 'Verify managed activation acceptance': "matrix.suite == 'integration'",
+ 'Verify managed restart acceptance': "matrix.suite == 'integration'",
+ 'Verify direct LAN WireGuard and Core native applications': "matrix.suite == 'integration'",
+ 'Verify explicit dispatch with three separate Core processes': "matrix.suite == 'integration'",
+ 'Verify durable outbox restart across Core processes': "matrix.suite == 'integration'",
+ 'Verify durable text restart and lost ACK across Core processes': "matrix.suite == 'integration'",
+ 'Verify manual nearby setup across native Core peers': "matrix.suite == 'integration'",
+ 'Verify TOFU request approval across native Core peers': "matrix.suite == 'integration'",
+ 'Verify full verification request approval across native Core peers': "matrix.suite == 'integration'",
+ 'Verify request rejection and cancellation across native Core peers': "matrix.suite == 'integration'",
+ 'Verify Linux nearby native discovery without skips': "matrix.suite == 'unit' && (matrix.goos == 'linux')",
+ 'Verify direct LAN synthetic expiry and rekey': "matrix.suite == 'integration'",
+ 'Verify explicit WAN discovery with isolated native STUN': "matrix.suite == 'integration'",
+ 'Verify guarded production direct and relay underlays': "matrix.suite == 'integration'",
+ 'Verify paired transport and Core applications over an isolated relay': "matrix.suite == 'integration'",
+ 'Verify recovery with the ordinary direct-enabled transport': "matrix.suite == 'integration'",
+ 'Verify direct LAN session natural rekey and idle lifecycle': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != "
+                                                               "'false')",
+ 'Verify guarded relay real-time lease continuity': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')",
+ 'Verify relay-only real-time lease and idle continuity': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != "
+                                                          "'false')",
+ 'Verify native remote resource inspection': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')",
+ 'Verify native remote resource management': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')",
+ 'Verify native fixed-group resource catalog': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')",
+ 'Wait for real-time lifecycle and lease checks': '',
+ 'Test experimental native companion': "matrix.suite == 'integration' && (matrix.goos == 'windows' || matrix.goos == 'darwin')",
+ 'Build native package and smoke archive contents': "matrix.suite == 'integration'",
+ 'Upload native packages': "matrix.suite == 'integration'",
+ 'Save Go caches after integration checks pass on main': "matrix.suite == 'integration' && (success() && "
+                                                         "steps.ci-plan.outputs.long_required != 'false' && github.repository == "
+                                                         "'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && "
+                                                         "github.event.repository.default_branch == 'main' && (github.event_name == 'push' "
+                                                         "|| github.event_name == 'workflow_dispatch') && steps.go-cache.outputs.cache-hit "
+                                                         "!= 'true')",
+ 'Save development Go caches after integration checks pass': "matrix.suite == 'integration' && (success() && "
+                                                             "steps.development-go-cache-scope.outputs.scope != '' && "
+                                                             "steps.development-go-cache.outputs.cache-hit != 'true')",
+ 'Preserve bounded Core failure context': "matrix.suite == 'unit' && (always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && "
+                                          "steps.native-core.outputs.failure_ready == 'true')",
+ 'Summarize measured native suites': 'always()',
+ 'Preserve native suite timings': 'always()'}
+
+
+def validate_native_matrix_workflow(data):
+    """Require exhaustive lane ownership, not a normalized legacy workflow."""
+    workflow = data.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    require(workflow.startswith('name: Cross-platform CI\n'), 'unexpected native workflow identity')
+    jobs = [(pos, key) for pos, indent, key, _ in metadata if indent == 2]
+    positions = [pos for pos, key in jobs if key == 'native']
+    require(len(positions) == 1, 'missing or duplicate native matrix')
+    start = positions[0]
+    end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+    region = workflow[start:end]
+    require('    steps:\n' in region, 'missing native matrix steps')
+    header = region.split('    steps:\n', 1)[0] + '    steps:\n'
+    require(digest(header.encode()) == CI_NATIVE_MATRIX_HEADER_SHA256, 'native matrix identity or failure policy differs')
+    seen = set()
+    for block in re.findall(r'^      - .*?(?=^      - |\Z)', region, re.M | re.S):
+        first = block.splitlines()[0].removeprefix('      - ')
+        name = first.removeprefix('name: ') if first.startswith('name: ') else first
+        require(name in NATIVE_MATRIX_CONDITIONS and name not in seen, 'unclassified or duplicate native matrix step')
+        seen.add(name)
+        conditions = re.findall(r'^        if: (.+)$', block, re.M)
+        expected = NATIVE_MATRIX_CONDITIONS[name]
+        require(conditions == ([expected] if expected else []), 'native matrix step ownership differs: ' + name)
+        if name != "Download this run's impact plan":
+            require(not re.search(r'^        continue-on-error:', block, re.M), 'native matrix failure cannot be ignored')
+    require(seen == set(NATIVE_MATRIX_CONDITIONS), 'native matrix step inventory differs')
+    require(region.count(CI_NATIVE_PREPARATION) == 1, 'native lane dependency preparation differs')
+    require(region.count('name: native-timings-${{ matrix.suite }}-${{ matrix.goos }}-${{ matrix.goarch }}') == 1,
+            'native matrix timing artifacts must be isolated')
+    require(region.count('name: package-${{ matrix.goos }}-${{ matrix.goarch }}') == 1,
+            'native matrix package artifact identity differs')
+    require(region.count('uses: actions/cache/save@') == 2,
+            'native matrix must retain one writer per cache namespace')
+    preparation = """          if [[ '${{ matrix.suite }}' == 'unit' ]]; then
+            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
+          fi
+"""
+    require(region.count(preparation) == 1, 'native Python regressions must run once per target')
+
+
+def native_lane_expected(block, suite, workflow):
+    """Add the reviewed CI-only predicate to expected text, never to input text.
+
+    Prerelease keeps its unconditional gates. This does not normalize or relax
+    an actual workflow; callers still compare the complete expected block.
+    """
+    if not workflow.startswith('name: Cross-platform CI\n'):
+        return block
+    require(suite in ('unit', 'integration'), 'unknown native suite')
+    def guarded(match):
+        step = match.group()
+        condition = re.search(r'^        if: (.+)$', step, re.M)
+        guard = "matrix.suite == '" + suite + "'"
+        if condition:
+            return step[:condition.start()] + '        if: ' + guard + ' && (' + condition[1] + ')' + step[condition.end():]
+        first = step.index('\n') + 1
+        return step[:first] + '        if: ' + guard + '\n' + step[first:]
+    return re.sub(r'^      - .*?(?=^      - |\Z)', guarded, block, flags=re.M | re.S)
+
+
 def validate_native_companion_workflow(data):
     workflow = data.decode("utf-8")
-    require(workflow.count(NATIVE_COMPANION_STEP) == 1, "native companion test gate differs")
+    require(workflow.count(native_lane_expected(NATIVE_COMPANION_STEP, 'integration', workflow)) == 1, "native companion test gate differs")
+
+
+# Bind the entire reviewed jobs, not just the concurrency keys. This includes
+# setup actions, conditional installation, disjoint writer commands, the joins,
+# and every consumer. Extra steps/overrides cannot hide outside a hashed prelude.
+CI_PREPARATION_JOB_SHA256 = {
+    'documents': 'ec5a17c2b3f063f0681dad5328fd238620bfbf400503181090ac062d976b86bc',
+    'product-activation': 'f589adb4e68ae6f7c78a9ae09edd9ecd7c8d098d22d98c9485921d2062244c9a',
+    'web-activation': '59ea77cb223611e42bbee0a12d733d8085a0fefb2259b268e6a78aba0df9d3cf',
+}
+
+
+def validate_preparation_overlap_workflow(data):
+    """Require closed docs and activation dependency DAGs before proof credit.
+
+    The docs group has an implicit failure join. Activation has one Go-only
+    background writer, one foreground npm/Chromium chain, and an explicit wait
+    before any acceptance consumer. No cancellation or relaxed failure is valid.
+    """
+    workflow = data.decode('utf-8')
+    jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    for name, expected in CI_PREPARATION_JOB_SHA256.items():
+        positions = [pos for pos, key in jobs if key == name]
+        require(len(positions) == 1, 'missing or duplicate preparation job: ' + name)
+        start = positions[0]
+        end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+        require(digest(workflow[start:end].encode()) == expected,
+                'preparation job dependency or failure policy differs: ' + name)
 
 
 def validate_parallel_workflow(data):
@@ -309,12 +500,13 @@ def validate_parallel_workflow(data):
         header = (marker + name + '\n        id: ' + identifier
                   + "\n        background: true\n        if: steps.ci-plan.outputs.long_required != 'false'"
                   + '\n        timeout-minutes: ' + str(timeout) + '\n        run: |\n')
+        header = native_lane_expected(header, 'integration', workflow)
         require(workflow.count(header) == 1, 'invalid real-time background step policy')
         starts.append(workflow.index(header))
     fence = (marker + 'Wait for real-time lifecycle and lease checks\n'
              '        wait: [natural-lifecycle, guarded-lease, relay-only-lease]\n')
     package = marker + 'Build native package and smoke archive contents\n'
-    require(workflow.count(fence + NATIVE_COMPANION_STEP + package) == 1, 'missing real-time wait before packaging')
+    require(workflow.count(fence + native_lane_expected(NATIVE_COMPANION_STEP, 'integration', workflow) + package) == 1, 'missing real-time wait before packaging')
     end = workflow.index(fence)
     require(starts == sorted(starts) and starts[-1] < end, 'invalid real-time step order')
     region = workflow[starts[0]:end]
@@ -326,11 +518,14 @@ def validate_parallel_workflow(data):
     require(tuple(re.findall(r'^      - name: ([^\n]+)$', region, re.M)) == expected
             and len(re.findall(r'^      - ', region, re.M)) == len(expected),
             'unexpected work inside real-time parallel region')
-    # Only these three steps may run asynchronously. No cancel, relaxed failure,
-    # nested parallel group, or alternate join may weaken the evidence boundary.
+    # Docs, native real-time gates, activation and browser preparation are the
+    # only async regions. Each has a separate closed source policy below.
     controls = [key for _, _, key, _ in metadata
                 if key in {'background', 'parallel', 'wait', 'wait-all', 'cancel'}]
-    require(controls == ['background', 'background', 'background', 'wait'],
+    require(controls == ['parallel',
+                         'background', 'background', 'background', 'wait',
+                         'background', 'wait', 'background', 'wait',
+                         'background', 'wait', 'background', 'wait'],
             'unexpected workflow concurrency or failure policy')
     require(not any(key == 'continue-on-error' and starts[0] <= pos < end + len(fence)
                     for pos, _, key, _ in metadata), 'real-time failures cannot be ignored')
@@ -350,9 +545,6 @@ def validate_fixture_diagnostics_workflow(data):
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          go run ./cmd/prepare-engine
-          go run ./cmd/prepare-engine --verify
-          go mod verify
           python - <<'PYTHON'
           import os
           import subprocess
@@ -405,7 +597,41 @@ def validate_fixture_diagnostics_workflow(data):
     start = workflow.index(marker)
     next_job = re.search(r'^  [A-Za-z0-9_-]+:\n', workflow[browser + len('\n  browser:\n'):], re.M)
     browser_end = browser + len('\n  browser:\n') + next_job.start() if next_job else len(workflow)
-    require(browser < start < browser_end and workflow.count(expected + '      - name: Verify actual UI workflows with isolated Playwright fixtures\n') == 1,
+    region = workflow[browser:browser_end]
+    prepare = """      # This preparer imports only the adaptation helpers, not embedded Web assets.
+      - name: Prepare verified browser engine
+        id: browser-engine
+        background: true
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+"""
+    node = "      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n"
+    install = """      - name: Wait for verified browser engine
+        wait: browser-engine
+      - name: Prepare verified Japanese fonts
+        timeout-minutes: 5
+        uses: ./.github/actions/japanese-fonts
+      - name: Install official Chromium and fonts
+        id: browser-chromium
+        background: true
+        run: |
+          set -euo pipefail
+          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+"""
+    ready = """      - name: Wait for browser runtime preparation
+        wait: browser-chromium
+      - name: Verify actual UI workflows with isolated Playwright fixtures
+"""
+    require(region.count(prepare + node) == 1 and region.count(install + expected + ready) == 1,
+            'invalid browser preparation overlap or wait policy')
+    require(region.index('      - uses: actions/setup-go@') < region.index(prepare)
+            < region.index('      - name: Test and reproduce locked frontend assets\n')
+            < region.index(install), 'browser preparation dependency order differs')
+    require(browser < start < browser_end and workflow.count(expected) == 1,
             'invalid fixture diagnostic execution policy')
 
 
@@ -455,6 +681,7 @@ def validate_resource_inspection_workflow(data):
           ], env=env, check=True, timeout=10 * 60)
           PYTHON
 """
+    expected = native_lane_expected(expected, 'integration', workflow)
     marker = '      - name: Verify native remote resource inspection\n'
     require(workflow.count(marker) == 1, 'missing or duplicate native inspection gate')
     start = workflow.index(marker)
@@ -516,6 +743,7 @@ def validate_resource_management_workflow(data):
           ], env=env, check=True, timeout=10 * 60)
           PYTHON
 """
+    expected = native_lane_expected(expected, 'integration', workflow)
     marker = '      - name: Verify native remote resource management\n'
     require(workflow.count(marker) == 1, 'missing or duplicate native management gate')
     start = workflow.index(marker)
@@ -572,6 +800,7 @@ def validate_resource_group_catalog_workflow(data):
           ], env=env, check=True, timeout=6 * 60)
           PYTHON
 """
+    expected = native_lane_expected(expected, 'integration', workflow)
     marker = '      - name: Verify native fixed-group resource catalog\n'
     require(workflow.count(marker) == 1, 'missing or duplicate native fixed-group catalog gate')
     start = workflow.index(marker)
@@ -597,6 +826,7 @@ def validate_outbox_workflow(workflow_bytes):
     workflow = workflow_bytes.decode('utf-8')
     expected = ("      - name: Verify durable outbox restart across Core processes\n        timeout-minutes: 6\n        env:\n          SOBALINK_RUN_DIRECT_INTEGRATION: '1'\n        run: |\n          set -euo pipefail\n          python .github/scripts/ci-metrics.py run --suite outbox-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxProcessRestart -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxProcessRestart$'\n",
                 "      - name: Verify durable outbox recovery with separate agents and actual browser\n        timeout-minutes: 8\n        env:\n          SOBALINK_RUN_DIRECT_INTEGRATION: '1'\n          SOBALINK_RUN_TRANSFER_BROWSER_NATIVE: '1'\n          SOBA_OUTBOX_BROWSER_SUMMARY: ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json\n        run: |\n          set -euo pipefail\n          python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestOutboxThreeProcessBrowser -- go test -race -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestOutboxThreeProcessBrowser$' -count=1 -timeout=4m\n")
+    expected = (native_lane_expected(expected[0], 'integration', workflow), expected[1])
     for block in expected:
         marker = block.splitlines(keepends=True)[0]
         require(workflow.count(marker) == 1 and workflow.count(block) == 1,
@@ -618,6 +848,7 @@ def validate_durable_text_workflow(workflow_bytes):
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite durable-text-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'
 """
+    expected = native_lane_expected(expected, 'integration', workflow)
     marker = expected.splitlines(keepends=True)[0]
     require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
             'invalid durable text execution policy')
@@ -654,6 +885,7 @@ def validate_request_setup_workflow(workflow_bytes):
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite {suite} -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:{test} -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^{test}$'
 """
+        block = native_lane_expected(block, 'integration', workflow)
         marker = block.splitlines(keepends=True)[0]
         require(workflow.count(marker) == 1 and workflow.count(block) == 1, "invalid request setup execution policy")
         start = workflow.index(marker)
@@ -738,6 +970,8 @@ def validate_setup_and_text_browser_workflow(workflow_bytes):
 """),
     )
     for job, block in expected:
+        if job == 'native':
+            block = native_lane_expected(block, 'integration', workflow)
         marker = block.splitlines(keepends=True)[0]
         require(workflow.count(marker) == 1 and workflow.count(block) == 1,
                 'invalid setup or text browser execution policy')
@@ -785,6 +1019,7 @@ def validate_linux_nearby_workflow(workflow_bytes):
           set -euo pipefail
           python -B .github/scripts/ci-metrics.py run --suite nearby-native-linux -- python -B .github/scripts/ci-nearby-required.py
 """
+    expected = native_lane_expected(expected, 'unit', workflow)
     marker = expected.splitlines(keepends=True)[0]
     require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
             'invalid Linux nearby execution policy')
@@ -804,17 +1039,7 @@ def validate_macos_nearby_workflow(workflow_bytes):
     """One required five-scope Terminal run and its mandatory closed artifact."""
     workflow = workflow_bytes.decode('utf-8')
     metadata = workflow_metadata(workflow)
-    preparation = """      - name: Check exact toolchain and native target
-        run: |
-          set -euo pipefail
-          test "$(go env GOVERSION)" = go1.27.1
-          test "$(go env GOOS)" = '${{ matrix.goos }}'
-          test "$(go env GOARCH)" = '${{ matrix.goarch }}'
-          go run ./cmd/prepare-engine
-          go run ./cmd/prepare-engine --verify
-          go mod verify
-          python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
-"""
+    preparation = CI_NATIVE_PREPARATION
     expected = """      - name: Verify macOS five-scope discovery without skips
         if: matrix.goos == 'darwin'
         timeout-minutes: 10
@@ -832,6 +1057,7 @@ def validate_macos_nearby_workflow(workflow_bytes):
           if-no-files-found: error
           retention-days: 90
 """
+    expected = native_lane_expected(expected, 'unit', workflow)
     marker = expected.splitlines(keepends=True)[0]
     require(workflow.count(marker) == 1 and workflow.count(expected) == 1,
             'invalid macOS nearby execution/export policy')
@@ -937,12 +1163,16 @@ def validate_native_packages_workflow(sources):
 """
     for path, tail in ((WORKFLOW, ordinary), ('.github/workflows/prerelease.yml', release)):
         workflow = sources[path].decode('utf-8')
+        early_step = native_lane_expected(early, 'unit', workflow)
+        later_step = native_lane_expected(later, 'unit', workflow)
+        failure_step = native_lane_expected(failure, 'unit', workflow)
+        tail_step = native_lane_expected(tail, 'unit', workflow) if path == WORKFLOW else tail
         metadata = workflow_metadata(workflow)
         jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
         native = [offset for offset, key in jobs if key == 'native']
         require(len(native) == 1, 'missing native package job')
         end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
-        for block in (early, later + tail, failure):
+        for block in (early_step, later_step + tail_step, failure_step):
             marker = block.splitlines(keepends=True)[0]
             require(workflow.count(marker) == workflow.count(block) == 1,
                     'invalid native package execution or receipt policy')
@@ -951,25 +1181,53 @@ def validate_native_packages_workflow(sources):
                     'invalid native package step boundary')
         region = workflow[native[0]:end]
         if path == WORKFLOW:
-            require(region.count(setup_go) == 1 and region.count(early + setup_node) == 1,
+            require(region.count(setup_go) == 1 and region.count(early_step + setup_node) == 1,
                     'Core must follow exact Go and cache setup before other workloads')
-            setup_start, core_start = region.index(setup_go), region.index(early)
+            setup_start, core_start = region.index(setup_go), region.index(early_step)
             require(setup_start < core_start, 'exact Go setup must precede Core collection')
             prelude = region[setup_start + len(setup_go):core_start]
             require(digest(prelude.encode('utf-8')) == CI_NATIVE_CACHE_PRELUDE_SHA256,
                     'early CI cache setup differs from reviewed read-only policy')
         else:
-            require(region.count(setup_go + early + setup_node) == 1,
+            require(region.count(setup_go + early_step + setup_node) == 1,
                     'release Core must immediately follow exact Go setup before other work or cache restore')
-        require(region.index('      - uses: actions/setup-go@') < region.index(early)
+        require(region.index('      - uses: actions/setup-go@') < region.index(early_step)
                 < region.index('      - uses: actions/setup-node@')
                 < region.index('      - name: Reproduce locked frontend assets\n')
-                < region.index(later), 'early Core setup ordering differs')
+                < region.index(later_step), 'early Core setup ordering differs')
         require(workflow.count('python -B .github/scripts/ci-native-core-required.py core') == 1
                 and workflow.count('python -B .github/scripts/ci-native-core-required.py remaining') == 1
                 and 'python -B .github/scripts/ci-windows-packages.py' not in workflow
                 and 'GOMAXPROCS' not in workflow and 'GOTRACEBACK' not in workflow,
                 'native package runner escaped its exact steps')
+
+
+def validate_browser_cache_workflow(sources):
+    """Bind cache scope, exact inputs and post-success save; never skip tests."""
+    require(digest(sources['.github/scripts/ci-browser-cache.py']) == '0657be81ee4cb662d205b281548b1645c1e6e2184ef19749d2a55180940f937b',
+            'browser cache selector differs from reviewed policy')
+    workflow = sources[WORKFLOW].decode('utf-8')
+    jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    starts = [pos for pos, key in jobs if key == 'browser']
+    require(len(starts) == 1, 'browser cache job missing or duplicated')
+    start = starts[0]
+    end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+    region = workflow[start:end]
+    restore_start = '      # Browser caches are acceleration only, never native/release evidence.\n'
+    save_start = '      - name: Save isolated browser Go cache after all checks pass\n'
+    require(workflow.count(restore_start) == 1 and workflow.count(save_start) == 1,
+            'browser cache steps escaped the required job')
+    require(restore_start in region and save_start in region, 'missing browser cache steps')
+    a = region.index(restore_start)
+    report = region.index('      - name: Report browser Go cache result\n', a)
+    b = region.index('      - ', report + len('      - name: Report browser Go cache result\n'))
+    require(digest(region[a:b].encode()) == 'e8b50e17f60117fd0588bd781e2454904fca8064d29ec5cb7885a8d9c314e01b',
+            'browser cache restore policy differs')
+    require(region[:a].endswith("          go-version: '1.27.1'\n          cache: false\n"),
+            'browser cache must immediately follow exact Go setup')
+    tail = region[region.index(save_start):].rstrip() + '\n'
+    require(digest(tail.encode()) == 'b24ac384b3a1a4d9527f4171257f46209d2711763ab7b2ad3a0bbe5c3892cf3c',
+            'browser cache must save only after all work succeeds')
 
 
 def validate_frontend_workflow(sources):
@@ -1019,7 +1277,7 @@ def validate_frontend_workflow(sources):
 
 def validate_regression_workflow(sources):
     """Portable regressions must finish in addition to every native lane."""
-    require(digest(sources['.github/scripts/ci-regressions.py']) == '851d7a3604943dd0e589e24593a6805d1da04ac58860c9877fa72f4182fbfd10',
+    require(digest(sources['.github/scripts/ci-regressions.py']) == 'b3539272f38593e6608b350bf933b01200fd34b1b810c77e6f5dad0388243ac8',
             'regression selector differs from reviewed policy')
     workflow = sources[WORKFLOW].decode('utf-8')
     metadata = workflow_metadata(workflow)
@@ -1106,7 +1364,7 @@ def validate_font_workflow(sources):
     marker = '      - name: Prepare verified Japanese fonts\n'
     for name, conditional, consumer in (
             ('documents', "        if: steps.document-selection.outputs.render_required == 'true'\n",
-             '      - name: Install isolated locked document rendering dependencies\n'),
+             '          - name: Install isolated locked document rendering dependencies\n'),
             ('browser', '', '      - name: Install official Chromium and fonts\n')):
         positions = [pos for pos, key in jobs if key == name]
         require(len(positions) == 1, 'missing Japanese font consumer job')
@@ -1114,14 +1372,23 @@ def validate_font_workflow(sources):
         end = next((pos for pos, _ in jobs if pos > start), len(workflow))
         job = workflow[start:end]
         expected = marker + conditional + '        timeout-minutes: 5\n        uses: ./.github/actions/japanese-fonts\n'
-        require(job.count(marker) == job.count(consumer) == 1 and job.count(expected + consumer) == 1,
+        require(job.count(marker) == job.count(consumer) == job.count(expected) == 1
+                and job.index(expected) < job.index(consumer),
                 'Japanese font setup or failure policy differs')
+        if name == 'browser':
+            require(job.count(expected + consumer) == 1, 'Japanese browser font preparation order differs')
+        else:
+            # The complete document job hash additionally binds the parallel
+            # system/npm dependency group and its join before rendering.
+            validate_preparation_overlap_workflow(sources[WORKFLOW])
 
 
-def required_jobs(sources):
+def required_jobs(sources, *, include_skipped=False):
     """Read literal required-step constants from the protected source; no exec."""
     validate_font_workflow(sources)
     validate_native_ui_workflow(sources)
+    validate_browser_cache_workflow(sources)
+    validate_native_matrix_workflow(sources[WORKFLOW])
     validate_regression_workflow(sources)
     validate_frontend_workflow(sources)
     validate_native_packages_workflow(sources)
@@ -1138,8 +1405,10 @@ def required_jobs(sources):
     validate_request_setup_workflow(sources['.github/workflows/prerelease.yml'])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     validate_fixture_diagnostics_workflow(sources[WORKFLOW])
+    validate_preparation_overlap_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
-    names = {'REGRESSION_STEPS', 'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
+    names = {'NATIVE_SHARED_STEPS', 'NATIVE_UNIT_STEPS', 'NATIVE_SHARED_CONTROL_STEPS', 'WINDOWS_BARRIER_STEPS',
+             'REGRESSION_STEPS', 'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
              'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS', 'NATIVE_UI_STEPS'}
     values = {}
     for node in tree.body:
@@ -1166,6 +1435,10 @@ def required_jobs(sources):
             'missing Japanese font required gate')
     require(values['BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,
             'missing fixture diagnostic required gate')
+    require(all(values['BROWSER_STEPS'].count(name) == 1 for name in (
+        'Prepare verified browser engine', 'Wait for verified browser engine',
+        'Install official Chromium and fonts', 'Wait for browser runtime preparation')),
+        'missing browser preparation required gate')
     require(values['FAST_STEPS'].count('Verify durable outbox restart across Core processes') == 1
             and values['BROWSER_STEPS'].count('Verify durable outbox recovery with separate agents and actual browser') == 1,
             'missing durable outbox required gates')
@@ -1188,25 +1461,44 @@ def required_jobs(sources):
     require(values['MACOS_NEARBY_TARGETS'] == ('darwin-arm64',)
             and values['MACOS_NEARBY_STEPS'] == ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof'),
             'unexpected qualified macOS nearby policy')
-    native_steps = values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
-    require(len(set(native_steps)) == len(native_steps), 'overlapping required native gates')
-    result = {name: native_steps for name, _ in TARGETS.values()}
-    require(not set(native_steps).intersection(values['LINUX_NEARBY_STEPS']), 'overlapping Linux nearby gate')
-    for target in values['LINUX_NEARBY_TARGETS']:
-        result[TARGETS[target][0]] += values['LINUX_NEARBY_STEPS']
-    require(not set(native_steps + values['LINUX_NEARBY_STEPS']).intersection(values['MACOS_NEARBY_STEPS']),
-            'overlapping macOS nearby gate')
-    for target in values['MACOS_NEARBY_TARGETS']:
-        result[TARGETS[target][0]] += values['MACOS_NEARBY_STEPS']
+    require(values['NATIVE_SHARED_STEPS'] == ('Reproduce locked frontend assets', 'Check exact toolchain and native target')
+            and values['NATIVE_UNIT_STEPS'] == ('Local and mock tests, race detector, and vet',
+                                               'Verify adapted engine admission and native underlay denial')
+            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for real-time lifecycle and lease checks',)
+            and values['WINDOWS_BARRIER_STEPS'] == ('Verify Windows receive-retirement directory barriers',),
+            'native suite partition differs from reviewed policy')
+    require(values['FAST_STEPS'].count('Verify explicit dispatch with three separate Core processes') == 1,
+            'missing explicit dispatch required gate')
     require(values['NATIVE_UI_STEPS'] == ('Test experimental native companion',), 'unexpected companion gate policy')
     require(values['NATIVE_PACKAGE_TARGETS'] == ('windows-amd64', 'darwin-arm64')
             and values['NATIVE_PACKAGE_STEPS'] == ('Collect required whole-Core race evidence',
                 'Verify remaining native package race coverage', 'Preserve required native package proof'),
             'unexpected native package coverage policy')
-    require(not set(native_steps).intersection(values['NATIVE_PACKAGE_STEPS']), 'overlapping native package gate')
-    for target in values['NATIVE_PACKAGE_TARGETS']:
-        result[TARGETS[target][0]] += values['NATIVE_PACKAGE_STEPS'] + values['NATIVE_UI_STEPS']
-    result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
+    inventory = (values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
+                 + values['LINUX_NEARBY_STEPS'] + values['MACOS_NEARBY_STEPS']
+                 + values['WINDOWS_BARRIER_STEPS'] + values['NATIVE_PACKAGE_STEPS'] + values['NATIVE_UI_STEPS'])
+    require(len(set(inventory)) == len(inventory), 'overlapping required native gates')
+    result, skipped = {}, {}
+    for suite, targets in (('unit', TARGETS), ('integration', INTEGRATION_TARGETS)):
+        for target, (name, _) in targets.items():
+            selected = set(values['NATIVE_SHARED_STEPS'] + values['NATIVE_SHARED_CONTROL_STEPS'])
+            if suite == 'unit':
+                selected.update(values['NATIVE_UNIT_STEPS'])
+                if target in values['LINUX_NEARBY_TARGETS']:
+                    selected.update(values['LINUX_NEARBY_STEPS'])
+                if target in values['MACOS_NEARBY_TARGETS']:
+                    selected.update(values['MACOS_NEARBY_STEPS'])
+                if target == 'windows-amd64':
+                    selected.update(values['WINDOWS_BARRIER_STEPS'])
+                if target in values['NATIVE_PACKAGE_TARGETS']:
+                    selected.update(values['NATIVE_PACKAGE_STEPS'])
+            else:
+                selected.update(set(values['FAST_STEPS']) - set(values['NATIVE_UNIT_STEPS']))
+                selected.update(values['LONG_STEPS'] + values['FULL_ONLY_STEPS'])
+                if target in values['NATIVE_PACKAGE_TARGETS']:
+                    selected.update(values['NATIVE_UI_STEPS'])
+            result[name] = tuple(step for step in inventory if step in selected)
+            skipped[name] = tuple(step for step in inventory if step not in selected)
     result.update({
         'impact': ('Select minimum CI scope',),
         'documents': ('Verify document selection and static content', 'Prepare verified Japanese fonts',
@@ -1215,28 +1507,40 @@ def required_jobs(sources):
         'browser': values['BROWSER_STEPS'],
         'manifest-smoke': ('Exercise signing and verification offline with a disposable test key',),
         'ci-required': ('Require every check selected for this change',),
-        'web-activation': ('Prepare locked dependencies and official Chromium', 'Verify fixed Web acceptance policy',
+        'web-activation': ('Prepare verified activation engine and Go dependencies',
+                           'Prepare locked dependencies and official Chromium', 'Wait for activation Go preparation',
+                           'Verify fixed Web acceptance policy',
                            'Compile and run seven private synthetic-owner cases'),
-        'product-activation': ('Prepare locked dependencies and official Chromium', 'Verify fixed product acceptance policy',
+        'product-activation': ('Prepare verified activation engine and Go dependencies',
+                               'Prepare locked dependencies and official Chromium', 'Wait for activation Go preparation',
+                               'Verify fixed product acceptance policy',
                                'Build normal assets and run two private production-entry cases'),
     })
-    return result
+    return (result, skipped) if include_skipped else result
 
 
-def audit_jobs(api, run, required):
+def audit_jobs(api, run, required, *, skipped=None):
     jobs = pages(api, f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", 'jobs')
-    index = {}
+    index, identifiers = {}, set()
+    native_names = {name for name, _ in (*TARGETS.values(), *INTEGRATION_TARGETS.values())}
     for job in jobs:
-        require(job.get('run_id') == run['id'] and job.get('run_attempt') == run['run_attempt']
+        require(type(job.get('id')) is int and job['id'] > 0 and job['id'] not in identifiers,
+                'invalid or duplicate effective CI job ID')
+        identifiers.add(job['id'])
+        require(type(job.get('run_id')) is int and type(job.get('run_attempt')) is int
+                and job.get('run_id') == run['id'] and job.get('run_attempt') == run['run_attempt']
                 and job.get('head_sha') == run['head_sha'] and isinstance(job.get('name'), str)
                 and job['name'] not in index, 'invalid effective CI job identity')
+        require(not job['name'].startswith(('native (', 'native-integration (')) or job['name'] in native_names,
+                'unknown native suite or target')
         index[job['name']] = job
+    skipped = skipped or {}
     proof = []
     for name, steps in sorted(required.items()):
         job = index.get(name, {})
         require(job.get('status') == 'completed' and job.get('conclusion') == 'success',
                 'required full-validation job did not pass: ' + name)
-        for expected, label in TARGETS.values():
+        for expected, label in (*TARGETS.values(), *INTEGRATION_TARGETS.values()):
             if name == expected:
                 require(label in job.get('labels', []), 'native CI runner target mismatch')
         selected = []
@@ -1245,6 +1549,10 @@ def audit_jobs(api, run, required):
             require(len(matches) == 1 and matches[0].get('status') == 'completed'
                     and matches[0].get('conclusion') == 'success', 'required full-validation step did not pass: ' + step)
             selected.append(step)
+        for step in skipped.get(name, ()):
+            matches = [s for s in job.get('steps', []) if s.get('name') == step]
+            require(len(matches) == 1 and matches[0].get('status') == 'completed'
+                    and matches[0].get('conclusion') == 'skipped', 'wrong native suite ownership or platform gate: ' + step)
         # GitHub may carry successful work into the effective current attempt
         # with new IDs and original timestamps. Do not demand physical reruns.
         proof.append({'name': name, 'id': job['id'], 'effective_attempt': run['run_attempt'],
@@ -1282,8 +1590,8 @@ def audit(api, commit, latest=None, local_root=None, previous_proof=None, artifa
                 and type(previous_proof.get('schema')) is int and previous_proof['schema'] == 1 and previous_proof.get('repository') == REPOSITORY
                 and previous_proof.get('head_sha') == commit and previous_proof.get('head_tree') == tree
                 and previous_proof.get('source_sha256') == hashes, 'stored full-CI proof source mismatch')
-    required = required_jobs(sources)
-    jobs = audit_jobs(api, run, required)
+    required, skipped = required_jobs(sources, include_skipped=True)
+    jobs = audit_jobs(api, run, required, skipped=skipped)
     path = Path(__file__).with_name('ci-dnssd-required.py')
     spec = importlib.util.spec_from_file_location('ci_dnssd_required', path)
     dnssd = importlib.util.module_from_spec(spec)

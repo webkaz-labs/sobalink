@@ -9,7 +9,7 @@ import { test as base, expect } from '@playwright/test'
 import { fixtureStartDiagnostic, readStartupSidecar } from './fixture-start-diagnostics.mjs'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
 import { createSyntheticPairingInterception, verifyCommandsBeforeCleanup } from './synthetic-pairing.mjs'
-import { assertSeparateArtifacts, safeArtifactName, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
+import { assertSeparateArtifacts, safeArtifactName, safeArtifactFilename, validateSession, CAPTURE_FORBIDDEN_SELECTOR, PRIVATE_VALUE_SELECTOR, privateControlsAreEmpty } from './fixture-safety.mjs'
 
 export { expect }
 
@@ -163,7 +163,7 @@ export const test = base.extend({
         interceptSyntheticPairingCommands(respond) { return syntheticPairing.install(page, respond) },
         async capture(name) {
           await assertCaptureAllowed()
-          const filename = `${safeArtifactName(name)}.png`
+          const filename = safeArtifactFilename(name, 'png', testInfo)
           await page.screenshot({ path: join(output, filename), fullPage: true })
           testInfo.annotations.push({ type: 'safe-artifact', description: filename })
         },
@@ -176,7 +176,7 @@ export const test = base.extend({
         },
         async writeMetrics(name, data) {
           await assertCaptureAllowed()
-          const filename = `${safeArtifactName(name)}.json`
+          const filename = safeArtifactFilename(name, 'json', testInfo)
           await writeFile(join(output, filename), `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 })
           testInfo.annotations.push({ type: 'safe-artifact', description: filename })
         },

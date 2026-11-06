@@ -213,6 +213,13 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn('python .github/scripts/check-frontend.py\n', browser)
         self.assertNotIn('--build-only', browser)
 
+    def assert_native_lane_guard(self, workflow, step, suite):
+        if workflow == "ci":
+            self.assertEqual(re.findall(r"^        if: (.+)$", step, re.MULTILINE),
+                             ["matrix.suite == '" + suite + "'"])
+        else:
+            self.assertNotIn("        if:", step)
+
     def test_reviewed_engine_preparation_and_guarded_gates_are_required(self):
         for workflow, jobs in (("ci", ("native", "manifest-smoke", "browser")), ("prerelease", ("native", "provenance"))):
             for job in jobs:
@@ -221,10 +228,10 @@ class WorkflowCachePolicy(unittest.TestCase):
                 self.assertIn("go run ./cmd/prepare-engine --verify", source)
         for workflow in ("ci", "prerelease"):
             step = self.step(workflow, "native", "name: Verify guarded production direct and relay underlays")
-            self.assertNotIn("        if:", step)
+            self.assert_native_lane_guard(workflow, step, "integration")
             self.assertNotIn("ts_omit_udptransport", step)
             engine_step = self.step(workflow, "native", "name: Verify adapted engine admission and native underlay denial")
-            self.assertNotIn("        if:", engine_step)
+            self.assert_native_lane_guard(workflow, engine_step, "unit")
             self.assertIn('env["SOBALINK_RUN_UNDERLAY_NATIVE"] = "1"', engine_step)
             self.assertIn('cwd=".sobalink-deps/tailscale"', engine_step)
             self.assertIn('"-run=^Test(UnderlayGuard|WANCandidate|Sobalink|GuardedLocalSocketEndpointUsesActualFamilyPort)"', engine_step)
@@ -243,7 +250,7 @@ class WorkflowCachePolicy(unittest.TestCase):
     def test_direct_and_wan_native_extension_gates(self):
         for workflow in ("ci", "prerelease"):
             direct = self.step(workflow, "native", "name: Verify direct LAN WireGuard and Core native applications")
-            self.assertNotIn("        if:", direct)
+            self.assert_native_lane_guard(workflow, direct, "integration")
             self.assertIn("timeout-minutes: 9", direct)
             self.assertIn("go test -race -count=2 -v -timeout=3m", direct)
             self.assertIn("-run='^TestDirectLAN' ./internal/core", direct)
@@ -251,9 +258,9 @@ class WorkflowCachePolicy(unittest.TestCase):
             title = "name: Verify direct LAN session natural rekey and idle lifecycle" if workflow == "ci" else "name: Verify direct LAN session rekey and idle lifecycle"
             lifecycle = self.step(workflow, "native", title)
             if workflow == "ci":
-                self.assertIn("if: steps.ci-plan.outputs.long_required != 'false'", lifecycle)
+                self.assertEqual(re.findall(r"^        if: (.+)$", lifecycle, re.M), ["matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')"])
                 synthetic = self.step("ci", "native", "name: Verify direct LAN synthetic expiry and rekey")
-                self.assertNotIn("        if:", synthetic)
+                self.assert_native_lane_guard(workflow, synthetic, "integration")
                 self.assertIn("-run='^TestNativeSessionSyntheticExpiryRekey$'", synthetic)
                 self.assertIn("go test -race -count=1", synthetic)
             else:
@@ -268,7 +275,7 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn("go vet -tags=directlan_integration", direct)
             self.assertNotIn("sudo", direct)
             wan = self.step(workflow, "native", "name: Verify explicit WAN discovery with isolated native STUN")
-            self.assertNotIn("        if:", wan)
+            self.assert_native_lane_guard(workflow, wan, "integration")
             self.assertIn('env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"', wan)
             self.assertIn("TestWANCandidateNativeLoopbackSTUN", wan)
             self.assertNotIn("ts_omit_udptransport", wan)
@@ -283,7 +290,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("mise exec -- soba --help", installed)
         for workflow in ("ci", "prerelease"):
             step = self.step(workflow, "native", "name: Verify paired transport")
-            self.assertNotIn("        if:", step)
+            self.assert_native_lane_guard(workflow, step, "integration")
             relay_test = "TestTrustedRelayTwoPeerFunctionalIntegration" if workflow == "ci" else "TestTrustedRelayTwoPeerIntegration"
             self.assertIn(relay_test + "|TestLANCorePeerApplicationsIntegration", step)
             self.assertIn('env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"', step)
@@ -296,7 +303,7 @@ class WorkflowCachePolicy(unittest.TestCase):
             native = self.job(workflow, 'native')
             for name, suite, test in full.REQUEST_SETUP_CASES:
                 step = self.step(workflow, 'native', 'name: ' + name)
-                self.assertNotIn('        if:', step)
+                self.assert_native_lane_guard(workflow, step, "integration")
                 self.assertNotIn('continue-on-error', step)
                 self.assertIn('--exact --expect github.com/webkaz-labs/sobalink/internal/core:' + test, step)
                 self.assertIn('go test -race -count=1 -timeout=3m', step)
@@ -312,8 +319,13 @@ class WorkflowCachePolicy(unittest.TestCase):
                 self.assertEqual(self.key("ci", job), prefix + runner + suffix + "${{ github.sha }}")
                 self.assertEqual(self.key("prerelease", release_job), prefix + runner + suffix + "${{ needs.gate.outputs.commit }}")
         native_matrix = lambda name: re.findall(r"^          - runner: (.+)\n            goos: (.+)\n            goarch: (.+)$", self.job(name, "native"), re.MULTILINE)
-        self.assertEqual(native_matrix("ci"), native_matrix("prerelease"))
-        self.assertEqual(len(native_matrix("ci")), 4)
+        release_matrix = native_matrix("prerelease")
+        self.assertEqual(native_matrix("ci"), release_matrix + release_matrix)
+        self.assertEqual(len(native_matrix("ci")), 8)
+        self.assertEqual(len(release_matrix), 4)
+        self.assertEqual(re.findall(r"^            suite: (.+)$", self.job("ci", "native"), re.M),
+                         ["unit"] * 4 + ["integration"] * 4)
+        self.assertNotIn("matrix.suite", self.job("prerelease", "native"))
         self.assertIn(("ubuntu-24.04", "linux", "amd64"), native_matrix("ci"))
 
     def test_four_target_inventories_match(self):
@@ -338,7 +350,7 @@ class WorkflowCachePolicy(unittest.TestCase):
                 with self.subTest(workflow=workflow, job=job):
                     restores = re.findall(r"^      - .*?(?=^      - |\Z)", self.job(workflow, job), re.MULTILINE | re.DOTALL)
                     restores = [step for step in restores if "uses: actions/cache/restore@" in step]
-                    self.assertEqual(len(restores), 2 if (workflow, job) == ("ci", "native") else 1)
+                    self.assertEqual(len(restores), 3 if (workflow, job) == ("ci", "native") else 1)
                     for restore in restores:
                         self.assertIn("uses: actions/cache/restore@" + self.CACHE_PIN, restore)
                         self.assertIn(self.CACHE_PATHS, restore)
@@ -351,10 +363,10 @@ class WorkflowCachePolicy(unittest.TestCase):
 
     def test_only_successful_canonical_main_native_ci_can_save(self):
         ci = self.workflow("ci")
-        self.assertEqual(ci.count("uses: actions/cache/save@"), 3)
-        save = self.step("ci", "native", "name: Save Go caches after all native checks pass on main")
+        self.assertEqual(ci.count("uses: actions/cache/save@"), 4)
+        save = self.step("ci", "native", "name: Save Go caches after integration checks pass on main")
         self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
-        self.assertIn("        if: success() && steps.ci-plan.outputs.long_required != 'false' && " + self.MAIN_GUARD + " && steps.go-cache.outputs.cache-hit != 'true'\n", save)
+        self.assertIn("        if: matrix.suite == 'integration' && (success() && steps.ci-plan.outputs.long_required != 'false' && " + self.MAIN_GUARD + " && steps.go-cache.outputs.cache-hit != 'true')\n", save)
         self.assertIn(self.CACHE_PATHS, save)
         self.assertIn("key: ${{ steps.go-cache.outputs.cache-primary-key }}", save)
         native = self.job("ci", "native")
@@ -369,13 +381,13 @@ class WorkflowCachePolicy(unittest.TestCase):
         native = self.job("ci", "native")
         core = native.index("name: Collect required whole-Core race evidence")
         for marker in ("id: go-cache-info\n", "id: development-go-cache-scope\n",
-                       "id: go-cache\n", "id: development-go-cache\n",
+                       "id: go-cache\n", "id: development-go-cache\n", "id: development-main-seed\n",
                        "name: Report Go cache results\n"):
             with self.subTest(marker=marker):
                 self.assertLess(native.index(self.step("ci", "native", marker)), core)
         self.assertLess(core, native.index("name: Reproduce locked frontend assets"))
-        for name in ("Save Go caches after all native checks pass on main",
-                     "Save development Go caches after all native checks pass"):
+        for name in ("Save Go caches after integration checks pass on main",
+                     "Save development Go caches after integration checks pass"):
             save = self.step("ci", "native", "name: " + name)
             self.assertNotIn("'schedule'", save)
             self.assertGreater(native.index(save), native.index("name: Wait for real-time lifecycle and lease checks"))
@@ -496,9 +508,9 @@ class WorkflowCachePolicy(unittest.TestCase):
 
     def test_development_cache_saves_only_after_successful_native_validation(self):
         restore = self.step("ci", "native", "id: development-go-cache\n")
-        save = self.step("ci", "native", "name: Save development Go caches after all native checks pass")
+        save = self.step("ci", "native", "name: Save development Go caches after integration checks pass")
         self.assertIn("        if: steps.development-go-cache-scope.outputs.scope != ''\n", restore)
-        self.assertIn("        if: success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-hit != 'true'\n", save)
+        self.assertIn("        if: matrix.suite == 'integration' && (success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-hit != 'true')\n", save)
         self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
         self.assertIn(self.CACHE_PATHS, save)
         self.assertIn("key: ${{ steps.development-go-cache.outputs.cache-primary-key }}", save)
@@ -556,7 +568,7 @@ class WorkflowCachePolicy(unittest.TestCase):
             for needle in ("go test -race -count=1 -timeout=10m ./...", "go vet ./...", "gofmt -l cmd internal", "python .github/scripts/smoke-package.py"):
                 with self.subTest(workflow=workflow, command=needle):
                     step = self.step(workflow, "native", needle)
-                    self.assertNotIn("        if:", step)
+                    self.assert_native_lane_guard(workflow, step, "integration" if "smoke-package.py" in needle else "unit")
                     self.assertNotIn("cache-hit", step)
         self.assertIn("python -B .github/scripts/ci-regressions.py native --plan", self.job("ci", "native"))
         self.assertIn("python -B .github/scripts/ci-regressions.py common --plan", self.job("ci", "policy-regressions"))
@@ -566,10 +578,16 @@ class WorkflowCachePolicy(unittest.TestCase):
     def test_native_packages_are_exhaustive_and_keep_later_policy_gates(self):
         for name in ('ci', 'prerelease'):
             early = self.step(name, 'native', 'name: Collect required whole-Core race evidence')
-            self.assertIn("        if: matrix.goos == 'windows' || matrix.goos == 'darwin'\n", early)
+            condition = "matrix.goos == 'windows' || matrix.goos == 'darwin'"
+            if name == 'ci':
+                condition = "matrix.suite == 'unit' && (" + condition + ")"
+            self.assertEqual(re.findall(r"^        if: (.+)$", early, re.M), [condition])
             self.assertIn('run: python -B .github/scripts/ci-native-core-required.py core', early)
             remaining = self.step(name, 'native', 'name: Verify remaining native package race coverage')
-            self.assertIn("steps.native-core.outputs.remaining_safe == 'true'", remaining)
+            remaining_condition = "always() && !cancelled() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true'"
+            if name == 'ci':
+                remaining_condition = "matrix.suite == 'unit' && (" + remaining_condition + ")"
+            self.assertEqual(re.findall(r"^        if: (.+)$", remaining, re.M), [remaining_condition])
             self.assertIn('run: python -B .github/scripts/ci-native-core-required.py remaining', remaining)
             native = self.job(name, 'native')
             self.assertIn("if [[ '${{ matrix.goos }}' == 'linux' ]]; then", native)
@@ -591,7 +609,17 @@ class WorkflowCachePolicy(unittest.TestCase):
             step = self.step("ci", "browser", command)
             self.assertNotIn("        if:", step)
             self.assertNotIn("cache-hit", step)
-        self.assertNotIn("actions/cache", browser)
+        self.assertNotIn("trusted-main-go-v1-", browser)
+        self.assertNotIn("development-go-v1-", browser)
+        self.assertEqual(browser.count("uses: actions/cache/restore@" + self.CACHE_PIN), 1)
+        self.assertEqual(browser.count("uses: actions/cache/save@" + self.CACHE_PIN), 1)
+        restore = self.step("ci", "browser", "name: Restore isolated browser Go cache")
+        save = self.step("ci", "browser", "name: Save isolated browser Go cache after all checks pass")
+        self.assertIn("key: browser-go-v1-", restore)
+        self.assertIn("if: success() && steps.browser-go-cache-info.outputs.scope != ''", save)
+        self.assertIn("key: ${{ steps.browser-go-cache.outputs.cache-primary-key }}", save)
+        self.assertLess(browser.index(save), len(browser))
+        self.assertGreater(browser.index(save), browser.index("name: Preserve sanitized UI screenshots"))
         relay = self.step("ci", "native", "name: Verify paired transport")
         self.assertNotIn("cache-hit", relay)
         self.assertIn('"go", "test", "-count=1", "-v"', relay)
@@ -604,7 +632,7 @@ class WorkflowCachePolicy(unittest.TestCase):
                  "Verify relay-only real-time lease and idle continuity")
         for name in names:
             step = self.step("ci", "native", "name: " + name)
-            self.assertIn("        if: steps.ci-plan.outputs.long_required != 'false'\n", step)
+            self.assertEqual(re.findall(r"^        if: (.+)$", step, re.M), ["matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')"])
             self.assertNotIn("cache-hit", step)
             self.assertIn("-count=1", step)
         guarded = self.step("ci", "native", "name: Verify guarded relay real-time lease continuity")
@@ -693,7 +721,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         for workflow, command in (("ci", "go test -race -count=5 -timeout=2m ./internal/control"), ("prerelease", "go test -race -count=25 -timeout=3m ./internal/control")):
             with self.subTest(workflow=workflow):
                 step = self.step(workflow, "native", command)
-                self.assertNotIn("        if:", step)
+                self.assert_native_lane_guard(workflow, step, "unit")
                 self.assertNotIn("cache-hit", step)
         self.assertIn("tee logs/ipc-regression.txt", self.job("prerelease", "native"))
 
@@ -708,7 +736,7 @@ class WorkflowCachePolicy(unittest.TestCase):
                 self.assertEqual(native.count('mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX"'), 1)
                 self.assertEqual(native.count('mkdir -p "$GOCACHE" "$GOTMPDIR"'), 2)
                 self.assertNotIn('go clean', native)
-                self.assertEqual(native.count('goos: darwin'), 1)
+                self.assertEqual(native.count('goos: darwin'), 2 if workflow == 'ci' else 1)
         ci = self.step("ci", "native", "name: Build native package and smoke archive contents")
         self.assertEqual(ci.count("if [[ '${{ matrix.goos }}' == darwin ]]; then"), 2)
         second = ci.split("if [[ '${{ matrix.goos }}' == darwin ]]; then", 2)[2].split("          fi", 1)[0]

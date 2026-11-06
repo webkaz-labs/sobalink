@@ -2,46 +2,45 @@
 
 [日本語](CI_TESTING.ja.md)
 
-CI policy fixtures run once in a shared Linux job, in parallel with native
-product checks. Native lanes keep the Python checks that exercise actual file,
-process, permission and cleanup behavior. This does not reduce Go product race
-tests, native discovery, browser acceptance or package validation within a selected scope.
+The shared Linux job discovers every Python regression, in parallel with native
+product checks. Native lanes retain actual file, process, permission and cleanup
+checks. Go race tests, native discovery, browser acceptance and package validation
+remain unchanged.
 The separate [native UI-only scope](CI_EFFICIENCY.en.md#native-ui-only-changes) keeps
 the complete companion race suite on four targets and Windows/macOS product
 packages, while omitting unrelated backend qualification and browser jobs.
 
-- For ordinary product source edits, the shared job discovers the complete
-  Python suite. Native lanes select the reviewed OS contracts: 49 on Windows,
-  53 on Linux and 65 on macOS, before any additional nested fixture checks.
-- Changes to CI scripts/workflows, dependency manifests, engine adaptation or
-  engine preparation require the complete Python suite on every target.
-- The existing nightly run, forced full runs, unknown paths and invalid or
-  incomplete change evidence also require the complete suite on every target.
-- The shared Ubuntu x64 job provides that target's full suite. Its native lane
-  keeps the OS subset, avoiding a fifth full run during periodic validation.
-- Documentation, frontend-only and scoped-Go changes do not gain an additional
-  Python job. Their existing scope-specific checks remain in place.
+- Ordinary product edits select 53 native cases on Windows, 57 on Linux and 69 on
+  macOS, before nested fixture checks. These include the three real Nearby child
+  process tests for bounded output, timeout cleanup and stdin pipes.
+- CI/toolchain/dependency changes, nightly and forced full runs, unknown paths,
+  and invalid or incomplete change evidence retain broad native discovery.
+  Only the 64 individually marked `FullProofTests` source/receipt-policy methods
+  are excluded from that broad native path in the hosted Cross-platform CI job.
+  They still run in the required common job. Outside that workflow, broad
+  discovery remains unfiltered.
+- Common Ubuntu x64 provides that target's full discovery; its native lane keeps
+  the OS subset. Documentation, frontend-only and scoped-Go changes retain their
+  existing narrower checks without an additional Python job.
 
 Both consumers independently reproduce the current event's complete Git delta.
-No prior test result authorizes a skip. The aggregate and release proof require
-the shared job to succeed, even if every native lane succeeds. A successful
-cache restore is never evidence that a test passed.
+The same-run aggregate and exact-source release proof require the common job and
+step to succeed, even if every native lane succeeds. No cache or earlier run can
+replace this evidence. Native jobs do not wait for common; the aggregate joins them.
 
-The selected OS contracts are listed in `.github/scripts/ci-regressions.py`.
-macOS retains actual POSIX child ownership and terminal cleanup tests; Linux
-results do not substitute for that macOS behavior. Portable fixture checks for
-Windows or Darwin metadata do not by themselves require those operating systems.
+The method-local `common_only` marker in `test_ci_full_validation.py` does not
+exempt a whole class or module. New unmarked methods/classes remain included in
+broad discovery, including inherited methods and unmarked overrides. This is a
+bounded intermediate reduction, not a complete classification: other broad
+matrix duplication and the ordinary selector remain. A new OS-dependent test
+still needs review for inclusion in the ordinary native subset.
 
-Residual risk: a hosted-runner update can affect a portable Python fixture on
-an OS where it is not repeated for an ordinary product edit. The nightly full
-matrix detects this; changes to the checked-in toolchain or helper policy
-restore full coverage immediately. Packaging, signing and source-bound release
-validation retain their independent checks.
-
-Further reductions should distinguish source-contract checks from helper-only
-fixtures and retain a full fallback for newly added or unclassified tests.
-Changing the test implementation language alone does not remove subprocess,
-Git history, repeated build or intentional real-time protocol work.
+The OS selectors are in `.github/scripts/ci-regressions.py`. macOS retains real
+POSIX child ownership and terminal cleanup checks; Linux cannot substitute for
+that evidence. Hosted-runner changes can affect unmarked helper fixtures, which
+remain in the nightly matrix. The marked FullProof cases use source and synthetic
+receipt fixtures, not native process behavior. No hosted timing improvement is
+claimed; packaging, signing and source-bound release validation remain separate.
 
 ## Frontend test repetition
 
@@ -85,3 +84,20 @@ same-repository PRs. Failed or unknown impact selection still runs them. Scoped
 Go changes retain both jobs: service presets feed Core snapshots, and bounded
 logging is used by CLI lifecycle code. Forced full and scheduled validation
 require both jobs independently of the PR optimization.
+
+## Browser preparation overlap
+
+The Go engine preparer runs in the background while Node/frontend validation
+proceeds. Its dependency closure contains only standard-library and adaptation
+helpers; it does not compile embedded Web assets. An explicit wait joins it
+after frontend reproduction. Then Chromium/font installation overlaps the Go
+fixture diagnostic cases, with another wait before actual browser acceptance.
+Both background steps and waits are required successful evidence.
+
+Do not move the Go diagnostics ahead of frontend completion: `soba-e2e` embeds
+`web/dist`, which Vite deletes and rebuilds. The diagnostic cases also retain
+their original serial order and private listeners. No additional browser or
+runner runs concurrently, and no test case or timeout is reduced. Go engine
+preparation and npm work may still compete for CPU or downloads; hosted timings
+are needed to measure the benefit. Background environment/outputs are consumed
+only after the corresponding wait.

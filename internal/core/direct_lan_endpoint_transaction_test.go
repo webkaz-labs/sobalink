@@ -159,8 +159,14 @@ func TestEndpointTransactionRejectsBeforeOldOwner(t *testing.T) {
 }
 
 func TestEndpointTransactionRetainsFailedOrCancelledJoin(t *testing.T) {
+	// Each case owns an inert Core and private files. Keep the parent serial and
+	// bound fixture concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, guard := range []string{"cleanup", "cancel", "stop", "root", "capacity-pointer", "file", "monotonic"} {
 		t.Run(guard, func(t *testing.T) {
+			t.Parallel()
+			parallel <- struct{}{}
+			t.Cleanup(func() { <-parallel })
 			c, s, b, old, m, now := endpointTransactionFixture(t)
 			ctx, cancel := context.WithCancel(c.ctx)
 			defer cancel()

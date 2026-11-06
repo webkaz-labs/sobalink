@@ -23,7 +23,14 @@ def run(identifier=10, start='2026-01-01T00:00:00Z', event='workflow_dispatch', 
                 head_commit={'id': SHA, 'tree_id': TREE})
 
 
+def common_only(method):
+    """This method's source/receipt fixtures always run in the common job."""
+    method._ci_common_only = True
+    return method
+
+
 class FullProofTests(unittest.TestCase):
+    @common_only
     def test_japanese_font_sources_are_reviewed_not_just_inventory_bound(self):
         for path in full.CI_FONT_POLICY_SHA256:
             original = self.sources[path]
@@ -33,6 +40,7 @@ class FullProofTests(unittest.TestCase):
                 full.required_jobs(self.sources)
             self.sources[path] = original
 
+    @common_only
     def test_japanese_font_steps_cannot_skip_ignore_failure_or_change_action(self):
         original = self.sources[full.WORKFLOW]
         marker = b'      - name: Prepare verified Japanese fonts\n'
@@ -48,6 +56,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             full.required_jobs(self.sources)
 
+    @common_only
     def test_browser_font_requirement_cannot_be_removed_from_coverage_policy(self):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
@@ -57,6 +66,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Japanese font required'):
             full.required_jobs(self.sources)
 
+    @common_only
     def test_full_proof_requires_actual_document_and_browser_font_success(self):
         gate = 'Prepare verified Japanese fonts'
         original = copy.deepcopy(self.jobs)
@@ -78,6 +88,7 @@ class FullProofTests(unittest.TestCase):
                     full.audit_jobs(self.api, self.runs[0], self.required)
         self.jobs = original
 
+    @common_only
     def test_shared_regressions_are_required_and_their_execution_is_source_bound(self):
         self.assertEqual(self.required['policy-regressions'], ('Run shared CI policy and source regressions',))
         original = self.sources[full.WORKFLOW]
@@ -95,6 +106,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.audit()
 
+    @common_only
     def test_frontend_checker_and_build_only_commands_are_source_bound(self):
         self.assertIn('.github/scripts/test_check_frontend.py', full.SOURCES)
         self.sources['.github/scripts/check-frontend.py'] += b'\n# synthetic checker mutation\n'
@@ -114,6 +126,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(old=old), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
 
+    @common_only
     def test_frontend_steps_cannot_skip_ignore_failure_or_add_commands(self):
         native = b'      - name: Reproduce locked frontend assets\n'
         browser = b'      - name: Test and reproduce locked frontend assets\n'
@@ -142,14 +155,16 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(replacement=replacement), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
 
+    @common_only
     def test_native_reproduction_and_common_frontend_step_remain_required(self):
         original = self.sources['.github/scripts/ci-coverage.py']
         for marker in (b'"Reproduce locked frontend assets"', b'"Test and reproduce locked frontend assets"'):
-            self.assertEqual(original.count(marker), 1)
+            self.assertEqual(original.count(marker), 2 if marker == b'"Reproduce locked frontend assets"' else 1)
             self.sources['.github/scripts/ci-coverage.py'] = original.replace(marker, b'"Ignored frontend check"')
             with self.subTest(marker=marker), self.assertRaisesRegex(ValueError, 'common frontend tests are required'):
                 full.required_jobs(self.sources)
 
+    @common_only
     def test_browser_frontend_job_and_step_must_pass_in_the_exact_full_run(self):
         original = copy.deepcopy(self.jobs)
         for mode in ('missing-job', 'missing-step', 'skipped-job', 'failed-job',
@@ -178,15 +193,19 @@ class FullProofTests(unittest.TestCase):
         self.main = SHA
         self.repository = dict(full_name=full.REPOSITORY, private=False, default_branch="main")
         self.sources = {p: (ROOT / p).read_bytes() for p in full.SOURCES}
-        self.required = full.required_jobs(self.sources)
+        self.required, self.skipped = full.required_jobs(self.sources, include_skipped=True)
         self.jobs = []
         self.calls = []
         for number, (name, steps) in enumerate(self.required.items(), 100):
-            labels = [label for expected, label in full.TARGETS.values() if expected == name]
+            labels = [label for expected, label in (*full.TARGETS.values(), *full.INTEGRATION_TARGETS.values()) if expected == name]
             self.jobs.append(dict(id=number, name=name, run_id=10, run_attempt=1, head_sha=SHA,
                                   labels=labels, status='completed', conclusion='success',
                                   started_at='2026-01-01T00:00:01Z', completed_at='2026-01-01T00:01:00Z',
                                   steps=[dict(name=s, status='completed', conclusion='success', started_at='2026-01-01T00:00:30Z' if s == dnssd_fixture.gate.STEPS[1] else '2026-01-01T00:00:05Z', completed_at='2026-01-01T00:00:50Z' if s == dnssd_fixture.gate.STEPS[1] else '2026-01-01T00:00:29Z') for s in steps]))
+        for item in self.jobs:
+            item['steps'].extend(dict(name=step, status='completed', conclusion='skipped',
+                                      started_at='2026-01-01T00:00:05Z', completed_at='2026-01-01T00:00:05Z')
+                                 for step in self.skipped.get(item['name'], ()))
         for target in core_fixture.gate.TARGETS:
             native = next(j for j in self.jobs if j['name'] == full.TARGETS[target][0])
             phases = core_fixture.job(target)['steps']
@@ -247,6 +266,7 @@ class FullProofTests(unittest.TestCase):
     def audit(self, **kwargs):
         return full.audit(self.api, SHA, artifact_download=lambda identifier: self.archive if identifier == 300 else next(data for meta, data in self.core_artifacts.values() if meta['id'] == identifier), job_log=lambda identifier:self.job_logs[identifier], **kwargs)
 
+    @common_only
     def test_shared_upload_helper_is_source_bound_and_packaged_for_publication(self):
         helper = '.github/scripts/ci-upload-artifact.py'
         tests = '.github/scripts/test_ci_upload_artifact.py'
@@ -260,6 +280,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'loaded release tool differs'):
             self.audit()
 
+    @common_only
     def test_native_package_gate_and_receipt_require_unique_actual_success(self):
         steps = core_fixture.gate.STEPS
         self.assertIn(full.WINDOWS_PACKAGES_HELPER, full.SOURCES)
@@ -285,10 +306,11 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(gate=gate, mode=mode), self.assertRaises(ValueError):
                     self.audit()
 
+    @common_only
     def test_native_literal_policy_preserves_complement_vet_and_failure_handling(self):
         for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
             original = self.sources[path]
-            for old, new in ((b"if: matrix.goos == 'windows' || matrix.goos == 'darwin'", b'if: false'),
+            for old, new in ((b"matrix.goos == 'windows' || matrix.goos == 'darwin'", b'false'),
                     (b"== 'linux'", b"== 'windows'"),
                     (b'ci-native-core-required.py core', b'ci-native-core.py'),
                     (b'ci-native-core-required.py remaining', b'ci-native-core-required.py core'),
@@ -308,6 +330,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.audit()
         self.sources[full.WORKFLOW] = original
 
+    @common_only
     def test_native_deduplication_cannot_replace_complete_race_execution(self):
         subsets = (
             b"go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute",
@@ -334,6 +357,7 @@ class FullProofTests(unittest.TestCase):
                     full.validate_native_packages_workflow(self.sources)
             self.sources[path] = original
 
+    @common_only
     def test_failure_context_upload_is_exact_separate_and_not_a_required_success_step(self):
         self.assertTrue(all('Preserve bounded Core failure context' not in names for names in self.required.values()))
         for path in (full.WORKFLOW,'.github/workflows/prerelease.yml'):
@@ -353,6 +377,7 @@ class FullProofTests(unittest.TestCase):
                 with self.assertRaises(ValueError):full.required_jobs(self.sources)
             self.sources[path]=original
 
+    @common_only
     def test_early_core_placement_rejects_unreviewed_work_or_cache_before_collection(self):
         for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
             original = self.sources[path]
@@ -364,6 +389,7 @@ class FullProofTests(unittest.TestCase):
                     full.required_jobs(self.sources)
             self.sources[path] = original
 
+    @common_only
     def test_early_ci_cache_policy_rejects_changed_actions_paths_keys_and_guards(self):
         original = self.sources[full.WORKFLOW]
         start = original.index(b"      # Restore only dependency and compilation caches")
@@ -398,6 +424,7 @@ class FullProofTests(unittest.TestCase):
             full.required_jobs(self.sources)
         self.sources[full.WORKFLOW] = original
 
+    @common_only
     def test_early_cache_prelude_cannot_move_exact_toolchain_after_core(self):
         original = self.sources[full.WORKFLOW]
         native = original.index(b"  native:\n")
@@ -414,6 +441,7 @@ class FullProofTests(unittest.TestCase):
             full.required_jobs(self.sources)
         self.sources[full.WORKFLOW] = original
 
+    @common_only
     def test_windows_helper_policy_rejects_altered_flags_missing_phase_or_union(self):
         original = self.sources[full.WINDOWS_PACKAGES_HELPER]
         for old, new in ((b"'-race', ", b''), (b"'-count=1'", b"'-count=2'"),
@@ -433,6 +461,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.audit()
 
+    @common_only
     def test_linux_nearby_exact_step_source_and_target_are_required(self):
         step = 'Verify Linux nearby native discovery without skips'
         self.assertIn('.github/scripts/ci-nearby-native.py', full.SOURCES)
@@ -456,6 +485,7 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(target=target, mode=mode), self.assertRaises(ValueError):
                     self.audit()
 
+    @common_only
     def test_macos_nearby_exact_step_and_target_are_required(self):
         step = 'Verify macOS five-scope discovery without skips'
         for target, (name, _) in full.TARGETS.items():
@@ -478,15 +508,16 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 self.audit()
 
+    @common_only
     def test_macos_nearby_literal_admission_rejects_weakened_commands_and_scope(self):
         original = self.sources[full.WORKFLOW]
         marker = b'      - name: Verify macOS five-scope discovery without skips\n'
         start = original.index(marker)
         end = original.index(b'      - ', start + len(marker))
         block = original[start:end]
-        changes = ((b"if: matrix.goos == 'darwin'", b'if: false'),
-                   (b"if: matrix.goos == 'darwin'", b"if: matrix.goos == 'linux'"),
-                   (b"if: matrix.goos == 'darwin'", b"if: always() && matrix.goos == 'darwin'"),
+        changes = ((b"if: matrix.suite == 'unit' && (matrix.goos == 'darwin')", b'if: false'),
+                   (b"if: matrix.suite == 'unit' && (matrix.goos == 'darwin')", b"if: matrix.goos == 'linux'"),
+                   (b"if: matrix.suite == 'unit' && (matrix.goos == 'darwin')", b"if: always() && matrix.goos == 'darwin'"),
                    (b'timeout-minutes: 10', b'timeout-minutes: 60'),
                    (b"CGO_ENABLED: '1'", b"CGO_ENABLED: '0'"),
                    (b'ci-dnssd-required.py', b'ci-dnssd-diagnostic.py'),
@@ -506,6 +537,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 full.validate_macos_nearby_workflow(value)
 
+    @common_only
     def test_macos_nearby_runs_once_immediately_after_exact_preparation(self):
         workflow = self.sources[full.WORKFLOW]
         full.validate_macos_nearby_workflow(workflow)
@@ -519,20 +551,23 @@ class FullProofTests(unittest.TestCase):
         self.assertLess(upload, remaining)
         self.assertLess(remaining, activation)
         self.assertTrue(workflow[:execution].endswith(
-            b'          python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"\n'))
+            b'            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"\n          fi\n'))
         self.assertEqual(workflow.count(b'-- python -B .github/scripts/ci-dnssd-required.py\n'), 1)
 
+    @common_only
     def test_macos_nearby_early_receipt_cannot_mask_later_activation_failure(self):
         native = next(job for job in self.jobs if job['name'] == full.TARGETS['darwin-arm64'][0])
         self.assertTrue(all(step['conclusion'] == 'success' for step in native['steps']
                             if step['name'] in dnssd_fixture.gate.STEPS))
-        activation = next(step for step in native['steps'] if step['name'] == 'Verify managed activation acceptance')
+        integration = next(job for job in self.jobs if job['name'] == full.INTEGRATION_TARGETS['darwin-arm64'][0])
+        activation = next(step for step in integration['steps'] if step['name'] == 'Verify managed activation acceptance')
         activation['conclusion'] = 'failure'
         for conclusion in ('success', 'failure'):
             native['conclusion'] = conclusion
             with self.subTest(job_conclusion=conclusion), self.assertRaises(ValueError):
                 self.audit()
 
+    @common_only
     def test_macos_nearby_order_rejects_unprepared_delayed_or_interrupted_execution(self):
         original = self.sources[full.WORKFLOW]
         preparation = original.index(b'      - name: Check exact toolchain and native target\n')
@@ -554,6 +589,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             full.validate_macos_nearby_workflow(inserted)
 
+    @common_only
     def test_macos_nearby_preparation_cannot_skip_failures_or_weaken_policy(self):
         original = self.sources[full.WORKFLOW]
         start = original.index(b'      - name: Check exact toolchain and native target\n')
@@ -574,6 +610,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(change=old), self.assertRaises(ValueError):
                 full.validate_macos_nearby_workflow(changed)
 
+    @common_only
     def test_macos_nearby_literal_coverage_policy_cannot_reclassify_the_gate(self):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
@@ -592,6 +629,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 full.required_jobs(sources)
 
+    @common_only
     def test_macos_nearby_wrapper_and_capability_sources_are_bound_to_proof(self):
         proof = self.audit()
         paths = (full.WORKFLOW, '.github/scripts/ci_full_validation.py', '.github/scripts/ci-coverage.py',
@@ -608,14 +646,15 @@ class FullProofTests(unittest.TestCase):
                 self.audit(local_root=ROOT)
             self.sources[path] = original
 
+    @common_only
     def test_linux_nearby_literal_admission_rejects_weakened_commands_and_scope(self):
         original = self.sources[full.WORKFLOW]
         marker = b'      - name: Verify Linux nearby native discovery without skips\n'
         start = original.index(marker)
         end = original.index(b'      - ', start + len(marker))
         block = original[start:end]
-        changes = ((b"if: matrix.goos == 'linux'", b'if: false'),
-                   (b"if: matrix.goos == 'linux'", b"if: matrix.goos == 'linux' && matrix.goarch == 'arm64'"),
+        changes = ((b"if: matrix.suite == 'unit' && (matrix.goos == 'linux')", b'if: false'),
+                   (b"if: matrix.suite == 'unit' && (matrix.goos == 'linux')", b"if: matrix.goos == 'linux' && matrix.goarch == 'arm64'"),
                    (b'timeout-minutes: 8', b'timeout-minutes: 80'),
                    (b'ci-nearby-required.py', b'ci-nearby-native.py'),
                    (b'SOBALINK_NEARBY_NATIVE_PLATFORM:', b'OTHER_PLATFORM:'),
@@ -674,6 +713,7 @@ class FullProofTests(unittest.TestCase):
                 full.required_jobs(self.sources)
             self.sources[path] = original
 
+    @common_only
     def test_full_proof_binds_source_jobs_and_policy(self):
         proof = self.audit(local_root=ROOT)
         self.assertEqual(proof['head_sha'], SHA)
@@ -686,7 +726,7 @@ class FullProofTests(unittest.TestCase):
         self.assertIn('.github/scripts/ci_full_validation.py', proof['source_sha256'])
         self.assertIn('.github/scripts/ci-browser-summary.py', proof['source_sha256'])
         self.assertIn('.github/scripts/ci-nearby-diagnostic.py', proof['source_sha256'])
-        for name, _ in full.TARGETS.values():
+        for name, _ in full.INTEGRATION_TARGETS.values():
             result = next(j for j in proof['jobs'] if j['name'] == name)
             self.assertEqual(result['required_steps_passed'].count('Verify native remote resource inspection'), 1)
             self.assertEqual(result['required_steps_passed'].count('Verify native remote resource management'), 1)
@@ -694,10 +734,11 @@ class FullProofTests(unittest.TestCase):
             self.assertEqual(result['required_steps_passed'].count('Verify durable text restart and lost ACK across Core processes'), 1)
             self.assertEqual(result['required_steps_passed'].count('Verify manual nearby setup across native Core peers'), 1)
 
+    @common_only
     def test_setup_and_text_browser_missing_duplicate_or_non_success_blocks_release(self):
         original = copy.deepcopy(self.jobs)
-        gates = [(name, 'Verify manual nearby setup across native Core peers') for name, _ in full.TARGETS.values()]
-        gates += [(name, gate) for name, _ in full.TARGETS.values() for gate, _, _ in full.REQUEST_SETUP_CASES]
+        gates = [(name, 'Verify manual nearby setup across native Core peers') for name, _ in full.INTEGRATION_TARGETS.values()]
+        gates += [(name, gate) for name, _ in full.INTEGRATION_TARGETS.values() for gate, _, _ in full.REQUEST_SETUP_CASES]
         gates += [('browser', 'Verify synthetic request pairing UI without skips'),
                   ('browser', 'Verify nearby setup with separate agents and actual browser'),
                   ('browser', 'Verify durable text recovery with separate agents and actual browser')]
@@ -717,6 +758,7 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(target=name, gate=gate, mode=mode), self.assertRaises(ValueError):
                     self.audit()
 
+    @common_only
     def test_setup_and_text_browser_exact_execution_and_exports_are_required(self):
         original = self.sources[full.WORKFLOW]
         gates = (
@@ -769,6 +811,7 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(export=filename, replacement=replacement), self.assertRaises(ValueError):
                     full.validate_setup_and_text_browser_workflow(original.replace(line, replacement, 1))
 
+    @common_only
     def test_setup_and_text_browser_gates_cannot_be_omitted_from_literal_policy(self):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
@@ -781,6 +824,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(gate=gate), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
 
+    @common_only
     def test_request_setup_ci_and_prerelease_exact_execution_is_required(self):
         self.assertEqual(tuple(test for _, _, test in full.REQUEST_SETUP_CASES), (
             'TestLANCoreRequestTOFUIntegration', 'TestLANCoreRequestFullVerificationIntegration',
@@ -810,6 +854,7 @@ class FullProofTests(unittest.TestCase):
                     with self.subTest(path=path, gate=gate, mutation=i), self.assertRaises(ValueError):
                         full.validate_request_setup_workflow(value)
 
+    @common_only
     def test_pairing_ui_gate_cannot_be_skipped_moved_or_suppressed(self):
         original = self.sources[full.WORKFLOW]
         marker = b'      - name: Verify synthetic request pairing UI without skips\n'
@@ -826,6 +871,7 @@ class FullProofTests(unittest.TestCase):
         for value in mutations:
             with self.assertRaises(ValueError): full.validate_pairing_ui_workflow(value)
 
+    @common_only
     def test_fixed_browser_summary_sources_are_bound_to_checkout(self):
         for path in ('.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py'):
             original = self.sources[path]
@@ -834,10 +880,11 @@ class FullProofTests(unittest.TestCase):
                 self.audit(local_root=ROOT)
             self.sources[path] = original
 
+    @common_only
     def test_durable_text_missing_duplicate_or_non_success_blocks_release(self):
         original = copy.deepcopy(self.jobs)
         gate = 'Verify durable text restart and lost ACK across Core processes'
-        for name, _ in full.TARGETS.values():
+        for name, _ in full.INTEGRATION_TARGETS.values():
             for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
                 self.jobs = copy.deepcopy(original)
                 job = next(j for j in self.jobs if j['name'] == name)
@@ -853,6 +900,7 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(target=name, mode=mode), self.assertRaises(ValueError):
                     self.audit()
 
+    @common_only
     def test_durable_text_exact_execution_contract_is_required(self):
         original = self.sources[full.WORKFLOW]
         marker = b'      - name: Verify durable text restart and lost ACK across Core processes\n'
@@ -869,8 +917,8 @@ class FullProofTests(unittest.TestCase):
             (b'timeout-minutes: 6', b'timeout-minutes: 60'),
             (b'SOBALINK_RUN_DIRECT_INTEGRATION: \'1\'', b'SOBALINK_RUN_DIRECT_INTEGRATION: \'0\''),
             (b'lanlink_integration,directlan_integration,', b'lanlink_integration,'),
-            (marker, marker + b'        if: false\n'),
-            (marker, marker + b"        if: matrix.goos != 'windows'\n"),
+            (b"        if: matrix.suite == 'integration'\n", b'        if: false\n'),
+            (b"        if: matrix.suite == 'integration'\n", b"        if: matrix.goos != 'windows'\n"),
             (marker, marker + b'        continue-on-error: true\n'),
             (b"HiddenReplay$'\n", b"HiddenReplay$' || true\n"),
         )
@@ -888,6 +936,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(mutation=index), self.assertRaisesRegex(ValueError, 'durable text'):
                 full.validate_durable_text_workflow(source)
 
+    @common_only
     def test_durable_text_required_gate_cannot_be_omitted_or_reclassified(self):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
@@ -904,10 +953,11 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
 
+    @common_only
     def test_durable_outbox_missing_or_skipped_gate_blocks_release(self):
         original = copy.deepcopy(self.jobs)
         for name, gate in [(name, 'Verify durable outbox restart across Core processes')
-                           for name, _ in full.TARGETS.values()] + [
+                           for name, _ in full.INTEGRATION_TARGETS.values()] + [
                                ('browser', 'Verify durable outbox recovery with separate agents and actual browser')]:
             for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', 'pending'):
                 self.jobs = copy.deepcopy(original)
@@ -924,6 +974,7 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(target=name, mode=mode), self.assertRaises(ValueError):
                     self.audit()
 
+    @common_only
     def test_durable_outbox_exact_execution_contract_is_required(self):
         original = self.sources[full.WORKFLOW]
         for change in (
@@ -937,9 +988,10 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'durable outbox'):
                 full.required_jobs(self.sources)
 
+    @common_only
     def test_native_resource_missing_duplicate_or_non_success_blocks_release(self):
         original = copy.deepcopy(self.jobs)
-        for name, _ in full.TARGETS.values():
+        for name, _ in full.INTEGRATION_TARGETS.values():
             for gate in ('Verify native remote resource inspection', 'Verify native remote resource management',
                          'Verify native fixed-group resource catalog'):
                 for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
@@ -957,6 +1009,7 @@ class FullProofTests(unittest.TestCase):
                     with self.subTest(target=name, gate=gate, mode=mode), self.assertRaises(ValueError):
                         self.audit()
 
+    @common_only
     def test_full_only_literal_policy_cannot_omit_or_reclassify_native_resource_gates(self):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
@@ -990,6 +1043,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(mutation=index), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
 
+    @common_only
     def test_management_command_and_exact_event_wrapper_are_bound_to_release_source(self):
         proof = self.audit()
         paths = (full.WORKFLOW, '.github/scripts/ci_full_validation.py', '.github/scripts/ci-go-test.py')
@@ -1009,6 +1063,7 @@ class FullProofTests(unittest.TestCase):
                 self.audit(previous_proof=proof)
             self.sources[path] = original
 
+    @common_only
     def test_fixed_group_command_and_exact_event_wrapper_are_bound_to_release_source(self):
         proof = self.audit()
         paths = (full.WORKFLOW, '.github/scripts/ci_full_validation.py', '.github/scripts/ci-go-test.py')
@@ -1028,6 +1083,7 @@ class FullProofTests(unittest.TestCase):
                 self.audit(previous_proof=proof)
             self.sources[path] = original
 
+    @common_only
     def test_effective_attempt_accepts_github_inherited_success_without_rerun(self):
         self.previous['actions/runs/10/attempts/1'] = run()
         self.runs = [run(start='2026-01-01T00:10:00Z', attempt=2)]
@@ -1041,6 +1097,7 @@ class FullProofTests(unittest.TestCase):
         self.assertTrue(any('/attempts/1/jobs' in p for p in self.calls))
         self.assertEqual(proof['macos_discovery_proof']['producingAttempt'], 1)
 
+    @common_only
     def test_new_quick_success_preserves_exact_source_full_proof(self):
         original = self.audit()
         self.runs.append(run(11, '2026-01-01T00:10:00Z', 'push'))
@@ -1048,6 +1105,7 @@ class FullProofTests(unittest.TestCase):
         self.assertEqual(refreshed['full_validation']['id'], 10)
         self.assertEqual(refreshed['gate_proof_sha256'], full.digest(full.encoded(original)))
 
+    @common_only
     def test_new_quick_failure_cancel_or_pending_blocks(self):
         for status, conclusion in [('completed', 'failure'), ('completed', 'cancelled'), ('in_progress', None), ('queued', None)]:
             newer = run(11, '2026-01-01T00:10:00Z', 'push')
@@ -1056,6 +1114,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(status=status, conclusion=conclusion), self.assertRaises(ValueError):
                 self.audit()
 
+    @common_only
     def test_new_full_failure_is_not_bypassed_by_older_success(self):
         for status, conclusion in [('completed', 'failure'), ('completed', 'cancelled'), ('in_progress', None)]:
             newer = run(11, '2026-01-01T00:10:00Z')
@@ -1064,6 +1123,7 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(status=status), self.assertRaises(ValueError):
                 self.audit()
 
+    @common_only
     def test_rerun_of_lower_id_can_be_the_latest_failed_full_intent(self):
         self.previous['actions/runs/9/attempts/1'] = run(9)
         newer = run(9, '2026-01-01T00:20:00Z', attempt=2)
@@ -1072,6 +1132,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'latest full'):
             self.audit()
 
+    @common_only
     def test_new_full_success_can_supersede_old_failure_and_old_gate_proof(self):
         proof = self.audit()
         self.runs[0]['conclusion'] = 'failure'
@@ -1094,6 +1155,7 @@ class FullProofTests(unittest.TestCase):
         result = self.audit(previous_proof=proof)
         self.assertEqual(result['full_validation']['id'], 11)
 
+    @common_only
     def test_schedule_is_canonical_but_never_manual_release_proof(self):
         self.runs = [run(event="schedule")]
         with self.assertRaisesRegex(ValueError, "force_full"):
@@ -1109,11 +1171,13 @@ class FullProofTests(unittest.TestCase):
         self.runs[0]["conclusion"] = "failure"
         self.assertEqual(self.audit()["full_validation"]["id"], 10)
 
+    @common_only
     def test_push_only_success_has_no_explicit_full_intent(self):
         self.runs[0]['event'] = 'push'
         with self.assertRaisesRegex(ValueError, 'force_full'):
             self.audit()
 
+    @common_only
     def test_skipped_short_or_missing_os_and_steps_are_never_full(self):
         original = copy.deepcopy(self.jobs)
         for index, job in enumerate(original):
@@ -1121,18 +1185,20 @@ class FullProofTests(unittest.TestCase):
                 self.jobs = copy.deepcopy(original)
                 self.jobs[index]['conclusion'] = bad
                 with self.subTest(job=job['name'], bad=bad), self.assertRaises(ValueError):
-                    self.audit()
+                    full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
             self.jobs = copy.deepcopy(original)
             self.jobs.pop(index)
             with self.subTest(missing=job['name']), self.assertRaises(ValueError):
-                self.audit()
+                full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
             for step in range(len(job['steps'])):
                 self.jobs = copy.deepcopy(original)
-                self.jobs[index]['steps'][step]['conclusion'] = 'skipped'
+                self.jobs[index]['steps'][step]['conclusion'] = (
+                    'success' if job['steps'][step]['conclusion'] == 'skipped' else 'skipped')
                 with self.subTest(job=job['name'], step=step), self.assertRaises(ValueError):
-                    self.audit()
+                    full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
         self.jobs = original
 
+    @common_only
     def test_duplicate_jobs_steps_wrong_source_attempt_or_runner_rejected(self):
         mutations = [lambda j: j.append(copy.deepcopy(j[0])),
                      lambda j: j[0]['steps'].append(copy.deepcopy(j[0]['steps'][0])),
@@ -1147,6 +1213,43 @@ class FullProofTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.audit()
 
+    @common_only
+    def test_both_native_lanes_require_same_source_attempt_and_target(self):
+        original = copy.deepcopy(self.jobs)
+        for name, _ in (*full.TARGETS.values(), *full.INTEGRATION_TARGETS.values()):
+            for field, value in (('head_sha', 'c' * 40), ('run_id', 11), ('run_attempt', 2),
+                                 ('labels', ['wrong-target']), ('id', 0), ('id', True)):
+                self.jobs = copy.deepcopy(original)
+                next(job for job in self.jobs if job['name'] == name)[field] = value
+                with self.subTest(name=name, field=field), self.assertRaises(ValueError):
+                    full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
+        self.jobs = copy.deepcopy(original)
+        self.jobs[4]['id'] = self.jobs[0]['id']
+        with self.assertRaisesRegex(ValueError, 'ID'):
+            full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
+        self.jobs = copy.deepcopy(original)
+        extra = copy.deepcopy(self.jobs[0])
+        extra.update(id=999, name='native-integration (unknown, linux, amd64)')
+        self.jobs.append(extra)
+        with self.assertRaisesRegex(ValueError, 'unknown native'):
+            full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
+
+    @common_only
+    def test_native_lane_partition_is_disjoint_and_exhaustive(self):
+        for target, (unit_name, _) in full.TARGETS.items():
+            integration_name = full.INTEGRATION_TARGETS[target][0]
+            shared = {'Reproduce locked frontend assets', 'Check exact toolchain and native target',
+                      'Wait for real-time lifecycle and lease checks'}
+            unit, integration = set(self.required[unit_name]), set(self.required[integration_name])
+            self.assertEqual(unit & integration, shared)
+            self.assertEqual(unit | set(self.skipped[unit_name]),
+                             integration | set(self.skipped[integration_name]))
+            for name in (unit_name, integration_name):
+                self.assertFalse(set(self.required[name]) & set(self.skipped[name]))
+            self.assertIn('Build native package and smoke archive contents', integration)
+            self.assertIn('Local and mock tests, race detector, and vet', unit)
+
+    @common_only
     def test_missing_latest_effective_jobs_never_imports_past_attempt(self):
         self.previous['actions/runs/10/attempts/1'] = run()
         self.runs[0] = run(start='2026-01-01T00:10:00Z', attempt=2)
@@ -1155,6 +1258,7 @@ class FullProofTests(unittest.TestCase):
             self.audit()
         self.assertFalse(any('/attempts/1/jobs' in p for p in self.calls))
 
+    @common_only
     def test_source_blob_hash_tree_and_stored_proof_mismatch_rejected(self):
         proof = self.audit()
         for key, value in [('schema', 0), ('head_sha', 'c' * 40), ('head_tree', 'c' * 40),
@@ -1169,6 +1273,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'tree mismatch'):
             self.audit()
 
+    @common_only
     def test_main_or_attempt_changes_during_read_are_rejected(self):
         def moved(path):
             if path.endswith('/jobs?per_page=100&page=1'):
@@ -1184,6 +1289,7 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.audit()
 
+    @common_only
     def test_pagination_is_complete_unique_and_bounded(self):
         values = [dict(id=i) for i in range(1, 102)]
         def api(path):
@@ -1196,6 +1302,7 @@ class FullProofTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 full.pages(lambda _: data, 'jobs', 'jobs')
 
+    @common_only
     def test_publication_repository_identity_is_rechecked(self):
         for key, value in [('private', True), ('default_branch', 'other'), ('full_name', 'synthetic/other')]:
             original = dict(self.repository)
@@ -1204,6 +1311,7 @@ class FullProofTests(unittest.TestCase):
                 self.audit()
             self.repository = original
 
+    @common_only
     def test_source_policy_api_mismatch_and_incomplete_metadata_are_rejected(self):
         original = self.api
         for replacement in ({'sha': '0' * 40}, {'size': 1}, {'encoding': 'none'}):
@@ -1218,6 +1326,7 @@ class FullProofTests(unittest.TestCase):
                 self.audit()
         self.hook = None
 
+    @common_only
     def test_workflow_wires_both_audits_and_keeps_proof_out_of_release_assets(self):
         workflow = (ROOT / '.github/workflows/prerelease.yml').read_text(encoding='utf-8')
         gate = workflow.split('  gate:\n')[1].split('  native:\n')[0]
@@ -1233,6 +1342,7 @@ class FullProofTests(unittest.TestCase):
         self.assertNotIn('id-token: write', publish)
         self.assertNotIn('schedule:', workflow)
 
+    @common_only
     def test_invalid_or_ambiguous_rerun_time_fails_closed(self):
         self.previous['actions/runs/10/attempts/1'] = run()
         self.runs[0]['run_attempt'] = 2
@@ -1288,7 +1398,7 @@ class ParallelWorkflowPolicyTests(unittest.TestCase):
             'Verify relay-only real-time lease and idle continuity',
             'Wait for real-time lifecycle and lease checks',
         )
-        for name, _ in full.TARGETS.values():
+        for name, _ in full.INTEGRATION_TARGETS.values():
             for gate in gates:
                 self.assertEqual(required[name].count(gate), 1)
 
@@ -1339,8 +1449,8 @@ class ParallelWorkflowPolicyTests(unittest.TestCase):
     def test_packaging_and_cache_writes_follow_the_join(self):
         boundary = self.workflow.index('      - name: Wait for real-time lifecycle and lease checks\n')
         for name in ('Build native package and smoke archive contents',
-                     'Save Go caches after all native checks pass on main',
-                     'Save development Go caches after all native checks pass',
+                     'Save Go caches after integration checks pass on main',
+                     'Save development Go caches after integration checks pass',
                      'Summarize measured native suites', 'Preserve native suite timings'):
             self.assertGreater(self.workflow.index('      - name: ' + name + '\n'), boundary)
         self.assertGreater(self.workflow.index('          name: package-${{ matrix.goos }}-${{ matrix.goarch }}'), boundary)
@@ -1362,5 +1472,38 @@ class NativeCompanionGateTests(unittest.TestCase):
     def test_only_supported_targets_require_success(self):
         sources = {p: (ROOT / p).read_bytes() for p in full.SOURCES}
         required = full.required_jobs(sources)
-        for target, (name, _) in full.TARGETS.items():
+        for target, (name, _) in full.INTEGRATION_TARGETS.items():
             self.assertEqual('Test experimental native companion' in required[name], target in ('darwin-arm64', 'windows-amd64'))
+
+
+class NativeMatrixPolicyTests(unittest.TestCase):
+    def test_closed_eight_lane_matrix_and_single_writers(self):
+        source = (ROOT / full.WORKFLOW).read_text()
+        full.validate_native_matrix_workflow(source.encode())
+        mutations = (
+            ('fail-fast: false', 'fail-fast: true'),
+            ('name: ${{ matrix.name }}', 'name: native (${{ matrix.suite }})'),
+            ('suite: integration', 'suite: unit'),
+            ('native-integration (macos-26, darwin, arm64)', 'native-integration (macos-26, darwin, amd64)'),
+            ("if: matrix.suite == 'integration'", "if: true"),
+            ("if: matrix.suite == 'unit'", "if: true"),
+            ('name: native-timings-${{ matrix.suite }}-', 'name: native-timings-'),
+            ("name: Upload native packages\n        if: matrix.suite == 'integration'", 'name: Upload native packages'),
+            ("name: Save Go caches after integration checks pass on main\n        if: matrix.suite == 'integration' && (",
+             'name: Save Go caches after integration checks pass on main\n        if: ('),
+            ("name: Save development Go caches after integration checks pass\n        if: matrix.suite == 'integration' && (",
+             'name: Save development Go caches after integration checks pass\n        if: ('),
+            ("if [[ '${{ matrix.suite }}' == 'unit' ]]; then", 'if true; then'),
+            ('            go mod download\n', '            go mod download all\n'),
+        )
+        for before, after in mutations:
+            self.assertIn(before, source)
+            changed = source.replace(before, after, 1)
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                full.validate_native_matrix_workflow(changed.encode())
+        start = source.index('          - runner: ubuntu-24.04\n', source.index('  native:\n'))
+        end = source.index('          - runner:', start + 1)
+        row = source[start:end]
+        for replacement in ('', row + row):
+            with self.subTest(row=replacement), self.assertRaises(ValueError):
+                full.validate_native_matrix_workflow(source.replace(row, replacement, 1).encode())

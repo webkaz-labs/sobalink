@@ -139,7 +139,10 @@ class ContextControlGateTests(unittest.TestCase):
                 step, = [step for step in steps if invocation in step]
                 self.assertIn("timeout-minutes: " + str(minutes), step)
                 self.assertIn("set -euo pipefail", step)
-                self.assertNotIn("        if:", step)
+                if workflow == "ci":
+                    self.assertEqual(re.findall(r"^        if: (.+)$", step, re.M), ["matrix.suite == 'integration'"])
+                else:
+                    self.assertNotIn("        if:", step)
                 self.assertNotIn("continue-on-error", step)
                 self.assertLess(native.index(step), native.index("go run ./cmd/package-tool build"))
                 if workflow == "ci":
