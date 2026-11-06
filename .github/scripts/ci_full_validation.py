@@ -12,6 +12,9 @@ REPOSITORY = 'webkaz-labs/sobalink'
 WORKFLOW = '.github/workflows/ci.yml'
 WINDOWS_PACKAGES_HELPER = '.github/scripts/ci-windows-packages.py'
 WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb731c4f42070'
+# Admit only the reviewed read-only cache prelude before CI's first workload.
+# This binds its action pins, paths, trust scopes, keys, and event predicates.
+CI_NATIVE_CACHE_PRELUDE_SHA256 = 'bb94e3f3a0c80c0ae92b64c0e8e1dfa8b081462a8ff254bcd2b7a109e31f2eea'
 SOURCES = (WORKFLOW, WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -930,8 +933,17 @@ def validate_native_packages_workflow(sources):
             require(native[0] < start < end and workflow[start + len(block):].startswith('      - '),
                     'invalid native package step boundary')
         region = workflow[native[0]:end]
-        require(region.count(setup_go + early + setup_node) == 1,
-                'Core must immediately follow exact Go setup before other work or cache restore')
+        if path == WORKFLOW:
+            require(region.count(setup_go) == 1 and region.count(early + setup_node) == 1,
+                    'Core must follow exact Go and cache setup before other workloads')
+            setup_start, core_start = region.index(setup_go), region.index(early)
+            require(setup_start < core_start, 'exact Go setup must precede Core collection')
+            prelude = region[setup_start + len(setup_go):core_start]
+            require(digest(prelude.encode('utf-8')) == CI_NATIVE_CACHE_PRELUDE_SHA256,
+                    'early CI cache setup differs from reviewed read-only policy')
+        else:
+            require(region.count(setup_go + early + setup_node) == 1,
+                    'release Core must immediately follow exact Go setup before other work or cache restore')
         require(region.index('      - uses: actions/setup-go@') < region.index(early)
                 < region.index('      - uses: actions/setup-node@')
                 < region.index('      - name: Test and reproduce locked frontend assets\n')
