@@ -330,10 +330,10 @@ class ActualCoverageTests(unittest.TestCase):
         for name in ("native", "browser", "web-activation", "product-activation", "nightly-full-check"):
             self.assertTrue(enabled(name), name)
             self.assertFalse(enabled(name, {"github.event.repository.private": True}), name)
-        # Only the proven pure-native UI scope omits supplemental activation.
+        # Only proven docs or pure-native UI scopes omit supplemental activation.
         # Failed/unknown selection must still execute the existing PR coverage.
         for name in coverage.SCHEDULE_ACCEPTANCE:
-            for scope in ("full", "native-short", "frontend", "go", "docs", "", None):
+            for scope in ("full", "native-short", "frontend", "go", "", None):
                 self.assertTrue(enabled(name, {"github.event_name": "pull_request",
                                                "github.event.pull_request.head.repo.full_name": coverage.REPOSITORY,
                                                "needs.impact.outputs.scope": scope}))
@@ -342,9 +342,10 @@ class ActualCoverageTests(unittest.TestCase):
                                                "github.event.pull_request.head.repo.full_name": coverage.REPOSITORY,
                                                "needs.impact.outputs.scope": "native-ui",
                                                "needs.impact.result": result}))
-            self.assertFalse(enabled(name, {"github.event_name": "pull_request",
-                                            "github.event.pull_request.head.repo.full_name": coverage.REPOSITORY,
-                                            "needs.impact.outputs.scope": "native-ui"}))
+            for scope in ("docs", "native-ui"):
+                self.assertFalse(enabled(name, {"github.event_name": "pull_request",
+                                                "github.event.pull_request.head.repo.full_name": coverage.REPOSITORY,
+                                                "needs.impact.outputs.scope": scope}))
         for name in (*coverage.SCHEDULE_ACCEPTANCE, "nightly-full-check"):
             for key, wrong in (("github.repository", "example/fork"),
                                ("github.ref", "refs/heads/topic"),

@@ -201,14 +201,17 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn('assert first == inventory()', frontend)
         self.assertIn('assert first == checked_in', frontend)
 
-    def test_only_ci_native_can_select_repeated_frontend_tests(self):
-        selected = 'python .github/scripts/check-frontend.py --native-plan "$RUNNER_TEMP/ci-impact-plan.json"'
-        self.assertIn(selected, self.job('ci', 'native'))
-        self.assertEqual(self.workflow('ci').count('--native-plan'), 1)
-        for workflow, job in (('ci', 'browser'), ('prerelease', 'native')):
-            source = self.job(workflow, job)
-            self.assertIn('python .github/scripts/check-frontend.py\n', source)
-            self.assertNotIn('--native-plan', source)
+    def test_native_ci_and_prerelease_build_without_repeating_browser_tests(self):
+        for workflow in ('ci', 'prerelease'):
+            source = self.job(workflow, 'native')
+            self.assertIn('name: Reproduce locked frontend assets', source)
+            self.assertIn('python .github/scripts/check-frontend.py --build-only\n', source)
+            self.assertEqual(self.workflow(workflow).count('--build-only'), 1)
+            self.assertNotIn('--native-plan', self.workflow(workflow))
+        browser = self.job('ci', 'browser')
+        self.assertIn('name: Test and reproduce locked frontend assets', browser)
+        self.assertIn('python .github/scripts/check-frontend.py\n', browser)
+        self.assertNotIn('--build-only', browser)
 
     def test_reviewed_engine_preparation_and_guarded_gates_are_required(self):
         for workflow, jobs in (("ci", ("native", "manifest-smoke", "browser")), ("prerelease", ("native", "provenance"))):
@@ -269,9 +272,6 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn('env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"', wan)
             self.assertIn("TestWANCandidateNativeLoopbackSTUN", wan)
             self.assertNotIn("ts_omit_udptransport", wan)
-            native = self.job(workflow, "native")
-            self.assertIn("./internal/backendworker ./internal/connectionroute", native)
-            self.assertIn("./internal/core -run '^TestMixed'", native)
 
     def test_release_product_identity_and_paired_transport_gate_match_packages(self):
         release = self.workflow("prerelease")
@@ -373,7 +373,7 @@ class WorkflowCachePolicy(unittest.TestCase):
                        "name: Report Go cache results\n"):
             with self.subTest(marker=marker):
                 self.assertLess(native.index(self.step("ci", "native", marker)), core)
-        self.assertLess(core, native.index("name: Test and reproduce locked frontend assets"))
+        self.assertLess(core, native.index("name: Reproduce locked frontend assets"))
         for name in ("Save Go caches after all native checks pass on main",
                      "Save development Go caches after all native checks pass"):
             save = self.step("ci", "native", "name: " + name)
@@ -573,11 +573,12 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn('run: python -B .github/scripts/ci-native-core-required.py remaining', remaining)
             native = self.job(name, 'native')
             self.assertIn("if [[ '${{ matrix.goos }}' == 'linux' ]]; then", native)
-            self.assertIn('go test -race -count=1 -timeout=10m ./...', native)
+            self.assertEqual(native.count('go test -race -count=1 -timeout=10m ./...'), 1)
             self.assertIn('go vet ./...', native)
-            self.assertIn('./internal/backendworker ./internal/connectionroute', native)
-            self.assertIn("./internal/core -run '^TestMixed'", native)
-            self.assertLess(native.index('name: Collect required whole-Core'), native.index('name: Test and reproduce locked frontend'))
+            # These ordinary packages/tests are already in the complete suite.
+            self.assertNotIn('./internal/backendworker ./internal/connectionroute', native)
+            self.assertNotIn("./internal/core -run '^TestMixed'", native)
+            self.assertLess(native.index('name: Collect required whole-Core'), native.index('name: Reproduce locked frontend'))
         ordinary = self.step('ci', 'native', 'name: Local and mock tests, race detector, and vet')
         self.assertLess(ordinary.index('          fi\n'), ordinary.index('go vet ./...'))
 

@@ -39,18 +39,38 @@ Windows/Darwin metadataを模擬する共通fixtureだけなら、そのOSでの
 
 ## フロントエンド試験の反復
 
-`native-short` または `full` が選ばれる通常の製品ソース変更では、必須のbrowserジョブが
-移植可能なVitest一式を1回実行します。native側では重複する `npm run test` の呼び出しだけを
-省略します。scoped-Goの変更は従来のGo専用検査を維持します。各native対象では引き続き、
-ロックファイルに従うクリーンな依存インストールとビルドを2回行い、双方の出力と
-チェックイン済み配布用ファイルの一致、ロックファイルが変更されていないことを確認します。
-実ブラウザーの受け入れ検査も必須です。
+フロントエンド検査を含む全scopeで、必須のbrowserジョブが移植可能なVitest一式を
+1回実行します。CI・ツールチェーン・依存の変更、夜間・明示的な全件検証、不明または
+検証できない変更も同じです。文書のみ・scoped-Goの変更は従来の限定検査を維持します。
 
-CI・ツールチェーン・依存の変更、夜間・明示的な全件検証、不明または検証できない変更では、
-全native対象でもVitestを実行します。native用planを渡さないbrowser・リリース・ローカルの
-呼び出しは常に全件実行です。完全検証の証拠には、同一ソースのbrowserジョブとその
-フロントエンド工程の成功が必要です。欠落・省略・失敗をnativeのビルド成功で代用しません。
+native CIとprereleaseは `python .github/scripts/check-frontend.py --build-only` を使います。
+各native対象では引き続き、ロックファイルに従うクリーンな依存インストールとビルドを
+2回行い、双方の出力とチェックイン済み配布用ファイルの一致、ロックファイルが
+変更されていないことを確認します。browser・ローカルでの引数なし呼び出しは、引き続き
+フロントエンド試験を全件実行します。Vitestを実行するかどうかの判断に、Python回帰検査の
+選択処理やimpact planは使いません。
 
-残余リスクとして、移植可能な単体試験のOS固有の問題は、通常の製品PRではなく夜間の
-全対象検証で見つかる場合があります。各OSのロック済みビルドと独立したnative・リリース
-検査は維持し、テストケース、アサーション、製品タイマーは削除しません。
+現在のVitestはjsdom、純粋なロジック、モック境界を検査します。Nodeのファイル読み取りは
+静的なソース・CSS・WASMやfixtureのバイト列の確認であり、OSごとの反復が必要な
+実process・権限・socket・ファイルシステム動作の検査ではありません。
+定期的な全OS Vitestジョブは追加しません。今後、実際のOS契約を扱う試験が加わる場合は、
+移植可能な全試験を反復するのではなく、その契約と必要な対象を確認します。
+
+集約判定と完全検証の証拠には、同一ソースのbrowserジョブとそのフロントエンド工程の
+成功が必要です。prereleaseでは、正確な `tested_commit` に対する手動の強制full CIと、
+その実行内のbrowser試験の成功を要求します。browserジョブ・工程の欠落・省略・失敗を、
+nativeのビルド成功や別コミットのcache済み試験結果で代用しません。実ブラウザー受入と
+独立したnative・リリース検査は維持し、テストケース、アサーション、製品タイマーは
+削除しません。
+
+## 通常Go検査とactivation
+
+CIとprereleaseでは、Linuxの完全なrace suite、またはWindows/macOSの互いに重ならない
+whole-Coreと残りのpackageの組で、通常のGo試験を1回実行します。同じケースが既に含まれる
+`backendworker`、`connectionroute`、Coreの `TestMixed` 部分集合のcount-one再実行は除きます。
+タグ付き統合検査、IPC・DirectLANの反復、vet、梱包検査は維持します。
+
+product 2件とWeb 7件のactivationジョブは、同一repositoryのPRで文書のみと証明できた場合に
+省略します。impact判定の失敗・不明時は実行します。限定Go変更では、service presetsがCoreの
+snapshotに、bounded loggingがCLIの起動終了処理に使われるため、両方を残します。
+強制fullと定期検証は、このPR向け最適化とは独立して両方のジョブを要求します。

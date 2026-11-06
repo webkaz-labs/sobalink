@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Test the frontend and require two byte-identical exact-lock builds.
 
-Browser/release/local runs always test. Native CI may avoid repeating portable
-Vitest cases only for a reproduced ordinary-product plan: the same-source
-browser job remains required. CI/toolchain/dependency edits, nightly/manual
-full runs and unknown input retain native tests as well. Both locked builds
-and the checked-in asset comparison run in every mode on every target.
+Browser/local runs test by default. Native CI and prerelease use --build-only:
+the required same-source browser job owns the portable Vitest suite, including
+CI/dependency changes and nightly/forced full runs. Prerelease requires that
+exact commit's full-CI proof. Both locked builds, the checked-in asset comparison
+and the unchanged-lock check run in every mode on every target.
 """
 import argparse
 import hashlib
-import importlib.util
 import os
 import pathlib
 import subprocess
@@ -32,24 +31,14 @@ def inventory():
             for p in files if p.is_file()}
 
 
-def native_tests(plan_path):
-    # Share the conservative ordinary-product allowlist, but never the Python
-    # suite's Linux host exception. Full intent keeps Vitest on all four targets.
-    spec = importlib.util.spec_from_file_location(
-        "frontend_regressions", root / ".github/scripts/ci-regressions.py")
-    policy = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(policy)
-    return policy.full_native_regressions(policy.verified_plan(plan_path))
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("--native-plan", type=pathlib.Path,
-                        help="reproduce native CI's impact plan before selecting repeated tests")
+    parser.add_argument("--build-only", action="store_true",
+                        help="reproduce assets without repeating the required browser job's tests")
     args = parser.parse_args(argv)
-    tests = args.native_plan is None or native_tests(args.native_plan)
+    tests = not args.build_only
     print("Frontend tests: " + ("full suite" if tests else
-          "required in browser job; native repetition not selected"), flush=True)
+          "required in browser job; build-only mode"), flush=True)
     assert subprocess.check_output(["node", "--version"], text=True).strip() == "v24.19.0"
     assert subprocess.check_output([npm, "--version"], text=True).strip() == "11.9.0"
     lock = (web / "package-lock.json").read_bytes()

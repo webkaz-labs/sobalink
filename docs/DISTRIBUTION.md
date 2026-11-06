@@ -86,7 +86,7 @@ python -m unittest discover -s .github/scripts -p 'test_*.py' -v
 python .github/scripts/check-frontend.py
 ```
 
-The frontend check uses the pinned environment to reproduce assets from the lockfile and compare them with the committed build. A failed, unavailable or blocked stage must be recorded separately from successful unit checks. A socket-restricted environment cannot establish native runtime acceptance. Each changed source needs its own affected checks; enumeration and DOM tests do not replace browser execution. Keep exact run outcomes in the [verification record](VERIFICATION.en.md#recorded-source-evidence).
+The frontend check runs all frontend tests by default, then uses the pinned environment to reproduce assets twice from the lockfile and compare them with the committed build. Native CI and prerelease use `--build-only` to avoid repeating the required same-source browser tests; prerelease still requires full-CI proof for the exact `tested_commit`. See [CI test frequency](CI_TESTING.en.md#frontend-test-repetition). A failed, unavailable or blocked stage must be recorded separately from successful unit checks. A socket-restricted environment cannot establish native runtime acceptance. Each changed source needs its own affected checks; enumeration and DOM tests do not replace browser execution. Keep exact run outcomes in the [verification record](VERIFICATION.en.md#recorded-source-evidence).
 
 ## Reviewed engine preparation
 

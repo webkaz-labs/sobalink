@@ -146,7 +146,8 @@ class NativeUIScopeTests(unittest.TestCase):
                 result = subprocess.run([sys.executable, *flags, '-c', code, mode],
                                         env=env, capture_output=True, timeout=15)
                 self.assertEqual(result.returncode, 0 if mode == 'pass' else 1, result.stderr)
-                self.assertEqual(result.stdout.decode('utf-8'),
+                # Console text uses CRLF on Windows; UTF-8 content must stay exact.
+                self.assertEqual(result.stdout.decode('utf-8').replace('\r\n', '\n'),
                                  '=== RUN   TestExchangeMessageByteLimit/界\n=== RUN   TestExchangeMessageByteLimit/😀\n')
                 if mode == 'malformed':
                     self.assertIn(b'Go test JSON output was malformed.', result.stderr)

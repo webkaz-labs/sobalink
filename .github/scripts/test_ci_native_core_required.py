@@ -144,6 +144,29 @@ class ReceiptTests(unittest.TestCase):
             value=fixture(); mutate(value)
             with self.assertRaises(ValueError): gate.validate_receipt(value, identity(), policy_hashes())
 
+    def test_ordinary_backend_and_route_packages_require_complete_complement(self):
+        # Model the packages whose separate count=1 reruns were removed. The
+        # inventory still comes from go list -race ./..., never this fixture.
+        inventory = [gate.packages.MODULE + '/internal/' + name
+                     for name in ('backendworker', 'connectionroute', 'core')]
+        for platform in gate.TARGETS:
+            value = fixture(platform)
+            value.update(inventory=inventory, inventorySha256=gate.packages.fingerprint(inventory),
+                         groups=gate.packages.partition(inventory))
+            value['remaining']['packages'] = list(value['groups']['remaining'])
+            gate.validate_receipt(value, identity(platform), policy_hashes())
+            self.assertEqual(value['groups']['core'], [gate.packages.CORE])
+            self.assertEqual(value['remaining']['packages'], inventory[:-1])
+            for package in inventory[:-1]:
+                for section in ('groups', 'remaining'):
+                    changed = copy.deepcopy(value)
+                    if section == 'groups':
+                        changed['groups']['remaining'].remove(package)
+                    else:
+                        changed['remaining']['packages'].remove(package)
+                    with self.subTest(platform=platform, package=package, section=section), self.assertRaises(ValueError):
+                        gate.validate_receipt(changed, identity(platform), policy_hashes())
+
     def test_skip_cannot_replace_an_ordinary_pass(self):
         value = fixture(); suite = value['result']['runs']['suite']
         suite['tests'][0]['outcome'] = 'skip'; suite['passedCount'] -= 1; suite['skippedCount'] += 1
@@ -671,7 +694,7 @@ class WorkflowAndBundleTests(unittest.TestCase):
         for name in ('ci.yml','prerelease.yml'):
             text=(gate.ROOT/'.github/workflows'/name).read_text(encoding='utf-8')
             native=text.split('  native:\n',1)[1]
-            self.assertLess(native.index('name: Collect required whole-Core'),native.index('name: Test and reproduce locked frontend'))
+            self.assertLess(native.index('name: Collect required whole-Core'),native.index('name: Reproduce locked frontend'))
             self.assertEqual(text.count('ci-native-core-required.py core'),1)
             self.assertEqual(text.count('ci-native-core-required.py remaining'),1)
             self.assertIn("if [[ '${{ matrix.goos }}' == 'linux' ]]; then",native)
