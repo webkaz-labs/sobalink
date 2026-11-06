@@ -303,7 +303,7 @@ class ActualCoverageTests(unittest.TestCase):
                   "github.event.pull_request.head.repo.full_name": "",
                   "github.repository": coverage.REPOSITORY, "github.ref": "refs/heads/main",
                   "github.event.repository.default_branch": "main", "inputs.force_full": False,
-                  "needs.impact.outputs.scope": "full"}
+                  "needs.impact.outputs.scope": "full", "needs.impact.result": "success"}
 
         def enabled(name, overrides=None):
             # Job-level fields are indented four spaces, so extract until next

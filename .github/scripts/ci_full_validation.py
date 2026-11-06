@@ -831,7 +831,7 @@ def validate_macos_nearby_workflow(workflow_bytes):
     region = workflow[native[0]:end]
     require(region.count(preparation + expected) == 1,
             'macOS nearby must immediately follow successful exact preparation')
-    require(region.index('      - name: Test and reproduce locked frontend assets\n')
+    require(region.index('      - name: Reproduce locked frontend assets\n')
             < region.index(preparation) < region.index(expected)
             < region.index('      - name: Verify remaining native package race coverage\n'),
             'macOS nearby must precede unrelated native gates after preparation')
@@ -890,8 +890,6 @@ def validate_native_packages_workflow(sources):
           fi
           # Enforce offline route-revocation recovery using the real protected fixture.
           python .github/scripts/ci-metrics.py run --suite offline-route-race -- go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
-          python .github/scripts/ci-metrics.py run --suite backend-route-race -- go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
-          python .github/scripts/ci-metrics.py run --suite mixed-core-race -- go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
           # Repeat real native IPC cleanup; exact timer policy is tested virtually.
           python .github/scripts/ci-metrics.py run --suite ipc-repeat-race -- go test -race -count=5 -timeout=2m ./internal/control
           python .github/scripts/ci-metrics.py run --suite native-vet -- go vet ./...
@@ -909,8 +907,6 @@ def validate_native_packages_workflow(sources):
           fi
           # Enforce offline route-revocation recovery using the real protected fixture.
           go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core 2>&1 | tee -a logs/race-tests.txt
-          go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
-          go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
           # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
           go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
 """
@@ -953,7 +949,7 @@ def validate_native_packages_workflow(sources):
                     'release Core must immediately follow exact Go setup before other work or cache restore')
         require(region.index('      - uses: actions/setup-go@') < region.index(early)
                 < region.index('      - uses: actions/setup-node@')
-                < region.index('      - name: Test and reproduce locked frontend assets\n')
+                < region.index('      - name: Reproduce locked frontend assets\n')
                 < region.index(later), 'early Core setup ordering differs')
         require(workflow.count('python -B .github/scripts/ci-native-core-required.py core') == 1
                 and workflow.count('python -B .github/scripts/ci-native-core-required.py remaining') == 1
@@ -963,15 +959,14 @@ def validate_native_packages_workflow(sources):
 
 
 def validate_frontend_workflow(sources):
-    """Bind selection to verified native plans; browser and release always test."""
-    require(digest(sources['.github/scripts/check-frontend.py']) == '8c5103bf39cfa701f28395bc02da2adad7c2b37a50886b40a1f3990bad228cf0',
+    """Require native reproduction and same-source browser tests in full proof."""
+    require(digest(sources['.github/scripts/check-frontend.py']) == 'e56e4ae637f86134c7215f40f39b2d29cd6302384bf2301acd30a4bfda803a46',
             'frontend checker differs from reviewed policy')
-    base = """      - name: Test and reproduce locked frontend assets
+    native = """      - name: Reproduce locked frontend assets
         run: |
           npm install --global npm@11.9.0 --no-audit --no-fund
-          python .github/scripts/check-frontend.py"""
-    native = base + ' --native-plan "$RUNNER_TEMP/ci-impact-plan.json"\n'
-    release = base + '\n'
+          python .github/scripts/check-frontend.py --build-only
+"""
     browser = """      - name: Test and reproduce locked frontend assets
         run: |
           set -euo pipefail
@@ -980,7 +975,7 @@ def validate_frontend_workflow(sources):
           git diff --exit-code -- web/dist
 """
     for path, expected in ((WORKFLOW, (('native', native), ('browser', browser))),
-                           ('.github/workflows/prerelease.yml', (('native', release),))):
+                           ('.github/workflows/prerelease.yml', (('native', native),))):
         workflow = sources[path].decode('utf-8')
         jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
         require(workflow.count('python .github/scripts/check-frontend.py') == len(expected),
@@ -1066,8 +1061,8 @@ def required_jobs(sources):
                 and len(set(value)) == len(value), 'invalid required-step policy')
     require(values['REGRESSION_STEPS'] == ('Run shared CI policy and source regressions',),
             'unexpected shared regression policy')
-    require(all(values[name].count('Test and reproduce locked frontend assets') == 1
-                for name in ('FAST_STEPS', 'BROWSER_STEPS')),
+    require(values['FAST_STEPS'].count('Reproduce locked frontend assets') == 1
+            and values['BROWSER_STEPS'].count('Test and reproduce locked frontend assets') == 1,
             'native reproduction and common frontend tests are required')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
     require(values['BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,

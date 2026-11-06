@@ -36,7 +36,7 @@ FULL_ONLY_STEPS = (
     "Verify native fixed-group resource catalog",
 )
 FAST_STEPS = (
-    "Test and reproduce locked frontend assets",
+    "Reproduce locked frontend assets",
     "Check exact toolchain and native target",
     "Local and mock tests, race detector, and vet",
     "Verify adapted engine admission and native underlay denial",
