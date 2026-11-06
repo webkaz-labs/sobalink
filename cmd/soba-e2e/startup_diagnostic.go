@@ -47,7 +47,8 @@ func startupErrorCategory(err error) string {
 	var coded interface{ ErrorCode() string }
 	if errors.As(err, &coded) {
 		switch code := coded.ErrorCode(); code {
-		case "lan_listener_conflict", "lan_listener_address_unavailable", "lan_listener_permission_denied", "lan_state_capacity", "lan_listener_capacity", "lan_start_failed":
+		case "lan_listener_conflict", "lan_listener_address_unavailable", "lan_listener_permission_denied", "lan_state_capacity", "lan_listener_capacity", "lan_start_failed",
+			"message_history_unavailable", "message_peer_storage_unavailable", "message_completion_interrupted":
 			return code
 		}
 	}
