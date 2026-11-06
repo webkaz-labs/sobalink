@@ -363,6 +363,23 @@ class GitHistoryTests(unittest.TestCase):
         self.git("checkout", "--detach", event["pull_request"]["head"]["sha"])
         self.assertEqual(self.classify(event=event, name="pull_request")["scope"], "full")
 
+    def test_native_ui_shared_brand_import_in_verified_merge_and_push(self):
+        paths = ('poc/native/theme.go', 'poc/native/presentation_test.go')
+        self.write(paths[1], 'package main\n')
+        self.base = self.commit()
+
+        def change():
+            for path in paths:
+                self.write(path, 'package main\nimport "github.com/webkaz-labs/sobalink/internal/uibrand"\n')
+
+        event = self.pull_request_event(change)
+        for name, value in (('pull_request', event), ('push', self.push_event())):
+            with self.subTest(event=name):
+                report = self.classify(event=value, name=name)
+                self.assertEqual(report['scope'], 'native-ui')
+                self.assertEqual(report['changed_paths'], sorted(paths))
+                self.assertEqual(report['head_tree'], self.git('rev-parse', 'HEAD^{tree}'))
+
     def test_native_ui_import_directive_content_and_modes_fail_closed(self):
         for source, reason in (
                 ('package main\nimport "net/http"\n', 'unreviewed_go_dependency'),
