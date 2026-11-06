@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -199,58 +200,54 @@ func TestSendBudgetErrorPrecedesOwnerJoin(t *testing.T) {
 			name = "retained_uncertain_owner"
 		}
 		t.Run(name, func(t *testing.T) {
-			tr := &heldBudgetCloseTransport{fakeTransport: newFakeTransport(), started: make(chan struct{}), release: make(chan struct{})}
-			if uncertain {
-				tr.closeErr = errSyntheticClose
-			}
-			s, clock := startCloseTest(t, tr)
-			released := false
-			t.Cleanup(func() {
-				if !released {
-					close(tr.release)
+			synctest.Test(t, func(t *testing.T) {
+				tr := &heldBudgetCloseTransport{fakeTransport: newFakeTransport(), started: make(chan struct{}), release: make(chan struct{})}
+				if uncertain {
+					tr.closeErr = errSyntheticClose
 				}
-				_ = tr.fakeTransport.Close()
-				_ = s.Close()
-			})
-			eventually(t, func() bool { return tr.count() == 2 })
-			driveQueryFloodToTerminal(t, s, clock, tr.fakeTransport)
-			eventually(t, func() bool {
+				s, clock := startCloseTest(t, tr)
+				released := false
+				t.Cleanup(func() {
+					if !released {
+						close(tr.release)
+					}
+					_ = tr.fakeTransport.Close()
+					_ = s.Close()
+				})
+				driveQueryFloodToTerminal(t, s, clock, tr.fakeTransport)
 				select {
 				case <-tr.started:
-					return true
 				default:
-					return false
+					t.Fatal("budget termination did not start transport close")
 				}
-			})
-			select {
-			case <-s.Done():
-				t.Fatal("terminal error falsely implied owner join")
-			default:
-			}
-			if len(s.Candidates()) != 0 || tr.calls.Load() != 1 {
-				t.Fatal("budget termination retained hints or repeated close")
-			}
-			close(tr.release)
-			released = true
-			eventually(t, func() bool {
 				select {
 				case <-s.Done():
-					return true
+					t.Fatal("terminal error falsely implied owner join")
 				default:
-					return false
+				}
+				if len(s.Candidates()) != 0 || tr.calls.Load() != 1 || clock.active() != 0 {
+					t.Fatal("budget termination retained hints/timers or repeated close")
+				}
+				close(tr.release)
+				released = true
+				synctest.Wait()
+				select {
+				case <-s.Done():
+				default:
+					t.Fatal("released transport left owners unjoined")
+				}
+				err := s.Close()
+				if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams || tr.calls.Load() != 1 {
+					t.Fatal("joined budget result changed")
+				}
+				if uncertain {
+					if !errors.Is(err, ErrCloseUncertain) || !errors.Is(err, errSyntheticClose) || IsUnavailable(s.Err()) {
+						t.Fatal("joined owner lost cleanup uncertainty")
+					}
+				} else if err != nil {
+					t.Fatal("successful close was not confirmed")
 				}
 			})
-			err := s.Close()
-			if !errors.Is(s.Err(), ErrSendBudget) || tr.count() != MaxSentDatagrams || tr.calls.Load() != 1 {
-				t.Fatal("joined budget result changed")
-			}
-			if uncertain {
-				if !errors.Is(err, ErrCloseUncertain) || !errors.Is(err, errSyntheticClose) || IsUnavailable(s.Err()) {
-					t.Fatal("joined owner lost cleanup uncertainty")
-				}
-			} else if err != nil {
-				t.Fatal("successful close was not confirmed")
-			}
 		})
 	}
 }

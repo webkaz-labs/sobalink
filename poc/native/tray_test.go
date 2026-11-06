@@ -82,6 +82,9 @@ func TestNativeTrayFooterFits(t *testing.T) {
 
 func TestNativeTrayUsesPersistentPanel(t *testing.T) {
 	opts := nativeTrayPanelOptions(nil)
+	if opts.Title != "sobalink · Native UI PoC" {
+		t.Fatal("window title must retain the shared product name")
+	}
 	if !opts.Panel || !opts.Hidden || !opts.UseContentSize {
 		t.Fatal("tray must use a reusable keyboard-capable panel, not a transient focus-dismissed flyout")
 	}

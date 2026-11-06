@@ -33,6 +33,33 @@ class NativeUIScopeTests(unittest.TestCase):
                         ('D', roots | {path: blob()}, roots)):
                     self.assertEqual(impact.classify_delta([{'status': status, 'paths': [path]}], before, after)[0], 'full')
 
+    def test_shared_brand_import_does_not_narrow_asset_coverage(self):
+        dependency = 'github.com/webkaz-labs/sobalink/internal/uibrand'
+        reviewed = {'poc/native/theme.go', 'poc/native/presentation_test.go'}
+        self.assertEqual({path for path, imports in impact.NATIVE_UI_IMPORTS.items()
+                          if dependency in imports}, reviewed)
+        for path in impact.NATIVE_UI_IMPORTS:
+            with self.subTest(path=path):
+                source = f'package main; import "{dependency}"'
+                if path in reviewed:
+                    impact.validate_go_imports(path, source)
+                else:
+                    with self.assertRaises(impact.FailClosed):
+                        impact.validate_go_imports(path, source)
+                with self.assertRaises(impact.FailClosed):
+                    impact.validate_go_imports(path, f'package main; import "{dependency}/new"')
+        # Shared Go and embedded Web/native assets are build inputs. Their edits,
+        # and the new native rendering helpers, still need complete product CI.
+        for path in ('internal/uibrand/brand.go', 'internal/uibrand/brand_test.go',
+                     'internal/uibrand/palette.json', 'internal/uibrand/icons.json',
+                     'internal/uibrand/mark.svg', 'internal/uibrand/README.en.md',
+                     'internal/uibrand/README.ja.md', 'poc/native/brand.go',
+                     'poc/native/brand_test.go'):
+            with self.subTest(path=path):
+                self.assertTrue((ROOT / path).is_file())
+                self.assertEqual(classify_paths(path)[0], 'full')
+                self.assertEqual(classify_paths('poc/native/theme.go', path)[0], 'full')
+
     def test_unreviewed_paths_and_every_runtime_union_stay_full(self):
         for path in ('poc/native/app.go', 'poc/native/model.go', 'poc/native/exchange.go',
                      'poc/native/messagepane.go', 'poc/native/filepane.go', 'poc/native/tray.go',

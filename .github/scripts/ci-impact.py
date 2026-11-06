@@ -52,13 +52,15 @@ NATIVE_UI_IMPORTS = {
     "poc/native/messagepane_view.go": frozenset(("context", "github.com/egoist/mygo/ui")),
     "poc/native/filepane_view.go": frozenset(("context", "fmt", "github.com/egoist/mygo/ui")),
     "poc/native/tray_view.go": frozenset(("github.com/egoist/mygo/ui",)),
-    "poc/native/theme.go": frozenset(("github.com/egoist/mygo/ui",)),
+    "poc/native/theme.go": frozenset(("github.com/egoist/mygo/ui",
+                                     "github.com/webkaz-labs/sobalink/internal/uibrand")),
     "poc/native/presentation.go": frozenset(("fmt", "strings")),
     "poc/native/messagepane_presentation.go": frozenset(("fmt", "github.com/webkaz-labs/sobalink/internal/messageframe")),
     "poc/native/filepane_presentation.go": frozenset(("path", "strings")),
     "poc/native/frame_view_test.go": frozenset(("errors", "fmt", "image/png", "os", "path/filepath", "testing", "github.com/egoist/mygo/ui")),
     "poc/native/theme_view_test.go": frozenset(("fmt", "image/png", "os", "path/filepath", "testing", "github.com/egoist/mygo/ui")),
-    "poc/native/presentation_test.go": frozenset(("context", "fmt", "testing", "github.com/egoist/mygo/ui")),
+    "poc/native/presentation_test.go": frozenset(("context", "fmt", "testing", "github.com/egoist/mygo/ui",
+                                                 "github.com/webkaz-labs/sobalink/internal/uibrand")),
 }
 
 GO_PLATFORMS = frozenset("""
