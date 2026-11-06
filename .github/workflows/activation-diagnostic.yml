@@ -51,6 +51,21 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      # No Web build or npm writes occur in this Go-only preparation chain.
+      - name: Prepare verified activation engine and Go dependencies
+        id: activation-go
+        background: true
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          # Fetch only the versions explicitly pinned in the main module.
+          # Broad "all" also pulls unrelated transitive test/tool graphs.
+          go mod download
+          go list -mod=readonly -deps -test -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native,product_activation_native ./cmd/soba >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
@@ -63,14 +78,8 @@ jobs:
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
           node web/node_modules/@playwright/test/cli.js install --with-deps chromium
-          go run ./cmd/prepare-engine
-          go run ./cmd/prepare-engine --verify
-          # Fetch only the versions explicitly pinned in the main module.
-          # Broad "all" also pulls unrelated transitive test/tool graphs.
-          go mod download
-          go list -mod=readonly -deps -test -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native,product_activation_native ./cmd/soba >/dev/null
-          git diff --exit-code -- go.mod go.sum
-          go mod verify
+      - name: Wait for activation Go preparation
+        wait: activation-go
       - name: Verify fixed product acceptance policy
         run: |
           python -m unittest discover -s .github/scripts -p 'test_ci_product_activation.py' -v
@@ -105,6 +114,21 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
+      # No Web build or npm writes occur in this Go-only preparation chain.
+      - name: Prepare verified activation engine and Go dependencies
+        id: activation-go
+        background: true
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          # Fetch only the versions explicitly pinned in the main module.
+          # Broad "all" also pulls unrelated transitive test/tool graphs.
+          go mod download
+          go list -mod=readonly -deps -test -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native ./cmd/soba >/dev/null
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
@@ -117,14 +141,8 @@ jobs:
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
           node web/node_modules/@playwright/test/cli.js install --with-deps chromium
-          go run ./cmd/prepare-engine
-          go run ./cmd/prepare-engine --verify
-          # Fetch only the versions explicitly pinned in the main module.
-          # Broad "all" also pulls unrelated transitive test/tool graphs.
-          go mod download
-          go list -mod=readonly -deps -test -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,managed_restart_native,web_activation_native ./cmd/soba >/dev/null
-          git diff --exit-code -- go.mod go.sum
-          go mod verify
+      - name: Wait for activation Go preparation
+        wait: activation-go
       - name: Verify fixed Web acceptance policy
         run: |
           python -m unittest discover -s .github/scripts -p 'test_ci_web_activation.py' -v

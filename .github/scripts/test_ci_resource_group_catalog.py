@@ -40,7 +40,7 @@ class ResourceGroupCatalogWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / full.WORKFLOW).read_text(encoding='utf-8')
         marker = '      - name: ' + GATE + '\n'
-        self.step = marker + self.workflow.split(marker)[1].split('      # Run only the isolated')[0]
+        self.step = marker + self.workflow.split(marker)[1].split('      - name: Wait for real-time lifecycle and lease checks\n')[0]
         self.script = textwrap.dedent(self.step.split("          python - <<'PYTHON'\n")[1]
                                      .split('          PYTHON\n')[0])
 
@@ -134,7 +134,7 @@ class ResourceGroupCatalogWorkflowTests(unittest.TestCase):
         full.validate_resource_management_workflow(self.workflow.encode('utf-8'))
         full.validate_resource_inspection_workflow(self.workflow.encode('utf-8'))
         full.validate_parallel_workflow(self.workflow.encode('utf-8'))
-        self.assertIn("        if: steps.ci-plan.outputs.long_required != 'false'\n", self.step)
+        self.assertEqual(re.findall(r"^        if: (.+)$", self.step, re.M), ["matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')"])
         self.assertIn('        timeout-minutes: 8\n', self.step)
         self.assertNotIn('background:', self.step)
         fixture = (ROOT / 'internal/core/resource_group_catalog_native_test.go').read_text(encoding='utf-8')
@@ -224,7 +224,7 @@ return newResourceGroupCatalogNativeAfterGuard(t)'''
                        '      - name: Verify guarded relay real-time lease continuity\n'):
             mutations.append(removed.replace(marker, self.step + marker))
         changes = (
-            ("if: steps.ci-plan.outputs.long_required != 'false'", 'if: always()'),
+            ("if: matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')", 'if: always()'),
             ('timeout-minutes: 8', 'timeout-minutes: 9'),
             ('        run: |\n', '        continue-on-error: true\n        run: |\n'),
             ('        run: |\n', '        background: true\n        run: |\n'),

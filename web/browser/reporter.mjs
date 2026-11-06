@@ -41,7 +41,10 @@ export default class SafeReporter {
   onBegin(_config, suite) { this.expectedTests = suite.allTests().length; console.log(`Collected ${this.expectedTests} browser acceptance tests`) }
   onTestEnd(test, result) {
     const artifacts = (test.annotations || []).filter(annotation => annotation.type === 'safe-artifact' && /^[a-z0-9][a-z0-9_.-]*\.(png|json)$/i.test(annotation.description || '') && !annotation.description.includes('..')).map(annotation => annotation.description)
-    const record = { name: test.titlePath().filter(Boolean).join(' > '), status: result.status, durationMs: result.duration, file: basename(test.location.file), line: test.location.line, failureCategory: failureCategory(result.errors), fixtureStart: readFixtureStartDiagnostic(test.annotations), failureLocations: failureLocations(result.errors, test.location.file), artifacts }
+    // Project labels schedule work; retain the pre-project scenario names.
+    const titles = test.titlePath()
+    const name = (titles[0] === '' ? titles.slice(2) : titles).filter(Boolean).join(' > ')
+    const record = { name, status: result.status, durationMs: result.duration, file: basename(test.location.file), line: test.location.line, failureCategory: failureCategory(result.errors), fixtureStart: readFixtureStartDiagnostic(test.annotations), failureLocations: failureLocations(result.errors, test.location.file), artifacts }
     this.tests.push(record)
     console.log(`${result.status.toUpperCase()} ${record.name}`)
     if (record.failureCategory) {

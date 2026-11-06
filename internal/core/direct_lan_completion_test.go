@@ -53,8 +53,14 @@ func TestManagedCompletionStoreObservesConfirmedCommitAndStatus(t *testing.T) {
 }
 
 func TestManagedCompletionStoreRejectsChangedEvidence(t *testing.T) {
+	// Each case owns an inert Core and private files. Keep the parent serial and
+	// bound fixture concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, change := range []string{"binding", "operation", "version", "peer", "receipt absent", "receipt replaced", "process", "path", "revision", "capacity", "capacity identity", "epoch", "stopped", "recovery", "file", "clock", "unconfirmed", "terminal"} {
 		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			parallel <- struct{}{}
+			t.Cleanup(func() { <-parallel })
 			f, o := localManagedCompletionOwner(t)
 			key, request := f.peer, f.bound("pair-context-status")
 			now := time.Now()

@@ -4,6 +4,9 @@ import existing from './playwright.config.mjs'
 // sandbox-disabled SDK default, single worker, no retries and private output.
 export default {
   ...existing,
+  // Run exactly this acceptance, never the ordinary fixture scheduling phases.
+  projects: undefined,
+  workers: 1,
   testMatch: '**/catalog-view-native.acceptance.mjs',
   globalTimeout: 75_000,
   reporter: './browser/catalog-native-reporter.mjs',
