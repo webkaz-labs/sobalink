@@ -30,13 +30,16 @@ jobs:
           node-version: '24.19.0'
           check-latest: false
           package-manager-cache: false
+      - name: Prepare verified Japanese fonts
+        timeout-minutes: 5
+        uses: ./.github/actions/japanese-fonts
       - name: Install official rendering dependencies
         env:
           PUPPETEER_CACHE_DIR: ${{ runner.temp }}/docs-review-browser
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y librsvg2-2 libcairo2 python3-pil fonts-noto-core fonts-noto-cjk
+          sudo apt-get install --no-install-recommends -y librsvg2-2 libcairo2 python3-pil
           npm install --global npm@11.9.0 --registry=https://registry.npmjs.org --no-audit --no-fund
           test "$(node --version)" = v24.19.0
           test "$(npm --version)" = 11.9.0

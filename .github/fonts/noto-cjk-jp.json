@@ -1,0 +1,21 @@
+{
+  "version": "2.004",
+  "commit": "523d033d6cb47f4a80c58a35753646f5c3608a78",
+  "files": [
+    {
+      "path": "Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
+      "sha256": "68a3fc98800b2a27b371f2fb79991daf3633bd89309d4ffaa6946fd587f375b5",
+      "bytes": 16467736
+    },
+    {
+      "path": "Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
+      "sha256": "e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76",
+      "bytes": 17032620
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+      "bytes": 4301
+    }
+  ]
+}

@@ -5,6 +5,9 @@ on:
     paths:
       - 'poc/native/**'
       - '.github/workflows/native-poc.yml'
+      - '.github/actions/japanese-fonts/**'
+      - '.github/fonts/**'
+      - '.github/scripts/ci-fonts.py'
       - 'internal/**'
       - 'go.mod'
       - 'go.sum'
@@ -78,11 +81,15 @@ jobs:
           cache-dependency-path: |
             go.sum
             poc/native/go.sum
+      - name: Prepare verified Japanese fonts
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        uses: ./.github/actions/japanese-fonts
       - name: Install headless renderer system dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libgtk-3-0 libgl1 fonts-noto-core fonts-noto-cjk
+          sudo apt-get install --no-install-recommends -y libgtk-3-0 libgl1
       - name: Prepare checksum-verified engine adaptations
         working-directory: .
         run: |

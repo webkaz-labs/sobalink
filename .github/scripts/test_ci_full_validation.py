@@ -24,6 +24,60 @@ def run(identifier=10, start='2026-01-01T00:00:00Z', event='workflow_dispatch', 
 
 
 class FullProofTests(unittest.TestCase):
+    def test_japanese_font_sources_are_reviewed_not_just_inventory_bound(self):
+        for path in full.CI_FONT_POLICY_SHA256:
+            original = self.sources[path]
+            self.assertIn(path, full.SOURCES)
+            self.sources[path] = b'{}\n' if path.endswith('.json') else original + b'\n# synthetic mutation\n'
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'Japanese font source'):
+                full.required_jobs(self.sources)
+            self.sources[path] = original
+
+    def test_japanese_font_steps_cannot_skip_ignore_failure_or_change_action(self):
+        original = self.sources[full.WORKFLOW]
+        marker = b'      - name: Prepare verified Japanese fonts\n'
+        self.assertEqual(original.count(marker), 2)
+        positions = [i for i in range(len(original)) if original.startswith(marker, i)]
+        for start in positions:
+            for suffix in (b'        if: false\n', b'        continue-on-error: true\n',
+                           b'        env:\n          FONTCONFIG_FILE: ignored\n'):
+                self.sources[full.WORKFLOW] = original[:start] + original[start:].replace(marker, marker + suffix, 1)
+                with self.subTest(start=start, suffix=suffix), self.assertRaises(ValueError):
+                    full.required_jobs(self.sources)
+        self.sources[full.WORKFLOW] = original.replace(b'uses: ./.github/actions/japanese-fonts', b'uses: ./.github/actions/other-fonts', 1)
+        with self.assertRaises(ValueError):
+            full.required_jobs(self.sources)
+
+    def test_browser_font_requirement_cannot_be_removed_from_coverage_policy(self):
+        path = '.github/scripts/ci-coverage.py'
+        original = self.sources[path]
+        marker = b'                 "Prepare verified Japanese fonts",\n'
+        self.assertEqual(original.count(marker), 1)
+        self.sources[path] = original.replace(marker, b'')
+        with self.assertRaisesRegex(ValueError, 'Japanese font required'):
+            full.required_jobs(self.sources)
+
+    def test_full_proof_requires_actual_document_and_browser_font_success(self):
+        gate = 'Prepare verified Japanese fonts'
+        original = copy.deepcopy(self.jobs)
+        for name in ('documents', 'browser'):
+            self.assertIn(gate, self.required[name])
+            for mode in ('missing', 'skipped', 'failure', 'in_progress', 'duplicate'):
+                self.jobs = copy.deepcopy(original)
+                job = next(job for job in self.jobs if job['name'] == name)
+                step = next(step for step in job['steps'] if step['name'] == gate)
+                if mode == 'missing':
+                    job['steps'].remove(step)
+                elif mode == 'duplicate':
+                    job['steps'].append(copy.deepcopy(step))
+                elif mode == 'in_progress':
+                    step['status'] = mode
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(job=name, mode=mode), self.assertRaises(ValueError):
+                    full.audit_jobs(self.api, self.runs[0], self.required)
+        self.jobs = original
+
     def test_shared_regressions_are_required_and_their_execution_is_source_bound(self):
         self.assertEqual(self.required['policy-regressions'], ('Run shared CI policy and source regressions',))
         original = self.sources[full.WORKFLOW]
