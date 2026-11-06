@@ -35,21 +35,11 @@ def jobs(scope="full"):
         result.append(job("native-ui", conclusion="skipped"))
     if scope in ("native-short", "full"):
         result.append(job("policy-regressions", coverage.REGRESSION_STEPS))
-        for target, name in coverage.TARGETS.items():
-            steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
-            if target in coverage.LINUX_NEARBY_TARGETS:
-                steps += coverage.LINUX_NEARBY_STEPS
-            if target in coverage.MACOS_NEARBY_TARGETS:
-                steps += coverage.MACOS_NEARBY_STEPS
-            if target == "windows-amd64":
-                steps += ("Verify Windows receive-retirement directory barriers",)
-            if target in coverage.NATIVE_PACKAGE_TARGETS:
-                steps += coverage.NATIVE_PACKAGE_STEPS + coverage.NATIVE_UI_STEPS
-            result.append(job(name, steps))
-            if scope == "native-short":
-                for item in result[-1]["steps"]:
-                    if item["name"] in coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS:
-                        item["conclusion"] = "skipped"
+        for suite, targets in (("unit", coverage.TARGETS), ("integration", coverage.INTEGRATION_TARGETS)):
+            for target, name in targets.items():
+                record = job(name)
+                record["steps"] = [step(gate, result) for gate, result in coverage.native_step_expectations(target, suite, scope).items()]
+                result.append(record)
         result.append(job("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",)))
     else:
         result.extend([job("native", conclusion="skipped"), job("manifest-smoke", conclusion="skipped"),
@@ -118,7 +108,8 @@ class ActualCoverageTests(unittest.TestCase):
             for gate in coverage.NATIVE_PACKAGE_STEPS + coverage.NATIVE_UI_STEPS:
                 for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
                     data = jobs(scope)
-                    selected = next(j for j in data if j['name'] == coverage.TARGETS['windows-amd64'])
+                    targets = coverage.INTEGRATION_TARGETS if gate in coverage.NATIVE_UI_STEPS else coverage.TARGETS
+                    selected = next(j for j in data if j['name'] == targets['windows-amd64'])
                     record = next(s for s in selected['steps'] if s['name'] == gate)
                     if mode in ('missing', 'wrong-target'):
                         selected['steps'].remove(record)
@@ -145,7 +136,7 @@ class ActualCoverageTests(unittest.TestCase):
             coverage.evaluate_jobs(jobs(scope), scope)
             for target, name in coverage.TARGETS.items():
                 selected = next(j for j in jobs(scope) if j['name'] == name)
-                self.assertEqual(gate in [s['name'] for s in selected['steps']], target == 'darwin-arm64')
+                self.assertEqual(gate in [s['name'] for s in selected['steps'] if s['conclusion'] == 'success'], target == 'darwin-arm64')
             for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending', 'wrong-target'):
                 data = jobs(scope)
                 selected = next(j for j in data if j['name'] == coverage.TARGETS['darwin-arm64'])
@@ -201,7 +192,7 @@ class ActualCoverageTests(unittest.TestCase):
         for scope in ('frontend', 'native-short', 'full'):
             required = [('browser', gate) for gate in browser]
             if scope != 'frontend':
-                required += [(target, gate) for target in coverage.TARGETS.values() for gate in native]
+                required += [(target, gate) for target in coverage.INTEGRATION_TARGETS.values() for gate in native]
             for target, gate in required:
                 for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
                     data = jobs(scope)
@@ -223,7 +214,7 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertEqual(coverage.FAST_STEPS.count(gate), 1)
         self.assertNotIn(gate, coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS)
         for scope in ("native-short", "full"):
-            for name in coverage.TARGETS.values():
+            for name in coverage.INTEGRATION_TARGETS.values():
                 for mode in ("missing", "duplicate", "skipped", "failure", "cancelled", None, "pending"):
                     data = jobs(scope)
                     selected = next(j for j in data if j["name"] == name)
@@ -246,7 +237,7 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertEqual(len(coverage.LONG_STEPS), 3)
         self.assertFalse(set(gates).intersection(coverage.FAST_STEPS + coverage.LONG_STEPS))
         for scope in ("full", "native-short"):
-            for name in coverage.TARGETS.values():
+            for name in coverage.INTEGRATION_TARGETS.values():
                 for gate in gates:
                     for mode in ("missing", "duplicate", "pending", "failure", "cancelled", None, "wrong-result"):
                         data = jobs(scope)
@@ -265,16 +256,19 @@ class ActualCoverageTests(unittest.TestCase):
                         with self.subTest(scope=scope, target=name, gate=gate, mode=mode), self.assertRaises(ValueError):
                             coverage.evaluate_jobs(data, scope)
 
-    def test_full_requires_all_four_targets_and_real_time_steps(self):
+    def test_full_requires_all_eight_jobs_and_applicable_steps(self):
         self.assertTrue(coverage.evaluate_jobs(jobs(), "full"))
-        for target, name in coverage.TARGETS.items():
-            for required in coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS:
-                for bad in ("skipped", "failure", "cancelled", None):
-                    data = jobs()
-                    target_job = next(j for j in data if j["name"] == name)
-                    next(s for s in target_job["steps"] if s["name"] == required)["conclusion"] = bad
-                    with self.subTest(target=target, required=required, bad=bad), self.assertRaises(ValueError):
-                        coverage.evaluate_jobs(data, "full")
+        for suite, targets in (("unit", coverage.TARGETS), ("integration", coverage.INTEGRATION_TARGETS)):
+            for target, name in targets.items():
+                for required, outcome in coverage.native_step_expectations(target, suite, "full").items():
+                    for bad in ("skipped", "failure", "cancelled", None):
+                        if bad == outcome:
+                            continue
+                        data = jobs()
+                        target_job = next(j for j in data if j["name"] == name)
+                        next(s for s in target_job["steps"] if s["name"] == required)["conclusion"] = bad
+                        with self.subTest(target=target, suite=suite, required=required, bad=bad), self.assertRaises(ValueError):
+                            coverage.evaluate_jobs(data, "full")
 
     def test_managed_acceptance_steps_are_explicit_and_required(self):
         required_names = ('Verify managed session tls', 'Verify managed session outbound-tcp', 'Verify managed session native-caller', 'Verify managed session native-simultaneous', 'Verify managed session native-udp-capacity', 'Verify managed activation acceptance', 'Verify managed restart acceptance')
@@ -282,7 +276,7 @@ class ActualCoverageTests(unittest.TestCase):
         for required in required_names:
             self.assertEqual(coverage.FAST_STEPS.count(required), 1)
             self.assertEqual(workflow.count('      - name: ' + required + '\n'), 1)
-            for target, name in coverage.TARGETS.items():
+            for target, name in coverage.INTEGRATION_TARGETS.items():
                 for mode in ('missing', 'skipped'):
                     data = jobs()
                     target_job = next(j for j in data if j['name'] == name)
@@ -355,7 +349,7 @@ class ActualCoverageTests(unittest.TestCase):
             self.assertEqual(enabled(name, {"github.event_name": "workflow_dispatch", "inputs.force_full": True}), name != "nightly-full-check")
             if name == "nightly-full-check":
                 self.assertFalse(enabled(name, {"github.event_name": "pull_request"}))
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 6)
+        self.assertEqual(workflow.count("if: matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')"), 6)
         self.assertIn("  manifest-smoke:\n    needs: native\n", workflow)
         self.assertEqual(set(coverage.TARGETS), {"linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"})
 
@@ -378,6 +372,8 @@ class ActualCoverageTests(unittest.TestCase):
                 with self.subTest(job=required["name"], bad=bad), self.assertRaises(ValueError):
                     coverage.evaluate_jobs(invalid, "full", scheduled=True)
                 for step_index in range(len(required["steps"])):
+                    if required["steps"][step_index]["conclusion"] == bad:
+                        continue
                     invalid = copy.deepcopy(data)
                     invalid[index]["steps"][step_index]["conclusion"] = bad
                     with self.subTest(job=required["name"], step=step_index, bad=bad), self.assertRaises(ValueError):
@@ -447,7 +443,7 @@ class ActualCoverageTests(unittest.TestCase):
         for name in coverage.DOCUMENT_STEPS:
             self.assertIn("name: " + name, documents)
         self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
-        self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 3)
+        self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 4)
         self.assertIn('npm ci --prefix "$DOCS_RENDER_ROOT"', documents)
         # runner context is unavailable in jobs.<id>.env; resolve it only in steps.
         self.assertNotIn("runner.", documents.split("    steps:", 1)[0])
@@ -504,7 +500,7 @@ class ActualCoverageTests(unittest.TestCase):
                 coverage.write_plan(plan("native-short"), pathlib.Path(directory) / "plan.json")
             self.assertEqual(output.read_text(encoding="utf-8"), "scope=native-short\nlong_required=false\n")
         workflow = (pathlib.Path(__file__).parents[1] / "workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("if: steps.ci-plan.outputs.long_required != 'false'"), 6)
+        self.assertEqual(workflow.count("if: matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')"), 6)
         self.assertIn("scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'", workflow)
         self.assertIn("success() && steps.ci-plan.outputs.long_required != 'false'", workflow)
         for name in ("Verify Core context control over pinned TLS", "Verify context control over fixed loopback TCP"):
@@ -607,6 +603,9 @@ class PlanAndReceiptTests(unittest.TestCase):
                 self.assertEqual(result["schema_version"], 3)
                 self.assertEqual(result["scope"], scope)
                 self.assertEqual(result["full_native"], scope == "full")
+                self.assertEqual(set(result["native_suites"]), {"unit", "integration"})
+                self.assertEqual(result["native_suites"]["unit"], result["targets"])
+                self.assertEqual(result["native_suites"]["integration"], result["targets"])
                 self.assertEqual(result["targets"], {t: "success" if scope == "full" else "short_checks_passed" if scope == "native-short" else "not_run" for t in coverage.TARGETS})
                 if scope == "native-ui":
                     self.assertEqual(result["native_ui_workflow_sha256"], POLICY)
@@ -659,8 +658,188 @@ class PlanAndReceiptTests(unittest.TestCase):
                     coverage.finalize("plan", output)
             self.assertFalse(output.exists())
 
+    def test_native_lane_partition_is_explicit_and_preserves_receipt_names(self):
+        self.assertEqual(coverage.NATIVE_SHARED_STEPS, ("Reproduce locked frontend assets", "Check exact toolchain and native target"))
+        self.assertEqual(coverage.NATIVE_UNIT_STEPS, ("Local and mock tests, race detector, and vet", "Verify adapted engine admission and native underlay denial"))
+        for target in coverage.TARGETS:
+            unit = coverage.native_step_expectations(target, "unit", "full")
+            integration = coverage.native_step_expectations(target, "integration", "full")
+            for gate in coverage.FAST_STEPS:
+                if gate in coverage.NATIVE_SHARED_STEPS + coverage.NATIVE_SHARED_CONTROL_STEPS:
+                    self.assertEqual((unit[gate], integration[gate]), ("success", "success"))
+                elif gate in coverage.NATIVE_UNIT_STEPS:
+                    self.assertEqual((unit[gate], integration[gate]), ("success", "skipped"))
+                else:
+                    self.assertEqual((unit[gate], integration[gate]), ("skipped", "success"))
+            self.assertTrue(coverage.TARGETS[target].startswith("native ("))
+            self.assertTrue(coverage.INTEGRATION_TARGETS[target].startswith("native-integration ("))
+        for suite in ("unknown", "", None):
+            with self.assertRaises(ValueError):
+                coverage.native_step_expectations("linux-amd64", suite, "full")
+
+    def test_both_scopes_require_all_eight_jobs_and_reject_extra_suites(self):
+        for scope in ("full", "native-short"):
+            for name in (*coverage.TARGETS.values(), *coverage.INTEGRATION_TARGETS.values()):
+                for mode in ("missing", "duplicate", "unknown-suite", "pending", "failure", "skipped"):
+                    data = jobs(scope)
+                    selected = next(j for j in data if j["name"] == name)
+                    if mode == "missing":
+                        data.remove(selected)
+                    elif mode == "duplicate":
+                        data.append(copy.deepcopy(selected))
+                    elif mode == "unknown-suite":
+                        selected["name"] = "native-other (ubuntu-24.04, linux, amd64)"
+                    elif mode == "pending":
+                        selected["status"] = "in_progress"
+                    else:
+                        selected["conclusion"] = mode
+                    with self.subTest(scope=scope, name=name, mode=mode), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+            with self.assertRaises(ValueError):
+                coverage.evaluate_jobs(jobs(scope) + [job("unexpected", conclusion="skipped")], scope)
+
+    def test_wrong_lane_gates_require_exact_skips_in_both_scopes(self):
+        for scope in ("full", "native-short"):
+            for suite, targets in (("unit", coverage.TARGETS), ("integration", coverage.INTEGRATION_TARGETS)):
+                for target, name in targets.items():
+                    for gate, outcome in coverage.native_step_expectations(target, suite, scope).items():
+                        if outcome != "skipped":
+                            continue
+                        for mode in ("success", "failure", "cancelled", "pending", "missing", "duplicate"):
+                            data = jobs(scope)
+                            selected = next(j for j in data if j["name"] == name)
+                            record = next(s for s in selected["steps"] if s["name"] == gate)
+                            if mode == "missing":
+                                selected["steps"].remove(record)
+                            elif mode == "duplicate":
+                                selected["steps"].append(copy.deepcopy(record))
+                            elif mode == "pending":
+                                record["status"] = "in_progress"
+                            else:
+                                record["conclusion"] = mode
+                            with self.subTest(scope=scope, suite=suite, target=target, gate=gate, mode=mode), self.assertRaises(ValueError):
+                                coverage.evaluate_jobs(data, scope)
+
+    def inventory_job(self, identity=1):
+        return dict(job("synthetic-" + str(identity)), id=identity, run_id=1, run_attempt=2,
+                    head_sha=HEAD, started_at="2020-01-01T00:00:00Z", completed_at="2020-01-01T00:01:00Z")
+
+    def read_inventory(self, pages, *, kind="push", event=None, ref="refs/heads/main", parents=None, overrides=None):
+        if event is None:
+            event = {"repository": {"full_name": coverage.REPOSITORY}, "after": HEAD}
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "event.json"
+            path.write_text(event if isinstance(event, str) else json.dumps(event), encoding="utf-8")
+            env = {"GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_SHA": HEAD,
+                   "GITHUB_REPOSITORY": coverage.REPOSITORY, "GITHUB_EVENT_NAME": kind,
+                   "GITHUB_REF": ref, "GITHUB_EVENT_PATH": str(path)}
+            env.update(overrides or {})
+            with patch.dict(os.environ, env, clear=True), patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=(parents or "").encode()), patch.object(coverage, "api", side_effect=pages):
+                return coverage.current_jobs()
+
+    def pr_inventory_event(self):
+        return {"repository": {"full_name": coverage.REPOSITORY}, "number": 7,
+                "pull_request": {"base": {"ref": "main", "repo": {"full_name": coverage.REPOSITORY}, "sha": "b" * 40},
+                                 "head": {"sha": "c" * 40, "repo": {"full_name": "synthetic-fork/project"}}}}
+
+    def test_pr_jobs_match_verified_event_head_not_synthetic_merge_checkout(self):
+        event = self.pr_inventory_event()
+        source = event["pull_request"]["head"]["sha"]
+        parents = " ".join((HEAD, "b" * 40, source))
+        record = dict(self.inventory_job(), head_sha=source)
+        for hint in (None, HEAD, "d" * 40):
+            event["pull_request"]["merge_commit_sha"] = hint
+            self.assertEqual(self.read_inventory([{"jobs": [record], "total_count": 1}], kind="pull_request",
+                             event=event, ref="refs/pull/7/merge", parents=parents), [record])
+        for wrong_head in (HEAD, "e" * 40, None):
+            with self.subTest(wrong_head=wrong_head), self.assertRaises(ValueError):
+                self.read_inventory([{"jobs": [dict(record, head_sha=wrong_head)], "total_count": 1}],
+                                    kind="pull_request", event=event, ref="refs/pull/7/merge", parents=parents)
+        for wrong_parents in (" ".join((HEAD, source, "b" * 40)), " ".join((HEAD, "b" * 40, "e" * 40)), HEAD):
+            with self.subTest(parents=wrong_parents), self.assertRaises(ValueError):
+                self.read_inventory([], kind="pull_request", event=event, ref="refs/pull/7/merge", parents=wrong_parents)
+
+    def test_pr_job_event_is_required_and_fails_closed_independently_of_scope(self):
+        valid = self.pr_inventory_event()
+        parents = " ".join((HEAD, "b" * 40, "c" * 40))
+        mutations = ["{", {}, [], {"repository": {"full_name": "other/project"}}]
+        for fields, value in ((('number',), True), (('number',), 0),
+                              (('pull_request', 'head', 'sha'), '0' * 40),
+                              (('pull_request', 'head', 'sha'), None),
+                              (('pull_request', 'head', 'sha'), HEAD),
+                              (('pull_request', 'head', 'repo'), {"full_name": "malformed"}),
+                              (('pull_request', 'base', 'ref'), 'other'),
+                              (('pull_request', 'base', 'repo', 'full_name'), 'other/project'),
+                              (('pull_request', 'base', 'sha'), 'c' * 40),
+                              (('pull_request', 'merge_commit_sha'), 'invalid')):
+            event = copy.deepcopy(valid)
+            cursor = event
+            for field in fields[:-1]:
+                cursor = cursor[field]
+            cursor[fields[-1]] = value
+            mutations.append(event)
+        for event in mutations:
+            with self.subTest(event=event), self.assertRaises(ValueError):
+                self.read_inventory([], kind="pull_request", event=event, ref="refs/pull/7/merge", parents=parents)
+        for override in ({"GITHUB_EVENT_PATH": "/nonexistent/synthetic-event"}, {"GITHUB_SHA": "d" * 40},
+                         {"GITHUB_REPOSITORY": "other/project"}, {"GITHUB_REF": "refs/pull/8/merge"}):
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                self.read_inventory([], kind="pull_request", event=valid, ref="refs/pull/7/merge", parents=parents, overrides=override)
+
+    def test_non_pr_job_events_retain_exact_checkout_identity(self):
+        record = self.inventory_job()
+        for kind, ref in (("push", "refs/heads/main"), ("schedule", "refs/heads/main"),
+                          ("workflow_dispatch", "refs/heads/main"), ("workflow_dispatch", "refs/heads/feature/example"),
+                          ("workflow_dispatch", "refs/tags/v1.2.3"), ("workflow_dispatch", "refs/heads/機能/検証"),
+                          ("workflow_dispatch", "refs/tags/検証版"), ("workflow_dispatch", "refs/heads/" + "a" * 250)):
+            self.assertEqual(self.read_inventory([{"jobs": [record], "total_count": 1}], kind=kind, ref=ref), [record])
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.read_inventory([{"jobs": [dict(record, head_sha="f" * 40)], "total_count": 1}], kind=kind, ref=ref)
+            for event in ("{", {}, [], {"repository": {"full_name": "other/project"}}):
+                with self.subTest(kind=kind, event=event), self.assertRaises(ValueError):
+                    self.read_inventory([], kind=kind, event=event, ref=ref)
+        for kind, ref in (("push", "refs/heads/feature/example"), ("schedule", "refs/heads/feature/example"),
+                          ("workflow_dispatch", "refs/tags/"), ("workflow_dispatch", "refs/heads/"),
+                          ("workflow_dispatch", "refs/pull/7/merge"), ("workflow_dispatch", "main"),
+                          ("unknown", "refs/heads/main"), ("", "refs/heads/main")):
+            with self.subTest(kind=kind, ref=ref), self.assertRaises(ValueError):
+                self.read_inventory([], kind=kind, ref=ref)
+        with self.assertRaises(ValueError):
+            self.read_inventory([], event={"repository": {"full_name": coverage.REPOSITORY}, "after": "f" * 40})
+
+    def test_inventory_validates_each_job_identity_without_timestamp_filtering(self):
+        record = self.inventory_job()
+        self.assertEqual(self.read_inventory([{"jobs": [record], "total_count": 1}]), [record])
+        for field, values in {"run_id": (None, "1", True, 9), "run_attempt": (None, "2", True, 1), "head_sha": (None, "f" * 40), "id": (None, True, "1", 0)}.items():
+            for value in values:
+                bad = dict(record, **{field: value})
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    self.read_inventory([{"jobs": [bad], "total_count": 1}])
+
+    def test_paginated_inventory_rejects_duplicates_count_changes_and_truncation(self):
+        first = [self.inventory_job(i) for i in range(1, 101)]
+        last = self.inventory_job(101)
+        pages = [{"jobs": first, "total_count": 101}, {"jobs": [last], "total_count": 101}]
+        self.assertEqual(len(self.read_inventory(pages)), 101)
+        for second in ({"jobs": [last], "total_count": 102}, {"jobs": [], "total_count": 101},
+                       {"jobs": [first[0]], "total_count": 101}, {"jobs": [last, last], "total_count": 101},
+                       {"jobs": [dict(last, run_attempt=1)], "total_count": 101}):
+            with self.subTest(second=second["total_count"]), self.assertRaises(ValueError):
+                self.read_inventory([pages[0], second])
+        with self.assertRaises(ValueError):
+            self.read_inventory([{"jobs": first, "total_count": True}])
+
+    def test_timings_expose_both_lanes_and_integration_cache_writes(self):
+        rows = coverage.job_timings(jobs())
+        names = {row["job"] for row in rows}
+        self.assertTrue(set(coverage.TARGETS.values()) <= names)
+        self.assertTrue(set(coverage.INTEGRATION_TARGETS.values()) <= names)
+        for name in ("Save Go caches after integration checks pass on main", "Save development Go caches after integration checks pass"):
+            row, = coverage.job_timings([job(coverage.INTEGRATION_TARGETS["linux-amd64"], (name,))])
+            self.assertEqual(row["steps"][0]["step"], name)
+
     def test_current_attempt_inventory_rejects_truncation(self):
-        with patch.dict(os.environ, {"GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "2"}), patch.object(coverage, "api", return_value={"jobs": jobs(), "total_count": 100}) as api:
+        with patch.dict(os.environ, {"GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "2"}), patch.object(coverage, "event_job_head", return_value=HEAD), patch.object(coverage, "api", return_value={"jobs": [self.inventory_job()], "total_count": 100}) as api:
             with self.assertRaises(ValueError):
                 coverage.current_jobs()
             self.assertIn("/attempts/2/", api.call_args.args[0])

@@ -25,6 +25,19 @@ TARGETS = {
     "darwin-arm64": "native (macos-26, darwin, arm64)",
     "windows-amd64": "native (windows-2025, windows, amd64)",
 }
+INTEGRATION_TARGETS = {target: name.replace("native (", "native-integration (")
+                       for target, name in TARGETS.items()}
+NATIVE_SHARED_STEPS = (
+    "Reproduce locked frontend assets",
+    "Check exact toolchain and native target",
+)
+NATIVE_UNIT_STEPS = (
+    "Local and mock tests, race detector, and vet",
+    "Verify adapted engine admission and native underlay denial",
+)
+# GitHub's wait control cannot have an if. It is a no-op in the unit lane.
+NATIVE_SHARED_CONTROL_STEPS = ("Wait for real-time lifecycle and lease checks",)
+WINDOWS_BARRIER_STEPS = ("Verify Windows receive-retirement directory barriers",)
 # Separate merge-tested UI evidence never substitutes for backend qualification.
 NATIVE_UI_TARGETS = {
     "linux-amd64": "native-ui / companion (linux-amd64)",
@@ -66,6 +79,7 @@ FAST_STEPS = (
     'Verify managed activation acceptance',
     'Verify managed restart acceptance',
     "Verify direct LAN WireGuard and Core native applications",
+    "Verify explicit dispatch with three separate Core processes",
     "Verify durable outbox restart across Core processes",
     "Verify durable text restart and lost ACK across Core processes",
     "Verify manual nearby setup across native Core peers",
@@ -91,9 +105,13 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 DOCUMENT_STEPS = ("Verify document selection and static content", "Require document checks and selected rendering")
 SCOPES = {"docs", "frontend", "go", "native-short", "native-ui", "full"}
-BROWSER_STEPS = ("Test and reproduce locked frontend assets",
+BROWSER_STEPS = ("Prepare verified browser engine",
+                 "Test and reproduce locked frontend assets",
+                 "Wait for verified browser engine",
                  "Prepare verified Japanese fonts",
+                 "Install official Chromium and fonts",
                  "Verify privacy-safe fixture diagnostics",
+                 "Wait for browser runtime preparation",
                  "Verify actual UI workflows with isolated Playwright fixtures",
                  "Verify synthetic request pairing UI without skips",
                  "Verify durable outbox recovery with separate agents and actual browser",
@@ -187,6 +205,32 @@ def successful_step(job, name):
     return len(steps) == 1 and steps[0].get("status") == "completed" and steps[0].get("conclusion") == "success"
 
 
+def native_step_expectations(target, suite, scope):
+    """Exact outcomes for both lanes, including gates owned by the other lane."""
+    require(target in TARGETS and suite in ("unit", "integration"), "unknown native target or suite")
+    require(scope in ("native-short", "full"), "unknown native scope")
+    inventory = (FAST_STEPS + LONG_STEPS + FULL_ONLY_STEPS + LINUX_NEARBY_STEPS
+                 + MACOS_NEARBY_STEPS + WINDOWS_BARRIER_STEPS + NATIVE_PACKAGE_STEPS + NATIVE_UI_STEPS)
+    required = set(NATIVE_SHARED_STEPS + NATIVE_SHARED_CONTROL_STEPS)
+    if suite == "unit":
+        required.update(NATIVE_UNIT_STEPS)
+        if target in LINUX_NEARBY_TARGETS:
+            required.update(LINUX_NEARBY_STEPS)
+        if target in MACOS_NEARBY_TARGETS:
+            required.update(MACOS_NEARBY_STEPS)
+        if target == "windows-amd64":
+            required.update(WINDOWS_BARRIER_STEPS)
+        if target in NATIVE_PACKAGE_TARGETS:
+            required.update(NATIVE_PACKAGE_STEPS)
+    else:
+        required.update(set(FAST_STEPS) - set(NATIVE_UNIT_STEPS))
+        if scope == "full":
+            required.update(LONG_STEPS + FULL_ONLY_STEPS)
+        if target in NATIVE_PACKAGE_TARGETS:
+            required.update(NATIVE_UI_STEPS)
+    return {name: "success" if name in required else "skipped" for name in inventory}
+
+
 def evaluate_jobs(jobs, scope, *, scheduled=False):
     require(scope in SCOPES, "unknown required scope")
     require(not scheduled or scope == "full", "scheduled CI must require full coverage")
@@ -223,31 +267,24 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
             passed(name, steps)
             required.add(name)
     if scope in ("native-short", "full"):
-        for target, name in TARGETS.items():
-            steps = FAST_STEPS + (LONG_STEPS + FULL_ONLY_STEPS if scope == "full" else ())
-            if target in LINUX_NEARBY_TARGETS:
-                steps += LINUX_NEARBY_STEPS
-            if target in MACOS_NEARBY_TARGETS:
-                steps += MACOS_NEARBY_STEPS
-            if target == "windows-amd64":
-                steps += ("Verify Windows receive-retirement directory barriers",)
-            if target in NATIVE_PACKAGE_TARGETS:
-                steps += NATIVE_PACKAGE_STEPS + NATIVE_UI_STEPS
-            passed(name, steps)
-            if scope == "native-short":
-                for full_step in LONG_STEPS + FULL_ONLY_STEPS:
-                    matches = [s for s in index[name].get("steps", []) if s.get("name") == full_step]
+        for suite, targets in (("unit", TARGETS), ("integration", INTEGRATION_TARGETS)):
+            for target, name in targets.items():
+                passed(name, ())
+                for gate, result in native_step_expectations(target, suite, scope).items():
+                    matches = [step for step in index[name].get("steps", []) if step.get("name") == gate]
                     require(len(matches) == 1 and matches[0].get("status") == "completed"
-                            and matches[0].get("conclusion") == "skipped",
-                            "native-short must record the unexecuted full-only gate: " + name + ": " + full_step)
-            required.add(name)
+                            and matches[0].get("conclusion") == result,
+                            "required native gate outcome differs: " + name + ": " + gate + ": " + result)
+                required.add(name)
         passed("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",))
         required.add("manifest-smoke")
 
     # Job-level skips can appear as one unexpanded matrix job or several jobs.
     # Only explicitly out-of-scope jobs may be skipped; their presence is not
     # required and is never represented as a test pass in the receipt.
-    application = {*TARGETS.values(), *NATIVE_UI_TARGETS.values(), "native", "native-ui", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
+    application = {*TARGETS.values(), *INTEGRATION_TARGETS.values(), *NATIVE_UI_TARGETS.values(), "native", "native-ui", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
+    known = application | {"impact", "documents", "ci-required", "nightly-full-check", *SCHEDULE_ACCEPTANCE}
+    require(set(index) <= known, "unknown job name or native suite")
     for name in application - required:
         if name in index:
             require(index[name].get("status") == "completed"
@@ -267,16 +304,83 @@ def api(path):
     return json.loads(result.stdout)
 
 
+def event_job_head():
+    """Bind REST job identity to the immutable event, not the PR merge SHA.
+
+    A full/fallback plan can bypass impact's event-base proof, so repeat the
+    exact PR parent check here rather than trusting the chosen scope.
+    """
+    commit = head()
+    require(os.environ.get("GITHUB_SHA") == commit
+            and os.environ.get("GITHUB_REPOSITORY") == REPOSITORY, "invalid job event environment")
+    kind, ref = os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF")
+    require(kind in ("pull_request", "push", "workflow_dispatch", "schedule"), "unknown job event")
+    try:
+        raw = pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes()
+        require(len(raw) <= 32 * 1024 * 1024, "job event exceeds validation limit")
+        event = json.loads(raw)
+        require(event["repository"]["full_name"] == REPOSITORY, "job event repository differs")
+        if kind == "pull_request":
+            pr, number = event["pull_request"], event["number"]
+            require(type(number) is int and number > 0 and ref == f"refs/pull/{number}/merge",
+                    "invalid PR job event")
+            base, source = pr["base"], pr["head"]
+            require(base["ref"] == "main" and base["repo"]["full_name"] == REPOSITORY,
+                    "invalid PR job base")
+            base_sha, source_sha = base["sha"], source["sha"]
+            require(all(type(value) is str and SHA.fullmatch(value) and set(value) != {"0"}
+                        for value in (base_sha, source_sha)) and base_sha != source_sha,
+                    "invalid PR job source")
+            head_repo = source.get("repo")
+            require(head_repo is None or type(head_repo) is dict
+                    and type(head_repo.get("full_name")) is str
+                    and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", head_repo["full_name"]),
+                    "invalid PR job source repository")
+            parents = git("rev-list", "--parents", "-n", "1", commit).decode("ascii").split()
+            require(parents == [commit, base_sha, source_sha], "unverified PR job merge parents")
+            hint = pr.get("merge_commit_sha")
+            require(hint is None or type(hint) is str and SHA.fullmatch(hint) and set(hint) != {"0"},
+                    "invalid PR merge hint")
+            # A stale, well-formed mergeability hint supplies no identity.
+            return source_sha
+        # GITHUB_REF is supplied by Actions. Dispatch supports branches and
+        # tags, including Unicode and long names; do not narrow that surface.
+        dispatch_ref = type(ref) is str and any(ref.startswith(prefix) and len(ref) > len(prefix)
+                                              for prefix in ("refs/heads/", "refs/tags/"))
+        require(type(ref) is str and (ref == "refs/heads/main" or kind == "workflow_dispatch" and dispatch_ref),
+                "invalid job event ref")
+        if kind == "push":
+            require(event["after"] == commit, "push job event head differs")
+        return commit
+    except (KeyError, TypeError, OSError, UnicodeError) as exc:
+        raise ValueError("missing or invalid job event") from exc
+
+
 def current_jobs():
     run_id, attempt = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"]
     require(run_id.isdecimal() and attempt.isdecimal(), "invalid current run identity")
-    jobs = []
+    sha = event_job_head()
+    jobs, seen, total = [], set(), None
     for page in range(1, 11):
         data = api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")
-        batch = data["jobs"]
+        batch, count = data["jobs"], data["total_count"]
+        require(type(count) is int and count >= 0 and isinstance(batch, list) and len(batch) <= 100,
+                "invalid current job inventory")
+        require(total is None or count == total, "current job inventory changed during pagination")
+        total = count
+        for job in batch:
+            require(type(job.get("id")) is int and job["id"] > 0 and job["id"] not in seen,
+                    "duplicate or invalid current job ID")
+            seen.add(job["id"])
+            require(type(job.get("run_id")) is int and job["run_id"] == int(run_id)
+                    and type(job.get("run_attempt")) is int and job["run_attempt"] == int(attempt)
+                    and job.get("head_sha") == sha, "job belongs to another run, attempt, or head")
         jobs.extend(batch)
+        require(len(jobs) <= total, "current job inventory exceeds declared count")
         if len(batch) < 100:
-            require(len(jobs) == data["total_count"], "incomplete current job inventory")
+            require(len(jobs) == total, "incomplete current job inventory")
+            # The attempt endpoint is authoritative. Successful jobs retained in a
+            # partial rerun can have timestamps predating this attempt's start.
             return jobs
     raise ValueError("job inventory exceeds validation limit")
 
@@ -291,11 +395,11 @@ def job_timings(jobs):
             return value if value >= 0 else None
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
-    names = {*TARGETS.values(), *NATIVE_UI_TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
-    steps = {*NATIVE_UI_SCOPE_STEPS, *NATIVE_UI_PRODUCT_STEPS, *REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS,
+    names = {*TARGETS.values(), *INTEGRATION_TARGETS.values(), *NATIVE_UI_TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
+    steps = {*NATIVE_UI_SCOPE_STEPS, *NATIVE_UI_PRODUCT_STEPS, *REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS, *WINDOWS_BARRIER_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
-             "Save Go caches after all native checks pass on main",
-             "Save development Go caches after all native checks pass"}
+             "Save Go caches after integration checks pass on main",
+             "Save development Go caches after integration checks pass"}
     return [{"job": j["name"], "elapsed_seconds": elapsed(j),
              "steps": [{"step": s["name"], "elapsed_seconds": elapsed(s), "result": s.get("conclusion")}
                        for s in j.get("steps", []) if s.get("name") in steps]}
@@ -346,6 +450,7 @@ def finalize(input_path, output, *, scheduled=False):
                "documents": "success",
                "documents_policy_sha256": digest(".github/scripts/ci-documents.py"),
                "targets": {t: "success" if full else "short_checks_passed" if scope == "native-short" else "not_run" for t in TARGETS},
+               "native_suites": {suite: {t: "success" if full else "short_checks_passed" if scope == "native-short" else "not_run" for t in TARGETS} for suite in ("unit", "integration")},
                "long_checks": {t: "success" if full else "not_run" for t in TARGETS},
                "browser": "success" if scope in ("frontend", "native-short", "full") else "not_run",
                "manifest": "success" if scope in ("native-short", "full") else "not_run",

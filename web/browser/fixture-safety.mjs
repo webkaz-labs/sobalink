@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { isAbsolute, relative } from 'node:path'
 
 export function validateSession(value, scenario) {
@@ -34,6 +35,17 @@ export function validateSession(value, scenario) {
 export function safeArtifactName(name) {
   assert.ok(typeof name === 'string' && /^[a-z0-9][a-z0-9_.-]{0,110}$/i.test(name) && !name.includes('..'), 'Artifact name must be a bounded plain filename')
   return name
+}
+
+// Test identity, repeats and retries are independent of worker scheduling.
+// Never place the raw test ID (which may contain private paths) in artifacts.
+export function safeArtifactFilename(name, extension, testInfo) {
+  safeArtifactName(name)
+  assert.ok(['png', 'json'].includes(extension), 'Artifact type must be an approved image or metrics file')
+  assert.ok(typeof testInfo.testId === 'string' && testInfo.testId.length > 0, 'Artifact requires a test identity')
+  for (const value of [testInfo.repeatEachIndex, testInfo.retry]) assert.ok(Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000, 'Artifact requires bounded repeat and retry indices')
+  const identity = createHash('sha256').update(testInfo.testId).digest('hex').slice(0, 24)
+  return `${name}-${identity}-n${testInfo.repeatEachIndex}-r${testInfo.retry}.${extension}`
 }
 
 export function assertSeparateArtifacts(output, privateRoot) {

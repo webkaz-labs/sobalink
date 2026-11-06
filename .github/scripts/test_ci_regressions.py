@@ -1,5 +1,7 @@
 """Offline selection checks; never replace the shared discovery with a subset."""
+import contextlib
 import importlib.util
+import io
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -51,6 +53,12 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(darwin, gate.NATIVE_TESTS + gate.POSIX_TESTS + gate.DARWIN_TESTS)
         for names in (windows, linux, darwin):
             self.assertEqual(len(names), len(set(names)))
+            for method in ('test_capture_is_small_private_and_preserves_nonzero',
+                           'test_capture_stops_exact_child_on_timeout_and_handles_launch_failure',
+                           'test_capture_stdin_is_bounded_and_converter_receives_only_private_bytes'):
+                self.assertIn('test_ci_nearby_native.NativeNearbyTests.' + method, names)
+        for names in (windows, linux, darwin):
+            self.assertIn('test_ci_native_ui_scope.NativeUIScopeTests.test_race_wrapper_uses_utf8_and_still_requires_valid_ipc_pass', names)
         self.assertIn('test_ci_native_core.RealPosixOwnershipTests', darwin)
 
     def test_common_target_avoids_a_fifth_full_run_without_losing_other_targets(self):
@@ -78,7 +86,7 @@ class SelectionTests(unittest.TestCase):
                 patch.object(gate.unittest, 'TextTestRunner') as runner:
             runner.return_value.run.return_value.wasSuccessful.return_value = True
             self.assertEqual(gate.main(['common', '--plan', 'synthetic.json']), 0)
-            selected.assert_called_once_with(True)
+            selected.assert_called_once_with(True, exclude_common=False)
 
     def test_failed_tests_fail_the_command(self):
         with patch.object(gate, 'verified_plan', return_value=plan('internal/core/core.go')), \
@@ -86,15 +94,106 @@ class SelectionTests(unittest.TestCase):
                 patch.object(gate.unittest, 'TextTestRunner') as runner:
             runner.return_value.run.return_value.wasSuccessful.return_value = False
             self.assertEqual(gate.main(['native', '--plan', 'synthetic.json']), 1)
-            selected.assert_called_once_with(False)
+            selected.assert_called_once_with(False, exclude_common=False)
+
+    def test_new_unmarked_method_class_and_module_remain_in_broad_discovery(self):
+        class Existing(unittest.TestCase):
+            def test_reviewed(self): pass
+            def test_new(self): pass
+        Existing.test_reviewed._ci_common_only = True
+        class New(unittest.TestCase):
+            def test_new(self): pass
+        New.__module__ = 'test_new_unclassified_module'
+        cases = [Existing('test_reviewed'), Existing('test_new'), New('test_new')]
+        original = unittest.TestSuite([unittest.TestSuite(cases[:2]), cases[2]])
+        with patch.object(gate.unittest.TestLoader, 'discover', return_value=original), \
+                contextlib.redirect_stdout(io.StringIO()):
+            common = gate.suite(True)
+            native = gate.suite(True, exclude_common=True)
+        self.assertEqual(common.countTestCases(), 3)
+        self.assertEqual([case.id() for case in native], [case.id() for case in cases[1:]])
+        self.assertEqual(original.countTestCases(), 3)
+
+    def test_class_markers_inherited_methods_and_overrides_cannot_exempt_other_methods(self):
+        class Parent(unittest.TestCase):
+            _ci_common_only = True
+            def test_reviewed(self): pass
+            def test_unmarked(self): pass
+        Parent.test_reviewed._ci_common_only = True
+        class Child(Parent):
+            def test_added(self): pass
+        class Override(Parent):
+            def test_reviewed(self): pass
+        cases = [Parent('test_unmarked'), Child('test_reviewed'), Child('test_added'),
+                 Override('test_reviewed')]
+        native = gate.without_common_only(unittest.TestSuite(cases))
+        self.assertEqual(list(native), cases)
+
+    def test_only_an_exact_boolean_method_marker_allows_exclusion(self):
+        class Fixture(unittest.TestCase):
+            def test_case(self): pass
+        for value in (None, False, 1, 'true', object()):
+            with self.subTest(value=value):
+                Fixture.test_case._ci_common_only = value
+                case = Fixture('test_case')
+                self.assertEqual(list(gate.without_common_only(unittest.TestSuite([case]))), [case])
+        Fixture.test_case._ci_common_only = True
+        self.assertEqual(gate.without_common_only(unittest.TestSuite([Fixture('test_case')])).countTestCases(), 0)
+
+    def test_only_known_shared_native_broad_execution_excludes_common_methods(self):
+        env = dict(GITHUB_ACTIONS='true', GITHUB_WORKFLOW='Cross-platform CI', GITHUB_JOB='native',
+                   RUNNER_ENVIRONMENT='github-hosted')
+        cases = [('native', plan('.github/workflows/ci.yml'), env, True, True),
+                 ('common', plan('.github/workflows/ci.yml'), env, True, False),
+                 ('native', plan('internal/core/core.go'), env, False, False),
+                 ('native', None, env, True, True),
+                 *[('native', None, env | {key: ''}, True, False) for key in env]]
+        for role, value, environment, full, exclude in cases:
+            with self.subTest(role=role, environment=environment, full=full), \
+                    patch.dict(gate.os.environ, environment, clear=True), \
+                    patch.object(gate.sys, 'platform', 'linux'), \
+                    patch.object(gate.platform, 'machine', return_value='aarch64'), \
+                    patch.object(gate, 'verified_plan', return_value=value), \
+                    patch.object(gate, 'suite', return_value=unittest.TestSuite()) as selected, \
+                    patch.object(gate.unittest, 'TextTestRunner') as runner, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                runner.return_value.run.return_value.wasSuccessful.return_value = True
+                self.assertEqual(gate.main([role, '--plan', 'synthetic.json']), 0)
+                selected.assert_called_once_with(full, exclude_common=exclude)
+
+    def test_exclusion_never_filters_ordinary_selection_or_accepts_an_empty_result(self):
+        with self.assertRaises(ValueError):
+            gate.suite(False, exclude_common=True)
+        with patch.object(gate.unittest.TestLoader, 'discover',
+                          return_value=unittest.TestSuite([unittest.FunctionTestCase(lambda: None)])), \
+                patch.object(gate, 'without_common_only', return_value=unittest.TestSuite()), \
+                self.assertRaises(ValueError):
+            gate.suite(True, exclude_common=True)
+
+    def test_real_discovery_omits_only_explicitly_marked_full_proof_methods(self):
+        def cases(selected):
+            for case in selected:
+                if isinstance(case, unittest.TestSuite):
+                    yield from cases(case)
+                else:
+                    yield case
+        common = list(cases(gate.suite(True)))
+        native = list(gate.without_common_only(unittest.TestSuite(common)))
+        excluded = {case.id() for case in common} - {case.id() for case in native}
+        self.assertTrue(excluded)
+        self.assertTrue(all(name.startswith('test_ci_full_validation.FullProofTests.') for name in excluded))
+        self.assertEqual(excluded, {case.id() for case in common
+            if getattr(vars(type(case)).get(case._testMethodName), '__dict__', {}).get('_ci_common_only') is True})
+        self.assertEqual(len(common), len(native) + len(excluded))
 
     def test_empty_or_failed_selection_is_not_a_pass(self):
         for errors in ([], ['synthetic import failure']):
             with patch.object(gate.unittest, 'TestLoader') as factory:
                 factory.return_value.errors = errors
                 factory.return_value.discover.return_value = unittest.TestSuite()
-                with self.assertRaises(ValueError):
-                    gate.suite(True)
+                for exclude in (False, True):
+                    with self.subTest(exclude=exclude), self.assertRaises(ValueError):
+                        gate.suite(True, exclude_common=exclude)
 
 
 if __name__ == '__main__':

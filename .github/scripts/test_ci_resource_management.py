@@ -136,7 +136,7 @@ class ResourceManagementWorkflowTests(unittest.TestCase):
         full.validate_resource_management_workflow(self.workflow.encode('utf-8'))
         full.validate_resource_inspection_workflow(self.workflow.encode('utf-8'))
         full.validate_parallel_workflow(self.workflow.encode('utf-8'))
-        self.assertIn("        if: steps.ci-plan.outputs.long_required != 'false'\n", self.step)
+        self.assertEqual(re.findall(r"^        if: (.+)$", self.step, re.M), ["matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')"])
         self.assertIn('        timeout-minutes: 12\n', self.step)
         self.assertNotIn('background:', self.step)
         fixture = (ROOT / 'internal/core/resource_management_native_test.go').read_text(encoding='utf-8')
@@ -163,7 +163,7 @@ class ResourceManagementWorkflowTests(unittest.TestCase):
                        '      - name: Verify guarded relay real-time lease continuity\n'):
             mutations.append(removed.replace(marker, self.step + marker))
         changes = (
-            ("if: steps.ci-plan.outputs.long_required != 'false'", 'if: always()'),
+            ("if: matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')", 'if: always()'),
             ('timeout-minutes: 12', 'timeout-minutes: 13'),
             ('        run: |\n', '        continue-on-error: true\n        run: |\n'),
             ('        run: |\n', '        background: true\n        run: |\n'),

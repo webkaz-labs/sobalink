@@ -42,6 +42,32 @@ npm --prefix web run test:browser
 
 Install Japanese sans-serif fonts, such as Noto Sans CJK JP, before glyph acceptance. `npm --prefix web run test:browser:safety` checks fixture and artifact privacy without launching a browser. `npm --prefix web run test:browser -- --list --reporter=list` lists tests without executing them; it is not browser evidence.
 
+## Bounded parallel execution
+
+One Playwright invocation produces one sanitized report for the complete suite.
+An explicit allowlist in `playwright.config.mjs` runs independent spec files with
+at most two workers. Tests inside each file remain sequential. Each case owns its
+browser context, Go child, private session/profile and held ephemeral listeners.
+New spec files default to the single-worker remainder until their resources are
+reviewed. Port proposals and actual service start/restart cases, including
+logout and whole-application shutdown with an active service, stay in that
+remainder: an observed or released port is not a reservation.
+
+The remainder is a Playwright teardown project so it runs after every parallel
+case has finished cleanup, even if that phase fails. It is not a dependency that
+would suppress independent checks after a failure. Native/release acceptance
+configs are unchanged. Test/repeat/retry identities distinguish artifact filenames
+without exposing raw IDs; scenario names and the all-collected-tests-must-pass
+report rule stay unchanged. Give separate invocations separate screenshot roots.
+
+The safety command checks real scheduler overlap, serial ordering after success
+and failure, complete file partitioning and artifact ownership without a browser.
+These checks do not establish actual UI acceptance or a measured speedup. For a
+focused local run of an allowlisted file, use `--project=isolated --no-deps` plus
+its filename; otherwise Playwright also schedules the serial teardown project.
+Use `--project=serial` to select only the serial phase. The full CI invocation
+keeps both phases and every case.
+
 ## Test structure
 
 - `browser/fixtures.mjs` owns private session setup, authenticated capture, read-only state assertions, fictional input files and bounded process cleanup
