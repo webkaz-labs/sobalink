@@ -54,7 +54,7 @@ Performance targets, excluding runner queue time, are a required result within t
 
 The `native-short` allowlist contains exactly `cmd/soba/help.go`, `cmd/soba/errors.go`, `cmd/soba/errors_test.go`, `cmd/soba/human_output.go` and `cmd/soba/human_output_test.go`. New paths, new imports, build directives and mixtures with unreviewed categories remain full. Combinations with the existing frontend and scoped-Go domains use all four native-short targets. Pure docs/frontend/scoped-Go changes retain their narrower existing scopes. Both old and new changed blobs are checked, including complete affected scoped-Go packages even in mixed plans. The complete authenticated PR merge or main-push diff must qualify; a later presentation-only commit cannot hide an earlier runtime change. Generated assets still require a corresponding frontend source change.
 
-This scope omits natural direct-LAN rekey/idle lifecycle, guarded relay real-time lease continuity, relay-only real-time lease/idle continuity, and the separate full-only native resource inspection, management and fixed-group catalog gates. Four-target race/vet, repeated IPC, Windows directory barriers, context TCP/TLS control, managed activation/restart, functional direct/relay recovery, synthetic expiry/rekey, browser, packages and manifest validation remain. The independent seven-case Web and two-case product jobs retain their PR/manual entry conditions and failure behavior; scheduled full runs require both. Test repetition counts and production timers are unchanged.
+This scope omits natural direct-LAN rekey/idle lifecycle, guarded relay real-time lease continuity, relay-only real-time lease/idle continuity, and the separate full-only native resource inspection, management and fixed-group catalog gates. Four-target race/vet, repeated IPC, Windows directory barriers, context TCP/TLS control, managed activation/restart, functional direct/relay recovery, synthetic expiry/rekey, browser, packages and manifest validation remain. The independent seven-case Web and two-case product jobs retain their native-short PR/manual entry conditions and failure behavior; proven documentation-only PRs omit these jobs, while scheduled full runs require both. Test repetition counts and production timers are unchanged.
 
 Authenticated main pushes can use the same closed native-short selection as PRs. Created/deleted/forced main pushes and unsupported events still require full validation. Keep the exact-source full validation gate below in place before deploying this main-shortening policy; a short green workflow cannot establish release eligibility. Related transport/lifecycle changes remain full; no new file allowlist, per-family long-test routing or test-count reduction is introduced. Daily full runs are described below.
 
@@ -94,7 +94,7 @@ Docs/frontend/scoped-Go/native-short successes all fail full-release eligibility
 
 The reviewed workflow schedules one full run per day at **18:00 UTC, or 03:00 JST (UTC+09:00) the following day**, using `0 18 * * *` in `.github/workflows/ci.yml`. It becomes active only after that workflow is merged into the default branch (`main`). GitHub uses the latest default-branch commit, including when no source changed. The classifier explicitly selects `full`; it cannot select `native-short` from an empty or documentation-only delta.
 
-Each scheduled run requires all four native targets, all real-time gates, the separate native resource inspection, management and fixed-group catalog gates, browser, package/manifest, seven-case Web acceptance and two-case product acceptance. `nightly-full-check` waits for `ci-required` and both acceptance jobs, and checks their actual required steps; skipped, missing, cancelled or failed gates cannot produce a successful receipt. Existing PR/manual acceptance entry conditions and ordinary `ci-required` dependencies remain intact; short PR feedback does not wait for this schedule-only aggregate. Separate run concurrency identities prevent a schedule from cancelling a push or explicit manual release audit. Existing cache trust rules and read-only repository permissions remain unchanged.
+Each scheduled run requires all four native targets, all real-time gates, the separate native resource inspection, management and fixed-group catalog gates, browser, package/manifest, seven-case Web acceptance and two-case product acceptance. `nightly-full-check` waits for `ci-required` and both acceptance jobs, and checks their actual required steps; skipped, missing, cancelled or failed gates cannot produce a successful receipt. Manual acceptance entry conditions and ordinary `ci-required` dependencies remain intact; proven documentation-only PRs omit the acceptance jobs; short PR feedback does not wait for this schedule-only aggregate. Separate run concurrency identities prevent a schedule from cancelling a push or explicit manual release audit. Existing cache trust rules and read-only repository permissions remain unchanged.
 
 This consumes one additional complete CI run per day, including the longer native and acceptance jobs. Review observed stability, runner time and cost before reducing frequency; change the single cron entry through review, never automatically taper it. A scheduled success is **not** the manual release proof required above. A newer scheduled failure or pending run blocks release until resolved or superseded by a later successful manual full validation of the same source.
 
@@ -131,9 +131,9 @@ Automated CI evidence remains separate from physical-device enrollment, network,
 ## Full-only native remote resource inspection
 
 `Verify native remote resource inspection` is one serial step after ordinary
-direct-enabled recovery and before the three asynchronous real-time gates. It
+direct-enabled recovery, while the three asynchronous real-time gates run. It
 uses the same full-tier condition, without joining or enlarging `LONG_STEPS`.
-The classifier's allowlists, three-member background region, required wait,
+The classifier's allowlists, three background gates, required wait,
 Node 24 pins and `setup-go` `cache: false` policy are unchanged.
 
 The step checks exact Go `go1.27.1` and the matrix GOOS/GOARCH before one
@@ -166,8 +166,8 @@ specific native claims; distribution and installed-binary gates remain separate.
 reviewed build tags, race detector, default vet, eight-minute test budget and
 child-only management/activation opt-ins. It immediately follows inspection.
 `Verify native fixed-group resource catalog` adds exactly one serial FULL-only
-step immediately after management and before the unchanged three-step parallel
-region. `FULL_ONLY_STEPS` contains exactly inspection, management and fixed-group
+step immediately after management and before the required join of the three
+background gates. `FULL_ONLY_STEPS` contains exactly inspection, management and fixed-group
 catalog in that order; none is added to `LONG_STEPS` or native-short execution.
 
 The new step checks exact Go `go1.27.1` and matrix GOOS/GOARCH, then invokes
@@ -209,10 +209,12 @@ native-short skip rules are unchanged. The four native targets remain required.
 The wait and each individual gate must succeed for full-CI or nightly evidence;
 failed, cancelled, skipped or missing gates never receive full-coverage credit.
 
-Only these wait-heavy groups overlap. They start after the serial native tests
-have built the same tagged package variants; build caches may still need work
-if entries are evicted. Package creation, uploads, cache saves and timing summaries
-follow the wait. Only natural-lifecycle writes the existing timing JSONL in this
+The three wait-heavy groups start before resource inspection, management and
+fixed-group catalog. Those resource gates remain serial with each other and
+overlap the three background gates. Earlier native tests have built the same
+tagged package variants; build caches may still need work if entries are evicted.
+No extra runner or duplicate setup is added. Companion checks, package creation,
+uploads, cache saves and timing summaries follow the wait. Only natural-lifecycle writes the existing timing JSONL in this
 region, so there are no concurrent timing writers. Adding another requires
 separate storage and a validated post-wait merge, rather than shared appends.
 

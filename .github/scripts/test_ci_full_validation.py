@@ -41,6 +41,83 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.audit()
 
+    def test_frontend_checker_and_build_only_commands_are_source_bound(self):
+        self.assertIn('.github/scripts/test_check_frontend.py', full.SOURCES)
+        self.sources['.github/scripts/check-frontend.py'] += b'\n# synthetic checker mutation\n'
+        with self.assertRaisesRegex(ValueError, 'frontend checker'):
+            full.required_jobs(self.sources)
+        self.sources['.github/scripts/check-frontend.py'] = (ROOT / '.github/scripts/check-frontend.py').read_bytes()
+        original = self.sources[full.WORKFLOW]
+        native = b' --build-only'
+        for old, new in ((native, b''), (native, b' --build'),
+                         (b'check-frontend.py\n', b'check-frontend.py --build-only\n'),
+                         (b'check-frontend.py\n', b'check-frontend.py || true\n'),
+                         (b'  browser:\n', b'  ignored-browser:\n'),
+                         (b"scope != 'docs' && needs.impact.outputs.scope != 'go'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25",
+                          b"scope == 'frontend'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25")):
+            self.sources[full.WORKFLOW] = original.replace(old, new, 1)
+            self.assertNotEqual(self.sources[full.WORKFLOW], original)
+            with self.subTest(old=old), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+
+    def test_frontend_steps_cannot_skip_ignore_failure_or_add_commands(self):
+        native = b'      - name: Reproduce locked frontend assets\n'
+        browser = b'      - name: Test and reproduce locked frontend assets\n'
+        for path, markers in ((full.WORKFLOW, (native, browser)),
+                              ('.github/workflows/prerelease.yml', (native,))):
+            original = self.sources[path]
+            for marker in markers:
+                self.assertEqual(original.count(marker), 1)
+                start = original.index(marker)
+                for suffix in (b'        if: false\n', b'        continue-on-error: true\n',
+                               b'        env:\n          FORCE_FULL: false\n'):
+                    self.sources[path] = original[:start] + original[start:].replace(marker, marker + suffix, 1)
+                    with self.subTest(path=path, marker=marker, suffix=suffix), self.assertRaises(ValueError):
+                        full.required_jobs(self.sources)
+                command_end = original.index(b'check-frontend.py', start)
+                command_end = original.index(b'\n', command_end)
+                self.sources[path] = original[:command_end] + b' || true' + original[command_end:]
+                with self.subTest(path=path, marker=marker), self.assertRaises(ValueError):
+                    full.required_jobs(self.sources)
+            self.sources[path] = original
+        release = '.github/workflows/prerelease.yml'
+        original = self.sources[release]
+        for replacement in (b'', b' --build', b' --native-plan plan.json'):
+            self.sources[release] = original.replace(b' --build-only', replacement)
+            self.assertNotEqual(self.sources[release], original)
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+
+    def test_native_reproduction_and_common_frontend_step_remain_required(self):
+        original = self.sources['.github/scripts/ci-coverage.py']
+        for marker in (b'"Reproduce locked frontend assets"', b'"Test and reproduce locked frontend assets"'):
+            self.assertEqual(original.count(marker), 1)
+            self.sources['.github/scripts/ci-coverage.py'] = original.replace(marker, b'"Ignored frontend check"')
+            with self.subTest(marker=marker), self.assertRaisesRegex(ValueError, 'common frontend tests are required'):
+                full.required_jobs(self.sources)
+
+    def test_browser_frontend_job_and_step_must_pass_in_the_exact_full_run(self):
+        original = copy.deepcopy(self.jobs)
+        for mode in ('missing-job', 'missing-step', 'skipped-job', 'failed-job',
+                     'skipped-step', 'failed-step', 'other-commit', 'other-run', 'other-attempt'):
+            self.jobs = copy.deepcopy(original)
+            browser = next(job for job in self.jobs if job['name'] == 'browser')
+            step = next(step for step in browser['steps'] if step['name'] == 'Test and reproduce locked frontend assets')
+            if mode == 'missing-job':
+                self.jobs.remove(browser)
+            elif mode == 'missing-step':
+                browser['steps'].remove(step)
+            elif mode in ('skipped-job', 'failed-job'):
+                browser['conclusion'] = 'skipped' if mode == 'skipped-job' else 'failure'
+            elif mode in ('skipped-step', 'failed-step'):
+                step['conclusion'] = 'skipped' if mode == 'skipped-step' else 'failure'
+            else:
+                key, value = {'other-commit': ('head_sha', 'c' * 40),
+                              'other-run': ('run_id', 11), 'other-attempt': ('run_attempt', 2)}[mode]
+                browser[key] = value
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                self.audit()
+
     def setUp(self):
         self.runs = [run()]
         self.previous = {}
@@ -176,6 +253,32 @@ class FullProofTests(unittest.TestCase):
         self.sources[full.WORKFLOW] = original.replace(b'-- go vet ./...', b'-- go vet ./internal/core')
         with self.assertRaises(ValueError): self.audit()
         self.sources[full.WORKFLOW] = original
+
+    def test_native_deduplication_cannot_replace_complete_race_execution(self):
+        subsets = (
+            b"go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute",
+            b"go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'",
+        )
+        full.validate_native_packages_workflow(self.sources)
+        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+            original = self.sources[path]
+            complete = b'go test -race -count=1 -timeout=10m ./...'
+            self.assertEqual(original.count(complete), 1)
+            for subset in subsets:
+                self.assertNotIn(subset, original)
+                # Neither a subset in place of the full run nor a repeated
+                # subset appended to it is the reviewed ordinary-suite policy.
+                for replacement in (subset, complete + b'\n          ' + subset):
+                    self.sources[path] = original.replace(complete, replacement, 1)
+                    with self.subTest(path=path, subset=subset, replacement=replacement), self.assertRaises(ValueError):
+                        full.validate_native_packages_workflow(self.sources)
+            for command in (complete, b'python -B .github/scripts/ci-native-core-required.py core',
+                            b'python -B .github/scripts/ci-native-core-required.py remaining'):
+                self.assertIn(command, original)
+                self.sources[path] = original.replace(command, b'echo omitted', 1)
+                with self.subTest(path=path, omitted=command), self.assertRaises(ValueError):
+                    full.validate_native_packages_workflow(self.sources)
+            self.sources[path] = original
 
     def test_failure_context_upload_is_exact_separate_and_not_a_required_success_step(self):
         self.assertTrue(all('Preserve bounded Core failure context' not in names for names in self.required.values()))
@@ -384,7 +487,7 @@ class FullProofTests(unittest.TestCase):
         for start, targets in ((execution, ('Check exact toolchain and native target',
                                           'Verify remaining native package race coverage',
                                           'Verify direct LAN synthetic expiry and rekey')),
-                               (preparation, ('Test and reproduce locked frontend assets',
+                               (preparation, ('Reproduce locked frontend assets',
                                               'Local and mock tests, race detector, and vet'))):
             block = original[start:end]
             stripped = original[:start] + original[end:]
@@ -1057,6 +1160,38 @@ class ParallelWorkflowPolicyTests(unittest.TestCase):
     def setUp(self):
         self.sources = {p: (ROOT / p).read_bytes() for p in full.SOURCES}
         self.workflow = self.sources[full.WORKFLOW].decode('utf-8')
+
+    def test_wait_heavy_checks_overlap_only_the_three_isolated_resource_gates(self):
+        full.validate_parallel_workflow(self.workflow.encode('utf-8'))
+        start = self.workflow.index('      - name: Verify direct LAN session natural rekey and idle lifecycle\n')
+        fence = self.workflow.index('      - name: Wait for real-time lifecycle and lease checks\n')
+        resources = ('Verify native remote resource inspection', 'Verify native remote resource management',
+                     'Verify native fixed-group resource catalog')
+        for name in resources:
+            self.assertTrue(start < self.workflow.index('      - name: ' + name + '\n') < fence)
+        for warmup in ('Verify direct LAN synthetic expiry and rekey',
+                       'Verify paired transport and Core applications over an isolated relay',
+                       'Verify recovery with the ordinary direct-enabled transport'):
+            self.assertLess(self.workflow.index('      - name: ' + warmup + '\n'), start)
+        region = self.workflow[start:fence]
+        self.assertEqual(region.count('.github/scripts/ci-metrics.py run'), 1)
+        self.assertNotIn('GITHUB_ENV', region)
+
+    def test_parallel_region_rejects_moved_resource_gate_and_shared_writer(self):
+        name = '      - name: Verify native remote resource inspection\n'
+        start = self.workflow.index(name)
+        end = self.workflow.index('      - name: Verify native remote resource management\n')
+        block = self.workflow[start:end]
+        stripped = self.workflow[:start] + self.workflow[end:]
+        insertion = stripped.index('      - name: Verify direct LAN session natural rekey and idle lifecycle\n')
+        moved = stripped[:insertion] + block + stripped[insertion:]
+        with self.assertRaises(ValueError):
+            full.validate_parallel_workflow(moved.encode('utf-8'))
+        changed = self.workflow[:start] + block.replace('          python - ',
+            '          python .github/scripts/ci-metrics.py run --suite resource-extra -- python - ', 1) + self.workflow[end:]
+        self.assertNotEqual(changed, self.workflow)
+        with self.assertRaises(ValueError):
+            full.validate_parallel_workflow(changed.encode('utf-8'))
 
     def test_literal_gate_names_and_join_remain_required(self):
         required = full.required_jobs(self.sources)

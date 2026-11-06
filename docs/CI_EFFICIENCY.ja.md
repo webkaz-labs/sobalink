@@ -61,7 +61,7 @@ flowchart TD
 
 `native-short` の対象は `cmd/soba/help.go`、`cmd/soba/errors.go`、`cmd/soba/errors_test.go`、`cmd/soba/human_output.go`、`cmd/soba/human_output_test.go` の5ファイルだけです。新しいパス・依存パッケージの読込み・ビルド対象を指定する指示、未確認の区分との混在は全件に戻します。既存のフロント・限定Goとの組み合わせは4ターゲットのnative-shortで確認します。文書・フロント・限定Goだけの場合は従来の限定範囲を維持します。変更前後の両方を確認し、混在時も変更対象の限定Goパッケージ全体を調べます。確認済みPR mergeまたはmain pushの差分全体が条件を満たす必要があり、最後の表示修正だけで先行するruntime変更を隠せません。生成資材には引き続き対応するフロントのソース変更が必要です。
 
-この区分では、direct-LAN の実時間での鍵更新・待機中の起動終了処理、送信先を制限した中継での実時間のリース継続、中継のみの構成での実時間のリース継続・待機に加え、別枠の全件専用のネイティブ検査（資源の照会・管理・固定グループの一覧）を省きます。4ターゲットのrace/vet、IPC反復、Windows directory barrier、TCP/TLSのcontext制御、managed activation/restart、direct/relayの機能・復旧、合成expiry/rekey、ブラウザー、配布物、マニフェスト検証は残します。独立したWeb 7件とproduct 2件のジョブも既存のPR・手動実行条件と失敗扱いを維持し、定期全件実行では両方を要求します。試験の反復回数や製品タイマーは変更しません。
+この区分では、direct-LAN の実時間での鍵更新・待機中の起動終了処理、送信先を制限した中継での実時間のリース継続、中継のみの構成での実時間のリース継続・待機に加え、別枠の全件専用のネイティブ検査（資源の照会・管理・固定グループの一覧）を省きます。4ターゲットのrace/vet、IPC反復、Windows directory barrier、TCP/TLSのcontext制御、managed activation/restart、direct/relayの機能・復旧、合成expiry/rekey、ブラウザー、配布物、マニフェスト検証は残します。独立したWeb 7件とproduct 2件のジョブもnative-shortのPR・手動実行条件と失敗扱いを維持します。文書のみと証明できたPRでは省略し、定期全件実行では両方を要求します。試験の反復回数や製品タイマーは変更しません。
 
 正当性を確認したmain pushもPRと同じ限定native-short判定を使えます。新規作成・削除・force pushされたmainや未対応イベントは全件に戻します。このmain短縮を導入する前から、下記の同一ソース全件検証を要求するリリース入口を維持します。短時間ワークフローの緑色だけではリリース条件を満たしません。通信・起動・終了処理変更は全件のままです。対象ファイルの追加、関連する長時間試験だけの選択、試験回数の削減は行いません。毎日の全件実行は下記のとおりです。
 
@@ -101,7 +101,7 @@ PRの試験対象はActionsの `GITHUB_SHA` と、正確な `refs/pull/<number>/
 
 確認済みワークフローは `.github/workflows/ci.yml` の `0 18 * * *` で、**毎日18:00 UTC、翌日の03:00 JST（UTC+09:00）**に1回の全件実行を予約します。このワークフローがdefault branch（`main`）へmergeされて初めて有効になります。変更がなくても、GitHubはdefault branchの最新コミットを使います。判定は明示的に `full` とし、空の差分や文書だけの差分から `native-short` にはしません。
 
-定期実行は4つのネイティブ対象、全実時間工程、別枠のネイティブ検査（資源の照会・管理・固定グループの一覧）、ブラウザー、配布物・マニフェスト、Web 7件、product 2件を要求します。`nightly-full-check` は `ci-required` と両acceptanceジョブを待ち、必須工程の実行結果も確認します。未実行・欠落・中止・失敗を成功の証拠にはしません。既存のPR・手動acceptanceの入口条件と通常の `ci-required` の依存関係は維持します。短時間PRの結果は、この定期専用aggregateを待ちません。実行ごとに別のconcurrency識別子を使うため、定期実行がpushや明示的な手動リリース監査を中止することはありません。キャッシュの信頼範囲と読み取り専用のrepository権限も変えません。
+定期実行は4つのネイティブ対象、全実時間工程、別枠のネイティブ検査（資源の照会・管理・固定グループの一覧）、ブラウザー、配布物・マニフェスト、Web 7件、product 2件を要求します。`nightly-full-check` は `ci-required` と両acceptanceジョブを待ち、必須工程の実行結果も確認します。未実行・欠落・中止・失敗を成功の証拠にはしません。手動acceptanceの入口条件と通常の `ci-required` の依存関係は維持します。文書のみと証明できたPRではacceptanceジョブを省略します。短時間PRの結果は、この定期専用aggregateを待ちません。実行ごとに別のconcurrency識別子を使うため、定期実行がpushや明示的な手動リリース監査を中止することはありません。キャッシュの信頼範囲と読み取り専用のrepository権限も変えません。
 
 長時間のネイティブ・acceptanceジョブを含む全件CIが毎日1回増えます。頻度を減らす場合は安定性・実行環境時間・費用の実績を確認し、cronの1行をレビューして変更します。自動で頻度を減らしません。定期実行の成功だけでは、上記の手動リリース証拠を満たしません。新しい定期実行が失敗・保留中なら、解消するか同じソースの後続手動全件検証が成功するまでリリースを止めます。
 
@@ -138,8 +138,8 @@ TCPとUDPに同じ接続先が必要な試験用環境は、正確なループ�
 ## 全件専用のnative remote resource inspection
 
 `Verify native remote resource inspection` は、通常の直接通信を有効にした構成の復旧試験後、
-実時間3工程の並列区間より前に置く1つの直列ステップです。同じ全件条件を使いますが、
-`LONG_STEPS` には追加しません。判定対象リスト、3工程のbackground区間、必須wait、
+実時間3工程がbackgroundで動く間に実行する直列ステップです。同じ全件条件を使いますが、
+`LONG_STEPS` には追加しません。判定対象リスト、backgroundの3工程、必須wait、
 Node 24の固定、`setup-go` の `cache: false` 方針は変更しません。
 
 正確なGo `go1.27.1` と対象構成の GOOS/GOARCHを確認した後、`ci-go-test.py --exact` を
@@ -166,7 +166,7 @@ OSの安全性・経路・ファイアウォール方針は変更しません。
 `Verify native remote resource management` はinspectionの直後に置き、正確な3件、
 確認済みの6つのビルドタグ、race検出、既定のvet、8分の試験上限、子プロセスだけの
 管理・有効化試験の実行指定を維持します。`Verify native fixed-group resource catalog`
-は、その直後かつ既存の3工程並列区間の前に、FULL専用の直列ステップを1つだけ追加します。
+は、その直後かつbackgroundの3工程を待つ必須waitの前に置くFULL専用の直列ステップです。
 `FULL_ONLY_STEPS` はinspection・management・fixed-group catalogの順で正確に3工程です。
 `LONG_STEPS` やnative-shortの実行対象には追加しません。
 
@@ -204,9 +204,11 @@ race オプション、native-short のスキップ条件は変えず、ネイ�
 完全CI・夜間CIの証跡には wait と各検証の成功が必要です。失敗・キャンセル・
 スキップ・欠落を完全実行の成功として扱いません。
 
-重ねるのは待ち時間の長い3組だけです。同じタグ付きパッケージをビルドする
-直列のネイティブ検証後に開始しますが、キャッシュが削除されれば追加ビルドは
-必要です。パッケージ作成、アップロード、キャッシュ保存、時間集計は wait 後です。
+待ち時間の長い3組を開始してから、resource inspection、management、fixed-group catalogを
+順番に実行します。resourceの3工程同士は直列のまま、backgroundの3組と重ねます。
+先行するネイティブ検証が同じタグ付きパッケージをビルドしますが、キャッシュが削除されれば
+追加ビルドは必要です。追加ランナーや重複するセットアップは増やしません。companion検査、
+パッケージ作成、アップロード、キャッシュ保存、時間集計は wait 後です。
 この区間で既存の時間計測 JSONL に書くのは natural-lifecycle だけなので、同時書き込みは
 ありません。計測を追加するときは共有追記ではなく、保存先の分離と wait 後の検証付き
 統合が必要です。

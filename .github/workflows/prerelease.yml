@@ -149,10 +149,10 @@ jobs:
           node-version: '24.19.0'
           check-latest: false
           package-manager-cache: false
-      - name: Test and reproduce locked frontend assets
+      - name: Reproduce locked frontend assets
         run: |
           npm install --global npm@11.9.0 --no-audit --no-fund
-          python .github/scripts/check-frontend.py
+          python .github/scripts/check-frontend.py --build-only
       - name: Locate Go module and compilation caches
         id: go-cache-info
         run: |
@@ -212,8 +212,6 @@ jobs:
           fi
           # Enforce offline route-revocation recovery using the real protected fixture.
           go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core 2>&1 | tee -a logs/race-tests.txt
-          go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
-          go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
           # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
           go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
       - name: Verify adapted engine admission and native underlay denial

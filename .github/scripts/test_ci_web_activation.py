@@ -2,6 +2,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import re
 import unittest
 from unittest import mock
 
@@ -86,13 +87,15 @@ class WebActivationPolicyTests(unittest.TestCase):
         for text in ['workers: 1', 'retries: 0', "screenshot: 'off'", "trace: 'off'", "video: 'off'", "serviceWorkers: 'block'"]:
             self.assertIn(text, config)
 
-    def test_workflow_independent_pr_trigger_and_exact_exports(self):
+    def test_workflow_scoped_pr_trigger_and_exact_exports(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
         job = workflow.split('\n  web-activation:\n', 1)[1].split('\n  browser:\n', 1)[0]
         self.assertIn("github.event_name == 'pull_request'", job)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', job)
         self.assertIn("github.event_name == 'workflow_dispatch' && inputs.force_full", job)
-        self.assertNotIn('needs:', job)
+        self.assertEqual(re.findall(r'^    needs: (.+)$', job, re.M), ['impact'])
+        self.assertIn("needs.impact.result != 'success' || needs.impact.outputs.scope != 'docs'", job)
+        self.assertIn('if: always() && !cancelled()', job)
         self.assertNotIn('endpoint_following_acceptance', job)
         self.assertIn('timeout-minutes: 55', job)
         self.assertIn('timeout-minutes: 40', job)

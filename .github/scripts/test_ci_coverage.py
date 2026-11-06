@@ -62,6 +62,26 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_browser_frontend_suite_is_mandatory_even_when_native_tests_are_deduplicated(self):
+        gate = 'Test and reproduce locked frontend assets'
+        for scope in ('frontend', 'native-short', 'full'):
+            for mode in ('missing-job', 'missing-step', 'duplicate-step', 'skipped', 'failure', 'cancelled', 'pending'):
+                data = jobs(scope)
+                selected = next(item for item in data if item['name'] == 'browser')
+                step = next(item for item in selected['steps'] if item['name'] == gate)
+                if mode == 'missing-job':
+                    data.remove(selected)
+                elif mode == 'missing-step':
+                    selected['steps'].remove(step)
+                elif mode == 'duplicate-step':
+                    selected['steps'].append(copy.deepcopy(step))
+                elif mode == 'pending':
+                    step['status'] = 'in_progress'
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(scope=scope, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, scope)
+
     def test_shared_regressions_must_actually_pass_for_each_native_scope(self):
         for scope in ('full', 'native-short'):
             for mode in ('missing-job', 'missing-step', 'duplicate-step', 'failure', 'cancelled', 'skipped', 'pending'):
@@ -283,7 +303,7 @@ class ActualCoverageTests(unittest.TestCase):
                   "github.event.pull_request.head.repo.full_name": "",
                   "github.repository": coverage.REPOSITORY, "github.ref": "refs/heads/main",
                   "github.event.repository.default_branch": "main", "inputs.force_full": False,
-                  "needs.impact.outputs.scope": "full"}
+                  "needs.impact.outputs.scope": "full", "needs.impact.result": "success"}
 
         def enabled(name, overrides=None):
             # Job-level fields are indented four spaces, so extract until next

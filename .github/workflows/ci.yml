@@ -318,10 +318,10 @@ jobs:
           node-version: '24.19.0'
           check-latest: false
           package-manager-cache: false
-      - name: Test and reproduce locked frontend assets
+      - name: Reproduce locked frontend assets
         run: |
           npm install --global npm@11.9.0 --no-audit --no-fund
-          python .github/scripts/check-frontend.py
+          python .github/scripts/check-frontend.py --build-only
       - name: Check exact toolchain and native target
         run: |
           set -euo pipefail
@@ -372,8 +372,6 @@ jobs:
           fi
           # Enforce offline route-revocation recovery using the real protected fixture.
           python .github/scripts/ci-metrics.py run --suite offline-route-race -- go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core
-          python .github/scripts/ci-metrics.py run --suite backend-route-race -- go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute
-          python .github/scripts/ci-metrics.py run --suite mixed-core-race -- go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'
           # Repeat real native IPC cleanup; exact timer policy is tested virtually.
           python .github/scripts/ci-metrics.py run --suite ipc-repeat-race -- go test -race -count=5 -timeout=2m ./internal/control
           python .github/scripts/ci-metrics.py run --suite native-vet -- go vet ./...
@@ -628,6 +626,69 @@ jobs:
               "-timeout=5m", "./internal/routecat", "./internal/core",
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
+      # Start wait-heavy gates after their exact tagged caches are warm.
+      # Resource checks use independent peers/state and overlap these timers.
+      - name: Verify direct LAN session natural rekey and idle lifecycle
+        id: natural-lifecycle
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
+      - name: Verify guarded relay real-time lease continuity
+        id: guarded-lease
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerIntegration",
+              "--",
+              "go", "test", "-race", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^TestGuardedRelayTwoPeerIntegration$", "-timeout=5m", "./internal/lanlink",
+          ], env=env, check=True, timeout=8 * 60)
+          PYTHON
+      - name: Verify relay-only real-time lease and idle continuity
+        id: relay-only-lease
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+          # Preserve Go package-level concurrency for the 130s lease and 80s idle gates.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
+              "--",
+              "go", "test", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestMultipleRelayPresenceAndFreshClientRecovery)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
+          ], env=env, check=True, timeout=9 * 60)
+          PYTHON
       - name: Verify native remote resource inspection
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 12
@@ -725,69 +786,6 @@ jobs:
               "-run=^TestResourceGroupCatalogNativeFixedTwoTargetOneShot$",
               "./internal/core",
           ], env=env, check=True, timeout=6 * 60)
-          PYTHON
-      # Run only the isolated, wait-heavy gates together after serial native tests
-      # have populated their exact tagged build caches. Keep evidence names stable.
-      - name: Verify direct LAN session natural rekey and idle lifecycle
-        id: natural-lifecycle
-        background: true
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
-      - name: Verify guarded relay real-time lease continuity
-        id: guarded-lease
-        background: true
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-          import sys
-
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerIntegration",
-              "--",
-              "go", "test", "-race", "-count=1", "-v",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^TestGuardedRelayTwoPeerIntegration$", "-timeout=5m", "./internal/lanlink",
-          ], env=env, check=True, timeout=8 * 60)
-          PYTHON
-      - name: Verify relay-only real-time lease and idle continuity
-        id: relay-only-lease
-        background: true
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 10
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-          import sys
-
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
-          # Preserve Go package-level concurrency for the 130s lease and 80s idle gates.
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
-              "--",
-              "go", "test", "-count=1", "-v",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestMultipleRelayPresenceAndFreshClientRecovery)$",
-              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
-          ], env=env, check=True, timeout=9 * 60)
           PYTHON
       - name: Wait for real-time lifecycle and lease checks
         wait: [natural-lifecycle, guarded-lease, relay-only-lease]
@@ -976,7 +974,10 @@ jobs:
     # Separate exact two-case real Core/CLI/panel composition; the seven-case
     # synthetic-owner job below remains unchanged. Hard runner termination is
     # failed/unjoined containment, never successful native cleanup evidence.
-    if: github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
+    needs: impact
+    # Only proven docs-only PRs omit acceptance; failed/unknown impact runs it.
+    # Forced and scheduled runs retain both exact-source acceptance suites.
+    if: always() && !cancelled() && github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (needs.impact.result != 'success' || needs.impact.outputs.scope != 'docs')) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -1029,10 +1030,13 @@ jobs:
           retention-days: 14
 
   web-activation:
-    # Independent draft-PR validation; no default-branch registration required.
+    # Draft-PR validation needs no default-branch registration.
     # The existing workflow_dispatch/force_full route is an additional entry.
     # Endpoint-following acceptance is deliberately excluded from this job.
-    if: github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
+    needs: impact
+    # Only proven docs-only PRs omit acceptance; failed/unknown impact runs it.
+    # Forced and scheduled runs retain both exact-source acceptance suites.
+    if: always() && !cancelled() && github.event.repository.private == false && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (needs.impact.result != 'success' || needs.impact.outputs.scope != 'docs')) || (github.event_name == 'workflow_dispatch' && inputs.force_full) || (github.event_name == 'schedule' && github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     permissions:
