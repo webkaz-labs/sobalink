@@ -691,7 +691,7 @@ class WorkflowAndBundleTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256((gate.ROOT/'.github/scripts/ci-windows-packages.py').read_bytes()).hexdigest(),
                          '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb731c4f42070')
     def test_early_core_precedes_frontend_and_policy_but_linux_path_remains(self):
-        for name in ('ci.yml','prerelease.yml'):
+        for name in ('ci.yml',):
             text=(gate.ROOT/'.github/workflows'/name).read_text(encoding='utf-8')
             native=text.split('  native:\n',1)[1]
             self.assertLess(native.index('name: Collect required whole-Core'),native.index('name: Reproduce locked frontend'))

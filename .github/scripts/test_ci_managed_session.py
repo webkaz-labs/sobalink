@@ -128,8 +128,8 @@ class ManagedSessionPolicyTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             run.assert_not_called()
 
-    def test_both_native_workflows_are_ordered_required_and_bounded(self):
-        for workflow in ('ci', 'prerelease'):
+    def test_canonical_ci_native_steps_are_ordered_required_and_bounded(self):
+        for workflow in ('ci',):
             source = (ROOT / '.github/workflows' / (workflow + '.yml')).read_text(encoding="utf-8")
             native = re.search(r'^  native:\n(.*?)(?=^  [\w-]+:|\Z)', source, re.M | re.S)[0]
             offsets = []

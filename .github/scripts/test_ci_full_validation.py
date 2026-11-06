@@ -286,7 +286,7 @@ class FullProofTests(unittest.TestCase):
                     self.audit()
 
     def test_native_literal_policy_preserves_complement_vet_and_failure_handling(self):
-        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+        for path in (full.WORKFLOW,):
             original = self.sources[path]
             for old, new in ((b"if: matrix.goos == 'windows' || matrix.goos == 'darwin'", b'if: false'),
                     (b"== 'linux'", b"== 'windows'"),
@@ -314,7 +314,7 @@ class FullProofTests(unittest.TestCase):
             b"go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'",
         )
         full.validate_native_packages_workflow(self.sources)
-        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+        for path in (full.WORKFLOW,):
             original = self.sources[path]
             complete = b'go test -race -count=1 -timeout=10m ./...'
             self.assertEqual(original.count(complete), 1)
@@ -336,7 +336,7 @@ class FullProofTests(unittest.TestCase):
 
     def test_failure_context_upload_is_exact_separate_and_not_a_required_success_step(self):
         self.assertTrue(all('Preserve bounded Core failure context' not in names for names in self.required.values()))
-        for path in (full.WORKFLOW,'.github/workflows/prerelease.yml'):
+        for path in (full.WORKFLOW,):
             original=self.sources[path]
             marker=b'      - name: Preserve bounded Core failure context\n'
             start=original.index(marker);end=original.index(b'      - ',start+len(marker))
@@ -354,7 +354,7 @@ class FullProofTests(unittest.TestCase):
             self.sources[path]=original
 
     def test_early_core_placement_rejects_unreviewed_work_or_cache_before_collection(self):
-        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+        for path in (full.WORKFLOW,):
             original = self.sources[path]
             marker = b'      - name: Collect required whole-Core race evidence\n'
             for inserted in (b'      - name: Unrelated workload\n        run: echo synthetic\n',
@@ -781,11 +781,11 @@ class FullProofTests(unittest.TestCase):
             with self.subTest(gate=gate), self.assertRaises(ValueError):
                 full.required_jobs(self.sources)
 
-    def test_request_setup_ci_and_prerelease_exact_execution_is_required(self):
+    def test_request_setup_exact_ci_execution_is_required(self):
         self.assertEqual(tuple(test for _, _, test in full.REQUEST_SETUP_CASES), (
             'TestLANCoreRequestTOFUIntegration', 'TestLANCoreRequestFullVerificationIntegration',
             'TestLANCoreRequestRejectCancelIntegration'))
-        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+        for path in (full.WORKFLOW,):
             original = self.sources[path]
             full.validate_request_setup_workflow(original)
             for gate, suite, test in full.REQUEST_SETUP_CASES:
@@ -1351,8 +1351,8 @@ if __name__ == '__main__':
 
 
 class NativeCompanionGateTests(unittest.TestCase):
-    def test_exact_step_in_both_workflows(self):
-        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+    def test_exact_step_in_canonical_ci(self):
+        for path in (full.WORKFLOW,):
             data = (ROOT / path).read_bytes()
             full.validate_native_companion_workflow(data)
             for before, after in [(b'-count=1', b'-count=0'), (b'test -race', b'test'), (b'go1.27.3', b'go1.27.1')]:
@@ -1364,3 +1364,85 @@ class NativeCompanionGateTests(unittest.TestCase):
         required = full.required_jobs(sources)
         for target, (name, _) in full.TARGETS.items():
             self.assertEqual('Test experimental native companion' in required[name], target in ('darwin-arm64', 'windows-amd64'))
+
+
+class ReleaseReuseBoundaryTests(unittest.TestCase):
+    """Offline mutations only; source proof must never authorize another build."""
+    def setUp(self):
+        self.source = (ROOT / '.github/workflows/prerelease.yml').read_bytes()
+
+    def test_reviewed_boundary_and_retained_stress(self):
+        full.validate_release_reuse_workflow(self.source)
+        native = self.source.split(b'  native:\n', 1)[1].split(b'  provenance:\n', 1)[0]
+        self.assertEqual(native.count(b'go test '), 1)
+        self.assertIn(b'go test -race -count=25 -timeout=3m ./internal/control', native)
+        for command in (b'ci-native-core-required.py core', b'ci-native-core-required.py remaining',
+                        b'ci-context-control.py ', b'ci-managed-session.py ', b'ci-managed-activation.py ',
+                        b'go vet ', b'gofmt ', b'Test experimental native companion'):
+            self.assertNotIn(command, native)
+        self.assertEqual(native.count(b'go run ./cmd/package-tool build "$RELEASE_VERSION"'), 2)
+        self.assertIn(b'python .github/scripts/smoke-package.py ', native)
+        self.assertIn(b"test_release_validation.py", self.source)
+        self.assertIn(b"test_native_companion.py", self.source)
+
+    def test_gate_checkout_target_toolchain_version_and_build_mutations_fail_closed(self):
+        changes = (
+            (b'    needs: gate\n', b'    needs: []\n'),
+            (b'    needs: gate\n', b'    needs: gate\n    if: always()\n'),
+            (b'    needs: [gate, native]\n', b'    needs: gate\n'),
+            (b'        id: gate\n', b'        id: gate\n        continue-on-error: true\n'),
+            (b'          ref: ${{ github.sha }}', b'          ref: main'),
+            (b'          ref: ${{ needs.gate.outputs.commit }}', b'          ref: main'),
+            (b"go-version: '1.27.1'", b"go-version: '1.27.3'"),
+            (b"go-version: '1.27.3'", b"go-version: '1.27.1'"),
+            (b"node-version: '24.19.0'", b"node-version: '24'"),
+            (b'          - runner: ubuntu-24.04-arm', b'          - runner: ubuntu-24.04'),
+            (b'      RELEASE_VERSION: ${{ needs.gate.outputs.version }}', b'      RELEASE_VERSION: 0.0.0-other'),
+            (b'      TESTED_COMMIT: ${{ needs.gate.outputs.commit }}', b'      TESTED_COMMIT: ${{ github.sha }}'),
+            (b'  GOTOOLCHAIN: local', b'  GOTOOLCHAIN: auto'),
+            (b'  GOFLAGS: -mod=readonly', b'  GOFLAGS: -mod=mod'),
+            (b'          test "$(git rev-parse HEAD)" = "$TESTED_COMMIT"', b'          echo source unchecked'),
+            (b'          test "$(go env GOARCH)" = "$TARGET_ARCH"', b'          echo target unchecked'),
+            (b'go test -race -count=25 -timeout=3m', b'go test -race -count=5 -timeout=3m'),
+            (b'build "$RELEASE_VERSION" "$TARGET_OS" "$TARGET_ARCH" "$TESTED_COMMIT"',
+             b'build "0.0.0-other" "$TARGET_OS" "$TARGET_ARCH" "$TESTED_COMMIT"'),
+            (b'          cmp "$RUNNER_TEMP/first-SHA256SUMS" dist/SHA256SUMS', b'          echo comparison skipped'),
+            (b'python .github/scripts/smoke-package.py ', b'echo .github/scripts/smoke-package.py '),
+        )
+        for old, new in changes:
+            self.assertIn(old, self.source)
+            with self.subTest(mutation=old), self.assertRaises(ValueError):
+                full.validate_release_reuse_workflow(self.source.replace(old, new, 1))
+
+    def test_staging_and_publication_revalidation_cannot_be_bypassed(self):
+        changes = (
+            (b'    needs: [gate, provenance, bundle-provenance]', b'    needs: gate'),
+            (b'    needs: [gate, stage, bundle-provenance]', b'    needs: gate'),
+            (b'name: ci-full-validation-proof\n          path: proof', b'name: other-proof\n          path: proof'),
+            (b'python .github/scripts/release-validation.py gate --proof "$RUNNER_TEMP/stage-ci-full-proof.json"', b'echo stage skipped'),
+            (b'python tools/release-validation.py publish-ready --proof proof/ci-full-proof.json --revalidated-proof proof/publication-full-proof.json', b'echo publication revalidation skipped'),
+        )
+        for old, new in changes:
+            self.assertIn(old, self.source)
+            with self.subTest(mutation=old), self.assertRaises(ValueError):
+                full.validate_release_reuse_workflow(self.source.replace(old, new, 1))
+        for marker in (b'      - name: Require exact main source, successful CI, and unpublished prerelease',
+                       b'      - name: Reproducible packages, license notices, and native archive smoke',
+                       b'      - name: Recheck source and CI,',
+                       b'      - name: Publish only the verified draft at the exact source commit'):
+            start = self.source.index(marker)
+            end = self.source.index(b'\n', start) + 1
+            for control in (b'        if: false\n', b'        continue-on-error: true\n'):
+                with self.subTest(marker=marker, control=control), self.assertRaises(ValueError):
+                    full.validate_release_reuse_workflow(self.source[:end] + control + self.source[end:])
+
+    def test_duplicate_job_mappings_cannot_shadow_the_checked_boundary(self):
+        for job in (b'gate', b'native', b'stage', b'publish'):
+            duplicate = b'\n  ' + job + b':\n    runs-on: ubuntu-24.04\n'
+            with self.subTest(job=job), self.assertRaisesRegex(ValueError, 'duplicate workflow mapping key'):
+                full.validate_release_reuse_workflow(self.source + duplicate)
+
+    def test_release_notes_are_not_a_new_execution_policy(self):
+        old = b'Experimental prerelease; this is not a stable release.'
+        self.assertIn(old, self.source)
+        full.validate_release_reuse_workflow(self.source.replace(old, b'Experimental prerelease; review the verification results.'))

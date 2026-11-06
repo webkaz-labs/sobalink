@@ -639,7 +639,7 @@ REQUEST_SETUP_CASES = (
 
 
 def validate_request_setup_workflow(workflow_bytes):
-    """Require all request-approval cases in every native CI/release lane."""
+    """Require all request-approval cases in every canonical native CI lane."""
     workflow = workflow_bytes.decode("utf-8")
     jobs = [(offset, key) for offset, indent, key, _ in workflow_metadata(workflow) if indent == 2]
     native = [offset for offset, key in jobs if key == "native"]
@@ -857,7 +857,7 @@ def validate_macos_nearby_workflow(workflow_bytes):
 
 
 def validate_native_packages_workflow(sources):
-    """Require the reviewed collector, disjoint complement, and both routes."""
+    """Require the canonical CI collector, disjoint complement and Linux suite."""
     require(digest(sources[WINDOWS_PACKAGES_HELPER]) == WINDOWS_PACKAGES_SHA256,
             'package partition runner differs from reviewed policy')
     require(digest(sources['.github/scripts/ci-native-core.py']) == 'd5e6b47a41cfd608e3d4f34a9f9949a351b07ac60299243ca1d68d677b881389',
@@ -913,17 +913,6 @@ def validate_native_packages_workflow(sources):
             exit 1
           fi
 """
-    release = """      - name: Native race tests (local and mocked services only)
-        run: |
-          set -euo pipefail
-          if [[ '${{ matrix.goos }}' == 'linux' ]]; then
-            go test -race -count=1 -timeout=10m ./... 2>&1 | tee logs/race-tests.txt
-          fi
-          # Enforce offline route-revocation recovery using the real protected fixture.
-          go test -race -count=1 -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestRoute(BrowserFixture|OfflineFailed)' -timeout=2m ./internal/core 2>&1 | tee -a logs/race-tests.txt
-          # Exercise actual named-pipe/Unix cleanup repeatedly before publication.
-          go test -race -count=25 -timeout=3m ./internal/control 2>&1 | tee logs/ipc-regression.txt
-"""
     setup_go = """      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.27.1'
@@ -935,41 +924,85 @@ def validate_native_packages_workflow(sources):
           check-latest: false
           package-manager-cache: false
 """
-    for path, tail in ((WORKFLOW, ordinary), ('.github/workflows/prerelease.yml', release)):
-        workflow = sources[path].decode('utf-8')
-        metadata = workflow_metadata(workflow)
-        jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
-        native = [offset for offset, key in jobs if key == 'native']
-        require(len(native) == 1, 'missing native package job')
-        end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
-        for block in (early, later + tail, failure):
-            marker = block.splitlines(keepends=True)[0]
-            require(workflow.count(marker) == workflow.count(block) == 1,
-                    'invalid native package execution or receipt policy')
-            start = workflow.index(marker)
-            require(native[0] < start < end and workflow[start + len(block):].startswith('      - '),
-                    'invalid native package step boundary')
-        region = workflow[native[0]:end]
-        if path == WORKFLOW:
-            require(region.count(setup_go) == 1 and region.count(early + setup_node) == 1,
-                    'Core must follow exact Go and cache setup before other workloads')
-            setup_start, core_start = region.index(setup_go), region.index(early)
-            require(setup_start < core_start, 'exact Go setup must precede Core collection')
-            prelude = region[setup_start + len(setup_go):core_start]
-            require(digest(prelude.encode('utf-8')) == CI_NATIVE_CACHE_PRELUDE_SHA256,
-                    'early CI cache setup differs from reviewed read-only policy')
-        else:
-            require(region.count(setup_go + early + setup_node) == 1,
-                    'release Core must immediately follow exact Go setup before other work or cache restore')
-        require(region.index('      - uses: actions/setup-go@') < region.index(early)
-                < region.index('      - uses: actions/setup-node@')
-                < region.index('      - name: Reproduce locked frontend assets\n')
-                < region.index(later), 'early Core setup ordering differs')
-        require(workflow.count('python -B .github/scripts/ci-native-core-required.py core') == 1
-                and workflow.count('python -B .github/scripts/ci-native-core-required.py remaining') == 1
-                and 'python -B .github/scripts/ci-windows-packages.py' not in workflow
-                and 'GOMAXPROCS' not in workflow and 'GOTRACEBACK' not in workflow,
-                'native package runner escaped its exact steps')
+    workflow = sources[WORKFLOW].decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    native = [offset for offset, key in jobs if key == 'native']
+    require(len(native) == 1, 'missing native package job')
+    end = next((offset for offset, _ in jobs if offset > native[0]), len(workflow))
+    for block in (early, later + ordinary, failure):
+        marker = block.splitlines(keepends=True)[0]
+        require(workflow.count(marker) == workflow.count(block) == 1,
+                'invalid native package execution or receipt policy')
+        start = workflow.index(marker)
+        require(native[0] < start < end and workflow[start + len(block):].startswith('      - '),
+                'invalid native package step boundary')
+    region = workflow[native[0]:end]
+    require(region.count(setup_go) == 1 and region.count(early + setup_node) == 1,
+            'Core must follow exact Go and cache setup before other workloads')
+    setup_start, core_start = region.index(setup_go), region.index(early)
+    require(setup_start < core_start, 'exact Go setup must precede Core collection')
+    prelude = region[setup_start + len(setup_go):core_start]
+    require(digest(prelude.encode('utf-8')) == CI_NATIVE_CACHE_PRELUDE_SHA256,
+            'early CI cache setup differs from reviewed read-only policy')
+    require(region.index('      - uses: actions/setup-go@') < region.index(early)
+            < region.index('      - uses: actions/setup-node@')
+            < region.index('      - name: Reproduce locked frontend assets\n')
+            < region.index(later), 'early Core setup ordering differs')
+    require(workflow.count('python -B .github/scripts/ci-native-core-required.py core') == 1
+            and workflow.count('python -B .github/scripts/ci-native-core-required.py remaining') == 1
+            and 'python -B .github/scripts/ci-windows-packages.py' not in workflow
+            and 'GOMAXPROCS' not in workflow and 'GOTRACEBACK' not in workflow,
+            'native package runner escaped its exact steps')
+
+
+def release_reuse_boundary(data):
+    """Select the existing release trust boundary, without a new proof format.
+
+    Bind the gate and native build lane, plus source revalidation before staging
+    and publication. Release notes/signing/install bodies remain independent.
+    The canonical CI execution and artifact audits above are never replaced.
+    """
+    workflow = data.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    roots = [offset for offset, indent, key, _ in metadata if indent == 0 and key == 'jobs']
+    require(len(roots) == 1, 'release needs one jobs mapping')
+    positions = [(offset, key) for offset, indent, key, _ in metadata
+                 if indent == 2 and offset > roots[0]]
+    jobs = {}
+    for index, (start, name) in enumerate(positions):
+        end = positions[index + 1][0] if index + 1 < len(positions) else len(workflow)
+        jobs[name] = workflow[start:end]
+    require(all(name in jobs for name in ('gate', 'native', 'provenance', 'stage', 'publish')),
+            'release reuse boundary is incomplete')
+
+    def header(name):
+        value = jobs[name]
+        require(value.count('    steps:\n') == 1, 'release needs one steps sequence')
+        return value.split('    steps:\n', 1)[0]
+
+    def step(name, marker):
+        blocks = re.findall(r'^      - .*?(?=^      - |\Z)', jobs[name], re.M | re.S)
+        matches = [block for block in blocks if marker in block]
+        require(len(matches) == 1, 'release boundary step is missing or ambiguous')
+        return matches[0]
+
+    stage = step('stage', 'name: Recheck source and CI,')
+    inline = "          python - <<'PY'\n"
+    require(stage.count(inline) == 1, 'release staging source check differs')
+    return encoded([
+        workflow[:roots[0]], jobs['gate'], jobs['native'], header('provenance'),
+        header('stage'), step('stage', 'uses: actions/checkout@'), stage.split(inline, 1)[0],
+        header('publish'), step('publish', 'name: ci-full-validation-proof\n'),
+        step('publish', 'name: Publish only the verified draft at the exact source commit'),
+    ])
+
+
+def validate_release_reuse_workflow(data):
+    # Review changes to source qualification, native release construction and
+    # final re-audit together. An ordinary test/cache receipt cannot grant reuse.
+    require(digest(release_reuse_boundary(data)) == 'd15fe480e2918e5cecc87541734ac17d20761b2dcc0690f64c4c3cdaa773c355',
+            'release source-proof reuse boundary differs from reviewed policy')
 
 
 def validate_frontend_workflow(sources):
@@ -1126,7 +1159,7 @@ def required_jobs(sources):
     validate_frontend_workflow(sources)
     validate_native_packages_workflow(sources)
     validate_native_companion_workflow(sources[WORKFLOW])
-    validate_native_companion_workflow(sources[".github/workflows/prerelease.yml"])
+    validate_release_reuse_workflow(sources[".github/workflows/prerelease.yml"])
     validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
     validate_durable_text_workflow(sources[WORKFLOW])
@@ -1135,7 +1168,6 @@ def required_jobs(sources):
     validate_setup_and_text_browser_workflow(sources[WORKFLOW])
     validate_request_setup_workflow(sources[WORKFLOW])
     validate_pairing_ui_workflow(sources[WORKFLOW])
-    validate_request_setup_workflow(sources['.github/workflows/prerelease.yml'])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     validate_fixture_diagnostics_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))

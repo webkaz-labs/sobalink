@@ -2,7 +2,7 @@
 
 [日本語](CI_EFFICIENCY.ja.md) · [Verification](VERIFICATION.en.md) · [Development principles](DEVELOPMENT_PRINCIPLES.en.md)
 
-Run the checks affected by the complete change. Ordinary documentation does not need an application build or four operating systems. Frontend changes need frontend and browser checks. Sensitive, shared or uncertain changes keep the complete native matrix. Every prerelease still runs the independent full validation and distribution/signature/install gates.
+Run the checks affected by the complete change. Ordinary documentation does not need an application build or four operating systems. Frontend changes need frontend and browser checks. Sensitive, shared or uncertain changes keep the complete native matrix. Every prerelease still requires exact-source full validation and runs independent distribution/signature/install gates.
 
 Here, a **native matrix** is the set of OS/CPU targets tested. A **gate** is a check that must pass before proceeding. A **receipt** records the source, checks and results; it does not replace executing those checks. **Provenance** records where build inputs and artifacts came from.
 
@@ -157,6 +157,8 @@ The proof binds exact commit/tree, workflow and policy source hashes, current ef
 
 Docs/frontend/scoped-Go/native-short/native-ui successes all fail full-release eligibility until a complete explicit full run is established. Scheduled runs add coverage but do not replace this manual release proof.
 
+Prerelease uses that proof instead of repeating equivalent source regressions. It retains the separate 25-repeat IPC stress check and all release-version build, package, signing and installation checks. Hosted environments may change between runs; source evidence does not replace current binary verification. See [the source/package boundary](CI_TESTING.en.md#release-source-evidence-and-package-checks).
+
 ## Daily full validation
 
 The reviewed workflow schedules one full run per day at **18:00 UTC, or 03:00 JST (UTC+09:00) the following day**, using `0 18 * * *` in `.github/workflows/ci.yml`. It becomes active only after that workflow is merged into the default branch (`main`). GitHub uses the latest default-branch commit, including when no source changed. The classifier explicitly selects `full`; it cannot select `native-short` from an empty or documentation-only delta.
@@ -175,7 +177,7 @@ This path proves that the complete change is ordinary prose; it does not borrow 
 
 ## Caches and measurements
 
-Compilation caches accelerate builds; they do not turn a previous test result into a new pass. Native development caches, scoped-Go caches and trusted-main caches use separate namespaces. Only complete main native validation writes trusted-main cache entries. Release retains exact-source restoration and reruns its full gates. Scoped Go tests use `-count=1` to execute their tests.
+Compilation caches accelerate builds; they do not turn a previous test result into a new pass. Native development caches, scoped-Go caches and trusted-main caches use separate namespaces. Only complete main native validation writes trusted-main cache entries. Release retains exact-source cache restoration, audits full-CI source evidence and runs its package/distribution gates. Scoped Go tests use `-count=1` to execute their tests.
 
 Content-free timings record fixed suite/job names, elapsed time, result and return code. They do not contain command arguments, environment values, file contents or raw logs. A command failure remains a failure if timing recording fails. Compare cold and warm runs separately; parallel job durations must not be added to describe elapsed waiting time.
 
@@ -212,7 +214,7 @@ actual cold and warm runner timings before claiming an end-to-end speedup.
 
 Full native validation retains race detection, vet, Windows retirement barriers, repeated IPC cleanup, synthetic key checks, engine negative controls, native discovery, direct/relay recovery and the original natural lifecycle/lease waits. Production timers, payloads, assertions and test timeouts are not shortened by scope selection.
 
-In Cross-platform CI and prerelease validation, Windows and macOS run one complete Core race suite immediately after Go setup, before frontend and policy workloads or cache restoration. The unchanged collector prepares dependencies, builds and warms the exact race inventory, then uses private temporary state and bounded JSON capture with the existing 600-second package timeout. The later phase runs every other package from the same exact `go list -race ./...` inventory, without repeating Core. Both phases and their official artifact bytes are bound to the tested commit/tree and producing attempt, including verified carried-forward jobs. Existing helper/platform skips remain explicit; missing, failed or unfinished tests and unexpected top-level skips fail qualification. Linux, tagged/repeated gates, frontend, vet, browser and package checks remain unchanged. This setup change does not establish the cause of earlier timeouts; diagnostic success is not required-validation credit.
+In Cross-platform CI, Windows and macOS run one complete Core race suite after exact Go setup and the reviewed cache restoration, before frontend and policy workloads. The unchanged collector prepares dependencies, builds and warms the exact race inventory, then uses private temporary state and bounded JSON capture with the existing 600-second package timeout. The later phase runs every other package from the same exact `go list -race ./...` inventory, without repeating Core. Both phases and their official artifact bytes are bound to the tested commit/tree and producing attempt, including verified carried-forward jobs. Existing helper/platform skips remain explicit; missing, failed or unfinished tests and unexpected top-level skips fail qualification. Linux, tagged/repeated gates, frontend, vet, browser and package checks remain unchanged. This setup change does not establish the cause of earlier timeouts; diagnostic success is not required-validation credit.
 
 Required DNS-SD and native-package artifacts must match exactly one completed, commit-pinned upload action in the original producer's official job log, including the API name, ID, ZIP digest and size. Missing, truncated or ambiguous upload evidence fails closed. This is reviewed-job-log association, not cryptographic step identity; the existing source, attempt, native-result and immutable API checks remain required.
 
