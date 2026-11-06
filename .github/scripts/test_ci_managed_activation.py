@@ -125,7 +125,10 @@ class ManagedActivationPolicyTests(unittest.TestCase):
                 self.assertIn('timeout-minutes: ' + str(bound), step)
                 self.assertIn('python .github/scripts/ci-managed-activation.py ' + suite, step)
                 self.assertNotIn('continue-on-error', step)
-                self.assertNotIn('\n        if:', step)
+                if workflow == "ci":
+                    self.assertEqual(re.findall(r"^        if: (.+)$", step, re.M), ["matrix.suite == 'integration'"])
+                else:
+                    self.assertNotIn("        if:", step)
             for runner in ('ubuntu-24.04', 'ubuntu-24.04-arm', 'macos-26', 'windows-2025'):
                 self.assertIn(runner, source)
 

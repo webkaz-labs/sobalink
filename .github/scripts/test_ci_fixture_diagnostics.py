@@ -20,6 +20,7 @@ CASES = {
         'TestStartupDiagnosticClosedVocabulary',
         'TestStartupArgumentFailureWritesDiagnostic')),
     'internal/core': ('lanlink_integration,ts_omit_udptransport', (
+        'TestOutboxBrowserFailurePrivacy',
         'TestNativeLANCommandDiagnosticRetainsOnlyAllowedCodes',
         'TestNativeLANCommandDiagnosticPreservesProductionListenClassification',
         'TestNativeLANHeldRelayPortDiagnosticIntegration')),
@@ -37,7 +38,7 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / full.WORKFLOW).read_text(encoding='utf-8')
         marker = '      - name: ' + GATE + '\n'
-        self.step = marker + self.workflow.split(marker)[1].split('      - name: Verify actual UI workflows')[0]
+        self.step = marker + self.workflow.split(marker)[1].split('      - ', 1)[0]
         self.script = textwrap.dedent(self.step.split("          python - <<'PYTHON'\n")[1]
                                      .split('          PYTHON\n')[0])
 
@@ -52,12 +53,12 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
                 error = exc
         return probe, launch, error
 
-    def test_all_eleven_cases_are_required_once_with_race_and_fixed_bounds(self):
+    def test_all_twelve_cases_are_required_once_with_race_and_fixed_bounds(self):
         probe, launch, error = self.invoke(environment={'SYNTHETIC_KEEP': 'fixture'})
         self.assertIsNone(error)
         probe.assert_called_once_with(['go', 'env', 'GOVERSION', 'GOOS', 'GOARCH'], text=True, timeout=30)
         self.assertEqual(launch.call_count, 3)
-        self.assertEqual(sum(len(tests) for _, tests in CASES.values()), 11)
+        self.assertEqual(sum(len(tests) for _, tests in CASES.values()), 12)
         for call, (package, (tags, tests)) in zip(launch.call_args_list, CASES.items()):
             expected = [sys.executable, '.github/scripts/ci-go-test.py']
             for name in tests:
@@ -99,11 +100,11 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
             self.assertEqual(launch.call_count, index + 1)
 
     def test_cases_correspond_to_actual_test_definitions(self):
-        files = {'cmd/soba-e2e': 'startup_diagnostic_test.go',
-                 'internal/core': 'lan_integration_diagnostics_test.go',
-                 'internal/directlan': 'resource_inspection_observer_test.go'}
+        files = {'cmd/soba-e2e': ('startup_diagnostic_test.go',),
+                 'internal/core': ('lan_integration_diagnostics_test.go', 'outbox_browser_diagnostics_integration_test.go'),
+                 'internal/directlan': ('resource_inspection_observer_test.go',)}
         for package, (_, tests) in CASES.items():
-            source = (ROOT / package / files[package]).read_text(encoding='utf-8')
+            source = '\n'.join((ROOT / package / path).read_text(encoding='utf-8') for path in files[package])
             self.assertCountEqual(re.findall(r'^func (Test\w+)\(t \*testing.T\)', source, re.M), tests)
 
     def test_required_browser_gate_and_source_policy(self):
@@ -133,6 +134,60 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
         for changed in mutations:
             with self.subTest(mutation=mutations.index(changed)), self.assertRaises(ValueError):
                 full.validate_fixture_diagnostics_workflow(changed.encode())
+
+
+    def test_preparation_is_joined_before_embedded_assets_or_browser_consumers(self):
+        region = self.workflow[self.workflow.index('\n  browser:\n'):]
+        names = ('Prepare verified browser engine', 'Test and reproduce locked frontend assets',
+                 'Wait for verified browser engine', 'Install official Chromium and fonts',
+                 GATE, 'Wait for browser runtime preparation',
+                 'Verify actual UI workflows with isolated Playwright fixtures')
+        positions = [region.index('      - name: ' + name + '\n') for name in names]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn('go run ./cmd/prepare-engine', self.step)
+        self.assertNotIn('GITHUB_ENV', self.step)
+        full.validate_fixture_diagnostics_workflow(self.workflow.encode())
+
+    def test_background_failures_cannot_escape_waits_or_race_vite_writes(self):
+        mutations = []
+        for name, identifier in (('Prepare verified browser engine', 'browser-engine'),
+                                 ('Install official Chromium and fonts', 'browser-chromium')):
+            marker = '      - name: ' + name + '\n'
+            for suffix in ('        if: false\n', '        continue-on-error: true\n'):
+                mutations.append(self.workflow.replace(marker, marker + suffix, 1))
+            before = '        id: ' + identifier + '\n        background: true\n'
+            mutations.append(self.workflow.replace(before, before.replace('true', 'false'), 1))
+        for name, identifier in (('Wait for verified browser engine', 'browser-engine'),
+                                 ('Wait for browser runtime preparation', 'browser-chromium')):
+            block = '      - name: ' + name + '\n        wait: ' + identifier + '\n'
+            mutations += [self.workflow.replace(block, ''),
+                          self.workflow.replace(block, block + '        if: always()\n'),
+                          self.workflow.replace(block, block + '        continue-on-error: true\n'),
+                          self.workflow.replace(block, block.replace('wait: ' + identifier, 'run: true'))]
+        marker = '      - name: Test and reproduce locked frontend assets\n'
+        start = self.workflow.index(marker)
+        end = self.workflow.index('      - ', start + len(marker))
+        frontend = self.workflow[start:end]
+        moved = self.workflow.replace(frontend, '', 1)
+        # This would compile diagnostics while Vite later deletes/rebuilds dist.
+        mutations.append(moved.replace(self.step, self.step + frontend, 1))
+        for index, mutation in enumerate(mutations):
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.validate_fixture_diagnostics_workflow(mutation.encode())
+
+    def test_each_preparation_and_wait_is_required_runtime_evidence(self):
+        sources = {path: (ROOT / path).read_bytes() for path in full.SOURCES}
+        gates = ('Prepare verified browser engine', 'Wait for verified browser engine',
+                 'Install official Chromium and fonts', 'Wait for browser runtime preparation')
+        required = full.required_jobs(sources)
+        for gate in gates:
+            self.assertEqual(required['browser'].count(gate), 1)
+            changed = dict(sources)
+            changed['.github/scripts/ci-coverage.py'] = sources['.github/scripts/ci-coverage.py'].replace(
+                ('"' + gate + '"').encode(), b'"Unreviewed replacement"', 1)
+            message = 'Playwright required gate' if gate == 'Install official Chromium and fonts' else 'browser preparation'
+            with self.subTest(gate=gate), self.assertRaisesRegex(ValueError, message):
+                full.required_jobs(changed)
 
 
 if __name__ == '__main__':

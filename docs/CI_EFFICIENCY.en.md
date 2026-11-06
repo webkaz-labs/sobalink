@@ -4,7 +4,7 @@
 
 Run the checks affected by the complete change. Ordinary documentation does not need an application build or four operating systems. Frontend changes need frontend and browser checks. Sensitive, shared or uncertain changes keep the complete native matrix. Every prerelease still runs the independent full validation and distribution/signature/install gates.
 
-Here, a **native matrix** is the set of OS/CPU targets tested. A **gate** is a check that must pass before proceeding. A **receipt** records the source, checks and results; it does not replace executing those checks. **Provenance** records where build inputs and artifacts came from.
+Here, a **native matrix** is the set of OS/CPU targets and independent test lanes. A **gate** is a check that must pass before proceeding. A **receipt** records the source, checks and results; it does not replace executing those checks. **Provenance** records where build inputs and artifacts came from.
 
 ## Choose a check, then read its scope
 
@@ -145,6 +145,57 @@ Repository protection settings need no change when this workflow is adopted: kee
 
 To request every check, use **Actions → Cross-platform CI → Run workflow** and leave **force_full** checked. There is no force-skip override. Release workflows do not consume the change-impact plan. A partial job rerun without complete current-attempt evidence cannot issue a full receipt.
 
+## Two independent native lanes per target
+
+Full and native-short scopes use an explicit eight-entry matrix: the same four
+OS/CPU targets, each with a `unit` and an `integration` lane. `fail-fast: false`
+lets every selected lane finish its own evidence. Unit job names retain their
+existing `native (<runner>, <GOOS>, <GOARCH>)` identities; integration jobs are
+`native-integration (<runner>, <GOOS>, <GOARCH>)`. `ci-required` and the package
+manifest wait for all eight jobs. Narrow docs/frontend/Go/native-UI scopes keep
+their existing selection.
+
+The unit lane owns complete ordinary/race/vet tests, engine admission, Windows
+retirement barriers and required platform discovery. Windows/macOS whole-Core
+qualification remains one prepared race binary and its complete test inventory,
+followed by the complementary packages. It is not split with `-run` or replaced
+by receipts from a different source, run or attempt. The integration lane owns
+tagged native acceptance, the existing three background real-time checks and
+serial resource gates, companion checks, and native package build/smoke/upload.
+Existing test counts, timers, native-short omissions and prerelease tests are
+unchanged. Separate runners isolate ports, processes, temporary profiles,
+compilation and measurement; the split adds no CPU-heavy work to resource gates.
+
+Both lanes reproduce locked frontend assets and verify their exact target,
+toolchain and prepared engine. Native Python regressions run only in the unit
+lane. Shared setup and cache restoration are deliberately duplicated rather than
+sharing mutable workspaces or distributing unverified binaries. Both lanes can
+restore their isolated cache, but **only integration saves it**, after its own
+checks pass. This is a compilation-cache success condition, not proof that the
+unit lane passed. A failed unit lane still blocks the aggregate and release.
+No cached test result, engine tree or receipt authorizes success. Timing artifact
+names include the lane; package and Core/discovery receipts have one producer.
+
+Coverage requires the exact successful gates for each lane and completed/skipped
+records for gates assigned to the other lane or platform. Both jobs must belong
+to the same authenticated event and effective run attempt. Exact-source release
+proof requires both lanes, while preserving the whole-Core and discovery
+producer checks. A missing, duplicated, unknown or wrong-lane result fails closed.
+
+### Measure latency and duplicated work
+
+The split is a scheduling change, not a measured speed guarantee. Compare the
+same source and scope with warm and cold caches separately. Record queue time,
+per-lane elapsed time, setup/install/cache-transfer time, each test gate and
+package time, plus the sum of runner-seconds across all jobs. The critical path
+is the latest required finish, not the sum of overlapping steps. Extra setup and
+four additional runners may increase total runner time even if the wait falls;
+limited concurrent runners can erase the benefit. Check the repository's actual
+runner allowance and billing, rather than assuming every matrix job starts at
+once. Inspect the exact eight job outcomes and both receipt families before
+comparing end-to-end success. Do not mix this comparison with changed test
+frequency, different cache states or unrelated source changes.
+
 ## Exact-source full validation before release
 
 After the reviewed commit is on main, run **Cross-platform CI → Run workflow → force_full=true** for that exact commit. The prerelease entry requires an explicit main `workflow_dispatch` full-validation run. Every manual CI dispatch is conservatively treated as full intent; a dispatch with `force_full=false` cannot qualify by omitting required checks. An ordinary main push, even if green, is not this explicit release proof.
@@ -175,7 +226,11 @@ This path proves that the complete change is ordinary prose; it does not borrow 
 
 ## Caches and measurements
 
-Compilation caches accelerate builds; they do not turn a previous test result into a new pass. Native development caches, scoped-Go caches and trusted-main caches use separate namespaces. Only complete main native validation writes trusted-main cache entries. Release retains exact-source restoration and reruns its full gates. Scoped Go tests use `-count=1` to execute their tests.
+Compilation caches accelerate builds; they do not turn a previous test result into a new pass. Native development caches, scoped-Go caches, browser caches and trusted-main caches use separate write namespaces. Native jobs first restore their own PR/branch cache. Only after a miss may they read a trusted-main seed with identical OS, architecture, runner, Go version and dependency/adaptation hash. This is one-way reuse: development never writes trusted-main keys. Only a successful main integration lane writes trusted-main cache entries; the aggregate separately requires the unit lane to pass. Release retains exact-source restoration and reruns its full gates. Scoped Go tests use `-count=1` to execute their tests.
+
+The browser lane independently caches only Go modules and build outputs, after all its checks succeed. Its key binds the same toolchain/dependency inputs and an isolated main, same-repository PR or hashed manual-branch scope. Fork PRs cannot populate this cache. Generated engine trees, frontend outputs, test receipts and browser profiles are not cached; pinned-source preparation/verification, both clean locked frontend builds and all tests still run. Browser caches cannot satisfy native or release evidence.
+
+Before adding caches, compare download, extraction and save costs. Runs [42199018319](https://github.com/webkaz-labs/sobalink/actions/runs/42199018319) and [42199045343](https://github.com/webkaz-labs/sobalink/actions/runs/42199045343) restored existing Linux native Go fallback caches of about 1.2 GB in 22–44 seconds. Web npm installs took 1–3 seconds; Chromium downloads took about 6–9 seconds, within 19-second browser dependency/font steps. These observations favor Go compilation reuse over adding npm/Chromium caches everywhere, not a measured speedup from this change. Additional cache entries can evict useful native caches. Keep the key schema deliberate and compare cold/warm exact-source runs before expanding caching. [GitHub cache limits and trust](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching) and [Playwright browser-cache guidance](https://playwright.dev/docs/next/ci#caching-browsers) explain the retention, transfer and Linux system-dependency limits.
 
 Content-free timings record fixed suite/job names, elapsed time, result and return code. They do not contain command arguments, environment values, file contents or raw logs. A command failure remains a failure if timing recording fails. Compare cold and warm runs separately; parallel job durations must not be added to describe elapsed waiting time.
 

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test, expect } from './transfer-native-fixtures.mjs'
+import { markPhase } from './outbox-native-diagnostics.mjs'
 
 // Actual Core processes provide every state, content and receipt. Only a
 // successful admission response is dropped; the browser never mocks delivery.
@@ -50,12 +51,15 @@ test('outbox-native-offline-reload-original-receipt-en-ja', async ({ page, app }
       await route.fulfill({ response })
     } else { assert.notEqual(command.name, 'outbox.discard'); await route.continue() }
   })
+  markPhase(test.info(), 'open-english')
   if (await page.locator('html').getAttribute('lang') !== 'en') await page.locator('.locale-toggle').click()
   await page.setViewportSize({ width: 375, height: 844 })
   const open = page.locator('.primary-nav').getByRole('button', { name: /^Outbox/ })
   await open.click()
   await expect(page.getByRole('dialog')).toBeVisible(); await fits()
+  markPhase(test.info(), 'focus-english')
   await page.keyboard.press('Escape'); await expect(open).toBeFocused()
+  markPhase(test.info(), 'select-recipients')
   await page.locator('.device-row').filter({ hasText: session.peerName }).click()
   await page.locator('.device-sections').getByRole('button', { name: 'Files & messages', exact: true }).click()
   await expect(page.locator('.composer textarea')).toBeDisabled()
@@ -65,25 +69,33 @@ test('outbox-native-offline-reload-original-receipt-en-ja', async ({ page, app }
   await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles({ name: 'browser-outbox.txt', mimeType: 'text/plain', buffer: content })
   const review = page.getByRole('region', { name: 'Review your batch', exact: true })
   await review.getByRole('checkbox', { name: new RegExp(session.recipients[1].name) }).check()
+  markPhase(test.info(), 'prepare')
   await review.getByRole('button', { name: 'Prepare queue review', exact: true }).click()
   const queue = review.getByRole('button', { name: /^Queue until/ })
   await expect(queue).toBeVisible(); assert.equal(commits, 0); await fits()
+  markPhase(test.info(), 'commit-lost')
   await queue.click()
   await expect(page.getByText('Result not confirmed. Check the original request before starting another send.', { exact: true })).toBeVisible()
+  markPhase(test.info(), 'recover-status')
   await page.getByRole('button', { name: 'Check original request', exact: true }).click()
   await expect(page.getByText('Queued on this device. Delivery is not yet confirmed.', { exact: true })).toBeVisible()
   assert.equal(checks, 1)
+  markPhase(test.info(), 'reload-japanese')
   await page.locator('.locale-toggle').click(); await page.setViewportSize({ width: 320, height: 844 })
   await page.reload(); await page.locator('.workspace').waitFor()
   const openJapanese = page.locator('.primary-nav').getByRole('button', { name: /^送信待ち/ })
+  markPhase(test.info(), 'open-japanese')
   await openJapanese.click(); await expect(page.getByRole('dialog')).toContainText('この端末の送信待ちに登録しました。相手への到着はまだ確認できていません。')
+  markPhase(test.info(), 'focus-japanese')
   await fits(); await page.keyboard.press('Escape'); await expect(openJapanese).toBeFocused(); await openJapanese.click()
   assert.deepEqual([uploads, commits, checks], [1, 1, 1])
   // The parent fixture now restarts the real receiving processes and grants
   // one explicit acceptance per original delivery, through normal Core APIs.
+  markPhase(test.info(), 'admission-bridge')
   const marker = join(dirname(process.env.SOBA_TRANSFER_BROWSER_SESSION), 'outbox-browser-admitted.json')
   await writeFile(`${marker}.tmp`, JSON.stringify({ prepared, admitted }), { flag: 'wx', mode: 0o600 })
   await rename(`${marker}.tmp`, marker)
+  markPhase(test.info(), 'observe-receipts')
   await expect.poll(async () => {
     const response = await page.request.post(new URL('/api/command', session.viewer.url).href, { headers: { 'X-CSRF-Token': (await state()).csrfToken, Origin: new URL(session.viewer.url).origin }, data: { requestId: `browser-observe-${Date.now()}`, name: 'outbox.status', payload: { outboxId: admitted.outboxId } } })
     assert.equal(response.status(), 200)
@@ -91,8 +103,10 @@ test('outbox-native-offline-reload-original-receipt-en-ja', async ({ page, app }
     assert.deepEqual(record.children.map(c => c.deliveryId), admitted.children.map(c => c.deliveryId))
     return record.deliveryOutcome
   }, { timeout: 30_000 }).toBe('confirmed')
+  markPhase(test.info(), 'refresh-completed')
   await page.getByRole('button', { name: '更新', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('処理の状態: 相手の端末に保存済み · 到着の確認状況: 保存を確認済み')
   await fits(); assert.deepEqual(app.counts(), { retries: 0, errors: 0 })
+  markPhase(test.info(), 'result')
   await writeFile(join(dirname(process.env.SOBA_TRANSFER_BROWSER_SESSION), 'outbox-browser-result.json'), JSON.stringify({ schema: 1, prepared, admitted, widths: [375, 320], locales: ['en', 'ja'] }), { flag: 'wx', mode: 0o600 })
 })

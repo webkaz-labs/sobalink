@@ -422,3 +422,69 @@ test('startup sidecars carry only closed-vocabulary failure facts', async () => 
     assert.equal(read({ ...record, outcome: 'timeout', code: null }), undefined)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('outbox failure diagnostics expose only fixed vocabulary and retain the first cause', async () => {
+  const { PHASES, ERROR_KINDS, failureRecord, markPhase, recordSessionFailure } = await import('./outbox-native-diagnostics.mjs')
+  for (const phase of PHASES) for (const kind of ERROR_KINDS) assert.deepEqual(failureRecord(phase, kind), { schema: 1, phase, errorKind: kind })
+  assert.throws(() => failureRecord(sentinel, 'timeout'))
+  assert.throws(() => failureRecord('prepare', sentinel))
+  const info = { annotations: [] }
+  markPhase(info, 'prepare')
+  assert.throws(() => markPhase(info, sentinel))
+  assert.deepEqual(info.annotations, [{ type: 'outbox-phase', description: 'prepare' }])
+  const dir = await mkdtemp(join(tmpdir(), 'outbox-diagnostic-test-')), old = process.env.SOBA_TRANSFER_BROWSER_SESSION
+  process.env.SOBA_TRANSFER_BROWSER_SESSION = join(dir, 'session.json')
+  try {
+    assert.equal(recordSessionFailure('prepare', 'assertion'), true)
+    assert.equal(recordSessionFailure('launch', 'unexpected'), false)
+    assert.deepEqual(JSON.parse(await readFile(join(dir, 'outbox-browser-failure.json'), 'utf8')), { schema: 1, phase: 'prepare', errorKind: 'assertion' })
+    const { stat } = await import('node:fs/promises')
+    assert.equal((await stat(join(dir, 'outbox-browser-failure.json'))).mode & 0o077, 0)
+  } finally {
+    if (old === undefined) delete process.env.SOBA_TRANSFER_BROWSER_SESSION; else process.env.SOBA_TRANSFER_BROWSER_SESSION = old
+    await rm(dir, { recursive: true })
+  }
+})
+
+test('outbox reporter retains fixed failure phase without weakening exact success evidence', async () => {
+  const { default: Reporter } = await import('./outbox-native-reporter.mjs')
+  const old = process.env.SOBA_TRANSFER_BROWSER_SESSION
+  for (const status of ['failed', 'passed', 'timedOut', 'interrupted']) {
+    const dir = await mkdtemp(join(tmpdir(), 'outbox-reporter-test-'))
+    process.env.SOBA_TRANSFER_BROWSER_SESSION = join(dir, 'session.json')
+    try {
+      const reporter = new Reporter()
+      reporter.onBegin({}, { allTests: () => [{}] })
+      reporter.onTestEnd({}, { status, retry: 0, annotations: [{ type: 'outbox-phase', description: 'prepare' }, { type: 'outbox-phase', description: sentinel }], errors: [{ message: 'strict mode violation ' + sentinel, stack: sentinel }] })
+      const accepted = status === 'passed'
+      assert.deepEqual(await reporter.onEnd({ status: accepted ? 'passed' : 'failed' }), accepted ? undefined : { status: 'failed' })
+      assert.deepEqual(JSON.parse(await readFile(join(dir, 'transfer-browser-result.json'), 'utf8')), { schema: 1, accepted, observed: 1, passed: accepted ? 1 : 0, errors: 0 })
+      if (accepted) {
+        await assert.rejects(readFile(join(dir, 'outbox-browser-failure.json')), { code: 'ENOENT' })
+      } else {
+        assert.deepEqual(JSON.parse(await readFile(join(dir, 'outbox-browser-failure.json'), 'utf8')), { schema: 1, phase: 'prepare', errorKind: status === 'interrupted' ? 'interrupted' : 'selector_ambiguous' })
+      }
+    } finally { await rm(dir, { recursive: true }) }
+  }
+  if (old === undefined) delete process.env.SOBA_TRANSFER_BROWSER_SESSION; else process.env.SOBA_TRANSFER_BROWSER_SESSION = old
+})
+
+test('outbox reporter fails closed before the test begins and when diagnostics cannot be saved', async () => {
+  const { default: Reporter } = await import('./outbox-native-reporter.mjs')
+  const { recordSessionFailure } = await import('./outbox-native-diagnostics.mjs')
+  const dir = await mkdtemp(join(tmpdir(), 'outbox-launch-test-')), old = process.env.SOBA_TRANSFER_BROWSER_SESSION
+  process.env.SOBA_TRANSFER_BROWSER_SESSION = join(dir, 'session.json')
+  try {
+    const reporter = new Reporter()
+    reporter.onBegin({}, { allTests: () => [{}] })
+    reporter.onError({ message: sentinel })
+    assert.deepEqual(await reporter.onEnd({ status: 'failed' }), { status: 'failed' })
+    assert.deepEqual(JSON.parse(await readFile(join(dir, 'outbox-browser-failure.json'), 'utf8')), { schema: 1, phase: 'launch', errorKind: 'unexpected' })
+    assert.deepEqual(JSON.parse(await readFile(join(dir, 'transfer-browser-result.json'), 'utf8')), { schema: 1, accepted: false, observed: 0, passed: 0, errors: 1 })
+    process.env.SOBA_TRANSFER_BROWSER_SESSION = join(dir, 'missing', 'session.json')
+    assert.equal(recordSessionFailure('prepare', 'assertion'), false)
+  } finally {
+    if (old === undefined) delete process.env.SOBA_TRANSFER_BROWSER_SESSION; else process.env.SOBA_TRANSFER_BROWSER_SESSION = old
+    await rm(dir, { recursive: true })
+  }
+})

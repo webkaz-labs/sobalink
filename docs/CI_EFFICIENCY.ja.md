@@ -141,6 +141,49 @@ PRの試験対象はActionsの `GITHUB_SHA` と、正確な `refs/pull/<number>/
 
 全件を実行するには **Actions → Cross-platform CI → Run workflow** で **force_full** を有効のまま実行します。強制省略の指定はありません。リリースワークフローは変更範囲の判定を参照しません。今回の試行に必要な結果が揃わない一部ジョブの再実行では、全件検証記録を発行できません。
 
+## OSごとの独立した2つのnative lane
+
+fullとnative-shortは、従来の4つのOS・CPUそれぞれに`unit`と`integration`を
+持つ8件の明示的なmatrixを使います。`fail-fast: false`を維持し、各laneの証拠を
+最後まで収集します。unitは既存の`native (<runner>, <GOOS>, <GOARCH>)`名を保持し、
+integrationは`native-integration (<runner>, <GOOS>, <GOARCH>)`となります。
+`ci-required`とpackage manifestは8件すべてを待ちます。文書・frontend・限定Go・
+native-UIの狭いscopeは従来どおりです。
+
+unitは通常試験・race・vet、engine admission、Windowsのretirement barrier、
+必須のplatform discoveryを担当します。Windows/macOSのwhole-Coreは、準備済みの
+単一race binaryで完全な試験inventoryを実行し、残りのpackageを続けます。
+`-run`で分割せず、別ソース・別run・別attemptのreceiptに置き換えません。
+integrationはtag付きnative acceptance、既存3件のbackground実時間試験と
+直列resource gate、companion検証、packageのbuild・smoke・uploadを担当します。
+試験回数、timer、native-shortの省略範囲、prerelease試験は変えません。
+別ランナーによりport・process・一時profile・compile・測定を分離し、resource gateと
+同じランナーにCPU負荷の大きな試験を追加しません。
+
+両laneでlock固定frontendを再現し、target・toolchain・準備済みengineを検証します。
+native Python回帰試験はunitだけで実行します。可変workspaceや未検証binaryを
+共有せず、setupとcache復元を意図的に重複させます。両laneが同じ隔離cacheを
+読めますが、**保存はintegrationだけ**が自身の検査成功後に行います。
+これはコンパイルcacheの条件であり、unitの成功証明ではありません。unit失敗は
+aggregateとreleaseを阻止します。cache内の試験結果・engine tree・receiptを成功の
+代わりにしません。timing artifact名はlaneを含み、packageとCore・discovery receiptは
+それぞれ単一のproducerに限定します。
+
+coverageはlaneごとの必須gate成功と、他lane・他platform所属gateのcompleted/skippedを
+厳密に要求します。両jobは同じ検証済みeventと有効なrun attemptに属する必要があります。
+リリース用の同一ソース証明も両laneを要求し、whole-Coreとdiscoveryのproducer検証を
+維持します。欠落・重複・未知の結果・誤ったlaneでの実行は失敗として扱います。
+
+### 待ち時間と重複処理を測る
+
+この分割はスケジュールの変更であり、実測済みの短縮保証ではありません。同一ソース・
+同一scopeでcoldとwarmを分け、queue時間、laneごとの経過時間、setup・install・cache転送、
+試験gate、package、全jobのrunner秒合計を記録します。critical pathは最後の必須完了であり、
+重なったstep時間の合計ではありません。追加setupと4ランナーにより、待ち時間が減っても
+総runner時間は増える場合があります。同時実行枠が不足すると利点が消えるため、実際の
+repositoryのrunner枠と課金を確認します。8件のjob結果と両receiptを確認し、試験頻度変更・
+cache状態差・無関係なソース変更を混ぜて効果を説明しません。
+
 ## リリース前の正確な同一ソース全件検証
 
 確認済みコミットがmainに入った後、その正確なコミットで **Cross-platform CI → Run workflow → force_full=true** を実行します。プレリリース入口はmainの明示的な `workflow_dispatch` 全件検証を要求します。CIの手動dispatchは保守的にすべて全件実行の意思として扱い、`force_full=false` で必要な試験を省いた実行は条件を満たしません。通常のmain pushは、成功していてもこの明示的なリリース証拠にはなりません。
@@ -171,7 +214,11 @@ GitHubの混雑時、特に毎時00分には遅延や実行の欠落があり得
 
 ## キャッシュと実測
 
-コンパイルキャッシュはビルドを高速化します。以前の試験結果を今回の成功に置き換えるものではありません。ネイティブ開発用、限定Go用、trusted-main用は別の名前空間です。trusted-mainへの保存はmainでの全ネイティブ検証成功時に限ります。リリースは同一ソースのキャッシュ復元と全件の再検証を維持します。限定Goも `-count=1` で試験を実行します。
+コンパイルキャッシュはビルドを高速化します。以前の試験結果を今回の成功に置き換えるものではありません。ネイティブ開発用、限定Go用、ブラウザー用、trusted-main用は保存先の名前空間を分けます。ネイティブは自分のPR・ブランチ用を優先し、miss時だけ、OS・アーキテクチャ・runner・Goバージョン・依存と適合処理のハッシュが一致するtrusted-mainを読み取り専用で利用します。逆方向には利用せず、開発実行からtrusted-mainへ保存しません。trusted-mainへの保存はmainのintegration lane自身の全検査成功時に限ります。unitも含む成功はaggregateで別途必須です。リリースは同一ソースのキャッシュ復元と全件の再検証を維持します。限定Goも `-count=1` で試験を実行します。
+
+ブラウザージョブは全検査成功後、Goモジュールとコンパイル出力だけを別途保存します。キーは同じtoolchain・依存情報と、main・同一repositoryのPR・ハッシュ化した手動ブランチの範囲を区別します。fork PRはこのキャッシュを作りません。生成engineツリー、フロント出力、試験receipt、ブラウザープロファイルは保存対象外です。固定ソースの準備・検証、2回のクリーンなlock固定フロントビルド、全試験を維持し、ブラウザー用キャッシュをネイティブ・リリースの成功証拠にしません。
+
+追加前にdownload・展開・保存の費用を比較します。[42199018319](https://github.com/webkaz-labs/sobalink/actions/runs/42199018319) と [42199045343](https://github.com/webkaz-labs/sobalink/actions/runs/42199045343) では、既存LinuxネイティブのGo fallback cache約1.2 GBの復元は22～44秒でした。Webのnpm installは1～3秒、Chromium取得は約6～9秒で、ブラウザーの依存・フォント工程全体は19秒でした。これはGoコンパイルの再利用を優先する根拠であり、今回の変更による高速化の実測ではありません。キャッシュ追加で有用なネイティブ用が削除される可能性もあるため、キーを不用意に増やさず、同じソースのcold・warm実行を比較してから対象を広げます。[GitHubの容量と信頼範囲](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching) と [Playwrightのブラウザーキャッシュ方針](https://playwright.dev/docs/next/ci#caching-browsers) に、保持・転送・Linuxシステム依存の制約があります。
 
 計測記録には固定のsuite/job名、経過秒、成否、終了コードだけを保存します。コマンド引数、環境変数、ファイル内容、生ログは含めません。計測保存に失敗しても、コマンド失敗を成功へ変更しません。coldとwarmは分けて比較し、並列ジョブの時間を足して待ち時間と説明しません。
 

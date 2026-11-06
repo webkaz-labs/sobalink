@@ -2,40 +2,38 @@
 
 [English](CI_TESTING.en.md)
 
-CIの共通fixture検査はLinuxの独立jobで1回実行し、native製品検査と並列に進めます。
-各native laneには実際のファイル、子process、権限、終了処理を確認するPython検査を残します。
-選択されたscope内のGo製品race検査、native discovery、ブラウザー受入検査、パッケージ検証は削減しません。
+共通Linux jobはPython回帰検査を全件検出し、native製品検査と並列に実行します。
+native側には実ファイル、process、権限、終了処理の検査を残します。
+Go race、native discovery、ブラウザー受入、パッケージ検証は変更しません。
 別の[native UI限定scope](CI_EFFICIENCY.ja.md#ネイティブuiのみの変更)は4対象のcompanion全race suiteと
 Windows/macOS製品パッケージを維持し、関連しないバックエンド全件検証とブラウザーjobを省略します。
 
-- 通常の製品ソース変更では、共通jobがPython全suiteを検出・実行します。
-  nativeは確認済みのOS契約を選びます。内部で再実行するfixtureを除き、
-  Windowsは49件、Linuxは53件、macOSは65件です。
-- CIスクリプト/workflow、依存manifest、engine adaptation、engine準備処理の変更では、
-  各targetでPython全suiteを実行します。
-- 既存のnightly、強制full、不明なパス、不正または不完全な変更証拠でも、
-  各targetで全suiteへ戻ります。
-- 共通Ubuntu x64 jobが同targetの全suiteを担います。そのnative laneはOS契約subsetを
-  維持し、定期検証で5回目の全実行を増やさないようにします。
-- 文書のみ、frontendのみ、限定Go scopeの変更には、新しいPython jobを追加しません。
-  既存のscope別検査を維持します。
+- 通常の製品変更では、内部のfixture検査を除き、Windowsは53件、Linuxは57件、
+  macOSは69件のnative検査を選びます。実Nearby子processの出力量制限、
+  timeout時の終了処理、stdin pipeを確認する3件を含みます。
+- CI・toolchain・依存変更、nightly、強制full、不明なパス、不正・不完全な変更証拠では、
+  引き続きnative検査を広く検出します。hosted Cross-platform CIのこの経路だけで、
+  個別に印を付けた `FullProofTests` のソース・receipt方針検査64件を除外します。
+  64件は必須の共通jobで実行します。このworkflow以外の全件検出では除外しません。
+- 共通Ubuntu x64が同targetの全件検出を担い、native laneはOS subsetを維持します。
+  文書のみ、frontendのみ、限定Go変更では、Python jobを追加せず従来の限定検査を維持します。
 
-両方の実行側が、現在のeventに対応する完全なGit差分を独立して再検証します。
-過去のテスト結果を省略の根拠にはしません。nativeが全て成功しても、共通jobが失敗すれば
-集約判定とリリース証明は成功しません。cache復元の成功をテスト合格として扱いません。
+両方の実行側が現在のeventの完全なGit差分を独立して再検証します。
+同一実行の集約判定と同一ソースのリリース証明は、nativeが全て成功しても、
+共通jobとその工程の成功を必須にします。cacheや過去の実行では代用できません。
+native jobは共通jobを待たず、最後の集約判定で両方を確認します。
 
-選択するOS契約は `.github/scripts/ci-regressions.py` にあります。
-macOSでは実POSIX子processの所有権とTerminal終了処理を維持し、Linuxの結果で代替しません。
-Windows/Darwin metadataを模擬する共通fixtureだけなら、そのOSでの実行は必須ではありません。
+`test_ci_full_validation.py` の `common_only` はmethod単位の印で、classやmodule全体を
+除外しません。新しい未指定method・class、継承したmethod、未指定でoverrideした検査は、
+広いnative検出に残ります。これは限定的な中間改善であり、完全な分類ではありません。
+他のmatrix重複と通常時のselectorは残ります。新しいOS依存検査は、通常native subsetへの
+追加も引き続き確認する必要があります。
 
-残るリスクとして、hosted runnerの更新が、通常の製品変更では繰り返さないOS上の
-共通Python fixtureに影響する可能性があります。nightlyの全matrixで検出します。
-管理対象のtoolchainやhelper方針の変更では、直ちに全検査へ戻します。
-梱包、署名、同一ソースに結び付いたリリース検証は、それぞれの独立検査を維持します。
-
-今後さらに削減する場合は、実ソースの契約検査とhelperだけのfixtureを分け、
-新規・未分類の検査は全実行へ戻るようにします。実装言語だけを変えても、
-子process、Git履歴、繰り返すbuild、意図した実時間protocol試験の時間はなくなりません。
+OS selectorは `.github/scripts/ci-regressions.py` にあります。macOSの実POSIX子process
+所有権とTerminal終了処理の検査は維持し、Linuxで代用しません。hosted runnerの更新が
+未指定helper fixtureに影響する可能性があるため、それらはnightly matrixに残します。
+指定したFullProofはソースと模擬receiptの検査で、native process動作の検査ではありません。
+hosted環境での時間短縮はまだ主張しません。梱包、署名、同一ソースのリリース検証は独立に維持します。
 
 ## フロントエンド試験の反復
 
@@ -74,3 +72,17 @@ product 2件とWeb 7件のactivationジョブは、同一repositoryのPRで文�
 省略します。impact判定の失敗・不明時は実行します。限定Go変更では、service presetsがCoreの
 snapshotに、bounded loggingがCLIの起動終了処理に使われるため、両方を残します。
 強制fullと定期検証は、このPR向け最適化とは独立して両方のジョブを要求します。
+
+## ブラウザー準備工程の重ね合わせ
+
+Go engineの準備をbackgroundで進める間に、Node・フロントエンドの検査を行います。
+この準備処理の依存先は標準ライブラリとadaptation補助処理だけで、Web資産はcompileしません。
+フロントエンド再現が完了してから明示的なwaitで合流します。その後、Chromium・fontの導入と
+Go fixture診断を重ね、実ブラウザー受入の前にもう一度waitします。背景2工程と両waitの
+成功を実行証拠として要求します。
+
+Go診断をフロントエンド完了前へ移してはいけません。`soba-e2e` はViteが削除・再生成する
+`web/dist` をembedします。診断ケース同士の直列順序と専有listenerも維持します。
+追加のbrowserやrunnerを同時起動せず、試験ケースやtimeoutを削りません。Go準備とnpmが
+CPU・downloadを競合する可能性は残るため、効果はhosted実行で測ります。背景工程の
+environment・outputsを使う場合も、対応するwaitの後に限ります。
