@@ -9,6 +9,11 @@ on:
       - 'go.mod'
       - 'go.sum'
   workflow_dispatch:
+    inputs:
+      ci_lane_smoke:
+        description: Exercise the reusable CI checks instead of the standalone kit checks (no required/release credit)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,7 +23,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ci-lane-smoke:
+    name: ci-lane-smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.ci_lane_smoke && github.event.repository.private == false
+    uses: ./.github/workflows/native-ui-checks.yml
+    with:
+      mode: smoke
+
+  merge-scope:
+    if: github.event_name != 'workflow_dispatch' || !inputs.ci_lane_smoke
+    # This classifier checks the same exact merge as required Cross-platform CI.
+    # Only that required four-target lane may replace duplicate HEAD-only work.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      scope: ${{ steps.selection.outputs.scope }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prove native UI merge scope
+        id: selection
+        if: github.event_name == 'pull_request' && github.event.repository.private == false
+        run: python -B .github/scripts/ci-coverage.py plan --output "$RUNNER_TEMP/native-poc-plan.json"
+
   isolated-native:
+    needs: merge-scope
+    if: always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.ci_lane_smoke) && (needs.merge-scope.result != 'success' || needs.merge-scope.outputs.scope != 'native-ui')
     name: PoC / ${{ matrix.runner }}
     strategy:
       fail-fast: false

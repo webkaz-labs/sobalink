@@ -25,6 +25,22 @@ TARGETS = {
     "darwin-arm64": "native (macos-26, darwin, arm64)",
     "windows-amd64": "native (windows-2025, windows, amd64)",
 }
+# Separate merge-tested UI evidence never substitutes for backend qualification.
+NATIVE_UI_TARGETS = {
+    "linux-amd64": "native-ui / companion (linux-amd64)",
+    "linux-arm64": "native-ui / companion (linux-arm64)",
+    "darwin-arm64": "native-ui / companion (darwin-arm64)",
+    "windows-amd64": "native-ui / companion (windows-amd64)",
+}
+NATIVE_UI_SCOPE_STEPS = (
+    "Validate native UI source and required scope",
+    "Check companion toolchain and prepare verified engine",
+    "Run complete companion race suite with protected IPC evidence",
+    "Vet MyGo lifetimes and check companion formatting",
+    "Compile companion and check deterministic kit packaging",
+)
+NATIVE_UI_PRODUCT_STEPS = ("Prepare locked frontend package inventory for native UI",
+                           "Build product package for native UI", "Smoke product package for native UI")
 LONG_STEPS = (
     "Verify direct LAN session natural rekey and idle lifecycle",
     "Verify guarded relay real-time lease continuity",
@@ -36,7 +52,7 @@ FULL_ONLY_STEPS = (
     "Verify native fixed-group resource catalog",
 )
 FAST_STEPS = (
-    "Test and reproduce locked frontend assets",
+    "Reproduce locked frontend assets",
     "Check exact toolchain and native target",
     "Local and mock tests, race detector, and vet",
     "Verify adapted engine admission and native underlay denial",
@@ -74,7 +90,7 @@ MACOS_NEARBY_STEPS = ('Verify macOS five-scope discovery without skips', 'Preser
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 DOCUMENT_STEPS = ("Verify document selection and static content", "Require document checks and selected rendering")
-SCOPES = {"docs", "frontend", "go", "native-short", "full"}
+SCOPES = {"docs", "frontend", "go", "native-short", "native-ui", "full"}
 BROWSER_STEPS = ("Test and reproduce locked frontend assets",
                  "Verify privacy-safe fixture diagnostics",
                  "Verify actual UI workflows with isolated Playwright fixtures",
@@ -90,6 +106,7 @@ SCHEDULE_ACCEPTANCE = {
     "product-activation": ("Verify fixed product acceptance policy",
                            "Build normal assets and run two private production-entry cases"),
 }
+REGRESSION_STEPS = ("Run shared CI policy and source regressions",)
 SCOPE_STEP = "Select minimum CI scope"
 
 
@@ -194,6 +211,16 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     if scope == "go":
         passed("go-unit", GO_STEPS)
         required.add("go-unit")
+    if scope in ("native-short", "native-ui", "full"):
+        passed("policy-regressions", REGRESSION_STEPS)
+        required.add("policy-regressions")
+    if scope == "native-ui":
+        for target, name in NATIVE_UI_TARGETS.items():
+            steps = NATIVE_UI_SCOPE_STEPS
+            if target in NATIVE_PACKAGE_TARGETS:
+                steps += NATIVE_UI_PRODUCT_STEPS
+            passed(name, steps)
+            required.add(name)
     if scope in ("native-short", "full"):
         for target, name in TARGETS.items():
             steps = FAST_STEPS + (LONG_STEPS + FULL_ONLY_STEPS if scope == "full" else ())
@@ -219,7 +246,7 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     # Job-level skips can appear as one unexpanded matrix job or several jobs.
     # Only explicitly out-of-scope jobs may be skipped; their presence is not
     # required and is never represented as a test pass in the receipt.
-    application = {*TARGETS.values(), "native", "browser", "go-unit", "manifest-smoke"}
+    application = {*TARGETS.values(), *NATIVE_UI_TARGETS.values(), "native", "native-ui", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
     for name in application - required:
         if name in index:
             require(index[name].get("status") == "completed"
@@ -263,8 +290,8 @@ def job_timings(jobs):
             return value if value >= 0 else None
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
-    names = {*TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke"}
-    steps = {*DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS,
+    names = {*TARGETS.values(), *NATIVE_UI_TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
+    steps = {*NATIVE_UI_SCOPE_STEPS, *NATIVE_UI_PRODUCT_STEPS, *REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}
@@ -323,6 +350,10 @@ def finalize(input_path, output, *, scheduled=False):
                "manifest": "success" if scope in ("native-short", "full") else "not_run",
                "go_unit": "success" if scope == "go" else "not_run",
                "selection": plan, "timings": job_timings(jobs), "macos_discovery_proof": macos_proof, "native_package_proof": package_proof}
+    if scope == "native-ui":
+        receipt["native_ui_workflow_sha256"] = digest(".github/workflows/native-ui-checks.yml")
+        receipt["native_ui"] = {t: "success" for t in NATIVE_UI_TARGETS}
+        receipt["native_ui_packages"] = {t: "success" for t in NATIVE_PACKAGE_TARGETS}
     if scheduled:
         receipt["scheduled_acceptance"] = {name: "success" for name in SCHEDULE_ACCEPTANCE}
     pathlib.Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -331,6 +362,7 @@ def finalize(input_path, output, *, scheduled=False):
         "frontend": "Frontend checks passed; four-target native and package checks NOT RUN",
         "go": "Affected Go packages and reverse dependencies passed on Linux; full native, browser and package checks NOT RUN",
         "native-short": "Four-target short native, browser and package checks passed; real-time lifecycle, lease and native remote resource inspection/management and fixed-group catalog checks NOT RUN",
+        "native-ui": "Four-platform companion race, protected IPC, MyGo and Windows/macOS product package checks passed; backend qualification, browser and manifest checks NOT RUN",
         "full": "Full native, browser and package coverage passed",
     }
     summary = descriptions[scope]

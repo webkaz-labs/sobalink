@@ -431,13 +431,15 @@ class ProductActivationPolicyTests(unittest.TestCase):
         for fragment in ['process.argv.length, 2', 'summary.expected === 2', 'summary.observed === 2', 'summary.passed === 2', 'await scopeExit', "process.on('SIGTERM', cancelOwnedScope)"]:
             self.assertIn(fragment, wrapper)
 
-    def test_workflow_exact_exports_and_independent_scope(self):
+    def test_workflow_exact_exports_and_impact_dependency(self):
         source = (ROOT / '.github/workflows/ci.yml').read_text()
         job = source.split('\n  product-activation:\n', 1)[1].split('\n  web-activation:\n', 1)[0]
         self.assertIn("github.event_name == 'pull_request'", job)
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', job)
         self.assertIn("github.event_name == 'workflow_dispatch' && inputs.force_full", job)
-        self.assertNotIn('needs:', job)
+        self.assertEqual(re.findall(r'^    needs: (.+)$', job, re.M), ['impact'])
+        self.assertIn("needs.impact.result != 'success' || (needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'native-ui')", job)
+        self.assertIn('if: always() && !cancelled()', job)
         self.assertNotIn('endpoint_following_acceptance', job)
         self.assertIn('timeout-minutes: 40', job)
         self.assertIn('timeout-minutes: 25', job)

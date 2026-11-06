@@ -58,6 +58,7 @@ class WorkflowAttestationPolicy(unittest.TestCase):
 class WorkflowCachePolicy(unittest.TestCase):
     CACHE_PIN = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
     MAIN_GUARD = "github.repository == 'webkaz-labs/sobalink' && github.ref == 'refs/heads/main' && github.event.repository.default_branch == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+    MAIN_RESTORE_GUARD = MAIN_GUARD.removesuffix(")") + " || github.event_name == 'schedule')"
     CACHE_PATHS = "\n".join(("          path: |", "            ${{ steps.go-cache-info.outputs.gomodcache }}", "            ${{ steps.go-cache-info.outputs.gocache }}"))
 
     def workflow(self, name):
@@ -125,7 +126,9 @@ class WorkflowCachePolicy(unittest.TestCase):
     def run_stage_loader(self, prefix, missing=None):
         upload = self.step("prerelease", "gate", "name: release-validation-tools")
         files = re.findall(r"^            (\.github/scripts/[^\n]+)$", upload, re.MULTILINE)
-        self.assertEqual(len(files), 16)
+        self.assertEqual(len(files), 18)
+        self.assertIn(".github/scripts/ci-regressions.py", files)
+        self.assertIn(".github/scripts/test_ci_regressions.py", files)
         root = pathlib.Path(__file__).parents[2]
         with tempfile.TemporaryDirectory() as directory:
             tools = pathlib.Path(directory) / "tools"
@@ -198,6 +201,18 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn('assert first == inventory()', frontend)
         self.assertIn('assert first == checked_in', frontend)
 
+    def test_native_ci_and_prerelease_build_without_repeating_browser_tests(self):
+        for workflow in ('ci', 'prerelease'):
+            source = self.job(workflow, 'native')
+            self.assertIn('name: Reproduce locked frontend assets', source)
+            self.assertIn('python .github/scripts/check-frontend.py --build-only\n', source)
+            self.assertEqual(self.workflow(workflow).count('--build-only'), 1)
+            self.assertNotIn('--native-plan', self.workflow(workflow))
+        browser = self.job('ci', 'browser')
+        self.assertIn('name: Test and reproduce locked frontend assets', browser)
+        self.assertIn('python .github/scripts/check-frontend.py\n', browser)
+        self.assertNotIn('--build-only', browser)
+
     def test_reviewed_engine_preparation_and_guarded_gates_are_required(self):
         for workflow, jobs in (("ci", ("native", "manifest-smoke", "browser")), ("prerelease", ("native", "provenance"))):
             for job in jobs:
@@ -257,9 +272,6 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn('env["SOBALINK_RUN_WAN_INTEGRATION"] = "1"', wan)
             self.assertIn("TestWANCandidateNativeLoopbackSTUN", wan)
             self.assertNotIn("ts_omit_udptransport", wan)
-            native = self.job(workflow, "native")
-            self.assertIn("./internal/backendworker ./internal/connectionroute", native)
-            self.assertIn("./internal/core -run '^TestMixed'", native)
 
     def test_release_product_identity_and_paired_transport_gate_match_packages(self):
         release = self.workflow("prerelease")
@@ -348,9 +360,30 @@ class WorkflowCachePolicy(unittest.TestCase):
         native = self.job("ci", "native")
         self.assertGreater(native.index(save), native.index("uses: actions/upload-artifact@"))
         for job in ("native", "manifest-smoke"):
-            self.assertIn("        if: " + self.MAIN_GUARD + "\n", self.step("ci", job, "id: go-cache\n"))
+            guard = self.MAIN_RESTORE_GUARD if job == "native" else self.MAIN_GUARD
+            self.assertIn("        if: " + guard + "\n", self.step("ci", job, "id: go-cache\n"))
         fallback = re.findall(r"^          restore-keys: (.+)$", self.step("ci", "native", "id: go-cache\n"), re.MULTILINE)
         self.assertEqual(fallback, [self.key("ci", "native").removesuffix("${{ github.sha }}")])
+
+    def test_native_ci_restores_before_core_without_widening_scheduled_writes(self):
+        native = self.job("ci", "native")
+        core = native.index("name: Collect required whole-Core race evidence")
+        for marker in ("id: go-cache-info\n", "id: development-go-cache-scope\n",
+                       "id: go-cache\n", "id: development-go-cache\n",
+                       "name: Report Go cache results\n"):
+            with self.subTest(marker=marker):
+                self.assertLess(native.index(self.step("ci", "native", marker)), core)
+        self.assertLess(core, native.index("name: Reproduce locked frontend assets"))
+        for name in ("Save Go caches after all native checks pass on main",
+                     "Save development Go caches after all native checks pass"):
+            save = self.step("ci", "native", "name: " + name)
+            self.assertNotIn("'schedule'", save)
+            self.assertGreater(native.index(save), native.index("name: Wait for real-time lifecycle and lease checks"))
+        self.assertEqual(self.development_scope(event_name="schedule", ref="refs/heads/main"), "")
+        # Release ordering and exact-key/no-fallback policy stay independent.
+        release = self.job("prerelease", "native")
+        self.assertLess(release.index("name: Collect required whole-Core race evidence"),
+                        release.index("name: Restore trusted main Go caches"))
 
     def inline_python(self, step):
         match = re.search(r"^          python - <<'PYTHON'\n(.*?)^          PYTHON$", step, re.MULTILINE | re.DOTALL)
@@ -525,7 +558,8 @@ class WorkflowCachePolicy(unittest.TestCase):
                     step = self.step(workflow, "native", needle)
                     self.assertNotIn("        if:", step)
                     self.assertNotIn("cache-hit", step)
-        self.assertIn("python -m unittest discover -s .github/scripts -p 'test_*.py' -v", self.job("ci", "native"))
+        self.assertIn("python -B .github/scripts/ci-regressions.py native --plan", self.job("ci", "native"))
+        self.assertIn("python -B .github/scripts/ci-regressions.py common --plan", self.job("ci", "policy-regressions"))
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
@@ -539,11 +573,12 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertIn('run: python -B .github/scripts/ci-native-core-required.py remaining', remaining)
             native = self.job(name, 'native')
             self.assertIn("if [[ '${{ matrix.goos }}' == 'linux' ]]; then", native)
-            self.assertIn('go test -race -count=1 -timeout=10m ./...', native)
+            self.assertEqual(native.count('go test -race -count=1 -timeout=10m ./...'), 1)
             self.assertIn('go vet ./...', native)
-            self.assertIn('./internal/backendworker ./internal/connectionroute', native)
-            self.assertIn("./internal/core -run '^TestMixed'", native)
-            self.assertLess(native.index('name: Collect required whole-Core'), native.index('name: Test and reproduce locked frontend'))
+            # These ordinary packages/tests are already in the complete suite.
+            self.assertNotIn('./internal/backendworker ./internal/connectionroute', native)
+            self.assertNotIn("./internal/core -run '^TestMixed'", native)
+            self.assertLess(native.index('name: Collect required whole-Core'), native.index('name: Reproduce locked frontend'))
         ordinary = self.step('ci', 'native', 'name: Local and mock tests, race detector, and vet')
         self.assertLess(ordinary.index('          fi\n'), ordinary.index('go vet ./...'))
 
@@ -624,7 +659,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("      force_full:\n", workflow)
         self.assertIn("        type: boolean\n        default: true", workflow)
         aggregate = self.job("ci", "ci-required")
-        self.assertIn("    needs: [impact, documents, native, browser, go-unit, manifest-smoke]\n", aggregate)
+        self.assertIn("    needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]\n", aggregate)
         self.assertIn("    if: always()\n", aggregate)
         self.assertIn("ci-coverage.py finalize", aggregate)
         self.assertNotIn("contents: write", aggregate)

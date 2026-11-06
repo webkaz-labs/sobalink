@@ -24,6 +24,100 @@ def run(identifier=10, start='2026-01-01T00:00:00Z', event='workflow_dispatch', 
 
 
 class FullProofTests(unittest.TestCase):
+    def test_shared_regressions_are_required_and_their_execution_is_source_bound(self):
+        self.assertEqual(self.required['policy-regressions'], ('Run shared CI policy and source regressions',))
+        original = self.sources[full.WORKFLOW]
+        for old, new in ((b'  policy-regressions:\n', b'  ignored-regressions:\n'),
+                         (b'ci-regressions.py common --plan', b'ci-regressions.py native --plan'),
+                         (b'ci-regressions.py native --plan', b'ci-regressions.py common --plan'),
+                         (b'node-version: \'24.19.0\'', b'node-version: \'24\''),
+                         (b'needs: [impact, documents, policy-regressions, native',
+                          b'needs: [impact, documents, native')):
+            self.sources[full.WORKFLOW] = original.replace(old, new, 1)
+            with self.subTest(old=old), self.assertRaises(ValueError):
+                self.audit()
+        self.sources[full.WORKFLOW] = original
+        self.sources['.github/scripts/ci-regressions.py'] += b'\n# synthetic selection mutation\n'
+        with self.assertRaises(ValueError):
+            self.audit()
+
+    def test_frontend_checker_and_build_only_commands_are_source_bound(self):
+        self.assertIn('.github/scripts/test_check_frontend.py', full.SOURCES)
+        self.sources['.github/scripts/check-frontend.py'] += b'\n# synthetic checker mutation\n'
+        with self.assertRaisesRegex(ValueError, 'frontend checker'):
+            full.required_jobs(self.sources)
+        self.sources['.github/scripts/check-frontend.py'] = (ROOT / '.github/scripts/check-frontend.py').read_bytes()
+        original = self.sources[full.WORKFLOW]
+        native = b' --build-only'
+        for old, new in ((native, b''), (native, b' --build'),
+                         (b'check-frontend.py\n', b'check-frontend.py --build-only\n'),
+                         (b'check-frontend.py\n', b'check-frontend.py || true\n'),
+                         (b'  browser:\n', b'  ignored-browser:\n'),
+                         (b"scope != 'docs' && needs.impact.outputs.scope != 'go' && needs.impact.outputs.scope != 'native-ui'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25",
+                          b"scope == 'frontend'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25")):
+            self.sources[full.WORKFLOW] = original.replace(old, new, 1)
+            self.assertNotEqual(self.sources[full.WORKFLOW], original)
+            with self.subTest(old=old), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+
+    def test_frontend_steps_cannot_skip_ignore_failure_or_add_commands(self):
+        native = b'      - name: Reproduce locked frontend assets\n'
+        browser = b'      - name: Test and reproduce locked frontend assets\n'
+        for path, markers in ((full.WORKFLOW, (native, browser)),
+                              ('.github/workflows/prerelease.yml', (native,))):
+            original = self.sources[path]
+            for marker in markers:
+                self.assertEqual(original.count(marker), 1)
+                start = original.index(marker)
+                for suffix in (b'        if: false\n', b'        continue-on-error: true\n',
+                               b'        env:\n          FORCE_FULL: false\n'):
+                    self.sources[path] = original[:start] + original[start:].replace(marker, marker + suffix, 1)
+                    with self.subTest(path=path, marker=marker, suffix=suffix), self.assertRaises(ValueError):
+                        full.required_jobs(self.sources)
+                command_end = original.index(b'check-frontend.py', start)
+                command_end = original.index(b'\n', command_end)
+                self.sources[path] = original[:command_end] + b' || true' + original[command_end:]
+                with self.subTest(path=path, marker=marker), self.assertRaises(ValueError):
+                    full.required_jobs(self.sources)
+            self.sources[path] = original
+        release = '.github/workflows/prerelease.yml'
+        original = self.sources[release]
+        for replacement in (b'', b' --build', b' --native-plan plan.json'):
+            self.sources[release] = original.replace(b' --build-only', replacement)
+            self.assertNotEqual(self.sources[release], original)
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+
+    def test_native_reproduction_and_common_frontend_step_remain_required(self):
+        original = self.sources['.github/scripts/ci-coverage.py']
+        for marker in (b'"Reproduce locked frontend assets"', b'"Test and reproduce locked frontend assets"'):
+            self.assertEqual(original.count(marker), 1)
+            self.sources['.github/scripts/ci-coverage.py'] = original.replace(marker, b'"Ignored frontend check"')
+            with self.subTest(marker=marker), self.assertRaisesRegex(ValueError, 'common frontend tests are required'):
+                full.required_jobs(self.sources)
+
+    def test_browser_frontend_job_and_step_must_pass_in_the_exact_full_run(self):
+        original = copy.deepcopy(self.jobs)
+        for mode in ('missing-job', 'missing-step', 'skipped-job', 'failed-job',
+                     'skipped-step', 'failed-step', 'other-commit', 'other-run', 'other-attempt'):
+            self.jobs = copy.deepcopy(original)
+            browser = next(job for job in self.jobs if job['name'] == 'browser')
+            step = next(step for step in browser['steps'] if step['name'] == 'Test and reproduce locked frontend assets')
+            if mode == 'missing-job':
+                self.jobs.remove(browser)
+            elif mode == 'missing-step':
+                browser['steps'].remove(step)
+            elif mode in ('skipped-job', 'failed-job'):
+                browser['conclusion'] = 'skipped' if mode == 'skipped-job' else 'failure'
+            elif mode in ('skipped-step', 'failed-step'):
+                step['conclusion'] = 'skipped' if mode == 'skipped-step' else 'failure'
+            else:
+                key, value = {'other-commit': ('head_sha', 'c' * 40),
+                              'other-run': ('run_id', 11), 'other-attempt': ('run_attempt', 2)}[mode]
+                browser[key] = value
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                self.audit()
+
     def setUp(self):
         self.runs = [run()]
         self.previous = {}
@@ -160,6 +254,32 @@ class FullProofTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.audit()
         self.sources[full.WORKFLOW] = original
 
+    def test_native_deduplication_cannot_replace_complete_race_execution(self):
+        subsets = (
+            b"go test -race -count=1 -timeout=3m ./internal/backendworker ./internal/connectionroute",
+            b"go test -race -count=1 -timeout=3m ./internal/core -run '^TestMixed'",
+        )
+        full.validate_native_packages_workflow(self.sources)
+        for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
+            original = self.sources[path]
+            complete = b'go test -race -count=1 -timeout=10m ./...'
+            self.assertEqual(original.count(complete), 1)
+            for subset in subsets:
+                self.assertNotIn(subset, original)
+                # Neither a subset in place of the full run nor a repeated
+                # subset appended to it is the reviewed ordinary-suite policy.
+                for replacement in (subset, complete + b'\n          ' + subset):
+                    self.sources[path] = original.replace(complete, replacement, 1)
+                    with self.subTest(path=path, subset=subset, replacement=replacement), self.assertRaises(ValueError):
+                        full.validate_native_packages_workflow(self.sources)
+            for command in (complete, b'python -B .github/scripts/ci-native-core-required.py core',
+                            b'python -B .github/scripts/ci-native-core-required.py remaining'):
+                self.assertIn(command, original)
+                self.sources[path] = original.replace(command, b'echo omitted', 1)
+                with self.subTest(path=path, omitted=command), self.assertRaises(ValueError):
+                    full.validate_native_packages_workflow(self.sources)
+            self.sources[path] = original
+
     def test_failure_context_upload_is_exact_separate_and_not_a_required_success_step(self):
         self.assertTrue(all('Preserve bounded Core failure context' not in names for names in self.required.values()))
         for path in (full.WORKFLOW,'.github/workflows/prerelease.yml'):
@@ -179,7 +299,7 @@ class FullProofTests(unittest.TestCase):
                 with self.assertRaises(ValueError):full.required_jobs(self.sources)
             self.sources[path]=original
 
-    def test_early_core_placement_rejects_inserted_work_or_cache_before_collection(self):
+    def test_early_core_placement_rejects_unreviewed_work_or_cache_before_collection(self):
         for path in (full.WORKFLOW, '.github/workflows/prerelease.yml'):
             original = self.sources[path]
             marker = b'      - name: Collect required whole-Core race evidence\n'
@@ -189,6 +309,56 @@ class FullProofTests(unittest.TestCase):
                 with self.subTest(path=path, inserted=inserted), self.assertRaises(ValueError):
                     full.required_jobs(self.sources)
             self.sources[path] = original
+
+    def test_early_ci_cache_policy_rejects_changed_actions_paths_keys_and_guards(self):
+        original = self.sources[full.WORKFLOW]
+        start = original.index(b"      # Restore only dependency and compilation caches")
+        end = original.index(b"      - name: Collect required whole-Core race evidence\n", start)
+        prelude = original[start:end]
+        self.assertEqual(hashlib.sha256(prelude).hexdigest(), full.CI_NATIVE_CACHE_PRELUDE_SHA256)
+        changes = (
+            (b"actions/cache/restore@", b"actions/cache/save@"),
+            (b"55cc8345863c7cc4c66a329aec7e433d2d1c52a9", b"unreviewed"),
+            (b"${{ steps.go-cache-info.outputs.gocache }}", b"${{ github.workspace }}"),
+            (b"trusted-main-go-v1-", b"development-go-v1-"),
+            (b"-${{ matrix.runner }}-go1.27.1-", b"-go1.27.1-"),
+            (b"'cmd/prepare-engine/**'", b"'README.md'"),
+            (b"github.ref == 'refs/heads/main' && ", b""),
+            (b"github.repository == 'webkaz-labs/sobalink' && ", b""),
+            (b" || github.event_name == 'schedule'", b" || github.event_name == 'pull_request'"),
+            (b'and head.get("full_name") == repository', b'and True'),
+            (b'scope = f"pr-{number}"', b'scope = "main"'),
+            (b"if: steps.development-go-cache-scope.outputs.scope != ''", b"if: always()"),
+            (b"          restore-keys: trusted-main-go-v1-", b"          restore-keys: trusted-main-"),
+            (b"        id: go-cache\n", b"        id: go-cache\n        continue-on-error: true\n"),
+        )
+        for old, new in changes:
+            self.assertIn(old, prelude)
+            changed = prelude.replace(old, new, 1)
+            self.sources[full.WORKFLOW] = original[:start] + changed + original[end:]
+            with self.subTest(change=old), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+        # An unreviewed gap after the prelude must not escape the hash check.
+        self.sources[full.WORKFLOW] = original[:end] + b"      - run: echo synthetic\n" + original[end:]
+        with self.assertRaises(ValueError):
+            full.required_jobs(self.sources)
+        self.sources[full.WORKFLOW] = original
+
+    def test_early_cache_prelude_cannot_move_exact_toolchain_after_core(self):
+        original = self.sources[full.WORKFLOW]
+        native = original.index(b"  native:\n")
+        setup = original.index(b"      - uses: actions/setup-go@", native)
+        prelude = original.index(b"      # Restore only dependency and compilation caches", setup)
+        core = original.index(b"      - name: Collect required whole-Core race evidence\n", prelude)
+        exact_setup = original[setup:prelude]
+        alternate_setup = exact_setup.replace(b"go-version: '1.27.1'", b"go-version: '1.27.3'")
+        self.assertNotEqual(exact_setup, alternate_setup)
+        changed = original[:setup] + alternate_setup + original[core:]
+        end = changed.index(b"  manifest-smoke:\n", native)
+        self.sources[full.WORKFLOW] = changed[:end] + original[setup:core] + changed[end:]
+        with self.assertRaises(ValueError):
+            full.required_jobs(self.sources)
+        self.sources[full.WORKFLOW] = original
 
     def test_windows_helper_policy_rejects_altered_flags_missing_phase_or_union(self):
         original = self.sources[full.WINDOWS_PACKAGES_HELPER]
@@ -295,7 +465,7 @@ class FullProofTests(unittest.TestCase):
         self.assertLess(upload, remaining)
         self.assertLess(remaining, activation)
         self.assertTrue(workflow[:execution].endswith(
-            b"          python -m unittest discover -s .github/scripts -p 'test_*.py' -v\n"))
+            b'          python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"\n'))
         self.assertEqual(workflow.count(b'-- python -B .github/scripts/ci-dnssd-required.py\n'), 1)
 
     def test_macos_nearby_early_receipt_cannot_mask_later_activation_failure(self):
@@ -317,7 +487,7 @@ class FullProofTests(unittest.TestCase):
         for start, targets in ((execution, ('Check exact toolchain and native target',
                                           'Verify remaining native package race coverage',
                                           'Verify direct LAN synthetic expiry and rekey')),
-                               (preparation, ('Test and reproduce locked frontend assets',
+                               (preparation, ('Reproduce locked frontend assets',
                                               'Local and mock tests, race detector, and vet'))):
             block = original[start:end]
             stripped = original[:start] + original[end:]
@@ -344,7 +514,7 @@ class FullProofTests(unittest.TestCase):
                          (b'          go run ./cmd/prepare-engine\n', b''),
                          (b'          go run ./cmd/prepare-engine --verify\n', b''),
                          (b'          go mod verify\n', b'          go mod verify || true\n'),
-                         (b"-p 'test_*.py'", b"-p 'test_ci_coverage.py'")):
+                         (b'ci-regressions.py native --plan', b'ci-regressions.py common --plan')):
             self.assertIn(old, block)
             changed = original[:start] + block.replace(old, new, 1) + original[end:]
             with self.subTest(change=old), self.assertRaises(ValueError):
@@ -416,6 +586,39 @@ class FullProofTests(unittest.TestCase):
             sources[path] = sources[path].replace(before, after)
             with self.assertRaises(ValueError):
                 full.required_jobs(sources)
+
+    def test_reusable_native_ui_sources_are_bound_without_granting_full_credit(self):
+        paths = ('.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+                 '.github/scripts/native_ui_smoke.py')
+        proof = self.audit(local_root=ROOT)
+        for path in paths:
+            self.assertIn(path, full.SOURCES)
+            self.assertEqual(proof['source_sha256'][path], hashlib.sha256((ROOT / path).read_bytes()).hexdigest())
+            original = self.sources[path]
+            self.sources[path] += b'\n# synthetic source mutation\n'
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'checkout policy differs'):
+                self.audit(local_root=ROOT)
+            self.sources[path] = original
+        self.assertFalse(any('companion (' in name for name in self.required))
+
+    def test_reusable_native_ui_contract_rejects_caller_mode_commands_and_names(self):
+        changes = (
+            (full.WORKFLOW, b'      mode: scope', b'      mode: smoke'),
+            ('.github/workflows/native-poc.yml', b'      mode: smoke', b'      mode: scope'),
+            ('.github/workflows/native-ui-checks.yml', b'go test -race', b'go test'),
+            ('.github/workflows/native-ui-checks.yml', b'python -X utf8 -B ../../.github/scripts/ci-go-test.py', b'python -B ../../.github/scripts/ci-go-test.py'),
+            ('.github/scripts/ci-native-ui-source.py', b"plan['scope'] != 'native-ui'", b'False'),
+            ('.github/scripts/native_ui_smoke.py', b"('devices', 'messages', 'files')", b"('devices',)"),
+            ('.github/scripts/ci-coverage.py', b'native-ui / companion (linux-amd64)', b'ci-lane-smoke / companion (linux-amd64)'),
+            ('.github/scripts/ci-coverage.py', b'"Validate native UI source and required scope",', b''),
+        )
+        for path, before, after in changes:
+            original = self.sources[path]
+            self.assertIn(before, original)
+            self.sources[path] = original.replace(before, after, 1)
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+            self.sources[path] = original
 
     def test_full_proof_binds_source_jobs_and_policy(self):
         proof = self.audit(local_root=ROOT)
@@ -990,6 +1193,38 @@ class ParallelWorkflowPolicyTests(unittest.TestCase):
     def setUp(self):
         self.sources = {p: (ROOT / p).read_bytes() for p in full.SOURCES}
         self.workflow = self.sources[full.WORKFLOW].decode('utf-8')
+
+    def test_wait_heavy_checks_overlap_only_the_three_isolated_resource_gates(self):
+        full.validate_parallel_workflow(self.workflow.encode('utf-8'))
+        start = self.workflow.index('      - name: Verify direct LAN session natural rekey and idle lifecycle\n')
+        fence = self.workflow.index('      - name: Wait for real-time lifecycle and lease checks\n')
+        resources = ('Verify native remote resource inspection', 'Verify native remote resource management',
+                     'Verify native fixed-group resource catalog')
+        for name in resources:
+            self.assertTrue(start < self.workflow.index('      - name: ' + name + '\n') < fence)
+        for warmup in ('Verify direct LAN synthetic expiry and rekey',
+                       'Verify paired transport and Core applications over an isolated relay',
+                       'Verify recovery with the ordinary direct-enabled transport'):
+            self.assertLess(self.workflow.index('      - name: ' + warmup + '\n'), start)
+        region = self.workflow[start:fence]
+        self.assertEqual(region.count('.github/scripts/ci-metrics.py run'), 1)
+        self.assertNotIn('GITHUB_ENV', region)
+
+    def test_parallel_region_rejects_moved_resource_gate_and_shared_writer(self):
+        name = '      - name: Verify native remote resource inspection\n'
+        start = self.workflow.index(name)
+        end = self.workflow.index('      - name: Verify native remote resource management\n')
+        block = self.workflow[start:end]
+        stripped = self.workflow[:start] + self.workflow[end:]
+        insertion = stripped.index('      - name: Verify direct LAN session natural rekey and idle lifecycle\n')
+        moved = stripped[:insertion] + block + stripped[insertion:]
+        with self.assertRaises(ValueError):
+            full.validate_parallel_workflow(moved.encode('utf-8'))
+        changed = self.workflow[:start] + block.replace('          python - ',
+            '          python .github/scripts/ci-metrics.py run --suite resource-extra -- python - ', 1) + self.workflow[end:]
+        self.assertNotEqual(changed, self.workflow)
+        with self.assertRaises(ValueError):
+            full.validate_parallel_workflow(changed.encode('utf-8'))
 
     def test_literal_gate_names_and_join_remain_required(self):
         required = full.required_jobs(self.sources)

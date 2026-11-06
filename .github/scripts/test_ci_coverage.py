@@ -27,7 +27,14 @@ def job(name, steps=(), conclusion="success"):
 
 def jobs(scope="full"):
     result = [job("impact", (coverage.SCOPE_STEP,)), job("documents", coverage.DOCUMENT_STEPS)]
+    if scope == "native-ui":
+        result.append(job("policy-regressions", coverage.REGRESSION_STEPS))
+        result.extend(job(name, coverage.NATIVE_UI_SCOPE_STEPS + (coverage.NATIVE_UI_PRODUCT_STEPS if target in coverage.NATIVE_PACKAGE_TARGETS else ()))
+                      for target, name in coverage.NATIVE_UI_TARGETS.items())
+    else:
+        result.append(job("native-ui", conclusion="skipped"))
     if scope in ("native-short", "full"):
+        result.append(job("policy-regressions", coverage.REGRESSION_STEPS))
         for target, name in coverage.TARGETS.items():
             steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
             if target in coverage.LINUX_NEARBY_TARGETS:
@@ -45,7 +52,8 @@ def jobs(scope="full"):
                         item["conclusion"] = "skipped"
         result.append(job("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",)))
     else:
-        result.extend([job("native", conclusion="skipped"), job("manifest-smoke", conclusion="skipped")])
+        result.extend([job("native", conclusion="skipped"), job("manifest-smoke", conclusion="skipped"),
+                       *([job("policy-regressions", conclusion="skipped")] if scope != "native-ui" else [])])
     result.append(job("browser", coverage.BROWSER_STEPS) if scope in ("full", "native-short", "frontend")
                   else job("browser", conclusion="skipped"))
     result.append(job("go-unit", coverage.GO_STEPS) if scope == "go"
@@ -60,6 +68,46 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_browser_frontend_suite_is_mandatory_even_when_native_tests_are_deduplicated(self):
+        gate = 'Test and reproduce locked frontend assets'
+        for scope in ('frontend', 'native-short', 'full'):
+            for mode in ('missing-job', 'missing-step', 'duplicate-step', 'skipped', 'failure', 'cancelled', 'pending'):
+                data = jobs(scope)
+                selected = next(item for item in data if item['name'] == 'browser')
+                step = next(item for item in selected['steps'] if item['name'] == gate)
+                if mode == 'missing-job':
+                    data.remove(selected)
+                elif mode == 'missing-step':
+                    selected['steps'].remove(step)
+                elif mode == 'duplicate-step':
+                    selected['steps'].append(copy.deepcopy(step))
+                elif mode == 'pending':
+                    step['status'] = 'in_progress'
+                else:
+                    step['conclusion'] = mode
+                with self.subTest(scope=scope, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, scope)
+
+    def test_shared_regressions_must_actually_pass_for_each_native_scope(self):
+        for scope in ('full', 'native-short', 'native-ui'):
+            for mode in ('missing-job', 'missing-step', 'duplicate-step', 'failure', 'cancelled', 'skipped', 'pending'):
+                data = jobs(scope)
+                selected = next(item for item in data if item['name'] == 'policy-regressions')
+                if mode == 'missing-job':
+                    data.remove(selected)
+                elif mode == 'missing-step':
+                    selected['steps'] = []
+                elif mode == 'duplicate-step':
+                    selected['steps'] *= 2
+                elif mode == 'pending':
+                    selected['status'] = 'in_progress'
+                else:
+                    selected['steps'][0]['conclusion'] = mode
+                with self.subTest(scope=scope, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, scope)
+        for scope in ('docs', 'frontend', 'go'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+
     def test_companion_is_required_on_supported_targets(self):
         self.assertEqual(coverage.NATIVE_UI_STEPS, ('Test experimental native companion',))
 
@@ -250,7 +298,7 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertIn("  schedule:\n    # Daily 03:00 JST (UTC+09:00); changes to cadence require review.\n    - cron: '0 18 * * *'", workflow)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
         self.assertIn("|| format('ci-run-{0}', github.run_id)", workflow)
-        self.assertIn("needs: [impact, documents, native, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
         self.assertIn("needs: [ci-required, web-activation, product-activation]", workflow)
         nightly = workflow.split("  nightly-full-check:\n", 1)[1]
         self.assertIn("ci-coverage.py nightly-finalize", nightly)
@@ -261,7 +309,7 @@ class ActualCoverageTests(unittest.TestCase):
                   "github.event.pull_request.head.repo.full_name": "",
                   "github.repository": coverage.REPOSITORY, "github.ref": "refs/heads/main",
                   "github.event.repository.default_branch": "main", "inputs.force_full": False,
-                  "needs.impact.outputs.scope": "full"}
+                  "needs.impact.outputs.scope": "full", "needs.impact.result": "success"}
 
         def enabled(name, overrides=None):
             # Job-level fields are indented four spaces, so extract until next
@@ -282,6 +330,22 @@ class ActualCoverageTests(unittest.TestCase):
         for name in ("native", "browser", "web-activation", "product-activation", "nightly-full-check"):
             self.assertTrue(enabled(name), name)
             self.assertFalse(enabled(name, {"github.event.repository.private": True}), name)
+        # Only proven docs or pure-native UI scopes omit supplemental activation.
+        # Failed/unknown selection must still execute the existing PR coverage.
+        for name in coverage.SCHEDULE_ACCEPTANCE:
+            for scope in ("full", "native-short", "frontend", "go", "", None):
+                self.assertTrue(enabled(name, {"github.event_name": "pull_request",
+                                               "github.event.pull_request.head.repo.full_name": coverage.REPOSITORY,
+                                               "needs.impact.outputs.scope": scope}))
+            for result in ("failure", "cancelled", "skipped", ""):
+                self.assertTrue(enabled(name, {"github.event_name": "pull_request",
+                                               "github.event.pull_request.head.repo.full_name": coverage.REPOSITORY,
+                                               "needs.impact.outputs.scope": "native-ui",
+                                               "needs.impact.result": result}))
+            for scope in ("docs", "native-ui"):
+                self.assertFalse(enabled(name, {"github.event_name": "pull_request",
+                                                "github.event.pull_request.head.repo.full_name": coverage.REPOSITORY,
+                                                "needs.impact.outputs.scope": scope}))
         for name in (*coverage.SCHEDULE_ACCEPTANCE, "nightly-full-check"):
             for key, wrong in (("github.repository", "example/fork"),
                                ("github.ref", "refs/heads/topic"),
@@ -298,7 +362,7 @@ class ActualCoverageTests(unittest.TestCase):
     def test_schedule_requires_full_and_both_complete_acceptance_jobs(self):
         data = jobs() + [job("ci-required", ("Require every check selected for this change",))] + [job(name, steps) for name, steps in coverage.SCHEDULE_ACCEPTANCE.items()]
         self.assertTrue(coverage.evaluate_jobs(data, "full", scheduled=True))
-        for scope in ("docs", "frontend", "go", "native-short"):
+        for scope in ("docs", "frontend", "go", "native-short", "native-ui"):
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(data, scope, scheduled=True)
         for index, required in enumerate(data):
@@ -325,7 +389,7 @@ class ActualCoverageTests(unittest.TestCase):
                     coverage.evaluate_jobs(invalid, "full", scheduled=True)
 
     def test_selected_scopes_are_never_full(self):
-        for scope in ("docs", "frontend", "go", "native-short"):
+        for scope in ("docs", "frontend", "go", "native-short", "native-ui"):
             with self.subTest(scope=scope):
                 self.assertFalse(coverage.evaluate_jobs(jobs(scope), scope))
 
@@ -382,7 +446,7 @@ class ActualCoverageTests(unittest.TestCase):
         documents = workflow.split("  documents:\n", 1)[1].split("  native:\n", 1)[0]
         for name in coverage.DOCUMENT_STEPS:
             self.assertIn("name: " + name, documents)
-        self.assertIn("needs: [impact, documents, native, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
         self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 2)
         self.assertIn('npm ci --prefix "$DOCS_RENDER_ROOT"', documents)
         # runner context is unavailable in jobs.<id>.env; resolve it only in steps.
@@ -412,7 +476,7 @@ class ActualCoverageTests(unittest.TestCase):
                 coverage.evaluate_jobs(data, scope)
 
     def test_full_rejects_selected_jobs_and_unknown_scope(self):
-        for scope in ("docs", "frontend", "go", "native-short"):
+        for scope in ("docs", "frontend", "go", "native-short", "native-ui"):
             with self.assertRaises(ValueError):
                 coverage.evaluate_jobs(jobs(scope), "full")
         for scope in (None, "", "changed", "FULL"):
@@ -454,6 +518,15 @@ class ActualCoverageTests(unittest.TestCase):
         with patch.object(pathlib.Path, "read_text", autospec=True, side_effect=explicit_utf8):
             self.test_native_short_plan_disables_real_time_and_full_only_steps()
 
+    def test_shared_regression_timing_is_recorded(self):
+        shared = job("policy-regressions", coverage.REGRESSION_STEPS)
+        for item in [shared, *shared["steps"]]:
+            item.update(started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:12Z")
+        row, = coverage.job_timings([shared])
+        self.assertEqual(row["elapsed_seconds"], 12)
+        self.assertEqual(row["steps"], [{"step": coverage.REGRESSION_STEPS[0],
+                                       "elapsed_seconds": 12, "result": "success"}])
+
     def test_document_job_and_static_render_step_timings_are_measurable(self):
         document = job("documents", coverage.DOCUMENT_STEPS)
         for item in [document, *document["steps"]]:
@@ -491,10 +564,10 @@ class PlanAndReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "plan.json"
             with patch.object(coverage, "head", return_value=HEAD), patch.object(coverage, "git", return_value=TREE.encode()), patch.object(coverage, "digest", return_value=POLICY):
-                path.write_text(json.dumps(plan("docs")))
-                self.assertEqual(coverage.read_plan(path), plan("docs"))
+                path.write_text(json.dumps(plan("native-ui")))
+                self.assertEqual(coverage.read_plan(path), plan("native-ui"))
                 for field, bad in (("version", 1), ("version", 2), ("policy_id", "old"), ("scope", "skip"), ("head_sha", "0" * 40), ("head_tree", "0" * 40), ("policy_sha256", "0" * 64)):
-                    changed = plan("docs")
+                    changed = plan("native-ui")
                     changed[field] = bad
                     path.write_text(json.dumps(changed))
                     with self.subTest(field=field), self.assertRaises(ValueError):
@@ -535,6 +608,13 @@ class PlanAndReceiptTests(unittest.TestCase):
                 self.assertEqual(result["scope"], scope)
                 self.assertEqual(result["full_native"], scope == "full")
                 self.assertEqual(result["targets"], {t: "success" if scope == "full" else "short_checks_passed" if scope == "native-short" else "not_run" for t in coverage.TARGETS})
+                if scope == "native-ui":
+                    self.assertEqual(result["native_ui_workflow_sha256"], POLICY)
+                    self.assertEqual(result["native_ui"], {t: "success" for t in coverage.NATIVE_UI_TARGETS})
+                    self.assertEqual(result["native_ui_packages"], {t: "success" for t in coverage.NATIVE_PACKAGE_TARGETS})
+                else:
+                    self.assertNotIn("native_ui", result)
+                    self.assertNotIn("native_ui_packages", result)
                 self.assertEqual(result["browser"], "success" if scope in ("frontend", "native-short", "full") else "not_run")
                 self.assertEqual(result["manifest"], "success" if scope in ("native-short", "full") else "not_run")
                 self.assertEqual(result["long_checks"], {t: "success" if scope == "full" else "not_run" for t in coverage.TARGETS})

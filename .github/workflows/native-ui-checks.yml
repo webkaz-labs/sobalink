@@ -1,0 +1,138 @@
+name: Reusable native UI checks
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: scope requires the main CI merge plan; smoke is manual-only and non-qualifying
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+
+jobs:
+  companion:
+    # Explicit names keep the caller-prefixed required job identities stable.
+    name: companion (${{ matrix.goos }}-${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+          - runner: macos-26
+            goos: darwin
+            goarch: arm64
+          - runner: windows-2025
+            goos: windows
+            goarch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: inputs.mode == 'scope'
+        with:
+          name: ci-impact-plan
+          path: ${{ runner.temp }}/ci-plan
+      - name: Validate native UI source and required scope
+        env:
+          NATIVE_UI_VALIDATION_MODE: ${{ inputs.mode }}
+        run: python -B .github/scripts/ci-native-ui-source.py "$NATIVE_UI_VALIDATION_MODE" --plan "$RUNNER_TEMP/ci-plan/ci-impact-plan.json"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          check-latest: false
+          cache-dependency-path: |
+            go.sum
+            poc/native/go.sum
+      - name: Install companion headless renderer dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libgtk-3-0 libgl1 fonts-noto-core fonts-noto-cjk
+      - name: Check companion toolchain and prepare verified engine
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.3
+          test "$(go env GOOS)/$(go env GOARCH)" = '${{ matrix.goos }}/${{ matrix.goarch }}'
+          native_go="$(go env GOROOT)/bin/go"
+          if [[ "$RUNNER_OS" == Windows ]]; then native_go="$native_go.exe"; fi
+          echo "SOBALINK_NATIVE_GO=$native_go" >> "$GITHUB_ENV"
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          (cd poc/native && go mod verify)
+          git diff --exit-code -- go.mod go.sum poc/native/go.mod poc/native/go.sum
+      - name: Run complete companion race suite with protected IPC evidence
+        working-directory: poc/native
+        run: python -X utf8 -B ../../.github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/poc/native:TestNativeProtectedIPCCoreExchange -- go test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
+      - name: Vet MyGo lifetimes and check companion formatting
+        working-directory: poc/native
+        run: |
+          set -euo pipefail
+          go vet ./...
+          go run github.com/egoist/mygo/cmd/mygo vet .
+          test -z "$(gofmt -l .)"
+      - name: Compile companion and check deterministic kit packaging
+        working-directory: poc/native
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/native-ui-check" .
+          python -B packaging_test.py
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Prepare locked frontend package inventory for native UI
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          test "$(node --version)" = v24.19.0
+          test "$(npm --version)" = 11.9.0
+          npm --prefix web ci --no-audit --no-fund
+          git diff --exit-code -- web/package.json web/package-lock.json web/dist
+      - name: Build product package for native UI
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          commit="$(git rev-parse HEAD)"
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+          go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
+          go run ./cmd/package-tool checksums
+      - name: Smoke product package for native UI
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        run: |
+          set -euo pipefail
+          version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          extension=tar.gz
+          if [[ '${{ matrix.goos }}' == windows ]]; then extension=zip; fi
+          python -B .github/scripts/smoke-package.py "dist/sobalink-$version-${{ matrix.goos }}-${{ matrix.goarch }}.$extension" "$version" --native-ui-scope
+      # No release/trusted-main caches are written and no build archives are uploaded.

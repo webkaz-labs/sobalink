@@ -44,6 +44,7 @@ flowchart TD
 | 上記に伴う生成済み `web/dist` の変更 | フロントソース変更がある場合のみフロント範囲。再生成の一致は必須 |
 | `internal/servicepresets` または `internal/boundedlog` の確認済みGo変更。通常文書との混在も可 | 変更パッケージと、テストからの参照を含む推移的な逆依存をLinuxでrace検出・vet |
 | PRまたはmainの確認済みCLI表示ファイル変更。通常文書との混在も可 | 4ターゲットの短時間・安全性試験、ブラウザー、配布物・マニフェスト検証。起動・終了処理とリースを実時間で確認する3工程とネイティブ検査（資源の照会・管理・固定グループの一覧）は未実行 |
+| 確認済みの既存native companion UIファイル。通常文書との混在も可 | 文書・共通方針検査、4対象のcompanion全race suiteと保護IPCの実pass、MyGo vet・整形・コンパイル、Windows/macOSの製品パッケージbuild・smoke。バックエンド全件検証、ブラウザー、マニフェストは未実行 |
 | 通信、認証、Core、設定、タイマー、共通補助処理、依存・lock、ビルド設定、CI判定・ワークフロー、その他不明なパス | Linux amd64/arm64、macOS arm64、Windows amd64の全ネイティブ試験、ブラウザー、配布物・マニフェスト検証 |
 | 確認済みCLI表示・フロント・限定Goの組み合わせ | 4ターゲットの短時間・安全性試験、ブラウザー、配布物・マニフェスト検証。起動・終了処理とリースを実時間で確認する3工程とネイティブ検査（資源の照会・管理・固定グループの一覧）は未実行 |
 | OS固有Go、cgo、未確認の依存パッケージの読込み、方針・出所情報のMarkdown、不正なモード・種類、判定できない入力 | 全件 |
@@ -61,13 +62,68 @@ flowchart TD
 
 `native-short` の対象は `cmd/soba/help.go`、`cmd/soba/errors.go`、`cmd/soba/errors_test.go`、`cmd/soba/human_output.go`、`cmd/soba/human_output_test.go` の5ファイルだけです。新しいパス・依存パッケージの読込み・ビルド対象を指定する指示、未確認の区分との混在は全件に戻します。既存のフロント・限定Goとの組み合わせは4ターゲットのnative-shortで確認します。文書・フロント・限定Goだけの場合は従来の限定範囲を維持します。変更前後の両方を確認し、混在時も変更対象の限定Goパッケージ全体を調べます。確認済みPR mergeまたはmain pushの差分全体が条件を満たす必要があり、最後の表示修正だけで先行するruntime変更を隠せません。生成資材には引き続き対応するフロントのソース変更が必要です。
 
-この区分では、direct-LAN の実時間での鍵更新・待機中の起動終了処理、送信先を制限した中継での実時間のリース継続、中継のみの構成での実時間のリース継続・待機に加え、別枠の全件専用のネイティブ検査（資源の照会・管理・固定グループの一覧）を省きます。4ターゲットのrace/vet、IPC反復、Windows directory barrier、TCP/TLSのcontext制御、managed activation/restart、direct/relayの機能・復旧、合成expiry/rekey、ブラウザー、配布物、マニフェスト検証は残します。独立したWeb 7件とproduct 2件のジョブも既存のPR・手動実行条件と失敗扱いを維持し、定期全件実行では両方を要求します。試験の反復回数や製品タイマーは変更しません。
+この区分では、direct-LAN の実時間での鍵更新・待機中の起動終了処理、送信先を制限した中継での実時間のリース継続、中継のみの構成での実時間のリース継続・待機に加え、別枠の全件専用のネイティブ検査（資源の照会・管理・固定グループの一覧）を省きます。4ターゲットのrace/vet、IPC反復、Windows directory barrier、TCP/TLSのcontext制御、managed activation/restart、direct/relayの機能・復旧、合成expiry/rekey、ブラウザー、配布物、マニフェスト検証は残します。独立したWeb 7件とproduct 2件のジョブもnative-shortのPR・手動実行条件と失敗扱いを維持します。文書のみと証明できたPRでは省略し、定期全件実行では両方を要求します。試験の反復回数や製品タイマーは変更しません。
 
-正当性を確認したmain pushもPRと同じ限定native-short判定を使えます。新規作成・削除・force pushされたmainや未対応イベントは全件に戻します。このmain短縮を導入する前から、下記の同一ソース全件検証を要求するリリース入口を維持します。短時間ワークフローの緑色だけではリリース条件を満たしません。通信・起動・終了処理変更は全件のままです。対象ファイルの追加、関連する長時間試験だけの選択、試験回数の削減は行いません。毎日の全件実行は下記のとおりです。
+正当性を確認したmain pushもPRと同じ限定native-short判定を使えます。新規作成・削除・force pushされたmainや未対応イベントは全件に戻します。このmain短縮を導入する前から、下記の同一ソース全件検証を要求するリリース入口を維持します。短時間ワークフローの緑色だけではリリース条件を満たしません。通信・起動・終了処理変更は全件のままです。native-shortの対象ファイル、関連する長時間試験の選択、試験の反復回数は変えません。毎日の全件実行は下記のとおりです。
 
 Goの対象リストは小さく限定しています。任意のGo変更を1環境だけで済ませる意味ではありません。OS固有ファイル、ビルド制約、確認済み境界を超える依存は全環境の対象です。限定Go実行は、統合試験のビルドタグも含む現在のパッケージ依存関係から逆依存を選びます。実行するのは通常のLinux試験で、長時間のネイティブ統合試験ではありません。依存関係を確定できない場合は通常Goパッケージ全件を実行します。コマンド失敗や実際のテスト成功が確認できない場合は失敗です。
 
 開発方針や上流ソースの出所情報として使うMarkdownは、通常の説明文に含めません。必須のルート文書は存在している必要があります。ガイドが配布物に同梱されるという理由だけで、文章修正のたびにアプリを再ビルドしません。コード変更時とリリース時には配布内容を確認します。別の資源・中継計測ワークフローも、報告文書の文章変更ではなく計測実装の変更で起動します。
+
+### ネイティブUIのみの変更
+
+`native-ui` の対象は `.github/scripts/ci-impact.py` の `NATIVE_UI_IMPORTS` に
+列挙した既存view・theme・presentationの10ファイルと、個別に確認したUIテスト3ファイルの
+修正だけです。変更前後とも通常のテキストファイルで、確認済みimportだけを使い、
+build・embed・link指令がないことを検証します。追加・削除・改名・不明なファイルは全件です。
+操作実装（`app.go`、`model.go`、`exchange.go`、pane操作、`tray.go`、
+`filepane_dialog.go`）、module manifest、梱包処理、UI方針文書も全件のままです。
+Web・限定Go・CLI変更との混在も、まずは全件へ戻します。
+
+これらは同じ `package main` に属し、新しいimportなしでも操作を呼び出せます。
+純粋な表示処理という証明ではなく、確認済みの検査範囲です。必須 `native-ui` laneは
+正確なPR merge/mainのtreeをLinux x64/ARM64、macOS ARM64、Windows x64で検証します。
+各対象で `native_integration` を付けたcompanion全race suiteを実行し、`ci-go-test.py` が
+`TestNativeProtectedIPCCoreExchange` の実際の成功を確認します。Go 1.27.3とmoduleで固定した
+MyGoでvet・整形・コンパイルを検査します。Windows/macOSでは、通常のGo 1.27.1製品packagerと
+そのnative module用toolchainで実パッケージを作り、companionのidentityとoffline実行を含む
+archive smoke検証を行います。固定Node/npmとlocked `npm ci` はpackage・license一覧のためだけに使い、
+Webテスト・buildは繰り返しません。展開したarchiveの実バイナリで、従来の端末・メッセージ・
+ファイルpane描画と、両バイナリのWindows未署名/macOS ad-hoc署名状態の検査も維持します。
+検査が署名を行うことはありません。文書と共通方針jobの成功も必須です。
+
+独立に証明したnative UI merge scopeだけが、HEADのみを検証する `native-poc` の重複実行を
+省略します。それ以外のscope、手動実行、不確かな分類では従来の検査を維持します。
+UIのみのPRでは製品archiveをrunner内で作成・smokeし、別のdevice-test kitは作成しません。
+手動 `native-poc` は引き続きrunner内のkitを作成・検査します。どちらもダウンロード用の
+kit/archiveはuploadしません。この出力の違いは、テスト範囲の削減とは分けて扱います。
+native UIのみのPRでは独立したWeb/product activation jobも省略し、それ以外の既存起動条件は
+維持します。定期・手動full、依存・方針変更、リリース適格性は全件検証のままです。
+過去の実行、テスト結果cache、HEADだけのjobをmergeの証拠にはしません。
+
+UIのみのreceiptは `full_native=false` とし、`native_ui` に4対象、
+`native_ui_packages` に2対象の成功を記録し、`native_ui_workflow_sha256` で共通workflowのhashを
+結び付けます。バックエンドの `targets`、
+`long_checks`、browser、manifestは `not_run` です。UI専用フィールドは他scopeのreceiptには
+含めません。時間は今回の実測であり、速度向上の保証や並列job時間の合算ではありません。
+実enrollment、導入済みUIの対話操作、OSログイン・suspend、認証された署名の受入を
+完了した意味ではありません。
+
+### ネイティブUI laneを手動で確認する
+
+main CIと明示的な手動確認は、同じ `.github/workflows/native-ui-checks.yml` を呼び出します。
+固定した検査commandのコピーは作りません。既存の **Native UI PoC validation** workflowで
+ソースbranchを選び、**ci_lane_smoke** をtrueにします。既定のfalseは従来のstandalone kit検証を
+維持します。smokeを選んだ場合だけ共通4対象検査へ切り替え、standalone jobは重ねません。
+無関係なfull PRに新しい4job matrixを追加することもありません。
+
+手動経路は呼出元、選択したcommit/tree、変更のないcheckoutを確認してから、実companion試験と
+製品archive検査を行います。UI限定差分とは判定せず、CI impact planのdownload、coverage receiptの
+出力、`ci-required` の作成も行いません。手動の `ci-lane-smoke / companion (<target>)` jobでは、
+main CIの同一試行で独立にscopeを確認した `native-ui / companion (<target>)` jobを要求する
+集約判定を満たせません。手動smoke成功はcommandの実行証拠だけであり、branch protection、
+UI限定scope、全件リリースの適格性には数えません。この新経路が成功したとする前に、
+実runnerの結果を確認する必要があります。
 
 ## 差分全体と必須チェック
 
@@ -95,13 +151,13 @@ PRの試験対象はActionsの `GITHUB_SHA` と、正確な `refs/pull/<number>/
 
 証拠は正確なcommit/tree、ワークフロー・判定ソースのhash、現在の有効試行、4つのネイティブ対象と必須工程すべてを結び付けます。実時間試験、各対象のネイティブ検査（資源の照会・管理・固定グループの一覧）、ブラウザー、マニフェスト、ci-required、Web 7件、product 2件も対象です。Goイベント検証補助処理の正確なソースもhashに結び付けます。全件専用の3工程を固定した組と各工程の確認済み直列ワークフロー呼び出しを静的に検証し、ネイティブ資源検査の工程の欠落・重複・省略・成功以外の結果では条件を満たせません。入口と公開直前の両方で、読み取り専用GitHub APIを独立に確認します。保存JSONだけで成功を許可しません。同じソースの新しい全件成功は公開時に使えますが、新しい失敗は無視しません。証拠成果物の保持は90日です。監査記録であり、追加の署名済みリリース資産ではありません。配布物の署名・実インストール検証は独立したまま変更しません。
 
-文書・フロント・限定Go・native-shortの成功は、明示的な全件検証が揃うまでは全件リリース条件を満たしません。定期実行は検証を追加しますが、この手動リリース証拠の代わりにはしません。
+文書・フロント・限定Go・native-short・native-uiの成功は、明示的な全件検証が揃うまでは全件リリース条件を満たしません。定期実行は検証を追加しますが、この手動リリース証拠の代わりにはしません。
 
 ## 毎日の全件検証
 
 確認済みワークフローは `.github/workflows/ci.yml` の `0 18 * * *` で、**毎日18:00 UTC、翌日の03:00 JST（UTC+09:00）**に1回の全件実行を予約します。このワークフローがdefault branch（`main`）へmergeされて初めて有効になります。変更がなくても、GitHubはdefault branchの最新コミットを使います。判定は明示的に `full` とし、空の差分や文書だけの差分から `native-short` にはしません。
 
-定期実行は4つのネイティブ対象、全実時間工程、別枠のネイティブ検査（資源の照会・管理・固定グループの一覧）、ブラウザー、配布物・マニフェスト、Web 7件、product 2件を要求します。`nightly-full-check` は `ci-required` と両acceptanceジョブを待ち、必須工程の実行結果も確認します。未実行・欠落・中止・失敗を成功の証拠にはしません。既存のPR・手動acceptanceの入口条件と通常の `ci-required` の依存関係は維持します。短時間PRの結果は、この定期専用aggregateを待ちません。実行ごとに別のconcurrency識別子を使うため、定期実行がpushや明示的な手動リリース監査を中止することはありません。キャッシュの信頼範囲と読み取り専用のrepository権限も変えません。
+定期実行は4つのネイティブ対象、全実時間工程、別枠のネイティブ検査（資源の照会・管理・固定グループの一覧）、ブラウザー、配布物・マニフェスト、Web 7件、product 2件を要求します。`nightly-full-check` は `ci-required` と両acceptanceジョブを待ち、必須工程の実行結果も確認します。未実行・欠落・中止・失敗を成功の証拠にはしません。手動acceptanceの入口条件と通常の `ci-required` の依存関係は維持します。文書のみと証明できたPRではacceptanceジョブを省略します。短時間PRの結果は、この定期専用aggregateを待ちません。実行ごとに別のconcurrency識別子を使うため、定期実行がpushや明示的な手動リリース監査を中止することはありません。キャッシュの信頼範囲と読み取り専用のrepository権限も変えません。
 
 長時間のネイティブ・acceptanceジョブを含む全件CIが毎日1回増えます。頻度を減らす場合は安定性・実行環境時間・費用の実績を確認し、cronの1行をレビューして変更します。自動で頻度を減らしません。定期実行の成功だけでは、上記の手動リリース証拠を満たしません。新しい定期実行が失敗・保留中なら、解消するか同じソースの後続手動全件検証が成功するまでリリースを止めます。
 
@@ -138,8 +194,8 @@ TCPとUDPに同じ接続先が必要な試験用環境は、正確なループ�
 ## 全件専用のnative remote resource inspection
 
 `Verify native remote resource inspection` は、通常の直接通信を有効にした構成の復旧試験後、
-実時間3工程の並列区間より前に置く1つの直列ステップです。同じ全件条件を使いますが、
-`LONG_STEPS` には追加しません。判定対象リスト、3工程のbackground区間、必須wait、
+実時間3工程がbackgroundで動く間に実行する直列ステップです。同じ全件条件を使いますが、
+`LONG_STEPS` には追加しません。判定対象リスト、backgroundの3工程、必須wait、
 Node 24の固定、`setup-go` の `cache: false` 方針は変更しません。
 
 正確なGo `go1.27.1` と対象構成の GOOS/GOARCHを確認した後、`ci-go-test.py --exact` を
@@ -166,7 +222,7 @@ OSの安全性・経路・ファイアウォール方針は変更しません。
 `Verify native remote resource management` はinspectionの直後に置き、正確な3件、
 確認済みの6つのビルドタグ、race検出、既定のvet、8分の試験上限、子プロセスだけの
 管理・有効化試験の実行指定を維持します。`Verify native fixed-group resource catalog`
-は、その直後かつ既存の3工程並列区間の前に、FULL専用の直列ステップを1つだけ追加します。
+は、その直後かつbackgroundの3工程を待つ必須waitの前に置くFULL専用の直列ステップです。
 `FULL_ONLY_STEPS` はinspection・management・fixed-group catalogの順で正確に3工程です。
 `LONG_STEPS` やnative-shortの実行対象には追加しません。
 
@@ -204,9 +260,11 @@ race オプション、native-short のスキップ条件は変えず、ネイ�
 完全CI・夜間CIの証跡には wait と各検証の成功が必要です。失敗・キャンセル・
 スキップ・欠落を完全実行の成功として扱いません。
 
-重ねるのは待ち時間の長い3組だけです。同じタグ付きパッケージをビルドする
-直列のネイティブ検証後に開始しますが、キャッシュが削除されれば追加ビルドは
-必要です。パッケージ作成、アップロード、キャッシュ保存、時間集計は wait 後です。
+待ち時間の長い3組を開始してから、resource inspection、management、fixed-group catalogを
+順番に実行します。resourceの3工程同士は直列のまま、backgroundの3組と重ねます。
+先行するネイティブ検証が同じタグ付きパッケージをビルドしますが、キャッシュが削除されれば
+追加ビルドは必要です。追加ランナーや重複するセットアップは増やしません。companion検査、
+パッケージ作成、アップロード、キャッシュ保存、時間集計は wait 後です。
 この区間で既存の時間計測 JSONL に書くのは natural-lifecycle だけなので、同時書き込みは
 ありません。計測を追加するときは共有追記ではなく、保存先の分離と wait 後の検証付き
 統合が必要です。
