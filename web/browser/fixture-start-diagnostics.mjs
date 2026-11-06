@@ -4,7 +4,7 @@ import { open, lstat } from 'node:fs/promises'
 const signals = new Set(['none', 'SIGABRT', 'SIGBUS', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT', 'SIGKILL', 'SIGPIPE', 'SIGSEGV', 'SIGTERM', 'SIGTRAP', 'other'])
 const keys = ['stage', 'outcome', 'code', 'signal']
 const startupStages = new Set(['unknown', 'arguments', 'temporary-directory', 'fixture-files', 'primary-lock', 'primary-core', 'receive-settings', 'secondary-lock', 'secondary-core', 'network-configure', 'peer-trust', 'peer-reconnect', 'seed-messages', 'seed-transfer', 'seed-share', 'discovery-refresh', 'assets', 'service-reservation', 'web-server', 'access-code', 'session-write'])
-const startupCategories = new Set(['canceled', 'deadline', 'permission', 'address-in-use', 'address-unavailable', 'connection-refused', 'not-exist', 'unclassified', 'multiple-causes', 'lan_listener_conflict', 'lan_listener_address_unavailable', 'lan_listener_permission_denied', 'lan_state_capacity', 'lan_listener_capacity', 'lan_start_failed'])
+const startupCategories = new Set(['canceled', 'deadline', 'permission', 'address-in-use', 'address-unavailable', 'connection-refused', 'not-exist', 'unclassified', 'multiple-causes', 'lan_listener_conflict', 'lan_listener_address_unavailable', 'lan_listener_permission_denied', 'lan_state_capacity', 'lan_listener_capacity', 'lan_start_failed', 'message_history_unavailable', 'message_peer_storage_unavailable', 'message_completion_interrupted'])
 function validStartup(value) {
   return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 2 && Object.hasOwn(value, 'stage') && Object.hasOwn(value, 'category') && startupStages.has(value.stage) && startupCategories.has(value.category)
 }

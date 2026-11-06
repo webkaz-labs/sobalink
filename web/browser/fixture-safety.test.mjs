@@ -423,6 +423,28 @@ test('startup sidecars carry only closed-vocabulary failure facts', async () => 
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
+
+test('message startup failures retain fixed codes without widening the private sidecar', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'soba-message-diagnostic-'))
+  const path = join(dir, 'diagnostic.json')
+  const read = value => readFixtureStartDiagnostic([{ type: 'fixture-start-diagnostic', description: JSON.stringify(value) }])
+  try {
+    for (const category of ['message_history_unavailable', 'message_peer_storage_unavailable', 'message_completion_interrupted']) {
+      const startup = { stage: 'seed-messages', category }
+      await writeFile(path, JSON.stringify(startup), { mode: 0o600 })
+      assert.deepEqual(await readStartupSidecar(path), startup)
+      const record = fixtureStartDiagnostic({ code: 1 }, false, startup)
+      assert.deepEqual(read(record).startup, startup)
+      for (const poisoned of [{ ...startup, error: sentinel }, { ...startup, category: `${category}:${sentinel}` }, { ...startup, stage: sentinel }]) {
+        await writeFile(path, JSON.stringify(poisoned))
+        assert.equal(await readStartupSidecar(path), undefined)
+        assert.equal(read({ ...record, startup: poisoned }), undefined)
+        assert.equal(JSON.stringify(fixtureStartDiagnostic({ code: 1 }, false, poisoned)).includes(sentinel), false)
+      }
+    }
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
 test('outbox failure diagnostics expose only fixed vocabulary and retain the first cause', async () => {
   const { PHASES, ERROR_KINDS, failureRecord, markPhase, recordSessionFailure } = await import('./outbox-native-diagnostics.mjs')
   for (const phase of PHASES) for (const kind of ERROR_KINDS) assert.deepEqual(failureRecord(phase, kind), { schema: 1, phase, errorKind: kind })
