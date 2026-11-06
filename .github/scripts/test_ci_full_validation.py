@@ -24,6 +24,23 @@ def run(identifier=10, start='2026-01-01T00:00:00Z', event='workflow_dispatch', 
 
 
 class FullProofTests(unittest.TestCase):
+    def test_shared_regressions_are_required_and_their_execution_is_source_bound(self):
+        self.assertEqual(self.required['policy-regressions'], ('Run shared CI policy and source regressions',))
+        original = self.sources[full.WORKFLOW]
+        for old, new in ((b'  policy-regressions:\n', b'  ignored-regressions:\n'),
+                         (b'ci-regressions.py common --plan', b'ci-regressions.py native --plan'),
+                         (b'ci-regressions.py native --plan', b'ci-regressions.py common --plan'),
+                         (b'node-version: \'24.19.0\'', b'node-version: \'24\''),
+                         (b'needs: [impact, documents, policy-regressions, native',
+                          b'needs: [impact, documents, native')):
+            self.sources[full.WORKFLOW] = original.replace(old, new, 1)
+            with self.subTest(old=old), self.assertRaises(ValueError):
+                self.audit()
+        self.sources[full.WORKFLOW] = original
+        self.sources['.github/scripts/ci-regressions.py'] += b'\n# synthetic selection mutation\n'
+        with self.assertRaises(ValueError):
+            self.audit()
+
     def setUp(self):
         self.runs = [run()]
         self.previous = {}
@@ -345,7 +362,7 @@ class FullProofTests(unittest.TestCase):
         self.assertLess(upload, remaining)
         self.assertLess(remaining, activation)
         self.assertTrue(workflow[:execution].endswith(
-            b"          python -m unittest discover -s .github/scripts -p 'test_*.py' -v\n"))
+            b'          python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"\n'))
         self.assertEqual(workflow.count(b'-- python -B .github/scripts/ci-dnssd-required.py\n'), 1)
 
     def test_macos_nearby_early_receipt_cannot_mask_later_activation_failure(self):
@@ -394,7 +411,7 @@ class FullProofTests(unittest.TestCase):
                          (b'          go run ./cmd/prepare-engine\n', b''),
                          (b'          go run ./cmd/prepare-engine --verify\n', b''),
                          (b'          go mod verify\n', b'          go mod verify || true\n'),
-                         (b"-p 'test_*.py'", b"-p 'test_ci_coverage.py'")):
+                         (b'ci-regressions.py native --plan', b'ci-regressions.py common --plan')):
             self.assertIn(old, block)
             changed = original[:start] + block.replace(old, new, 1) + original[end:]
             with self.subTest(change=old), self.assertRaises(ValueError):

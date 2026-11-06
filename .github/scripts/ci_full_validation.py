@@ -15,7 +15,7 @@ WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb
 # Admit only the reviewed read-only cache prelude before CI's first workload.
 # This binds its action pins, paths, trust scopes, keys, and event predicates.
 CI_NATIVE_CACHE_PRELUDE_SHA256 = 'bb94e3f3a0c80c0ae92b64c0e8e1dfa8b081462a8ff254bcd2b7a109e31f2eea'
-SOURCES = (WORKFLOW, WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
+SOURCES = (WORKFLOW, '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
            '.github/scripts/ci-nearby-screenshots.py',
@@ -792,7 +792,7 @@ def validate_macos_nearby_workflow(workflow_bytes):
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           go mod verify
-          python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+          python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
 """
     expected = """      - name: Verify macOS five-scope discovery without skips
         if: matrix.goos == 'darwin'
@@ -955,8 +955,29 @@ def validate_native_packages_workflow(sources):
                 'native package runner escaped its exact steps')
 
 
+def validate_regression_workflow(sources):
+    """Portable regressions must finish in addition to every native lane."""
+    require(digest(sources['.github/scripts/ci-regressions.py']) == '851d7a3604943dd0e589e24593a6805d1da04ac58860c9877fa72f4182fbfd10',
+            'regression selector differs from reviewed policy')
+    workflow = sources[WORKFLOW].decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
+    selected = [offset for offset, key in jobs if key == 'policy-regressions']
+    require(len(selected) == 1, 'missing or duplicate shared regression job')
+    start = selected[0]
+    end = next((offset for offset, _ in jobs if offset > start), len(workflow))
+    require(digest(workflow[start:end].encode('utf-8')) == 'ebbfd1545f49814702136f1cc8db2ae1d6c44712b4542f106c2014db752bb956',
+            'shared regression execution differs from reviewed policy')
+    require(workflow.count('python -B .github/scripts/ci-regressions.py common --plan') == 1
+            and workflow.count('python -B .github/scripts/ci-regressions.py native --plan') == 1,
+            'regression execution escaped its required steps')
+    require(workflow.count('needs: [impact, documents, policy-regressions, native, browser, go-unit, manifest-smoke]') == 1,
+            'aggregate must wait for shared regressions')
+
+
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
+    validate_regression_workflow(sources)
     validate_native_packages_workflow(sources)
     validate_native_companion_workflow(sources[WORKFLOW])
     validate_native_companion_workflow(sources[".github/workflows/prerelease.yml"])
@@ -972,7 +993,7 @@ def required_jobs(sources):
     validate_resource_inspection_workflow(sources[WORKFLOW])
     validate_fixture_diagnostics_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
-    names = {'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
+    names = {'REGRESSION_STEPS', 'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
              'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS', 'NATIVE_UI_STEPS'}
     values = {}
     for node in tree.body:
@@ -989,6 +1010,8 @@ def required_jobs(sources):
     for value in values.values():
         require(isinstance(value, tuple) and value and all(isinstance(v, str) and v for v in value)
                 and len(set(value)) == len(value), 'invalid required-step policy')
+    require(values['REGRESSION_STEPS'] == ('Run shared CI policy and source regressions',),
+            'unexpected shared regression policy')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
     require(values['BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,
             'missing fixture diagnostic required gate')
@@ -1035,6 +1058,7 @@ def required_jobs(sources):
     result[TARGETS['windows-amd64'][0]] += ('Verify Windows receive-retirement directory barriers',)
     result.update({
         'impact': ('Select minimum CI scope',),
+        'policy-regressions': values['REGRESSION_STEPS'],
         'browser': values['BROWSER_STEPS'],
         'manifest-smoke': ('Exercise signing and verification offline with a disposable test key',),
         'ci-required': ('Require every check selected for this change',),
