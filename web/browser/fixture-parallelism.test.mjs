@@ -38,6 +38,49 @@ test('audited files use at most two workers while every unlisted spec stays seri
   }
 })
 
+// Native acceptance imports shared browser defaults but must never inherit the
+// ordinary fixture projects. Inspect the real pinned runner's resolved suite;
+// discovery starts no browser, child Core or private native session.
+for (const [name, configFile, acceptanceFile, mode] of [
+  ['catalog', 'catalog', 'catalog-view', {}],
+  ['transfer', 'transfer', 'transfer-group', {}],
+  ['dispatch', 'transfer', 'transfer-dispatch', { SOBA_TRANSFER_BROWSER_DISPATCH: '1' }],
+  ['outbox', 'transfer', 'outbox', { SOBA_TRANSFER_BROWSER_OUTBOX: '1' }],
+  ['nearby', 'nearby', 'nearby-setup', {}],
+  ['text', 'text', 'text-outbox', {}],
+]) test(`${name} native discovery contains only its exact acceptance case`, { timeout: 30_000 }, async () => {
+  const output = await mkdtemp(join(tmpdir(), 'soba-native-discovery-'))
+  try {
+    const result = spawnSync(process.execPath, [
+      fileURLToPath(import.meta.resolve('@playwright/test/cli')), 'test',
+      '--config', fileURLToPath(new URL(`../playwright.${configFile}-native.config.mjs`, import.meta.url)),
+      '--list', '--reporter=json', '--output', output,
+    ], {
+      env: { ...process.env, SOBA_TRANSFER_BROWSER_OUTBOX: '0', SOBA_TRANSFER_BROWSER_DISPATCH: '0', ...mode },
+      encoding: 'utf8', timeout: 25_000,
+    })
+    assert.equal(result.error, undefined)
+    assert.equal(result.status, 0, 'Native acceptance discovery must succeed without a session')
+    const report = JSON.parse(result.stdout)
+    assert.deepEqual(report.errors, [])
+    assert.equal(report.config.workers, 1)
+    assert.equal(report.config.projects.length, 1)
+    const [project] = report.config.projects
+    assert.equal(project.name, '')
+    assert.equal(project.retries, 0)
+    assert.deepEqual(project.testMatch, [`**/${acceptanceFile}-native.acceptance.mjs`])
+    const cases = []
+    const visit = suite => {
+      for (const spec of suite.specs || []) for (const test of spec.tests) cases.push({ file: spec.file, project: test.projectName })
+      for (const child of suite.suites || []) visit(child)
+    }
+    for (const suite of report.suites) visit(suite)
+    assert.deepEqual(cases, [{ file: `${acceptanceFile}-native.acceptance.mjs`, project: '' }])
+  } finally {
+    await rm(output, { recursive: true, force: true })
+  }
+})
+
 test('artifact ownership survives duplicate labels, worker reuse, retries and repeats', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'soba-artifact-ownership-'))
   const privateID = '/private/fixture/PRIVATE_SENTINEL'
