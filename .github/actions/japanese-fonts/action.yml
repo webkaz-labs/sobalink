@@ -1,0 +1,26 @@
+name: Verified Japanese fonts
+description: Cache upstream Noto Sans CJK JP Regular and Bold without the full apt CJK collection
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      id: font-cache
+      with:
+        path: ${{ runner.temp }}/soba-ci-fonts
+        key: ci-japanese-fonts-v1-${{ hashFiles('.github/fonts/noto-cjk-jp.json') }}
+    - name: Verify and install pinned Japanese fonts
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        test "$RUNNER_OS" = Linux
+        if ! command -v fc-match >/dev/null || ! command -v fc-scan >/dev/null || ! command -v fc-cache >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends fontconfig
+        fi
+        python3 -B .github/scripts/ci-fonts.py --cache-dir "$RUNNER_TEMP/soba-ci-fonts" --font-dir "$HOME/.local/share/fonts/soba-ci"
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      if: steps.font-cache.outputs.cache-hit != 'true'
+      with:
+        path: ${{ runner.temp }}/soba-ci-fonts
+        key: ci-japanese-fonts-v1-${{ hashFiles('.github/fonts/noto-cjk-jp.json') }}

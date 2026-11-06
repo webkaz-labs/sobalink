@@ -447,7 +447,7 @@ class ActualCoverageTests(unittest.TestCase):
         for name in coverage.DOCUMENT_STEPS:
             self.assertIn("name: " + name, documents)
         self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
-        self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 2)
+        self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 3)
         self.assertIn('npm ci --prefix "$DOCS_RENDER_ROOT"', documents)
         # runner context is unavailable in jobs.<id>.env; resolve it only in steps.
         self.assertNotIn("runner.", documents.split("    steps:", 1)[0])

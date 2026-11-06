@@ -62,11 +62,15 @@ jobs:
           cache-dependency-path: |
             go.sum
             poc/native/go.sum
+      - name: Prepare verified Japanese fonts
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        uses: ./.github/actions/japanese-fonts
       - name: Install companion headless renderer dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libgtk-3-0 libgl1 fonts-noto-core fonts-noto-cjk
+          sudo apt-get install --no-install-recommends -y libgtk-3-0 libgl1
       - name: Check companion toolchain and prepare verified engine
         run: |
           set -euo pipefail
