@@ -24,7 +24,7 @@ func (a *app) devicesView(c *ui.Context) {
 		ui.TextInput(c, &a.query).Placeholder(a.t("Filter devices", "端末を絞り込む")).Label(a.t("Device filter", "端末を絞り込む")).FillWidth()
 		a.deviceList(c, a.filteredPeers())
 		if a.selected != "" {
-			if ui.Button(c, a.t("Open messages / files", "メッセージ・ファイルを開く")).Clicked() {
+			if nativeIconButton(c, "message", a.t("Open messages / files", "メッセージ・ファイルを開く")).Clicked() {
 				a.openConversation()
 			}
 		}
@@ -32,7 +32,13 @@ func (a *app) devicesView(c *ui.Context) {
 	})
 }
 func (a *app) devicesHeader(c *ui.Context) {
-	nativeHeader(c, "soba", nativeStyles(c).title, nil, func() {
+	style := nativeStyles(c)
+	nativeHeader(c, "", style.title, func() {
+		ui.Row(c).Gap(style.controlGap).Children(func() {
+			ui.Icon(c, brandMark).Size(style.title, style.title).TextColor(style.brand)
+			ui.RichText(c, ui.Span{Text: "sobalink"}, ui.Span{Text: ".", Color: style.brand}).FontSize(style.title * .8).Bold()
+		})
+	}, func() {
 		if ui.Button(c, a.t("日本語", "English")).Clicked() {
 			a.toggleLocale()
 		}
@@ -43,7 +49,7 @@ func (a *app) networkCard(c *ui.Context, v networkPresentation) {
 	ui.Column(c).FillWidth().Padding(style.cardPadding).Gap(theme.Space(1.25)).Background(style.status).Radius(style.cardRadius).Children(func() {
 		ui.Row(c).FillWidth().Gap(style.controlGap).Children(func() {
 			ui.Text(c, v.status).Bold().Grow(1)
-			if !a.demo && ui.Button(c, v.refresh).Disabled(a.busy).Clicked() {
+			if !a.demo && nativeIconButton(c, "refresh", v.refresh).Disabled(a.busy).Clicked() {
 				a.refresh(c.Services().Invalidate)
 			}
 		})
@@ -72,7 +78,7 @@ func (a *app) deviceList(c *ui.Context, peers []peer) {
 }
 func (a *app) deviceRow(c *ui.Context, v devicePresentation) {
 	theme, style := c.Theme(), nativeStyles(c)
-	row := ui.ButtonBase(c.Key(v.peer.ID)).FillWidth().Padding(style.rowPadding).Background(theme.Surface).Border(style.rowBorder, theme.Border).Radius(style.cardRadius).Cursor(ui.CursorPointer).Role(ui.RoleButton).Label(v.peer.Name).Description(v.description).Expanded(v.expanded)
+	row := ui.ButtonBase(c.Key(v.peer.ID)).FillWidth().Padding(style.rowPadding).Background(theme.Surface).Border(style.rowBorder, style.border).Radius(style.cardRadius).Cursor(ui.CursorPointer).Role(ui.RoleButton).Label(v.peer.Name).Description(v.description).Expanded(v.expanded)
 	if row.Hovered() {
 		row.Background(theme.SurfaceHover)
 	}
@@ -102,7 +108,10 @@ func (a *app) deviceSummary(c *ui.Context, v devicePresentation) {
 			ui.Text(c, v.peer.Name).FontSize(style.device).Bold()
 			ui.Text(c, v.state).FontSize(style.body).TextColor(stateColor)
 		})
-		ui.Text(c, v.chevron).FontSize(style.chevron).TextColor(theme.TextMuted).Role(ui.RoleNone)
+		chevron := ui.Icon(c, actionIcons["chevron"]).FontSize(style.chevron).TextColor(theme.TextMuted)
+		if v.expanded {
+			chevron.Rotate(90)
+		}
 	})
 }
 func (a *app) deviceDetails(c *ui.Context, v devicePresentation) {

@@ -65,9 +65,9 @@ func (a *app) networkPresentation() networkPresentation {
 }
 
 type devicePresentation struct {
-	peer                               peer
-	description, state, trust, chevron string
-	expanded                           bool
+	peer                      peer
+	description, state, trust string
+	expanded                  bool
 }
 
 func (a *app) devicePresentation(p peer) devicePresentation {
@@ -82,10 +82,7 @@ func (a *app) devicePresentation(p peer) devicePresentation {
 	case "relay":
 		route = a.t("Relay", "中継")
 	}
-	v := devicePresentation{peer: p, description: a.peerDescription(p), state: online + " · " + route, expanded: a.selected == p.ID, chevron: "›", trust: a.t("Messages/files: not trusted", "メッセージ・ファイル: 未許可")}
-	if v.expanded {
-		v.chevron = "⌄"
-	}
+	v := devicePresentation{peer: p, description: a.peerDescription(p), state: online + " · " + route, expanded: a.selected == p.ID, trust: a.t("Messages/files: not trusted", "メッセージ・ファイル: 未許可")}
 	if p.Trusted {
 		v.trust = a.t("Messages/files: trusted", "メッセージ・ファイル: 許可済み")
 	}

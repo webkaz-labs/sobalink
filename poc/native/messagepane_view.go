@@ -43,8 +43,12 @@ func (p *messagePane) historyView(c *ui.Context, ja bool, v messagePresentation)
 }
 func messageRow(c *ui.Context, ja bool, m exchangeMessage) {
 	theme, style := c.Theme(), nativeStyles(c)
-	ui.Column(c.Key(m.Direction + ":" + m.ID)).FillWidth().Padding(theme.Space(2)).Gap(theme.Space(.75)).Background(style.history).Radius(style.historyRadius).Children(func() {
-		ui.Text(c, messageAuthor(m, ja)+" · "+exchangeStatus(m.Status, ja)).FontSize(style.metadata)
+	background := style.history
+	if m.Direction == "outgoing" {
+		background = style.outgoing
+	}
+	ui.Column(c.Key(m.Direction + ":" + m.ID)).FillWidth().Padding(theme.Space(2)).Gap(theme.Space(.75)).Background(background).Radius(style.historyRadius).Children(func() {
+		ui.Text(c, messageAuthor(m, ja)+" · "+exchangeStatus(m.Status, ja)).FontSize(style.metadata).TextColor(nativeStatusColor(c, m.Status))
 		ui.Text(c, m.Text).FillWidth().FontSize(style.body)
 	})
 }
@@ -62,8 +66,8 @@ func (p *messagePane) reviewView(c *ui.Context, ja, allowed bool, peerID string,
 	ui.Text(c, t("To: ", "送信先: ")+r.peerName).FontSize(style.caption)
 	ui.Text(c, r.peerID).FontSize(style.metadata).FillWidth()
 	ui.Text(c, r.text).FillWidth().FontSize(style.body)
-	ui.Row(c).Gap(style.actionGap).Children(func() {
-		if ui.Button(c, t("Confirm message send", "メッセージ送信を確定")).Disabled(!allowed || !p.canSend(peerID)).Clicked() {
+	ui.Row(c).FillWidth().Wrap().Gap(style.actionGap).Children(func() {
+		if nativePrimaryButton(c, "send", t("Confirm message send", "メッセージ送信を確定")).Disabled(!allowed || !p.canSend(peerID)).Clicked() {
 			confirm()
 		}
 		if ui.Button(c, t("Edit draft", "下書きに戻る")).Disabled(!p.canEdit()).Clicked() {
@@ -77,6 +81,6 @@ func (p *messagePane) statusView(c *ui.Context, ja bool) {
 		ui.Text(c, t("Submitting…", "送信要求中…")).FontSize(style.caption)
 	}
 	if notice := p.noticeText(ja); notice != "" {
-		ui.Text(c, notice).FillWidth().FontSize(style.caption)
+		ui.Text(c, notice).FillWidth().FontSize(style.caption).TextColor(nativeStatusColor(c, p.notice))
 	}
 }

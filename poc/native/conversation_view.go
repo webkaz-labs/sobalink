@@ -18,11 +18,11 @@ func (a *app) exchangeView(c *ui.Context) {
 }
 func (a *app) conversationHeader(c *ui.Context, v conversationPresentation) {
 	nativeHeader(c, v.name, c.Theme().FontSize, func() {
-		if ui.Button(c, a.t("Back", "戻る")).Clicked() {
+		if nativeIconButton(c, "back", a.t("Back", "戻る")).Clicked() {
 			a.closeConversation()
 		}
 	}, func() {
-		if !a.demo && ui.Button(c, a.t("Refresh", "更新")).Disabled(a.busy).Clicked() {
+		if !a.demo && nativeIconButton(c, "refresh", a.t("Refresh", "更新")).Disabled(a.busy).Clicked() {
 			a.refresh(c.Services().Invalidate)
 		}
 	})

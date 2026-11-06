@@ -37,7 +37,7 @@ func TestNativeScreensAppearance(t *testing.T) {
 						for i := 0; i < 3; i++ {
 							tt.Frame()
 						}
-						labels := []string{"soba", a.t("Device filter", "端末を絞り込む"), a.t("About", "この試作について")}
+						labels := []string{"sobalink.", a.t("Device filter", "端末を絞り込む"), a.t("About", "この試作について")}
 						if pane != "devices" {
 							labels = []string{"Demo laptop", a.t("Back", "戻る"), a.t("Messages", "メッセージ"), a.t("Files", "ファイル")}
 						}
@@ -73,27 +73,40 @@ func assertNativeControlVisible(t *testing.T, tt *ui.Tester, label string, width
 	}
 }
 func TestMessageReviewLargeTextReachability(t *testing.T) {
-	for _, ja := range []bool{false, true} {
-		a := demoApp()
-		a.ja, a.conversation = ja, "demo-alpha"
-		tt := ui.NewTester(a.view, 360, 560)
-		tt.SetPreferences(ui.Preferences{TextScale: 1.5})
-		p := a.messages[a.conversation]
-		p.draft = "Fictional review text"
-		tt.Frame()
-		tt.Scroll(180, 320, 0, 2000)
-		assertNativeControlVisible(t, tt, a.t("Review message", "送信内容を確認"), 360, 560)
-		if err := tt.Click(a.t("Review message", "送信内容を確認")); err != nil {
-			t.Fatal(err)
-		}
-		tt.Scroll(180, 320, 0, 2000)
-		assertNativeControlVisible(t, tt, a.t("Confirm message send", "メッセージ送信を確定"), 360, 560)
-		assertNativeControlVisible(t, tt, a.t("Edit draft", "下書きに戻る"), 360, 560)
-		if err := tt.Click(a.t("Edit draft", "下書きに戻る")); err != nil {
-			t.Fatal(err)
-		}
-		if p.review != nil || p.draft != "Fictional review text" {
-			t.Fatal("enlarged review cannot return to draft")
+	for _, scale := range []float32{1.5, 2} {
+		for _, ja := range []bool{false, true} {
+			a := demoApp()
+			a.ja, a.conversation = ja, "demo-alpha"
+			tt := ui.NewTester(a.view, 360, 560)
+			tt.SetPreferences(ui.Preferences{TextScale: scale})
+			p := a.messages[a.conversation]
+			p.draft = "Fictional review text"
+			tt.Frame()
+			tt.Scroll(180, 320, 0, 2000)
+			assertNativeControlVisible(t, tt, a.t("Review message", "送信内容を確認"), 360, 560)
+			if err := tt.Click(a.t("Review message", "送信内容を確認")); err != nil {
+				t.Fatal(err)
+			}
+			tt.Scroll(180, 320, 0, 2000)
+			assertNativeControlVisible(t, tt, a.t("Confirm message send", "メッセージ送信を確定"), 360, 560)
+			assertNativeControlVisible(t, tt, a.t("Edit draft", "下書きに戻る"), 360, 560)
+			if out := os.Getenv("SOBA_POC_THEME_OUTPUT"); out != "" {
+				f, err := os.Create(filepath.Join(out, fmt.Sprintf("message-review-scale-%.1f-ja-%t.png", scale, ja)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = png.Encode(f, tt.Image())
+				f.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tt.Click(a.t("Edit draft", "下書きに戻る")); err != nil {
+				t.Fatal(err)
+			}
+			if p.review != nil || p.draft != "Fictional review text" {
+				t.Fatal("enlarged review cannot return to draft")
+			}
 		}
 	}
 }

@@ -79,6 +79,34 @@ func TestNativeUIInputAdmission(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeUIIncludesSharedEmbeddedArtwork(t *testing.T) {
+	root, destination := t.TempDir(), t.TempDir()
+	for _, name := range []string{"go.mod", "go.sum", "LICENSE", "poc/native/go.mod", "poc/native/go.sum", "internal/uibrand/brand.go", "internal/uibrand/palette.json", "internal/uibrand/icons.json", "internal/uibrand/mark.svg"} {
+		writeFixture(t, filepath.Join(root, filepath.FromSlash(name)), "fictional source "+name)
+	}
+	packages := []goPackage{{ImportPath: Project + "/internal/uibrand", Dir: filepath.Join(root, "internal", "uibrand"), GoFiles: []string{"brand.go"}, EmbedFiles: []string{"palette.json", "icons.json", "mark.svg"}, Module: &goModule{Path: Project, Dir: root, Main: true}}}
+	inputs, err := nativeUISourceInputs(root, packages, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"palette.json", "icons.json", "mark.svg"} {
+		path := "internal/uibrand/" + name
+		found := false
+		for _, input := range inputs {
+			if input.Path == path {
+				got, err := fileHash(filepath.Join(destination, filepath.FromSlash(path)))
+				if err != nil || got != input.SHA256 {
+					t.Fatal("shared artwork missing from retained source")
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("shared artwork omitted from input identity")
+		}
+	}
+}
 func TestNativeUIRequiresExplicitCompiler(t *testing.T) {
 	t.Setenv("SOBALINK_NATIVE_GO", "")
 	tool, err := New(t.TempDir())

@@ -48,7 +48,7 @@ func TestNativeFrameNavigationRetainsReview(t *testing.T) {
 				for range 2 {
 					click(a.t("Files", "ファイル"))
 					click(a.t("Back", "戻る"))
-					if a.conversation != "" || !tt.HasText("soba") {
+					if a.conversation != "" || !tt.HasText("sobalink.") {
 						t.Fatal("conversation header did not return to devices")
 					}
 					click(a.t("Open messages / files", "メッセージ・ファイルを開く"))
@@ -102,7 +102,7 @@ func TestNativeShellFrameAppearance(t *testing.T) {
 						tt := ui.NewTester(nativeTestFrame(a, mode), 460, 640)
 						tt.SetDark(dark)
 						tt.SetPreferences(ui.Preferences{TextScale: 1.5})
-						labels := []string{"soba", a.t("日本語", "English")}
+						labels := []string{"sobalink.", a.t("日本語", "English")}
 						if pane != "devices" {
 							labels = []string{"Demo laptop", a.t("Back", "戻る"), a.t("Messages", "メッセージ"), a.t("Files", "ファイル")}
 						}
