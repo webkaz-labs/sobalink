@@ -138,8 +138,8 @@ TCPとUDPに同じ接続先が必要な試験用環境は、正確なループ�
 ## 全件専用のnative remote resource inspection
 
 `Verify native remote resource inspection` は、通常の直接通信を有効にした構成の復旧試験後、
-実時間3工程の並列区間より前に置く1つの直列ステップです。同じ全件条件を使いますが、
-`LONG_STEPS` には追加しません。判定対象リスト、3工程のbackground区間、必須wait、
+実時間3工程がbackgroundで動く間に実行する直列ステップです。同じ全件条件を使いますが、
+`LONG_STEPS` には追加しません。判定対象リスト、backgroundの3工程、必須wait、
 Node 24の固定、`setup-go` の `cache: false` 方針は変更しません。
 
 正確なGo `go1.27.1` と対象構成の GOOS/GOARCHを確認した後、`ci-go-test.py --exact` を
@@ -166,7 +166,7 @@ OSの安全性・経路・ファイアウォール方針は変更しません。
 `Verify native remote resource management` はinspectionの直後に置き、正確な3件、
 確認済みの6つのビルドタグ、race検出、既定のvet、8分の試験上限、子プロセスだけの
 管理・有効化試験の実行指定を維持します。`Verify native fixed-group resource catalog`
-は、その直後かつ既存の3工程並列区間の前に、FULL専用の直列ステップを1つだけ追加します。
+は、その直後かつbackgroundの3工程を待つ必須waitの前に置くFULL専用の直列ステップです。
 `FULL_ONLY_STEPS` はinspection・management・fixed-group catalogの順で正確に3工程です。
 `LONG_STEPS` やnative-shortの実行対象には追加しません。
 
@@ -204,9 +204,11 @@ race オプション、native-short のスキップ条件は変えず、ネイ�
 完全CI・夜間CIの証跡には wait と各検証の成功が必要です。失敗・キャンセル・
 スキップ・欠落を完全実行の成功として扱いません。
 
-重ねるのは待ち時間の長い3組だけです。同じタグ付きパッケージをビルドする
-直列のネイティブ検証後に開始しますが、キャッシュが削除されれば追加ビルドは
-必要です。パッケージ作成、アップロード、キャッシュ保存、時間集計は wait 後です。
+待ち時間の長い3組を開始してから、resource inspection、management、fixed-group catalogを
+順番に実行します。resourceの3工程同士は直列のまま、backgroundの3組と重ねます。
+先行するネイティブ検証が同じタグ付きパッケージをビルドしますが、キャッシュが削除されれば
+追加ビルドは必要です。追加ランナーや重複するセットアップは増やしません。companion検査、
+パッケージ作成、アップロード、キャッシュ保存、時間集計は wait 後です。
 この区間で既存の時間計測 JSONL に書くのは natural-lifecycle だけなので、同時書き込みは
 ありません。計測を追加するときは共有追記ではなく、保存先の分離と wait 後の検証付き
 統合が必要です。

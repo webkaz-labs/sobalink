@@ -321,7 +321,7 @@ jobs:
       - name: Test and reproduce locked frontend assets
         run: |
           npm install --global npm@11.9.0 --no-audit --no-fund
-          python .github/scripts/check-frontend.py
+          python .github/scripts/check-frontend.py --native-plan "$RUNNER_TEMP/ci-impact-plan.json"
       - name: Check exact toolchain and native target
         run: |
           set -euo pipefail
@@ -628,6 +628,69 @@ jobs:
               "-timeout=5m", "./internal/routecat", "./internal/core",
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
+      # Start wait-heavy gates after their exact tagged caches are warm.
+      # Resource checks use independent peers/state and overlap these timers.
+      - name: Verify direct LAN session natural rekey and idle lifecycle
+        id: natural-lifecycle
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
+      - name: Verify guarded relay real-time lease continuity
+        id: guarded-lease
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerIntegration",
+              "--",
+              "go", "test", "-race", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
+              "-run=^TestGuardedRelayTwoPeerIntegration$", "-timeout=5m", "./internal/lanlink",
+          ], env=env, check=True, timeout=8 * 60)
+          PYTHON
+      - name: Verify relay-only real-time lease and idle continuity
+        id: relay-only-lease
+        background: true
+        if: steps.ci-plan.outputs.long_required != 'false'
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python - <<'PYTHON'
+          import os
+          import subprocess
+          import sys
+
+          env = {k: v for k, v in os.environ.items()
+                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
+                 and not k.upper().startswith("TS_")}
+          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
+          # Preserve Go package-level concurrency for the 130s lease and 80s idle gates.
+          subprocess.run([
+              sys.executable, ".github/scripts/ci-go-test.py",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
+              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
+              "--",
+              "go", "test", "-count=1", "-v",
+              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
+              "-run=^(TestTrustedRelayTwoPeerIntegration|TestMultipleRelayPresenceAndFreshClientRecovery)$",
+              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
+          ], env=env, check=True, timeout=9 * 60)
+          PYTHON
       - name: Verify native remote resource inspection
         if: steps.ci-plan.outputs.long_required != 'false'
         timeout-minutes: 12
@@ -725,69 +788,6 @@ jobs:
               "-run=^TestResourceGroupCatalogNativeFixedTwoTargetOneShot$",
               "./internal/core",
           ], env=env, check=True, timeout=6 * 60)
-          PYTHON
-      # Run only the isolated, wait-heavy gates together after serial native tests
-      # have populated their exact tagged build caches. Keep evidence names stable.
-      - name: Verify direct LAN session natural rekey and idle lifecycle
-        id: natural-lifecycle
-        background: true
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python .github/scripts/ci-metrics.py run --suite natural-lifecycle -- python .github/scripts/ci-go-test.py --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/active-through-natural-rekey --expect github.com/webkaz-labs/sobalink/internal/directlan:TestNativeSessionLifecycle/idle-through-natural-expiry-new-dial -- go test -race -count=1 -timeout=8m -tags=directlan_integration,directlan_lifecycle,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -run='^TestNativeSessionLifecycle$' ./internal/directlan
-      - name: Verify guarded relay real-time lease continuity
-        id: guarded-lease
-        background: true
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 9
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-          import sys
-
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_GUARDED_INTEGRATION"] = "1"
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestGuardedRelayTwoPeerIntegration",
-              "--",
-              "go", "test", "-race", "-count=1", "-v",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy",
-              "-run=^TestGuardedRelayTwoPeerIntegration$", "-timeout=5m", "./internal/lanlink",
-          ], env=env, check=True, timeout=8 * 60)
-          PYTHON
-      - name: Verify relay-only real-time lease and idle continuity
-        id: relay-only-lease
-        background: true
-        if: steps.ci-plan.outputs.long_required != 'false'
-        timeout-minutes: 10
-        run: |
-          set -euo pipefail
-          python - <<'PYTHON'
-          import os
-          import subprocess
-          import sys
-
-          env = {k: v for k, v in os.environ.items()
-                 if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "TS_PROXY")
-                 and not k.upper().startswith("TS_")}
-          env["SOBALINK_RUN_LAN_INTEGRATION"] = "1"
-          # Preserve Go package-level concurrency for the 130s lease and 80s idle gates.
-          subprocess.run([
-              sys.executable, ".github/scripts/ci-go-test.py",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/lanlink:TestTrustedRelayTwoPeerIntegration",
-              "--expect", "github.com/webkaz-labs/sobalink/internal/routecat:TestMultipleRelayPresenceAndFreshClientRecovery",
-              "--",
-              "go", "test", "-count=1", "-v",
-              "-tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport",
-              "-run=^(TestTrustedRelayTwoPeerIntegration|TestMultipleRelayPresenceAndFreshClientRecovery)$",
-              "-timeout=5m", "./internal/lanlink", "./internal/routecat",
-          ], env=env, check=True, timeout=9 * 60)
           PYTHON
       - name: Wait for real-time lifecycle and lease checks
         wait: [natural-lifecycle, guarded-lease, relay-only-lease]

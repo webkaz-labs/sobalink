@@ -201,6 +201,15 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn('assert first == inventory()', frontend)
         self.assertIn('assert first == checked_in', frontend)
 
+    def test_only_ci_native_can_select_repeated_frontend_tests(self):
+        selected = 'python .github/scripts/check-frontend.py --native-plan "$RUNNER_TEMP/ci-impact-plan.json"'
+        self.assertIn(selected, self.job('ci', 'native'))
+        self.assertEqual(self.workflow('ci').count('--native-plan'), 1)
+        for workflow, job in (('ci', 'browser'), ('prerelease', 'native')):
+            source = self.job(workflow, job)
+            self.assertIn('python .github/scripts/check-frontend.py\n', source)
+            self.assertNotIn('--native-plan', source)
+
     def test_reviewed_engine_preparation_and_guarded_gates_are_required(self):
         for workflow, jobs in (("ci", ("native", "manifest-smoke", "browser")), ("prerelease", ("native", "provenance"))):
             for job in jobs:

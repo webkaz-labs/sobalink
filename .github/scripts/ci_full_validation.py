@@ -15,7 +15,7 @@ WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb
 # Admit only the reviewed read-only cache prelude before CI's first workload.
 # This binds its action pins, paths, trust scopes, keys, and event predicates.
 CI_NATIVE_CACHE_PRELUDE_SHA256 = 'bb94e3f3a0c80c0ae92b64c0e8e1dfa8b081462a8ff254bcd2b7a109e31f2eea'
-SOURCES = (WORKFLOW, '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
+SOURCES = (WORKFLOW, '.github/scripts/test_check_frontend.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
            '.github/scripts/ci-nearby-screenshots.py',
@@ -304,7 +304,13 @@ def validate_parallel_workflow(data):
     end = workflow.index(fence)
     require(starts == sorted(starts) and starts[-1] < end, 'invalid real-time step order')
     region = workflow[starts[0]:end]
-    require(len(re.findall(r'^      - ', region, re.M)) == 3,
+    expected = tuple(name for name, _, _ in groups) + (
+        'Verify native remote resource inspection',
+        'Verify native remote resource management',
+        'Verify native fixed-group resource catalog',
+    )
+    require(tuple(re.findall(r'^      - name: ([^\n]+)$', region, re.M)) == expected
+            and len(re.findall(r'^      - ', region, re.M)) == len(expected),
             'unexpected work inside real-time parallel region')
     # Only these three steps may run asynchronously. No cancel, relaxed failure,
     # nested parallel group, or alternate join may weaken the evidence boundary.
@@ -316,8 +322,8 @@ def validate_parallel_workflow(data):
                     for pos, _, key, _ in metadata), 'real-time failures cannot be ignored')
     require(workflow.index(marker + 'Verify recovery with the ordinary direct-enabled transport\n') < starts[0],
             'real-time checks must follow serial native checks')
-    # No shared timing writer is added: only natural-lifecycle records a metric
-    # in this region, and all serial metric writers have already completed.
+    # The three resource commands do not use the shared timing writer. Only
+    # natural-lifecycle records a metric while these gates overlap.
     require(region.count('.github/scripts/ci-metrics.py run') == 1
             and region.count('--suite natural-lifecycle --') == 1,
             'parallel timing writers require isolated storage')
@@ -448,7 +454,7 @@ def validate_resource_inspection_workflow(data):
     recovery = '      - name: Verify recovery with the ordinary direct-enabled transport\n'
     parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
     require(workflow.count(recovery) == 1 and workflow.count(parallel) == 1
-            and workflow.index(recovery) < start < workflow.index(parallel)
+            and workflow.index(recovery) < workflow.index(parallel) < start
             and end == management_start, 'native inspection must immediately precede management')
     # Opt-ins belong only to this child invocation, never the workflow/job env.
     # Following management/group children have separately validated opt-ins.
@@ -507,7 +513,7 @@ def validate_resource_management_workflow(data):
     inspection = '      - name: Verify native remote resource inspection\n'
     parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
     require(workflow.count(inspection) == 1 and workflow.count(parallel) == 1
-            and workflow.index(inspection) < start < workflow.index(parallel)
+            and workflow.index(parallel) < workflow.index(inspection) < start
             and end == group_start, 'native management must immediately precede fixed-group catalog')
     # The group child removes inherited management opt-in without enabling it.
     outside = workflow[:start] + workflow[group_end:]
@@ -562,9 +568,10 @@ def validate_resource_group_catalog_workflow(data):
     require(block == expected, 'invalid native fixed-group catalog execution policy')
     management = '      - name: Verify native remote resource management\n'
     parallel = '      - name: Verify direct LAN session natural rekey and idle lifecycle\n'
-    require(workflow.count(management) == 1 and workflow.count(parallel) == 1
-            and workflow.index(management) < start < workflow.index(parallel)
-            and end == workflow.index(parallel), 'native fixed-group catalog must precede the async region')
+    fence = '      - name: Wait for real-time lifecycle and lease checks\n'
+    require(workflow.count(management) == workflow.count(parallel) == workflow.count(fence) == 1
+            and workflow.index(parallel) < workflow.index(management) < start < workflow.index(fence)
+            and end == workflow.index(fence), 'native fixed-group catalog must finish immediately before the join')
     outside = workflow[:start] + workflow[end:]
     require('SOBALINK_RUN_RESOURCE_GROUP_CATALOG_NATIVE' not in outside,
             'native fixed-group catalog opt-in escaped its step')
@@ -955,6 +962,52 @@ def validate_native_packages_workflow(sources):
                 'native package runner escaped its exact steps')
 
 
+def validate_frontend_workflow(sources):
+    """Bind selection to verified native plans; browser and release always test."""
+    require(digest(sources['.github/scripts/check-frontend.py']) == '8c5103bf39cfa701f28395bc02da2adad7c2b37a50886b40a1f3990bad228cf0',
+            'frontend checker differs from reviewed policy')
+    base = """      - name: Test and reproduce locked frontend assets
+        run: |
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          python .github/scripts/check-frontend.py"""
+    native = base + ' --native-plan "$RUNNER_TEMP/ci-impact-plan.json"\n'
+    release = base + '\n'
+    browser = """      - name: Test and reproduce locked frontend assets
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          python .github/scripts/check-frontend.py
+          git diff --exit-code -- web/dist
+"""
+    for path, expected in ((WORKFLOW, (('native', native), ('browser', browser))),
+                           ('.github/workflows/prerelease.yml', (('native', release),))):
+        workflow = sources[path].decode('utf-8')
+        jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+        require(workflow.count('python .github/scripts/check-frontend.py') == len(expected),
+                'frontend checks escaped their required steps')
+        for job, block in expected:
+            positions = [pos for pos, key in jobs if key == job]
+            require(len(positions) == 1, 'missing or duplicate frontend job')
+            start = positions[0]
+            end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+            region = workflow[start:end]
+            marker = block.splitlines(keepends=True)[0]
+            require(region.count(marker) == 1 and region.count(block) == 1,
+                    'frontend execution differs from reviewed policy')
+            require(region[region.index(block) + len(block):].startswith('      - '),
+                    'invalid frontend step boundary')
+    browser_header = """  browser:
+    # Real Go management HTTP and embedded assets; networking peers are fixtures.
+    needs: impact
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'go'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+"""
+    require(sources[WORKFLOW].decode('utf-8').count(browser_header) == 1,
+            'common frontend tests must run for every native scope')
+
+
 def validate_regression_workflow(sources):
     """Portable regressions must finish in addition to every native lane."""
     require(digest(sources['.github/scripts/ci-regressions.py']) == '851d7a3604943dd0e589e24593a6805d1da04ac58860c9877fa72f4182fbfd10',
@@ -978,6 +1031,7 @@ def validate_regression_workflow(sources):
 def required_jobs(sources):
     """Read literal required-step constants from the protected source; no exec."""
     validate_regression_workflow(sources)
+    validate_frontend_workflow(sources)
     validate_native_packages_workflow(sources)
     validate_native_companion_workflow(sources[WORKFLOW])
     validate_native_companion_workflow(sources[".github/workflows/prerelease.yml"])
@@ -1012,6 +1066,9 @@ def required_jobs(sources):
                 and len(set(value)) == len(value), 'invalid required-step policy')
     require(values['REGRESSION_STEPS'] == ('Run shared CI policy and source regressions',),
             'unexpected shared regression policy')
+    require(all(values[name].count('Test and reproduce locked frontend assets') == 1
+                for name in ('FAST_STEPS', 'BROWSER_STEPS')),
+            'native reproduction and common frontend tests are required')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
     require(values['BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,
             'missing fixture diagnostic required gate')

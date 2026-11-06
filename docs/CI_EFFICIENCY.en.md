@@ -131,9 +131,9 @@ Automated CI evidence remains separate from physical-device enrollment, network,
 ## Full-only native remote resource inspection
 
 `Verify native remote resource inspection` is one serial step after ordinary
-direct-enabled recovery and before the three asynchronous real-time gates. It
+direct-enabled recovery, while the three asynchronous real-time gates run. It
 uses the same full-tier condition, without joining or enlarging `LONG_STEPS`.
-The classifier's allowlists, three-member background region, required wait,
+The classifier's allowlists, three background gates, required wait,
 Node 24 pins and `setup-go` `cache: false` policy are unchanged.
 
 The step checks exact Go `go1.27.1` and the matrix GOOS/GOARCH before one
@@ -166,8 +166,8 @@ specific native claims; distribution and installed-binary gates remain separate.
 reviewed build tags, race detector, default vet, eight-minute test budget and
 child-only management/activation opt-ins. It immediately follows inspection.
 `Verify native fixed-group resource catalog` adds exactly one serial FULL-only
-step immediately after management and before the unchanged three-step parallel
-region. `FULL_ONLY_STEPS` contains exactly inspection, management and fixed-group
+step immediately after management and before the required join of the three
+background gates. `FULL_ONLY_STEPS` contains exactly inspection, management and fixed-group
 catalog in that order; none is added to `LONG_STEPS` or native-short execution.
 
 The new step checks exact Go `go1.27.1` and matrix GOOS/GOARCH, then invokes
@@ -209,10 +209,12 @@ native-short skip rules are unchanged. The four native targets remain required.
 The wait and each individual gate must succeed for full-CI or nightly evidence;
 failed, cancelled, skipped or missing gates never receive full-coverage credit.
 
-Only these wait-heavy groups overlap. They start after the serial native tests
-have built the same tagged package variants; build caches may still need work
-if entries are evicted. Package creation, uploads, cache saves and timing summaries
-follow the wait. Only natural-lifecycle writes the existing timing JSONL in this
+The three wait-heavy groups start before resource inspection, management and
+fixed-group catalog. Those resource gates remain serial with each other and
+overlap the three background gates. Earlier native tests have built the same
+tagged package variants; build caches may still need work if entries are evicted.
+No extra runner or duplicate setup is added. Companion checks, package creation,
+uploads, cache saves and timing summaries follow the wait. Only natural-lifecycle writes the existing timing JSONL in this
 region, so there are no concurrent timing writers. Adding another requires
 separate storage and a validated post-wait merge, rather than shared appends.
 

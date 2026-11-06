@@ -39,3 +39,24 @@ Further reductions should distinguish source-contract checks from helper-only
 fixtures and retain a full fallback for newly added or unclassified tests.
 Changing the test implementation language alone does not remove subprocess,
 Git history, repeated build or intentional real-time protocol work.
+
+## Frontend test repetition
+
+For ordinary product source changes selecting `native-short` or `full`, the
+required browser job runs the portable Vitest suite once. Native lanes omit
+only that repeated `npm run test` call. Scoped-Go changes keep their narrower
+Go-only checks.
+Every native target still runs two clean, locked dependency installations and
+frontend builds, compares their bytes with each other and the checked-in assets,
+and checks that the lockfile did not change. Browser acceptance remains required.
+
+CI/toolchain/dependency edits, nightly or forced full validation, and unknown or
+unverifiable changes also run Vitest on every native target. Browser, release
+and local calls without a native plan always run the full frontend suite. Both
+the same-source browser job and its frontend step must pass for full proof; a
+missing, skipped or failed job cannot be replaced by the native build results.
+
+Residual risk: OS-specific behavior in a portable unit test may be found later
+by the nightly matrix rather than an ordinary product PR. Cross-platform locked
+builds and the independent native and release gates remain in place. No test
+case, assertion or production timer is removed.
