@@ -289,6 +289,26 @@ NATIVE_COMPANION_STEP = '      - name: Test experimental native companion\n     
 
 # Bind the eight reviewed rows, unchanged unit producer names, target runners,
 # scope predicate, fail-fast:false and job defaults. A new target/lane is reviewable.
+CI_NATIVE_PREPARATION = """      - name: Check exact toolchain and native target
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.1
+          test "$(go env GOOS)" = '${{ matrix.goos }}'
+          test "$(go env GOARCH)" = '${{ matrix.goarch }}'
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          if [[ '${{ matrix.suite }}' == 'integration' ]]; then
+            # Offline acceptance must not depend on an earlier unit lane.
+            # Fetch the root module's pinned requirements, not broad tool graphs.
+            go mod download
+            git diff --exit-code -- go.mod go.sum
+          fi
+          go mod verify
+          if [[ '${{ matrix.suite }}' == 'unit' ]]; then
+            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
+          fi
+"""
+
 CI_NATIVE_MATRIX_HEADER_SHA256 = '266c44fe500fa47942dd58733089ede7c625cc5870755a42056dbbe51dd0f1c7'
 NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7': '',
  "Download this run's impact plan": "needs.impact.result == 'success'",
@@ -393,6 +413,7 @@ def validate_native_matrix_workflow(data):
         if name != "Download this run's impact plan":
             require(not re.search(r'^        continue-on-error:', block, re.M), 'native matrix failure cannot be ignored')
     require(seen == set(NATIVE_MATRIX_CONDITIONS), 'native matrix step inventory differs')
+    require(region.count(CI_NATIVE_PREPARATION) == 1, 'native lane dependency preparation differs')
     require(region.count('name: native-timings-${{ matrix.suite }}-${{ matrix.goos }}-${{ matrix.goarch }}') == 1,
             'native matrix timing artifacts must be isolated')
     require(region.count('name: package-${{ matrix.goos }}-${{ matrix.goarch }}') == 1,
@@ -1018,19 +1039,7 @@ def validate_macos_nearby_workflow(workflow_bytes):
     """One required five-scope Terminal run and its mandatory closed artifact."""
     workflow = workflow_bytes.decode('utf-8')
     metadata = workflow_metadata(workflow)
-    preparation = """      - name: Check exact toolchain and native target
-        run: |
-          set -euo pipefail
-          test "$(go env GOVERSION)" = go1.27.1
-          test "$(go env GOOS)" = '${{ matrix.goos }}'
-          test "$(go env GOARCH)" = '${{ matrix.goarch }}'
-          go run ./cmd/prepare-engine
-          go run ./cmd/prepare-engine --verify
-          go mod verify
-          if [[ '${{ matrix.suite }}' == 'unit' ]]; then
-            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
-          fi
-"""
+    preparation = CI_NATIVE_PREPARATION
     expected = """      - name: Verify macOS five-scope discovery without skips
         if: matrix.goos == 'darwin'
         timeout-minutes: 10

@@ -389,6 +389,12 @@ jobs:
           test "$(go env GOARCH)" = '${{ matrix.goarch }}'
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
+          if [[ '${{ matrix.suite }}' == 'integration' ]]; then
+            # Offline acceptance must not depend on an earlier unit lane.
+            # Fetch the root module's pinned requirements, not broad tool graphs.
+            go mod download
+            git diff --exit-code -- go.mod go.sum
+          fi
           go mod verify
           if [[ '${{ matrix.suite }}' == 'unit' ]]; then
             python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"

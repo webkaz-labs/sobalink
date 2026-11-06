@@ -1494,6 +1494,7 @@ class NativeMatrixPolicyTests(unittest.TestCase):
             ("name: Save development Go caches after integration checks pass\n        if: matrix.suite == 'integration' && (",
              'name: Save development Go caches after integration checks pass\n        if: ('),
             ("if [[ '${{ matrix.suite }}' == 'unit' ]]; then", 'if true; then'),
+            ('            go mod download\n', '            go mod download all\n'),
         )
         for before, after in mutations:
             self.assertIn(before, source)
