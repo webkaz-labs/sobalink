@@ -28,6 +28,7 @@ def job(name, steps=(), conclusion="success"):
 def jobs(scope="full"):
     result = [job("impact", (coverage.SCOPE_STEP,)), job("documents", coverage.DOCUMENT_STEPS)]
     if scope in ("native-short", "full"):
+        result.append(job("policy-regressions", coverage.REGRESSION_STEPS))
         for target, name in coverage.TARGETS.items():
             steps = coverage.FAST_STEPS + coverage.LONG_STEPS + coverage.FULL_ONLY_STEPS
             if target in coverage.LINUX_NEARBY_TARGETS:
@@ -45,7 +46,8 @@ def jobs(scope="full"):
                         item["conclusion"] = "skipped"
         result.append(job("manifest-smoke", ("Exercise signing and verification offline with a disposable test key",)))
     else:
-        result.extend([job("native", conclusion="skipped"), job("manifest-smoke", conclusion="skipped")])
+        result.extend([job("native", conclusion="skipped"), job("manifest-smoke", conclusion="skipped"),
+                       job("policy-regressions", conclusion="skipped")])
     result.append(job("browser", coverage.BROWSER_STEPS) if scope in ("full", "native-short", "frontend")
                   else job("browser", conclusion="skipped"))
     result.append(job("go-unit", coverage.GO_STEPS) if scope == "go"
@@ -60,6 +62,26 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def test_shared_regressions_must_actually_pass_for_each_native_scope(self):
+        for scope in ('full', 'native-short'):
+            for mode in ('missing-job', 'missing-step', 'duplicate-step', 'failure', 'cancelled', 'skipped', 'pending'):
+                data = jobs(scope)
+                selected = next(item for item in data if item['name'] == 'policy-regressions')
+                if mode == 'missing-job':
+                    data.remove(selected)
+                elif mode == 'missing-step':
+                    selected['steps'] = []
+                elif mode == 'duplicate-step':
+                    selected['steps'] *= 2
+                elif mode == 'pending':
+                    selected['status'] = 'in_progress'
+                else:
+                    selected['steps'][0]['conclusion'] = mode
+                with self.subTest(scope=scope, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, scope)
+        for scope in ('docs', 'frontend', 'go'):
+            coverage.evaluate_jobs(jobs(scope), scope)
+
     def test_companion_is_required_on_supported_targets(self):
         self.assertEqual(coverage.NATIVE_UI_STEPS, ('Test experimental native companion',))
 
@@ -250,7 +272,7 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertIn("  schedule:\n    # Daily 03:00 JST (UTC+09:00); changes to cadence require review.\n    - cron: '0 18 * * *'", workflow)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
         self.assertIn("|| format('ci-run-{0}', github.run_id)", workflow)
-        self.assertIn("needs: [impact, documents, native, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, browser, go-unit, manifest-smoke]", workflow)
         self.assertIn("needs: [ci-required, web-activation, product-activation]", workflow)
         nightly = workflow.split("  nightly-full-check:\n", 1)[1]
         self.assertIn("ci-coverage.py nightly-finalize", nightly)
@@ -382,7 +404,7 @@ class ActualCoverageTests(unittest.TestCase):
         documents = workflow.split("  documents:\n", 1)[1].split("  native:\n", 1)[0]
         for name in coverage.DOCUMENT_STEPS:
             self.assertIn("name: " + name, documents)
-        self.assertIn("needs: [impact, documents, native, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, browser, go-unit, manifest-smoke]", workflow)
         self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 2)
         self.assertIn('npm ci --prefix "$DOCS_RENDER_ROOT"', documents)
         # runner context is unavailable in jobs.<id>.env; resolve it only in steps.
@@ -453,6 +475,15 @@ class ActualCoverageTests(unittest.TestCase):
             return original(path, *args, **kwargs)
         with patch.object(pathlib.Path, "read_text", autospec=True, side_effect=explicit_utf8):
             self.test_native_short_plan_disables_real_time_and_full_only_steps()
+
+    def test_shared_regression_timing_is_recorded(self):
+        shared = job("policy-regressions", coverage.REGRESSION_STEPS)
+        for item in [shared, *shared["steps"]]:
+            item.update(started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:12Z")
+        row, = coverage.job_timings([shared])
+        self.assertEqual(row["elapsed_seconds"], 12)
+        self.assertEqual(row["steps"], [{"step": coverage.REGRESSION_STEPS[0],
+                                       "elapsed_seconds": 12, "result": "success"}])
 
     def test_document_job_and_static_render_step_timings_are_measurable(self):
         document = job("documents", coverage.DOCUMENT_STEPS)

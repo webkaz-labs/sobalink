@@ -126,7 +126,9 @@ class WorkflowCachePolicy(unittest.TestCase):
     def run_stage_loader(self, prefix, missing=None):
         upload = self.step("prerelease", "gate", "name: release-validation-tools")
         files = re.findall(r"^            (\.github/scripts/[^\n]+)$", upload, re.MULTILINE)
-        self.assertEqual(len(files), 16)
+        self.assertEqual(len(files), 18)
+        self.assertIn(".github/scripts/ci-regressions.py", files)
+        self.assertIn(".github/scripts/test_ci_regressions.py", files)
         root = pathlib.Path(__file__).parents[2]
         with tempfile.TemporaryDirectory() as directory:
             tools = pathlib.Path(directory) / "tools"
@@ -547,7 +549,8 @@ class WorkflowCachePolicy(unittest.TestCase):
                     step = self.step(workflow, "native", needle)
                     self.assertNotIn("        if:", step)
                     self.assertNotIn("cache-hit", step)
-        self.assertIn("python -m unittest discover -s .github/scripts -p 'test_*.py' -v", self.job("ci", "native"))
+        self.assertIn("python -B .github/scripts/ci-regressions.py native --plan", self.job("ci", "native"))
+        self.assertIn("python -B .github/scripts/ci-regressions.py common --plan", self.job("ci", "policy-regressions"))
         self.assertIn("packslip verify", self.job("ci", "manifest-smoke"))
         self.assertIn("sha256sum --check SHA256SUMS", self.job("ci", "manifest-smoke"))
 
@@ -646,7 +649,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         self.assertIn("      force_full:\n", workflow)
         self.assertIn("        type: boolean\n        default: true", workflow)
         aggregate = self.job("ci", "ci-required")
-        self.assertIn("    needs: [impact, documents, native, browser, go-unit, manifest-smoke]\n", aggregate)
+        self.assertIn("    needs: [impact, documents, policy-regressions, native, browser, go-unit, manifest-smoke]\n", aggregate)
         self.assertIn("    if: always()\n", aggregate)
         self.assertIn("ci-coverage.py finalize", aggregate)
         self.assertNotIn("contents: write", aggregate)

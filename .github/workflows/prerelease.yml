@@ -59,6 +59,8 @@ jobs:
           path: |
             .github/scripts/release-validation.py
             .github/scripts/ci_full_validation.py
+            .github/scripts/ci-regressions.py
+            .github/scripts/test_ci_regressions.py
             .github/scripts/ci-native-core-required.py
             .github/scripts/ci-native-core.py
             .github/scripts/ci-windows-packages.py

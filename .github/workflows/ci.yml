@@ -117,6 +117,33 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  policy-regressions:
+    # Portable fixtures and source contracts run once, beside native workloads.
+    # Do not add these checks to docs/frontend/scoped-Go-only changes.
+    needs: impact
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'frontend' && needs.impact.outputs.scope != 'go'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Download this run's regression selection
+        if: needs.impact.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-impact-plan
+          path: ${{ runner.temp }}/ci-plan
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Run shared CI policy and source regressions
+        run: python -B .github/scripts/ci-regressions.py common --plan "$RUNNER_TEMP/ci-plan/ci-impact-plan.json"
+
   native:
     # Unknown or failed selection defaults to the full native matrix.
     needs: impact
@@ -304,7 +331,7 @@ jobs:
           go run ./cmd/prepare-engine
           go run ./cmd/prepare-engine --verify
           go mod verify
-          python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+          python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
       - name: Verify macOS five-scope discovery without skips
         if: matrix.goos == 'darwin'
         timeout-minutes: 10
@@ -1323,7 +1350,7 @@ jobs:
 
   ci-required:
     # Require this aggregate in branch protection; a skipped job alone is green.
-    needs: [impact, documents, native, browser, go-unit, manifest-smoke]
+    needs: [impact, documents, policy-regressions, native, browser, go-unit, manifest-smoke]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10

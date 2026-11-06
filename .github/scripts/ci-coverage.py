@@ -90,6 +90,7 @@ SCHEDULE_ACCEPTANCE = {
     "product-activation": ("Verify fixed product acceptance policy",
                            "Build normal assets and run two private production-entry cases"),
 }
+REGRESSION_STEPS = ("Run shared CI policy and source regressions",)
 SCOPE_STEP = "Select minimum CI scope"
 
 
@@ -195,6 +196,8 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
         passed("go-unit", GO_STEPS)
         required.add("go-unit")
     if scope in ("native-short", "full"):
+        passed("policy-regressions", REGRESSION_STEPS)
+        required.add("policy-regressions")
         for target, name in TARGETS.items():
             steps = FAST_STEPS + (LONG_STEPS + FULL_ONLY_STEPS if scope == "full" else ())
             if target in LINUX_NEARBY_TARGETS:
@@ -219,7 +222,7 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     # Job-level skips can appear as one unexpanded matrix job or several jobs.
     # Only explicitly out-of-scope jobs may be skipped; their presence is not
     # required and is never represented as a test pass in the receipt.
-    application = {*TARGETS.values(), "native", "browser", "go-unit", "manifest-smoke"}
+    application = {*TARGETS.values(), "native", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
     for name in application - required:
         if name in index:
             require(index[name].get("status") == "completed"
@@ -263,8 +266,8 @@ def job_timings(jobs):
             return value if value >= 0 else None
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
-    names = {*TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke"}
-    steps = {*DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS,
+    names = {*TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
+    steps = {*REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after all native checks pass on main",
              "Save development Go caches after all native checks pass"}
