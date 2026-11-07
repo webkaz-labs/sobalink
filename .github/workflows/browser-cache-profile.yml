@@ -1,0 +1,44 @@
+name: Browser cache profile (not acceptance)
+
+# A reviewed exact-head branch starts one bounded experiment. No shared cache
+# is read, written, or removed, and this workflow cannot supply CI acceptance.
+on:
+  create:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-cache-profile-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+
+jobs:
+  profile:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.ref_type == 'branch' && startsWith(github.ref, 'refs/heads/profile-browser-cache/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify bounded cache experiment
+        run: python -B -m unittest discover -s .github/scripts -p test_ci_browser_cache_profile.py -v
+      - name: Measure isolated compile-only seeds
+        run: python -B .github/scripts/ci-browser-cache-profile.py
+      - name: Preserve only numeric measurements and source identity
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: browser-cache-profile-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-cache-profile/result.json
+          if-no-files-found: error
+          retention-days: 7
