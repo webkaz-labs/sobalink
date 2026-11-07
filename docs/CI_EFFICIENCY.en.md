@@ -228,7 +228,9 @@ This path proves that the complete change is ordinary prose; it does not borrow 
 
 Compilation caches accelerate builds; they do not turn a previous test result into a new pass. Native development caches, scoped-Go caches, browser caches and trusted-main caches use separate write namespaces. Native jobs first restore their own PR/branch cache. Only after a miss may they read a trusted-main seed with identical OS, architecture, runner, Go version and dependency/adaptation hash. This is one-way reuse: development never writes trusted-main keys. Only a successful main integration lane writes trusted-main cache entries; the aggregate separately requires the unit lane to pass. Release retains exact-source restoration and reruns its full gates. Scoped Go tests use `-count=1` to execute their tests.
 
-The browser lane independently caches only Go modules and build outputs, after all its checks succeed. Its key binds the same toolchain/dependency inputs and an isolated main, same-repository PR or hashed manual-branch scope. Fork PRs cannot populate this cache. Generated engine trees, frontend outputs, test receipts and browser profiles are not cached; pinned-source preparation/verification, both clean locked frontend builds and all tests still run. Browser caches cannot satisfy native or release evidence.
+The browser lane independently caches only Go modules and build outputs, after all its checks succeed and no compatible cache was restored. It first tries its own PR/branch prefix, then the main browser seed with the same target and dependency inputs. Its key binds the same toolchain/dependency inputs and an isolated main, same-repository PR or hashed manual-branch scope. Fork PRs cannot populate this cache. Generated engine trees, frontend outputs, test receipts and browser profiles are not cached; pinned-source preparation/verification, both clean locked frontend builds and all tests still run. Browser caches cannot satisfy native or release evidence.
+
+To limit duplicate archives, native development jobs save only after both their own scope and the trusted-main seed miss. Browser jobs also save only after a complete miss; an exact or fallback hit is not copied into another per-source entry. Go still recompiles changed inputs, and tests run on the current source. This favors keeping reusable dependency builds over retaining each PR revision's compiled outputs, so a later source edit may require additional compilation. Trusted-main native saves retain their exact source key for release restoration. No cache deletion or storage-limit change is part of this policy.
 
 Before adding caches, compare download, extraction and save costs. Runs [42199018319](https://github.com/webkaz-labs/sobalink/actions/runs/42199018319) and [42199045343](https://github.com/webkaz-labs/sobalink/actions/runs/42199045343) restored existing Linux native Go fallback caches of about 1.2 GB in 22–44 seconds. Web npm installs took 1–3 seconds; Chromium downloads took about 6–9 seconds, within 19-second browser dependency/font steps. These observations favor Go compilation reuse over adding npm/Chromium caches everywhere, not a measured speedup from this change. Additional cache entries can evict useful native caches. Keep the key schema deliberate and compare cold/warm exact-source runs before expanding caching. [GitHub cache limits and trust](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching) and [Playwright browser-cache guidance](https://playwright.dev/docs/next/ci#caching-browsers) explain the retention, transfer and Linux system-dependency limits.
 
@@ -259,9 +261,35 @@ Hosted runner inventories do not promise this CJK family. Trusting any preinstal
 font would make rendering depend on image updates. Switching apt mirrors would
 still download the full collection on a cold runner; caching that collection
 would retain unnecessary languages. The pinned two-face source keeps cold bytes
-smaller and warm runs independent of the apt font mirror. Other system libraries
-and Chromium's official dependencies still use their existing installers. Compare
+smaller and warm runs independent of the apt CJK mirror. Chromium's remaining
+official dependencies use the separate installation path below. Compare
 actual cold and warm runner timings before claiming an end-to-end speedup.
+
+### Complete Playwright system dependencies
+
+All seven Chromium setup sites in the main and diagnostic workflows use
+`.github/scripts/ci-playwright.py` on Ubuntu 24.04 x64. It runs the locked
+Playwright CLI's complete `install-deps chromium`, then `install chromium` as
+the normal user. It does not omit fonts or libraries, use the runner's unrelated
+Chromium version, or disable Playwright's dependency validation.
+
+Only the dependency command receives a temporary `APT_CONFIG` selecting Ubuntu's
+official HTTPS archive and security archive. The runner's Ubuntu archive keyring
+still authenticates repository metadata and package hashes; no source file,
+trusted key or security setting is replaced. Package versions continue to follow
+the signed Ubuntu 24.04 repositories, including security updates. This avoids
+the slow Azure archive payload path without maintaining a second dependency list.
+The existing preparation/job limits remain, and failed installation fails CI.
+
+The hosted image does not contain every dependency: one affected run fetched
+21.1 MB of nine font-related packages in 9m50s. Skipping `install-deps` would
+therefore change the test environment. A browser-binary cache would not remove
+this apt download; [Playwright also discourages that cache](https://github.com/microsoft/playwright/blob/v1.63.0/docs/src/ci.md#caching-browsers).
+Caching installed system directories would bypass package-manager state. A
+separate verified `.deb` cache is possible but is not needed to try the official
+archive path first. No test or acceptance result is cached. Installer timings
+and complete hosted browser/activation outcomes must be checked before claiming
+an overall speedup.
 
 ## Native fixture and release coverage
 

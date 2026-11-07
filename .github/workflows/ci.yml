@@ -472,9 +472,16 @@ jobs:
           PYTHON
           python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
           go run ./cmd/prepare-engine --verify
+      # Core TLS owns an in-memory transport and private fixture profiles.
+      # Overlap it with the ordered managed-session chain, then join both
+      # before starting the separate application overlap region.
       - name: Verify Core context control over pinned TLS
+        id: core-context
+        background: true
         if: matrix.suite == 'integration'
         timeout-minutes: 5
+        env:
+          SOBALINK_CI_METRICS: ${{ runner.temp }}/sobalink-ci-context-metrics.jsonl
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite context-core-tls -- python .github/scripts/ci-context-control.py core-tls
@@ -526,9 +533,18 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite managed-restart -- python .github/scripts/ci-managed-activation.py restart
+      - name: Wait for Core context checks
+        wait: core-context
+      # One background gate overlaps the sequential process-recovery checks.
+      # Each fixture owns its temporary profiles and dynamic loopback ports.
+      # Join before any nearby, long-running lease, package or cache work.
       - name: Verify direct LAN WireGuard and Core native applications
+        id: directlan-applications
+        background: true
         if: matrix.suite == 'integration'
         timeout-minutes: 9
+        env:
+          SOBALINK_CI_METRICS: ${{ runner.temp }}/sobalink-ci-directlan-metrics.jsonl
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite directlan-repeat-race -- go test -race -count=2 -v -timeout=3m -tags=directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/directlan
@@ -558,6 +574,8 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite durable-text-process-restart -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestDurableTextProcessRestartACKLossAndHiddenReplay -- go test -race -count=1 -timeout=4m -tags=lanlink_integration,directlan_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./internal/core -run '^TestDurableTextProcessRestartACKLossAndHiddenReplay$'
+      - name: Wait for direct LAN application checks
+        wait: directlan-applications
       - name: Verify manual nearby setup across native Core peers
         if: matrix.suite == 'integration'
         timeout-minutes: 6
@@ -943,8 +961,10 @@ jobs:
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
+      # Reuse a matched development or main seed without another per-SHA copy.
+      # A completely cold successful integration lane may still create its seed.
       - name: Save development Go caches after integration checks pass
-        if: matrix.suite == 'integration' && (success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-hit != 'true')
+        if: matrix.suite == 'integration' && (success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-matched-key == '' && steps.development-main-seed.outputs.cache-matched-key == '')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -964,7 +984,7 @@ jobs:
           retention-days: 14
       - name: Summarize measured native suites
         if: always()
-        run: python .github/scripts/ci-metrics.py summary --output "$RUNNER_TEMP/ci-suite-metrics.json"
+        run: python .github/scripts/ci-metrics.py summary --include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" --include "$RUNNER_TEMP/sobalink-ci-context-metrics.jsonl" --output "$RUNNER_TEMP/ci-suite-metrics.json"
       - name: Preserve native suite timings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -1121,7 +1141,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
       - name: Wait for activation Go preparation
         wait: activation-go
       - name: Verify fixed product acceptance policy
@@ -1189,7 +1209,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
       - name: Wait for activation Go preparation
         wait: activation-go
       - name: Verify fixed Web acceptance policy
@@ -1283,7 +1303,7 @@ jobs:
         background: true
         run: |
           set -euo pipefail
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
       - name: Verify privacy-safe fixture diagnostics
         timeout-minutes: 10
         run: |
@@ -1304,6 +1324,7 @@ jobs:
                   "TestStartupArgumentFailureWritesDiagnostic",
               )),
               ("internal/core", "lanlink_integration,ts_omit_udptransport", (
+                  "TestOutboxBrowserFailurePrivacy",
                   "TestNativeLANCommandDiagnosticRetainsOnlyAllowedCodes",
                   "TestNativeLANCommandDiagnosticPreservesProductionListenClassification",
                   "TestNativeLANHeldRelayPortDiagnosticIntegration",
@@ -1453,8 +1474,10 @@ jobs:
             ${{ runner.temp }}/soba-playwright-screenshots/text-native-summary.json
           if-no-files-found: warn
           retention-days: 14
+      # Keep one reusable seed until its exact target/dependency prefix misses.
+      # Go recompiles changed inputs; every test still runs on this source.
       - name: Save isolated browser Go cache after all checks pass
-        if: success() && steps.browser-go-cache-info.outputs.scope != '' && steps.browser-go-cache.outputs.cache-hit != 'true'
+        if: success() && steps.browser-go-cache-info.outputs.scope != '' && steps.browser-go-cache.outputs.cache-matched-key == ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |

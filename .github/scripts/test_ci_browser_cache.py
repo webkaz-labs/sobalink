@@ -175,10 +175,58 @@ class WorkflowTests(unittest.TestCase):
         end = workflow.index('  go-unit:\n', start)
         save = workflow[start:end]
         self.assertIn('key: ${{ steps.browser-go-cache.outputs.cache-primary-key }}', save)
-        self.assertNotIn('cache-matched-key', save)
+        self.assertNotIn('key: ${{ steps.browser-go-cache.outputs.cache-matched-key }}', save)
         self.assertNotIn('browser-go-v1-main-', save)
         self.assertIn("success() && steps.browser-go-cache-info.outputs.scope != ''", save)
-        self.assertIn("steps.browser-go-cache.outputs.cache-hit != 'true'", save)
+        self.assertIn("steps.browser-go-cache.outputs.cache-matched-key == ''", save)
+
+    def test_acceleration_cache_saves_require_a_complete_miss(self):
+        workflow = self.sources[full.WORKFLOW].decode()
+        cases = (
+            ('Save development Go caches after integration checks pass',
+             'steps.development-go-cache-scope.outputs.scope',
+             ('steps.development-go-cache.outputs.cache-matched-key',
+              'steps.development-main-seed.outputs.cache-matched-key')),
+            ('Save isolated browser Go cache after all checks pass',
+             'steps.browser-go-cache-info.outputs.scope',
+             ('steps.browser-go-cache.outputs.cache-matched-key',)),
+        )
+        for name, scope_field, cache_fields in cases:
+            condition = workflow.split('      - name: ' + name + '\n', 1)[1].splitlines()[0]
+            self.assertTrue(condition.startswith('        if: '))
+            condition = condition.removeprefix('        if: ')
+            # Evaluate the actual fixed workflow expression over exact hits,
+            # fallback hits, cold misses, disallowed scopes and failed jobs.
+            from itertools import product
+            for success, scope, suite, hits in product(
+                    (False, True), ('', 'pr-123'), ('unit', 'integration'),
+                    product(('', 'exact-key', 'fallback-key'), repeat=len(cache_fields))):
+                values = {'success()': success, scope_field: scope, 'matrix.suite': suite,
+                          **dict(zip(cache_fields, hits))}
+                expression = condition
+                for field, value in values.items():
+                    expression = expression.replace(field, repr(value))
+                expression = expression.replace('&&', 'and')
+                actual = eval(expression, {'__builtins__': {}}, {})
+                expected = success and bool(scope) and not any(hits)
+                if len(cache_fields) == 2:
+                    expected = expected and suite == 'integration'
+                with self.subTest(name=name, values=values):
+                    self.assertEqual(actual, expected)
+
+    def test_duplicate_cache_write_mutations_fail_closed(self):
+        original = self.sources[full.WORKFLOW]
+        for old, new in (
+                (b"steps.browser-go-cache.outputs.cache-matched-key == ''",
+                 b"steps.browser-go-cache.outputs.cache-hit != 'true'"),
+                (b"steps.development-go-cache.outputs.cache-matched-key == '' && "
+                 b"steps.development-main-seed.outputs.cache-matched-key == ''",
+                 b"steps.development-go-cache.outputs.cache-hit != 'true'"),
+                (b" && steps.development-main-seed.outputs.cache-matched-key == ''", b'')):
+            self.assertIn(old, original)
+            self.sources[full.WORKFLOW] = original.replace(old, new)
+            with self.subTest(change=old), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
 
     def test_browser_seed_policy_mutations_fail_closed(self):
         original = self.sources[full.WORKFLOW]
@@ -217,7 +265,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("github.ref == 'refs/heads/main'", block)
         self.assertIn('key: ${{ steps.go-cache.outputs.cache-primary-key }}', block)
         self.assertIn('key: ${{ steps.development-go-cache.outputs.cache-primary-key }}', block)
-        self.assertNotIn('development-main-seed', block)
+        self.assertNotIn('key: ${{ steps.development-main-seed.', block)
+        main_save = block.split('      - name: Save development Go caches', 1)[0]
+        self.assertIn("steps.go-cache.outputs.cache-hit != 'true'", main_save)
+        self.assertNotIn('cache-matched-key', main_save)
         self.assertNotIn('browser-go-v1-', self.sources['.github/workflows/prerelease.yml'].decode())
 
 
