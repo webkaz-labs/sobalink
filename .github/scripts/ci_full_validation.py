@@ -361,11 +361,11 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'Verify explicit dispatch with three separate Core processes': "matrix.suite == 'integration'",
  'Verify durable outbox restart across Core processes': "matrix.suite == 'integration'",
  'Verify durable text restart and lost ACK across Core processes': "matrix.suite == 'integration'",
- 'Wait for direct LAN application checks': '',
  'Verify manual nearby setup across native Core peers': "matrix.suite == 'integration'",
  'Verify TOFU request approval across native Core peers': "matrix.suite == 'integration'",
  'Verify full verification request approval across native Core peers': "matrix.suite == 'integration'",
  'Verify request rejection and cancellation across native Core peers': "matrix.suite == 'integration'",
+ 'Wait for direct LAN application checks': '',
  'Verify Linux nearby native discovery without skips': "matrix.suite == 'unit' && (matrix.goos == 'linux')",
  'Verify direct LAN synthetic expiry and rekey': "matrix.suite == 'integration'",
  'Verify explicit WAN discovery with isolated native STUN': "matrix.suite == 'integration'",
@@ -496,13 +496,13 @@ def validate_preparation_overlap_workflow(data):
 # Review the complete bounded two-chain region, including commands, ownership,
 # timeout bounds, private metrics file and explicit failure join. This is not
 # test-result reuse: the runtime audit still requires each gate and its wait.
-CI_APPLICATION_OVERLAP_SHA256 = '27da3c865648303e6ff73cd17ef0d40cbdf2a4d83e1f1aa56dfc9b1cec22ec9e'
+CI_APPLICATION_OVERLAP_SHA256 = 'd8e59c38b7f97a77c5dedd1ea6ae2251db01e9e9ef251aae9850e13479e31b79'
 
 
 def validate_application_overlap_workflow(data):
     workflow = data.decode('utf-8')
     start = '      - name: Verify direct LAN WireGuard and Core native applications\n'
-    end = '      - name: Verify manual nearby setup across native Core peers\n'
+    end = '      - name: Verify Linux nearby native discovery without skips\n'
     require(workflow.count(start) == workflow.count(end) == 1,
             'missing or duplicate native application overlap boundary')
     region = workflow[workflow.index(start):workflow.index(end)]
@@ -522,7 +522,7 @@ def validate_application_overlap_workflow(data):
             'parallel application metrics must be summarized after their join')
 
 
-CI_CONTEXT_OVERLAP_SHA256 = '5718f69c171e808c909d5e8958bae48373874ed9d574b06b5a6c72d5f856b5c7'
+CI_CONTEXT_OVERLAP_SHA256 = '894b37e9fb18b588a1c0772d37549a48621e48e2221b3598a62075e036050887'
 
 
 def validate_context_overlap_workflow(data):
