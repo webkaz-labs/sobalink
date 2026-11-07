@@ -355,10 +355,12 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'Verify managed session native-udp-capacity': "matrix.suite == 'integration'",
  'Verify managed activation acceptance': "matrix.suite == 'integration'",
  'Verify managed restart acceptance': "matrix.suite == 'integration'",
+ 'Wait for Core context checks': '',
  'Verify direct LAN WireGuard and Core native applications': "matrix.suite == 'integration'",
  'Verify explicit dispatch with three separate Core processes': "matrix.suite == 'integration'",
  'Verify durable outbox restart across Core processes': "matrix.suite == 'integration'",
  'Verify durable text restart and lost ACK across Core processes': "matrix.suite == 'integration'",
+ 'Wait for direct LAN application checks': '',
  'Verify manual nearby setup across native Core peers': "matrix.suite == 'integration'",
  'Verify TOFU request approval across native Core peers': "matrix.suite == 'integration'",
  'Verify full verification request approval across native Core peers': "matrix.suite == 'integration'",
@@ -489,6 +491,53 @@ def validate_preparation_overlap_workflow(data):
                 'preparation job dependency or failure policy differs: ' + name)
 
 
+# Review the complete bounded two-chain region, including commands, ownership,
+# timeout bounds, private metrics file and explicit failure join. This is not
+# test-result reuse: the runtime audit still requires each gate and its wait.
+CI_APPLICATION_OVERLAP_SHA256 = '27da3c865648303e6ff73cd17ef0d40cbdf2a4d83e1f1aa56dfc9b1cec22ec9e'
+
+
+def validate_application_overlap_workflow(data):
+    workflow = data.decode('utf-8')
+    start = '      - name: Verify direct LAN WireGuard and Core native applications\n'
+    end = '      - name: Verify manual nearby setup across native Core peers\n'
+    require(workflow.count(start) == workflow.count(end) == 1,
+            'missing or duplicate native application overlap boundary')
+    region = workflow[workflow.index(start):workflow.index(end)]
+    require(digest(region.encode()) == CI_APPLICATION_OVERLAP_SHA256,
+            'native application overlap commands or failure policy differ')
+    require(workflow.index('      - name: Check exact toolchain and native target\n')
+            < workflow.index(start) < workflow.index(end)
+            < workflow.index('      - name: Verify direct LAN session natural rekey and idle lifecycle\n'),
+            'application overlap must follow preparation and join before real-time gates')
+    summary = ('      - name: Summarize measured native suites\n'
+               '        if: always()\n'
+               '        run: python .github/scripts/ci-metrics.py summary '
+               '--include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" '
+               '--include "$RUNNER_TEMP/sobalink-ci-context-metrics.jsonl" '
+               '--output "$RUNNER_TEMP/ci-suite-metrics.json"\n')
+    require(workflow.count(summary) == 1 and workflow.index(summary) > workflow.index(end),
+            'parallel application metrics must be summarized after their join')
+
+
+CI_CONTEXT_OVERLAP_SHA256 = '5718f69c171e808c909d5e8958bae48373874ed9d574b06b5a6c72d5f856b5c7'
+
+
+def validate_context_overlap_workflow(data):
+    """Bind one private Core fixture chain and the unchanged managed gate order."""
+    workflow = data.decode('utf-8')
+    start = '      - name: Verify Core context control over pinned TLS\n'
+    end = '      - name: Verify direct LAN WireGuard and Core native applications\n'
+    require(workflow.count(start) == workflow.count(end) == 1,
+            'missing or duplicate Core context overlap boundary')
+    region = workflow[workflow.index(start):workflow.index(end)]
+    require(digest(region.encode()) == CI_CONTEXT_OVERLAP_SHA256,
+            'Core context overlap commands or failure policy differ')
+    require(workflow.index('      - name: Check exact toolchain and native target\n')
+            < workflow.index(start) < workflow.index(end),
+            'Core context overlap must follow preparation and join before application checks')
+
+
 def validate_parallel_workflow(data):
     """Fail closed on changes to the deliberately narrow native async region.
 
@@ -498,6 +547,8 @@ def validate_parallel_workflow(data):
     """
     workflow = data.decode('utf-8')
     metadata = workflow_metadata(workflow)
+    validate_application_overlap_workflow(data)
+    validate_context_overlap_workflow(data)
     groups = (
         ('Verify direct LAN session natural rekey and idle lifecycle', 'natural-lifecycle', 9),
         ('Verify guarded relay real-time lease continuity', 'guarded-lease', 9),
@@ -527,11 +578,13 @@ def validate_parallel_workflow(data):
     require(tuple(re.findall(r'^      - name: ([^\n]+)$', region, re.M)) == expected
             and len(re.findall(r'^      - ', region, re.M)) == len(expected),
             'unexpected work inside real-time parallel region')
-    # Docs, native real-time gates, activation and browser preparation are the
+    # Docs, native fixture gates, activation and browser preparation are the
     # only async regions. Each has a separate closed source policy below.
     controls = [key for _, _, key, _ in metadata
                 if key in {'background', 'parallel', 'wait', 'wait-all', 'cancel'}]
     require(controls == ['parallel',
+                         'background', 'wait',
+                         'background', 'wait',
                          'background', 'background', 'background', 'wait',
                          'background', 'wait', 'background', 'wait',
                          'background', 'wait', 'background', 'wait'],
@@ -1425,9 +1478,9 @@ def required_jobs(sources, *, include_skipped=False):
     validate_native_packages_workflow(sources)
     validate_native_companion_workflow(sources[WORKFLOW])
     validate_native_companion_workflow(sources[".github/workflows/prerelease.yml"])
-    validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
     validate_durable_text_workflow(sources[WORKFLOW])
+    validate_parallel_workflow(sources[WORKFLOW])
     validate_linux_nearby_workflow(sources[WORKFLOW])
     validate_macos_nearby_workflow(sources[WORKFLOW])
     validate_setup_and_text_browser_workflow(sources[WORKFLOW])
@@ -1497,7 +1550,9 @@ def required_jobs(sources, *, include_skipped=False):
     require(values['NATIVE_SHARED_STEPS'] == ('Reproduce locked frontend assets', 'Check exact toolchain and native target')
             and values['NATIVE_UNIT_STEPS'] == ('Local and mock tests, race detector, and vet',
                                                'Verify adapted engine admission and native underlay denial')
-            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for real-time lifecycle and lease checks',)
+            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for Core context checks',
+                                                         'Wait for direct LAN application checks',
+                                                         'Wait for real-time lifecycle and lease checks')
             and values['WINDOWS_BARRIER_STEPS'] == ('Verify Windows receive-retirement directory barriers',),
             'native suite partition differs from reviewed policy')
     require(values['FAST_STEPS'].count('Verify explicit dispatch with three separate Core processes') == 1,

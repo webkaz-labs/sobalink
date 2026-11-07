@@ -3,7 +3,8 @@
 
 Use fixed, non-sensitive suite identifiers. Command arguments, environment
 values, paths, and captured output are never included in the metric records.
-Choose a fresh SOBALINK_CI_METRICS file for each job; calls within a job append.
+Choose a fresh SOBALINK_CI_METRICS file for each sequential command chain.
+Concurrent chains must use separate files and join before summary --include.
 """
 
 import argparse
@@ -102,20 +103,22 @@ def validate_record(record):
     return record
 
 
-def read_records():
+def read_records(path=None):
     try:
-        source = metrics_path().open(encoding="utf-8")
+        source = (metrics_path() if path is None else Path(path)).open(encoding="utf-8")
     except FileNotFoundError:
         return []
     with source:
         return [validate_record(json.loads(line, object_pairs_hook=unique_object)) for line in source]
 
 
-def summary(output_path=None):
+def summary(output_path=None, include=()):
     # Validate the complete source before writing either output. No raw source
     # content or exception details are included in an error or summary.
     try:
         records = read_records()
+        for path in include:
+            records.extend(read_records(path))
     except (OSError, ValueError, UnicodeError, RecursionError, MetricsError):
         print("error: CI timing data could not be read or is malformed.", file=sys.stderr)
         return 1
@@ -155,9 +158,11 @@ def main(argv=None):
     run.add_argument("command", nargs=argparse.REMAINDER)
     summarize = commands.add_parser("summary", help="render validated timings for this job")
     summarize.add_argument("--output", help="optional JSON summary artifact path")
+    summarize.add_argument("--include", action="append", default=[],
+                           help="additional timing file from an already joined command chain")
     args = parser.parse_args(argv)
     if args.action == "summary":
-        return summary(args.output)
+        return summary(args.output, args.include)
     if not valid_suite(args.suite):
         parser.error("suite must be a fixed identifier using letters, digits, dots, underscores or hyphens")
     command = args.command

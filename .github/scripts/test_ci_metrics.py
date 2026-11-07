@@ -141,6 +141,31 @@ class CIMetricsTests(unittest.TestCase):
         self.assertIn("| failed-tests | 0.500 | failed | 23 |", step.read_text())
         self.assertEqual(result.stdout, "")
 
+    def test_summary_includes_joined_private_files_without_shared_append(self):
+        first = {"suite": "foreground", "elapsed_seconds": 1, "status": "passed", "returncode": 0}
+        second = {"suite": "background", "elapsed_seconds": 2, "status": "failed", "returncode": 23}
+        self.metrics.write_text(json.dumps(first) + "\n", encoding="utf-8")
+        other = self.root / "private-background.jsonl"
+        other.write_text(json.dumps(second) + "\n", encoding="utf-8")
+        artifact = self.root / "combined.json"
+        result = self.invoke("summary", "--include", str(other), "--include", str(self.root / "skipped.jsonl"),
+                             "--output", str(artifact))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(artifact.read_text()), [first, second])
+        self.assertEqual(self.records(), [first])
+        self.assertEqual(other.read_text(), json.dumps(second) + "\n")
+        self.assertNotIn(str(other), result.stdout + result.stderr + artifact.read_text())
+
+    def test_malformed_included_metrics_cannot_write_partial_summary(self):
+        other = self.root / "private-background.jsonl"
+        other.write_text('{"secret":"synthetic-private-value"}\n', encoding="utf-8")
+        artifact = self.root / "combined.json"
+        result = self.invoke("summary", "--include", str(other), "--output", str(artifact))
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(artifact.exists())
+        self.assertNotIn("synthetic-private-value", result.stdout + result.stderr)
+        self.assertNotIn(str(other), result.stdout + result.stderr)
+
     def test_empty_and_missing_metrics_have_explicit_summary(self):
         for present in (False, True):
             with self.subTest(present=present):
