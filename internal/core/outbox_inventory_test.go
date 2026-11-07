@@ -22,6 +22,12 @@ func assertOutboxSavedInventory(t *testing.T, root string, expected transfer.Ent
 // succeeds (directory-only /start does not run file-receive cleanup). Its exact
 // reserved name is allowed, never arbitrary dotfiles or extra user outputs.
 func outboxSavedInventory(root string, expected transfer.Entry) (string, error) {
+	return outboxSavedInventoryWithStageReader(root, expected, os.ReadDir)
+}
+
+// Inject only the stage read so error and disappearance cases do not depend on
+// filesystem permissions or a concurrent maintenance operation.
+func outboxSavedInventoryWithStageReader(root string, expected transfer.Entry, readStage func(string) ([]os.DirEntry, error)) (string, error) {
 	const stageName = ".sobalink-durable-stage-v1"
 	if expected.Path == "" || filepath.Base(expected.Path) != expected.Path || expected.Path == stageName {
 		return "", errors.New("fixture expected output is not one reviewed top-level entry")
@@ -59,11 +65,17 @@ func outboxSavedInventory(root string, expected transfer.Entry) (string, error) 
 			if !info.IsDir() {
 				return "", errors.New("reserved durable stage is not a real directory")
 			}
-			staged, err := os.ReadDir(filepath.Join(root, stageName))
+			staged, err := readStage(filepath.Join(root, stageName))
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			if err != nil || len(staged) != 0 {
+			if errors.Is(err, os.ErrPermission) {
+				return "", errors.New("completed durable stage could not be read: permission denied")
+			}
+			if err != nil {
+				return "", errors.New("completed durable stage could not be read")
+			}
+			if len(staged) != 0 {
 				return "", errors.New("completed durable stage retained unexpected entries")
 			}
 		default:
@@ -151,6 +163,75 @@ func TestOutboxSavedInventory(t *testing.T) {
 			}
 			if tc.valid && output != filepath.Join(root, expected.Path) {
 				t.Fatal("inventory retargeted reviewed output")
+			}
+		})
+	}
+}
+
+func TestOutboxSavedInventoryStageReadDiagnostics(t *testing.T) {
+	const stage = ".sobalink-durable-stage-v1"
+	privateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(privateDir, "synthetic-private-entry"), []byte("synthetic-private-content"), 0600); err != nil {
+		t.Fatal("could not create synthetic stage entry")
+	}
+	privateEntries, err := os.ReadDir(privateDir)
+	if err != nil {
+		t.Fatal("could not read synthetic stage entry")
+	}
+	pathError := func(err error) error {
+		return &os.PathError{Op: "synthetic-private-operation", Path: filepath.Join(privateDir, "synthetic-private-id"), Err: err}
+	}
+	for _, tc := range []struct {
+		name    string
+		entries []os.DirEntry
+		err     error
+		want    string
+	}{
+		{name: "empty"},
+		{name: "nonempty", entries: privateEntries, want: "completed durable stage retained unexpected entries"},
+		{name: "disappeared", err: os.ErrNotExist},
+		{name: "disappeared_path_error", err: pathError(os.ErrNotExist)},
+		{name: "disappeared_with_entries", entries: privateEntries, err: pathError(os.ErrNotExist)},
+		{name: "permission_denied", err: os.ErrPermission, want: "completed durable stage could not be read: permission denied"},
+		{name: "permission_path_error", err: pathError(os.ErrPermission), want: "completed durable stage could not be read: permission denied"},
+		{name: "permission_with_entries", entries: privateEntries, err: pathError(os.ErrPermission), want: "completed durable stage could not be read: permission denied"},
+		{name: "other_read_error", err: errors.New("synthetic-private-error"), want: "completed durable stage could not be read"},
+		{name: "other_path_error", err: pathError(errors.New("synthetic-private-error")), want: "completed durable stage could not be read"},
+		{name: "other_error_with_entries", entries: privateEntries, err: pathError(errors.New("synthetic-private-error")), want: "completed durable stage could not be read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			expected := transfer.Entry{Path: "reviewed", Kind: transfer.File, Size: 5}
+			if err := os.WriteFile(filepath.Join(root, expected.Path), []byte("saved"), 0600); err != nil {
+				t.Fatal("could not create reviewed output")
+			}
+			if err := os.Mkdir(filepath.Join(root, stage), 0700); err != nil {
+				t.Fatal("could not create optional stage")
+			}
+			reads := 0
+			output, err := outboxSavedInventoryWithStageReader(root, expected, func(path string) ([]os.DirEntry, error) {
+				reads++
+				if path != filepath.Join(root, stage) {
+					t.Fatal("stage read retargeted another path")
+				}
+				return tc.entries, tc.err
+			})
+			if reads != 1 {
+				t.Fatal("inventory did not perform exactly one stage read")
+			}
+			if tc.want == "" {
+				if err != nil || output != filepath.Join(root, expected.Path) {
+					t.Fatal("empty or disappeared optional stage changed inventory acceptance")
+				}
+				return
+			}
+			// Exact fixed text and no wrapped cause prevent paths, entry names,
+			// operations, identifiers, contents, or raw errors from escaping.
+			if err == nil || err.Error() != tc.want || errors.Unwrap(err) != nil {
+				t.Fatal("stage diagnostic is not the expected fixed classification")
+			}
+			if output != "" {
+				t.Fatal("invalid inventory returned a reviewed output")
 			}
 		})
 	}
