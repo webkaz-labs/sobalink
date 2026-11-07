@@ -68,10 +68,28 @@ func TestOutboxProcessRestart(t *testing.T) {
 	commit := func(review browserOutboxRecord, phase string) browserOutboxRecord {
 		t.Helper()
 		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
+		entry := "file"
+		if len(review.Entries) == 1 && review.Entries[0].Kind == transfer.Directory {
+			entry = "empty-directory"
+		}
+		started, attempts, busyCount := time.Now(), 0, 0
+		var lastInvoke, maxInvoke time.Duration
 		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
+			attempts++
+			invoked := time.Now()
 			reply := peers[0].invokeResult(t, "outbox.commit", payload)
+			lastInvoke = time.Since(invoked)
+			if lastInvoke > maxInvoke {
+				maxInvoke = lastInvoke
+			}
+			if reply.Error == "outbox.commit: outbox_storage_busy" {
+				busyCount++
+			}
 			return reply.Value, reply.Error
 		})
+		// Fixed counters also describe successful samples without exposing the
+		// original payload, source path, peer, request ID or raw error.
+		t.Logf("outbox commit observation: phase=%s entry=%s attempt_count=%d busy_count=%d elapsed_ms=%d last_invoke_ms=%d max_invoke_ms=%d", phase, entry, attempts, busyCount, time.Since(started).Milliseconds(), lastInvoke.Milliseconds(), maxInvoke.Milliseconds())
 		if err != nil || code != "" {
 			t.Fatalf("original outbox commit failed: phase=%s retry_stopped=%t command=%q; runtime diagnostics:\n%s", phase, err != nil, outboxProcessCommitDiagnosticCode(code), peers[0].diagnostics.safeSummary())
 		}

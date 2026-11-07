@@ -211,3 +211,25 @@ func TestOutboxProcessCommitRetryStops(t *testing.T) {
 		})
 	}
 }
+
+// The retry budget bounds admission, not an invocation already in flight.
+// Record this distinction without extending the deadline or replaying other errors.
+func TestOutboxProcessCommitRetrySlowBusyInvocation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started, calls := time.Now(), 0
+		payload := []byte(`{"outboxId":"synthetic-original","reviewRevision":"fixed"}`)
+		original := append([]byte(nil), payload...)
+		want := "outbox.commit: outbox_storage_busy"
+		reply, code, err := retryOutboxProcessCommit(context.Background(), func() (json.RawMessage, string) {
+			calls++
+			if !bytes.Equal(payload, original) {
+				t.Fatal("slow busy invocation changed the original payload")
+			}
+			time.Sleep(3 * time.Second)
+			return nil, want
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || reply != nil || code != want || calls != 1 || time.Since(started) != 3*time.Second || !bytes.Equal(payload, original) {
+			t.Fatal("slow busy invocation escaped the existing retry admission deadline")
+		}
+	})
+}
