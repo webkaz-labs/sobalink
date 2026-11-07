@@ -1221,7 +1221,7 @@ def validate_browser_cache_workflow(sources):
     a = region.index(restore_start)
     report = region.index('      - name: Report browser Go cache result\n', a)
     b = region.index('      - ', report + len('      - name: Report browser Go cache result\n'))
-    require(digest(region[a:b].encode()) == 'e8b50e17f60117fd0588bd781e2454904fca8064d29ec5cb7885a8d9c314e01b',
+    require(digest(region[a:b].encode()) == 'ff65c3c324656dc090ca0aceb6d9b71f70eb157e400f7368e1569eaeae2bd9e6',
             'browser cache restore policy differs')
     require(region[:a].endswith("          go-version: '1.27.1'\n          cache: false\n"),
             'browser cache must immediately follow exact Go setup')

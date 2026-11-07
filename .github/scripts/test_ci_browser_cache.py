@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -126,6 +127,72 @@ class WorkflowTests(unittest.TestCase):
         self.sources['.github/scripts/ci-browser-cache.py'] += b'\n# changed\n'
         with self.assertRaises(ValueError):
             full.validate_browser_cache_workflow(self.sources)
+
+    def test_browser_seed_matches_only_the_same_target_and_dependencies(self):
+        workflow = self.sources[full.WORKFLOW].decode()
+        start = workflow.index('      - name: Restore isolated browser Go cache\n')
+        end = workflow.index('      - name: Report browser Go cache result\n', start)
+        restore = workflow[start:end]
+        primary = re.search(r'^          key: (.+)$', restore, re.MULTILINE).group(1)
+        prefixes = restore.split('          restore-keys: |\n', 1)[1].splitlines()
+        prefixes = [line.strip() for line in prefixes]
+        self.assertEqual(len(prefixes), 2)
+        self.assertEqual(prefixes[0], primary.removesuffix('${{ github.sha }}'))
+        self.assertEqual(prefixes[1], prefixes[0].replace(
+            '${{ steps.browser-go-cache-info.outputs.scope }}', 'main'))
+
+        values = {'steps.browser-go-cache-info.outputs.scope': 'pr-123',
+                  'runner.os': 'Linux', 'runner.arch': 'X64', 'github.sha': 'a' * 40}
+        manifests = re.search(r'\$\{\{ (hashFiles\(.+?\)) \}\}', primary).group(1)
+        values[manifests] = 'b' * 64
+
+        def render(template, replacements):
+            return re.sub(r'\$\{\{ (.+?) \}\}', lambda m: replacements[m[1]], template)
+
+        rendered_prefixes = [render(prefix, values) for prefix in prefixes]
+        # This PR's earlier result wins; main seeds only the first cold run.
+        for scope, expected_index in (('pr-123', 0), ('main', 1)):
+            old_key = render(primary, dict(values, **{
+                'steps.browser-go-cache-info.outputs.scope': scope, 'github.sha': 'c' * 40}))
+            self.assertEqual(next(i for i, prefix in enumerate(rendered_prefixes)
+                                  if old_key.startswith(prefix)), expected_index)
+        for field, alternatives in (
+                ('steps.browser-go-cache-info.outputs.scope', ('pr-124', 'branch-' + 'd' * 64)),
+                ('runner.os', ('Windows', 'macOS')),
+                ('runner.arch', ('ARM64',)), (manifests, ('e' * 64,))):
+            for value in alternatives:
+                other_key = render(primary, dict(values, **{field: value}))
+                with self.subTest(field=field, value=value):
+                    self.assertFalse(any(other_key.startswith(p) for p in rendered_prefixes))
+        for old, new in (('ubuntu-24.04', 'ubuntu-26.04'), ('go1.27.1', 'go1.27.3'),
+                         ('browser-go-v1-', 'trusted-main-go-v1-')):
+            other_key = render(primary, values).replace(old, new)
+            self.assertFalse(any(other_key.startswith(p) for p in rendered_prefixes))
+
+    def test_browser_seed_never_replaces_the_scoped_save_key(self):
+        workflow = self.sources[full.WORKFLOW].decode()
+        start = workflow.index('      - name: Save isolated browser Go cache after all checks pass\n')
+        end = workflow.index('  go-unit:\n', start)
+        save = workflow[start:end]
+        self.assertIn('key: ${{ steps.browser-go-cache.outputs.cache-primary-key }}', save)
+        self.assertNotIn('cache-matched-key', save)
+        self.assertNotIn('browser-go-v1-main-', save)
+        self.assertIn("success() && steps.browser-go-cache-info.outputs.scope != ''", save)
+        self.assertIn("steps.browser-go-cache.outputs.cache-hit != 'true'", save)
+
+    def test_browser_seed_policy_mutations_fail_closed(self):
+        original = self.sources[full.WORKFLOW]
+        seed = next(line for line in original.splitlines(keepends=True)
+                    if line.startswith(b'            browser-go-v1-main-'))
+        for replacement in (b'', seed.replace(b'-main-', b'-pr-124-'),
+                            seed.replace(b'${{ runner.os }}', b'Windows'),
+                            seed.replace(b'${{ runner.arch }}', b'ARM64'),
+                            b'            browser-go-v1-\n',
+                            seed.replace(b'go1.27.1', b'go1.27.3'),
+                            seed.replace(b"'go.sum'", b"'README.md'")):
+            self.sources[full.WORKFLOW] = original.replace(seed, replacement)
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                full.validate_browser_cache_workflow(self.sources)
 
     def test_native_main_seed_is_restore_only_and_miss_only(self):
         workflow = self.sources[full.WORKFLOW].decode()

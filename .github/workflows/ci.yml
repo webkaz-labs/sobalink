@@ -1238,7 +1238,12 @@ jobs:
             ${{ steps.browser-go-cache-info.outputs.gomodcache }}
             ${{ steps.browser-go-cache-info.outputs.gocache }}
           key: browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.sha }}
-          restore-keys: browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
+          # Prefer this PR/branch, then the same browser-only main seed. GitHub
+          # branch isolation prevents main from restoring a PR-created cache.
+          # Saves still use the requested scope, never the matched fallback key.
+          restore-keys: |
+            browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
+            browser-go-v1-main-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
       - name: Report browser Go cache result
         env:
           CACHE_OUTCOME: ${{ steps.browser-go-cache.outcome }}
