@@ -604,7 +604,7 @@ def validate_parallel_workflow(data):
 
 
 
-CI_BROWSER_LANE_SHA256 = {'browser': '509196d5c6246eafae4f8e5c14d5c4c97612ddd78135d69736c351c6c1370f42', 'browser-native': '5720579e5548a30a4a57a39475f825b8c32615e7f890b822409f3a15c159642e'}
+CI_BROWSER_LANE_SHA256 = {'browser': '509196d5c6246eafae4f8e5c14d5c4c97612ddd78135d69736c351c6c1370f42', 'browser-native': '795234d290a070fc6f21d1044ee060d14772886b17fb152942e352ecb71f3134'}
 
 
 def validate_browser_lanes_workflow(data):
@@ -1297,8 +1297,10 @@ def validate_browser_cache_workflow(sources):
     region = workflow[start:end]
     restore_start = '      # Browser caches are acceleration only, never native/release evidence.\n'
     save_start = '      - name: Save isolated browser Go cache after all checks pass\n'
+    prewarm_start = '      - name: Warm UI fixture compilation only for a new browser seed\n'
     require(workflow.count(restore_start) == 1 and workflow.count(save_start) == 1,
             'browser cache steps escaped the required job')
+    require(workflow.count(prewarm_start) == 1, 'browser seed preparation missing or duplicated')
     require(restore_start in region and save_start not in region, 'UI browser cache must be read-only')
     a = region.index(restore_start)
     report = region.index('      - name: Report browser Go cache result\n', a)
@@ -1310,10 +1312,11 @@ def validate_browser_cache_workflow(sources):
     native_start = workflow.index('  browser-native:\n')
     native_end = workflow.index('  go-unit:\n', native_start)
     native = workflow[native_start:native_end]
-    require(save_start in native, 'native-browser must be the sole browser cache writer')
-    tail = native[native.index(save_start):].rstrip() + '\n'
-    require(digest(tail.encode()) == 'df4e065596e8deb98181509ab4b3d8a592f7da4c9d657eb62268f303bacc508d',
-            'browser cache must save only after all work succeeds')
+    require(save_start in native and prewarm_start in native,
+            'native-browser must be the sole browser cache preparer and writer')
+    tail = native[native.index(prewarm_start):].rstrip() + '\n'
+    require(digest(tail.encode()) == '99634e83efe87891383204ed81108e561552300af570ef1241eb878a7df26f64',
+            'browser cache must prewarm and save only after all work succeeds')
 
 
 def validate_frontend_workflow(sources):

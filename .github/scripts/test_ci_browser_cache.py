@@ -194,6 +194,9 @@ class WorkflowTests(unittest.TestCase):
             ('Save isolated browser Go cache after all checks pass',
              'steps.browser-go-cache-info.outputs.scope',
              ('steps.browser-go-cache.outputs.cache-matched-key',)),
+            ('Warm UI fixture compilation only for a new browser seed',
+             'steps.browser-go-cache-info.outputs.scope',
+             ('steps.browser-go-cache.outputs.cache-matched-key',)),
         )
         for name, scope_field, cache_fields in cases:
             condition = workflow.split('      - name: ' + name + '\n', 1)[1].splitlines()[0]
@@ -217,6 +220,46 @@ class WorkflowTests(unittest.TestCase):
                     expected = expected and suite == 'integration'
                 with self.subTest(name=name, values=values):
                     self.assertEqual(actual, expected)
+
+    def test_ui_prewarm_matches_fixture_and_stays_before_save(self):
+        workflow = self.sources[full.WORKFLOW].decode()
+        marker = '      - name: Warm UI fixture compilation only for a new browser seed\n'
+        start = workflow.index(marker)
+        save = workflow.index('      - name: Save isolated browser Go cache after all checks pass\n')
+        block = workflow[start:save]
+        self.assertIn('        timeout-minutes: 5\n', block)
+        self.assertNotIn('-race', block)
+        self.assertIn('          umask 077\n', block)
+        self.assertIn('-o "$RUNNER_TEMP/soba-ui-cache-prewarm" ./cmd/soba-e2e\n', block)
+        tags = re.search(r'go build (-tags=\S+)', block).group(1)
+        ui = workflow.split('  browser:\n', 1)[1].split('  browser-native:\n', 1)[0]
+        self.assertIn('go build ' + tags + ' ', ui)
+        self.assertGreater(start, workflow.index('      - name: Verify durable text recovery with separate agents and actual browser\n'))
+        self.assertEqual(workflow.count('soba-ui-cache-prewarm'), 1)
+
+    def test_ui_prewarm_mutations_fail_closed(self):
+        original = self.sources[full.WORKFLOW].decode()
+        marker = '      - name: Warm UI fixture compilation only for a new browser seed\n'
+        start = original.index(marker)
+        end = original.index('      - name: Save isolated browser Go cache after all checks pass\n', start)
+        block = original[start:end]
+        variants = [original[:start] + block.replace(old, new) + original[end:]
+                    for old, new in (
+                        ('success()', 'always()'),
+                        ("steps.browser-go-cache-info.outputs.scope != ''", 'true'),
+                        ("cache-matched-key == ''", "cache-hit != 'true'"),
+                        ('timeout-minutes: 5', 'timeout-minutes: 5\n        continue-on-error: true'),
+                        ('go build -tags=', 'go build -race -tags='),
+                        ('soba_e2e,ts_omit_portmapper', 'soba_e2e'),
+                        ('$RUNNER_TEMP/soba-ui-cache-prewarm', 'web/dist/soba-ui-cache-prewarm'),
+                        ('./cmd/soba-e2e\n', './cmd/soba-e2e || true\n'))]
+        variants.append(original[:start] + original[end:])
+        native_end = original.index('  go-unit:\n', end)
+        variants.append(original[:start] + original[end:native_end] + block + original[native_end:])
+        for changed in variants:
+            self.sources[full.WORKFLOW] = changed.encode()
+            with self.subTest(change=changed[start:start + 180]), self.assertRaises(ValueError):
+                full.validate_browser_cache_workflow(self.sources)
 
     def test_duplicate_cache_write_mutations_fail_closed(self):
         original = self.sources[full.WORKFLOW]
