@@ -68,10 +68,44 @@ func TestOutboxProcessRestart(t *testing.T) {
 	commit := func(review browserOutboxRecord, phase string) browserOutboxRecord {
 		t.Helper()
 		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
+		entry := "file"
+		if len(review.Entries) == 1 && review.Entries[0].Kind == transfer.Directory {
+			entry = "empty-directory"
+		}
+		started, attempts, busyCount := time.Now(), 0, 0
+		var lastInvoke, maxInvoke time.Duration
+		var observed routeOutboxBusyObservation
+		observations := 0
 		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
+			attempts++
+			invoked := time.Now()
 			reply := peers[0].invokeResult(t, "outbox.commit", payload)
+			lastInvoke = time.Since(invoked)
+			if lastInvoke > maxInvoke {
+				maxInvoke = lastInvoke
+			}
+			if reply.Error == "outbox.commit: outbox_storage_busy" {
+				busyCount++
+				if sample := reply.OutboxObservation; sample != nil {
+					observations++
+					if sample.CommandMS > observed.CommandMS {
+						observed.CommandMS = sample.CommandMS
+					}
+					observed.SnapshotAvailable = observed.SnapshotAvailable || sample.SnapshotAvailable
+					observed.LifecycleObserved = observed.LifecycleObserved || sample.LifecycleObserved
+					observed.Receiver = observed.Receiver || sample.Receiver
+					observed.Outbox = observed.Outbox || sample.Outbox
+					observed.Message = observed.Message || sample.Message
+					observed.Resource = observed.Resource || sample.Resource
+					observed.Other = observed.Other || sample.Other
+				}
+			}
 			return reply.Value, reply.Error
 		})
+		// Fixed counters also describe successful samples without exposing the
+		// original payload, source path, peer, request ID or raw error.
+		t.Logf("outbox commit observation: phase=%s entry=%s attempt_count=%d busy_count=%d elapsed_ms=%d last_invoke_ms=%d max_invoke_ms=%d", phase, entry, attempts, busyCount, time.Since(started).Milliseconds(), lastInvoke.Milliseconds(), maxInvoke.Milliseconds())
+		t.Logf("outbox busy sample: observations=%d max_command_ms=%d snapshot_available=%t lifecycle_observed=%t receiver=%t outbox=%t message=%t resource=%t other=%t", observations, observed.CommandMS, observed.SnapshotAvailable, observed.LifecycleObserved, observed.Receiver, observed.Outbox, observed.Message, observed.Resource, observed.Other)
 		if err != nil || code != "" {
 			t.Fatalf("original outbox commit failed: phase=%s retry_stopped=%t command=%q; runtime diagnostics:\n%s", phase, err != nil, outboxProcessCommitDiagnosticCode(code), peers[0].diagnostics.safeSummary())
 		}
