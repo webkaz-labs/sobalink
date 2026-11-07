@@ -602,6 +602,10 @@ class PlanAndReceiptTests(unittest.TestCase):
                 result = json.loads(output.read_text())
                 self.assertEqual(result["schema_version"], 3)
                 self.assertEqual(result["scope"], scope)
+                if scope == "go":
+                    summary = pathlib.Path(env["GITHUB_STEP_SUMMARY"]).read_text(encoding="utf-8")
+                    self.assertIn("Selected Go package race and vet checks passed on Linux", summary)
+                    self.assertNotIn("reverse dependencies passed", summary)
                 self.assertEqual(result["full_native"], scope == "full")
                 self.assertEqual(set(result["native_suites"]), {"unit", "integration"})
                 self.assertEqual(result["native_suites"]["unit"], result["targets"])
