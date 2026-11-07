@@ -99,6 +99,44 @@ def verify_head(plan, env):
           git_env)
 
 
+def test_only_change(plan, env):
+    """Prove all changed paths are tests in the already-reviewed Go packages.
+
+    The workflow reproduces the complete event plan before invoking this runner.
+    Independently compare its immutable endpoints here, so absent/truncated
+    metadata cannot narrow execution. Any uncertainty retains reverse coverage.
+    Ordinary prose mixed with tests conservatively retains that coverage too.
+    """
+    base, paths = plan.get("base_sha"), plan.get("changed_paths")
+    if (not isinstance(base, str) or not OID.fullmatch(base)
+            or not isinstance(paths, list) or not paths
+            or any(not isinstance(path, str) for path in paths)
+            or len(paths) != len(set(paths))):
+        return False
+    changed = set()
+    for path in paths:
+        package, _, filename = path.rpartition("/")
+        if ("./" + package not in ALLOWED_PACKAGES
+                or not filename.endswith("_test.go")
+                or any(ord(char) < 32 or ord(char) == 127 for char in path)
+                or "\\" in path):
+            return False
+        changed.add("./" + package)
+    if changed != set(plan["go_packages"]):
+        return False
+    git_env = dict(env, GIT_NO_REPLACE_OBJECTS="1", GIT_OPTIONAL_LOCKS="0",
+                   GIT_TERMINAL_PROMPT="0")
+    try:
+        query(["git", "merge-base", "--is-ancestor", base, plan["head_sha"]], git_env)
+        delta = query(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                       "--name-only", "-z", "--ignore-submodules=none",
+                       base, plan["head_sha"], "--"], git_env)
+    except InvalidInput:
+        return False
+    return (delta.endswith("\0") and len(delta[:-1].split("\0")) == len(paths)
+            and set(delta[:-1].split("\0")) == set(paths))
+
+
 def import_path(value):
     if (not isinstance(value, str) or not IMPORT.fullmatch(value)
             or any(part in ("", ".", "..") for part in value.split("/"))):
@@ -248,15 +286,22 @@ def main(argv=None):
     except InvalidInput as exc:
         print("error: " + str(exc), file=sys.stderr)
         return 2
-    try:
-        graph, standard = discover_graph(env)
-        packages = affected_packages(graph, standard, plan["go_packages"])
-        print(f"Scoped Go coverage: {len(packages)} standard packages, including reverse test imports.",
+    if test_only_change(plan, env):
+        # Test files do not alter the package imported by another package.
+        # Run every test in each changed package, not just a matching test name.
+        packages = sorted(plan["go_packages"])
+        print(f"Scoped Go coverage: {len(packages)} changed packages; verified test-only delta.",
               flush=True)
-    except InvalidInput:
-        print("warning: Go graph selection was uncertain; running all standard Go packages.",
-              file=sys.stderr, flush=True)
-        packages = ["./..."]
+    else:
+        try:
+            graph, standard = discover_graph(env)
+            packages = affected_packages(graph, standard, plan["go_packages"])
+            print(f"Scoped Go coverage: {len(packages)} standard packages, including reverse test imports.",
+                  flush=True)
+        except InvalidInput:
+            print("warning: Go graph selection was uncertain; running all standard Go packages.",
+                  file=sys.stderr, flush=True)
+            packages = ["./..."]
     try:
         result = race_tests(packages, plan["go_packages"], env)
         if result:

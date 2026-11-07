@@ -55,6 +55,106 @@ def event(action, test=None, **fields):
 PASSED = [event("run", "TestPreset"), event("pass", "TestPreset"), event("pass")]
 
 
+def test_plan(*paths):
+    return {**plan(), "base_sha": "c" * 40,
+            "changed_paths": list(paths or ["internal/servicepresets/catalog_test.go"])}
+
+
+class TestOnlySelectionTests(unittest.TestCase):
+    def test_complete_test_delta_is_proved_with_fixed_git_arguments(self):
+        value = test_plan()
+        with mock.patch.object(scope, "query", side_effect=["", value["changed_paths"][0] + "\0"]) as query:
+            self.assertTrue(scope.test_only_change(value, {}))
+        self.assertEqual(query.call_args_list[0].args[0],
+                         ["git", "merge-base", "--is-ancestor", value["base_sha"], value["head_sha"]])
+        command, env = query.call_args_list[1].args
+        self.assertEqual(command, ["git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                                   "--name-only", "-z", "--ignore-submodules=none",
+                                   value["base_sha"], value["head_sha"], "--"])
+        self.assertEqual(env["GIT_NO_REPLACE_OBJECTS"], "1")
+        self.assertEqual(env["GIT_OPTIONAL_LOCKS"], "0")
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+
+    def test_missing_malformed_or_non_test_metadata_keeps_reverse_coverage(self):
+        value = test_plan()
+        bad = [plan(), {**value, "base_sha": None}, {**value, "base_sha": "main"},
+               *[{**value, "changed_paths": paths} for paths in
+                 (None, [], "path", [42], value["changed_paths"] * 2,
+                  ["internal/servicepresets/catalog.go"],
+                  ["internal/core/catalog_test.go"],
+                  ["internal/servicepresets/sub/catalog_test.go"],
+                  ["internal/servicepresets/../catalog_test.go"],
+                  ["internal/servicepresets/fake\n_test.go"],
+                  ["internal/servicepresets/fake\\_test.go"],
+                  ["README.md", *value["changed_paths"]])],
+               {**value, "go_packages": [CHANGED, "./internal/boundedlog"]}]
+        for item in bad:
+            with self.subTest(value=item), mock.patch.object(scope, "query") as query:
+                self.assertFalse(scope.test_only_change(item, {}))
+                query.assert_not_called()
+
+    def test_truncated_empty_duplicate_or_mismatched_git_delta_cannot_narrow(self):
+        value = test_plan()
+        path = value["changed_paths"][0]
+        for delta in ("", path, path + "\0\0", path + "\0" + path + "\0",
+                      "internal/servicepresets/catalog.go\0",
+                      path + "\0internal/servicepresets/catalog.go\0"):
+            with self.subTest(delta=delta), mock.patch.object(scope, "query", side_effect=["", delta]):
+                self.assertFalse(scope.test_only_change(value, {}))
+
+    def test_failed_ancestry_or_delta_query_cannot_narrow(self):
+        for outputs in ([scope.InvalidInput("fixture")], ["", scope.InvalidInput("fixture")]):
+            with mock.patch.object(scope, "query", side_effect=outputs):
+                self.assertFalse(scope.test_only_change(test_plan(), {}))
+
+    def test_two_test_only_packages_still_select_both(self):
+        value = test_plan("internal/servicepresets/catalog_test.go", "internal/boundedlog/log_test.go")
+        value["go_packages"].append("./internal/boundedlog")
+        with mock.patch.object(scope, "query", side_effect=["", "\0".join(reversed(value["changed_paths"])) + "\0"]):
+            self.assertTrue(scope.test_only_change(value, {}))
+
+    def test_real_git_range_keeps_earlier_production_changes_and_both_rename_paths(self):
+        # Compare the complete event range, never only the latest test commit.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+                       GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                       GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.invalid")
+            real_run = subprocess.run
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root, env=env,
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            def commit():
+                git("add", ".")
+                git("-c", "commit.gpgsign=false", "commit", "-qm", "Synthetic fixture")
+                return git("rev-parse", "HEAD")
+            git("init", "-q")
+            source = root / "internal/servicepresets"
+            source.mkdir(parents=True)
+            (source / "catalog.go").write_text("package servicepresets\n", encoding="utf-8")
+            test = source / "catalog_test.go"
+            test.write_text("package servicepresets\n", encoding="utf-8")
+            base = commit()
+            (source / "catalog.go").write_text("package servicepresets\n// source edit\n", encoding="utf-8")
+            production = commit()
+            test.write_text("package servicepresets\n// test edit\n", encoding="utf-8")
+            head = commit()
+            value = {**test_plan(), "head_sha": head, "base_sha": production}
+            # Route only this runner's Git queries into the isolated fixture.
+            with mock.patch.object(scope.subprocess, "run",
+                                   side_effect=lambda *args, **kwargs: real_run(*args, cwd=root, **kwargs)):
+                self.assertTrue(scope.test_only_change(value, env))
+                self.assertFalse(scope.test_only_change({**value, "base_sha": base}, env))
+            git("mv", "internal/servicepresets/catalog_test.go", "internal/servicepresets/renamed_test.go")
+            renamed = commit()
+            value.update(base_sha=head, head_sha=renamed)
+            with mock.patch.object(scope.subprocess, "run",
+                                   side_effect=lambda *args, **kwargs: real_run(*args, cwd=root, **kwargs)):
+                self.assertFalse(scope.test_only_change(value, env))
+                value["changed_paths"].append("internal/servicepresets/renamed_test.go")
+                self.assertTrue(scope.test_only_change(value, env))
+
+
 class GraphTests(unittest.TestCase):
     def test_transitive_reverse_imports_and_both_test_import_types(self):
         parsed = scope.parse_graph(fixture_graph())
@@ -125,7 +225,7 @@ class GraphTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     def invoke(self, *, value=None, graphs=None, events=None, test_code=0, vet_code=0,
-               head="a" * 40, tree="b" * 40, dirty=False):
+               head="a" * 40, tree="b" * 40, dirty=False, delta=None):
         commands = []
         outputs = iter(graphs or [fixture_graph()] * len(scope.GRAPH_VARIANTS))
 
@@ -137,6 +237,8 @@ class RunnerTests(unittest.TestCase):
                 if argv[1] == "rev-parse":
                     raw = head if argv[-1] == "HEAD" else tree
                     return subprocess.CompletedProcess(argv, 0, (raw + "\n").encode())
+                if "--name-only" in argv:
+                    return subprocess.CompletedProcess(argv, 0, (delta or "").encode())
                 return subprocess.CompletedProcess(argv, 1 if dirty else 0, b"")
             if argv[1] == "list":
                 raw = next(outputs)
@@ -182,6 +284,38 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(vet[0], ["go", "vet", "-mod=readonly", *expected])
         for _, kwargs in commands:
             self.assertEqual(kwargs["env"]["GOFLAGS"], "-mod=readonly -tags=standard")
+
+    def test_test_only_run_skips_graph_and_runs_full_changed_package_race_and_vet(self):
+        value = test_plan()
+        code, stdout, stderr, commands = self.invoke(value=value, delta=value["changed_paths"][0] + "\0")
+        self.assertEqual(code, 0)
+        self.assertIn("verified test-only delta", stdout)
+        self.assertEqual(stderr, "")
+        self.assertFalse(any(argv[:2] == ["go", "list"] for argv, _ in commands))
+        execution = [argv for argv, _ in commands if argv[0] == "go"]
+        self.assertEqual(execution, [
+            ["go", "test", "-json", "-mod=readonly", "-race", "-count=1", "-timeout=10m", CHANGED],
+            ["go", "vet", "-mod=readonly", CHANGED]])
+
+    def test_test_only_selection_still_requires_tests_and_propagates_failure(self):
+        value = test_plan()
+        delta = value["changed_paths"][0] + "\0"
+        for fields, status in (({"events": []}, 1), ({"events": [event("pass")]}, 1),
+                               ({"events": [event("skip", "TestPreset"), *PASSED]}, 1),
+                               ({"test_code": 8}, 8), ({"vet_code": 9}, 9)):
+            with self.subTest(fields=fields):
+                self.assertEqual(self.invoke(value=value, delta=delta, **fields)[0], status)
+
+    def test_unproven_test_delta_retains_reverse_coverage_and_graph_fallback(self):
+        value = test_plan()
+        delta = "internal/servicepresets/catalog.go\0"
+        code, stdout, _, commands = self.invoke(value=value, delta=delta)
+        self.assertEqual(code, 0)
+        self.assertIn("including reverse test imports", stdout)
+        self.assertEqual(sum(argv[:2] == ["go", "list"] for argv, _ in commands), len(scope.GRAPH_VARIANTS))
+        code, _, stderr, _ = self.invoke(value=value, delta=delta, graphs=[None])
+        self.assertEqual(code, 0)
+        self.assertIn("all standard Go packages", stderr)
 
     def test_query_failure_or_invalid_graph_falls_back_to_all_standard_packages(self):
         for output in (None, "[]", "", OSError("fixture"),

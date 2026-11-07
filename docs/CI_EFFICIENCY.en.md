@@ -36,6 +36,7 @@ Text equivalent: classify the complete change; run only a recognized narrower su
 | `web/src` TypeScript/TSX/CSS or existing `web/browser/*.mjs` acceptance code, optionally with ordinary prose | Linux frontend unit tests, two matching exact-lock builds, fixture safety tests and real browser acceptance |
 | Accompanying generated `web/dist` changes | Included in frontend scope only with a frontend source change; regeneration must match |
 | Reviewed Go-only changes in `internal/servicepresets` or `internal/boundedlog`, optionally with ordinary prose | Changed packages and transitive reverse dependencies, including test imports, tested with race detection and vet on Linux |
+| Only `*_test.go` changes within those two reviewed Go packages | All tests in each changed package, race detection and vet on Linux; unchanged reverse dependencies and dependency-graph discovery are omitted only after the complete Git delta is reproduced |
 | Reviewed CLI presentation changes on PRs or main, optionally with ordinary prose | All four native short/safety suites, browser and package/manifest checks; three real-time lifecycle/lease gates and native resource inspection, management and fixed-group catalog are not run |
 | Reviewed existing native companion UI files, optionally with ordinary prose | Documents and shared policy checks, all four companion race suites with protected IPC pass evidence, MyGo vet/format/compile and Windows/macOS product package build/smoke; backend qualification and browser/manifest checks are not run |
 | Transport, authentication, Core, configuration, timers, shared helpers, dependencies, lockfiles, build configuration, CI policy/workflows, or any unknown path | Full native Linux amd64/arm64, macOS arm64, Windows amd64, browser and package/manifest validation |
@@ -60,6 +61,18 @@ This scope omits natural direct-LAN rekey/idle lifecycle, guarded relay real-tim
 Authenticated main pushes can use the same closed native-short selection as PRs. Created/deleted/forced main pushes and unsupported events still require full validation. Keep the exact-source full validation gate below in place before deploying this main-shortening policy; a short green workflow cannot establish release eligibility. Related transport/lifecycle changes remain full; the native-short allowlist, per-family long-test routing and test repetition counts are unchanged. Daily full runs are described below.
 
 The Go allowlist is deliberately small. It is not permission to run any Go change on one operating system. OS-specific files, build constraints and dependencies outside the reviewed package boundary require the full matrix. The scoped runner uses current Go import graphs, including integration-tag variants for reverse-dependency selection, but executes ordinary Linux tests rather than the long native integration suites. If graph discovery is uncertain, it runs all ordinary Go packages. Failed commands and missing actual test passes remain failures.
+
+For changes confined to `*_test.go` in those two packages, the scoped runner
+compares the verified plan's immutable base and head again with Git, including
+both rename endpoints. An exact match runs every test in each changed package
+with `-race -count=1`, then vet. Test files do not change the package consumed by
+its importers, so this case omits reverse dependencies and six graph-discovery
+commands. Missing, malformed, incomplete or inconsistent evidence retains the
+usual reverse-dependency path; a failed graph query there still runs all ordinary
+packages. Production-code edits, mixed prose and test changes, and every other
+scope keep their existing coverage. Daily full runs, dependency updates and
+exact-SHA release qualification are unchanged. This reduces selected work;
+elapsed-time savings depend on the affected packages and runner caches.
 
 Markdown used as development policy or upstream source provenance is not ordinary prose. The required root documents must remain present. Guides are included in release archives, but that alone does not require rebuilding the application for every prose edit. Code and release validations continue checking the package contents. The separate resource and relay measurement workflows are triggered by their implementation inputs, not wording changes in their reports.
 
