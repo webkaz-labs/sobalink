@@ -46,6 +46,8 @@ def jobs(scope="full"):
                        *([job("policy-regressions", conclusion="skipped")] if scope != "native-ui" else [])])
     result.append(job("browser", coverage.BROWSER_STEPS) if scope in ("full", "native-short", "frontend")
                   else job("browser", conclusion="skipped"))
+    result.append(job("browser-native", coverage.NATIVE_BROWSER_STEPS) if scope in ("full", "native-short", "frontend")
+                  else job("browser-native", conclusion="skipped"))
     result.append(job("go-unit", coverage.GO_STEPS) if scope == "go"
                   else job("go-unit", conclusion="skipped"))
     return result
@@ -188,9 +190,9 @@ class ActualCoverageTests(unittest.TestCase):
         for gate in native:
             self.assertEqual(coverage.FAST_STEPS.count(gate), 1)
         for gate in browser:
-            self.assertEqual(coverage.BROWSER_STEPS.count(gate), 1)
+            self.assertEqual((coverage.BROWSER_STEPS + coverage.NATIVE_BROWSER_STEPS).count(gate), 1)
         for scope in ('frontend', 'native-short', 'full'):
-            required = [('browser', gate) for gate in browser]
+            required = [('browser' if gate in coverage.BROWSER_STEPS else 'browser-native', gate) for gate in browser]
             if scope != 'frontend':
                 required += [(target, gate) for target in coverage.INTEGRATION_TARGETS.values() for gate in native]
             for target, gate in required:
@@ -292,7 +294,7 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertIn("  schedule:\n    # Daily 03:00 JST (UTC+09:00); changes to cadence require review.\n    - cron: '0 18 * * *'", workflow)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
         self.assertIn("|| format('ci-run-{0}', github.run_id)", workflow)
-        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, browser-native, go-unit, manifest-smoke]", workflow)
         self.assertIn("needs: [ci-required, web-activation, product-activation]", workflow)
         nightly = workflow.split("  nightly-full-check:\n", 1)[1]
         self.assertIn("ci-coverage.py nightly-finalize", nightly)
@@ -442,7 +444,7 @@ class ActualCoverageTests(unittest.TestCase):
         documents = workflow.split("  documents:\n", 1)[1].split("  native:\n", 1)[0]
         for name in coverage.DOCUMENT_STEPS:
             self.assertIn("name: " + name, documents)
-        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, browser-native, go-unit, manifest-smoke]", workflow)
         self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 4)
         self.assertIn('npm ci --prefix "$DOCS_RENDER_ROOT"', documents)
         # runner context is unavailable in jobs.<id>.env; resolve it only in steps.
