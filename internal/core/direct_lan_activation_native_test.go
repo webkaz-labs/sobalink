@@ -40,6 +40,7 @@ type activationNativePair struct {
 	observations     [2]activationNativeObservation
 	responseGate     [2]func()
 	traceCompletions bool
+	driveResults     [2]atomic.Pointer[activationDiagnosticDrive]
 }
 
 // Test-only, fixed numeric stages; never retain raw errors, peer data or proof.
@@ -462,7 +463,12 @@ func (f *activationNativePair) drive(i int, ctx context.Context) *contextUpgrade
 	go func() {
 		defer close(job.done)
 		defer cancel()
-		if err := c.driveContextUpgrade(run, job); err != nil {
+		started := time.Now()
+		err := c.driveContextUpgrade(run, job)
+		if f.traceCompletions {
+			f.driveResults[i].Store(activationDiagnosticDriveResult(err, run, time.Since(started)))
+		}
+		if err != nil {
 			c.upgradePhase(job, "failed", err)
 		}
 	}()
@@ -470,10 +476,30 @@ func (f *activationNativePair) drive(i int, ctx context.Context) *contextUpgrade
 }
 func TestActivationNativeLostFirstPrepareReplyRecovery(t *testing.T) {
 	f := newActivationNativePair(t)
+	f.traceCompletions = true
 	ctx, cancel := context.WithTimeout(f.ctx, 45*time.Second)
 	defer cancel()
 	initiator, _ := f.preparedOwner(0, ctx, false)
 	responder, dropped := f.preparedOwner(1, ctx, true)
+	peerKeys := [2]string{f.cores[1].directLAN.copy().Identity.PublicKey(), f.cores[0].directLAN.copy().Identity.PublicKey()}
+	defer func() {
+		if !t.Failed() {
+			return
+		}
+		// Snapshot both sides before fixture cleanup. Completed callback ordinals
+		// are not correlated with sender wires or a joined transport history.
+		for i, owner := range [2]*contextControlOwner{initiator, responder} {
+			observation := &f.observations[i]
+			records, omitted, unobserved := observation.completionSites.snapshot()
+			var classes [8]int32
+			for j := range classes {
+				classes[j] = observation.errors[j].Load()
+			}
+			t.Logf("lost PREPARE recovery terminal observation: side=%d driver=%+v", i, f.driveResults[i].Load())
+			t.Logf("lost PREPARE recovery callback observations (independent snapshots): side=%d callbacks=%d completed=%d rejected=%d classes=%v admitted=%d denied=%d cancelled_admission=%d stale_admission=%d response_lock_denials=%d records=%+v omitted=%d unobserved=%d", i, observation.callbacks.Load(), observation.completed.Load(), observation.rejected.Load(), classes, observation.admitted.Load(), observation.denied.Load(), observation.cancelledAdmission.Load(), observation.staleAdmission.Load(), owner.responseContention.Load(), records, omitted, unobserved)
+			t.Logf("lost PREPARE recovery retained state (nil when a lock is busy): side=%d state=%+v", i, activationDiagnosticTryRecoveryState(f.cores[i], peerKeys[i]))
+		}
+	}()
 	left, right := f.cores[0], f.cores[1]
 	right.op.Lock()
 	_, err := right.armContextInboundLocked(ctx, responder, left.directLAN.copy().Identity.PublicKey(), directlan.ContextPrepare)
