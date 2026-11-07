@@ -510,7 +510,7 @@ class WorkflowCachePolicy(unittest.TestCase):
         restore = self.step("ci", "native", "id: development-go-cache\n")
         save = self.step("ci", "native", "name: Save development Go caches after integration checks pass")
         self.assertIn("        if: steps.development-go-cache-scope.outputs.scope != ''\n", restore)
-        self.assertIn("        if: matrix.suite == 'integration' && (success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-hit != 'true')\n", save)
+        self.assertIn("        if: matrix.suite == 'integration' && (success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-matched-key == '' && steps.development-main-seed.outputs.cache-matched-key == '')\n", save)
         self.assertIn("uses: actions/cache/save@" + self.CACHE_PIN, save)
         self.assertIn(self.CACHE_PATHS, save)
         self.assertIn("key: ${{ steps.development-go-cache.outputs.cache-primary-key }}", save)

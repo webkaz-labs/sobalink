@@ -391,7 +391,8 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
                                                          "!= 'true')",
  'Save development Go caches after integration checks pass': "matrix.suite == 'integration' && (success() && "
                                                              "steps.development-go-cache-scope.outputs.scope != '' && "
-                                                             "steps.development-go-cache.outputs.cache-hit != 'true')",
+                                                             "steps.development-go-cache.outputs.cache-matched-key == '' && "
+                                                             "steps.development-main-seed.outputs.cache-matched-key == '')",
  'Preserve bounded Core failure context': "matrix.suite == 'unit' && (always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && "
                                           "steps.native-core.outputs.failure_ready == 'true')",
  'Summarize measured native suites': 'always()',
@@ -1284,12 +1285,12 @@ def validate_browser_cache_workflow(sources):
     a = region.index(restore_start)
     report = region.index('      - name: Report browser Go cache result\n', a)
     b = region.index('      - ', report + len('      - name: Report browser Go cache result\n'))
-    require(digest(region[a:b].encode()) == 'e8b50e17f60117fd0588bd781e2454904fca8064d29ec5cb7885a8d9c314e01b',
+    require(digest(region[a:b].encode()) == 'ff65c3c324656dc090ca0aceb6d9b71f70eb157e400f7368e1569eaeae2bd9e6',
             'browser cache restore policy differs')
     require(region[:a].endswith("          go-version: '1.27.1'\n          cache: false\n"),
             'browser cache must immediately follow exact Go setup')
     tail = region[region.index(save_start):].rstrip() + '\n'
-    require(digest(tail.encode()) == 'b24ac384b3a1a4d9527f4171257f46209d2711763ab7b2ad3a0bbe5c3892cf3c',
+    require(digest(tail.encode()) == 'df4e065596e8deb98181509ab4b3d8a592f7da4c9d657eb62268f303bacc508d',
             'browser cache must save only after all work succeeds')
 
 
