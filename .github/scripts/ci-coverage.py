@@ -36,7 +36,8 @@ NATIVE_UNIT_STEPS = (
     "Verify adapted engine admission and native underlay denial",
 )
 # GitHub's wait control cannot have an if. It is a no-op in the unit lane.
-NATIVE_SHARED_CONTROL_STEPS = ("Wait for direct LAN application checks",
+NATIVE_SHARED_CONTROL_STEPS = ("Wait for Core context checks",
+                               "Wait for direct LAN application checks",
                                "Wait for real-time lifecycle and lease checks")
 WINDOWS_BARRIER_STEPS = ("Verify Windows receive-retirement directory barriers",)
 # Separate merge-tested UI evidence never substitutes for backend qualification.
@@ -79,6 +80,7 @@ FAST_STEPS = (
     'Verify managed session native-udp-capacity',
     'Verify managed activation acceptance',
     'Verify managed restart acceptance',
+    'Wait for Core context checks',
     "Verify direct LAN WireGuard and Core native applications",
     "Verify explicit dispatch with three separate Core processes",
     "Verify durable outbox restart across Core processes",

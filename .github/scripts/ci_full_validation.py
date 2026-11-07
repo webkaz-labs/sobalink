@@ -346,6 +346,7 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'Verify managed session native-udp-capacity': "matrix.suite == 'integration'",
  'Verify managed activation acceptance': "matrix.suite == 'integration'",
  'Verify managed restart acceptance': "matrix.suite == 'integration'",
+ 'Wait for Core context checks': '',
  'Verify direct LAN WireGuard and Core native applications': "matrix.suite == 'integration'",
  'Verify explicit dispatch with three separate Core processes': "matrix.suite == 'integration'",
  'Verify durable outbox restart across Core processes': "matrix.suite == 'integration'",
@@ -504,9 +505,28 @@ def validate_application_overlap_workflow(data):
                '        if: always()\n'
                '        run: python .github/scripts/ci-metrics.py summary '
                '--include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" '
+               '--include "$RUNNER_TEMP/sobalink-ci-context-metrics.jsonl" '
                '--output "$RUNNER_TEMP/ci-suite-metrics.json"\n')
     require(workflow.count(summary) == 1 and workflow.index(summary) > workflow.index(end),
             'parallel application metrics must be summarized after their join')
+
+
+CI_CONTEXT_OVERLAP_SHA256 = '5718f69c171e808c909d5e8958bae48373874ed9d574b06b5a6c72d5f856b5c7'
+
+
+def validate_context_overlap_workflow(data):
+    """Bind one private Core fixture chain and the unchanged managed gate order."""
+    workflow = data.decode('utf-8')
+    start = '      - name: Verify Core context control over pinned TLS\n'
+    end = '      - name: Verify direct LAN WireGuard and Core native applications\n'
+    require(workflow.count(start) == workflow.count(end) == 1,
+            'missing or duplicate Core context overlap boundary')
+    region = workflow[workflow.index(start):workflow.index(end)]
+    require(digest(region.encode()) == CI_CONTEXT_OVERLAP_SHA256,
+            'Core context overlap commands or failure policy differ')
+    require(workflow.index('      - name: Check exact toolchain and native target\n')
+            < workflow.index(start) < workflow.index(end),
+            'Core context overlap must follow preparation and join before application checks')
 
 
 def validate_parallel_workflow(data):
@@ -519,6 +539,7 @@ def validate_parallel_workflow(data):
     workflow = data.decode('utf-8')
     metadata = workflow_metadata(workflow)
     validate_application_overlap_workflow(data)
+    validate_context_overlap_workflow(data)
     groups = (
         ('Verify direct LAN session natural rekey and idle lifecycle', 'natural-lifecycle', 9),
         ('Verify guarded relay real-time lease continuity', 'guarded-lease', 9),
@@ -548,11 +569,12 @@ def validate_parallel_workflow(data):
     require(tuple(re.findall(r'^      - name: ([^\n]+)$', region, re.M)) == expected
             and len(re.findall(r'^      - ', region, re.M)) == len(expected),
             'unexpected work inside real-time parallel region')
-    # Docs, native real-time gates, activation and browser preparation are the
+    # Docs, native fixture gates, activation and browser preparation are the
     # only async regions. Each has a separate closed source policy below.
     controls = [key for _, _, key, _ in metadata
                 if key in {'background', 'parallel', 'wait', 'wait-all', 'cancel'}]
     require(controls == ['parallel',
+                         'background', 'wait',
                          'background', 'wait',
                          'background', 'background', 'background', 'wait',
                          'background', 'wait', 'background', 'wait',
@@ -1495,7 +1517,8 @@ def required_jobs(sources, *, include_skipped=False):
     require(values['NATIVE_SHARED_STEPS'] == ('Reproduce locked frontend assets', 'Check exact toolchain and native target')
             and values['NATIVE_UNIT_STEPS'] == ('Local and mock tests, race detector, and vet',
                                                'Verify adapted engine admission and native underlay denial')
-            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for direct LAN application checks',
+            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for Core context checks',
+                                                         'Wait for direct LAN application checks',
                                                          'Wait for real-time lifecycle and lease checks')
             and values['WINDOWS_BARRIER_STEPS'] == ('Verify Windows receive-retirement directory barriers',),
             'native suite partition differs from reviewed policy')

@@ -472,9 +472,16 @@ jobs:
           PYTHON
           python .github/scripts/underlay-negative-controls.py --source .sobalink-deps/tailscale
           go run ./cmd/prepare-engine --verify
+      # Core TLS owns an in-memory transport and private fixture profiles.
+      # Overlap it with the ordered managed-session chain, then join both
+      # before starting the separate application overlap region.
       - name: Verify Core context control over pinned TLS
+        id: core-context
+        background: true
         if: matrix.suite == 'integration'
         timeout-minutes: 5
+        env:
+          SOBALINK_CI_METRICS: ${{ runner.temp }}/sobalink-ci-context-metrics.jsonl
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite context-core-tls -- python .github/scripts/ci-context-control.py core-tls
@@ -526,6 +533,8 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite managed-restart -- python .github/scripts/ci-managed-activation.py restart
+      - name: Wait for Core context checks
+        wait: core-context
       # One background gate overlaps the sequential process-recovery checks.
       # Each fixture owns its temporary profiles and dynamic loopback ports.
       # Join before any nearby, long-running lease, package or cache work.
@@ -973,7 +982,7 @@ jobs:
           retention-days: 14
       - name: Summarize measured native suites
         if: always()
-        run: python .github/scripts/ci-metrics.py summary --include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" --output "$RUNNER_TEMP/ci-suite-metrics.json"
+        run: python .github/scripts/ci-metrics.py summary --include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" --include "$RUNNER_TEMP/sobalink-ci-context-metrics.jsonl" --output "$RUNNER_TEMP/ci-suite-metrics.json"
       - name: Preserve native suite timings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
