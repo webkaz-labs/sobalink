@@ -13,7 +13,7 @@ def cache_scope(env, event):
             or metadata.get('full_name') != repository
             or metadata.get('default_branch') != 'main'
             or metadata.get('private') is not False
-            or env.get('GITHUB_JOB') != 'browser'
+            or env.get('GITHUB_JOB') not in ('browser', 'browser-native')
             or env.get('RUNNER_OS') != 'Linux' or env.get('RUNNER_ARCH') != 'X64'):
         return ''
     ref, name = env.get('GITHUB_REF', ''), env.get('GITHUB_EVENT_NAME', '')

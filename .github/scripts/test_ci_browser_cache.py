@@ -28,6 +28,10 @@ class ScopeTests(unittest.TestCase):
     def test_same_repository_pull_request(self):
         self.assertEqual(cache.cache_scope(self.env, self.event), 'pr-123')
 
+    def test_native_browser_uses_same_scope_without_new_family(self):
+        self.env['GITHUB_JOB'] = 'browser-native'
+        self.assertEqual(cache.cache_scope(self.env, self.event), 'pr-123')
+
     def test_main_trigger_allowlist(self):
         self.env['GITHUB_REF'] = 'refs/heads/main'
         for event in ('push', 'workflow_dispatch', 'schedule'):

@@ -40,7 +40,7 @@ class FullProofTests(unittest.TestCase):
         self.sources[full.CI_PLAYWRIGHT_HELPER] = original
         original = self.sources[full.WORKFLOW]
         marker = b'          python3 -B .github/scripts/ci-playwright.py\n'
-        self.assertEqual(original.count(marker), 3)
+        self.assertEqual(original.count(marker), 4)
         positions = [i for i in range(len(original)) if original.startswith(marker, i)]
         for start in positions:
             for after in (b'', marker.replace(b'ci-playwright.py', b'other.py'),
@@ -98,7 +98,7 @@ class FullProofTests(unittest.TestCase):
     def test_japanese_font_steps_cannot_skip_ignore_failure_or_change_action(self):
         original = self.sources[full.WORKFLOW]
         marker = b'      - name: Prepare verified Japanese fonts\n'
-        self.assertEqual(original.count(marker), 2)
+        self.assertEqual(original.count(marker), 3)
         positions = [i for i in range(len(original)) if original.startswith(marker, i)]
         for start in positions:
             for suffix in (b'        if: false\n', b'        continue-on-error: true\n',
@@ -115,8 +115,8 @@ class FullProofTests(unittest.TestCase):
         path = '.github/scripts/ci-coverage.py'
         original = self.sources[path]
         marker = b'                 "Prepare verified Japanese fonts",\n'
-        self.assertEqual(original.count(marker), 1)
-        self.sources[path] = original.replace(marker, b'')
+        self.assertEqual(original.count(marker), 2)
+        self.sources[path] = original.replace(marker, b'', 1)
         with self.assertRaisesRegex(ValueError, 'Japanese font required'):
             full.required_jobs(self.sources)
 
@@ -124,7 +124,7 @@ class FullProofTests(unittest.TestCase):
     def test_full_proof_requires_actual_document_and_browser_font_success(self):
         gate = 'Prepare verified Japanese fonts'
         original = copy.deepcopy(self.jobs)
-        for name in ('documents', 'browser'):
+        for name in ('documents', 'browser', 'browser-native'):
             self.assertIn(gate, self.required[name])
             for mode in ('missing', 'skipped', 'failure', 'in_progress', 'duplicate'):
                 self.jobs = copy.deepcopy(original)
@@ -794,8 +794,8 @@ class FullProofTests(unittest.TestCase):
         gates = [(name, 'Verify manual nearby setup across native Core peers') for name, _ in full.INTEGRATION_TARGETS.values()]
         gates += [(name, gate) for name, _ in full.INTEGRATION_TARGETS.values() for gate, _, _ in full.REQUEST_SETUP_CASES]
         gates += [('browser', 'Verify synthetic request pairing UI without skips'),
-                  ('browser', 'Verify nearby setup with separate agents and actual browser'),
-                  ('browser', 'Verify durable text recovery with separate agents and actual browser')]
+                  ('browser-native', 'Verify nearby setup with separate agents and actual browser'),
+                  ('browser-native', 'Verify durable text recovery with separate agents and actual browser')]
         for name, gate in gates:
             for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
                 self.jobs = copy.deepcopy(original)
@@ -1012,7 +1012,7 @@ class FullProofTests(unittest.TestCase):
         original = copy.deepcopy(self.jobs)
         for name, gate in [(name, 'Verify durable outbox restart across Core processes')
                            for name, _ in full.INTEGRATION_TARGETS.values()] + [
-                               ('browser', 'Verify durable outbox recovery with separate agents and actual browser')]:
+                               ('browser-native', 'Verify durable outbox recovery with separate agents and actual browser')]:
             for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', 'pending'):
                 self.jobs = copy.deepcopy(original)
                 job = next(j for j in self.jobs if j['name'] == name)
