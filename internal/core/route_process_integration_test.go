@@ -94,6 +94,7 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		}
 		var value any
 		var callErr error
+		var outboxCommitMS *int64
 		switch request.Name {
 		case "fixture.text-fault", "fixture.text-evidence", "fixture.text-wire":
 			value, callErr = textFixture.command(ctx, request.Name, request.Payload)
@@ -289,11 +290,19 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 					requestID = newTextRequestID(time.Now())
 				}
 			}
+			var commandStarted time.Time
+			if request.Name == "outbox.commit" {
+				commandStarted = time.Now()
+			}
 			value, callErr = c.Command(call, webui.Command{RequestID: requestID, Name: request.Name, Payload: request.Payload})
+			if !commandStarted.IsZero() {
+				elapsed := time.Since(commandStarted).Milliseconds()
+				outboxCommitMS = &elapsed
+			}
 			stop()
 		}
 		raw, _ := json.Marshal(value)
-		reply := processReply{Value: raw}
+		reply := processReply{Value: raw, OutboxCommitMS: outboxCommitMS}
 		if callErr != nil {
 			reply.Error = request.Name + ": " + routeProcessCommandErrorCode(request.Name, callErr)
 			if request.Name == "transfer.accept" {
@@ -310,9 +319,10 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 }
 
 type processReply struct {
-	Value       json.RawMessage
-	Error       string
-	AcceptCause string `json:",omitempty"`
+	OutboxCommitMS *int64 `json:",omitempty"`
+	Value          json.RawMessage
+	Error          string
+	AcceptCause    string `json:",omitempty"`
 }
 type routeCoreProcess struct {
 	cmd         *exec.Cmd

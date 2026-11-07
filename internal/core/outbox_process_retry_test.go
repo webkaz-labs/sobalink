@@ -211,3 +211,55 @@ func TestOutboxProcessCommitRetryStops(t *testing.T) {
 		})
 	}
 }
+
+// The two-second limit governs retry admission, not a command already in
+// flight. Observation must preserve that distinction and every original reply.
+func TestOutboxProcessCommitRetryObservedResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		duration   time.Duration
+		calls      int
+		expired    bool
+	}{
+		{"slow-busy", "outbox.commit: outbox_storage_busy", 3 * time.Second, 1, true},
+		{"persistent-busy", "outbox.commit: outbox_storage_busy", 0, 0, true},
+		{"success", "", 3 * time.Second, 1, false},
+		{"other-error", "outbox.commit: outbox_storage_uncertain", time.Millisecond, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var observation outboxProcessCommitObservation
+				want := json.RawMessage(`{"original":"synthetic-record"}`)
+				started := time.Now()
+				got, code, err := retryOutboxProcessCommit(context.Background(), func() (json.RawMessage, string) {
+					observation.start()
+					started := time.Now()
+					time.Sleep(tc.duration)
+					child := tc.duration.Milliseconds()
+					observation.record(tc.code, time.Since(started), &child)
+					return want, tc.code
+				})
+				callsMatch, wantElapsed := observation.attempts == tc.calls, tc.duration
+				if tc.calls == 0 {
+					// The last retry timer and deadline can become ready together.
+					// Pin the time bound, not their scheduler-dependent tie order.
+					callsMatch, wantElapsed = observation.attempts >= 2, 2*time.Second
+				}
+				resultMatches := err == nil
+				if tc.expired {
+					resultMatches = errors.Is(err, context.DeadlineExceeded)
+				}
+				if !bytes.Equal(got, want) || code != tc.code || !callsMatch || observation.completed != observation.attempts || observation.childSamples != observation.attempts || observation.maxCommandMS != tc.duration.Milliseconds() || !resultMatches || time.Since(started) != wantElapsed {
+					t.Fatal("observation changed the original reply or retry deadline")
+				}
+				wantBusy := 0
+				if tc.code == "outbox.commit: outbox_storage_busy" {
+					wantBusy = observation.attempts
+				}
+				if observation.busy != wantBusy {
+					t.Fatal("observation changed exact-busy classification")
+				}
+			})
+		})
+	}
+}

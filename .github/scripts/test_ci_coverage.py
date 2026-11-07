@@ -46,6 +46,8 @@ def jobs(scope="full"):
                        *([job("policy-regressions", conclusion="skipped")] if scope != "native-ui" else [])])
     result.append(job("browser", coverage.BROWSER_STEPS) if scope in ("full", "native-short", "frontend")
                   else job("browser", conclusion="skipped"))
+    result.append(job("browser-native", coverage.NATIVE_BROWSER_STEPS) if scope in ("full", "native-short", "frontend")
+                  else job("browser-native", conclusion="skipped"))
     result.append(job("go-unit", coverage.GO_STEPS) if scope == "go"
                   else job("go-unit", conclusion="skipped"))
     return result
@@ -58,6 +60,101 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def frontend_matrix_jobs(self):
+        data = jobs("frontend")
+        selected = next(item for item in data if item["name"] == "native")
+        selected.update(name="matrix.name", steps=None)
+        return data
+
+    def test_unexpanded_frontend_skip_is_not_native_success(self):
+        for steps in (None, []):
+            data = self.frontend_matrix_jobs()
+            selected = next(item for item in data if item["name"] == "matrix.name")
+            selected["steps"] = steps
+            original = copy.deepcopy(data)
+            self.assertFalse(coverage.evaluate_jobs(data, "frontend"))
+            self.assertEqual(data, original)
+
+    def test_unexpanded_matrix_skip_rejects_other_scopes_and_executed_jobs(self):
+        for scope in sorted(coverage.SCOPES - {"frontend", "go"}):
+            data = jobs(scope) + [job("matrix.name", conclusion="skipped")]
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                coverage.evaluate_jobs(data, scope)
+        for scope in ("frontend", "go"):
+            for field, values in {
+                "status": (None, "queued", "in_progress"),
+                "conclusion": (None, "success", "failure", "cancelled", "timed_out", "neutral"),
+                "steps": ([step("executed")], [step("not run", "skipped")], {}, ""),
+                "name": ("matrix.other", "${{ matrix.name }}", "unknown"),
+            }.items():
+                for value in values:
+                    data = jobs(scope)
+                    next(item for item in data if item["name"] == "native").update(name="matrix.name", steps=None)
+                    next(item for item in data if item["name"] == "matrix.name")[field] = value
+                    with self.subTest(scope=scope, field=field, value=value), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
+    def test_unexpanded_go_skip_keeps_required_go_jobs_and_steps(self):
+        for name in ("impact", "documents", "go-unit"):
+            for mode in ("valid", "missing", "duplicate", "pending", "skipped", "failure", "cancelled",
+                         "missing-step", "duplicate-step", "pending-step", "skipped-step", "failed-step"):
+                data = jobs("go")
+                next(item for item in data if item["name"] == "native").update(name="matrix.name", steps=None)
+                selected = next(item for item in data if item["name"] == name)
+                if mode == "valid":
+                    self.assertFalse(coverage.evaluate_jobs(data, "go"))
+                    continue
+                if mode == "missing":
+                    data.remove(selected)
+                elif mode == "duplicate":
+                    data.append(copy.deepcopy(selected))
+                elif mode == "pending":
+                    selected["status"] = "in_progress"
+                elif mode == "missing-step":
+                    selected["steps"].pop()
+                elif mode == "duplicate-step":
+                    selected["steps"].append(copy.deepcopy(selected["steps"][0]))
+                elif mode == "pending-step":
+                    selected["steps"][0]["status"] = "in_progress"
+                elif mode in ("skipped-step", "failed-step"):
+                    selected["steps"][0]["conclusion"] = "skipped" if mode == "skipped-step" else "failure"
+                else:
+                    selected["conclusion"] = mode
+                with self.subTest(name=name, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, "go")
+
+    def test_unexpanded_skip_rejects_duplicates_in_either_order(self):
+        for name in ("matrix.name", "native"):
+            for reverse in (False, True):
+                data = self.frontend_matrix_jobs() + [job(name, conclusion="skipped")]
+                with self.subTest(name=name, reverse=reverse), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(list(reversed(data)) if reverse else data, "frontend")
+
+    def test_unexpanded_skip_cannot_hide_missing_or_failed_frontend_checks(self):
+        for name in ("impact", "documents", "browser", "browser-native"):
+            for mode in ("missing", "duplicate", "pending", "skipped", "failure", "cancelled",
+                         "missing-step", "duplicate-step", "pending-step", "skipped-step", "failed-step"):
+                data = self.frontend_matrix_jobs()
+                selected = next(item for item in data if item["name"] == name)
+                if mode == "missing":
+                    data.remove(selected)
+                elif mode == "duplicate":
+                    data.append(copy.deepcopy(selected))
+                elif mode == "pending":
+                    selected["status"] = "in_progress"
+                elif mode == "missing-step":
+                    selected["steps"].pop()
+                elif mode == "duplicate-step":
+                    selected["steps"].append(copy.deepcopy(selected["steps"][0]))
+                elif mode == "pending-step":
+                    selected["steps"][0]["status"] = "in_progress"
+                elif mode in ("skipped-step", "failed-step"):
+                    selected["steps"][0]["conclusion"] = "skipped" if mode == "skipped-step" else "failure"
+                else:
+                    selected["conclusion"] = mode
+                with self.subTest(name=name, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, "frontend")
+
     def test_browser_frontend_suite_is_mandatory_even_when_native_tests_are_deduplicated(self):
         gate = 'Test and reproduce locked frontend assets'
         for scope in ('frontend', 'native-short', 'full'):
@@ -188,9 +285,9 @@ class ActualCoverageTests(unittest.TestCase):
         for gate in native:
             self.assertEqual(coverage.FAST_STEPS.count(gate), 1)
         for gate in browser:
-            self.assertEqual(coverage.BROWSER_STEPS.count(gate), 1)
+            self.assertEqual((coverage.BROWSER_STEPS + coverage.NATIVE_BROWSER_STEPS).count(gate), 1)
         for scope in ('frontend', 'native-short', 'full'):
-            required = [('browser', gate) for gate in browser]
+            required = [('browser' if gate in coverage.BROWSER_STEPS else 'browser-native', gate) for gate in browser]
             if scope != 'frontend':
                 required += [(target, gate) for target in coverage.INTEGRATION_TARGETS.values() for gate in native]
             for target, gate in required:
@@ -292,7 +389,7 @@ class ActualCoverageTests(unittest.TestCase):
         self.assertIn("  schedule:\n    # Daily 03:00 JST (UTC+09:00); changes to cadence require review.\n    - cron: '0 18 * * *'", workflow)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
         self.assertIn("|| format('ci-run-{0}', github.run_id)", workflow)
-        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, browser-native, go-unit, manifest-smoke]", workflow)
         self.assertIn("needs: [ci-required, web-activation, product-activation]", workflow)
         nightly = workflow.split("  nightly-full-check:\n", 1)[1]
         self.assertIn("ci-coverage.py nightly-finalize", nightly)
@@ -442,7 +539,7 @@ class ActualCoverageTests(unittest.TestCase):
         documents = workflow.split("  documents:\n", 1)[1].split("  native:\n", 1)[0]
         for name in coverage.DOCUMENT_STEPS:
             self.assertIn("name: " + name, documents)
-        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]", workflow)
+        self.assertIn("needs: [impact, documents, policy-regressions, native, native-ui, browser, browser-native, go-unit, manifest-smoke]", workflow)
         self.assertEqual(documents.count("if: steps.document-selection.outputs.render_required == 'true'"), 4)
         self.assertIn('npm ci --prefix "$DOCS_RENDER_ROOT"', documents)
         # runner context is unavailable in jobs.<id>.env; resolve it only in steps.

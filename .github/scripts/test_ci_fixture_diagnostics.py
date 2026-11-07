@@ -110,11 +110,11 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
     def test_required_browser_gate_and_source_policy(self):
         sources = {path: (ROOT / path).read_bytes() for path in full.SOURCES}
         required = full.required_jobs(sources)
-        self.assertEqual(required['browser'].count(GATE), 1)
-        self.assertTrue(all(GATE not in steps for job, steps in required.items() if job != 'browser'))
+        self.assertEqual(required['browser-native'].count(GATE), 1)
+        self.assertTrue(all(GATE not in steps for job, steps in required.items() if job != 'browser-native'))
         sources['.github/scripts/ci-coverage.py'] = sources['.github/scripts/ci-coverage.py'].replace(
             b'                 "Verify privacy-safe fixture diagnostics",\n', b'')
-        with self.assertRaisesRegex(ValueError, 'missing fixture diagnostic required gate'):
+        with self.assertRaisesRegex(ValueError, 'every native-browser'):
             full.required_jobs(sources)
 
     def test_source_policy_rejects_missing_duplicate_or_weakened_execution(self):
@@ -137,11 +137,11 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
 
 
     def test_preparation_is_joined_before_embedded_assets_or_browser_consumers(self):
-        region = self.workflow[self.workflow.index('\n  browser:\n'):]
-        names = ('Prepare verified browser engine', 'Test and reproduce locked frontend assets',
-                 'Wait for verified browser engine', 'Install official Chromium and fonts',
-                 GATE, 'Wait for browser runtime preparation',
-                 'Verify actual UI workflows with isolated Playwright fixtures')
+        region = self.workflow[self.workflow.index('\n  browser-native:\n'):]
+        names = ('Prepare verified native-browser engine', 'Install locked native-browser dependencies',
+                 'Wait for verified native-browser engine', 'Install official native-browser Chromium and fonts',
+                 GATE, 'Wait for native-browser runtime preparation',
+                 'Verify real browser UI launch without skips')
         positions = [region.index('      - name: ' + name + '\n') for name in names]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn('go run ./cmd/prepare-engine', self.step)
@@ -150,21 +150,21 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
 
     def test_background_failures_cannot_escape_waits_or_race_vite_writes(self):
         mutations = []
-        for name, identifier in (('Prepare verified browser engine', 'browser-engine'),
-                                 ('Install official Chromium and fonts', 'browser-chromium')):
+        for name, identifier in (('Prepare verified native-browser engine', 'native-browser-engine'),
+                                 ('Install official native-browser Chromium and fonts', 'native-browser-chromium')):
             marker = '      - name: ' + name + '\n'
             for suffix in ('        if: false\n', '        continue-on-error: true\n'):
                 mutations.append(self.workflow.replace(marker, marker + suffix, 1))
             before = '        id: ' + identifier + '\n        background: true\n'
             mutations.append(self.workflow.replace(before, before.replace('true', 'false'), 1))
-        for name, identifier in (('Wait for verified browser engine', 'browser-engine'),
-                                 ('Wait for browser runtime preparation', 'browser-chromium')):
+        for name, identifier in (('Wait for verified native-browser engine', 'native-browser-engine'),
+                                 ('Wait for native-browser runtime preparation', 'native-browser-chromium')):
             block = '      - name: ' + name + '\n        wait: ' + identifier + '\n'
             mutations += [self.workflow.replace(block, ''),
                           self.workflow.replace(block, block + '        if: always()\n'),
                           self.workflow.replace(block, block + '        continue-on-error: true\n'),
                           self.workflow.replace(block, block.replace('wait: ' + identifier, 'run: true'))]
-        marker = '      - name: Test and reproduce locked frontend assets\n'
+        marker = '      - name: Install locked native-browser dependencies\n'
         start = self.workflow.index(marker)
         end = self.workflow.index('      - ', start + len(marker))
         frontend = self.workflow[start:end]
@@ -177,15 +177,15 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
 
     def test_each_preparation_and_wait_is_required_runtime_evidence(self):
         sources = {path: (ROOT / path).read_bytes() for path in full.SOURCES}
-        gates = ('Prepare verified browser engine', 'Wait for verified browser engine',
-                 'Install official Chromium and fonts', 'Wait for browser runtime preparation')
+        gates = ('Prepare verified native-browser engine', 'Wait for verified native-browser engine',
+                 'Install official native-browser Chromium and fonts', 'Wait for native-browser runtime preparation')
         required = full.required_jobs(sources)
         for gate in gates:
-            self.assertEqual(required['browser'].count(gate), 1)
+            self.assertEqual(required['browser-native'].count(gate), 1)
             changed = dict(sources)
             changed['.github/scripts/ci-coverage.py'] = sources['.github/scripts/ci-coverage.py'].replace(
                 ('"' + gate + '"').encode(), b'"Unreviewed replacement"', 1)
-            message = 'Playwright required gate' if gate == 'Install official Chromium and fonts' else 'browser preparation'
+            message = 'every native-browser'
             with self.subTest(gate=gate), self.assertRaisesRegex(ValueError, message):
                 full.required_jobs(changed)
 
