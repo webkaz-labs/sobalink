@@ -112,7 +112,7 @@ class FontTests(unittest.TestCase):
 
 class WorkflowContractTests(unittest.TestCase):
     def test_every_former_font_consumer_uses_one_shared_verified_action(self):
-        counts = {'ci.yml': 2, 'docs-review.yml': 1, 'native-poc.yml': 1,
+        counts = {'ci.yml': 3, 'docs-review.yml': 1, 'native-poc.yml': 1,
                   'native-ui-checks.yml': 1, 'activation-diagnostic.yml': 2}
         for name, count in counts.items():
             source = (ROOT / '.github/workflows' / name).read_text()

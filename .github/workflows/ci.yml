@@ -961,8 +961,10 @@ jobs:
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
+      # Reuse a matched development or main seed without another per-SHA copy.
+      # A completely cold successful integration lane may still create its seed.
       - name: Save development Go caches after integration checks pass
-        if: matrix.suite == 'integration' && (success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-hit != 'true')
+        if: matrix.suite == 'integration' && (success() && steps.development-go-cache-scope.outputs.scope != '' && steps.development-go-cache.outputs.cache-matched-key == '' && steps.development-main-seed.outputs.cache-matched-key == '')
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -1256,7 +1258,12 @@ jobs:
             ${{ steps.browser-go-cache-info.outputs.gomodcache }}
             ${{ steps.browser-go-cache-info.outputs.gocache }}
           key: browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.sha }}
-          restore-keys: browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
+          # Prefer this PR/branch, then the same browser-only main seed. GitHub
+          # branch isolation prevents main from restoring a PR-created cache.
+          # Saves still use the requested scope, never the matched fallback key.
+          restore-keys: |
+            browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
+            browser-go-v1-main-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
       - name: Report browser Go cache result
         env:
           CACHE_OUTCOME: ${{ steps.browser-go-cache.outcome }}
@@ -1293,6 +1300,114 @@ jobs:
         uses: ./.github/actions/japanese-fonts
       - name: Install official Chromium and fonts
         id: browser-chromium
+        background: true
+        run: |
+          set -euo pipefail
+          python3 -B .github/scripts/ci-playwright.py
+      - name: Build isolated browser fixture
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
+      - name: Wait for browser runtime preparation
+        wait: browser-chromium
+      - name: Verify actual UI workflows with isolated Playwright fixtures
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          npm --prefix web run test:browser:safety
+          node --test web/browser/nearby-native-selectors.test.mjs web/browser/nearby-native-diagnostics.test.mjs web/browser/text-native-contract.test.mjs
+          screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
+          mkdir -m 700 "$screenshots"
+          SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
+      - name: Verify synthetic request pairing UI without skips
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          python -B .github/scripts/ci-pairing-ui.py
+      - name: Preserve sanitized UI screenshots and typography measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: soba-browser-screenshots
+          path: |
+            ${{ runner.temp }}/soba-playwright-screenshots/*.png
+            ${{ runner.temp }}/soba-playwright-screenshots/typography-*.json
+            ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser-native:
+    # Same source and scope as browser; final aggregation requires both lanes.
+    needs: impact
+    if: always() && !cancelled() && github.event.repository.private == false && needs.impact.outputs.scope != 'docs' && needs.impact.outputs.scope != 'go' && needs.impact.outputs.scope != 'native-ui'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      # Reuse the same browser cache family; only this race-heavy lane saves it.
+      - name: Select shared native-browser Go cache
+        id: browser-go-cache-info
+        run: python -B .github/scripts/ci-browser-cache.py
+      - name: Restore shared native-browser Go cache
+        id: browser-go-cache
+        if: steps.browser-go-cache-info.outputs.scope != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.browser-go-cache-info.outputs.gomodcache }}
+            ${{ steps.browser-go-cache-info.outputs.gocache }}
+          key: browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ github.sha }}
+          # Prefer this PR/branch, then the same browser-only main seed. GitHub
+          # branch isolation prevents main from restoring a PR-created cache.
+          # Saves still use the requested scope, never the matched fallback key.
+          restore-keys: |
+            browser-go-v1-${{ steps.browser-go-cache-info.outputs.scope }}-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
+            browser-go-v1-main-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
+      - name: Report native-browser Go cache result
+        env:
+          CACHE_OUTCOME: ${{ steps.browser-go-cache.outcome }}
+          CACHE_PRIMARY_KEY: ${{ steps.browser-go-cache.outputs.cache-primary-key }}
+          CACHE_MATCHED_KEY: ${{ steps.browser-go-cache.outputs.cache-matched-key }}
+          CACHE_HIT: ${{ steps.browser-go-cache.outputs.cache-hit }}
+        run: |
+          printf 'Browser Go cache outcome: %s; exact hit: %s\nRequested key: %s\nMatched key: %s\n' "${CACHE_OUTCOME:-skipped}" "${CACHE_HIT:-miss}" "$CACHE_PRIMARY_KEY" "${CACHE_MATCHED_KEY:-none}"
+      # This preparer imports only the adaptation helpers, not embedded Web assets.
+      - name: Prepare verified native-browser engine
+        id: native-browser-engine
+        background: true
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Install locked native-browser dependencies
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          test "$(node --version)" = v24.19.0
+          test "$(npm --version)" = 11.9.0
+          npm --prefix web ci --no-audit --no-fund
+          git diff --exit-code -- web/package-lock.json web/dist
+      - name: Wait for verified native-browser engine
+        wait: native-browser-engine
+      - name: Prepare verified Japanese fonts
+        timeout-minutes: 5
+        uses: ./.github/actions/japanese-fonts
+      - name: Install official native-browser Chromium and fonts
+        id: native-browser-chromium
         background: true
         run: |
           set -euo pipefail
@@ -1347,24 +1462,15 @@ jobs:
                           "-run=^(" + "|".join(tests) + ")$", "./" + package]
               subprocess.run(command, env=env, check=True, timeout=3 * 60)
           PYTHON
-      - name: Wait for browser runtime preparation
-        wait: browser-chromium
-      - name: Verify actual UI workflows with isolated Playwright fixtures
-        timeout-minutes: 15
+      - name: Wait for native-browser runtime preparation
+        wait: native-browser-chromium
+      - name: Verify real browser UI launch without skips
+        timeout-minutes: 3
         run: |
           set -euo pipefail
-          go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
-          npm --prefix web run test:browser:safety
-          node --test web/browser/nearby-native-selectors.test.mjs web/browser/nearby-native-diagnostics.test.mjs web/browser/text-native-contract.test.mjs
-          screenshots="$RUNNER_TEMP/soba-playwright-screenshots"
-          mkdir -m 700 "$screenshots"
-          SOBA_E2E_BINARY="$RUNNER_TEMP/soba-e2e" SOBA_SCREENSHOT_DIR="$screenshots" npm --prefix web run test:browser
           SOBA_UI_BROWSER_TEST=1 python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/webui:TestUILaunchRealBrowser -- go test -race -count=1 -timeout=2m ./internal/webui -run '^TestUILaunchRealBrowser$'
-      - name: Verify synthetic request pairing UI without skips
-        timeout-minutes: 6
-        run: |
-          set -euo pipefail
-          python -B .github/scripts/ci-pairing-ui.py
+      - name: Create private native-browser summary directory
+        run: mkdir -m 700 "$RUNNER_TEMP/soba-playwright-screenshots"
       - name: Verify catalog view with separate agents and actual browser
         timeout-minutes: 8
         env:
@@ -1450,15 +1556,12 @@ jobs:
             ${{ runner.temp }}/soba-setup-ui-sanitized/screenshots.json
           if-no-files-found: error
           retention-days: 14
-      - name: Preserve sanitized UI screenshots and typography measurements
+      - name: Preserve sanitized native browser summaries
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: soba-browser-screenshots
+          name: soba-native-browser-summaries
           path: |
-            ${{ runner.temp }}/soba-playwright-screenshots/*.png
-            ${{ runner.temp }}/soba-playwright-screenshots/typography-*.json
-            ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
             ${{ runner.temp }}/soba-playwright-screenshots/transfer-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json
@@ -1467,8 +1570,10 @@ jobs:
             ${{ runner.temp }}/soba-playwright-screenshots/text-native-summary.json
           if-no-files-found: warn
           retention-days: 14
+      # Keep one reusable seed until its exact target/dependency prefix misses.
+      # Go recompiles changed inputs; every test still runs on this source.
       - name: Save isolated browser Go cache after all checks pass
-        if: success() && steps.browser-go-cache-info.outputs.scope != '' && steps.browser-go-cache.outputs.cache-hit != 'true'
+        if: success() && steps.browser-go-cache-info.outputs.scope != '' && steps.browser-go-cache.outputs.cache-matched-key == ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -1541,7 +1646,7 @@ jobs:
 
   ci-required:
     # Require this aggregate in branch protection; a skipped job alone is green.
-    needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]
+    needs: [impact, documents, policy-regressions, native, native-ui, browser, browser-native, go-unit, manifest-smoke]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10

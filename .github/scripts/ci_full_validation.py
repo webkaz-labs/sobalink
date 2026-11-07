@@ -26,6 +26,7 @@ CI_FONT_POLICY_SHA256 = {
 CI_PLAYWRIGHT_HELPER = '.github/scripts/ci-playwright.py'
 CI_PLAYWRIGHT_SHA256 = 'bb87c90acc14984424e91cb26f4666fd7cd9500b6ff2742551675e8749e69237'
 CI_PLAYWRIGHT_STEPS = {
+    'browser-native': ('Install official native-browser Chromium and fonts', 'e7a514b653173e57d6a94984e3c885feffc1b06395550821c09aed023989c4ce'),
     'browser': ('Install official Chromium and fonts', '8713ef9acdce3e80e33890644453f30f8cf09ff22424400b770a686dac85758a'),
     'web-activation': ('Prepare locked dependencies and official Chromium', 'bb8f858aaf93517c90555abf356b37a933713703b997304fdae80d86c8b1fcf4'),
     'product-activation': ('Prepare locked dependencies and official Chromium', 'bb8f858aaf93517c90555abf356b37a933713703b997304fdae80d86c8b1fcf4'),
@@ -37,7 +38,7 @@ NATIVE_UI_POLICY_SHA256 = {
     '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
     '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
 }
-SOURCES = (WORKFLOW, CI_PLAYWRIGHT_HELPER, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/ci-browser-cache.py', '.github/scripts/test_ci_browser_cache.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+SOURCES = (WORKFLOW, CI_PLAYWRIGHT_HELPER, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/ci-browser-cache.py', '.github/scripts/test_ci_browser_cache.py', '.github/scripts/test_ci_browser_lanes.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
            '.github/scripts/native_ui_smoke.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -391,7 +392,8 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
                                                          "!= 'true')",
  'Save development Go caches after integration checks pass': "matrix.suite == 'integration' && (success() && "
                                                              "steps.development-go-cache-scope.outputs.scope != '' && "
-                                                             "steps.development-go-cache.outputs.cache-hit != 'true')",
+                                                             "steps.development-go-cache.outputs.cache-matched-key == '' && "
+                                                             "steps.development-main-seed.outputs.cache-matched-key == '')",
  'Preserve bounded Core failure context': "matrix.suite == 'unit' && (always() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && "
                                           "steps.native-core.outputs.failure_ready == 'true')",
  'Summarize measured native suites': 'always()',
@@ -587,6 +589,7 @@ def validate_parallel_workflow(data):
                          'background', 'wait',
                          'background', 'background', 'background', 'wait',
                          'background', 'wait', 'background', 'wait',
+                         'background', 'wait', 'background', 'wait',
                          'background', 'wait', 'background', 'wait'],
             'unexpected workflow concurrency or failure policy')
     require(not any(key == 'continue-on-error' and starts[0] <= pos < end + len(fence)
@@ -598,6 +601,25 @@ def validate_parallel_workflow(data):
     require(region.count('.github/scripts/ci-metrics.py run') == 1
             and region.count('--suite natural-lifecycle --') == 1,
             'parallel timing writers require isolated storage')
+
+
+
+CI_BROWSER_LANE_SHA256 = {'browser': '509196d5c6246eafae4f8e5c14d5c4c97612ddd78135d69736c351c6c1370f42', 'browser-native': '5720579e5548a30a4a57a39475f825b8c32615e7f890b822409f3a15c159642e'}
+
+
+def validate_browser_lanes_workflow(data):
+    """Two independent workspaces, same scope/source, fail-closed final join."""
+    workflow = data.decode('utf-8')
+    jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    for name, expected in CI_BROWSER_LANE_SHA256.items():
+        starts = [pos for pos, key in jobs if key == name]
+        require(len(starts) == 1, 'missing or duplicate browser lane: ' + name)
+        start = starts[0]
+        end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+        require(digest(workflow[start:end].encode()) == expected,
+                'browser lane source, cache, artifact or failure policy differs: ' + name)
+    require('    needs: [impact, documents, policy-regressions, native, native-ui, browser, browser-native, go-unit, manifest-smoke]\n' in workflow,
+            'aggregate must join both browser lanes')
 
 
 def validate_fixture_diagnostics_workflow(data):
@@ -656,14 +678,14 @@ def validate_fixture_diagnostics_workflow(data):
 """
     marker = '      - name: Verify privacy-safe fixture diagnostics\n'
     require(workflow.count(marker) == 1, 'missing or duplicate fixture diagnostic gate')
-    browser = workflow.index('\n  browser:\n')
+    browser = workflow.index('\n  browser-native:\n')
     start = workflow.index(marker)
-    next_job = re.search(r'^  [A-Za-z0-9_-]+:\n', workflow[browser + len('\n  browser:\n'):], re.M)
-    browser_end = browser + len('\n  browser:\n') + next_job.start() if next_job else len(workflow)
+    next_job = re.search(r'^  [A-Za-z0-9_-]+:\n', workflow[browser + len('\n  browser-native:\n'):], re.M)
+    browser_end = browser + len('\n  browser-native:\n') + next_job.start() if next_job else len(workflow)
     region = workflow[browser:browser_end]
     prepare = """      # This preparer imports only the adaptation helpers, not embedded Web assets.
-      - name: Prepare verified browser engine
-        id: browser-engine
+      - name: Prepare verified native-browser engine
+        id: native-browser-engine
         background: true
         timeout-minutes: 10
         run: |
@@ -673,26 +695,26 @@ def validate_fixture_diagnostics_workflow(data):
           go mod verify
 """
     node = "      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n"
-    install = """      - name: Wait for verified browser engine
-        wait: browser-engine
+    install = """      - name: Wait for verified native-browser engine
+        wait: native-browser-engine
       - name: Prepare verified Japanese fonts
         timeout-minutes: 5
         uses: ./.github/actions/japanese-fonts
-      - name: Install official Chromium and fonts
-        id: browser-chromium
+      - name: Install official native-browser Chromium and fonts
+        id: native-browser-chromium
         background: true
         run: |
           set -euo pipefail
           python3 -B .github/scripts/ci-playwright.py
 """
-    ready = """      - name: Wait for browser runtime preparation
-        wait: browser-chromium
-      - name: Verify actual UI workflows with isolated Playwright fixtures
+    ready = """      - name: Wait for native-browser runtime preparation
+        wait: native-browser-chromium
+      - name: Verify real browser UI launch without skips
 """
     require(region.count(prepare + node) == 1 and region.count(install + expected + ready) == 1,
             'invalid browser preparation overlap or wait policy')
     require(region.index('      - uses: actions/setup-go@') < region.index(prepare)
-            < region.index('      - name: Test and reproduce locked frontend assets\n')
+            < region.index('      - name: Install locked native-browser dependencies\n')
             < region.index(install), 'browser preparation dependency order differs')
     require(browser < start < browser_end and workflow.count(expected) == 1,
             'invalid fixture diagnostic execution policy')
@@ -990,7 +1012,7 @@ def validate_setup_and_text_browser_workflow(workflow_bytes):
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite nearby-manual-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreNearbySetupManualIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreNearbySetupManualIntegration$'
 """),
-        ('browser', """      - name: Verify nearby setup with separate agents and actual browser
+        ('browser-native', """      - name: Verify nearby setup with separate agents and actual browser
         id: setup-browser
         timeout-minutes: 8
         env:
@@ -1015,7 +1037,7 @@ def validate_setup_and_text_browser_workflow(workflow_bytes):
           if [ "$status" -ne 0 ]; then exit "$status"; fi
           exit "$summary_status"
 """),
-        ('browser', """      - name: Verify durable text recovery with separate agents and actual browser
+        ('browser-native', """      - name: Verify durable text recovery with separate agents and actual browser
         timeout-minutes: 8
         env:
           SOBALINK_RUN_DIRECT_INTEGRATION: '1'
@@ -1045,15 +1067,12 @@ def validate_setup_and_text_browser_workflow(workflow_bytes):
         require(len(positions) == 1, 'missing setup or text browser job')
         end = next((offset for offset, _ in jobs if offset > positions[0]), len(workflow))
         require(positions[0] < start < end, 'setup or text browser gate is in the wrong job')
-    artifact = """      - name: Preserve sanitized UI screenshots and typography measurements
+    artifact = """      - name: Preserve sanitized native browser summaries
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: soba-browser-screenshots
+          name: soba-native-browser-summaries
           path: |
-            ${{ runner.temp }}/soba-playwright-screenshots/*.png
-            ${{ runner.temp }}/soba-playwright-screenshots/typography-*.json
-            ${{ runner.temp }}/soba-playwright-screenshots/playwright-report.json
             ${{ runner.temp }}/soba-playwright-screenshots/transfer-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/dispatch-native-summary.json
             ${{ runner.temp }}/soba-playwright-screenshots/outbox-native-summary.json
@@ -1267,7 +1286,7 @@ def validate_native_packages_workflow(sources):
 
 def validate_browser_cache_workflow(sources):
     """Bind cache scope, exact inputs and post-success save; never skip tests."""
-    require(digest(sources['.github/scripts/ci-browser-cache.py']) == '0657be81ee4cb662d205b281548b1645c1e6e2184ef19749d2a55180940f937b',
+    require(digest(sources['.github/scripts/ci-browser-cache.py']) == 'b3d5a3e3cda0776b61f3f28e960e1e3e2184a2ec930870ad8a28f1f35172a740',
             'browser cache selector differs from reviewed policy')
     workflow = sources[WORKFLOW].decode('utf-8')
     jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
@@ -1280,16 +1299,20 @@ def validate_browser_cache_workflow(sources):
     save_start = '      - name: Save isolated browser Go cache after all checks pass\n'
     require(workflow.count(restore_start) == 1 and workflow.count(save_start) == 1,
             'browser cache steps escaped the required job')
-    require(restore_start in region and save_start in region, 'missing browser cache steps')
+    require(restore_start in region and save_start not in region, 'UI browser cache must be read-only')
     a = region.index(restore_start)
     report = region.index('      - name: Report browser Go cache result\n', a)
     b = region.index('      - ', report + len('      - name: Report browser Go cache result\n'))
-    require(digest(region[a:b].encode()) == 'e8b50e17f60117fd0588bd781e2454904fca8064d29ec5cb7885a8d9c314e01b',
+    require(digest(region[a:b].encode()) == 'ff65c3c324656dc090ca0aceb6d9b71f70eb157e400f7368e1569eaeae2bd9e6',
             'browser cache restore policy differs')
     require(region[:a].endswith("          go-version: '1.27.1'\n          cache: false\n"),
             'browser cache must immediately follow exact Go setup')
-    tail = region[region.index(save_start):].rstrip() + '\n'
-    require(digest(tail.encode()) == 'b24ac384b3a1a4d9527f4171257f46209d2711763ab7b2ad3a0bbe5c3892cf3c',
+    native_start = workflow.index('  browser-native:\n')
+    native_end = workflow.index('  go-unit:\n', native_start)
+    native = workflow[native_start:native_end]
+    require(save_start in native, 'native-browser must be the sole browser cache writer')
+    tail = native[native.index(save_start):].rstrip() + '\n'
+    require(digest(tail.encode()) == 'df4e065596e8deb98181509ab4b3d8a592f7da4c9d657eb62268f303bacc508d',
             'browser cache must save only after all work succeeds')
 
 
@@ -1354,7 +1377,7 @@ def validate_regression_workflow(sources):
     require(workflow.count('python -B .github/scripts/ci-regressions.py common --plan') == 1
             and workflow.count('python -B .github/scripts/ci-regressions.py native --plan') == 1,
             'regression execution escaped its required steps')
-    require(workflow.count('needs: [impact, documents, policy-regressions, native, native-ui, browser, go-unit, manifest-smoke]') == 1,
+    require(workflow.count('needs: [impact, documents, policy-regressions, native, native-ui, browser, browser-native, go-unit, manifest-smoke]') == 1,
             'aggregate must wait for shared regressions')
 
 
@@ -1428,7 +1451,8 @@ def validate_font_workflow(sources):
     for name, conditional, consumer in (
             ('documents', "        if: steps.document-selection.outputs.render_required == 'true'\n",
              '          - name: Install isolated locked document rendering dependencies\n'),
-            ('browser', '', '      - name: Install official Chromium and fonts\n')):
+            ('browser', '', '      - name: Install official Chromium and fonts\n'),
+            ('browser-native', '', '      - name: Install official native-browser Chromium and fonts\n')):
         positions = [pos for pos, key in jobs if key == name]
         require(len(positions) == 1, 'missing Japanese font consumer job')
         start = positions[0]
@@ -1489,10 +1513,11 @@ def required_jobs(sources, *, include_skipped=False):
     validate_request_setup_workflow(sources['.github/workflows/prerelease.yml'])
     validate_resource_inspection_workflow(sources[WORKFLOW])
     validate_fixture_diagnostics_workflow(sources[WORKFLOW])
+    validate_browser_lanes_workflow(sources[WORKFLOW])
     validate_preparation_overlap_workflow(sources[WORKFLOW])
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'NATIVE_SHARED_STEPS', 'NATIVE_UNIT_STEPS', 'NATIVE_SHARED_CONTROL_STEPS', 'WINDOWS_BARRIER_STEPS',
-             'REGRESSION_STEPS', 'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS',
+             'REGRESSION_STEPS', 'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS', 'NATIVE_BROWSER_STEPS',
              'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS', 'NATIVE_UI_STEPS'}
     values = {}
     for node in tree.body:
@@ -1509,6 +1534,8 @@ def required_jobs(sources, *, include_skipped=False):
     for value in values.values():
         require(isinstance(value, tuple) and value and all(isinstance(v, str) and v for v in value)
                 and len(set(value)) == len(value), 'invalid required-step policy')
+    require(values['NATIVE_BROWSER_STEPS'] == ('Prepare verified native-browser engine', 'Install locked native-browser dependencies', 'Wait for verified native-browser engine', 'Prepare verified Japanese fonts', 'Install official native-browser Chromium and fonts', 'Verify privacy-safe fixture diagnostics', 'Wait for native-browser runtime preparation', 'Verify real browser UI launch without skips', 'Verify catalog view with separate agents and actual browser', 'Verify selected transfer retry with separate agents and actual browser', 'Verify multi-recipient send recovery with separate agents and actual browser', 'Verify durable outbox recovery with separate agents and actual browser', 'Verify nearby setup with separate agents and actual browser', 'Verify durable text recovery with separate agents and actual browser'),
+            'every native-browser preparation and acceptance gate is mandatory')
     require(values['REGRESSION_STEPS'] == ('Run shared CI policy and source regressions',),
             'unexpected shared regression policy')
     require(values['FAST_STEPS'].count('Reproduce locked frontend assets') == 1
@@ -1519,14 +1546,14 @@ def required_jobs(sources, *, include_skipped=False):
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
     require(values['BROWSER_STEPS'].count('Prepare verified Japanese fonts') == 1,
             'missing Japanese font required gate')
-    require(values['BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,
+    require(values['NATIVE_BROWSER_STEPS'].count('Verify privacy-safe fixture diagnostics') == 1,
             'missing fixture diagnostic required gate')
     require(all(values['BROWSER_STEPS'].count(name) == 1 for name in (
         'Prepare verified browser engine', 'Wait for verified browser engine',
-        'Install official Chromium and fonts', 'Wait for browser runtime preparation')),
+        'Install official Chromium and fonts', 'Build isolated browser fixture', 'Wait for browser runtime preparation')),
         'missing browser preparation required gate')
     require(values['FAST_STEPS'].count('Verify durable outbox restart across Core processes') == 1
-            and values['BROWSER_STEPS'].count('Verify durable outbox recovery with separate agents and actual browser') == 1,
+            and values['NATIVE_BROWSER_STEPS'].count('Verify durable outbox recovery with separate agents and actual browser') == 1,
             'missing durable outbox required gates')
     require(values['FAST_STEPS'].count('Verify durable text restart and lost ACK across Core processes') == 1,
             'missing durable text required gate')
@@ -1534,8 +1561,8 @@ def required_jobs(sources, *, include_skipped=False):
             'missing request setup required gates')
     require(values['BROWSER_STEPS'].count('Verify synthetic request pairing UI without skips') == 1, 'missing synthetic pairing UI gate')
     require(values['FAST_STEPS'].count('Verify manual nearby setup across native Core peers') == 1
-            and values['BROWSER_STEPS'].count('Verify nearby setup with separate agents and actual browser') == 1
-            and values['BROWSER_STEPS'].count('Verify durable text recovery with separate agents and actual browser') == 1,
+            and values['NATIVE_BROWSER_STEPS'].count('Verify nearby setup with separate agents and actual browser') == 1
+            and values['NATIVE_BROWSER_STEPS'].count('Verify durable text recovery with separate agents and actual browser') == 1,
             'missing setup or text browser required gates')
     require(values['FULL_ONLY_STEPS'] == ('Verify native remote resource inspection',
                                          'Verify native remote resource management',
@@ -1593,6 +1620,7 @@ def required_jobs(sources, *, include_skipped=False):
                       'Require document checks and selected rendering'),
         'policy-regressions': values['REGRESSION_STEPS'],
         'browser': values['BROWSER_STEPS'],
+        'browser-native': values['NATIVE_BROWSER_STEPS'],
         'manifest-smoke': ('Exercise signing and verification offline with a disposable test key',),
         'ci-required': ('Require every check selected for this change',),
         'web-activation': ('Prepare verified activation engine and Go dependencies',

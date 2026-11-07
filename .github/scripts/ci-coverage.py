@@ -109,18 +109,33 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 DOCUMENT_STEPS = ("Verify document selection and static content", "Require document checks and selected rendering")
 SCOPES = {"docs", "frontend", "go", "native-short", "native-ui", "full"}
-BROWSER_STEPS = ("Prepare verified browser engine",
+BROWSER_STEPS = (
+                 "Prepare verified browser engine",
                  "Test and reproduce locked frontend assets",
                  "Wait for verified browser engine",
                  "Prepare verified Japanese fonts",
                  "Install official Chromium and fonts",
-                 "Verify privacy-safe fixture diagnostics",
+                 "Build isolated browser fixture",
                  "Wait for browser runtime preparation",
                  "Verify actual UI workflows with isolated Playwright fixtures",
                  "Verify synthetic request pairing UI without skips",
+)
+NATIVE_BROWSER_STEPS = (
+                 "Prepare verified native-browser engine",
+                 "Install locked native-browser dependencies",
+                 "Wait for verified native-browser engine",
+                 "Prepare verified Japanese fonts",
+                 "Install official native-browser Chromium and fonts",
+                 "Verify privacy-safe fixture diagnostics",
+                 "Wait for native-browser runtime preparation",
+                 "Verify real browser UI launch without skips",
+                 "Verify catalog view with separate agents and actual browser",
+                 "Verify selected transfer retry with separate agents and actual browser",
+                 "Verify multi-recipient send recovery with separate agents and actual browser",
                  "Verify durable outbox recovery with separate agents and actual browser",
                  "Verify nearby setup with separate agents and actual browser",
-                 "Verify durable text recovery with separate agents and actual browser")
+                 "Verify durable text recovery with separate agents and actual browser",
+)
 GO_STEPS = ("Validate scoped Go selection", "Check exact toolchain and module graph",
             "Test affected Go packages and reverse dependencies")
 SCHEDULE_ACCEPTANCE = {
@@ -257,6 +272,8 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     if scope in ("frontend", "native-short", "full"):
         passed("browser", BROWSER_STEPS)
         required.add("browser")
+        passed("browser-native", NATIVE_BROWSER_STEPS)
+        required.add("browser-native")
     if scope == "go":
         passed("go-unit", GO_STEPS)
         required.add("go-unit")
@@ -286,7 +303,7 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     # Job-level skips can appear as one unexpanded matrix job or several jobs.
     # Only explicitly out-of-scope jobs may be skipped; their presence is not
     # required and is never represented as a test pass in the receipt.
-    application = {*TARGETS.values(), *INTEGRATION_TARGETS.values(), *NATIVE_UI_TARGETS.values(), "native", "native-ui", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
+    application = {*TARGETS.values(), *INTEGRATION_TARGETS.values(), *NATIVE_UI_TARGETS.values(), "native", "native-ui", "browser", "browser-native", "go-unit", "manifest-smoke", "policy-regressions"}
     known = application | {"impact", "documents", "ci-required", "nightly-full-check", *SCHEDULE_ACCEPTANCE}
     require(set(index) <= known, "unknown job name or native suite")
     for name in application - required:
@@ -399,8 +416,8 @@ def job_timings(jobs):
             return value if value >= 0 else None
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
-    names = {*TARGETS.values(), *INTEGRATION_TARGETS.values(), *NATIVE_UI_TARGETS.values(), "impact", "documents", "browser", "go-unit", "manifest-smoke", "policy-regressions"}
-    steps = {*NATIVE_UI_SCOPE_STEPS, *NATIVE_UI_PRODUCT_STEPS, *REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS, *WINDOWS_BARRIER_STEPS,
+    names = {*TARGETS.values(), *INTEGRATION_TARGETS.values(), *NATIVE_UI_TARGETS.values(), "impact", "documents", "browser", "browser-native", "go-unit", "manifest-smoke", "policy-regressions"}
+    steps = {*NATIVE_UI_SCOPE_STEPS, *NATIVE_UI_PRODUCT_STEPS, *REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *NATIVE_BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS, *WINDOWS_BARRIER_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after integration checks pass on main",
              "Save development Go caches after integration checks pass"}
@@ -456,6 +473,7 @@ def finalize(input_path, output, *, scheduled=False):
                "targets": {t: "success" if full else "short_checks_passed" if scope == "native-short" else "not_run" for t in TARGETS},
                "native_suites": {suite: {t: "success" if full else "short_checks_passed" if scope == "native-short" else "not_run" for t in TARGETS} for suite in ("unit", "integration")},
                "long_checks": {t: "success" if full else "not_run" for t in TARGETS},
+               "browser_native": "success" if scope in ("frontend", "native-short", "full") else "not_run",
                "browser": "success" if scope in ("frontend", "native-short", "full") else "not_run",
                "manifest": "success" if scope in ("native-short", "full") else "not_run",
                "go_unit": "success" if scope == "go" else "not_run",

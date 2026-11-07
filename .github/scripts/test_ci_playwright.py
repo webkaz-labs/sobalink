@@ -112,7 +112,7 @@ class PlaywrightSetupTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
 
     def test_all_seven_existing_consumers_share_the_helper(self):
-        for name, expected in (('ci.yml', 3), ('activation-diagnostic.yml', 4)):
+        for name, expected in (('ci.yml', 4), ('activation-diagnostic.yml', 4)):
             source = (ROOT / '.github/workflows' / name).read_text()
             self.assertEqual(source.count('python3 -B .github/scripts/ci-playwright.py'), expected)
             self.assertNotIn('install --with-deps chromium', source)
