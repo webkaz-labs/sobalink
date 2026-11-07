@@ -256,6 +256,14 @@ def evaluate_jobs(jobs, scope, *, scheduled=False):
     index = {}
     for job in jobs:
         name = job.get("name")
+        # A job-level skip precedes matrix expansion in GitHub Actions. Accept
+        # only the observed empty frontend skip, never executed native evidence.
+        if name == "matrix.name":
+            require(scope == "frontend" and job.get("status") == "completed"
+                    and job.get("conclusion") == "skipped"
+                    and job.get("steps") in (None, []),
+                    "invalid unexpanded native matrix skip")
+            name = "native"
         require(name not in index, "duplicate job name")
         index[name] = job
 

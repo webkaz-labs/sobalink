@@ -60,6 +60,70 @@ def plan(scope="full"):
 
 
 class ActualCoverageTests(unittest.TestCase):
+    def frontend_matrix_jobs(self):
+        data = jobs("frontend")
+        selected = next(item for item in data if item["name"] == "native")
+        selected.update(name="matrix.name", steps=None)
+        return data
+
+    def test_unexpanded_frontend_skip_is_not_native_success(self):
+        for steps in (None, []):
+            data = self.frontend_matrix_jobs()
+            selected = next(item for item in data if item["name"] == "matrix.name")
+            selected["steps"] = steps
+            original = copy.deepcopy(data)
+            self.assertFalse(coverage.evaluate_jobs(data, "frontend"))
+            self.assertEqual(data, original)
+
+    def test_unexpanded_matrix_skip_rejects_other_scopes_and_executed_jobs(self):
+        for scope in sorted(coverage.SCOPES - {"frontend"}):
+            data = jobs(scope) + [job("matrix.name", conclusion="skipped")]
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                coverage.evaluate_jobs(data, scope)
+        for field, values in {
+            "status": (None, "queued", "in_progress"),
+            "conclusion": (None, "success", "failure", "cancelled", "timed_out", "neutral"),
+            "steps": ([step("executed")], [step("not run", "skipped")], {}, ""),
+            "name": ("matrix.other", "${{ matrix.name }}", "unknown"),
+        }.items():
+            for value in values:
+                data = self.frontend_matrix_jobs()
+                next(item for item in data if item["name"] == "matrix.name")[field] = value
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, "frontend")
+
+    def test_unexpanded_skip_rejects_duplicates_in_either_order(self):
+        for name in ("matrix.name", "native"):
+            for reverse in (False, True):
+                data = self.frontend_matrix_jobs() + [job(name, conclusion="skipped")]
+                with self.subTest(name=name, reverse=reverse), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(list(reversed(data)) if reverse else data, "frontend")
+
+    def test_unexpanded_skip_cannot_hide_missing_or_failed_frontend_checks(self):
+        for name in ("impact", "documents", "browser", "browser-native"):
+            for mode in ("missing", "duplicate", "pending", "skipped", "failure", "cancelled",
+                         "missing-step", "duplicate-step", "pending-step", "skipped-step", "failed-step"):
+                data = self.frontend_matrix_jobs()
+                selected = next(item for item in data if item["name"] == name)
+                if mode == "missing":
+                    data.remove(selected)
+                elif mode == "duplicate":
+                    data.append(copy.deepcopy(selected))
+                elif mode == "pending":
+                    selected["status"] = "in_progress"
+                elif mode == "missing-step":
+                    selected["steps"].pop()
+                elif mode == "duplicate-step":
+                    selected["steps"].append(copy.deepcopy(selected["steps"][0]))
+                elif mode == "pending-step":
+                    selected["steps"][0]["status"] = "in_progress"
+                elif mode in ("skipped-step", "failed-step"):
+                    selected["steps"][0]["conclusion"] = "skipped" if mode == "skipped-step" else "failure"
+                else:
+                    selected["conclusion"] = mode
+                with self.subTest(name=name, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, "frontend")
+
     def test_browser_frontend_suite_is_mandatory_even_when_native_tests_are_deduplicated(self):
         gate = 'Test and reproduce locked frontend assets'
         for scope in ('frontend', 'native-short', 'full'):
