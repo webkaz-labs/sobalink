@@ -1290,13 +1290,37 @@ func (b *locoBackend) onEngineStatus(st *wgengine.Status, err error) {
 	if err != nil || st == nil {
 		return
 	}
-	var eps []netip.AddrPort
-	for _, ep := range st.LocalAddrs {
-		eps = append(eps, ep.Addr)
+	// Status callbacks can finish out of order: the engine samples endpoints
+	// before inspecting peers. Treat the callback as a notification and sample
+	// current magicsock endpoints while serializing the backend assignment.
+	b.refreshEndpoints(func() []netip.AddrPort {
+		var sb ipnstate.StatusBuilder
+		b.sys.MagicSock.Get().UpdateStatus(&sb)
+		status := sb.Status()
+		var eps []netip.AddrPort
+		if status.Self != nil {
+			for _, address := range status.Self.Addrs {
+				if endpoint, err := netip.ParseAddrPort(address); err == nil {
+					eps = append(eps, endpoint)
+				}
+			}
+		}
+		return eps
+	})
+}
+
+// refreshEndpoints samples and stores current endpoints as one serialized
+// operation. read must not call back into the backend. The production reader
+// takes only magicsock's mutex, matching setNetworkMapLocked's lock order.
+func (b *locoBackend) refreshEndpoints(read func() []netip.AddrPort) {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return
 	}
+	eps := slices.Clone(read())
 	slices.SortFunc(eps, func(a, b netip.AddrPort) int { return a.Compare(b) })
 	eps = slices.Compact(eps)
-	b.mu.Lock()
 	changed := !slices.Equal(eps, b.eps)
 	if changed {
 		b.eps = eps
