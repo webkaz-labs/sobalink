@@ -392,10 +392,15 @@ class WorkflowCachePolicy(unittest.TestCase):
             self.assertNotIn("'schedule'", save)
             self.assertGreater(native.index(save), native.index("name: Wait for real-time lifecycle and lease checks"))
         self.assertEqual(self.development_scope(event_name="schedule", ref="refs/heads/main"), "")
-        # Release ordering and exact-key/no-fallback policy stay independent.
+        # Release also restores before Go creates read-only module files, while
+        # retaining its independent exact-key/no-fallback policy.
         release = self.job("prerelease", "native")
-        self.assertLess(release.index("name: Collect required whole-Core race evidence"),
-                        release.index("name: Restore trusted main Go caches"))
+        core = release.index("name: Collect required whole-Core race evidence")
+        for marker in ("id: go-cache-info\n", "id: go-cache\n"):
+            self.assertLess(release.index(self.step("prerelease", "native", marker)), core)
+        frontend = release.index("name: Reproduce locked frontend assets")
+        self.assertLess(core, frontend)
+        self.assertLess(frontend, release.index("name: Report Go cache result and require an exact release key"))
 
     def inline_python(self, step):
         match = re.search(r"^          python - <<'PYTHON'\n(.*?)^          PYTHON$", step, re.MULTILINE | re.DOTALL)
