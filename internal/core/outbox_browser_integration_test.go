@@ -127,6 +127,9 @@ func TestOutboxThreeProcessBrowser(t *testing.T) {
 				}
 				break
 			}
+			if _, failed := readOutboxBrowserFailure(private); failed {
+				t.Fatal("actual browser failed before admission bridge; fixed classification follows")
+			}
 			if !os.IsNotExist(err) || time.Now().After(until) || ctx.Err() != nil {
 				t.Fatal("actual browser admission bridge did not arrive")
 			}
