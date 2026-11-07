@@ -6,7 +6,14 @@ async function assertDialogLayout(page, readiness = 'form') {
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
   if (readiness === 'catalog') await expect(dialog.locator('.definition-toolbar')).toBeVisible()
-  else await expect(dialog.locator('input:not([type=checkbox]):not([type=radio]):visible, select:visible, textarea:visible').first()).toBeVisible()
+  else {
+    const firstField = dialog.locator('input:not([type=checkbox]):not([type=radio]):visible, select:visible, textarea:visible').first()
+    await expect(firstField).toBeVisible()
+    // A visible form can still be loading with its fields disabled. Counting
+    // that temporary subset underestimates the full keyboard cycle after the
+    // read completes (for example, proxy.list in Advanced connections).
+    await expect(firstField, 'The compact form is ready before measuring its focus cycle').toBeEnabled()
+  }
   for (const size of viewports) {
     await page.setViewportSize(size)
     await expect.poll(() => dialog.evaluate(element => {
@@ -135,5 +142,59 @@ for (const locale of ['en', 'ja']) {
     }))
     expect(targets.every(Boolean), 'Dense navigation retains full touch targets and visible labels').toBe(true)
     await app.capture(`compact-device-list-${locale}-375`)
+  })
+}
+
+for (const locale of ['en', 'ja']) {
+  test(`compact ${locale}: a delayed proxy list expands the ready focus cycle without escaping`, async ({ page, app }) => {
+    const ja = locale === 'ja'
+    await app.appearance(locale, ja ? 'dark' : 'light')
+    await page.setViewportSize({ width: 375, height: 844 })
+    let release, intercepted
+    const held = new Promise(resolve => { release = resolve })
+    const seen = new Promise(resolve => { intercepted = resolve })
+    const handler = async route => {
+      if (route.request().postDataJSON()?.name !== 'proxy.list') return route.continue()
+      intercepted()
+      await held
+      await route.continue()
+    }
+    await page.route('**/api/command', handler)
+    try {
+      await page.locator('.app-header .header-actions button.icon-button').click()
+      await page.getByRole('button', { name: ja ? '高度な接続' : 'Advanced connections', exact: true }).click()
+      await seen
+      const dialog = page.getByRole('dialog')
+      const firstField = dialog.locator('input').first()
+      await expect(firstField).toBeVisible()
+      await expect(firstField).toBeDisabled()
+      // Preserve the former measurement at the controlled loading boundary.
+      // No response bytes, command payloads or private state are fabricated.
+      const loadingCount = await dialog.evaluate(element => [...element.querySelectorAll('button, input, select, textarea, a[href], summary, [tabindex]')]
+        .filter(field => field.tabIndex >= 0 && !field.disabled && field.getClientRects().length > 0).length)
+      const close = dialog.locator('.modal-heading button')
+      await close.focus()
+      await page.keyboard.press('Shift+Tab')
+      expect(await dialog.evaluate(element => element.contains(document.activeElement)), 'Loading-state reverse Tab remains inside the dialog').toBe(true)
+      await page.keyboard.press('Tab')
+      await expect(close).toBeFocused()
+
+      release()
+      await expect(firstField).toBeEnabled()
+      let returnedWithLoadingBound = false
+      for (let index = 0; index < loadingCount + 2; index++) {
+        await page.keyboard.press('Tab')
+        expect(await dialog.evaluate(element => element.contains(document.activeElement)), 'Enabling the form does not release its focus trap').toBe(true)
+        if (await close.evaluate(element => element === document.activeElement)) { returnedWithLoadingBound = true; break }
+      }
+      expect(returnedWithLoadingBound, 'The loading-only count cannot cover the newly enabled form').toBe(false)
+      await assertDialogLayout(page)
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      for (const command of ['proxy.preview', 'proxy.start', 'proxy.stop', 'startup.save']) expect(await app.count(command)).toBe(0)
+    } finally {
+      release()
+      await page.unrouteAll({ behavior: 'wait' })
+    }
   })
 }
