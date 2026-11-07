@@ -174,6 +174,11 @@ runs. The coverage receipt records both jobs and their required step timings;
 parallel job durations are not elapsed waiting time. Hosted results, not the
 source partition alone, establish the actual speed and cost change.
 
+Pull requests requesting complete native/browser proof must target `main`. The
+existing native source-identity check rejects a PR based on another feature
+branch; stacking a PR does not relax that boundary. Review and validate every
+included change when a dependent branch is retargeted to `main`.
+
 ## Two independent native lanes per target
 
 Full and native-short scopes use an explicit eight-entry matrix: the same four
