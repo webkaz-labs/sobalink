@@ -602,7 +602,7 @@ class TextDiagnosticTests(unittest.TestCase):
         self.assertEqual(re.findall(r'\$\{\{ runner.temp \}\}/([^\n]+)', artifact),
                          ['soba-text-sanitized/result.json', 'soba-text-sanitized/provenance.json'])
         self.assertIn('go run ./cmd/prepare-engine --verify', job)
-        self.assertIn('node web/node_modules/@playwright/test/cli.js install --with-deps chromium', job)
+        self.assertIn('python3 -B .github/scripts/ci-playwright.py', job)
 
     def test_production_sources_deadlines_and_sandbox_baseline_are_reused(self):
         source = SCRIPT.read_text(encoding='utf-8')

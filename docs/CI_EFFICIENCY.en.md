@@ -259,9 +259,35 @@ Hosted runner inventories do not promise this CJK family. Trusting any preinstal
 font would make rendering depend on image updates. Switching apt mirrors would
 still download the full collection on a cold runner; caching that collection
 would retain unnecessary languages. The pinned two-face source keeps cold bytes
-smaller and warm runs independent of the apt font mirror. Other system libraries
-and Chromium's official dependencies still use their existing installers. Compare
+smaller and warm runs independent of the apt CJK mirror. Chromium's remaining
+official dependencies use the separate installation path below. Compare
 actual cold and warm runner timings before claiming an end-to-end speedup.
+
+### Complete Playwright system dependencies
+
+All seven Chromium setup sites in the main and diagnostic workflows use
+`.github/scripts/ci-playwright.py` on Ubuntu 24.04 x64. It runs the locked
+Playwright CLI's complete `install-deps chromium`, then `install chromium` as
+the normal user. It does not omit fonts or libraries, use the runner's unrelated
+Chromium version, or disable Playwright's dependency validation.
+
+Only the dependency command receives a temporary `APT_CONFIG` selecting Ubuntu's
+official HTTPS archive and security archive. The runner's Ubuntu archive keyring
+still authenticates repository metadata and package hashes; no source file,
+trusted key or security setting is replaced. Package versions continue to follow
+the signed Ubuntu 24.04 repositories, including security updates. This avoids
+the slow Azure archive payload path without maintaining a second dependency list.
+The existing preparation/job limits remain, and failed installation fails CI.
+
+The hosted image does not contain every dependency: one affected run fetched
+21.1 MB of nine font-related packages in 9m50s. Skipping `install-deps` would
+therefore change the test environment. A browser-binary cache would not remove
+this apt download; [Playwright also discourages that cache](https://github.com/microsoft/playwright/blob/v1.63.0/docs/src/ci.md#caching-browsers).
+Caching installed system directories would bypass package-manager state. A
+separate verified `.deb` cache is possible but is not needed to try the official
+archive path first. No test or acceptance result is cached. Installer timings
+and complete hosted browser/activation outcomes must be checked before claiming
+an overall speedup.
 
 ## Native fixture and release coverage
 
