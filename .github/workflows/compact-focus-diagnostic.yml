@@ -1,0 +1,78 @@
+name: Compact focus repeated diagnostics
+on:
+  create:
+permissions:
+  contents: read
+concurrency:
+  group: compact-focus-${{ github.run_id }}
+  cancel-in-progress: false
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+jobs:
+  compact-focus:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.ref_type == 'branch' && startsWith(github.ref, 'refs/heads/qa/compact-focus-repeat-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          ref: 193e81cdccddab43bdf36ab01573519afec5b59a
+      - name: Verify exact diagnostic target
+        run: test "$(git rev-parse HEAD)" = 193e81cdccddab43bdf36ab01573519afec5b59a
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - id: go-paths
+        run: |
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      - name: Restore acceleration-only main browser seed without saving
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ${{ steps.go-paths.outputs.gomodcache }}
+            ${{ steps.go-paths.outputs.gocache }}
+          key: compact-focus-read-only-${{ github.run_id }}
+          restore-keys: |
+            browser-go-v1-main-Linux-X64-ubuntu-24.04-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-
+      - name: Verify adapted engine
+        run: |
+          go run ./cmd/prepare-engine
+          go run ./cmd/prepare-engine --verify
+          go mod verify
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Reproduce locked frontend
+        run: |
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          python .github/scripts/check-frontend.py
+          git diff --exit-code -- web/dist
+      - name: Install verified Japanese fonts
+        uses: ./.github/actions/japanese-fonts
+      - name: Install official Chromium
+        run: python3 -B .github/scripts/ci-playwright.py
+      - name: Build exact-head fixture
+        run: go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-e2e" ./cmd/soba-e2e
+      - name: Repeat every compact case ten times with zero retries
+        env:
+          SOBA_E2E_BINARY: ${{ runner.temp }}/soba-e2e
+          SOBA_SCREENSHOT_DIR: ${{ runner.temp }}/compact-focus-sanitized
+          GITHUB_SHA: 193e81cdccddab43bdf36ab01573519afec5b59a
+        run: |
+          npm --prefix web run test:browser:safety
+          npm --prefix web run test:browser -- --project=isolated --no-deps compact-screens.spec.mjs --repeat-each=10 --workers=2
+      - name: Preserve sanitized report only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: compact-focus-repeated-report
+          path: ${{ runner.temp }}/compact-focus-sanitized/playwright-report.json
+          if-no-files-found: error
+          retention-days: 14
