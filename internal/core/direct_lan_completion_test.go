@@ -176,8 +176,14 @@ func TestManagedCompletionSlotConsumesRejectedDuplicateAndLateCalls(t *testing.T
 // Provisional B/C1 integration: these are inert Core ownership predicates only,
 // never a transport request, ordinary constructor or positive send admission.
 func TestManagedCompletionCoreOwnerRejectsRemovalAndCleanup(t *testing.T) {
+	// Cases own separate Core state and private files. Keep the parent serial
+	// and limit concurrent fixtures, including cleanup, to avoid disk pressure.
+	parallel := make(chan struct{}, 2)
 	for _, change := range []string{"none", "backend", "store", "context owner", "process", "closing", "cancel", "cleanup pending", "cleanup error", "removal", "raw denial", "mixed denial", "unrelated denial"} {
 		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			parallel <- struct{}{}
+			t.Cleanup(func() { <-parallel })
 			f, o := localManagedCompletionOwner(t)
 			o.node = &directlan.Node{}
 			o.backend = &directLANBackend{Node: o.node, ctx: f.core.ctx, store: f.store, ready: true, completion: o}
