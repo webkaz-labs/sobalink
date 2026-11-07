@@ -93,17 +93,25 @@ func TestRuleSaveDoesNotStartOrRestore(t *testing.T) {
 }
 func TestGroupRollbackPreservesExistingOwner(t *testing.T) {
 	s, _ := ruleFixture(t)
-	existing, a, b := testRule(t, "existing"), testRule(t, "first"), testRule(t, "blocked")
-	for _, r := range []config.Rule{existing, a, b} {
-		saveRule(t, s, r)
-	}
-	startRules(t, s, RuleCommand{Names: []string{"existing"}, Owner: "task-a"})
-	old := s.rules.entries["existing"].server
-	conflict, e := net.Listen("tcp4", config.Loopback(b.ListenPort))
+	// Keep the blocked port bound and start the existing listener before
+	// selecting the first rule's port. Released ephemeral ports can otherwise
+	// be reused within this fixture, failing before the intended rollback.
+	conflict, e := net.Listen("tcp4", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer conflict.Close()
+	existing := testRule(t, "existing")
+	saveRule(t, s, existing)
+	startRules(t, s, RuleCommand{Names: []string{"existing"}, Owner: "task-a"})
+	old := s.rules.entries["existing"].server
+	a := testRule(t, "first")
+	b := a
+	b.Name = "blocked"
+	b.ListenPort = conflict.Addr().(*net.TCPAddr).Port
+	for _, r := range []config.Rule{a, b} {
+		saveRule(t, s, r)
+	}
 	v, e := s.rules.command(t.Context(), RuleCommand{Action: "start", ExpectedRules: config.RulesDigest([]config.Rule{a, b}), Names: []string{"first", "blocked"}, Owner: "task-b"})
 	if e != nil {
 		t.Fatal(e)
@@ -111,7 +119,7 @@ func TestGroupRollbackPreservesExistingOwner(t *testing.T) {
 	if s.rules.entries["first"].server != nil || s.rules.entries["first"].desired {
 		t.Fatal("partial listener survived")
 	}
-	if s.rules.entries["blocked"].status.State != "failed" || s.rules.entries["first"].status.ReasonCode != "rolled-back" {
+	if s.rules.entries["blocked"].status.State != "failed" || s.rules.entries["blocked"].status.ReasonCode != "port-unavailable" || s.rules.entries["first"].status.ReasonCode != "rolled-back" {
 		t.Fatal(v)
 	}
 	if s.rules.entries["existing"].server != old {
