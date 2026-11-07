@@ -1121,7 +1121,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
       - name: Wait for activation Go preparation
         wait: activation-go
       - name: Verify fixed product acceptance policy
@@ -1189,7 +1189,7 @@ jobs:
           set -euo pipefail
           npm install --global npm@11.9.0 --no-audit --no-fund
           npm --prefix web ci --no-audit --no-fund
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
       - name: Wait for activation Go preparation
         wait: activation-go
       - name: Verify fixed Web acceptance policy
@@ -1278,7 +1278,7 @@ jobs:
         background: true
         run: |
           set -euo pipefail
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
       - name: Verify privacy-safe fixture diagnostics
         timeout-minutes: 10
         run: |
@@ -1299,6 +1299,7 @@ jobs:
                   "TestStartupArgumentFailureWritesDiagnostic",
               )),
               ("internal/core", "lanlink_integration,ts_omit_udptransport", (
+                  "TestOutboxBrowserFailurePrivacy",
                   "TestNativeLANCommandDiagnosticRetainsOnlyAllowedCodes",
                   "TestNativeLANCommandDiagnosticPreservesProductionListenClassification",
                   "TestNativeLANHeldRelayPortDiagnosticIntegration",

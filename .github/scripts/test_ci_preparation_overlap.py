@@ -13,7 +13,7 @@ import unittest
 import ci_full_validation as full
 
 ROOT = Path(__file__).resolve().parents[2]
-HASHES = {'documents': '09c0a484aba425a640badc70546bc349dee98edb6c3b7511d9f4b7791d0ea871', 'supplemental': 'f1b1e770ffe92cee7766a9a48f88feae4e969bb5454a708d9eaf3aa7e8ef61b4', 'product-activation': '98e7b12cd4025c01741a2de00b28512f15284bd5e24aaff770a96859d4776bb5', 'web-activation': '87ed7303bae22e7296d8dc50d8b50eeafad7a7a0dda01a640135bed2ae8e6dbd'}
+HASHES = {'documents': '09c0a484aba425a640badc70546bc349dee98edb6c3b7511d9f4b7791d0ea871', 'supplemental': 'f1b1e770ffe92cee7766a9a48f88feae4e969bb5454a708d9eaf3aa7e8ef61b4', 'product-activation': '6f78614a9981e33235310af423b8a69d5f9a2d114a366a915b955d831382379f', 'web-activation': '129d7c8ef56c820ae70a5baf403c0d29805d67737628fd47fa8219816fc0cb49'}
 
 
 def job(source, name):

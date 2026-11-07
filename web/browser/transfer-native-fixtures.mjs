@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, stat } from 'node:fs/promises'
 import { test as base, expect } from '@playwright/test'
 import { drainRoutesBeforeCleanup } from './fixture-lifecycle.mjs'
+import { markPhase } from './outbox-native-diagnostics.mjs'
 export { expect }
 const bounded = value => typeof value === 'string' && value.length > 0 && value.length <= 256
 export const test = base.extend({
@@ -39,6 +40,7 @@ export const test = base.extend({
       } catch { errors++ }
     })
     try {
+      if (session.outbox === true) markPhase(base.info(), 'authenticate')
       try {
         const response = await page.goto(session.viewer.url)
         assert.ok(response && response.status() === 200 && (response.headers()['content-security-policy'] || '').includes("script-src 'self'"))
