@@ -76,21 +76,52 @@ class ActualCoverageTests(unittest.TestCase):
             self.assertEqual(data, original)
 
     def test_unexpanded_matrix_skip_rejects_other_scopes_and_executed_jobs(self):
-        for scope in sorted(coverage.SCOPES - {"frontend"}):
+        for scope in sorted(coverage.SCOPES - {"frontend", "go"}):
             data = jobs(scope) + [job("matrix.name", conclusion="skipped")]
             with self.subTest(scope=scope), self.assertRaises(ValueError):
                 coverage.evaluate_jobs(data, scope)
-        for field, values in {
-            "status": (None, "queued", "in_progress"),
-            "conclusion": (None, "success", "failure", "cancelled", "timed_out", "neutral"),
-            "steps": ([step("executed")], [step("not run", "skipped")], {}, ""),
-            "name": ("matrix.other", "${{ matrix.name }}", "unknown"),
-        }.items():
-            for value in values:
-                data = self.frontend_matrix_jobs()
-                next(item for item in data if item["name"] == "matrix.name")[field] = value
-                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
-                    coverage.evaluate_jobs(data, "frontend")
+        for scope in ("frontend", "go"):
+            for field, values in {
+                "status": (None, "queued", "in_progress"),
+                "conclusion": (None, "success", "failure", "cancelled", "timed_out", "neutral"),
+                "steps": ([step("executed")], [step("not run", "skipped")], {}, ""),
+                "name": ("matrix.other", "${{ matrix.name }}", "unknown"),
+            }.items():
+                for value in values:
+                    data = jobs(scope)
+                    next(item for item in data if item["name"] == "native").update(name="matrix.name", steps=None)
+                    next(item for item in data if item["name"] == "matrix.name")[field] = value
+                    with self.subTest(scope=scope, field=field, value=value), self.assertRaises(ValueError):
+                        coverage.evaluate_jobs(data, scope)
+
+    def test_unexpanded_go_skip_keeps_required_go_jobs_and_steps(self):
+        for name in ("impact", "documents", "go-unit"):
+            for mode in ("valid", "missing", "duplicate", "pending", "skipped", "failure", "cancelled",
+                         "missing-step", "duplicate-step", "pending-step", "skipped-step", "failed-step"):
+                data = jobs("go")
+                next(item for item in data if item["name"] == "native").update(name="matrix.name", steps=None)
+                selected = next(item for item in data if item["name"] == name)
+                if mode == "valid":
+                    self.assertFalse(coverage.evaluate_jobs(data, "go"))
+                    continue
+                if mode == "missing":
+                    data.remove(selected)
+                elif mode == "duplicate":
+                    data.append(copy.deepcopy(selected))
+                elif mode == "pending":
+                    selected["status"] = "in_progress"
+                elif mode == "missing-step":
+                    selected["steps"].pop()
+                elif mode == "duplicate-step":
+                    selected["steps"].append(copy.deepcopy(selected["steps"][0]))
+                elif mode == "pending-step":
+                    selected["steps"][0]["status"] = "in_progress"
+                elif mode in ("skipped-step", "failed-step"):
+                    selected["steps"][0]["conclusion"] = "skipped" if mode == "skipped-step" else "failure"
+                else:
+                    selected["conclusion"] = mode
+                with self.subTest(name=name, mode=mode), self.assertRaises(ValueError):
+                    coverage.evaluate_jobs(data, "go")
 
     def test_unexpanded_skip_rejects_duplicates_in_either_order(self):
         for name in ("matrix.name", "native"):
