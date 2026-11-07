@@ -14,17 +14,21 @@ class ApplicationOverlapTests(unittest.TestCase):
         self.sources = {path: (ROOT / path).read_bytes() for path in full.SOURCES}
         self.workflow = self.sources[full.WORKFLOW].decode()
         self.start = '      - name: Verify direct LAN WireGuard and Core native applications\n'
-        self.after = '      - name: Verify manual nearby setup across native Core peers\n'
+        self.after = '      - name: Verify Linux nearby native discovery without skips\n'
         self.wait = '      - name: Wait for direct LAN application checks\n        wait: directlan-applications\n'
         self.region = self.workflow[self.workflow.index(self.start):self.workflow.index(self.after)]
 
-    def test_one_background_chain_and_three_serial_process_gates_join(self):
+    def test_one_background_chain_and_seven_serial_gates_join(self):
         full.validate_parallel_workflow(self.workflow.encode())
         self.assertEqual(re.findall(r'^      - name: (.+)$', self.region, re.M), [
             'Verify direct LAN WireGuard and Core native applications',
             'Verify explicit dispatch with three separate Core processes',
             'Verify durable outbox restart across Core processes',
             'Verify durable text restart and lost ACK across Core processes',
+            'Verify manual nearby setup across native Core peers',
+            'Verify TOFU request approval across native Core peers',
+            'Verify full verification request approval across native Core peers',
+            'Verify request rejection and cancellation across native Core peers',
             'Wait for direct LAN application checks',
         ])
         self.assertEqual(self.region.count('        background: true\n'), 1)
@@ -33,7 +37,7 @@ class ApplicationOverlapTests(unittest.TestCase):
         self.assertIn('SOBALINK_CI_METRICS: ${{ runner.temp }}/sobalink-ci-directlan-metrics.jsonl', first)
         self.assertNotIn('SOBALINK_CI_METRICS:', foreground)
         self.assertEqual(first.count('ci-metrics.py run --suite'), 3)
-        self.assertEqual(foreground.count('ci-metrics.py run --suite'), 3)
+        self.assertEqual(foreground.count('ci-metrics.py run --suite'), 7)
         for forbidden in ('GITHUB_ENV', 'GITHUB_PATH', 'cache/save', 'package-tool', 'prepare-engine',
                           'continue-on-error', 'GOMAXPROCS', '-p='):
             self.assertNotIn(forbidden, self.region)
@@ -49,6 +53,8 @@ class ApplicationOverlapTests(unittest.TestCase):
             self.region.replace('id: directlan-applications', 'id: other'),
             self.region.replace('sobalink-ci-directlan-metrics.jsonl', 'sobalink-ci-metrics.jsonl'),
             self.region.replace('-count=5', '-count=1'),
+            self.region.replace(',ts_omit_udptransport', ''),
+            self.region.replace('SOBALINK_RUN_LAN_INTEGRATION:', 'SOBALINK_RUN_OTHER_INTEGRATION:'),
             self.region.replace('-race ', ''),
             self.region.replace('-timeout=5m', '-timeout=10m'),
             self.region.replace('        timeout-minutes: 6', '        background: true\n        timeout-minutes: 6', 1),
@@ -57,6 +63,14 @@ class ApplicationOverlapTests(unittest.TestCase):
         for index, changed in enumerate(changes):
             with self.subTest(index=index), self.assertRaises(ValueError):
                 full.validate_parallel_workflow(self.workflow.replace(self.region, changed).encode())
+        # The old early join cannot silently remove the intended overlap;
+        # neither can a later join allow native discovery or timers to overlap.
+        early = '      - name: Verify manual nearby setup across native Core peers\n'
+        late = '      - name: Verify direct LAN synthetic expiry and rekey\n'
+        for boundary in (early, late):
+            moved = self.workflow.replace(self.wait, '').replace(boundary, self.wait + boundary)
+            with self.subTest(boundary=boundary), self.assertRaises(ValueError):
+                full.validate_parallel_workflow(moved.encode())
         for changed in (self.workflow.replace('--include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" ', ''),
                         self.workflow.replace(self.wait, '').replace(self.after, self.after + self.wait)):
             with self.assertRaises(ValueError):

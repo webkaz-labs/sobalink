@@ -409,6 +409,25 @@ claims are made. Manual release proof now requires this unique successful step
 on every native target and binds workflow, policy and exact-event-helper source;
 distribution/signature/install gates and existing acceptance suites remain intact.
 
+## Overlap isolated nearby setup with application checks
+
+The existing direct-LAN background chain overlaps the three ordered process
+recovery gates and then the four ordered nearby Core gates. The nearby fixtures
+use private temporary profiles and dynamic loopback relays with UDP discovery
+omitted. They do not share peers or state with the direct-LAN chain. There is
+still only one background chain and one foreground chain in this region.
+
+The required direct-LAN wait follows request rejection/cancellation and precedes
+native discovery and every later lifecycle, package and cache step. Commands,
+race flags, repeat counts, timeouts and expected pass events are unchanged.
+Metrics keep their separate files and are combined only after the wait.
+Every gate and the wait must pass for the same source and run attempt.
+
+This removes an early idle wait without adding runners or tests. Runner load,
+compilation and queue time can limit the benefit; the whole-Core unit lane is
+unchanged. Compare complete native job spans, not the sum of concurrent steps,
+and do not infer a measured speedup from scheduling alone.
+
 ## Isolated real-time step concurrency
 
 The three existing natural-lifecycle, guarded-lease and relay-only lease gates use
