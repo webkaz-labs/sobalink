@@ -68,8 +68,17 @@ func TestOutboxProcessRestart(t *testing.T) {
 	commit := func(review browserOutboxRecord, phase string) browserOutboxRecord {
 		t.Helper()
 		payload := map[string]any{"processId": oldProcess, "outboxId": review.OutboxID, "reviewRevision": review.ReviewRevision, "confirm": true}
+		started := time.Now()
+		var observation outboxProcessCommitObservation
+		// Log even when the existing pipe-write/response-timeout path calls Fatal.
+		// Started and completed attempts remain distinct in that case.
+		directory := len(review.Entries) == 1 && review.Entries[0].Kind == transfer.Directory
+		defer func() { t.Log(observation.summary(phase, directory, time.Since(started))) }()
 		reply, code, err := retryOutboxProcessCommit(ctx, func() (json.RawMessage, string) {
+			observation.start()
+			invoked := time.Now()
 			reply := peers[0].invokeResult(t, "outbox.commit", payload)
+			observation.record(reply.Error, time.Since(invoked), reply.OutboxCommitMS)
 			return reply.Value, reply.Error
 		})
 		if err != nil || code != "" {
