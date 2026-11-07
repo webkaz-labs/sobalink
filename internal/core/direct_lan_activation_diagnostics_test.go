@@ -89,6 +89,89 @@ func activationDiagnosticMillis(duration time.Duration) int64 {
 	return duration.Milliseconds()
 }
 
+// Immutable terminal observations contain only closed classes and durations.
+// Snapshot before the driver's deferred cancellation changes its context.
+// These are not controller receipts and never affect its work or lifetime.
+type activationDiagnosticDrive struct {
+	Error, Context string
+	ElapsedMS      int64
+}
+
+func activationDiagnosticDriveResult(err error, run context.Context, elapsed time.Duration) *activationDiagnosticDrive {
+	return &activationDiagnosticDrive{
+		Error: activationDiagnosticError(err), Context: activationDiagnosticError(run.Err()),
+		ElapsedMS: activationDiagnosticMillis(elapsed),
+	}
+}
+
+func TestActivationDiagnosticDriverTerminalSnapshot(t *testing.T) {
+	run, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	before := activationDiagnosticDriveResult(errors.New("synthetic private error"), run, 1500*time.Millisecond)
+	cancel()
+	after := activationDiagnosticDriveResult(context.Canceled, run, -time.Second)
+	if *before != (activationDiagnosticDrive{Error: "other", Context: "success", ElapsedMS: 1500}) || *after != (activationDiagnosticDrive{Error: "cancelled", Context: "cancelled", ElapsedMS: 0}) {
+		t.Fatal("terminal observations retained arbitrary data or lost their pre-cleanup state")
+	}
+}
+
+type activationDiagnosticRecoveryState struct {
+	ContextOwner, OrdinaryBackend, StoreRecovery, EpochValid bool
+	PublicationCurrent, Prepared, Committed, Confirmed       bool
+	PublicationRevision                                      uint64
+}
+
+// A failed join may leave any of these locks occupied. Never wait, read files,
+// inspect readiness, or change authority merely to produce failure diagnostics.
+func activationDiagnosticTryRecoveryState(c *Core, key string) *activationDiagnosticRecoveryState {
+	if !c.op.TryLock() {
+		return nil
+	}
+	defer c.op.Unlock()
+	if !c.mu.TryRLock() {
+		return nil
+	}
+	defer c.mu.RUnlock()
+	s := c.directLAN
+	if s == nil || !s.mu.TryLock() {
+		return nil
+	}
+	defer s.mu.Unlock()
+	_, ordinary := c.node.(*directLANBackend)
+	r := &activationDiagnosticRecoveryState{
+		ContextOwner: c.contextControl != nil, OrdinaryBackend: ordinary,
+		StoreRecovery: s.recovery, EpochValid: s.contextEpoch.Valid(),
+		PublicationCurrent: s.contextPublicationCurrentLocked(c.lanStartNonce), PublicationRevision: s.reviewRevision,
+	}
+	if s.state.Metadata != nil {
+		for _, peer := range s.state.Metadata.Peers {
+			if peer.Peer.Key == key {
+				r.Prepared, r.Committed, r.Confirmed = contextSavedPair(peer) != nil, peer.PairContext != nil, peer.ContextConfirmed
+				break
+			}
+		}
+	}
+	return r
+}
+
+func TestActivationDiagnosticRecoveryStateNeverWaits(t *testing.T) {
+	c := &Core{directLAN: &directLANStore{reviewRevision: 7}}
+	for _, lock := range []interface {
+		Lock()
+		Unlock()
+	}{&c.op, &c.mu, &c.directLAN.mu} {
+		lock.Lock()
+		got := activationDiagnosticTryRecoveryState(c, "synthetic-peer")
+		lock.Unlock()
+		if got != nil {
+			t.Fatal("busy diagnostic state was read")
+		}
+	}
+	if got := activationDiagnosticTryRecoveryState(c, "synthetic-peer"); got == nil || got.PublicationRevision != 7 {
+		t.Fatal("available retained state was not observed")
+	}
+}
+
 type activationDiagnosticTimeout struct{}
 
 func (activationDiagnosticTimeout) Error() string   { return "synthetic timeout" }
