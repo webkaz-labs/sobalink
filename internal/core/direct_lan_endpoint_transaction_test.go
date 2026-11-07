@@ -66,6 +66,7 @@ func endpointTransactionFixture(t *testing.T) (*Core, *directLANStore, *directLA
 }
 
 func TestEndpointTransactionDurableReceiptAndUnlockedJoin(t *testing.T) {
+	parallelEndpointParent(t)
 	c, s, b, old, m, now := endpointTransactionFixture(t)
 	previous := s.contextPublication
 	writes := 0
@@ -121,6 +122,7 @@ func TestEndpointTransactionDurableReceiptAndUnlockedJoin(t *testing.T) {
 }
 
 func TestEndpointTransactionRejectsBeforeOldOwner(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, guard := range []string{"binding", "proof", "highwater", "approval", "receipt", "capacity", "cancel"} {
 		t.Run(guard, func(t *testing.T) {
 			c, s, b, old, m, now := endpointTransactionFixture(t)
@@ -205,15 +207,10 @@ func TestEndpointTransactionRetainsFailedOrCancelledJoin(t *testing.T) {
 }
 
 func TestEndpointTransactionUncertainPublicationHasNoReceipt(t *testing.T) {
-	// Cases own separate Core state and private files. Keep the parent serial
-	// and limit concurrent fixtures, including cleanup, to avoid disk pressure.
-	parallel := make(chan struct{}, 2)
+	parallelEndpointParent(t)
 	for _, phase := range []int{1, 2} {
 		for _, published := range []bool{false, true} {
 			t.Run(string(rune('0'+phase))+map[bool]string{false: "not-published", true: "published"}[published], func(t *testing.T) {
-				t.Parallel()
-				parallel <- struct{}{}
-				t.Cleanup(func() { <-parallel })
 				c, s, b, old, m, now := endpointTransactionFixture(t)
 				writes := 0
 				s.write = func(path string, data []byte) error {
@@ -243,6 +240,7 @@ func TestEndpointTransactionUncertainPublicationHasNoReceipt(t *testing.T) {
 }
 
 func TestEndpointTransactionPreservesFirstDeadline(t *testing.T) {
+	parallelEndpointParent(t)
 	c, s, b, old, m, now := endpointTransactionFixture(t)
 	var first map[directLANEndpointDeadlineKey]directLANEndpointDeadline
 	old.onWait = func() error {
@@ -276,14 +274,9 @@ func TestEndpointTransactionPreservesFirstDeadline(t *testing.T) {
 // An unrelated expired or terminal record is retained evidence, not positive
 // runtime authority. Its elapsed proof deadline cannot deny a valid target.
 func TestEndpointTransactionIgnoresInactiveRetainedDeadlines(t *testing.T) {
-	// Cases own separate Core state and private files. Keep the parent serial
-	// and limit concurrent fixtures, including cleanup, to avoid disk pressure.
-	parallel := make(chan struct{}, 2)
+	parallelEndpointParent(t)
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "inactive", true: "terminal"}[terminal], func(t *testing.T) {
-			t.Parallel()
-			parallel <- struct{}{}
-			t.Cleanup(func() { <-parallel })
 			c, s, b, old, mutation, now := endpointTransactionFixture(t)
 			state := s.copy()
 			remote := directlan.Identity{Seed: strings.Repeat("03", 32)}
@@ -345,6 +338,7 @@ func TestEndpointTransactionIgnoresInactiveRetainedDeadlines(t *testing.T) {
 }
 
 func TestEndpointTransactionRechecksTimeAtDisruptionAndResult(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, phase := range []string{"pre-signal", "final-write"} {
 		t.Run(phase, func(t *testing.T) {
 			c, s, b, old, mutation, now := endpointTransactionFixture(t)

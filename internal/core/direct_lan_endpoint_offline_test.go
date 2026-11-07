@@ -236,6 +236,7 @@ func (f *offlineEndpointFixture) assertUnchanged(t *testing.T, file []byte, stat
 }
 
 func TestOfflineEndpointInspectIsWriteFreeAndCannotCreateConsent(t *testing.T) {
+	parallelEndpointParent(t)
 	f := newOfflineEndpointFixture(t, nil)
 	signature := f.envelope.Signature
 	before := offlineEndpointRead(t, f.store.path)
@@ -283,6 +284,7 @@ func TestOfflineEndpointInspectIsWriteFreeAndCannotCreateConsent(t *testing.T) {
 }
 
 func TestOfflineEndpointMissingContextCannotBeManufactured(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, absent := range []bool{true, false} {
 		t.Run(fmt.Sprintf("absent_%t", absent), func(t *testing.T) {
 			f := newOfflineEndpointFixture(t, func(s *directLANState) {
@@ -306,6 +308,7 @@ func TestOfflineEndpointMissingContextCannotBeManufactured(t *testing.T) {
 }
 
 func TestOfflineEndpointCommandsRejectAttemptedNetworkStart(t *testing.T) {
+	parallelEndpointParent(t)
 	f := newOfflineEndpointFixture(t, nil)
 	before := offlineEndpointRead(t, f.store.path)
 	f.store.write = func(string, []byte) error { t.Fatal("stopped-only guard reached writer"); return os.ErrPermission }
@@ -322,6 +325,7 @@ func TestOfflineEndpointCommandsRejectAttemptedNetworkStart(t *testing.T) {
 }
 
 func TestOfflineEndpointReviewBindsInputFileProcessAndStoreRevision(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, change := range []string{"input", "file-bytes", "process", "store-revision", "missing-review"} {
 		t.Run(change, func(t *testing.T) {
 			f := newOfflineEndpointFixture(t, nil)
@@ -387,6 +391,7 @@ func TestOfflineEndpointReviewBindsInputFileProcessAndStoreRevision(t *testing.T
 }
 
 func TestOfflineEndpointSavedAcceptanceKeepsReplayAndScope(t *testing.T) {
+	parallelEndpointParent(t)
 	f := newOfflineEndpointFixture(t, nil)
 	profile := offlineEndpointRead(t, filepath.Join(f.core.dir, "sobalink.json"))
 	in := f.reviewed(t, f.input(t, true))
@@ -432,9 +437,7 @@ func TestOfflineEndpointSavedAcceptanceKeepsReplayAndScope(t *testing.T) {
 }
 
 func TestOfflineEndpointFenceAndFinalSaveOutcomes(t *testing.T) {
-	// Cases own separate Core state and private files. Keep the parent serial
-	// and limit concurrent fixtures, including cleanup, to avoid disk pressure.
-	parallel := make(chan struct{}, 2)
+	parallelEndpointParent(t)
 	for _, tc := range []struct {
 		name                string
 		fail                int
@@ -450,9 +453,6 @@ func TestOfflineEndpointFenceAndFinalSaveOutcomes(t *testing.T) {
 		{"durable", 0, false, 2, false, "3", "7"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			parallel <- struct{}{}
-			t.Cleanup(func() { <-parallel })
 			f := newOfflineEndpointFixture(t, nil)
 			in := f.reviewed(t, f.input(t, true))
 			writes := 0
@@ -526,14 +526,9 @@ func (f *offlineEndpointFixture) leavePending(t *testing.T) {
 }
 
 func TestOfflineEndpointPendingRecoveryNeedsExactReview(t *testing.T) {
-	// Cases own separate Core state and private files. Keep the parent serial
-	// and limit concurrent fixtures, including cleanup, to avoid disk pressure.
-	parallel := make(chan struct{}, 2)
+	parallelEndpointParent(t)
 	for _, cancel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cancel_%t", cancel), func(t *testing.T) {
-			t.Parallel()
-			parallel <- struct{}{}
-			t.Cleanup(func() { <-parallel })
 			f := newOfflineEndpointFixture(t, nil)
 			f.leavePending(t)
 			before, pending := offlineEndpointRead(t, f.store.path), f.store.copy()
@@ -577,6 +572,7 @@ func TestOfflineEndpointPendingRecoveryNeedsExactReview(t *testing.T) {
 }
 
 func TestOfflineEndpointRecoveryReviewBindsExpiryOutcome(t *testing.T) {
+	parallelEndpointParent(t)
 	f := newOfflineEndpointFixture(t, nil)
 	f.leavePending(t)
 	before, pending := offlineEndpointRead(t, f.store.path), f.store.copy()
@@ -605,6 +601,7 @@ func TestOfflineEndpointRecoveryReviewBindsExpiryOutcome(t *testing.T) {
 }
 
 func TestOfflineEndpointObservedClockRollbackStaysProcessLocal(t *testing.T) {
+	parallelEndpointParent(t)
 	f := newOfflineEndpointFixture(t, nil)
 	f.grantFollow(t)
 	before := offlineEndpointRead(t, f.store.path)
@@ -628,6 +625,7 @@ func TestOfflineEndpointObservedClockRollbackStaysProcessLocal(t *testing.T) {
 }
 
 func TestOfflineEndpointMonotonicProofBoundSurvivesLocalReapproval(t *testing.T) {
+	parallelEndpointParent(t)
 	f := newOfflineEndpointFixture(t, nil)
 	in := f.reviewed(t, f.input(t, true))
 	f.must(t, "accept", in)
@@ -649,6 +647,7 @@ func TestOfflineEndpointMonotonicProofBoundSurvivesLocalReapproval(t *testing.T)
 }
 
 func TestOfflineEndpointMonotonicConsentBoundsSurvivePolling(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, kind := range []string{"approval", "follow"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newOfflineEndpointFixture(t, nil)
@@ -678,14 +677,9 @@ func TestOfflineEndpointMonotonicConsentBoundsSurvivePolling(t *testing.T) {
 }
 
 func TestOfflineEndpointReductionsIgnoreIndependentFollowCutoff(t *testing.T) {
-	// Cases own separate Core state and private files. Keep the parent serial
-	// and limit concurrent fixtures, including cleanup, to avoid disk pressure.
-	parallel := make(chan struct{}, 2)
+	parallelEndpointParent(t)
 	for _, action := range []string{"revoke", "withdraw", "disable-follow", "cancel-set"} {
 		t.Run(action, func(t *testing.T) {
-			t.Parallel()
-			parallel <- struct{}{}
-			t.Cleanup(func() { <-parallel })
 			f := newOfflineEndpointFixture(t, nil)
 			f.grantFollow(t)
 			if action == "cancel-set" {
@@ -727,6 +721,7 @@ func TestOfflineEndpointReductionsIgnoreIndependentFollowCutoff(t *testing.T) {
 }
 
 func TestOfflineEndpointFenceStagesDeadlineBeforeFallibleSave(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, interrupt := range []string{"clock-cutoff", "caller-cancelled"} {
 		t.Run(interrupt, func(t *testing.T) {
 			f := newOfflineEndpointFixture(t, nil)
@@ -780,6 +775,7 @@ func TestOfflineEndpointFenceStagesDeadlineBeforeFallibleSave(t *testing.T) {
 }
 
 func TestOfflineEndpointCapacityFailsBeforeFencePublication(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, limit := range []string{"whole-file", "process-revision", "persisted-revision"} {
 		t.Run(limit, func(t *testing.T) {
 			f := newOfflineEndpointFixture(t, func(s *directLANState) {

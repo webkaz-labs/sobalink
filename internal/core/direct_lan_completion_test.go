@@ -34,6 +34,7 @@ func localManagedCompletionOwner(t *testing.T) (*localContextFixture, *managedCo
 }
 
 func TestManagedCompletionStoreObservesConfirmedCommitAndStatus(t *testing.T) {
+	parallelEndpointParent(t)
 	for _, operation := range []string{"pair-context-commit", "pair-context-status"} {
 		t.Run(operation, func(t *testing.T) {
 			f, o := localManagedCompletionOwner(t)
@@ -117,6 +118,7 @@ func TestManagedCompletionStoreRejectsChangedEvidence(t *testing.T) {
 }
 
 func TestManagedCompletionRequiresFreshOrdinaryEpochAfterContextJoin(t *testing.T) {
+	parallelEndpointParent(t)
 	f, o := localManagedCompletionOwner(t)
 	old, receipt := o.epoch, o.receipt
 	// stopContextControlLocked invalidates/removes exactly this old signal. Model
@@ -147,6 +149,7 @@ func TestManagedCompletionRequiresFreshOrdinaryEpochAfterContextJoin(t *testing.
 }
 
 func TestManagedCompletionSlotConsumesRejectedDuplicateAndLateCalls(t *testing.T) {
+	parallelEndpointParent(t)
 	f, o := localManagedCompletionOwner(t)
 	// Populate only inert owner identities, not a running Node. This isolates
 	// rejection at the missing transport identity rather than an absent owner.
@@ -176,14 +179,9 @@ func TestManagedCompletionSlotConsumesRejectedDuplicateAndLateCalls(t *testing.T
 // Provisional B/C1 integration: these are inert Core ownership predicates only,
 // never a transport request, ordinary constructor or positive send admission.
 func TestManagedCompletionCoreOwnerRejectsRemovalAndCleanup(t *testing.T) {
-	// Cases own separate Core state and private files. Keep the parent serial
-	// and limit concurrent fixtures, including cleanup, to avoid disk pressure.
-	parallel := make(chan struct{}, 2)
+	parallelEndpointParent(t)
 	for _, change := range []string{"none", "backend", "store", "context owner", "process", "closing", "cancel", "cleanup pending", "cleanup error", "removal", "raw denial", "mixed denial", "unrelated denial"} {
 		t.Run(change, func(t *testing.T) {
-			t.Parallel()
-			parallel <- struct{}{}
-			t.Cleanup(func() { <-parallel })
 			f, o := localManagedCompletionOwner(t)
 			o.node = &directlan.Node{}
 			o.backend = &directLANBackend{Node: o.node, ctx: f.core.ctx, store: f.store, ready: true, completion: o}
