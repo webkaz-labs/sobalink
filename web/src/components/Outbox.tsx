@@ -95,13 +95,27 @@ export function OutboxDialog({ server, state, locale, t, onClose, focusTextReque
     const { server } = latest.current
     if (server.auth !== 'ready' || server.stale || operation.current) return
     const generation = ++fetchGeneration.current
+    const current = () => alive.current && generation === fetchGeneration.current
     try {
-      const result = await api.command('outbox.list', {}), snapshot = readOutboxSnapshot(result.result), next = snapshot.items
+      const result = await api.command('outbox.list', {})
+      // Closing or replacing this refresh also invalidates follow-up reads and
+      // locator-storage changes, not only the final React state publication.
+      if (!current()) return
+      const snapshot = readOutboxSnapshot(result.result), next = snapshot.items
       const unresolved: string[] = [], missing: string[] = []
       for (const requestId of pendingOutboxLocators()) {
+        if (!current()) return
         const listed = next.find(r => r.requestId === requestId)
         if (listed) { if (listed.admission === 'enqueued' || listed.status === 'discarded') resolveOutboxLocator(requestId); continue }
-        try { const response = await api.command('outbox.status', { requestId }); const recovered = readOutbox(response.result, { requestId }); next.push(recovered); if (recovered.admission === 'enqueued' || recovered.status === 'discarded') resolveOutboxLocator(requestId) } catch (error) { if (error instanceof api.ApiError && error.code === 'outbox_not_found') { missing.push(requestId); resolveOutboxLocator(requestId) } else unresolved.push(requestId) }
+        try {
+          const response = await api.command('outbox.status', { requestId })
+          if (!current()) return
+          const recovered = readOutbox(response.result, { requestId }); next.push(recovered)
+          if (recovered.admission === 'enqueued' || recovered.status === 'discarded') resolveOutboxLocator(requestId)
+        } catch (error) {
+          if (!current()) return
+          if (error instanceof api.ApiError && error.code === 'outbox_not_found') { missing.push(requestId); resolveOutboxLocator(requestId) } else unresolved.push(requestId)
+        }
       }
       if (!alive.current || generation !== fetchGeneration.current) return
       setAvailability(snapshot); setAbsent(missing); setRecords(next); setLocators(unresolved); setFailure(false)
