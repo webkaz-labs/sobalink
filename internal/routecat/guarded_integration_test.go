@@ -15,7 +15,6 @@ import (
 	"tailscale.com/feature/buildfeatures"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
-	"tailscale.com/types/logger"
 	"tailscale.com/types/views"
 	"tailscale.com/util/eventbus"
 	"tailscale.com/wgengine/router"
@@ -40,7 +39,8 @@ func TestGuardedDirectEncryptedTCPUDPIntegration(t *testing.T) {
 			defer closeRelay()
 			prefixes := []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32"), netip.MustParsePrefix("::1/128")}
 			serverKey, role := key.NewNode(), key.NewNode()
-			server := &Server{Key: serverKey, PresharedKey: NewPresharedKey(), Regions: []*tailcfg.DERPRegion{region}, DestinationPrefixes: prefixes, Logf: logger.Discard, AllowClient: func(k key.NodePublic) bool { return k == role.Public() }}
+			serverDiagnostics, clientDiagnostics := newGuardedDiagnostics(), newGuardedDiagnostics()
+			server := &Server{Key: serverKey, PresharedKey: NewPresharedKey(), Regions: []*tailcfg.DERPRegion{region}, DestinationPrefixes: prefixes, Logf: serverDiagnostics.logf, AllowClient: func(k key.NodePublic) bool { return k == role.Public() }}
 			defer server.Close()
 			listeners := make(map[string]net.Listener)
 			for _, network := range []string{"tcp", "udp"} {
@@ -52,35 +52,47 @@ func TestGuardedDirectEncryptedTCPUDPIntegration(t *testing.T) {
 				defer ln.Close()
 			}
 			capability := (&ConnInfo{ServerPublic: NodePublic{serverKey.Public()}, ServerDiscoPublic: DiscoPublicForNode(serverKey), PresharedKey: server.PresharedKey, Region: []*tailcfg.DERPRegion{region}}).Addr()
-			client := &Client{Key: role, Server: capability, DestinationPrefixes: prefixes, Logf: logger.Discard}
+			client := &Client{Key: role, Server: capability, DestinationPrefixes: prefixes, Logf: clientDiagnostics.logf}
 			defer client.Close()
 			if _, err := client.Ping(ctx); err != nil {
 				t.Fatal("guarded pinned relay handshake failed")
 			}
 			loopback := netip.MustParseAddr(family)
-			for _, backend := range []*locoBackend{server.lb, client.lb} {
+			diagnostics := []*guardedDiagnostics{serverDiagnostics, clientDiagnostics}
+			backends := []*locoBackend{server.lb, client.lb}
+			selected := make([]netip.AddrPort, len(backends))
+			for i, backend := range backends {
 				sock := backend.sys.MagicSock.Get()
 				// PortUpdate is production socket state, including separately bound IPv6.
 				observer := backend.sys.Bus.Get().Client("guarded-family-port")
-				ports := eventbus.Subscribe[router.PortUpdate](observer)
-				sock.Rebind()
+				defer observer.Close()
 				network := "udp4"
 				if loopback.Is6() {
 					network = "udp6"
 				}
+				firstPort := make(chan uint16, 1)
+				observation := diagnostics[i]
+				eventbus.SubscribeFunc[router.PortUpdate](observer, func(update router.PortUpdate) {
+					if update.EndpointNetwork != network || update.UDPPort == 0 {
+						return
+					}
+					observation.portUpdate(update.UDPPort)
+					select {
+					case firstPort <- update.UDPPort:
+					default:
+					}
+				})
+				sock.Rebind()
 				var port uint16
 				for port == 0 {
 					select {
-					case update := <-ports.Events():
-						if update.EndpointNetwork == network {
-							port = update.UDPPort
-						}
+					case port = <-firstPort:
 					case <-ctx.Done():
 						observer.Close()
 						t.Fatal("guarded socket family port not reported")
 					}
 				}
-				observer.Close()
+				selected[i] = netip.AddrPortFrom(loopback, port)
 				sock.SetStaticEndpoints(views.SliceOf([]netip.AddrPort{netip.AddrPortFrom(loopback, port)}))
 			}
 			deadline := time.Now().Add(20 * time.Second)
@@ -122,6 +134,9 @@ func TestGuardedDirectEncryptedTCPUDPIntegration(t *testing.T) {
 					emptyProofs++
 				}
 				time.Sleep(100 * time.Millisecond)
+			}
+			for i, backend := range backends {
+				diagnostics[i].report(t, []string{"server", "client"}[i], backend, selected[i], selected[1-i])
 			}
 			if !direct {
 				t.Logf("guarded direct probe diagnostics: attempts=%d probe_errors=%d deadline_errors=%d canceled_errors=%d nil_proofs=%d relay_proofs=%d empty_proofs=%d malformed_endpoints=%d wrong_family=%d wrong_address=%d parent_done=%t",

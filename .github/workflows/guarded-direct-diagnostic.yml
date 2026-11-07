@@ -1,0 +1,47 @@
+name: Guarded direct diagnostics
+
+on:
+  pull_request:
+    paths:
+      - 'internal/routecat/guarded_integration_test.go'
+      - 'internal/routecat/guarded_diagnostics_test.go'
+      - '.github/workflows/guarded-direct-diagnostic.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guarded-direct-diagnostic-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+
+jobs:
+  macos-reproduction:
+    if: github.event.repository.private == false
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Prepare checksum-verified dependencies
+        run: go run ./cmd/prepare-engine
+      - name: Repeat unchanged guarded assertions with bounded diagnostics
+        env:
+          SOBALINK_RUN_GUARDED_INTEGRATION: '1'
+        run: |
+          python3 .github/scripts/ci-go-test.py \
+            --expect github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDirectEncryptedTCPUDPIntegration \
+            --expect github.com/webkaz-labs/sobalink/internal/routecat:TestGuardedDiagnosticsRetainOnlyCounts \
+            -- go test -race -count=30 -v \
+            -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy \
+            '-run=^(TestGuardedDirectEncryptedTCPUDPIntegration|TestGuardedDiagnosticsRetainOnlyCounts)$' \
+            -timeout=15m ./internal/routecat
