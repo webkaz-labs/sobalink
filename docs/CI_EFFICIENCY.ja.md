@@ -245,9 +245,33 @@ cache hit でもインストール前にハッシュを再検証します。さ�
 標準 runner の一覧はこの CJK family を保証しません。搭載済みフォントを無条件に使うと
 イメージ更新に描画が左右されます。apt ミラーの変更だけでは cold 時の全言語取得が残り、
 パッケージ全体のキャッシュにも不要な言語が含まれます。固定した2書体に絞り、cold の
-取得量を減らし、warm 時は apt のフォント配信に依存しない構成にします。他のシステム
-ライブラリーや Chromium の公式依存は従来の導入方法を維持します。全体の高速化は、
+取得量を減らし、warm 時は apt の CJK 配信に依存しない構成にします。Chromium の残りの
+公式依存は次節の独立した導入経路を使います。全体の高速化は、
 実際の runner で cold と warm を分けて計測してから判断します。
+
+### Playwright の全システム依存
+
+main と診断ワークフローの Chromium 準備7箇所は、Ubuntu 24.04 x64 上で
+`.github/scripts/ci-playwright.py` を使います。lock で固定した Playwright CLI の
+`install-deps chromium` で全依存を導入し、続けて通常ユーザーで `install chromium`
+を実行します。フォント・ライブラリーの省略、runner の別版 Chromium への置換、
+Playwright の依存検証の無効化は行いません。
+
+依存導入コマンドだけに一時的な `APT_CONFIG` を渡し、Ubuntu 公式の HTTPS archive と
+security archive を選びます。標準の Ubuntu archive keyring によるメタデータの署名と
+パッケージのハッシュ検証は維持し、取得元の設定ファイル・信頼鍵・セキュリティー設定は
+置き換えません。パッケージの版はセキュリティー更新を含む Ubuntu 24.04 の署名済み
+リポジトリーに従います。依存一覧を別に保守せず、Azure archive の遅い実体取得経路を
+避けます。既存の準備・ジョブの時間上限は維持し、導入失敗は CI の失敗にします。
+
+標準イメージには依存がすべて入っているわけではなく、障害時の実行ではフォント関連
+9パッケージ、21.1 MB の取得に9分50秒かかりました。`install-deps` の省略は試験環境を
+変えてしまいます。ブラウザー本体のキャッシュではこの apt 取得をなくせず、
+[Playwright 公式も本体のキャッシュを推奨していません](https://github.com/microsoft/playwright/blob/v1.63.0/docs/src/ci.md#caching-browsers)。
+導入済みシステムディレクトリーの復元はパッケージ管理の状態を迂回します。
+検証付き `.deb` キャッシュは選択肢ですが、まず公式 archive の経路を試すためには
+不要です。試験や受入結果はキャッシュしません。全体の高速化を判断する前に、導入の
+実測時間と hosted runner 上のブラウザー・activation 検証全体の結果を確認します。
 
 ## native fixtureとリリース検証
 

@@ -22,13 +22,22 @@ CI_FONT_POLICY_SHA256 = {
     '.github/scripts/ci-fonts.py': 'eb5c56f0019098330250157818838f3f9d1b40447c75682e1ca7e34460cbe33e',
 }
 
+# Reviewed complete official dependency installer and mandatory calling steps.
+CI_PLAYWRIGHT_HELPER = '.github/scripts/ci-playwright.py'
+CI_PLAYWRIGHT_SHA256 = 'bb87c90acc14984424e91cb26f4666fd7cd9500b6ff2742551675e8749e69237'
+CI_PLAYWRIGHT_STEPS = {
+    'browser': ('Install official Chromium and fonts', '8713ef9acdce3e80e33890644453f30f8cf09ff22424400b770a686dac85758a'),
+    'web-activation': ('Prepare locked dependencies and official Chromium', 'bb8f858aaf93517c90555abf356b37a933713703b997304fdae80d86c8b1fcf4'),
+    'product-activation': ('Prepare locked dependencies and official Chromium', 'bb8f858aaf93517c90555abf356b37a933713703b997304fdae80d86c8b1fcf4'),
+}
+
 # Reviewed reusable execution and source-mode boundary; never grants full credit.
 NATIVE_UI_POLICY_SHA256 = {
     '.github/workflows/native-ui-checks.yml': '7596e04c5751d5ada7aae0c96088db27e491722101359dc4db96eb5ec0605ae6',
     '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
     '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
 }
-SOURCES = (WORKFLOW, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/ci-browser-cache.py', '.github/scripts/test_ci_browser_cache.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+SOURCES = (WORKFLOW, CI_PLAYWRIGHT_HELPER, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/ci-browser-cache.py', '.github/scripts/test_ci_browser_cache.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
            '.github/scripts/native_ui_smoke.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -346,10 +355,12 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'Verify managed session native-udp-capacity': "matrix.suite == 'integration'",
  'Verify managed activation acceptance': "matrix.suite == 'integration'",
  'Verify managed restart acceptance': "matrix.suite == 'integration'",
+ 'Wait for Core context checks': '',
  'Verify direct LAN WireGuard and Core native applications': "matrix.suite == 'integration'",
  'Verify explicit dispatch with three separate Core processes': "matrix.suite == 'integration'",
  'Verify durable outbox restart across Core processes': "matrix.suite == 'integration'",
  'Verify durable text restart and lost ACK across Core processes': "matrix.suite == 'integration'",
+ 'Wait for direct LAN application checks': '',
  'Verify manual nearby setup across native Core peers': "matrix.suite == 'integration'",
  'Verify TOFU request approval across native Core peers': "matrix.suite == 'integration'",
  'Verify full verification request approval across native Core peers': "matrix.suite == 'integration'",
@@ -457,8 +468,8 @@ def validate_native_companion_workflow(data):
 # and every consumer. Extra steps/overrides cannot hide outside a hashed prelude.
 CI_PREPARATION_JOB_SHA256 = {
     'documents': 'ec5a17c2b3f063f0681dad5328fd238620bfbf400503181090ac062d976b86bc',
-    'product-activation': 'f589adb4e68ae6f7c78a9ae09edd9ecd7c8d098d22d98c9485921d2062244c9a',
-    'web-activation': '59ea77cb223611e42bbee0a12d733d8085a0fefb2259b268e6a78aba0df9d3cf',
+    'product-activation': 'd69b357c03ddfde94b7923e1aec9681a1a0a4f2999156b9535daaec69b49f9f2',
+    'web-activation': '61f8c4e6f20d52222c0db54df1adea145e2b08be8fcadad1d39ff409541b9789',
 }
 
 
@@ -480,6 +491,53 @@ def validate_preparation_overlap_workflow(data):
                 'preparation job dependency or failure policy differs: ' + name)
 
 
+# Review the complete bounded two-chain region, including commands, ownership,
+# timeout bounds, private metrics file and explicit failure join. This is not
+# test-result reuse: the runtime audit still requires each gate and its wait.
+CI_APPLICATION_OVERLAP_SHA256 = '27da3c865648303e6ff73cd17ef0d40cbdf2a4d83e1f1aa56dfc9b1cec22ec9e'
+
+
+def validate_application_overlap_workflow(data):
+    workflow = data.decode('utf-8')
+    start = '      - name: Verify direct LAN WireGuard and Core native applications\n'
+    end = '      - name: Verify manual nearby setup across native Core peers\n'
+    require(workflow.count(start) == workflow.count(end) == 1,
+            'missing or duplicate native application overlap boundary')
+    region = workflow[workflow.index(start):workflow.index(end)]
+    require(digest(region.encode()) == CI_APPLICATION_OVERLAP_SHA256,
+            'native application overlap commands or failure policy differ')
+    require(workflow.index('      - name: Check exact toolchain and native target\n')
+            < workflow.index(start) < workflow.index(end)
+            < workflow.index('      - name: Verify direct LAN session natural rekey and idle lifecycle\n'),
+            'application overlap must follow preparation and join before real-time gates')
+    summary = ('      - name: Summarize measured native suites\n'
+               '        if: always()\n'
+               '        run: python .github/scripts/ci-metrics.py summary '
+               '--include "$RUNNER_TEMP/sobalink-ci-directlan-metrics.jsonl" '
+               '--include "$RUNNER_TEMP/sobalink-ci-context-metrics.jsonl" '
+               '--output "$RUNNER_TEMP/ci-suite-metrics.json"\n')
+    require(workflow.count(summary) == 1 and workflow.index(summary) > workflow.index(end),
+            'parallel application metrics must be summarized after their join')
+
+
+CI_CONTEXT_OVERLAP_SHA256 = '5718f69c171e808c909d5e8958bae48373874ed9d574b06b5a6c72d5f856b5c7'
+
+
+def validate_context_overlap_workflow(data):
+    """Bind one private Core fixture chain and the unchanged managed gate order."""
+    workflow = data.decode('utf-8')
+    start = '      - name: Verify Core context control over pinned TLS\n'
+    end = '      - name: Verify direct LAN WireGuard and Core native applications\n'
+    require(workflow.count(start) == workflow.count(end) == 1,
+            'missing or duplicate Core context overlap boundary')
+    region = workflow[workflow.index(start):workflow.index(end)]
+    require(digest(region.encode()) == CI_CONTEXT_OVERLAP_SHA256,
+            'Core context overlap commands or failure policy differ')
+    require(workflow.index('      - name: Check exact toolchain and native target\n')
+            < workflow.index(start) < workflow.index(end),
+            'Core context overlap must follow preparation and join before application checks')
+
+
 def validate_parallel_workflow(data):
     """Fail closed on changes to the deliberately narrow native async region.
 
@@ -489,6 +547,8 @@ def validate_parallel_workflow(data):
     """
     workflow = data.decode('utf-8')
     metadata = workflow_metadata(workflow)
+    validate_application_overlap_workflow(data)
+    validate_context_overlap_workflow(data)
     groups = (
         ('Verify direct LAN session natural rekey and idle lifecycle', 'natural-lifecycle', 9),
         ('Verify guarded relay real-time lease continuity', 'guarded-lease', 9),
@@ -518,11 +578,13 @@ def validate_parallel_workflow(data):
     require(tuple(re.findall(r'^      - name: ([^\n]+)$', region, re.M)) == expected
             and len(re.findall(r'^      - ', region, re.M)) == len(expected),
             'unexpected work inside real-time parallel region')
-    # Docs, native real-time gates, activation and browser preparation are the
+    # Docs, native fixture gates, activation and browser preparation are the
     # only async regions. Each has a separate closed source policy below.
     controls = [key for _, _, key, _ in metadata
                 if key in {'background', 'parallel', 'wait', 'wait-all', 'cancel'}]
     require(controls == ['parallel',
+                         'background', 'wait',
+                         'background', 'wait',
                          'background', 'background', 'background', 'wait',
                          'background', 'wait', 'background', 'wait',
                          'background', 'wait', 'background', 'wait'],
@@ -561,6 +623,7 @@ def validate_fixture_diagnostics_workflow(data):
                   "TestStartupArgumentFailureWritesDiagnostic",
               )),
               ("internal/core", "lanlink_integration,ts_omit_udptransport", (
+                  "TestOutboxBrowserFailurePrivacy",
                   "TestNativeLANCommandDiagnosticRetainsOnlyAllowedCodes",
                   "TestNativeLANCommandDiagnosticPreservesProductionListenClassification",
                   "TestNativeLANHeldRelayPortDiagnosticIntegration",
@@ -620,7 +683,7 @@ def validate_fixture_diagnostics_workflow(data):
         background: true
         run: |
           set -euo pipefail
-          node web/node_modules/@playwright/test/cli.js install --with-deps chromium
+          python3 -B .github/scripts/ci-playwright.py
 """
     ready = """      - name: Wait for browser runtime preparation
         wait: browser-chromium
@@ -1383,9 +1446,30 @@ def validate_font_workflow(sources):
             validate_preparation_overlap_workflow(sources[WORKFLOW])
 
 
+def validate_playwright_workflow(sources):
+    """Changing mirrors must retain the official dependency and browser gates."""
+    require(digest(sources[CI_PLAYWRIGHT_HELPER]) == CI_PLAYWRIGHT_SHA256,
+            'Playwright dependency source policy differs')
+    workflow = sources[WORKFLOW].decode('utf-8')
+    jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
+    for name, (gate, expected) in CI_PLAYWRIGHT_STEPS.items():
+        positions = [pos for pos, key in jobs if key == name]
+        require(len(positions) == 1, 'missing Playwright dependency consumer')
+        start = positions[0]
+        end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+        job = workflow[start:end]
+        marker = '      - name: ' + gate + '\n'
+        require(job.count(marker) == 1, 'missing or duplicate Playwright dependency gate')
+        start = job.index(marker)
+        end = job.find('      - ', start + len(marker))
+        block = job[start:end if end >= 0 else len(job)]
+        require(digest(block.encode('utf-8')) == expected, 'Playwright dependency execution differs')
+
+
 def required_jobs(sources, *, include_skipped=False):
     """Read literal required-step constants from the protected source; no exec."""
     validate_font_workflow(sources)
+    validate_playwright_workflow(sources)
     validate_native_ui_workflow(sources)
     validate_browser_cache_workflow(sources)
     validate_native_matrix_workflow(sources[WORKFLOW])
@@ -1394,9 +1478,9 @@ def required_jobs(sources, *, include_skipped=False):
     validate_native_packages_workflow(sources)
     validate_native_companion_workflow(sources[WORKFLOW])
     validate_native_companion_workflow(sources[".github/workflows/prerelease.yml"])
-    validate_parallel_workflow(sources[WORKFLOW])
     validate_outbox_workflow(sources[WORKFLOW])
     validate_durable_text_workflow(sources[WORKFLOW])
+    validate_parallel_workflow(sources[WORKFLOW])
     validate_linux_nearby_workflow(sources[WORKFLOW])
     validate_macos_nearby_workflow(sources[WORKFLOW])
     validate_setup_and_text_browser_workflow(sources[WORKFLOW])
@@ -1430,6 +1514,8 @@ def required_jobs(sources, *, include_skipped=False):
     require(values['FAST_STEPS'].count('Reproduce locked frontend assets') == 1
             and values['BROWSER_STEPS'].count('Test and reproduce locked frontend assets') == 1,
             'native reproduction and common frontend tests are required')
+    require(values['BROWSER_STEPS'].count('Install official Chromium and fonts') == 1,
+            'missing official Playwright required gate')
     require(len(values['LONG_STEPS']) == 3, 'unexpected real-time gate policy')
     require(values['BROWSER_STEPS'].count('Prepare verified Japanese fonts') == 1,
             'missing Japanese font required gate')
@@ -1464,7 +1550,9 @@ def required_jobs(sources, *, include_skipped=False):
     require(values['NATIVE_SHARED_STEPS'] == ('Reproduce locked frontend assets', 'Check exact toolchain and native target')
             and values['NATIVE_UNIT_STEPS'] == ('Local and mock tests, race detector, and vet',
                                                'Verify adapted engine admission and native underlay denial')
-            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for real-time lifecycle and lease checks',)
+            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for Core context checks',
+                                                         'Wait for direct LAN application checks',
+                                                         'Wait for real-time lifecycle and lease checks')
             and values['WINDOWS_BARRIER_STEPS'] == ('Verify Windows receive-retirement directory barriers',),
             'native suite partition differs from reviewed policy')
     require(values['FAST_STEPS'].count('Verify explicit dispatch with three separate Core processes') == 1,

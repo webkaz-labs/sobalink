@@ -130,9 +130,25 @@ func (operation *peerMessageOperation) commit(c *Core, message Message) error {
 	// appendMessageLocked reconciles ErrAtomicCommitted with the in-memory
 	// record and keeps durability uncertainty. No completion is claimed on a
 	// timeout; this operation and its budgets remain owned until I/O returns.
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.appendMessageLocked(message)
+	// Retain the exact completion obligation when a lifecycle operation briefly
+	// owns admission. Only this private pre-callback refusal may wait: no HTTP
+	// request, receipt, mutation callback or uncertain disk write is repeated.
+	// Release Core.mu before waiting to preserve lifecycle-first lock ordering.
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for {
+		c.mu.Lock()
+		err := c.appendMessageLocked(message)
+		c.mu.Unlock()
+		if _, busy := err.(*messageStoreAdmissionBusy); !busy || !time.Now().Before(deadline) {
+			return err
+		}
+		// Completion records an outcome that already exists, even after caller
+		// cancellation or retirement. It cannot authorize another transmission.
+		time.Sleep(min(20*time.Millisecond, time.Until(deadline)))
+		if !time.Now().Before(deadline) {
+			return err
+		}
+	}
 }
 
 func (operation *peerMessageOperation) finish() {

@@ -124,7 +124,7 @@ class WorkflowContractTests(unittest.TestCase):
         for name in ('native-poc.yml', 'native-ui-checks.yml'):
             self.assertIn("if: runner.os == 'Linux'\n        timeout-minutes: 5\n        uses: ./.github/actions/japanese-fonts",
                           (ROOT / '.github/workflows' / name).read_text())
-        self.assertIn('node web/node_modules/@playwright/test/cli.js install --with-deps chromium', ci)
+        self.assertIn('python3 -B .github/scripts/ci-playwright.py', ci)
         poc = (ROOT / '.github/workflows/native-poc.yml').read_text().split('  workflow_dispatch:', 1)[0]
         for path in ('.github/actions/japanese-fonts/**', '.github/fonts/**', '.github/scripts/ci-fonts.py'):
             self.assertIn(path, poc)

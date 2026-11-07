@@ -20,6 +20,7 @@ CASES = {
         'TestStartupDiagnosticClosedVocabulary',
         'TestStartupArgumentFailureWritesDiagnostic')),
     'internal/core': ('lanlink_integration,ts_omit_udptransport', (
+        'TestOutboxBrowserFailurePrivacy',
         'TestNativeLANCommandDiagnosticRetainsOnlyAllowedCodes',
         'TestNativeLANCommandDiagnosticPreservesProductionListenClassification',
         'TestNativeLANHeldRelayPortDiagnosticIntegration')),
@@ -52,12 +53,12 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
                 error = exc
         return probe, launch, error
 
-    def test_all_eleven_cases_are_required_once_with_race_and_fixed_bounds(self):
+    def test_all_twelve_cases_are_required_once_with_race_and_fixed_bounds(self):
         probe, launch, error = self.invoke(environment={'SYNTHETIC_KEEP': 'fixture'})
         self.assertIsNone(error)
         probe.assert_called_once_with(['go', 'env', 'GOVERSION', 'GOOS', 'GOARCH'], text=True, timeout=30)
         self.assertEqual(launch.call_count, 3)
-        self.assertEqual(sum(len(tests) for _, tests in CASES.values()), 11)
+        self.assertEqual(sum(len(tests) for _, tests in CASES.values()), 12)
         for call, (package, (tags, tests)) in zip(launch.call_args_list, CASES.items()):
             expected = [sys.executable, '.github/scripts/ci-go-test.py']
             for name in tests:
@@ -99,11 +100,11 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
             self.assertEqual(launch.call_count, index + 1)
 
     def test_cases_correspond_to_actual_test_definitions(self):
-        files = {'cmd/soba-e2e': 'startup_diagnostic_test.go',
-                 'internal/core': 'lan_integration_diagnostics_test.go',
-                 'internal/directlan': 'resource_inspection_observer_test.go'}
+        files = {'cmd/soba-e2e': ('startup_diagnostic_test.go',),
+                 'internal/core': ('lan_integration_diagnostics_test.go', 'outbox_browser_diagnostics_integration_test.go'),
+                 'internal/directlan': ('resource_inspection_observer_test.go',)}
         for package, (_, tests) in CASES.items():
-            source = (ROOT / package / files[package]).read_text(encoding='utf-8')
+            source = '\n'.join((ROOT / package / path).read_text(encoding='utf-8') for path in files[package])
             self.assertCountEqual(re.findall(r'^func (Test\w+)\(t \*testing.T\)', source, re.M), tests)
 
     def test_required_browser_gate_and_source_policy(self):
@@ -184,7 +185,8 @@ class FixtureDiagnosticWorkflowTests(unittest.TestCase):
             changed = dict(sources)
             changed['.github/scripts/ci-coverage.py'] = sources['.github/scripts/ci-coverage.py'].replace(
                 ('"' + gate + '"').encode(), b'"Unreviewed replacement"', 1)
-            with self.subTest(gate=gate), self.assertRaisesRegex(ValueError, 'browser preparation'):
+            message = 'Playwright required gate' if gate == 'Install official Chromium and fonts' else 'browser preparation'
+            with self.subTest(gate=gate), self.assertRaisesRegex(ValueError, message):
                 full.required_jobs(changed)
 
 
