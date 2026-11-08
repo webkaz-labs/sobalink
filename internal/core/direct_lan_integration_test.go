@@ -44,9 +44,9 @@ func runDirectLANCoreNative(t *testing.T, diagnoseFirstHTTP bool) {
 		}
 		return value
 	}
-	choose := func() *testfixture.PortReservation {
+	choose := func(excluded ...uint16) *testfixture.PortReservation {
 		t.Helper()
-		reserve, err := testfixture.ReserveLoopbackTCPUDP(netip.MustParseAddr("127.0.0.1"), 54543, 54544, 54545)
+		reserve, err := testfixture.ReserveLoopbackTCPUDP(netip.MustParseAddr("127.0.0.1"), append(excluded, 54543, 54544, 54545)...)
 		if err != nil {
 			t.Fatalf("could not allocate a paired loopback TCP/UDP endpoint: %v", err)
 		}
@@ -159,7 +159,34 @@ func runDirectLANCoreNative(t *testing.T, diagnoseFirstHTTP bool) {
 	if !received {
 		t.Fatal("host did not receive authenticated message")
 	}
-	target, err := net.Listen("tcp4", "127.0.0.1:0")
+	// Match service.share's protocol-independent exclusions, not just ports
+	// already bound for the target protocol. In particular, UDP can otherwise
+	// receive a TCP-only management port or one of the fixed application ports.
+	chooseTarget := func() netip.AddrPort {
+		t.Helper()
+		state, err := host.current(context.Background())
+		if err != nil {
+			t.Fatalf("read application target reservations: %v", err)
+		}
+		excluded := append([]uint16(nil), state.ReservedPorts...)
+		host.mu.RLock()
+		for _, endpoint := range host.proxyReservedPorts() {
+			excluded = append(excluded, endpoint.Port())
+		}
+		if host.web != nil {
+			excluded = append(excluded, host.web.Port())
+		}
+		host.mu.RUnlock()
+		reserve := choose(excluded...)
+		endpoint := reserve.Endpoint()
+		// Release immediately before the real target bind. As with node setup,
+		// a competing bind still fails the test rather than retrying the flow.
+		if err := reserve.Close(); err != nil {
+			t.Fatalf("release application target reservation: %v", err)
+		}
+		return endpoint
+	}
+	target, err := net.Listen("tcp4", chooseTarget().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +227,7 @@ func runDirectLANCoreNative(t *testing.T, diagnoseFirstHTTP bool) {
 		t.Fatal("target not reached")
 	}
 
-	udpTarget, e := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:0")))
+	udpTarget, e := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(chooseTarget()))
 	if e != nil {
 		t.Fatal(e)
 	}
