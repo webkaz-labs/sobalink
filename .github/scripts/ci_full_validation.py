@@ -38,7 +38,7 @@ NATIVE_UI_POLICY_SHA256 = {
     '.github/scripts/ci-native-ui-source.py': 'cd17be782f7b9ff34a98cc077b9a2f55369a89ce0030653a28e97250c5fdd819',
     '.github/scripts/native_ui_smoke.py': '3d3bcf0a5a7ffc89c095595922e27a4346260ed7cdc2197fd3476327b73c37d7',
 }
-SOURCES = (WORKFLOW, CI_PLAYWRIGHT_HELPER, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/ci-browser-cache.py', '.github/scripts/test_ci_browser_cache.py', '.github/scripts/test_ci_browser_lanes.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
+SOURCES = (WORKFLOW, '.github/scripts/test_ci_macos_package_overlap.py', CI_PLAYWRIGHT_HELPER, '.github/actions/japanese-fonts/action.yml', '.github/fonts/noto-cjk-jp.json', '.github/scripts/ci-fonts.py', '.github/scripts/ci-browser-cache.py', '.github/scripts/test_ci_browser_cache.py', '.github/scripts/test_ci_browser_lanes.py', '.github/scripts/test_check_frontend.py', '.github/workflows/native-poc.yml', '.github/workflows/native-ui-checks.yml', '.github/scripts/ci-native-ui-source.py',
            '.github/scripts/native_ui_smoke.py', '.github/scripts/ci-regressions.py', '.github/scripts/test_ci_regressions.py', WINDOWS_PACKAGES_HELPER, '.github/scripts/ci-metrics.py', '.github/scripts/ci-impact.py', '.github/scripts/ci-coverage.py',
            '.github/scripts/ci-go-test.py', '.github/scripts/ci_full_validation.py',
            '.github/scripts/ci-browser-summary.py', '.github/scripts/ci-nearby-diagnostic.py',
@@ -372,6 +372,7 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'Verify guarded production direct and relay underlays': "matrix.suite == 'integration'",
  'Verify paired transport and Core applications over an isolated relay': "matrix.suite == 'integration'",
  'Verify recovery with the ordinary direct-enabled transport': "matrix.suite == 'integration'",
+ 'Reproduce macOS packages with clean caches': "matrix.suite == 'integration' && matrix.goos == 'darwin'",
  'Verify direct LAN session natural rekey and idle lifecycle': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != "
                                                                "'false')",
  'Verify guarded relay real-time lease continuity': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')",
@@ -382,6 +383,7 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'Verify native fixed-group resource catalog': "matrix.suite == 'integration' && (steps.ci-plan.outputs.long_required != 'false')",
  'Wait for real-time lifecycle and lease checks': '',
  'Test experimental native companion': "matrix.suite == 'integration' && (matrix.goos == 'windows' || matrix.goos == 'darwin')",
+ 'Wait for macOS package reproduction': '',
  'Build native package and smoke archive contents': "matrix.suite == 'integration'",
  'Upload native packages': "matrix.suite == 'integration'",
  'Save Go caches after integration checks pass on main': "matrix.suite == 'integration' && (success() && "
@@ -540,6 +542,27 @@ def validate_context_overlap_workflow(data):
             'Core context overlap must follow preparation and join before application checks')
 
 
+def validate_macos_package_overlap_workflow(data):
+    """Retain two isolated cold builds and defer smoke until every owner joins."""
+    workflow = data.decode('utf-8')
+    marker = '      - name: '
+    start = marker + 'Reproduce macOS packages with clean caches\n'
+    after = '      # Start wait-heavy gates after their exact tagged caches are warm.\n'
+    smoke = marker + 'Build native package and smoke archive contents\n'
+    upload = marker + 'Upload native packages\n'
+    for boundary in (start, after, smoke, upload):
+        require(workflow.count(boundary) == 1, 'missing or duplicate macOS package boundary')
+    require(workflow.index(marker + 'Verify recovery with the ordinary direct-enabled transport\n')
+            < workflow.index(start) < workflow.index(after) < workflow.index(smoke) < workflow.index(upload),
+            'macOS package build or smoke ordering differs')
+    require(digest(workflow[workflow.index(start):workflow.index(after)].encode())
+            == '043ce0f51d2d9168041b8584ce4e17cdb1665763b153c792596899b176e3b2b9',
+            'macOS clean builds, cache isolation or checksum comparison differ')
+    require(digest(workflow[workflow.index(smoke):workflow.index(upload)].encode())
+            == 'bb859dc4b3a1ed1ea754aff27bb27094221f08cf4988c711a5f057ca2bb5a55c',
+            'native package build or post-join smoke differs')
+
+
 def validate_parallel_workflow(data):
     """Fail closed on changes to the deliberately narrow native async region.
 
@@ -568,7 +591,11 @@ def validate_parallel_workflow(data):
     fence = (marker + 'Wait for real-time lifecycle and lease checks\n'
              '        wait: [natural-lifecycle, guarded-lease, relay-only-lease]\n')
     package = marker + 'Build native package and smoke archive contents\n'
-    require(workflow.count(fence + native_lane_expected(NATIVE_COMPANION_STEP, 'integration', workflow) + package) == 1, 'missing real-time wait before packaging')
+    package_wait = (marker + 'Wait for macOS package reproduction\n'
+                    '        wait: macos-package\n')
+    require(workflow.count(fence + native_lane_expected(NATIVE_COMPANION_STEP, 'integration', workflow)
+                           + package_wait + package) == 1, 'missing required joins before package smoke')
+    validate_macos_package_overlap_workflow(data)
     end = workflow.index(fence)
     require(starts == sorted(starts) and starts[-1] < end, 'invalid real-time step order')
     region = workflow[starts[0]:end]
@@ -587,7 +614,7 @@ def validate_parallel_workflow(data):
     require(controls == ['parallel',
                          'background', 'wait',
                          'background', 'wait',
-                         'background', 'background', 'background', 'wait',
+                         'background', 'background', 'background', 'background', 'wait', 'wait',
                          'background', 'wait', 'background', 'wait',
                          'background', 'wait', 'background', 'wait',
                          'background', 'wait', 'background', 'wait'],
@@ -1519,7 +1546,7 @@ def required_jobs(sources, *, include_skipped=False):
     tree = ast.parse(sources['.github/scripts/ci-coverage.py'].decode('utf-8'))
     names = {'NATIVE_SHARED_STEPS', 'NATIVE_UNIT_STEPS', 'NATIVE_SHARED_CONTROL_STEPS', 'WINDOWS_BARRIER_STEPS',
              'REGRESSION_STEPS', 'FAST_STEPS', 'LONG_STEPS', 'FULL_ONLY_STEPS', 'BROWSER_STEPS', 'NATIVE_BROWSER_STEPS',
-             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS', 'NATIVE_UI_STEPS'}
+             'LINUX_NEARBY_TARGETS', 'LINUX_NEARBY_STEPS', 'MACOS_NEARBY_TARGETS', 'MACOS_NEARBY_STEPS', 'NATIVE_PACKAGE_TARGETS', 'NATIVE_PACKAGE_STEPS', 'NATIVE_UI_STEPS', 'MACOS_PACKAGE_STEPS'}
     values = {}
     for node in tree.body:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -1580,11 +1607,14 @@ def required_jobs(sources, *, include_skipped=False):
                                                'Verify adapted engine admission and native underlay denial')
             and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for Core context checks',
                                                          'Wait for direct LAN application checks',
-                                                         'Wait for real-time lifecycle and lease checks')
+                                                         'Wait for real-time lifecycle and lease checks',
+                                                         'Wait for macOS package reproduction')
             and values['WINDOWS_BARRIER_STEPS'] == ('Verify Windows receive-retirement directory barriers',),
             'native suite partition differs from reviewed policy')
     require(values['FAST_STEPS'].count('Verify explicit dispatch with three separate Core processes') == 1,
             'missing explicit dispatch required gate')
+    require(values['MACOS_PACKAGE_STEPS'] == ('Reproduce macOS packages with clean caches',),
+            'unexpected macOS package reproduction policy')
     require(values['NATIVE_UI_STEPS'] == ('Test experimental native companion',), 'unexpected companion gate policy')
     require(values['NATIVE_PACKAGE_TARGETS'] == ('windows-amd64', 'darwin-arm64')
             and values['NATIVE_PACKAGE_STEPS'] == ('Collect required whole-Core race evidence',
@@ -1592,8 +1622,11 @@ def required_jobs(sources, *, include_skipped=False):
             'unexpected native package coverage policy')
     inventory = (values['FAST_STEPS'] + values['LONG_STEPS'] + values['FULL_ONLY_STEPS']
                  + values['LINUX_NEARBY_STEPS'] + values['MACOS_NEARBY_STEPS']
-                 + values['WINDOWS_BARRIER_STEPS'] + values['NATIVE_PACKAGE_STEPS'] + values['NATIVE_UI_STEPS'])
+                 + values['WINDOWS_BARRIER_STEPS'] + values['NATIVE_PACKAGE_STEPS'] + values['NATIVE_UI_STEPS']
+                 + values['MACOS_PACKAGE_STEPS'])
     require(len(set(inventory)) == len(inventory), 'overlapping required native gates')
+    require(set(values['NATIVE_SHARED_CONTROL_STEPS']).issubset(inventory),
+            'required native joins must remain in the audited inventory')
     result, skipped = {}, {}
     for suite, targets in (('unit', TARGETS), ('integration', INTEGRATION_TARGETS)):
         for target, (name, _) in targets.items():
@@ -1613,6 +1646,8 @@ def required_jobs(sources, *, include_skipped=False):
                 selected.update(values['LONG_STEPS'] + values['FULL_ONLY_STEPS'])
                 if target in values['NATIVE_PACKAGE_TARGETS']:
                     selected.update(values['NATIVE_UI_STEPS'])
+                if target == 'darwin-arm64':
+                    selected.update(values['MACOS_PACKAGE_STEPS'])
             result[name] = tuple(step for step in inventory if step in selected)
             skipped[name] = tuple(step for step in inventory if step not in selected)
     result.update({

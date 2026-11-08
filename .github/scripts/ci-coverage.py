@@ -37,7 +37,8 @@ NATIVE_UNIT_STEPS = (
 # GitHub's wait control cannot have an if. It is a no-op in the unit lane.
 NATIVE_SHARED_CONTROL_STEPS = ("Wait for Core context checks",
                                "Wait for direct LAN application checks",
-                               "Wait for real-time lifecycle and lease checks")
+                               "Wait for real-time lifecycle and lease checks",
+                               "Wait for macOS package reproduction")
 WINDOWS_BARRIER_STEPS = ("Verify Windows receive-retirement directory barriers",)
 # Separate merge-tested UI evidence never substitutes for backend qualification.
 NATIVE_UI_TARGETS = {
@@ -95,6 +96,7 @@ FAST_STEPS = (
     "Verify paired transport and Core applications over an isolated relay",
     "Verify recovery with the ordinary direct-enabled transport",
     "Wait for real-time lifecycle and lease checks",
+    "Wait for macOS package reproduction",
     "Build native package and smoke archive contents",
 )
 LINUX_NEARBY_TARGETS = ('linux-amd64', 'linux-arm64')
@@ -102,6 +104,7 @@ LINUX_NEARBY_STEPS = ('Verify Linux nearby native discovery without skips',)
 NATIVE_UI_STEPS = ('Test experimental native companion',)
 NATIVE_PACKAGE_TARGETS = ('windows-amd64', 'darwin-arm64')
 NATIVE_PACKAGE_STEPS = ('Collect required whole-Core race evidence', 'Verify remaining native package race coverage', 'Preserve required native package proof')
+MACOS_PACKAGE_STEPS = ('Reproduce macOS packages with clean caches',)
 MACOS_NEARBY_TARGETS = ('darwin-arm64',)
 MACOS_NEARBY_STEPS = ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof')
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -228,7 +231,9 @@ def native_step_expectations(target, suite, scope):
     require(target in TARGETS and suite in ("unit", "integration"), "unknown native target or suite")
     require(scope in ("native-short", "full"), "unknown native scope")
     inventory = (FAST_STEPS + LONG_STEPS + FULL_ONLY_STEPS + LINUX_NEARBY_STEPS
-                 + MACOS_NEARBY_STEPS + WINDOWS_BARRIER_STEPS + NATIVE_PACKAGE_STEPS + NATIVE_UI_STEPS)
+                 + MACOS_NEARBY_STEPS + WINDOWS_BARRIER_STEPS + NATIVE_PACKAGE_STEPS + NATIVE_UI_STEPS + MACOS_PACKAGE_STEPS)
+    require(set(NATIVE_SHARED_CONTROL_STEPS).issubset(inventory),
+            "required native joins must remain in the audited inventory")
     required = set(NATIVE_SHARED_STEPS + NATIVE_SHARED_CONTROL_STEPS)
     if suite == "unit":
         required.update(NATIVE_UNIT_STEPS)
@@ -246,6 +251,8 @@ def native_step_expectations(target, suite, scope):
             required.update(LONG_STEPS + FULL_ONLY_STEPS)
         if target in NATIVE_PACKAGE_TARGETS:
             required.update(NATIVE_UI_STEPS)
+        if target == "darwin-arm64":
+            required.update(MACOS_PACKAGE_STEPS)
     return {name: "success" if name in required else "skipped" for name in inventory}
 
 
@@ -424,7 +431,7 @@ def job_timings(jobs):
         except (ValueError, KeyError, TypeError, AttributeError):
             return None
     names = {*TARGETS.values(), *INTEGRATION_TARGETS.values(), *NATIVE_UI_TARGETS.values(), "impact", "documents", "browser", "browser-native", "go-unit", "manifest-smoke", "policy-regressions"}
-    steps = {*NATIVE_UI_SCOPE_STEPS, *NATIVE_UI_PRODUCT_STEPS, *REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *NATIVE_BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS, *WINDOWS_BARRIER_STEPS,
+    steps = {*NATIVE_UI_SCOPE_STEPS, *NATIVE_UI_PRODUCT_STEPS, *REGRESSION_STEPS, *DOCUMENT_STEPS, *FAST_STEPS, *LONG_STEPS, *FULL_ONLY_STEPS, *BROWSER_STEPS, *NATIVE_BROWSER_STEPS, *GO_STEPS, *LINUX_NEARBY_STEPS, *MACOS_NEARBY_STEPS, *NATIVE_PACKAGE_STEPS, *NATIVE_UI_STEPS, *MACOS_PACKAGE_STEPS, *WINDOWS_BARRIER_STEPS,
              "Restore trusted main Go caches", "Restore isolated development Go caches",
              "Save Go caches after integration checks pass on main",
              "Save development Go caches after integration checks pass"}

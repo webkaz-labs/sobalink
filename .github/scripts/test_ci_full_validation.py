@@ -1369,7 +1369,7 @@ class FullProofTests(unittest.TestCase):
             integration_name = full.INTEGRATION_TARGETS[target][0]
             shared = {'Check exact toolchain and native target',
                       'Wait for Core context checks', 'Wait for direct LAN application checks',
-                      'Wait for real-time lifecycle and lease checks'}
+                      'Wait for real-time lifecycle and lease checks', 'Wait for macOS package reproduction'}
             unit, integration = set(self.required[unit_name]), set(self.required[integration_name])
             self.assertEqual(unit & integration, shared)
             self.assertEqual(unit | set(self.skipped[unit_name]),

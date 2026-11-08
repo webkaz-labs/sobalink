@@ -434,9 +434,9 @@ and do not infer a measured speedup from scheduling alone.
 ## Isolated real-time step concurrency
 
 The three existing natural-lifecycle, guarded-lease and relay-only lease gates use
-GitHub Actions `background` steps with a named, required `wait` immediately before
-packaging. Their names, exact expected Go pass events, timeouts, race flags and
-native-short skip rules are unchanged. The four native targets remain required.
+GitHub Actions `background` steps with a named, required `wait` before
+companion checks and archive smoke. Their names, exact expected Go pass events,
+timeouts, race flags and native-short skip rules are unchanged. The four native targets remain required.
 The wait and each individual gate must succeed for full-CI or nightly evidence;
 failed, cancelled, skipped or missing gates never receive full-coverage credit.
 
@@ -444,10 +444,25 @@ The three wait-heavy groups start before resource inspection, management and
 fixed-group catalog. Those resource gates remain serial with each other and
 overlap the three background gates. Earlier native tests have built the same
 tagged package variants; build caches may still need work if entries are evicted.
-No extra runner or duplicate setup is added. Companion checks, package creation,
-uploads, cache saves and timing summaries follow the wait. Only natural-lifecycle writes the existing timing JSONL in this
-region, so there are no concurrent timing writers. Adding another requires
-separate storage and a validated post-wait merge, rather than shared appends.
+No extra runner or duplicate setup is added. Companion checks, archive smoke,
+uploads, cache saves and timing summaries follow the wait. Linux and Windows
+package builds remain after that wait. Only natural-lifecycle writes the existing
+timing JSONL in this region, so there are no concurrent timing writers. Adding
+another requires separate storage and a validated post-wait merge, rather than shared appends.
+
+macOS starts its two existing clean-cache package builds before these wait-heavy
+gates. Each build retains its own fresh `GOCACHE` and `GOTMPDIR`, with
+`GOCACHEPROG` empty; both checksum passes and their exact comparison remain
+mandatory. Compilation reads the already prepared sources and writes only
+private package stages and the single-owner `dist` directory. The compiler
+caches are not shared with concurrent tests. A separate required
+`Wait for macOS package reproduction` joins the build after companion checks,
+before archive smoke, uploads or cache saves. Other targets explicitly skip this
+macOS build step, while every lane requires the wait's successful outcome.
+The full and `native-short` audits require this same-source macOS reproduction;
+short scope never turns reproducibility into a skip. The release workflow keeps
+its original serial builds. Hosted timing and contention must be checked without
+loosening test deadlines; this source change alone establishes no speedup.
 
 These are synthetic, separate-process fixtures: application ports belong to
 separate userspace network stacks; host sockets request ephemeral ports; state is

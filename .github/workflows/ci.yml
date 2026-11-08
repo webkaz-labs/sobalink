@@ -736,6 +736,31 @@ jobs:
               "-timeout=5m", "./internal/routecat", "./internal/core",
           ], env=env, check=True, timeout=8 * 60)
           PYTHON
+      # Two independent clean-cache builds retain macOS reproducibility.
+      # Only package staging/dist are written; smoke and publication wait below.
+      - name: Reproduce macOS packages with clean caches
+        id: macos-package
+        background: true
+        if: matrix.suite == 'integration' && matrix.goos == 'darwin'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+          commit="$(git rev-parse HEAD)"
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          clean_packages="$(mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX")"
+          trap 'rm -rf "$clean_packages"' EXIT
+          export GOCACHEPROG=
+          export GOCACHE="$clean_packages/first-cache" GOTMPDIR="$clean_packages/first-tmp"
+          mkdir -p "$GOCACHE" "$GOTMPDIR"
+          go run ./cmd/package-tool build "$version" 'darwin' 'arm64' "$commit"
+          go run ./cmd/package-tool checksums
+          cp dist/SHA256SUMS "$clean_packages/first-SHA256SUMS"
+          export GOCACHE="$clean_packages/second-cache" GOTMPDIR="$clean_packages/second-tmp"
+          mkdir -p "$GOCACHE" "$GOTMPDIR"
+          go run ./cmd/package-tool build "$version" 'darwin' 'arm64' "$commit"
+          go run ./cmd/package-tool checksums
+          cmp "$clean_packages/first-SHA256SUMS" dist/SHA256SUMS
       # Start wait-heavy gates after their exact tagged caches are warm.
       # Resource checks use independent peers/state and overlap these timers.
       - name: Verify direct LAN session natural rekey and idle lifecycle
@@ -909,6 +934,8 @@ jobs:
           "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
           "$SOBALINK_NATIVE_GO" vet ./...
           test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"
+      - name: Wait for macOS package reproduction
+        wait: macos-package
       - name: Build native package and smoke archive contents
         if: matrix.suite == 'integration'
         run: |
@@ -916,22 +943,9 @@ jobs:
           version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
           commit="$(git rev-parse HEAD)"
           export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
-          if [[ '${{ matrix.goos }}' == darwin ]]; then
-            clean_packages="$(mktemp -d "$RUNNER_TEMP/soba-clean-packages.XXXXXX")"
-            trap 'rm -rf "$clean_packages"' EXIT
-            export GOCACHEPROG=
-            export GOCACHE="$clean_packages/first-cache" GOTMPDIR="$clean_packages/first-tmp"
-            mkdir -p "$GOCACHE" "$GOTMPDIR"
-          fi
-          go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
-          go run ./cmd/package-tool checksums
-          if [[ '${{ matrix.goos }}' == darwin ]]; then
-            cp dist/SHA256SUMS "$clean_packages/first-SHA256SUMS"
-            export GOCACHE="$clean_packages/second-cache" GOTMPDIR="$clean_packages/second-tmp"
-            mkdir -p "$GOCACHE" "$GOTMPDIR"
+          if [[ '${{ matrix.goos }}' != darwin ]]; then
             go run ./cmd/package-tool build "$version" '${{ matrix.goos }}' '${{ matrix.goarch }}' "$commit"
             go run ./cmd/package-tool checksums
-            cmp "$clean_packages/first-SHA256SUMS" dist/SHA256SUMS
           fi
           if [[ '${{ matrix.goos }}' == windows ]]; then
             extension=zip
