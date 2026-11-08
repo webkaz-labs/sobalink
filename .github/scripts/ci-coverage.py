@@ -31,11 +31,13 @@ NATIVE_SHARED_STEPS = (
     "Check exact toolchain and native target",
 )
 NATIVE_UNIT_STEPS = (
+    "Run native OS regression contracts",
     "Local and mock tests, race detector, and vet",
     "Verify adapted engine admission and native underlay denial",
 )
-# GitHub's wait control cannot have an if. It is a no-op in the unit lane.
-NATIVE_SHARED_CONTROL_STEPS = ("Wait for Core context checks",
+# GitHub's wait control cannot have an if. Inactive-lane waits are no-ops.
+NATIVE_SHARED_CONTROL_STEPS = ("Wait for native OS regression contracts",
+                               "Wait for Core context checks",
                                "Wait for direct LAN application checks",
                                "Wait for real-time lifecycle and lease checks",
                                "Wait for macOS package reproduction")
@@ -67,6 +69,8 @@ FULL_ONLY_STEPS = (
     "Verify native fixed-group resource catalog",
 )
 FAST_STEPS = (
+    "Run native OS regression contracts",
+    "Wait for native OS regression contracts",
     "Reproduce locked frontend assets",
     "Check exact toolchain and native target",
     "Local and mock tests, race detector, and vet",
@@ -232,6 +236,8 @@ def native_step_expectations(target, suite, scope):
     require(scope in ("native-short", "full"), "unknown native scope")
     inventory = (FAST_STEPS + LONG_STEPS + FULL_ONLY_STEPS + LINUX_NEARBY_STEPS
                  + MACOS_NEARBY_STEPS + WINDOWS_BARRIER_STEPS + NATIVE_PACKAGE_STEPS + NATIVE_UI_STEPS + MACOS_PACKAGE_STEPS)
+    require(set(NATIVE_UNIT_STEPS + NATIVE_SHARED_STEPS).issubset(inventory),
+            "required native execution gates must remain in the audited inventory")
     require(set(NATIVE_SHARED_CONTROL_STEPS).issubset(inventory),
             "required native joins must remain in the audited inventory")
     required = set(NATIVE_SHARED_STEPS + NATIVE_SHARED_CONTROL_STEPS)

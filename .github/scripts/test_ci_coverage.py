@@ -757,7 +757,7 @@ class PlanAndReceiptTests(unittest.TestCase):
 
     def test_native_lane_partition_is_explicit_and_preserves_receipt_names(self):
         self.assertEqual(coverage.NATIVE_SHARED_STEPS, ("Check exact toolchain and native target",))
-        self.assertEqual(coverage.NATIVE_UNIT_STEPS, ("Local and mock tests, race detector, and vet", "Verify adapted engine admission and native underlay denial"))
+        self.assertEqual(coverage.NATIVE_UNIT_STEPS, ("Run native OS regression contracts", "Local and mock tests, race detector, and vet", "Verify adapted engine admission and native underlay denial"))
         for target in coverage.TARGETS:
             unit = coverage.native_step_expectations(target, "unit", "full")
             integration = coverage.native_step_expectations(target, "integration", "full")
@@ -773,6 +773,29 @@ class PlanAndReceiptTests(unittest.TestCase):
         for suite in ("unknown", "", None):
             with self.assertRaises(ValueError):
                 coverage.native_step_expectations("linux-amd64", suite, "full")
+
+    def test_native_regression_failure_or_join_cannot_emit_coverage_receipt(self):
+        for scope in ('full', 'native-short'):
+            for name in coverage.TARGETS.values():
+                for gate in ('Run native OS regression contracts', 'Wait for native OS regression contracts'):
+                    for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                        data = jobs(scope)
+                        selected = next(job for job in data if job['name'] == name)
+                        step = next(step for step in selected['steps'] if step['name'] == gate)
+                        if mode == 'missing':
+                            selected['steps'].remove(step)
+                        elif mode == 'duplicate':
+                            selected['steps'].append(copy.deepcopy(step))
+                        elif mode == 'pending':
+                            step['status'] = 'in_progress'
+                        else:
+                            step['conclusion'] = mode
+                        with tempfile.TemporaryDirectory() as directory:
+                            output = pathlib.Path(directory) / 'receipt.json'
+                            with patch.dict(os.environ, {}, clear=True), patch.object(coverage, 'verified_plan', return_value=plan(scope)), patch.object(coverage, 'current_jobs', return_value=data):
+                                with self.subTest(scope=scope, name=name, gate=gate, mode=mode), self.assertRaises(ValueError):
+                                    coverage.finalize('plan', output)
+                            self.assertFalse(output.exists())
 
     def test_native_frontend_builds_belong_to_all_four_integration_lanes(self):
         gate = 'Reproduce locked frontend assets'

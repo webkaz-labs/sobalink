@@ -397,9 +397,6 @@ jobs:
             git diff --exit-code -- go.mod go.sum
           fi
           go mod verify
-          if [[ '${{ matrix.suite }}' == 'unit' ]]; then
-            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
-          fi
       - name: Verify macOS five-scope discovery without skips
         if: matrix.suite == 'unit' && (matrix.goos == 'darwin')
         timeout-minutes: 10
@@ -419,11 +416,21 @@ jobs:
       - name: Verify Windows receive-retirement directory barriers
         if: matrix.suite == 'unit' && (matrix.goos == 'windows')
         run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer
+      # Regressions own private fixture trees. Keep Core and platform proofs
+      # isolated, then overlap only the exact remaining Go package complement.
+      - name: Run native OS regression contracts
+        id: native-regressions
+        background: true
+        if: matrix.suite == 'unit'
+        timeout-minutes: 10
+        run: python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
       - name: Verify remaining native package race coverage
         if: matrix.suite == 'unit' && (always() && !cancelled() && (matrix.goos == 'windows' || matrix.goos == 'darwin') && steps.native-core.outputs.remaining_safe == 'true')
         env:
           SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
         run: python -B .github/scripts/ci-native-core-required.py remaining
+      - name: Wait for native OS regression contracts
+        wait: native-regressions
       - name: Preserve required native package proof
         if: matrix.suite == 'unit' && (always() && (matrix.goos == 'windows' || matrix.goos == 'darwin'))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
