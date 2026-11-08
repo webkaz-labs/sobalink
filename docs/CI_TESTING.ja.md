@@ -41,10 +41,14 @@ hosted環境での時間短縮はまだ主張しません。梱包、署名、�
 1回実行します。CI・ツールチェーン・依存の変更、夜間・明示的な全件検証、不明または
 検証できない変更も同じです。文書のみ・scoped-Goの変更は従来の限定検査を維持します。
 
-native CIとprereleaseは `python .github/scripts/check-frontend.py --build-only` を使います。
-各native対象では引き続き、ロックファイルに従うクリーンな依存インストールとビルドを
-2回行い、双方の出力とチェックイン済み配布用ファイルの一致、ロックファイルが
-変更されていないことを確認します。browser・ローカルでの引数なし呼び出しは、引き続き
+native CIのintegration laneとprereleaseは
+`python .github/scripts/check-frontend.py --build-only` を使います。
+4つのnative対象すべてで引き続き、ロックファイルに従うクリーンな依存インストールと
+ビルドを2回行い、双方の出力とチェックイン済み配布用ファイルの一致、ロックファイルが
+変更されていないことを確認します。CIのunit laneは、この重複ビルド工程だけを省略します。
+集約判定では同じソース・run・有効なattemptの全integration laneで工程の成功を要求します。
+広範なPython回帰試験が実際のNode helperを使うため、unitでも固定版Nodeのsetupを維持します。
+prereleaseは変えません。browser・ローカルでの引数なし呼び出しは、引き続き
 フロントエンド試験を全件実行します。Vitestを実行するかどうかの判断に、Python回帰検査の
 選択処理やimpact planは使いません。
 

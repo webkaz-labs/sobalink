@@ -337,7 +337,7 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'Report Go cache results': 'always()',
  'Collect required whole-Core race evidence': "matrix.suite == 'unit' && (matrix.goos == 'windows' || matrix.goos == 'darwin')",
  'uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0': '',
- 'Reproduce locked frontend assets': '',
+ 'Reproduce locked frontend assets': "matrix.suite == 'integration'",
  'Check exact toolchain and native target': '',
  'Verify macOS five-scope discovery without skips': "matrix.suite == 'unit' && (matrix.goos == 'darwin')",
  'Preserve required macOS discovery proof': "matrix.suite == 'unit' && (always() && matrix.goos == 'darwin')",
@@ -1332,7 +1332,8 @@ def validate_frontend_workflow(sources):
           python .github/scripts/check-frontend.py
           git diff --exit-code -- web/dist
 """
-    for path, expected in ((WORKFLOW, (('native', native), ('browser', browser))),
+    ci_native = native.replace('        run: |\n', "        if: matrix.suite == 'integration'\n        run: |\n", 1)
+    for path, expected in ((WORKFLOW, (('native', ci_native), ('browser', browser))),
                            ('.github/workflows/prerelease.yml', (('native', native),))):
         workflow = sources[path].decode('utf-8')
         jobs = [(pos, key) for pos, indent, key, _ in workflow_metadata(workflow) if indent == 2]
@@ -1574,7 +1575,7 @@ def required_jobs(sources, *, include_skipped=False):
     require(values['MACOS_NEARBY_TARGETS'] == ('darwin-arm64',)
             and values['MACOS_NEARBY_STEPS'] == ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof'),
             'unexpected qualified macOS nearby policy')
-    require(values['NATIVE_SHARED_STEPS'] == ('Reproduce locked frontend assets', 'Check exact toolchain and native target')
+    require(values['NATIVE_SHARED_STEPS'] == ('Check exact toolchain and native target',)
             and values['NATIVE_UNIT_STEPS'] == ('Local and mock tests, race detector, and vet',
                                                'Verify adapted engine admission and native underlay denial')
             and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for Core context checks',
