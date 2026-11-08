@@ -679,8 +679,7 @@ class FullProofTests(unittest.TestCase):
         self.assertLess(execution, upload)
         self.assertLess(upload, remaining)
         self.assertLess(remaining, activation)
-        self.assertTrue(workflow[:execution].endswith(
-            b'            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"\n          fi\n'))
+        self.assertTrue(workflow[:execution].endswith(full.CI_NATIVE_PREPARATION.encode()))
         self.assertEqual(workflow.count(b'-- python -B .github/scripts/ci-dnssd-required.py\n'), 1)
 
     @common_only
@@ -732,8 +731,7 @@ class FullProofTests(unittest.TestCase):
                          (b" = '${{ matrix.goarch }}'", b" = 'arm64'"),
                          (b'          go run ./cmd/prepare-engine\n', b''),
                          (b'          go run ./cmd/prepare-engine --verify\n', b''),
-                         (b'          go mod verify\n', b'          go mod verify || true\n'),
-                         (b'ci-regressions.py native --plan', b'ci-regressions.py common --plan')):
+                         (b'          go mod verify\n', b'          go mod verify || true\n')):
             self.assertIn(old, block)
             changed = original[:start] + block.replace(old, new, 1) + original[end:]
             with self.subTest(change=old), self.assertRaises(ValueError):
@@ -1364,10 +1362,84 @@ class FullProofTests(unittest.TestCase):
             full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
 
     @common_only
+    def test_native_regression_background_and_join_require_actual_success(self):
+        original = copy.deepcopy(self.jobs)
+        gates = ('Run native OS regression contracts', 'Wait for native OS regression contracts')
+        for target, (name, _) in full.TARGETS.items():
+            for gate in gates:
+                self.assertIn(gate, self.required[name])
+                for mode in ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', None, 'pending'):
+                    self.jobs = copy.deepcopy(original)
+                    job = next(job for job in self.jobs if job['name'] == name)
+                    step = next(step for step in job['steps'] if step['name'] == gate)
+                    # Keep the job and the Core/package evidence green: neither
+                    # can replace a failed background child or its explicit join.
+                    if mode == 'missing':
+                        job['steps'].remove(step)
+                    elif mode == 'duplicate':
+                        job['steps'].append(copy.deepcopy(step))
+                    elif mode == 'pending':
+                        step['status'] = 'in_progress'
+                    else:
+                        step['conclusion'] = mode
+                    with self.subTest(target=target, gate=gate, mode=mode), self.assertRaises(ValueError):
+                        full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
+        for name, _ in full.INTEGRATION_TARGETS.values():
+            self.assertIn(gates[0], self.skipped[name])
+            self.assertIn(gates[1], self.required[name])
+
+    @common_only
+    def test_native_regression_coverage_inventory_cannot_drop_launch_or_join(self):
+        path = '.github/scripts/ci-coverage.py'
+        original = self.sources[path]
+        for gate in ('Run native OS regression contracts', 'Wait for native OS regression contracts'):
+            self.sources[path] = original.replace(('    "' + gate + '",\n').encode(), b'')
+            with self.subTest(gate=gate), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+
+    @common_only
+    def test_native_regression_overlap_rejects_weakened_or_moved_controls(self):
+        original = self.sources[full.WORKFLOW]
+        launch = full.CI_NATIVE_REGRESSIONS.encode()
+        join = full.CI_NATIVE_REGRESSIONS_WAIT.encode()
+        full.validate_native_regression_overlap_workflow(original)
+        mutations = [original.replace(launch, b''), original.replace(join, b''),
+                     original.replace(launch, launch + launch), original.replace(join, join + join)]
+        for old, new in ((b'background: true', b'background: false'),
+                         (b"if: matrix.suite == 'unit'", b'if: false'),
+                         (b'timeout-minutes: 10', b'timeout-minutes: 60'),
+                         (b'        run:', b'        continue-on-error: true\n        run:'),
+                         (b'ci-regressions.py native --plan', b'ci-regressions.py common --plan'),
+                         (b'"$RUNNER_TEMP/ci-impact-plan.json"', b'"other-plan.json"')):
+            mutations.append(original.replace(launch, launch.replace(old, new)))
+        for replacement in (b'        wait: other-child\n', b'        wait-all: true\n',
+                            b'        cancel: native-regressions\n',
+                            b'        if: false\n        wait: native-regressions\n',
+                            b'        continue-on-error: true\n        wait: native-regressions\n'):
+            mutations.append(original.replace(join, join.splitlines(keepends=True)[0] + replacement))
+        for target in ('Check exact toolchain and native target',
+                       'Verify macOS five-scope discovery without skips',
+                       'Verify Windows receive-retirement directory barriers',
+                       'Local and mock tests, race detector, and vet'):
+            stripped = original.replace(launch, b'')
+            marker = ('      - name: ' + target + '\n').encode()
+            mutations.append(stripped.replace(marker, launch + marker))
+        stripped = original.replace(join, b'')
+        for target in ('Verify remaining native package race coverage',
+                       'Local and mock tests, race detector, and vet'):
+            marker = ('      - name: ' + target + '\n').encode()
+            mutations.append(stripped.replace(marker, join + marker))
+        mutations.append(original.replace(join, b'      - name: Extra workload\n        run: echo extra\n' + join))
+        for index, changed in enumerate(mutations):
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.validate_native_regression_overlap_workflow(changed)
+
+    @common_only
     def test_native_lane_partition_is_disjoint_and_exhaustive(self):
         for target, (unit_name, _) in full.TARGETS.items():
             integration_name = full.INTEGRATION_TARGETS[target][0]
             shared = {'Check exact toolchain and native target',
+                      'Wait for native OS regression contracts',
                       'Wait for Core context checks', 'Wait for direct LAN application checks',
                       'Wait for real-time lifecycle and lease checks', 'Wait for macOS package reproduction'}
             unit, integration = set(self.required[unit_name]), set(self.required[integration_name])
@@ -1623,7 +1695,7 @@ class NativeMatrixPolicyTests(unittest.TestCase):
              'name: Save Go caches after integration checks pass on main\n        if: ('),
             ("name: Save development Go caches after integration checks pass\n        if: matrix.suite == 'integration' && (",
              'name: Save development Go caches after integration checks pass\n        if: ('),
-            ("if [[ '${{ matrix.suite }}' == 'unit' ]]; then", 'if true; then'),
+            ('id: native-regressions', 'id: unrelated-regressions'),
             ('            go mod download\n', '            go mod download all\n'),
         )
         for before, after in mutations:

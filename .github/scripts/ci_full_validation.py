@@ -314,9 +314,17 @@ CI_NATIVE_PREPARATION = """      - name: Check exact toolchain and native target
             git diff --exit-code -- go.mod go.sum
           fi
           go mod verify
-          if [[ '${{ matrix.suite }}' == 'unit' ]]; then
-            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
-          fi
+"""
+
+CI_NATIVE_REGRESSIONS = """      - name: Run native OS regression contracts
+        id: native-regressions
+        background: true
+        if: matrix.suite == 'unit'
+        timeout-minutes: 10
+        run: python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
+"""
+CI_NATIVE_REGRESSIONS_WAIT = """      - name: Wait for native OS regression contracts
+        wait: native-regressions
 """
 
 CI_NATIVE_MATRIX_HEADER_SHA256 = '266c44fe500fa47942dd58733089ede7c625cc5870755a42056dbbe51dd0f1c7'
@@ -339,6 +347,8 @@ NATIVE_MATRIX_CONDITIONS = {'uses: actions/checkout@3d3c42e5aac5ba805825da76410c
  'uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0': '',
  'Reproduce locked frontend assets': "matrix.suite == 'integration'",
  'Check exact toolchain and native target': '',
+ 'Run native OS regression contracts': "matrix.suite == 'unit'",
+ 'Wait for native OS regression contracts': '',
  'Verify macOS five-scope discovery without skips': "matrix.suite == 'unit' && (matrix.goos == 'darwin')",
  'Preserve required macOS discovery proof': "matrix.suite == 'unit' && (always() && matrix.goos == 'darwin')",
  'Verify Windows receive-retirement directory barriers': "matrix.suite == 'unit' && (matrix.goos == 'windows')",
@@ -435,11 +445,45 @@ def validate_native_matrix_workflow(data):
             'native matrix package artifact identity differs')
     require(region.count('uses: actions/cache/save@') == 2,
             'native matrix must retain one writer per cache namespace')
-    preparation = """          if [[ '${{ matrix.suite }}' == 'unit' ]]; then
-            python -B .github/scripts/ci-regressions.py native --plan "$RUNNER_TEMP/ci-impact-plan.json"
-          fi
-"""
-    require(region.count(preparation) == 1, 'native Python regressions must run once per target')
+    validate_native_regression_overlap_workflow(data)
+
+
+def validate_native_regression_overlap_workflow(data):
+    """Bind one unit regression child and its mandatory join before proof export."""
+    workflow = data.decode('utf-8')
+    metadata = workflow_metadata(workflow)
+    jobs = [(pos, key) for pos, indent, key, _ in metadata if indent == 2]
+    starts = [pos for pos, key in jobs if key == 'native']
+    require(len(starts) == 1, 'missing native regression job')
+    start = starts[0]
+    end = next((pos for pos, _ in jobs if pos > start), len(workflow))
+    region = workflow[start:end]
+    require(workflow.count(CI_NATIVE_REGRESSIONS) == 1
+            and workflow.count(CI_NATIVE_REGRESSIONS_WAIT) == 1
+            and region.count(CI_NATIVE_PREPARATION) == 1,
+            'native regressions must start once after verified preparation')
+    launch = region.index(CI_NATIVE_REGRESSIONS)
+    join = region.find(CI_NATIVE_REGRESSIONS_WAIT, launch)
+    require(join > launch, 'missing native regression join')
+    require(region.index(CI_NATIVE_PREPARATION) < launch
+            and ''.join(line for line in region[:launch].splitlines(keepends=True)
+                        if not line.lstrip().startswith('#')).endswith(
+                "        run: go test -race -count=1 -v -timeout=2m -run '^TestWindowsRetirementDirectoryBarrierProbe$' ./internal/transfer\n"),
+            'native regressions must follow the serial discovery and barrier proofs')
+    names = tuple(re.findall(r'^      - name: ([^\n]+)$', region[launch:join], re.M))
+    require(names == ('Run native OS regression contracts',
+                      'Verify remaining native package race coverage')
+            and len(re.findall(r'^      - ', region[launch:join], re.M)) == len(names),
+            'unexpected native regression overlap boundary')
+    require(region[join + len(CI_NATIVE_REGRESSIONS_WAIT):].startswith(
+            '      - name: Preserve required native package proof\n'),
+            'native regressions must join before package proof export')
+    command = 'python -B .github/scripts/ci-regressions.py native --plan'
+    require(workflow.count(command) == 1, 'native regressions must execute once per unit target')
+    controls = [(key, value) for pos, _, key, value in workflow_metadata(region[launch:join + len(CI_NATIVE_REGRESSIONS_WAIT)])
+                if key in {'background', 'parallel', 'wait', 'wait-all', 'cancel', 'continue-on-error'}]
+    require([key for key, _ in controls] == ['background', 'wait'],
+            'native regression failure or cancellation policy differs')
 
 
 def native_lane_expected(block, suite, workflow):
@@ -574,6 +618,7 @@ def validate_parallel_workflow(data):
     metadata = workflow_metadata(workflow)
     validate_application_overlap_workflow(data)
     validate_context_overlap_workflow(data)
+    validate_native_regression_overlap_workflow(data)
     groups = (
         ('Verify direct LAN session natural rekey and idle lifecycle', 'natural-lifecycle', 9),
         ('Verify guarded relay real-time lease continuity', 'guarded-lease', 9),
@@ -612,6 +657,7 @@ def validate_parallel_workflow(data):
     controls = [key for _, _, key, _ in metadata
                 if key in {'background', 'parallel', 'wait', 'wait-all', 'cancel'}]
     require(controls == ['parallel',
+                         'background', 'wait',
                          'background', 'wait',
                          'background', 'wait',
                          'background', 'background', 'background', 'background', 'wait', 'wait',
@@ -1275,6 +1321,9 @@ def validate_native_packages_workflow(sources):
         early_step = native_lane_expected(early, 'unit', workflow)
         later_step = native_lane_expected(later, 'unit', workflow)
         failure_step = native_lane_expected(failure, 'unit', workflow)
+        if path == WORKFLOW:
+            later_step = later_step.replace('      - name: Preserve required native package proof\n',
+                                            CI_NATIVE_REGRESSIONS_WAIT + '      - name: Preserve required native package proof\n')
         tail_step = native_lane_expected(tail, 'unit', workflow) if path == WORKFLOW else tail
         metadata = workflow_metadata(workflow)
         jobs = [(offset, key) for offset, indent, key, _ in metadata if indent == 2]
@@ -1603,9 +1652,11 @@ def required_jobs(sources, *, include_skipped=False):
             and values['MACOS_NEARBY_STEPS'] == ('Verify macOS five-scope discovery without skips', 'Preserve required macOS discovery proof'),
             'unexpected qualified macOS nearby policy')
     require(values['NATIVE_SHARED_STEPS'] == ('Check exact toolchain and native target',)
-            and values['NATIVE_UNIT_STEPS'] == ('Local and mock tests, race detector, and vet',
+            and values['NATIVE_UNIT_STEPS'] == ('Run native OS regression contracts',
+                                               'Local and mock tests, race detector, and vet',
                                                'Verify adapted engine admission and native underlay denial')
-            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for Core context checks',
+            and values['NATIVE_SHARED_CONTROL_STEPS'] == ('Wait for native OS regression contracts',
+                                                         'Wait for Core context checks',
                                                          'Wait for direct LAN application checks',
                                                          'Wait for real-time lifecycle and lease checks',
                                                          'Wait for macOS package reproduction')
@@ -1625,6 +1676,8 @@ def required_jobs(sources, *, include_skipped=False):
                  + values['WINDOWS_BARRIER_STEPS'] + values['NATIVE_PACKAGE_STEPS'] + values['NATIVE_UI_STEPS']
                  + values['MACOS_PACKAGE_STEPS'])
     require(len(set(inventory)) == len(inventory), 'overlapping required native gates')
+    require(set(values['NATIVE_UNIT_STEPS'] + values['NATIVE_SHARED_STEPS']).issubset(inventory),
+            'required native execution gates must remain in the audited inventory')
     require(set(values['NATIVE_SHARED_CONTROL_STEPS']).issubset(inventory),
             'required native joins must remain in the audited inventory')
     result, skipped = {}, {}
