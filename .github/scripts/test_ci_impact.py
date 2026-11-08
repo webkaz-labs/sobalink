@@ -234,6 +234,78 @@ class ImpactRulesTests(unittest.TestCase):
             impact.validate_delta(impact.parse_name_status(b"M\0README.md\0"), before, after)
 
 
+class BlobContentCacheTests(unittest.TestCase):
+    def test_shared_immutable_blob_is_read_once_but_only_within_one_call(self):
+        tree = {path: blob() for path in impact.ROOT_DOCS}
+        with mock.patch.object(impact, "git", return_value=b"synthetic prose\n") as query:
+            for count in (1, 2):
+                impact.validate_contents(None, [], tree, tree, [])
+                self.assertEqual(query.call_count, count)
+        query.assert_called_with(None, "cat-file", "blob", "a" * 40)
+
+    def test_before_after_and_distinct_blobs_are_still_read(self):
+        before = {path: blob() for path in impact.ROOT_DOCS}
+        after = before | {"README.md": blob("b")}
+        with mock.patch.object(impact, "git", return_value=b"synthetic prose\n") as query:
+            impact.validate_contents(None, [{"status": "M", "paths": ["README.md"]}], before, after, [])
+        self.assertCountEqual(query.call_args_list,
+                              [mock.call(None, "cat-file", "blob", oid * 40) for oid in ("a", "b")])
+
+    def test_shared_content_cannot_reuse_another_packages_import_permission(self):
+        tree = {path: blob() for path in impact.ROOT_DOCS}
+        paths = ("internal/boundedlog/example.go", "internal/servicepresets/example.go")
+        tree.update({path: blob("b") for path in paths})
+        def contents(root, command, kind, oid):
+            return b'synthetic prose\n' if oid == "a" * 40 else b'package fixture\nimport "os"\n'
+        with mock.patch.object(impact, "git", side_effect=contents) as query, \
+                self.assertRaisesRegex(impact.FailClosed, "unreviewed_go_dependency"):
+            impact.validate_contents(None, [], tree, tree,
+                                     ["./internal/boundedlog", "./internal/servicepresets"])
+        self.assertEqual(query.call_count, 2)
+
+    def test_cached_prose_still_checks_go_directives_and_unsafe_imports(self):
+        path = "internal/boundedlog/example.go"
+        tree = {name: blob() for name in (*impact.ROOT_DOCS, path)}
+        for source in (b"//go:build linux\npackage fixture\n",
+                       b'package fixture\nimport "unsafe"\n'):
+            with self.subTest(source=source), mock.patch.object(impact, "git", return_value=source) as query, \
+                    self.assertRaisesRegex(impact.FailClosed, "platform_or_special_go_source"):
+                impact.validate_contents(None, [], tree, tree, ["./internal/boundedlog"])
+            query.assert_called_once_with(None, "cat-file", "blob", "a" * 40)
+
+    def test_total_cache_budget_retains_only_fitting_blobs_and_rechecks_others(self):
+        paths = ("docs/a.md", "docs/b.md", "docs/c.md", "docs/d.md")
+        tree = {path: blob("a" if index % 2 == 0 else "b") for index, path in enumerate(paths)}
+        changes = [{"status": "M", "paths": [path]} for path in paths]
+        with mock.patch.object(impact, "ROOT_DOCS", set()), \
+                mock.patch.object(impact, "MAX_CACHED_BLOB_BYTES", 6), \
+                mock.patch.object(impact, "git", return_value=b"text") as query:
+            impact.validate_contents(None, changes, tree, tree, [])
+        self.assertEqual(query.call_args_list,
+                         [mock.call(None, "cat-file", "blob", oid * 40) for oid in ("a", "b", "b")])
+
+    def test_memory_bound_falls_back_to_real_reads_without_skipping_validation(self):
+        tree = {path: blob() for path in impact.ROOT_DOCS}
+        with mock.patch.object(impact, "MAX_CACHED_BLOB_BYTES", 1), \
+                mock.patch.object(impact, "git", return_value=b"synthetic prose\n") as query:
+            impact.validate_contents(None, [], tree, tree, [])
+        self.assertEqual(query.call_count, len(impact.ROOT_DOCS))
+
+    def test_invalid_text_mode_and_query_failures_are_not_cached_passes(self):
+        tree = {path: blob() for path in impact.ROOT_DOCS}
+        for raw in (b"\xff", b"synthetic\x00", b"synthetic\x7f"):
+            with self.subTest(raw=raw), mock.patch.object(impact, "git", return_value=raw), \
+                    self.assertRaisesRegex(impact.FailClosed, "non_text_content"):
+                impact.validate_contents(None, [], tree, tree, [])
+        with mock.patch.object(impact, "git", side_effect=impact.FailClosed("git_query_failed")), \
+                self.assertRaisesRegex(impact.FailClosed, "git_query_failed"):
+            impact.validate_contents(None, [], tree, tree, [])
+        tree["SECURITY.md"] = blob(mode="120000")
+        with mock.patch.object(impact, "git", return_value=b"synthetic prose\n"), \
+                self.assertRaisesRegex(impact.FailClosed, "non_regular_or_changed_file_mode"):
+            impact.validate_contents(None, [], tree, tree, [])
+
+
 class GitOutputParserTests(unittest.TestCase):
     def test_name_status_is_nul_delimited_and_retains_spaces(self):
         self.assertEqual(impact.parse_name_status(b"A\0docs/new guide.md\0D\0docs/old.md\0"),
@@ -274,12 +346,27 @@ class GitOutputParserTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("git"), "Git is required for tree integration tests")
 class GitHistoryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Cache only synthetic setup, never a classifier result. Each case
+        # receives independent files, objects, refs, index and local config.
+        cls.seed_temp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.seed_temp.cleanup)
+        seed = cls()
+        seed.root = pathlib.Path(cls.seed_temp.name) / "repo"
+        seed.root.mkdir()
+        seed.prepare_baseline()
+        cls.seed_root, cls.seed_base = seed.root, seed.base
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name) / "repo"
-        self.root.mkdir()
+        shutil.copytree(self.seed_root, self.root)
         self.event_path = pathlib.Path(self.temp.name) / "event.json"
+        self.base = self.seed_base
+
+    def prepare_baseline(self):
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.name", "CI Fixture")
         self.git("config", "user.email", "ci@example.invalid")
@@ -350,6 +437,35 @@ class GitHistoryTests(unittest.TestCase):
                 "pull_request": {"merge_commit_sha": head,
                     "base": {"sha": self.base, "ref": "main", "repo": {"full_name": impact.REPOSITORY}},
                     "head": {"sha": source, "repo": {"full_name": "fixture-fork/sobalink"}}}}
+
+    def test_seed_copies_isolate_worktrees_objects_refs_index_and_config(self):
+        # Exercise two copies in one case so isolation is independent of test
+        # order and a future switch to hardlinks cannot silently share state.
+        sibling = type(self)()
+        sibling.root = pathlib.Path(self.temp.name) / "sibling"
+        shutil.copytree(self.seed_root, sibling.root)
+        original = (self.seed_root / "README.md").read_bytes()
+        for relative in ("README.md", ".git/index", ".git/config", ".git/refs/heads/main",
+                         ".git/objects/" + self.base[:2] + "/" + self.base[2:]):
+            source = self.seed_root / relative
+            for destination in (self.root / relative, sibling.root / relative):
+                self.assertEqual(destination.read_bytes(), source.read_bytes())
+                self.assertFalse(source.samefile(destination))
+        self.assertFalse((self.root / ".git/objects/info/alternates").exists())
+        self.write("README.md", "isolated synthetic change\n")
+        changed = self.commit()
+        self.git("config", "fixture.isolation", "changed")
+        self.git("update-index", "--assume-unchanged", "README.md")
+        self.assertNotEqual(changed, self.base)
+        for root in (self.seed_root, sibling.root):
+            other = type(self)()
+            other.root = root
+            self.assertEqual((root / "README.md").read_bytes(), original)
+            self.assertEqual(other.git("rev-parse", "HEAD"), self.base)
+            self.assertEqual(other.git("status", "--porcelain"), "")
+            self.assertEqual(other.git("ls-files", "-v", "README.md"), "H README.md")
+            self.assertNotIn("fixture.isolation", other.git("config", "--local", "--list"))
+            self.assertFalse((root / ".git/objects" / changed[:2] / changed[2:]).exists())
 
     def test_native_ui_merge_main_identity_and_head_only_rejection(self):
         event = self.pull_request_event(lambda: self.write("poc/native/theme.go", 'package main\nimport "github.com/egoist/mygo/ui"\n'))

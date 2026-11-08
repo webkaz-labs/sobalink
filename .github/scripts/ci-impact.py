@@ -70,6 +70,7 @@ GO_PLATFORMS = frozenset("""
     ppc64le riscv riscv64 s390 s390x sparc sparc64 wasm
 """.split())
 MAX_GIT_OUTPUT = 32 * 1024 * 1024
+MAX_CACHED_BLOB_BYTES = 1024 * 1024
 OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 ROOT_DOCS = frozenset(("README.md", "README.en.md", "SECURITY.md"))
 # Authoritative development/agent policies do not qualify as ordinary prose.
@@ -328,6 +329,7 @@ def validate_contents(root, changes, before, after, packages):
                         raise FailClosed("unsupported_go_package_file")
                     paths.add(path)
     seen = set()
+    contents, cached_bytes = {}, 0
     for path in sorted(paths):
         for tree in (before, after):
             entry = tree.get(path)
@@ -336,14 +338,24 @@ def validate_contents(root, changes, before, after, packages):
             seen.add((path, entry))
             if entry[:2] != ("100644", "blob"):
                 raise FailClosed("non_regular_or_changed_file_mode")
-            raw = git(root, "cat-file", "blob", entry[2])
-            try:
-                content = raw.decode("utf-8", errors="strict")
-            except UnicodeError as exc:
-                raise FailClosed("non_text_content") from exc
-            if any(ord(char) < 32 and char not in "\t\r\n" or ord(char) == 127
-                   for char in content):
-                raise FailClosed("non_text_content")
+            oid = entry[2]
+            if oid in contents:
+                content = contents[oid]
+            else:
+                raw = git(root, "cat-file", "blob", oid)
+                try:
+                    content = raw.decode("utf-8", errors="strict")
+                except UnicodeError as exc:
+                    raise FailClosed("non_text_content") from exc
+                if any(ord(char) < 32 and char not in "\t\r\n" or ord(char) == 127
+                       for char in content):
+                    raise FailClosed("non_text_content")
+                # Immutable text only, with a per-call payload-byte budget.
+                # Keep every path's mode, directive and import checks below, even
+                # when different paths or before/after trees share one blob.
+                if cached_bytes + len(raw) <= MAX_CACHED_BLOB_BYTES:
+                    contents[oid] = content
+                    cached_bytes += len(raw)
             if path_kind(path) in ("go", "native-short", "native-ui"):
                 # Directives can introduce platform, embed or link dependencies.
                 # Reject C/unsafe imports conservatively, even inside comments.
