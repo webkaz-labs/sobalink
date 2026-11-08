@@ -49,10 +49,15 @@ that includes frontend checks. This includes CI/toolchain/dependency edits,
 nightly and forced full validation, and unknown or unverifiable changes.
 Documentation-only and scoped-Go changes keep their narrower checks.
 
-Native CI and prerelease use `python .github/scripts/check-frontend.py --build-only`.
-Every native target still runs two clean, locked dependency installations and
-frontend builds, compares their bytes with each other and the checked-in assets,
-and checks that the lockfile did not change. The helper's default browser/local
+Native CI integration lanes and prerelease use
+`python .github/scripts/check-frontend.py --build-only`. All four native targets
+still run two clean, locked dependency installations and frontend builds,
+compare their bytes with each other and the checked-in assets, and check that
+the lockfile did not change. CI unit lanes skip only this duplicate build step;
+the aggregate requires its success in every integration lane from the same
+source, run and effective attempt. Pinned Node setup remains in unit lanes for
+the real Node helper used by broad Python regressions. Prerelease is unchanged.
+The helper's default browser/local
 invocation still runs all frontend tests. It does not consult the Python
 regression selector or an impact plan to decide whether to run Vitest.
 

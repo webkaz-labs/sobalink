@@ -378,6 +378,7 @@ jobs:
           check-latest: false
           package-manager-cache: false
       - name: Reproduce locked frontend assets
+        if: matrix.suite == 'integration'
         run: |
           npm install --global npm@11.9.0 --no-audit --no-fund
           python .github/scripts/check-frontend.py --build-only

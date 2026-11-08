@@ -190,9 +190,12 @@ integrationはtag付きnative acceptance、既存3件のbackground実時間試�
 別ランナーによりport・process・一時profile・compile・測定を分離し、resource gateと
 同じランナーにCPU負荷の大きな試験を追加しません。
 
-両laneでlock固定frontendを再現し、target・toolchain・準備済みengineを検証します。
-native Python回帰試験はunitだけで実行します。可変workspaceや未検証binaryを
-共有せず、setupとcache復元を意図的に重複させます。両laneが同じ隔離cacheを
+4つのintegration laneすべてでlock固定frontendを再現し、unitではこの工程の明示的な
+skipped記録を要求します。target・toolchain・準備済みengineは両laneで検証します。
+unitの広範なPython回帰試験が実際のNode helperを実行するため、固定版Nodeのsetupも
+両laneで維持します。native Python回帰試験はunitだけで実行します。
+可変workspaceや未検証binaryを共有せず、それ以外の共通setupとcache復元は意図的に
+重複させます。両laneが同じ隔離cacheを
 読めますが、**保存はintegrationだけ**が自身の検査成功後に行います。
 これはコンパイルcacheの条件であり、unitの成功証明ではありません。unit失敗は
 aggregateとreleaseを阻止します。cache内の試験結果・engine tree・receiptを成功の
