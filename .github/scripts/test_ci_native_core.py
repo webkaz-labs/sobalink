@@ -289,6 +289,18 @@ class OwnershipTests(unittest.TestCase):
         self.assertNotIn('private-output', json.dumps(result))
 
     def test_query_termination_and_wait_failure_are_never_join_proof(self):
+        class Clock:
+            def __init__(self):
+                self.elapsed = 0.0
+                self.sleeps = []
+
+            def monotonic(self):
+                return self.elapsed
+
+            def sleep(self, seconds):
+                self.sleeps.append(seconds)
+                self.elapsed += seconds
+
         for failure in ('query', 'terminate', 'wait', 'close'):
             calls, job, child = self.setup_capture(running=True, active=2)
             if failure == 'query':
@@ -299,11 +311,26 @@ class OwnershipTests(unittest.TestCase):
                 child.wait.side_effect = subprocess.TimeoutExpired('private-command', 10)
             else:
                 job.close.side_effect = OSError('private')
-            with patch.object(gate.sys, 'platform', 'win32'), patch.object(gate, 'OwnedJob', return_value=job), patch.object(gate.subprocess, 'Popen', return_value=child), \
+            # Only mocked failed termination keeps descendants active. Advance
+            # its polling clock without changing the real cleanup deadline or
+            # the shared time module used by threads and real-process tests.
+            clock = Clock()
+            timer = patch.object(gate, 'time', clock) if failure == 'terminate' else contextlib.nullcontext()
+            with timer, patch.object(gate.sys, 'platform', 'win32'), patch.object(gate, 'OwnedJob', return_value=job), patch.object(gate.subprocess, 'Popen', return_value=child), \
                     patch.dict(gate.BOUNDS, {'suite': 0}):
                 result, _ = gate.capture('suite', {})
             self.assertFalse(result['ownersJoined'])
             self.assertEqual(result['process'], 'cleanup_unresolved')
+            child.wait.assert_called_once_with(timeout=10)
+            job.close.assert_called_once_with()
+            if failure == 'terminate':
+                job.terminate.assert_called_once_with()
+                self.assertEqual(job.active.return_value, 2)
+                self.assertGreater(job.active.call_count, 2)
+                self.assertTrue(clock.sleeps)
+                self.assertTrue(all(seconds > 0 for seconds in clock.sleeps))
+                self.assertGreaterEqual(clock.elapsed, 10)
+                self.assertEqual(result['executionState'], 'watchdog_timeout')
 
     def test_owned_child_accepts_only_fixed_phase_after_exact_gate(self):
         for phase, data in (('arbitrary', b'G'), ('suite', b''), ('suite', b'X')):
