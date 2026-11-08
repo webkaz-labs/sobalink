@@ -70,9 +70,15 @@ func TestManagedRemovalPublicationOrdering(t *testing.T) {
 }
 
 func TestManagedRemovalPartialPublication(t *testing.T) {
+	// Each case owns private fixtures. Keep the parent serial and bound fixture
+	// concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, failAt := range []int{1, 2, 3, 4} {
 		for _, committed := range []bool{false, true} {
 			t.Run(string(rune('0'+failAt))+map[bool]string{false: "-absent", true: "-uncertain"}[committed], func(t *testing.T) {
+				t.Parallel()
+				parallel <- struct{}{}
+				t.Cleanup(func() { <-parallel })
 				c, s, now, id := managedRemovalFixture(t)
 				sentinel := errors.New("synthetic publication failure")
 				writes := 0

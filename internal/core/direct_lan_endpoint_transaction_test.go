@@ -205,9 +205,15 @@ func TestEndpointTransactionRetainsFailedOrCancelledJoin(t *testing.T) {
 }
 
 func TestEndpointTransactionUncertainPublicationHasNoReceipt(t *testing.T) {
+	// Each case owns private fixtures. Keep the parent serial and bound fixture
+	// concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, phase := range []int{1, 2} {
 		for _, published := range []bool{false, true} {
 			t.Run(string(rune('0'+phase))+map[bool]string{false: "not-published", true: "published"}[published], func(t *testing.T) {
+				t.Parallel()
+				parallel <- struct{}{}
+				t.Cleanup(func() { <-parallel })
 				c, s, b, old, m, now := endpointTransactionFixture(t)
 				writes := 0
 				s.write = func(path string, data []byte) error {
@@ -270,8 +276,14 @@ func TestEndpointTransactionPreservesFirstDeadline(t *testing.T) {
 // An unrelated expired or terminal record is retained evidence, not positive
 // runtime authority. Its elapsed proof deadline cannot deny a valid target.
 func TestEndpointTransactionIgnoresInactiveRetainedDeadlines(t *testing.T) {
+	// Each case owns private fixtures. Keep the parent serial and bound fixture
+	// concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "inactive", true: "terminal"}[terminal], func(t *testing.T) {
+			t.Parallel()
+			parallel <- struct{}{}
+			t.Cleanup(func() { <-parallel })
 			c, s, b, old, mutation, now := endpointTransactionFixture(t)
 			state := s.copy()
 			remote := directlan.Identity{Seed: strings.Repeat("03", 32)}
