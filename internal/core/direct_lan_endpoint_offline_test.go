@@ -432,6 +432,9 @@ func TestOfflineEndpointSavedAcceptanceKeepsReplayAndScope(t *testing.T) {
 }
 
 func TestOfflineEndpointFenceAndFinalSaveOutcomes(t *testing.T) {
+	// Each case owns private fixtures. Keep the parent serial and bound fixture
+	// concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, tc := range []struct {
 		name                string
 		fail                int
@@ -447,6 +450,9 @@ func TestOfflineEndpointFenceAndFinalSaveOutcomes(t *testing.T) {
 		{"durable", 0, false, 2, false, "3", "7"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parallel <- struct{}{}
+			t.Cleanup(func() { <-parallel })
 			f := newOfflineEndpointFixture(t, nil)
 			in := f.reviewed(t, f.input(t, true))
 			writes := 0
@@ -520,8 +526,14 @@ func (f *offlineEndpointFixture) leavePending(t *testing.T) {
 }
 
 func TestOfflineEndpointPendingRecoveryNeedsExactReview(t *testing.T) {
+	// Each case owns private fixtures. Keep the parent serial and bound fixture
+	// concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, cancel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cancel_%t", cancel), func(t *testing.T) {
+			t.Parallel()
+			parallel <- struct{}{}
+			t.Cleanup(func() { <-parallel })
 			f := newOfflineEndpointFixture(t, nil)
 			f.leavePending(t)
 			before, pending := offlineEndpointRead(t, f.store.path), f.store.copy()
@@ -666,8 +678,14 @@ func TestOfflineEndpointMonotonicConsentBoundsSurvivePolling(t *testing.T) {
 }
 
 func TestOfflineEndpointReductionsIgnoreIndependentFollowCutoff(t *testing.T) {
+	// Each case owns private fixtures. Keep the parent serial and bound fixture
+	// concurrency, including cleanup, to limit persistence pressure.
+	parallel := make(chan struct{}, 2)
 	for _, action := range []string{"revoke", "withdraw", "disable-follow", "cancel-set"} {
 		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+			parallel <- struct{}{}
+			t.Cleanup(func() { <-parallel })
 			f := newOfflineEndpointFixture(t, nil)
 			f.grantFollow(t)
 			if action == "cancel-set" {
