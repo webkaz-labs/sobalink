@@ -234,6 +234,29 @@ func TestReservationExcludesFixturePortsWithinBudget(t *testing.T) {
 	}
 }
 
+// Both fixed application ports and dynamically reserved ports must be rejected
+// even when the OS could successfully bind both protocols on the candidate.
+func TestReservationExcludesApplicationTargetCandidates(t *testing.T) {
+	excluded := []uint16{54543, 54544, 54545, 50000, 50001, 50002}
+	for _, port := range excluded {
+		t.Run(fmt.Sprint(port), func(t *testing.T) {
+			os := &portOS{candidates: []uint16{port}}
+			defer os.assertClosed(t)
+			r, err := reserveLoopbackTCPUDP(netip.MustParseAddr("127.0.0.1"), 2, os.bind, excluded...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			if r.Endpoint().Port() != uint16(nextLoopbackPort(int(port))) || os.sockets[0].closeCalls != 1 || len(os.calls) != 3 {
+				t.Fatalf("reserved candidate not released: endpoint=%s, calls=%v", r.Endpoint(), os.calls)
+			}
+			if os.calls[1].network != "tcp4" || os.calls[2].network != "udp4" {
+				t.Fatalf("reserved candidate reached UDP bind: %v", os.calls)
+			}
+		})
+	}
+}
+
 func TestReservationRejectsUnsafeAddressesAndInvalidBudget(t *testing.T) {
 	for _, ip := range []string{"", "0.0.0.0", "::", "127.0.0.2", "::ffff:127.0.0.1", "192.0.2.1"} {
 		t.Run(ip, func(t *testing.T) {
