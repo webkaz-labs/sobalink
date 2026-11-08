@@ -200,10 +200,13 @@ Existing test counts, timers, native-short omissions and prerelease tests are
 unchanged. Separate runners isolate ports, processes, temporary profiles,
 compilation and measurement; the split adds no CPU-heavy work to resource gates.
 
-Both lanes reproduce locked frontend assets and verify their exact target,
-toolchain and prepared engine. Native Python regressions run only in the unit
-lane. Shared setup and cache restoration are deliberately duplicated rather than
-sharing mutable workspaces or distributing unverified binaries. Both lanes can
+All four integration lanes reproduce locked frontend assets; unit lanes require
+an explicit skipped record for that step. Both lanes verify their exact target,
+toolchain and prepared engine. Pinned Node setup remains in both lanes because
+broad unit Python regressions execute a real Node helper. Native Python
+regressions run only in the unit lane. Other shared setup and cache restoration
+are deliberately duplicated rather than sharing mutable workspaces or
+distributing unverified binaries. Both lanes can
 restore their isolated cache, but **only integration saves it**, after its own
 checks pass. This is a compilation-cache success condition, not proof that the
 unit lane passed. A failed unit lane still blocks the aggregate and release.

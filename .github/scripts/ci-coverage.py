@@ -28,7 +28,6 @@ TARGETS = {
 INTEGRATION_TARGETS = {target: name.replace("native (", "native-integration (")
                        for target, name in TARGETS.items()}
 NATIVE_SHARED_STEPS = (
-    "Reproduce locked frontend assets",
     "Check exact toolchain and native target",
 )
 NATIVE_UNIT_STEPS = (

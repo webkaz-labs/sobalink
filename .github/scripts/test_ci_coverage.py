@@ -756,7 +756,7 @@ class PlanAndReceiptTests(unittest.TestCase):
             self.assertFalse(output.exists())
 
     def test_native_lane_partition_is_explicit_and_preserves_receipt_names(self):
-        self.assertEqual(coverage.NATIVE_SHARED_STEPS, ("Reproduce locked frontend assets", "Check exact toolchain and native target"))
+        self.assertEqual(coverage.NATIVE_SHARED_STEPS, ("Check exact toolchain and native target",))
         self.assertEqual(coverage.NATIVE_UNIT_STEPS, ("Local and mock tests, race detector, and vet", "Verify adapted engine admission and native underlay denial"))
         for target in coverage.TARGETS:
             unit = coverage.native_step_expectations(target, "unit", "full")
@@ -773,6 +773,18 @@ class PlanAndReceiptTests(unittest.TestCase):
         for suite in ("unknown", "", None):
             with self.assertRaises(ValueError):
                 coverage.native_step_expectations("linux-amd64", suite, "full")
+
+    def test_native_frontend_builds_belong_to_all_four_integration_lanes(self):
+        gate = 'Reproduce locked frontend assets'
+        self.assertEqual(coverage.FAST_STEPS.count(gate), 1)
+        self.assertNotIn(gate, coverage.NATIVE_SHARED_STEPS + coverage.NATIVE_UNIT_STEPS)
+        self.assertEqual(len(coverage.TARGETS), 4)
+        self.assertEqual(set(coverage.TARGETS), set(coverage.INTEGRATION_TARGETS))
+        for scope in ('full', 'native-short'):
+            for target in coverage.TARGETS:
+                self.assertEqual(coverage.native_step_expectations(target, 'unit', scope)[gate], 'skipped')
+                self.assertEqual(coverage.native_step_expectations(target, 'integration', scope)[gate], 'success')
+        # The generic per-gate failure/skip tests also cover this moved gate.
 
     def test_both_scopes_require_all_eight_jobs_and_reject_extra_suites(self):
         for scope in ("full", "native-short"):
