@@ -29,6 +29,22 @@ CHANGED = {'internal/core/direct_lan_completion_test.go',
 HELPERS = {'internal/core/direct_lan_parent_parallel_test.go',
            'internal/core/direct_lan_parent_serial_test.go'}
 ORDER = ('baseline', 'child', 'parent', 'baseline')
+SUBTEST_SKIPS = {'darwin-arm64': 0, 'windows-amd64': 32}
+PROBE = 'TestAtomicOutcomeJournalCommittedRevocationMustCloseTrust'
+FAILURE_CLASSES = {
+    'path-length': ('filename or extension is too long', 'file name too long', 'path is too long', 'destination name too long'),
+    'missing-path': ('cannot find the path', 'cannot find the file', 'no such file or directory'),
+    'permission': ('access is denied', 'permission denied'),
+    'non-directory': ('not a directory', 'must be a real directory', 'non-reparse directory'),
+    'ownership': ('another sobalink process owns', 'ownership'),
+    'invalid-argument': ('invalid argument', 'parameter is incorrect', 'directory name is invalid'),
+}
+
+
+def failure_classes(raw):
+    lower = raw.lower()
+    return {key: sum(lower.count(phrase.encode('ascii')) for phrase in phrases)
+            for key, phrases in FAILURE_CLASSES.items()}
 
 
 def module(root, name):
@@ -94,12 +110,12 @@ def main():
                       workflowCommit=os.environ['GITHUB_SHA'],
                       runId=os.environ['GITHUB_RUN_ID'], runAttempt=os.environ['GITHUB_RUN_ATTEMPT'])
 
-        def capture(case, phase, result):
+        def capture(case, phase, result, env=None):
             collector = case['collector']
             require(time.monotonic() + collector.BOUNDS[phase] + 60 < deadline)
             result['phase'] = phase
             case['ownersState'] = 'in_flight'
-            process, raw = collector.capture_phase(phase, case['env'], result)
+            process, raw = collector.capture_phase(phase, case['env'] if env is None else env, result)
             case['ownersState'] = result['ownersState']
             report['variants'][case['name']]['lastPhase'] = phase
             report['variants'][case['name']]['lastProcess'] = process
@@ -119,7 +135,8 @@ def main():
                 require(source_delta(cases['baseline']['source'], source) == CHANGED | (HELPERS if name == 'parent' else set()))
             # Formatting must not mutate the source under comparison.
             require(not collector.checked(['gofmt', '-l', *sorted(CHANGED | (HELPERS if name == 'parent' else set()))]).strip())
-            private = Path(tempfile.mkdtemp(prefix='private-' + name + '-', dir=workspace))
+            # Match the ordinary required Core collector's temporary-root depth.
+            private = Path(tempfile.mkdtemp(prefix='soba-native-core-private-', dir=temporary))
             env = dict(os.environ, TMPDIR=str(private), TMP=str(private), TEMP=str(private))
             case = {'name': name, 'root': root, 'collector': collector, 'validator': validator, 'source': source,
                     'private': private, 'env': env, 'ownersState': 'not_started', 'preparation': {}}
@@ -139,10 +156,21 @@ def main():
                 require(case['names'] == cases['baseline']['names'])
             row['inventorySha256'] = collector.aggregate(case['names'])
             row['inventoryCount'] = len(case['names'])
+            if name == 'baseline':
+                # Catch fixture/setup differences before compiling the other
+                # variants. This focused probe is not a whole-suite result.
+                require(PROBE in case['names'])
+                probe_env = dict(env, GOFLAGS=collector.GOFLAGS + ' -run=^' + PROBE + '$')
+                probe_process, probe_raw = capture(case, 'suite', validator.empty_result(), probe_env)
+                probe = collector.timing(probe_raw, [PROBE], probe_process)
+                row['fixtureProbe'] = probe
+                row['fixtureProbeFailureClasses'] = failure_classes(probe_raw) if not collector.execution_complete(probe) else {}
+                require(collector.execution_complete(probe) and probe['passedCount'] == 1 and not probe['skippedCount'])
 
         # The repeated baseline brackets order/thermal drift. It is an
         # observation, not a claim of statistical significance or CI latency.
         report['phase'] = 'whole-core-runs'
+        baseline_skipped_children = None
         for index, name in enumerate(ORDER):
             case = cases[name]
             collector, validator = case['collector'], case['validator']
@@ -155,8 +183,17 @@ def main():
             process, raw = capture(case, 'suite', result)
             suite = collector.timing(raw, case['names'], process)
             result['runs']['suite'] = suite
+            if not collector.execution_complete(suite):
+                record['failureClasses'] = failure_classes(raw)
+            skipped_children = sorted(event['Test'] for event in collector.events(raw)
+                                      if event['Action'] == 'skip' and '/' in event.get('Test', ''))
+            require(len(skipped_children) == len(set(skipped_children)) == SUBTEST_SKIPS[platform])
+            if baseline_skipped_children is None:
+                baseline_skipped_children = skipped_children
+            require(skipped_children == baseline_skipped_children)
+            record['subtestSkipNamesSha256'] = collector.aggregate(skipped_children)
             require(collector.execution_complete(suite) and collector.bound_suite(result)
-                    and suite['subtestSkipped'] == 0
+                    and suite['subtestSkipped'] == SUBTEST_SKIPS[platform]
                     and {test['test'] for test in suite['tests'] if test['outcome'] == 'skip'} == validator.SKIPS[platform])
             result['metrics'] = [{'suite': 'native-core-suite', 'elapsed_seconds': process['wallSeconds'],
                                   'returncode': 0, 'status': 'passed'}]

@@ -1,6 +1,7 @@
 name: Paired Core profile (not acceptance)
 
 # One-off comparison branch only. Never add this workload to ordinary CI.
+# macOS completed in run 42392297128; repeat only the corrected Windows probe.
 on:
   push:
     branches: [perf/profile-core-unit-comparison]
@@ -25,10 +26,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-26
-            platform: darwin-arm64
           - runner: windows-2025
             platform: windows-amd64
+    defaults:
+      run:
+        shell: bash
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
