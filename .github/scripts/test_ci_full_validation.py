@@ -181,6 +181,81 @@ class FullProofTests(unittest.TestCase):
                 full.required_jobs(self.sources)
 
     @common_only
+    def test_frontend_checker_cannot_drop_second_build_dist_or_lock_checks(self):
+        path = '.github/scripts/check-frontend.py'
+        original = self.sources[path]
+        for removed in (
+            b'    run("ci", "--no-audit", "--no-fund")\n    run("run", "build")\n',
+            b'    assert first == checked_in, "checked-in frontend dist differs from source; rebuild and commit web/dist"\n',
+            b'    assert first == inventory(), "locked frontend rebuild is not byte-identical"\n',
+            b'    assert lock == (web / "package-lock.json").read_bytes(), "build changed dependency lock"\n',
+        ):
+            self.assertEqual(original.count(removed), 1)
+            self.sources[path] = original.replace(removed, b'')
+            with self.subTest(removed=removed), self.assertRaisesRegex(ValueError, 'frontend checker'):
+                full.required_jobs(self.sources)
+
+    @common_only
+    def test_frontend_lane_condition_and_all_lane_pinned_node_are_exact(self):
+        original = self.sources[full.WORKFLOW]
+        marker = b'      - name: Reproduce locked frontend assets\n'
+        condition = b"        if: matrix.suite == 'integration'\n"
+        self.assertEqual(original.count(marker + condition), 1)
+        for replacement in (b'', b'        if: false\n', b"        if: matrix.suite == 'unit'\n",
+                            b"        if: matrix.suite == 'integration' && matrix.goos != 'linux'\n",
+                            b"        if: matrix.suite == 'integration' && matrix.goos != 'darwin'\n",
+                            b"        if: matrix.suite == 'integration' && matrix.goos != 'windows'\n",
+                            b"        if: matrix.suite == 'integration' && matrix.goarch == 'amd64'\n"):
+            self.sources[full.WORKFLOW] = original.replace(marker + condition, marker + replacement)
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+        node = b"""      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+"""
+        self.assertEqual(original.count(node + marker), 1)
+        for replacement in (b'', node.replace(b'        with:', condition + b'        with:'),
+                            node.replace(b'@949feb2413d6458794dcd2491c4babbbce0c15c1', b'@main')):
+            self.sources[full.WORKFLOW] = original.replace(node + marker, replacement + marker)
+            with self.subTest(node=replacement), self.assertRaises(ValueError):
+                full.required_jobs(self.sources)
+        path = '.github/scripts/ci-coverage.py'
+        self.sources[full.WORKFLOW] = original
+        self.sources[path] = self.sources[path].replace(
+            b'NATIVE_SHARED_STEPS = (', b'NATIVE_SHARED_STEPS = ("Reproduce locked frontend assets",', 1)
+        with self.assertRaisesRegex(ValueError, 'native suite partition'):
+            full.required_jobs(self.sources)
+
+    @common_only
+    def test_native_frontend_proof_requires_four_builds_and_four_explicit_skips(self):
+        gate = 'Reproduce locked frontend assets'
+        original = copy.deepcopy(self.jobs)
+        for target, (unit_name, _) in full.TARGETS.items():
+            integration_name = full.INTEGRATION_TARGETS[target][0]
+            self.assertIn(gate, self.skipped[unit_name])
+            self.assertNotIn(gate, self.required[unit_name])
+            self.assertIn(gate, self.required[integration_name])
+            self.assertNotIn(gate, self.skipped[integration_name])
+            for name, modes in ((integration_name, ('missing', 'duplicate', 'skipped', 'failure', 'cancelled', 'pending')),
+                                (unit_name, ('missing', 'success'))):
+                for mode in modes:
+                    self.jobs = copy.deepcopy(original)
+                    job = next(job for job in self.jobs if job['name'] == name)
+                    step = next(step for step in job['steps'] if step['name'] == gate)
+                    if mode == 'missing':
+                        job['steps'].remove(step)
+                    elif mode == 'duplicate':
+                        job['steps'].append(copy.deepcopy(step))
+                    elif mode == 'pending':
+                        step['status'] = 'in_progress'
+                    else:
+                        step['conclusion'] = mode
+                    with self.subTest(target=target, name=name, mode=mode), self.assertRaises(ValueError):
+                        full.audit_jobs(self.api, self.runs[0], self.required, skipped=self.skipped)
+
+    @common_only
     def test_frontend_steps_cannot_skip_ignore_failure_or_add_commands(self):
         native = b'      - name: Reproduce locked frontend assets\n'
         browser = b'      - name: Test and reproduce locked frontend assets\n'
@@ -213,7 +288,7 @@ class FullProofTests(unittest.TestCase):
     def test_native_reproduction_and_common_frontend_step_remain_required(self):
         original = self.sources['.github/scripts/ci-coverage.py']
         for marker in (b'"Reproduce locked frontend assets"', b'"Test and reproduce locked frontend assets"'):
-            self.assertEqual(original.count(marker), 2 if marker == b'"Reproduce locked frontend assets"' else 1)
+            self.assertEqual(original.count(marker), 1)
             self.sources['.github/scripts/ci-coverage.py'] = original.replace(marker, b'"Ignored frontend check"')
             with self.subTest(marker=marker), self.assertRaisesRegex(ValueError, 'common frontend tests are required'):
                 full.required_jobs(self.sources)
@@ -1292,7 +1367,7 @@ class FullProofTests(unittest.TestCase):
     def test_native_lane_partition_is_disjoint_and_exhaustive(self):
         for target, (unit_name, _) in full.TARGETS.items():
             integration_name = full.INTEGRATION_TARGETS[target][0]
-            shared = {'Reproduce locked frontend assets', 'Check exact toolchain and native target',
+            shared = {'Check exact toolchain and native target',
                       'Wait for Core context checks', 'Wait for direct LAN application checks',
                       'Wait for real-time lifecycle and lease checks'}
             unit, integration = set(self.required[unit_name]), set(self.required[integration_name])
