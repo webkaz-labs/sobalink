@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/sobalink/internal/capacity"
+	"github.com/webkaz-labs/sobalink/internal/directlan"
 	"github.com/webkaz-labs/sobalink/internal/operationjournal"
 	"github.com/webkaz-labs/sobalink/internal/resource"
 	"github.com/webkaz-labs/sobalink/internal/resourcegrant"
@@ -85,7 +86,20 @@ func (f *resourceManagementNativePair) remoteOnce(input resourcegrant.RemoteMana
 	ctx, cancel := context.WithTimeout(f.ctx, 20*time.Second)
 	defer cancel()
 	// The real client still owns its fixed 15-second budget and one request.
-	return f.commandOnce(ctx, 0, resourceManagementNativeCommand(input.Request.Action), input)
+	observed, log := directlan.WithInspectionObservation(ctx)
+	value, err := f.commandOnce(observed, 0, resourceManagementNativeCommand(input.Request.Action), input)
+	if err != nil {
+		// Management shares the existing dial observer but does not finish an
+		// inspection event. Read only the terminal dial fields, after its worker
+		// has joined; no result does not imply that a TCP dial was attempted.
+		dial, _ := log.Result()
+		if dial.DialResultStage == "" {
+			f.t.Log("management transport: dial_result=unobserved")
+		} else {
+			f.t.Logf("management transport: dial_result=%s dial_code=%s tcp_connected=%t", dial.DialResultStage, dial.DialResultCode, dial.TCPConnected)
+		}
+	}
+	return value, err
 }
 
 func (f *resourceManagementNativePair) checkedReply(value any, err error, input resourcegrant.RemoteManagementInput) resourcegrant.ManagementReply {
@@ -475,9 +489,10 @@ func (f *resourceManagementNativePair) status(record resourcegrant.Record, id st
 func (f *resourceManagementNativePair) deny(input resourcegrant.RemoteManagementInput, code string) {
 	f.t.Helper()
 	before := f.savedBytes()
+	started := time.Now()
 	value, err := f.remoteOnce(input)
 	if value != nil || networkErrorCode(err) != code {
-		f.t.Fatal("denied management request disclosed data or returned an unexpected code")
+		f.t.Fatal(resourceManagementNativeDenialSummary(code, value != nil, err, f.ctx.Err(), time.Since(started)))
 	}
 	f.unchanged(before)
 }
