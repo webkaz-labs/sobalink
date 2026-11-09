@@ -118,7 +118,7 @@ class AdmissionTests(unittest.TestCase):
         return dict(event_name='create', event={'ref_type': 'branch', 'ref': branch,
                     'repository': {'full_name': lab.REPOSITORY, 'private': False, 'default_branch': 'main'}},
                     repository=lab.REPOSITORY, ref='refs/heads/' + branch, sha=sha,
-                    checkout_sha=sha, parent=lab.BASE, changed=['A\t' + p for p in lab.FILES])
+                    checkout_sha=sha, ancestor=lab.BASE, changed=['A\t' + p for p in lab.FILES])
 
     def test_only_exact_head_three_new_files_and_base_allowed(self):
         args = self.arguments()
@@ -127,7 +127,7 @@ class AdmissionTests(unittest.TestCase):
                    {'repository': 'other/project'}, {'ref': 'refs/heads/main'},
                    {'ref': args['ref'] + '\n'}, {'ref': args['ref'].replace('attempt1', 'x/y')},
                    {'ref': args['ref'].replace('a' * 12, 'b' * 12)}, {'sha': 'A' * 40},
-                   {'checkout_sha': 'b' * 40}, {'parent': 'b' * 40},
+                   {'checkout_sha': 'b' * 40}, {'ancestor': 'b' * 40},
                    {'changed': args['changed'] + ['M\t.github/workflows/ci.yml']},
                    {'changed': ['M\t' + p for p in lab.FILES]}, {'changed': []}]
         for change in changes:
@@ -206,16 +206,28 @@ class AdmissionTests(unittest.TestCase):
         source = inspect.getsource(lab.measure)
         self.assertNotIn('finally:', source)
         self.assertNotIn('TemporaryDirectory(', source)
-        self.assertLess(source.index("measure_phase('companion_vet'"), source.index('remove_owned_prepared(prepared)'))
+        self.assertLess(source.index("run_workload("), source.index('remove_owned_prepared(prepared)'))
         self.assertFalse(row['phases']['companion_suite']['ownersJoined'])
+
+    def test_runtime_temp_environment_preserved_and_warmup_precedes_pairs(self):
+        with patch.dict(os.environ, {'TMPDIR': '/fictional-short', 'TMP': '/fictional-tmp', 'TEMP': '/fictional-temp'}):
+            env = lab.workload_environment('backend', 'modules', 'compiler-scratch')
+        self.assertEqual([env[k] for k in ('TMPDIR', 'TMP', 'TEMP')],
+                         ['/fictional-short', '/fictional-tmp', '/fictional-temp'])
+        self.assertEqual(env['GOTMPDIR'], 'compiler-scratch')
+        source = inspect.getsource(lab.measure)
+        self.assertLess(source.index("report['comparisonSeed'] = inventory(seed)"), source.index('for sample in range(ROUNDS)'))
+        self.assertIn('run_workload(workload_environment(seed, module_copy, warmup_scratch), seed', source)
+        self.assertIn('full_copy(seed, backend)', source)
+        self.assertIn('copy_backend_candidate(seed, backend)', source)
 
     def test_split_companion_is_fresh_and_backend_copy_conservative(self):
         source = inspect.getsource(lab.measure)
         self.assertIn("companion = backend if mode == 'baseline' else candidate / 'companion'", source)
         self.assertIn('companion.mkdir()', source)
-        self.assertIn('row[\'partition\'] = copy_backend_candidate(original, backend)', source)
-        self.assertIn('GOMODCACHE=str(module_copy)', source)
-        self.assertIn("GOPROXY='off', GOSUMDB='off'", source)
+        self.assertIn('row[\'partition\'] = copy_backend_candidate(seed, backend)', source)
+        self.assertIn('GOMODCACHE=str(modules)', inspect.getsource(lab.workload_environment))
+        self.assertIn("GOPROXY='off', GOSUMDB='off'", inspect.getsource(lab.workload_environment))
         self.assertIn("modes = ('baseline', 'split') if sample % 2 == 0 else ('split', 'baseline')", source)
         self.assertIn("os.environ.get('CACHE_HIT') == 'true'", source)
         self.assertIn("os.environ.get('CACHE_MATCHED_KEY') == plan['key']", source)
@@ -258,6 +270,9 @@ class EventTests(unittest.TestCase):
         for change in ['skip', 'fail']:
             rows = list(good)
             rows[3] = self.row(change, lab.IPC, Elapsed=0)
+            summary = lab.companion_summary(self.raw(rows), names, process)
+            self.assertFalse(summary['accepted'])
+            self.assertNotIn('fictional-private', json.dumps(summary))
             with self.assertRaises(ValueError):
                 lab.companion_result(self.raw(rows), names, process)
         with self.assertRaises(ValueError):

@@ -66,7 +66,7 @@ def checked(command, **kwargs):
     return collector.native.checked(command, **kwargs).decode('utf-8').strip()
 
 
-def select(event_name, event, repository, ref, sha, checkout_sha, parent, changed):
+def select(event_name, event, repository, ref, sha, checkout_sha, ancestor, changed):
     match = REF.fullmatch(ref)
     metadata = event.get('repository') or {}
     require(event_name == 'create' and event.get('ref_type') == 'branch'
@@ -75,7 +75,7 @@ def select(event_name, event, repository, ref, sha, checkout_sha, parent, change
             and re.fullmatch('[0-9a-f]{40}', sha) and sha == checkout_sha
             and match and match[1] == sha[:12]
             and event.get('ref') == ref.removeprefix('refs/heads/')
-            and parent == BASE and sorted(changed) == sorted('A\t' + p for p in FILES))
+            and ancestor == BASE and sorted(changed) == sorted('A\t' + p for p in FILES))
     return sha
 
 
@@ -89,10 +89,10 @@ def admission():
     require(event_path.stat().st_size <= 1024 * 1024)
     event = json.loads(event_path.read_text(encoding='utf-8'))
     head = checked(['git', 'rev-parse', 'HEAD'])
-    parent = checked(['git', 'rev-parse', 'HEAD^'])
+    ancestor = checked(['git', 'merge-base', BASE, head])
     changed = checked(['git', 'diff', '--name-status', BASE, head]).splitlines()
     select(env['GITHUB_EVENT_NAME'], event, env['GITHUB_REPOSITORY'],
-           env['GITHUB_REF'], env['GITHUB_SHA'], head, parent, changed)
+           env['GITHUB_REF'], env['GITHUB_SHA'], head, ancestor, changed)
     source = collector.source_inventory()
     require(all(name in source for name in FILES))
     target = env.get('SOBALINK_CACHE_DIAGNOSTIC_PLATFORM')
@@ -388,25 +388,62 @@ def companion_inventory(raw):
     return names
 
 
-def companion_result(raw, names, process):
+def companion_summary(raw, names, process):
     previous = collector.PACKAGE
     try:
         collector.PACKAGE = COMPANION
         result = collector.timing(raw, names, process)
     finally:
         collector.PACKAGE = previous
-    require(collector.execution_complete(result)
+    accepted = (collector.execution_complete(result)
             and any(t['test'] == IPC and t['outcome'] == 'pass' for t in result['tests']))
-    return {name: result[name] for name in ('expectedCount', 'passedCount', 'skippedCount', 'failedCount', 'subtestSkipped')}
+    summary = {name: result[name] for name in ('expectedCount', 'passedCount', 'skippedCount', 'failedCount', 'subtestSkipped')}
+    summary.update(accepted=accepted, accountingComplete=result['accountingComplete'],
+                   eventStreamValid=result['eventStreamValid'],
+                   failedTopLevelTests=[t['test'] for t in result['tests'] if t['outcome'] == 'fail'])
+    return summary
 
 
-def measure_phase(phase, env, row):
+def companion_result(raw, names, process):
+    summary = companion_summary(raw, names, process)
+    require(summary['accepted'])
+    return summary
+
+
+def measure_phase(phase, env, row, *, allow_test_failure=False):
     require(shutil.disk_usage(env['GOTMPDIR']).free >= MIN_FREE_BYTES)
     process, raw = capture(phase, env)
     row['phases'][phase] = {'seconds': process['wallSeconds'], 'status': process['process'],
                             'returncode': process['returncode'], 'ownersJoined': process['ownersJoined']}
-    require(process['process'] == 'completed' and process['returncode'] == 0 and process['ownersJoined'])
+    accepted_states = ('completed', 'nonzero') if allow_test_failure and phase == 'companion_suite' else ('completed',)
+    require(process['process'] in accepted_states and process['ownersJoined'])
     return raw, process
+
+
+def run_workload(env, companion, row):
+    for phase in ('prepare', 'verify', 'modules', 'backend_inventory'):
+        raw, process = measure_phase(phase, env, row)
+        if phase == 'backend_inventory':
+            row['backendTestCount'] = len(collector.inventory(raw))
+    native_env = dict(env, GOCACHE=str(companion))
+    raw, _ = measure_phase('companion_inventory', native_env, row)
+    names = companion_inventory(raw)
+    raw, process = measure_phase('companion_suite', native_env, row, allow_test_failure=True)
+    row['companionTests'] = companion_summary(raw, names, process)
+    require(row['companionTests']['accepted'])
+    measure_phase('companion_vet', native_env, row)
+
+
+def workload_environment(backend, modules, scratch):
+    # Preserve the runner's runtime temporary-directory variables. Native IPC
+    # tests deliberately use short profiles and enforce a 100-byte socket path.
+    # Only compiler scratch is redirected; it does not change os.TempDir().
+    env = dict(os.environ, GOCACHE=str(backend), GOMODCACHE=str(modules),
+               GOTOOLCHAIN='local', GOENV='off', GOWORK='off', GOCACHEPROG='',
+               GOTELEMETRY='off', GOPROXY='off', GOSUMDB='off',
+               GOFLAGS='-mod=readonly -tags=' + TAGS, GOTMPDIR=str(scratch))
+    env.pop('GOROOT', None)
+    return env
 
 
 def remove_owned_prepared(prepared):
@@ -430,16 +467,28 @@ def measure(plan, report):
     original_stamp, module_stamp = snapshot(original), snapshot(modules)
     temporary = Path(os.environ['RUNNER_TEMP']).resolve()
     require(temporary.is_dir() and not temporary.is_symlink())
-    needed = original_inventory['bytes'] + module_inventory['bytes'] + 3 * 1024 ** 3
+    needed = 2 * original_inventory['bytes'] + module_inventory['bytes'] + 8 * 1024 ** 3
     report['space'] = {'neededBytes': needed, 'freeBytes': shutil.disk_usage(temporary).free}
     require(report['space']['freeBytes'] >= needed)
     prepared = ROOT / '.sobalink-deps'
     require(not prepared.exists())
-    # On a failure, retain these owned paths for hosted runner cleanup. Never
-    # delete files while a command may still have unresolved descendants.
+    # On a failure, retain owned paths for hosted runner cleanup. Never delete
+    # files while a command may still have unresolved descendants.
     private = Path(tempfile.mkdtemp(prefix='soba-cache-diagnostic-', dir=temporary))
     module_copy = private / 'modules'
     full_copy(modules, module_copy)
+    # Without -trimpath, Go hashes package source directories. Relocating the
+    # module cache invalidates archived action IDs. Warm both pinned toolchains
+    # at this one fixed private module path before comparing derived copies.
+    seed = private / 'adapted-seed'
+    full_copy(original, seed)
+    warmup_scratch = private / 'warmup-scratch'
+    warmup_scratch.mkdir()
+    report['warmup'] = {'phases': {}}
+    run_workload(workload_environment(seed, module_copy, warmup_scratch), seed, report['warmup'])
+    require(plan['source'] == collector.source_inventory())
+    remove_owned_prepared(prepared)
+    report['comparisonSeed'] = inventory(seed)
     for sample in range(ROUNDS):
         modes = ('baseline', 'split') if sample % 2 == 0 else ('split', 'baseline')
         for mode in modes:
@@ -450,29 +499,15 @@ def measure(plan, report):
             backend = candidate / 'backend'
             started = time.monotonic()
             if mode == 'baseline':
-                full_copy(original, backend)
+                full_copy(seed, backend)
             else:
-                row['partition'] = copy_backend_candidate(original, backend)
+                row['partition'] = copy_backend_candidate(seed, backend)
             row['copySeconds'] = round(time.monotonic() - started, 6)
             companion = backend if mode == 'baseline' else candidate / 'companion'
             if mode != 'baseline':
                 companion.mkdir()
-            env = dict(os.environ, GOCACHE=str(backend), GOMODCACHE=str(module_copy),
-                       GOTOOLCHAIN='local', GOENV='off', GOWORK='off', GOCACHEPROG='',
-                       GOTELEMETRY='off', GOPROXY='off', GOSUMDB='off',
-                       GOFLAGS='-mod=readonly -tags=' + TAGS,
-                       GOTMPDIR=str(candidate), TMPDIR=str(candidate), TMP=str(candidate), TEMP=str(candidate))
-            env.pop('GOROOT', None)
-            for phase in ('prepare', 'verify', 'modules', 'backend_inventory'):
-                raw, process = measure_phase(phase, env, row)
-                if phase == 'backend_inventory':
-                    row['backendTestCount'] = len(collector.inventory(raw))
-            native_env = dict(env, GOCACHE=str(companion))
-            raw, _ = measure_phase('companion_inventory', native_env, row)
-            names = companion_inventory(raw)
-            raw, process = measure_phase('companion_suite', native_env, row)
-            row['companionTests'] = companion_result(raw, names, process)
-            measure_phase('companion_vet', native_env, row)
+            env = workload_environment(backend, module_copy, candidate)
+            run_workload(env, companion, row)
             row['after'] = {'backend': inventory(backend), 'companion': inventory(companion)}
             require(plan['source'] == collector.source_inventory())
             remove_owned_prepared(prepared)
@@ -493,14 +528,17 @@ def main(argv=None):
         return 1
     report = {'schema': 1, 'diagnosticPassed': False, 'releaseValidation': False,
               'remoteCacheWrites': False, 'scope': 'cache-inventory-and-companion-recompilation-only',
-              'samples': [], 'originalRootMetadataUnchanged': False,
+              'samples': [], 'originalRootMetadataUnchanged': None,
               'limitations': ['no remote cache archive save or compressed restore comparison',
+                  'comparison uses a separately prewarmed local seed at a relocated module path',
+                  'warmup is reported separately and is not production warm-cache latency',
                   'local copy time is diagnostic setup, not cache restore time',
                   'only recognized Go 1.27.3 package objects are omitted',
                   'unknown cache data is retained; companion starts with an empty build cache',
                   'module copy is shared and warm; paired samples do not measure cold module downloads',
                   'source cache invariance uses file names, sizes and modification times',
                   'disk headroom is monitored, not a filesystem quota',
+                  'test event accounting fails closed beyond 12 minutes despite the 15-minute command timeout',
                   'no package reproduction, full native coverage or release approval']}
     output = None
     try:
