@@ -1587,6 +1587,15 @@ jobs:
           retention-days: 14
       # Keep one reusable seed until its exact target/dependency prefix misses.
       # Go recompiles changed inputs; every test still runs on this source.
+      - name: Warm UI fixture compilation only for a new browser seed
+        if: success() && steps.browser-go-cache-info.outputs.scope != '' && steps.browser-go-cache.outputs.cache-matched-key == ''
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          umask 077
+          # The native lane's race binaries do not warm ordinary UI builds.
+          # Compile only; do not execute or upload this disposable binary.
+          go build -tags=soba_e2e,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy -o "$RUNNER_TEMP/soba-ui-cache-prewarm" ./cmd/soba-e2e
       - name: Save isolated browser Go cache after all checks pass
         if: success() && steps.browser-go-cache-info.outputs.scope != '' && steps.browser-go-cache.outputs.cache-matched-key == ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6

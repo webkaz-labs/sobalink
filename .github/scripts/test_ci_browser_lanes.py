@@ -25,7 +25,7 @@ class BrowserLaneTests(unittest.TestCase):
         cls.sources = {p: (ROOT / p).read_bytes() for p in full.SOURCES}
         cls.workflow = cls.sources[full.WORKFLOW].decode()
 
-    def test_coverage_is_partitioned_without_duplicate_builds_or_race_work(self):
+    def test_coverage_is_partitioned_with_only_cold_seed_preparation(self):
         ui, native = (lane(self.workflow, name) for name in ('browser', 'browser-native'))
         full.validate_browser_lanes_workflow(self.workflow.encode())
         self.assertEqual(re.findall(r'^    (?:needs|if):.*$', ui, re.M),
@@ -36,7 +36,12 @@ class BrowserLaneTests(unittest.TestCase):
         self.assertNotIn('go test -race', ui)
         self.assertNotIn('npm --prefix web run test:browser\n', native)
         self.assertEqual(self.workflow.count('SOBA_UI_BROWSER_TEST=1 '), 1)
-        self.assertEqual(self.workflow.count('go build -tags=soba_e2e,'), 1)
+        self.assertEqual(ui.count('go build -tags=soba_e2e,'), 1)
+        self.assertEqual(native.count('go build -tags=soba_e2e,'), 1)
+        self.assertEqual(self.workflow.count('go build -tags=soba_e2e,'), 2)
+        self.assertIn("      - name: Warm UI fixture compilation only for a new browser seed\n"
+                      "        if: success() && steps.browser-go-cache-info.outputs.scope != '' && "
+                      "steps.browser-go-cache.outputs.cache-matched-key == ''\n", native)
         self.assertIn('SOBA_UI_BROWSER_TEST=1 ', native)
         self.assertIn('actions/cache/restore@', ui)
         self.assertIn('actions/cache/restore@', native)
