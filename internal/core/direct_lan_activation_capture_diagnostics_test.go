@@ -67,6 +67,22 @@ func TestActivationCaptureFailureSnapshotPrecedesCleanup(t *testing.T) {
 	}
 }
 
+func TestActivationRecoveryStateSnapshotRemainsNonMutating(t *testing.T) {
+	f := newLocalContextFixture(t)
+	f.advance(t, "prepared")
+	owner := localContextRuntimeOwner(t, f)
+	defer owner.cancel()
+	before := cloneDirectLANState(f.store.state)
+	revision, writes, epoch, receipt := f.store.reviewRevision, f.writes, f.store.contextEpoch, f.store.contextPublication
+	record := activationDiagnosticTryRecoveryState(f.core, f.peer)
+	if record == nil || !record.ContextOwner || record.OrdinaryBackend || record.StoreRecovery || !record.Prepared || record.Committed || record.Confirmed || record.PublicationRevision != revision {
+		t.Fatal("retained recovery state was not captured")
+	}
+	if f.store.reviewRevision != revision || f.writes != writes || f.store.contextEpoch != epoch || f.store.contextPublication != receipt || !reflect.DeepEqual(before, f.store.state) {
+		t.Fatal("recovery observation changed saved state or authority")
+	}
+}
+
 func TestActivationCaptureFailureSnapshotClosedAndPrivate(t *testing.T) {
 	f := newLocalContextFixture(t)
 	owner := localContextRuntimeOwner(t, f)
