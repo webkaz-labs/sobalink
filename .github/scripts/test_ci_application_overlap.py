@@ -18,7 +18,7 @@ class ApplicationOverlapTests(unittest.TestCase):
         self.wait = '      - name: Wait for direct LAN application checks\n        wait: directlan-applications\n'
         self.region = self.workflow[self.workflow.index(self.start):self.workflow.index(self.after)]
 
-    def test_one_background_chain_and_seven_serial_gates_join(self):
+    def test_one_background_chain_and_eight_serial_gates_join(self):
         full.validate_parallel_workflow(self.workflow.encode())
         self.assertEqual(re.findall(r'^      - name: (.+)$', self.region, re.M), [
             'Verify direct LAN WireGuard and Core native applications',
@@ -29,6 +29,7 @@ class ApplicationOverlapTests(unittest.TestCase):
             'Verify TOFU request approval across native Core peers',
             'Verify full verification request approval across native Core peers',
             'Verify request rejection and cancellation across native Core peers',
+            'Test experimental native companion',
             'Wait for direct LAN application checks',
         ])
         self.assertEqual(self.region.count('        background: true\n'), 1)
@@ -77,27 +78,35 @@ class ApplicationOverlapTests(unittest.TestCase):
                 full.validate_parallel_workflow(changed.encode())
 
     def test_runtime_audit_requires_successful_wait_and_every_process_gate(self):
-        required = {name: names for name, names in full.required_jobs(self.sources).items()
+        required, skipped = full.required_jobs(self.sources, include_skipped=True)
+        required = {name: names for name, names in required.items()
                     if name in {value[0] for value in full.INTEGRATION_TARGETS.values()}}
+        skipped = {name: skipped[name] for name in required}
         run = dict(id=10, run_attempt=1, head_sha='a' * 40)
         runners = dict(full.INTEGRATION_TARGETS.values())
         original = [dict(id=index, name=name, labels=[runners[name]], run_id=10, run_attempt=1, head_sha='a' * 40,
                          status='completed', conclusion='success',
-                         steps=[dict(name=step, status='completed', conclusion='success') for step in names])
+                         steps=[dict(name=step, status='completed', conclusion='success') for step in names]
+                         + [dict(name=step, status='completed', conclusion='skipped') for step in skipped[name]])
                     for index, (name, names) in enumerate(required.items(), 100)]
         def audit(rows):
-            return full.audit_jobs(lambda path: dict(total_count=len(rows), jobs=rows), run, required)
+            return full.audit_jobs(lambda path: dict(total_count=len(rows), jobs=rows), run, required, skipped=skipped)
         self.assertEqual(len(audit(original)), 4)
-        for name in re.findall(r'^      - name: (.+)$', self.region, re.M):
-            for outcome in ('failure', 'skipped', 'cancelled', 'missing'):
-                rows = copy.deepcopy(original)
-                step = next(step for step in rows[0]['steps'] if step['name'] == name)
-                if outcome == 'missing':
-                    rows[0]['steps'].remove(step)
-                else:
-                    step['conclusion'] = outcome
-                with self.subTest(name=name, outcome=outcome), self.assertRaises(ValueError):
-                    audit(rows)
+        for index, row in enumerate(original):
+            for name in re.findall(r'^      - name: (.+)$', self.region, re.M):
+                for outcome in ('failure', 'wrong-outcome', 'cancelled', 'missing', 'duplicate', 'pending'):
+                    rows = copy.deepcopy(original)
+                    step = next(step for step in rows[index]['steps'] if step['name'] == name)
+                    if outcome == 'missing':
+                        rows[index]['steps'].remove(step)
+                    elif outcome == 'duplicate':
+                        rows[index]['steps'].append(copy.deepcopy(step))
+                    elif outcome == 'pending':
+                        step['status'] = 'in_progress'
+                    else:
+                        step['conclusion'] = ('success' if step['conclusion'] == 'skipped' else 'skipped') if outcome == 'wrong-outcome' else outcome
+                    with self.subTest(job=row['name'], name=name, outcome=outcome), self.assertRaises(ValueError):
+                        audit(rows)
 
 
 if __name__ == '__main__':

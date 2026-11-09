@@ -420,8 +420,15 @@ use private temporary profiles and dynamic loopback relays with UDP discovery
 omitted. They do not share peers or state with the direct-LAN chain. There is
 still only one background chain and one foreground chain in this region.
 
-The required direct-LAN wait follows request rejection/cancellation and precedes
-native discovery and every later lifecycle, package and cache step. Commands,
+On macOS and Windows, the unchanged companion race/vet/format gate follows
+request rejection/cancellation in the foreground, before the required direct-LAN
+wait. Its peer transport is `net.Pipe`; protected IPC endpoints and Core state
+belong to private temporary profiles. It adds no TCP/UDP listener or timing-file
+writer to this region. The separate Go 1.27.3 executable and shell-local `GOROOT`
+reset remain unchanged, and Linux explicitly skips the companion gate.
+
+The required direct-LAN wait precedes native discovery and every later lifecycle,
+package and cache step. Commands,
 race flags, repeat counts, timeouts and expected pass events are unchanged.
 Metrics keep their separate files and are combined only after the wait.
 Every gate and the wait must pass for the same source and run attempt.
@@ -435,7 +442,8 @@ and do not infer a measured speedup from scheduling alone.
 
 The three existing natural-lifecycle, guarded-lease and relay-only lease gates use
 GitHub Actions `background` steps with a named, required `wait` before
-companion checks and archive smoke. Their names, exact expected Go pass events,
+archive smoke. Companion checks have already completed in the earlier
+foreground application chain. Gate names, exact expected Go pass events,
 timeouts, race flags and native-short skip rules are unchanged. The four native targets remain required.
 The wait and each individual gate must succeed for full-CI or nightly evidence;
 failed, cancelled, skipped or missing gates never receive full-coverage credit.
@@ -444,7 +452,7 @@ The three wait-heavy groups start before resource inspection, management and
 fixed-group catalog. Those resource gates remain serial with each other and
 overlap the three background gates. Earlier native tests have built the same
 tagged package variants; build caches may still need work if entries are evicted.
-No extra runner or duplicate setup is added. Companion checks, archive smoke,
+No extra runner or duplicate setup is added. Archive smoke,
 uploads, cache saves and timing summaries follow the wait. Linux and Windows
 package builds remain after that wait. Only natural-lifecycle writes the existing
 timing JSONL in this region, so there are no concurrent timing writers. Adding

@@ -607,6 +607,16 @@ jobs:
         run: |
           set -euo pipefail
           python .github/scripts/ci-metrics.py run --suite nearby-request-reject-cancel-core -- python .github/scripts/ci-go-test.py --exact --expect github.com/webkaz-labs/sobalink/internal/core:TestLANCoreRequestRejectCancelIntegration -- go test -race -count=1 -timeout=3m -tags=lanlink_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy,ts_omit_udptransport ./internal/core -run '^TestLANCoreRequestRejectCancelIntegration$'
+      - name: Test experimental native companion
+        if: matrix.suite == 'integration' && (matrix.goos == 'windows' || matrix.goos == 'darwin')
+        working-directory: poc/native
+        run: |
+          set -euo pipefail
+          unset GOROOT
+          test "$("$SOBALINK_NATIVE_GO" env GOVERSION)" = go1.27.3
+          "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
+          "$SOBALINK_NATIVE_GO" vet ./...
+          test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"
       - name: Wait for direct LAN application checks
         wait: directlan-applications
       - name: Verify Linux nearby native discovery without skips
@@ -924,16 +934,6 @@ jobs:
           PYTHON
       - name: Wait for real-time lifecycle and lease checks
         wait: [natural-lifecycle, guarded-lease, relay-only-lease]
-      - name: Test experimental native companion
-        if: matrix.suite == 'integration' && (matrix.goos == 'windows' || matrix.goos == 'darwin')
-        working-directory: poc/native
-        run: |
-          set -euo pipefail
-          unset GOROOT
-          test "$("$SOBALINK_NATIVE_GO" env GOVERSION)" = go1.27.3
-          "$SOBALINK_NATIVE_GO" test -race -count=1 -v -timeout=15m -tags=native_integration,ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy ./...
-          "$SOBALINK_NATIVE_GO" vet ./...
-          test -z "$("$(dirname "$SOBALINK_NATIVE_GO")/gofmt" -l .)"
       - name: Wait for macOS package reproduction
         wait: macos-package
       - name: Build native package and smoke archive contents

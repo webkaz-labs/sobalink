@@ -1606,6 +1606,137 @@ class NativeCompanionGateTests(unittest.TestCase):
             self.assertEqual('Test experimental native companion' in required[name], target in ('darwin-arm64', 'windows-amd64'))
 
 
+class CompanionApplicationOverlapTests(unittest.TestCase):
+    """Closed scheduling and synthetic receipts, not native execution proof."""
+
+    def setUp(self):
+        self.sources = {path: (ROOT / path).read_bytes() for path in full.SOURCES}
+        self.workflow = self.sources[full.WORKFLOW].decode()
+        self.companion = full.native_lane_expected(full.NATIVE_COMPANION_STEP, 'integration', self.workflow)
+        self.wait = ('      - name: Wait for direct LAN application checks\n'
+                     '        wait: directlan-applications\n')
+        self.gates = ('Test experimental native companion', 'Wait for direct LAN application checks')
+
+    def test_exact_companion_is_foreground_tail_before_existing_join(self):
+        full.validate_parallel_workflow(self.workflow.encode())
+        start = self.workflow.index('      - name: Verify direct LAN WireGuard and Core native applications\n')
+        end = self.workflow.index('      - name: Verify Linux nearby native discovery without skips\n')
+        region = self.workflow[start:end]
+        self.assertEqual(region.count('        background: true\n'), 1)
+        self.assertEqual(region.count('        wait:'), 1)
+        self.assertTrue(region.endswith(self.companion + self.wait))
+        self.assertLess(region.index('Verify request rejection and cancellation across native Core peers'),
+                        region.index('Test experimental native companion'))
+        for forbidden in ('background:', 'ci-metrics.py', 'GITHUB_ENV', 'GITHUB_PATH',
+                          'prepare-engine', 'cache/save', 'continue-on-error'):
+            self.assertNotIn(forbidden, self.companion)
+        for name in ('Verify direct LAN synthetic expiry and rekey',
+                     'Verify explicit WAN discovery with isolated native STUN',
+                     'Verify guarded production direct and relay underlays',
+                     'Verify paired transport and Core applications over an isolated relay',
+                     'Verify recovery with the ordinary direct-enabled transport',
+                     'Reproduce macOS packages with clean caches',
+                     'Verify direct LAN session natural rekey and idle lifecycle'):
+            self.assertGreater(self.workflow.index('      - name: ' + name + '\n'), end)
+        prerelease = self.sources['.github/workflows/prerelease.yml'].decode()
+        full.validate_native_companion_workflow(prerelease.encode())
+        self.assertIn(full.NATIVE_COMPANION_STEP, prerelease)
+        self.assertNotIn('wait: directlan-applications', prerelease)
+
+    def test_companion_cannot_be_removed_duplicated_moved_or_weakened(self):
+        mutations = [self.workflow.replace(self.companion, ''),
+                     self.workflow.replace(self.companion, self.companion * 2)]
+        stripped = self.workflow.replace(self.companion, '')
+        for target in ('Verify request rejection and cancellation across native Core peers',
+                       'Verify direct LAN synthetic expiry and rekey',
+                       'Wait for macOS package reproduction'):
+            marker = '      - name: ' + target + '\n'
+            mutations.append(stripped.replace(marker, self.companion + marker))
+        for before, after in (('        working-directory:', '        background: true\n        working-directory:'),
+                              ('        working-directory:', '        continue-on-error: true\n        working-directory:'),
+                              ('set -euo pipefail', 'set +e'),
+                              ('test -race', 'test'), ('-count=1', '-count=0'),
+                              ('-timeout=15m', '-timeout=30m'),
+                              ('go1.27.3', 'go1.27.1'),
+                              ("matrix.goos == 'windows' || matrix.goos == 'darwin'", 'true')):
+            mutations.append(self.workflow.replace(self.companion, self.companion.replace(before, after)))
+        for index, changed in enumerate(mutations):
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.validate_parallel_workflow(changed.encode())
+
+    def test_application_join_cannot_be_removed_weakened_or_reordered(self):
+        mutations = [self.workflow.replace(self.wait, replacement) for replacement in
+                     ('', self.wait * 2, self.wait.replace('wait: directlan-applications', 'wait-all: true'),
+                      self.wait.replace('wait: directlan-applications', 'wait: another-child'),
+                      self.wait + '        if: false\n', self.wait + '        continue-on-error: true\n')]
+        stripped = self.workflow.replace(self.wait, '')
+        for target in ('Test experimental native companion',
+                       'Verify direct LAN synthetic expiry and rekey',
+                       'Build native package and smoke archive contents'):
+            marker = '      - name: ' + target + '\n'
+            mutations.append(stripped.replace(marker, self.wait + marker))
+        for index, changed in enumerate(mutations):
+            with self.subTest(mutation=index), self.assertRaises(ValueError):
+                full.validate_parallel_workflow(changed.encode())
+
+    def test_aggregate_retains_companion_ownership_and_actual_gate_outcomes(self):
+        from test_ci_coverage import coverage, jobs
+
+        for scope in ('full', 'native-short'):
+            original = jobs(scope)
+            coverage.evaluate_jobs(original, scope)
+            for suite, targets in (('unit', coverage.TARGETS), ('integration', coverage.INTEGRATION_TARGETS)):
+                for target, name in targets.items():
+                    expected = coverage.native_step_expectations(target, suite, scope)
+                    self.assertEqual(expected[self.gates[0]], 'success' if suite == 'integration'
+                                     and target in ('darwin-arm64', 'windows-amd64') else 'skipped')
+                    self.assertEqual(expected[self.gates[1]], 'success')
+                    for gate in self.gates:
+                        for outcome in ('failure', 'cancelled', 'missing', 'duplicate', 'pending', 'wrong-outcome'):
+                            changed = copy.deepcopy(original)
+                            row = next(row for row in changed if row['name'] == name)
+                            self.mutate_gate(row, gate, outcome)
+                            with self.subTest(scope=scope, job=name, gate=gate, outcome=outcome), self.assertRaises(ValueError):
+                                coverage.evaluate_jobs(changed, scope)
+
+    @staticmethod
+    def mutate_gate(row, gate, outcome):
+        step = next(step for step in row['steps'] if step['name'] == gate)
+        if outcome == 'missing':
+            row['steps'].remove(step)
+        elif outcome == 'duplicate':
+            row['steps'].append(copy.deepcopy(step))
+        elif outcome == 'pending':
+            step['status'] = 'in_progress'
+        else:
+            step['conclusion'] = ('success' if step['conclusion'] == 'skipped' else 'skipped') if outcome == 'wrong-outcome' else outcome
+
+    def test_full_release_proof_requires_each_gate_and_skipped_linux_companion(self):
+        required, skipped = full.required_jobs(self.sources, include_skipped=True)
+        run = dict(id=10, run_attempt=1, head_sha='a' * 40)
+        runners = dict((*full.TARGETS.values(), *full.INTEGRATION_TARGETS.values()))
+        rows = [dict(id=index, name=name, labels=[runners[name]], run_id=10, run_attempt=1,
+                     head_sha=run['head_sha'], status='completed', conclusion='success',
+                     steps=[dict(name=gate, status='completed', conclusion='success') for gate in required[name]]
+                     + [dict(name=gate, status='completed', conclusion='skipped') for gate in skipped[name]])
+                for index, name in enumerate(runners, 100)]
+        native_required = {name: required[name] for name in runners}
+        native_skipped = {name: skipped[name] for name in runners}
+
+        def audit(data):
+            return full.audit_jobs(lambda _: dict(total_count=len(data), jobs=data), run,
+                                   native_required, skipped=native_skipped)
+
+        self.assertEqual(len(audit(rows)), 8)
+        for index, row in enumerate(rows):
+            for gate in self.gates:
+                for outcome in ('failure', 'cancelled', 'missing', 'duplicate', 'pending', 'wrong-outcome'):
+                    changed = copy.deepcopy(rows)
+                    self.mutate_gate(changed[index], gate, outcome)
+                    with self.subTest(job=row['name'], gate=gate, outcome=outcome), self.assertRaises(ValueError):
+                        audit(changed)
+
+
 class NativeMatrixPolicyTests(unittest.TestCase):
     def test_closed_eight_lane_matrix_and_single_writers(self):
         source = (ROOT / full.WORKFLOW).read_text()
