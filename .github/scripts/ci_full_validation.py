@@ -498,10 +498,12 @@ def validate_preparation_overlap_workflow(data):
 # Review the complete bounded two-chain region, including commands, ownership,
 # timeout bounds, private metrics file and explicit failure join. This is not
 # test-result reuse: the runtime audit still requires each gate and its wait.
-CI_APPLICATION_OVERLAP_SHA256 = 'd8e59c38b7f97a77c5dedd1ea6ae2251db01e9e9ef251aae9850e13479e31b79'
+CI_APPLICATION_OVERLAP_SHA256 = 'c3ad289ffedc611f126e37131db0fa0aec68a8139260eaf94969b37eebe710ca'
 
 
 def validate_application_overlap_workflow(data):
+    # The same foreground companion gate remains exact and unique across CI.
+    validate_native_companion_workflow(data)
     workflow = data.decode('utf-8')
     start = '      - name: Verify direct LAN WireGuard and Core native applications\n'
     end = '      - name: Verify Linux nearby native discovery without skips\n'
@@ -593,8 +595,8 @@ def validate_parallel_workflow(data):
     package = marker + 'Build native package and smoke archive contents\n'
     package_wait = (marker + 'Wait for macOS package reproduction\n'
                     '        wait: macos-package\n')
-    require(workflow.count(fence + native_lane_expected(NATIVE_COMPANION_STEP, 'integration', workflow)
-                           + package_wait + package) == 1, 'missing required joins before package smoke')
+    require(workflow.count(fence + package_wait + package) == 1,
+            'missing required joins before package smoke')
     validate_macos_package_overlap_workflow(data)
     end = workflow.index(fence)
     require(starts == sorted(starts) and starts[-1] < end, 'invalid real-time step order')
