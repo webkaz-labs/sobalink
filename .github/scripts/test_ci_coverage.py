@@ -699,6 +699,10 @@ class PlanAndReceiptTests(unittest.TestCase):
                 result = json.loads(output.read_text())
                 self.assertEqual(result["schema_version"], 3)
                 self.assertEqual(result["scope"], scope)
+                if scope == "go":
+                    summary = pathlib.Path(env["GITHUB_STEP_SUMMARY"]).read_text(encoding="utf-8")
+                    self.assertIn("Selected Go package race and vet checks passed on Linux", summary)
+                    self.assertNotIn("reverse dependencies passed", summary)
                 self.assertEqual(result["full_native"], scope == "full")
                 self.assertEqual(set(result["native_suites"]), {"unit", "integration"})
                 self.assertEqual(result["native_suites"]["unit"], result["targets"])
@@ -712,6 +716,7 @@ class PlanAndReceiptTests(unittest.TestCase):
                     self.assertNotIn("native_ui", result)
                     self.assertNotIn("native_ui_packages", result)
                 self.assertEqual(result["browser"], "success" if scope in ("frontend", "native-short", "full") else "not_run")
+                self.assertEqual(result["browser_native"], "success" if scope in ("frontend", "native-short", "full") else "not_run")
                 self.assertEqual(result["manifest"], "success" if scope in ("native-short", "full") else "not_run")
                 self.assertEqual(result["long_checks"], {t: "success" if scope == "full" else "not_run" for t in coverage.TARGETS})
                 self.assertEqual(result["go_unit"], "success" if scope == "go" else "not_run")

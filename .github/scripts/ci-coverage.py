@@ -502,7 +502,7 @@ def finalize(input_path, output, *, scheduled=False):
     descriptions = {
         "docs": "Documentation only; application tests, builds and packages NOT RUN",
         "frontend": "Frontend checks passed; four-target native and package checks NOT RUN",
-        "go": "Affected Go packages and reverse dependencies passed on Linux; full native, browser and package checks NOT RUN",
+        "go": "Selected Go package race and vet checks passed on Linux; full native, browser and package checks NOT RUN",
         "native-short": "Four-target short native, browser and package checks passed; real-time lifecycle, lease and native remote resource inspection/management and fixed-group catalog checks NOT RUN",
         "native-ui": "Four-platform companion race, protected IPC, MyGo and Windows/macOS product package checks passed; backend qualification, browser and manifest checks NOT RUN",
         "full": "Full native, browser and package coverage passed",
