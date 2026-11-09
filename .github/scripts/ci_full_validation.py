@@ -12,9 +12,11 @@ REPOSITORY = 'webkaz-labs/sobalink'
 WORKFLOW = '.github/workflows/ci.yml'
 WINDOWS_PACKAGES_HELPER = '.github/scripts/ci-windows-packages.py'
 WINDOWS_PACKAGES_SHA256 = '94e8976ace4f8a54c23fbe02aacd474ac1491e850822bd8e9befb731c4f42070'
-# Admit only the reviewed read-only cache prelude before CI's first workload.
+# Admit only the reviewed read-only cache prelude before each first workload.
 # This binds its action pins, paths, trust scopes, keys, and event predicates.
 CI_NATIVE_CACHE_PRELUDE_SHA256 = '171cbbb627e6d321d377fbb9442fbcef8b1b8c0b33ec30c697ca8926f85dfef1'
+RELEASE_NATIVE_CACHE_PRELUDE_SHA256 = '987394a045860f2e0e3fdff0fbaf1e0e7c768c98c9506bbd173da4594e3389b4'
+RELEASE_NATIVE_CACHE_REPORT_SHA256 = '3ef4a590f87b334a47f9bbc291075a3da7585f918b81e7af6be9d5e1971acdba'
 # Reviewed upstream bytes and installer; cache hits never bypass verification.
 CI_FONT_POLICY_SHA256 = {
     '.github/actions/japanese-fonts/action.yml': '800ce0427f95dfd4c4fd93a20df0beba15edf4337975646d558a524855653508',
@@ -1298,8 +1300,19 @@ def validate_native_packages_workflow(sources):
             require(digest(prelude.encode('utf-8')) == CI_NATIVE_CACHE_PRELUDE_SHA256,
                     'early CI cache setup differs from reviewed read-only policy')
         else:
-            require(region.count(setup_go + early_step + setup_node) == 1,
-                    'release Core must immediately follow exact Go setup before other work or cache restore')
+            require(region.count(setup_go) == 1 and region.count(early_step + setup_node) == 1,
+                    'release Core must follow exact Go and cache setup before other workloads')
+            setup_start, core_start = region.index(setup_go), region.index(early_step)
+            require(setup_start < core_start, 'exact release Go setup must precede Core collection')
+            prelude = region[setup_start + len(setup_go):core_start]
+            require(digest(prelude.encode('utf-8')) == RELEASE_NATIVE_CACHE_PRELUDE_SHA256,
+                    'early release cache setup differs from reviewed exact-source read-only policy')
+            # Keep checkout log creation after the strict early source inventory.
+            report_start = region.index('      - name: Report Go cache result and require an exact release key\n')
+            report_end = region.index('      - name: Verify source, exact toolchain, native target, and dependencies\n', report_start)
+            require(region.index('      - name: Reproduce locked frontend assets\n') < report_start
+                    and digest(region[report_start:report_end].encode('utf-8')) == RELEASE_NATIVE_CACHE_REPORT_SHA256,
+                    'release cache report must retain exact-key checks after Core collection')
         require(region.index('      - uses: actions/setup-go@') < region.index(early_step)
                 < region.index('      - uses: actions/setup-node@')
                 < region.index('      - name: Reproduce locked frontend assets\n')

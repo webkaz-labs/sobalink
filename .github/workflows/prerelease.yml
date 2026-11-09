@@ -138,21 +138,6 @@ jobs:
         with:
           go-version: '1.27.1'
           cache: false
-      - name: Collect required whole-Core race evidence
-        id: native-core
-        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
-        env:
-          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
-        run: python -B .github/scripts/ci-native-core-required.py core
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '24.19.0'
-          check-latest: false
-          package-manager-cache: false
-      - name: Reproduce locked frontend assets
-        run: |
-          npm install --global npm@11.9.0 --no-audit --no-fund
-          python .github/scripts/check-frontend.py --build-only
       - name: Locate Go module and compilation caches
         id: go-cache-info
         run: |
@@ -170,6 +155,21 @@ jobs:
             ${{ steps.go-cache-info.outputs.gomodcache }}
             ${{ steps.go-cache-info.outputs.gocache }}
           key: trusted-main-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.runner }}-go1.27.1-${{ hashFiles('go.mod', 'go.sum', 'internal/engineadaptation/**', 'internal/lifecycleadaptation/**', 'cmd/prepare-engine/**') }}-${{ needs.gate.outputs.commit }}
+      - name: Collect required whole-Core race evidence
+        id: native-core
+        if: matrix.goos == 'windows' || matrix.goos == 'darwin'
+        env:
+          SOBALINK_CORE_NATIVE_PLATFORM: ${{ matrix.goos }}-${{ matrix.goarch }}
+        run: python -B .github/scripts/ci-native-core-required.py core
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          check-latest: false
+          package-manager-cache: false
+      - name: Reproduce locked frontend assets
+        run: |
+          npm install --global npm@11.9.0 --no-audit --no-fund
+          python .github/scripts/check-frontend.py --build-only
       - name: Report Go cache result and require an exact release key
         env:
           CACHE_PRIMARY_KEY: ${{ steps.go-cache.outputs.cache-primary-key }}

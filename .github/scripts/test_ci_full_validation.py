@@ -554,6 +554,83 @@ class FullProofTests(unittest.TestCase):
         self.sources[full.WORKFLOW] = original
 
     @common_only
+    def test_early_release_cache_policy_is_exact_read_only_and_source_bound(self):
+        path = '.github/workflows/prerelease.yml'
+        original = self.sources[path]
+        start = original.index(b'      - name: Locate Go module and compilation caches\n')
+        end = original.index(b'      - name: Collect required whole-Core race evidence\n', start)
+        prelude = original[start:end]
+        self.assertEqual(hashlib.sha256(prelude).hexdigest(), full.RELEASE_NATIVE_CACHE_PRELUDE_SHA256)
+        full.validate_native_packages_workflow(self.sources)
+        changes = (
+            (b'actions/cache/restore@', b'actions/cache/save@'),
+            (b'55cc8345863c7cc4c66a329aec7e433d2d1c52a9', b'unreviewed'),
+            (b'${{ steps.go-cache-info.outputs.gomodcache }}', b'${{ github.workspace }}'),
+            (b'${{ steps.go-cache-info.outputs.gocache }}', b'${{ runner.temp }}'),
+            (b'trusted-main-go-v1-', b'development-go-v1-'),
+            (b'${{ needs.gate.outputs.commit }}', b'${{ github.sha }}'),
+            (b'${{ runner.os }}', b'Linux'),
+            (b'${{ runner.arch }}', b'X64'),
+            (b'-${{ matrix.runner }}-go1.27.1-', b'-go1.27.1-'),
+            (b"'cmd/prepare-engine/**'", b"'README.md'"),
+            (b'        id: go-cache\n', b'        id: go-cache\n        if: false\n'),
+            (b'        with:\n', b'        continue-on-error: true\n        with:\n'),
+            (b'          key: trusted-main-go-v1-',
+             b'          restore-keys: trusted-main-go-v1-\n          key: trusted-main-go-v1-'),
+            (b'          test "$(go env GOVERSION)" = go1.27.1\n',
+             b'          go run ./cmd/prepare-engine\n'),
+        )
+        for old, new in changes:
+            self.assertIn(old, prelude)
+            self.sources[path] = original[:start] + prelude.replace(old, new, 1) + original[end:]
+            with self.subTest(change=old), self.assertRaises(ValueError):
+                full.validate_native_packages_workflow(self.sources)
+        self.sources[path] = original
+
+    @common_only
+    def test_release_cache_report_keeps_exact_key_checks_after_source_inventory(self):
+        path = '.github/workflows/prerelease.yml'
+        original = self.sources[path]
+        marker = b'      - name: Report Go cache result and require an exact release key\n'
+        start = original.index(marker)
+        end = original.index(b'      - name: Verify source, exact toolchain, native target, and dependencies\n', start)
+        report = original[start:end]
+        self.assertEqual(hashlib.sha256(report).hexdigest(), full.RELEASE_NATIVE_CACHE_REPORT_SHA256)
+        require_exact = b'          test -z "$CACHE_MATCHED_KEY" || test "$CACHE_MATCHED_KEY" = "$CACHE_PRIMARY_KEY"\n'
+        core = original.index(b'      - name: Collect required whole-Core race evidence\n')
+        self.assertLess(core, start)
+        changes = [original.replace(require_exact, b'          true\n', 1),
+                   original[:start] + original[end:],
+                   original[:core] + report + original[core:start] + original[end:]]
+        for changed in changes:
+            self.sources[path] = changed
+            with self.subTest(change=changed[start:start + 70]), self.assertRaises(ValueError):
+                full.validate_native_packages_workflow(self.sources)
+        self.sources[path] = original
+
+    @common_only
+    def test_release_restore_cannot_follow_core_or_precede_exact_toolchain(self):
+        path = '.github/workflows/prerelease.yml'
+        original = self.sources[path]
+        start = original.index(b'      - name: Locate Go module and compilation caches\n')
+        core = original.index(b'      - name: Collect required whole-Core race evidence\n', start)
+        node = original.index(b'      - uses: actions/setup-node@', core)
+        verify = original.index(b'      - name: Verify source, exact toolchain, native target, and dependencies\n', node)
+        prelude = original[start:core]
+        # Both restoring after Core and the previous post-frontend placement
+        # collide with module files created by the first Go workload.
+        changes = [original[:start] + original[core:node] + prelude + original[node:],
+                   original[:start] + original[core:verify] + prelude + original[verify:],
+                   original[:start] + original[core:]]
+        setup = original.rindex(b'      - uses: actions/setup-go@', 0, start)
+        changes.append(original[:setup] + prelude + original[setup:start] + original[core:])
+        for changed in changes:
+            self.sources[path] = changed
+            with self.subTest(change=changed[start:start + 70]), self.assertRaises(ValueError):
+                full.validate_native_packages_workflow(self.sources)
+        self.sources[path] = original
+
+    @common_only
     def test_early_cache_prelude_cannot_move_exact_toolchain_after_core(self):
         original = self.sources[full.WORKFLOW]
         native = original.index(b"  native:\n")
