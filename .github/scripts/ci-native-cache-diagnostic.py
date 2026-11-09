@@ -2,7 +2,7 @@
 """Restore-only native cache diagnostics. Never native/release acceptance.
 
 Only fixed trusted-main objects are restored. Existing restored roots are never
-modified. Owned private copies measure backend reuse and cold companion cost;
+modified. Owned private copies compare shared and separately warm build caches;
 no cache namespace is written and no raw output or object content is exported.
 """
 from collections import Counter
@@ -262,6 +262,9 @@ def capture(phase, env):
 DATA_NAME = re.compile(r'[0-9a-f]{64}-d\Z')
 ACTION_NAME = re.compile(r'[0-9a-f]{64}-a\Z')
 OBJECT_HEADER = re.compile(rb'go object [a-z0-9]+ [a-z0-9]+ (go1\.27\.[13])(?: |\n)')
+ACTION_RECORD_BYTES = 175
+ACTION_REFERENCE_CATEGORIES = ('go1.27.1_package_archive', 'go1.27.3_package_archive',
+                               'other_present', 'missing', 'unparseable')
 MAX_ENTRIES = 500_000
 
 
@@ -283,7 +286,8 @@ def category(path):
     except ValueError:
         return 'unclassified_cache_data'
     match = OBJECT_HEADER.match(header[68:])
-    if not match or member_size < match.end():
+    if (not match or member_size < match.end()
+            or member_size > path.stat().st_size - 68):
         return 'unclassified_cache_data'
     return match.group(1).decode('ascii') + '_package_archive'
 
@@ -321,21 +325,90 @@ def inventory(root):
         'files': sum(counts.values()), 'bytes': sum(sizes.values())}
 
 
-def copy_backend_candidate(source, destination):
+def action_output(path, relative):
+    """Read only canonical records emitted by Go's v1 putIndexEntry.
+
+    Go 1.27.1 cmd/go/internal/cache/cache.go defines a 175-byte entry:
+    v1, 64-hex action ID, 64-hex output ID, two space-padded 20-byte int64
+    fields (size and Unix nanoseconds), and LF. Stricter than Go's reader:
+    noncanonical records stay unparseable, never candidates for deletion.
+    """
+    if (not ACTION_NAME.fullmatch(path.name)
+            or relative.parts != (path.name[:2], path.name)):
+        return None
+    with path.open('rb') as stream:
+        raw = stream.read(ACTION_RECORD_BYTES + 1)
+    if (len(raw) != ACTION_RECORD_BYTES or raw[:3] != b'v1 '
+            or raw[67:68] != b' ' or raw[132:133] != b' '
+            or raw[153:154] != b' ' or raw[174:175] != b'\n'
+            or raw[3:67] != path.name[:64].encode('ascii')
+            or not re.fullmatch(rb'[0-9a-f]{64}', raw[68:132])):
+        return None
+    for field in (raw[133:153], raw[154:174]):
+        if not re.fullmatch(rb' *[0-9]+', field):
+            return None
+        value = int(field)
+        if value > 2 ** 63 - 1 or f'{value:20d}'.encode('ascii') != field:
+            return None
+    return raw[68:132].decode('ascii')
+
+
+def action_reference_inventory(root):
+    # Admit the complete idle snapshot, including directory/entry bounds and
+    # symlink rejection, before reading records or following hex-only refs.
+    root = Path(root)
+    admitted = list(entries(root))
+    counts, sizes, targets = Counter(), Counter(), {}
+    for path, relative, size in admitted:
+        if not ACTION_NAME.fullmatch(path.name):
+            continue
+        output = action_output(path, relative)
+        name = 'unparseable'
+        if output is not None:
+            if output not in targets:
+                target = root / output[:2] / (output + '-d')
+                try:
+                    mode = target.lstat().st_mode
+                except FileNotFoundError:
+                    targets[output] = 'missing'
+                else:
+                    require(stat.S_ISREG(mode) or stat.S_ISDIR(mode))
+                    # Go also stores cached executables inside -d directories.
+                    # A present directory is not a dangling/missing reference.
+                    kind = category(target) if stat.S_ISREG(mode) else 'other_present'
+                    targets[output] = kind if kind in ACTION_REFERENCE_CATEGORIES[:2] else 'other_present'
+            name = targets[output]
+        counts[name] += 1
+        sizes[name] += size
+    return {'schema': 1, 'scope': 'action-reference-inventory-only-not-cache-hit-proof',
+            'recordBytes': ACTION_RECORD_BYTES,
+            'categories': {name: {'files': counts[name], 'bytes': sizes[name]}
+                           for name in ACTION_REFERENCE_CATEGORIES},
+            'files': sum(counts.values()), 'bytes': sum(sizes.values())}
+
+
+def admit_destination(source, destination):
     source, destination = Path(source), Path(destination)
     if destination.exists() or destination.is_symlink():
         raise ValueError('candidate destination must not exist')
     a, b = source.resolve(), destination.resolve()
     if a == b or a in b.parents or b in a.parents:
         raise ValueError('source and candidate must not overlap')
+
+
+def copy_candidate(source, destination, role):
+    source, destination = Path(source), Path(destination)
+    require(role in ('backend', 'companion'))
+    admit_destination(source, destination)
     # Finish admission before creating anything. The lab is not a security
     # boundary against concurrent hostile modification; run on an idle owned
     # snapshot, not a cache concurrently written by builds.
     admitted = list(entries(source))
     destination.mkdir(parents=False)
-    copied, omitted = Counter(), Counter()
+    copied, omitted = Counter(files=0, bytes=0), Counter(files=0, bytes=0)
+    excluded = ('go1.27.3' if role == 'backend' else 'go1.27.1') + '_package_archive'
     for path, relative, size in admitted:
-        if category(path) == 'go1.27.3_package_archive':
+        if category(path) == excluded:
             omitted['files'] += 1
             omitted['bytes'] += size
             continue
@@ -344,7 +417,30 @@ def copy_backend_candidate(source, destination):
         shutil.copy2(path, target)
         copied['files'] += 1
         copied['bytes'] += size
-    return {'schema': 1, 'copied': dict(copied), 'omitted': dict(omitted)}
+    return {'schema': 1, 'role': role, 'copied': dict(copied), 'omitted': dict(omitted)}
+
+
+def copy_backend_candidate(source, destination):
+    return copy_candidate(source, destination, 'backend')
+
+
+def copy_warm_pair(source, backend, companion):
+    # Validate both destinations before creating either one. Never hardlink:
+    # later writes, trimming or regeneration must not modify the seed or peer.
+    for destination in (backend, companion):
+        admit_destination(source, destination)
+    a, b = Path(backend).resolve(), Path(companion).resolve()
+    require(a != b and a not in b.parents and b not in a.parents)
+    return {'backend': copy_candidate(source, backend, 'backend'),
+            'companion': copy_candidate(source, companion, 'companion')}
+
+
+def split_bytes(value):
+    # Unknown outputs and all action metadata remain in both roots. Missing
+    # outputs are ordinary cache misses, not evidence that a test was executed.
+    known = sum(value['categories'].get(version + '_package_archive', {}).get('bytes', 0)
+                for version in ('go1.27.1', 'go1.27.3'))
+    return value['bytes'] * 2 - known
 
 
 
@@ -464,10 +560,12 @@ def measure(plan, report):
     original_inventory = inventory(original)
     module_inventory = inventory(modules)
     report['restored'] = {'build': original_inventory, 'modules': module_inventory, 'match': 'exact'}
+    report['actionReferences'] = {'restored': action_reference_inventory(original)}
     original_stamp, module_stamp = snapshot(original), snapshot(modules)
     temporary = Path(os.environ['RUNNER_TEMP']).resolve()
     require(temporary.is_dir() and not temporary.is_symlink())
-    needed = 2 * original_inventory['bytes'] + module_inventory['bytes'] + 8 * 1024 ** 3
+    needed = (original_inventory['bytes'] + split_bytes(original_inventory)
+              + module_inventory['bytes'] + 8 * 1024 ** 3)
     report['space'] = {'neededBytes': needed, 'freeBytes': shutil.disk_usage(temporary).free}
     require(report['space']['freeBytes'] >= needed)
     prepared = ROOT / '.sobalink-deps'
@@ -489,31 +587,41 @@ def measure(plan, report):
     require(plan['source'] == collector.source_inventory())
     remove_owned_prepared(prepared)
     report['comparisonSeed'] = inventory(seed)
+    report['actionReferences']['comparisonSeed'] = action_reference_inventory(seed)
+    seed_stamp = snapshot(seed)
+    report['candidatePayload'] = {
+        'baselineBuildBytes': report['comparisonSeed']['bytes'],
+        'splitWarmBuildBytes': split_bytes(report['comparisonSeed']),
+        'duplicatedMetadataAndUnknownBytes': split_bytes(report['comparisonSeed']) - report['comparisonSeed']['bytes']}
     for sample in range(ROUNDS):
-        modes = ('baseline', 'split') if sample % 2 == 0 else ('split', 'baseline')
+        modes = ('baseline', 'split-warm') if sample % 2 == 0 else ('split-warm', 'baseline')
         for mode in modes:
             require(not prepared.exists())
+            # Seed growth during path adaptation is measured, not estimated
+            # from the restored root. Preserve compiler scratch headroom too.
+            require(shutil.disk_usage(private).free >= split_bytes(report['comparisonSeed']) + 4 * MIN_FREE_BYTES)
             row = {'sample': sample + 1, 'mode': mode, 'phases': {}}
             report['samples'].append(row)
             candidate = Path(tempfile.mkdtemp(prefix='candidate-', dir=private))
             backend = candidate / 'backend'
+            companion = backend if mode == 'baseline' else candidate / 'companion'
             started = time.monotonic()
             if mode == 'baseline':
                 full_copy(seed, backend)
             else:
-                row['partition'] = copy_backend_candidate(seed, backend)
+                row['partition'] = copy_warm_pair(seed, backend, companion)
             row['copySeconds'] = round(time.monotonic() - started, 6)
-            companion = backend if mode == 'baseline' else candidate / 'companion'
-            if mode != 'baseline':
-                companion.mkdir()
+            row['before'] = {'backend': inventory(backend), 'companion': inventory(companion)}
             env = workload_environment(backend, module_copy, candidate)
             run_workload(env, companion, row)
             row['after'] = {'backend': inventory(backend), 'companion': inventory(companion)}
             require(plan['source'] == collector.source_inventory())
+            require(snapshot(seed) == seed_stamp)
             remove_owned_prepared(prepared)
             shutil.rmtree(candidate)
     require(snapshot(original) == original_stamp and snapshot(modules) == module_stamp)
     report['originalRootMetadataUnchanged'] = True
+    report['comparisonSeedMetadataUnchanged'] = True
     # Module snapshots can contain read-only Go download/extraction entries.
     # They are private temporary diagnostic files; leave them to runner cleanup.
     require(plan['source'] == collector.source_inventory())
@@ -526,15 +634,18 @@ def main(argv=None):
     if argv not in (['plan'], ['measure']):
         print('Native cache diagnostic requires its fixed entry point.')
         return 1
-    report = {'schema': 1, 'diagnosticPassed': False, 'releaseValidation': False,
-              'remoteCacheWrites': False, 'scope': 'cache-inventory-and-companion-recompilation-only',
-              'samples': [], 'originalRootMetadataUnchanged': None,
+    report = {'schema': 2, 'diagnosticPassed': False, 'releaseValidation': False,
+              'remoteCacheWrites': False, 'scope': 'cache-inventory-and-split-warm-reuse-only',
+              'samples': [], 'originalRootMetadataUnchanged': None, 'comparisonSeedMetadataUnchanged': None,
               'limitations': ['no remote cache archive save or compressed restore comparison',
                   'comparison uses a separately prewarmed local seed at a relocated module path',
                   'warmup is reported separately and is not production warm-cache latency',
                   'local copy time is diagnostic setup, not cache restore time',
-                  'only recognized Go 1.27.3 package objects are omitted',
-                  'unknown cache data is retained; companion starts with an empty build cache',
+                  'each split root omits only recognized package archives from the other pinned toolchain',
+                  'action metadata and unknown cache data are duplicated in both warm roots',
+                  'action-reference counts are read-only; present output does not prove size, hash or action validity',
+                  'noncanonical action records remain unparseable; no metadata is pruned',
+                  'warm means seeded compilation objects; every test executes with count=1',
                   'module copy is shared and warm; paired samples do not measure cold module downloads',
                   'source cache invariance uses file names, sizes and modification times',
                   'disk headroom is monitored, not a filesystem quota',

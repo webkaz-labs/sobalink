@@ -59,6 +59,13 @@ jobs:
       - name: Admit exact source and trusted cache
         id: plan
         run: python -B .github/scripts/ci-native-cache-diagnostic.py plan
+      - name: Verify warm hits and cache-miss regeneration with both pinned compilers
+        run: |
+          set -euo pipefail
+          backend_go="$(go env GOROOT)/bin/go"
+          if [[ "$RUNNER_OS" == Windows ]]; then backend_go="$backend_go.exe"; fi
+          SOBALINK_CACHE_FIXTURE_GO="$backend_go" python -B .github/scripts/test_ci_native_cache_diagnostic.py RealGoFixtureTests -v
+          SOBALINK_CACHE_FIXTURE_GO="$SOBALINK_NATIVE_GO" python -B .github/scripts/test_ci_native_cache_diagnostic.py RealGoFixtureTests -v
       - name: Restore exact trusted main cache without publishing
         id: cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -68,7 +75,7 @@ jobs:
             ${{ steps.plan.outputs.gocache }}
           key: ${{ steps.plan.outputs.key }}
           fail-on-cache-miss: true
-      - name: Measure isolated backend and companion costs
+      - name: Compare shared and split-warm backend and companion caches
         id: measure
         env:
           CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
