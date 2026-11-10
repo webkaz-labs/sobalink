@@ -15,13 +15,13 @@ class OutboxObservationTests(unittest.TestCase):
         source = self.source('outbox_process_observation_test.go')
         fields = source.split('type outboxProcessCommitObservation struct {', 1)[1].split('}', 1)[0]
         self.assertEqual(set(line.split()[-1] for line in fields.splitlines() if line.strip()),
-                         {'int', 'time.Duration', 'int64'})
+                         {'int', 'time.Duration', 'int64', 'outboxProcessWaitObservation'})
         summary = source.split('func (o outboxProcessCommitObservation) summary(', 1)[1].split('\nfunc Test', 1)[0]
         self.assertIn('phase != "initial" && phase != "replay"', summary)
         self.assertIn('phase = "other"', summary)
         self.assertIn('entry := "file"', summary)
         self.assertIn('entry = "empty-directory"', summary)
-        self.assertEqual(summary.count('fmt.Sprintf('), 1)
+        self.assertEqual(summary.count('fmt.Sprintf('), 2)
         for forbidden in ('runtime.', 'pprof.', 'os.', 'net.', 'go func(', 'time.Sleep(', 'time.NewTimer(', 'json.', '[]byte'):
             self.assertNotIn(forbidden, source)
 
@@ -33,6 +33,9 @@ class OutboxObservationTests(unittest.TestCase):
 			invoked := time.Now()
 			reply := peers[0].invokeResult(t, "outbox.commit", payload)
 			observation.record(reply.Error, time.Since(invoked), reply.OutboxCommitMS)
+			if reply.OutboxCommitWait != nil {
+				observation.wait.add(*reply.OutboxCommitWait)
+			}
 			return reply.Value, reply.Error
 		})'''
         self.assertIn(expected, source)
@@ -46,20 +49,44 @@ class OutboxObservationTests(unittest.TestCase):
     def test_child_times_only_the_existing_outbox_command(self):
         source = self.source('route_process_integration_test.go')
         expected = '''var commandStarted time.Time
+			var stopObservation func() outboxProcessWaitObservation
 			if request.Name == "outbox.commit" {
+				stopObservation = observeOutboxProcessWait()
 				commandStarted = time.Now()
 			}
 			value, callErr = c.Command(call, webui.Command{RequestID: requestID, Name: request.Name, Payload: request.Payload})
 			if !commandStarted.IsZero() {
 				elapsed := time.Since(commandStarted).Milliseconds()
 				outboxCommitMS = &elapsed
+				joinStarted := time.Now()
+				observed := stopObservation()
+				observed.JoinUS = time.Since(joinStarted).Microseconds()
+				outboxCommitWait = &observed
 			}
 			stop()'''
         self.assertIn(expected, source)
-        self.assertRegex(source, r'OutboxCommitMS\s+\*int64 `json:",omitempty"`')
-        self.assertIn('reply := processReply{Value: raw, OutboxCommitMS: outboxCommitMS}', source)
+        self.assertRegex(source, r'OutboxCommitMS\s+\*int64\s+`json:",omitempty"`')
+        self.assertIn('reply := processReply{Value: raw, OutboxCommitMS: outboxCommitMS, OutboxCommitWait: outboxCommitWait}', source)
         self.assertIn('context.WithTimeout(ctx, 30*time.Second)', source)
         self.assertIn('case <-time.After(40 * time.Second):', source)
+
+    def test_sampler_is_bounded_test_only_and_scalar(self):
+        source = self.source('outbox_process_wait_test.go')
+        fields = source.split('type outboxProcessWaitObservation struct {', 1)[1].split('}', 1)[0]
+        self.assertEqual(set(line.split()[-1] for line in fields.splitlines() if line.strip()), {'int', 'int64'})
+        sampler = source.split('func observeOutboxProcessWait()', 1)[1].split('\nfunc Test', 1)[0]
+        self.assertIn('const outboxWaitProfileLimit = 4096', source)
+        self.assertIn('100 * time.Millisecond, 400 * time.Millisecond, 500 * time.Millisecond, 500 * time.Millisecond', sampler)
+        self.assertIn('observeOutboxProcessWaitUsing(runtime.GoroutineProfile)', sampler)
+        self.assertIn('n, ok := profile(records)', sampler)
+        self.assertIn('case <-stop:', sampler)
+        self.assertIn('<-done', sampler)
+        for forbidden in ('runtime.Stack(', 'pprof.', 'unsafe.', 'SetMutexProfileFraction', 'SetBlockProfileRate', 'TryLock(', 'TryRLock(', 'fmt.', 'os.', 'net.'):
+            self.assertNotIn(forbidden, source)
+        for name in ('ObservedRealLocks', 'UnavailableAndMissing', 'QuickStop', 'SampleLimit', 'StopJoinsActiveProfile', 'RejectsMultipleCommands'):
+            self.assertIn('func TestOutboxProcessWait' + name + '(', source)
+        self.assertIn('mutex && op', source)
+        self.assertIn('commands != 1', source)
 
     def test_retry_control_flow_is_unchanged(self):
         source = self.source('outbox_process_retry_test.go')
