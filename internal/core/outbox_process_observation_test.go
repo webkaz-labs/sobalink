@@ -13,6 +13,7 @@ type outboxProcessCommitObservation struct {
 	attempts, completed, busy, childSamples int
 	lastInvoke, maxInvoke                   time.Duration
 	maxCommandMS                            int64
+	wait                                    outboxProcessWaitObservation
 }
 
 func (o *outboxProcessCommitObservation) start() { o.attempts++ }
@@ -42,7 +43,11 @@ func (o outboxProcessCommitObservation) summary(phase string, directory bool, el
 	if directory {
 		entry = "empty-directory"
 	}
-	return fmt.Sprintf("outbox commit observation: phase=%s entry=%s attempt_count=%d completed_count=%d busy_count=%d elapsed_ms=%d last_invoke_ms=%d max_invoke_ms=%d child_samples=%d max_command_ms=%d", phase, entry, o.attempts, o.completed, o.busy, elapsed.Milliseconds(), o.lastInvoke.Milliseconds(), o.maxInvoke.Milliseconds(), o.childSamples, o.maxCommandMS)
+	summary := fmt.Sprintf("outbox commit observation: phase=%s entry=%s attempt_count=%d completed_count=%d busy_count=%d elapsed_ms=%d last_invoke_ms=%d max_invoke_ms=%d child_samples=%d max_command_ms=%d", phase, entry, o.attempts, o.completed, o.busy, elapsed.Milliseconds(), o.lastInvoke.Milliseconds(), o.maxInvoke.Milliseconds(), o.childSamples, o.maxCommandMS)
+	if o.wait.Samples > 0 || o.wait.JoinUS > 0 {
+		summary += fmt.Sprintf(" wait_samples=%d wait_unavailable=%d wait_command_missing=%d wait_core_op=%d wait_core_mu=%d wait_outbox_mu=%d wait_other=%d maintenance_refresh_samples=%d receiver_maintenance_samples=%d sampler_work_us=%d sampler_join_us=%d", o.wait.Samples, o.wait.Unavailable, o.wait.CommandMissing, o.wait.CoreOp, o.wait.CoreMu, o.wait.OutboxMu, o.wait.Other, o.wait.MaintenanceRefresh, o.wait.ReceiverMaintenance, o.wait.SamplerUS, o.wait.JoinUS)
+	}
+	return summary
 }
 
 func TestOutboxProcessCommitObservationClosedCounters(t *testing.T) {
@@ -82,5 +87,14 @@ func TestOutboxProcessCommitObservationUnfinishedAttempt(t *testing.T) {
 	want := "outbox commit observation: phase=initial entry=file attempt_count=1 completed_count=0 busy_count=0 elapsed_ms=40000 last_invoke_ms=0 max_invoke_ms=0 child_samples=0 max_command_ms=0"
 	if o.summary("initial", false, 40*time.Second) != want {
 		t.Fatal("unfinished invocation was reported as completed")
+	}
+}
+
+func TestOutboxProcessCommitObservationWaitSummary(t *testing.T) {
+	var o outboxProcessCommitObservation
+	o.wait = outboxProcessWaitObservation{Samples: 4, Unavailable: 1, CoreOp: 2, CoreMu: 1, MaintenanceRefresh: 3, ReceiverMaintenance: 1, SamplerUS: 1234, JoinUS: 17}
+	want := " wait_samples=4 wait_unavailable=1 wait_command_missing=0 wait_core_op=2 wait_core_mu=1 wait_outbox_mu=0 wait_other=0 maintenance_refresh_samples=3 receiver_maintenance_samples=1 sampler_work_us=1234 sampler_join_us=17"
+	if !strings.HasSuffix(o.summary("initial", false, time.Second), want) {
+		t.Fatal("fixed wait counters or separate observer costs changed")
 	}
 }

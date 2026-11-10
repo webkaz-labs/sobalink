@@ -95,6 +95,7 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 		var value any
 		var callErr error
 		var outboxCommitMS *int64
+		var outboxCommitWait *outboxProcessWaitObservation
 		switch request.Name {
 		case "fixture.text-fault", "fixture.text-evidence", "fixture.text-wire":
 			value, callErr = textFixture.command(ctx, request.Name, request.Payload)
@@ -291,18 +292,24 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 				}
 			}
 			var commandStarted time.Time
+			var stopObservation func() outboxProcessWaitObservation
 			if request.Name == "outbox.commit" {
+				stopObservation = observeOutboxProcessWait()
 				commandStarted = time.Now()
 			}
 			value, callErr = c.Command(call, webui.Command{RequestID: requestID, Name: request.Name, Payload: request.Payload})
 			if !commandStarted.IsZero() {
 				elapsed := time.Since(commandStarted).Milliseconds()
 				outboxCommitMS = &elapsed
+				joinStarted := time.Now()
+				observed := stopObservation()
+				observed.JoinUS = time.Since(joinStarted).Microseconds()
+				outboxCommitWait = &observed
 			}
 			stop()
 		}
 		raw, _ := json.Marshal(value)
-		reply := processReply{Value: raw, OutboxCommitMS: outboxCommitMS}
+		reply := processReply{Value: raw, OutboxCommitMS: outboxCommitMS, OutboxCommitWait: outboxCommitWait}
 		if callErr != nil {
 			reply.Error = request.Name + ": " + routeProcessCommandErrorCode(request.Name, callErr)
 			if request.Name == "transfer.accept" {
@@ -319,10 +326,11 @@ func TestRouteCoreProcessHelper(t *testing.T) {
 }
 
 type processReply struct {
-	OutboxCommitMS *int64 `json:",omitempty"`
-	Value          json.RawMessage
-	Error          string
-	AcceptCause    string `json:",omitempty"`
+	OutboxCommitWait *outboxProcessWaitObservation `json:",omitempty"`
+	OutboxCommitMS   *int64                        `json:",omitempty"`
+	Value            json.RawMessage
+	Error            string
+	AcceptCause      string `json:",omitempty"`
 }
 type routeCoreProcess struct {
 	cmd         *exec.Cmd

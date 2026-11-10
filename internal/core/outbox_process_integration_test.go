@@ -79,6 +79,9 @@ func TestOutboxProcessRestart(t *testing.T) {
 			invoked := time.Now()
 			reply := peers[0].invokeResult(t, "outbox.commit", payload)
 			observation.record(reply.Error, time.Since(invoked), reply.OutboxCommitMS)
+			if reply.OutboxCommitWait != nil {
+				observation.wait.add(*reply.OutboxCommitWait)
+			}
 			return reply.Value, reply.Error
 		})
 		if err != nil || code != "" {
