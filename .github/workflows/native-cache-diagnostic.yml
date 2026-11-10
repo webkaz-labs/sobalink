@@ -1,0 +1,91 @@
+name: Native cache diagnostics (restore only)
+
+# Creating a fresh exact-head branch triggers only this supplemental diagnostic.
+on:
+  create:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-cache-diagnostic-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly -tags=ts_omit_portmapper,ts_omit_captiveportal,ts_omit_useproxy
+
+jobs:
+  measure:
+    if: github.repository == 'webkaz-labs/sobalink' && github.event.repository.private == false && github.event.ref_type == 'branch' && startsWith(github.ref, 'refs/heads/cache-diagnostic/')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            platform: windows-amd64
+          - runner: macos-26
+            platform: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOBALINK_CACHE_DIAGNOSTIC_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Retain exact companion toolchain
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.27.3
+          native_go="$(go env GOROOT)/bin/go"
+          if [[ "$RUNNER_OS" == Windows ]]; then native_go="$native_go.exe"; fi
+          echo "SOBALINK_NATIVE_GO=$native_go" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Validate fixed diagnostic policy
+        run: python -B -m unittest discover -s .github/scripts -p test_ci_native_cache_diagnostic.py -v
+      - name: Admit exact source and trusted cache
+        id: plan
+        run: python -B .github/scripts/ci-native-cache-diagnostic.py plan
+      - name: Verify warm hits and cache-miss regeneration with both pinned compilers
+        run: |
+          set -euo pipefail
+          backend_go="$(go env GOROOT)/bin/go"
+          if [[ "$RUNNER_OS" == Windows ]]; then backend_go="$backend_go.exe"; fi
+          SOBALINK_CACHE_FIXTURE_GO="$backend_go" python -B .github/scripts/test_ci_native_cache_diagnostic.py RealGoFixtureTests -v
+          SOBALINK_CACHE_FIXTURE_GO="$SOBALINK_NATIVE_GO" python -B .github/scripts/test_ci_native_cache_diagnostic.py RealGoFixtureTests -v
+      - name: Restore exact trusted main cache without publishing
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ steps.plan.outputs.gomodcache }}
+            ${{ steps.plan.outputs.gocache }}
+          key: ${{ steps.plan.outputs.key }}
+          fail-on-cache-miss: true
+      - name: Measure bounded original-snapshot archive pilot
+        id: measure
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+          CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
+        run: python -B .github/scripts/ci-native-cache-diagnostic.py archive
+      - name: Preserve only sanitized diagnostic measurements
+        if: always() && steps.measure.outputs.sanitized_ready == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-cache-diagnostic-${{ matrix.platform }}
+          path: ${{ runner.temp }}/soba-native-cache-sanitized/result.json
+          if-no-files-found: error
+          retention-days: 7
