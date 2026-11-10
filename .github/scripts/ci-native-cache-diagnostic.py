@@ -7,6 +7,7 @@ no cache namespace is written and no raw output or object content is exported.
 """
 from collections import Counter
 import hashlib
+import errno
 import importlib.util
 import json
 import os
@@ -816,34 +817,164 @@ def archive_stream_bound(rows):
     return sum(row['size'] for row in rows.values()) + len(rows) * (ARCHIVE_PAX_BYTES + 1536) + 10240
 
 
-def archive_stage(rows, stage, deadline):
-    require(not stage.exists())
-    stage.mkdir()
-    for name, row in rows.items():
-        archive_tick(deadline)
-        source, target = row['source'], stage / name
-        before = source.lstat()
-        require(archive_identity(before) == row['identity'])
-        if row['kind'] == 'directory':
-            target.mkdir()
-        else:
-            digest, count = hashlib.sha256(), 0
-            with source.open('rb') as incoming, target.open('xb') as outgoing:
-                opened = archive_handle_identity(before, os.fstat(incoming.fileno()))
-                while block := incoming.read(1024 * 1024):
-                    archive_tick(deadline)
-                    count += len(block)
-                    require(count <= row['size'])
-                    outgoing.write(block)
-                    digest.update(block)
-                require(archive_identity(os.fstat(incoming.fileno())) == opened)
-            require(count == row['size'] and digest.hexdigest() == row['sha256'])
-        require(archive_identity(source.lstat()) == row['identity'])
-    # Finalize directories last so read-only module trees remain writable
-    # while staging, then retain their source modes and mtimes for packing.
-    for name, row in sorted(rows.items(), reverse=True):
-        shutil.copystat(row['source'], stage / name, follow_symlinks=False)
-        require(archive_identity(row['source'].lstat()) == row['identity'])
+ARCHIVE_STAGE_FIELDS = ('st_dev', 'st_ino', 'st_mode', 'st_size', 'st_mtime_ns',
+                        'st_ctime_ns', 'st_nlink', 'st_file_attributes', 'st_birthtime_ns')
+ARCHIVE_STAGE_OPERATIONS = frozenset((
+    'stage_fresh', 'stage_mkdir', 'deadline_check', 'source_stat_before',
+    'source_identity_before', 'stage_directory_create', 'source_open',
+    'stage_file_create', 'source_handle_stat_before', 'handle_identity_initial',
+    'source_read', 'payload_bound', 'stage_write', 'source_handle_stat_after',
+    'handle_identity_after', 'stage_file_close', 'source_close', 'payload_verify',
+    'source_stat_after', 'source_identity_after', 'metadata_copy',
+    'source_stat_after_metadata', 'source_identity_after_metadata'))
+
+
+def archive_stage_equal(expected, actual):
+    # Only already-captured identities are compared. No post-failure I/O and
+    # no values, paths, member names or hashes enter the diagnostic record.
+    return {name: left == right for name, left, right in zip(ARCHIVE_STAGE_FIELDS, expected, actual)}
+
+
+def archive_stage_failure(operation, error, equalities=None):
+    """Reconstruct a closed, bounded record; never stringify an exception."""
+    operation = operation if type(operation) is str and operation in ARCHIVE_STAGE_OPERATIONS else 'unknown_operation'
+    category = 'unexpected_failure'
+    if isinstance(error, OSError):
+        # Standard numeric error codes are used only for classification. They
+        # are never exported; unknown/noninteger codes have one fixed bucket.
+        try:
+            winerror, code = getattr(error, 'winerror', None), getattr(error, 'errno', None)
+        except Exception:
+            winerror, code = None, None
+        windows = {2: 'io_missing', 3: 'io_missing', 5: 'io_permission',
+                   32: 'io_sharing_or_lock', 33: 'io_sharing_or_lock',
+                   80: 'io_exists', 112: 'io_disk_full', 183: 'io_exists',
+                   206: 'io_path_length', 50: 'io_unsupported'}
+        portable = {errno.ENOENT: 'io_missing', errno.EACCES: 'io_permission', errno.EPERM: 'io_permission',
+                    errno.EEXIST: 'io_exists', errno.ENOSPC: 'io_disk_full', errno.ENAMETOOLONG: 'io_path_length'}
+        category = (windows.get(winerror, 'io_other') if type(winerror) is int else
+                    portable.get(code, 'io_other') if type(code) is int else 'io_other')
+    elif isinstance(error, NotImplementedError):
+        category = 'io_unsupported'
+    elif isinstance(error, ValueError):
+        category = {'stage_fresh': 'stage_not_fresh', 'deadline_check': 'deadline_rejected',
+                    'source_identity_before': 'source_identity_rejected',
+                    'source_identity_after': 'source_identity_rejected',
+                    'source_identity_after_metadata': 'source_identity_rejected',
+                    'handle_identity_initial': 'handle_identity_rejected',
+                    'handle_identity_after': 'handle_identity_changed',
+                    'payload_bound': 'payload_size_rejected',
+                    'payload_verify': 'payload_rejected'}.get(operation, 'invariant_rejected')
+    result = {'status': 'failed', 'operation': operation, 'category': category,
+              'operationAttribution': 'last-marked-boundary-may-precede-unwind-error'}
+    if type(equalities) is dict:
+        safe = {name: equalities[name] for name in ARCHIVE_STAGE_FIELDS
+                if name in equalities and type(equalities[name]) is bool}
+        if safe:
+            result['fieldEqual'] = safe
+    return result
+
+
+def archive_stage(rows, stage, deadline, diagnostic=None):
+    progress = {'operation': 'stage_fresh'}
+
+    def step(operation):
+        progress.clear()
+        progress['operation'] = operation
+
+    def equal(expected, actual):
+        progress['fieldEqual'] = archive_stage_equal(expected, actual)
+
+    if diagnostic is not None:
+        diagnostic.clear()
+        diagnostic['status'] = 'started'
+    try:
+        require(not stage.exists())
+        step('stage_mkdir')
+        stage.mkdir()
+        for name, row in rows.items():
+            step('deadline_check')
+            archive_tick(deadline)
+            source, target = row['source'], stage / name
+            step('source_stat_before')
+            before = source.lstat()
+            step('source_identity_before')
+            observed = archive_identity(before)
+            equal(row['identity'], observed)
+            require(observed == row['identity'])
+            if row['kind'] == 'directory':
+                step('stage_directory_create')
+                target.mkdir()
+            else:
+                digest, count = hashlib.sha256(), 0
+                step('source_open')
+                with source.open('rb') as incoming:
+                    step('stage_file_create')
+                    with target.open('xb') as outgoing:
+                        step('source_handle_stat_before')
+                        handle_info = os.fstat(incoming.fileno())
+                        step('handle_identity_initial')
+                        try:
+                            opened = archive_handle_identity(before, handle_info)
+                        except ValueError:
+                            # Raw path/handle equality may legitimately differ
+                            # in Windows mode/ctime. This identifies observations,
+                            # not the compatible-field rejection by itself.
+                            equal(tuple(getattr(before, field, 0 if field == 'st_file_attributes' else None) for field in ARCHIVE_STAGE_FIELDS),
+                                  tuple(getattr(handle_info, field, 0 if field == 'st_file_attributes' else None) for field in ARCHIVE_STAGE_FIELDS))
+                            raise
+                        while True:
+                            step('source_read')
+                            block = incoming.read(1024 * 1024)
+                            if not block:
+                                break
+                            step('deadline_check')
+                            archive_tick(deadline)
+                            count += len(block)
+                            step('payload_bound')
+                            require(count <= row['size'])
+                            step('stage_write')
+                            outgoing.write(block)
+                            digest.update(block)
+                        step('source_handle_stat_after')
+                        handle_info = os.fstat(incoming.fileno())
+                        step('handle_identity_after')
+                        observed = archive_identity(handle_info)
+                        equal(opened, observed)
+                        require(observed == opened)
+                        step('stage_file_close')
+                    step('source_close')
+                step('payload_verify')
+                require(count == row['size'] and digest.hexdigest() == row['sha256'])
+            step('source_stat_after')
+            after = source.lstat()
+            step('source_identity_after')
+            observed = archive_identity(after)
+            equal(row['identity'], observed)
+            require(observed == row['identity'])
+        # Finalize directories last so read-only module trees remain writable
+        # while staging, then retain their source modes and mtimes for packing.
+        for name, row in sorted(rows.items(), reverse=True):
+            step('metadata_copy')
+            shutil.copystat(row['source'], stage / name, follow_symlinks=False)
+            step('source_stat_after_metadata')
+            after = row['source'].lstat()
+            step('source_identity_after_metadata')
+            observed = archive_identity(after)
+            equal(row['identity'], observed)
+            require(observed == row['identity'])
+    except Exception as error:
+        if diagnostic is not None:
+            diagnostic.clear()
+            diagnostic.update(archive_stage_failure(progress['operation'], error, progress.get('fieldEqual')))
+        # Preserve existing failure propagation. Unexpected exceptions also
+        # fail closed through main's sanitized handler, with no raw traceback.
+        if isinstance(error, (OSError, ValueError, KeyError, RuntimeError)):
+            raise
+        raise ValueError('native cache diagnostic boundary differs') from None
+    if diagnostic is not None:
+        diagnostic.clear()
+        diagnostic['status'] = 'completed'
 
 
 def archive_remove(path):
@@ -1183,7 +1314,8 @@ def measure_archives(plan, report):
             row = {'block': block, 'object': object_name, 'position': len(measured) + 1, 'phases': {}}
             report['samples'].append(row)
             sample_started = at = time.monotonic()
-            archive_stage(rows, private / 'stage', deadline)
+            row['staging'] = {}
+            archive_stage(rows, private / 'stage', deadline, row['staging'])
             row['stagingSeconds'] = round(time.monotonic() - at, 6)
             at = time.monotonic()
             (private / 'manifest.bin').write_bytes(b''.join(n.encode('utf-8') + b'\0' for n in rows))

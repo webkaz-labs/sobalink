@@ -958,10 +958,12 @@ class ArchiveHandleIdentityTests(unittest.TestCase):
 
     def test_staging_uses_shared_comparison_and_keeps_full_handle_revalidation(self):
         source = inspect.getsource(lab.archive_stage)
-        self.assertIn("require(archive_identity(before) == row['identity'])", source)
-        self.assertIn('opened = archive_handle_identity(before, os.fstat(incoming.fileno()))', source)
-        self.assertIn('require(archive_identity(os.fstat(incoming.fileno())) == opened)', source)
-        self.assertIn("require(archive_identity(source.lstat()) == row['identity'])", source)
+        self.assertIn('observed = archive_identity(before)', source)
+        self.assertEqual(source.count("require(observed == row['identity'])"), 3)
+        self.assertIn('opened = archive_handle_identity(before, handle_info)', source)
+        self.assertIn('require(observed == opened)', source)
+        self.assertIn('after = source.lstat()', source)
+        self.assertIn("after = row['source'].lstat()", source)
         self.assertIn("digest.hexdigest() == row['sha256']", source)
 
     def test_synthetic_native_identity_reports_only_field_equalities(self):
@@ -1003,6 +1005,336 @@ class ArchiveHandleIdentityTests(unittest.TestCase):
         self.assertTrue(all(type(value) is int for value in record['pythonVersion']))
         self.assertNotIn('private-identity-sentinel', output.getvalue())
         self.assertNotIn('fixture.exe', output.getvalue())
+
+
+
+class ArchiveStageDiagnosticTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.source = self.root / 'source.bin'
+        self.source.write_bytes(b'payload')
+        self.directory = self.root / 'source-directory'
+        self.directory.mkdir()
+        self.serial = 0
+
+    def run_failure(self, fault):
+        self.serial += 1
+        stage = self.root / ('stage-' + str(self.serial))
+        before = lab.archive_identity(self.source.lstat())
+        directory = fault == 'stage_directory_create'
+        source = self.directory if directory else self.source
+        info = source.lstat()
+        row = {'source': source, 'identity': lab.archive_identity(info),
+               'kind': 'directory' if directory else 'file', 'size': 0 if directory else 7,
+               'sha256': hashlib.sha256(b'payload').hexdigest()}
+        if fault == 'payload_bound':
+            row['size'] = 6
+        if fault == 'payload_short':
+            row['size'] = 8
+        if fault == 'payload_hash':
+            row['sha256'] = 'private-hash-sentinel'
+        if fault == 'stage_fresh':
+            stage.mkdir()
+        diagnostic, counts = {}, {}
+        original_open, original_mkdir, original_lstat = Path.open, Path.mkdir, Path.lstat
+        original_fstat, original_handle, original_copy, original_tick = os.fstat, lab.archive_handle_identity, shutil.copystat, lab.archive_tick
+
+        def hit(name):
+            counts[name] = counts.get(name, 0) + 1
+            if fault == name:
+                raise OSError(13, 'private-error-sentinel', 'private-member-sentinel')
+
+        class Proxy:
+            def __init__(self, stream, role):
+                self.stream, self.role = stream, role
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, kind, value, traceback):
+                self.stream.close()
+                if kind is None:
+                    hit('stage_file_close' if self.role == 'stage' else 'source_close')
+
+            def fileno(self):
+                return self.stream.fileno()
+
+            def read(self, size):
+                hit('source_read')
+                return self.stream.read(size)
+
+            def write(self, block):
+                hit('stage_write')
+                return self.stream.write(block)
+
+        def opened(path, mode='r', *args, **kwargs):
+            if path == source and mode == 'rb':
+                hit('source_open')
+                return Proxy(original_open(path, mode, *args, **kwargs), 'source')
+            if path == stage / 'member' and mode == 'xb':
+                hit('stage_file_create')
+                return Proxy(original_open(path, mode, *args, **kwargs), 'stage')
+            return original_open(path, mode, *args, **kwargs)
+
+        def mkdir(path, *args, **kwargs):
+            if path == stage:
+                hit('stage_mkdir')
+            elif path == stage / 'member':
+                hit('stage_directory_create')
+            return original_mkdir(path, *args, **kwargs)
+
+        def lstat(path, *args, **kwargs):
+            actual = original_lstat(path, *args, **kwargs)
+            if path != source:
+                return actual
+            number = counts.get('lstat', 0) + 1
+            counts['lstat'] = number
+            phase = {1: 'before', 2: 'after', 3: 'after_metadata'}[number]
+            hit('source_stat_' + phase)
+            if fault == 'source_identity_' + phase:
+                values = {field: getattr(actual, field, 0 if field == 'st_file_attributes' else None)
+                          for field in lab.ARCHIVE_STAGE_FIELDS}
+                values['st_mtime_ns'] += 1
+                return SimpleNamespace(**values)
+            return actual
+
+        def fstat(fd):
+            number = counts.get('fstat', 0) + 1
+            counts['fstat'] = number
+            hit('source_handle_stat_before' if number == 1 else 'source_handle_stat_after')
+            actual = original_fstat(fd)
+            if fault == 'handle_identity_after' and number == 2:
+                values = {field: getattr(actual, field, 0 if field == 'st_file_attributes' else None)
+                          for field in lab.ARCHIVE_STAGE_FIELDS}
+                values['st_ctime_ns'] += 1
+                return SimpleNamespace(**values)
+            return actual
+
+        def handle(a, b):
+            if fault == 'handle_identity_initial':
+                raise ValueError('private-identity-sentinel')
+            return original_handle(a, b)
+
+        def copy(a, b, **kwargs):
+            hit('metadata_copy')
+            return original_copy(a, b, **kwargs)
+
+        def tick(deadline):
+            counts['ticks'] = counts.get('ticks', 0) + 1
+            if fault == 'deadline_check' or fault == 'chunk_deadline' and counts['ticks'] == 2:
+                raise ValueError('private-clock-sentinel')
+            return original_tick(deadline)
+
+        with patch.object(Path, 'open', opened), patch.object(Path, 'mkdir', mkdir), \
+                patch.object(Path, 'lstat', lstat), patch.object(lab.os, 'fstat', fstat), \
+                patch.object(lab, 'archive_handle_identity', handle), patch.object(lab.shutil, 'copystat', copy), \
+                patch.object(lab, 'archive_tick', tick), patch.object(lab, 'archive_remove') as remove, \
+                patch.object(lab.shutil, 'rmtree') as rmtree:
+            with self.assertRaises((OSError, ValueError)):
+                lab.archive_stage({'member': row}, stage, time.monotonic() + 10, diagnostic)
+            remove.assert_not_called()
+            rmtree.assert_not_called()
+        self.assertEqual(self.source.read_bytes(), b'payload')
+        self.assertEqual(lab.archive_identity(self.source.lstat()), before)
+        self.assertEqual(stage.exists(), fault != 'stage_mkdir')
+        encoded = json.dumps(diagnostic)
+        for private in (str(self.root), 'private-', 'source.bin', 'member-sentinel', row['sha256']):
+            self.assertNotIn(private, encoded)
+        self.assertLess(len(encoded), 1024)
+        if fault in counts:
+            self.assertEqual(counts[fault], 1)  # No retry of a failing operation.
+        if fault == 'chunk_deadline':
+            self.assertEqual(counts['ticks'], 2)
+        return diagnostic
+
+    def test_all_stage_guard_and_io_boundaries_are_classified_without_cleanup_or_retry(self):
+        invariants = {'stage_fresh': 'stage_not_fresh', 'deadline_check': 'deadline_rejected',
+            'source_identity_before': 'source_identity_rejected', 'handle_identity_initial': 'handle_identity_rejected',
+            'payload_bound': 'payload_size_rejected', 'handle_identity_after': 'handle_identity_changed',
+            'source_identity_after': 'source_identity_rejected', 'source_identity_after_metadata': 'source_identity_rejected'}
+        for operation in sorted(lab.ARCHIVE_STAGE_OPERATIONS - {'payload_verify'}):
+            with self.subTest(operation=operation):
+                result = self.run_failure(operation)
+                self.assertEqual(result['operation'], operation)
+                self.assertEqual(result['category'], invariants.get(operation, 'io_permission'))
+                self.assertEqual(result['status'], 'failed')
+        self.assertEqual(self.run_failure('chunk_deadline'),
+                         {'status': 'failed',
+                          'operationAttribution': 'last-marked-boundary-may-precede-unwind-error', 'operation': 'deadline_check', 'category': 'deadline_rejected'})
+        for fault in ('payload_short', 'payload_hash'):
+            with self.subTest(fault=fault):
+                result = self.run_failure(fault)
+                self.assertEqual(result, {'status': 'failed',
+                          'operationAttribution': 'last-marked-boundary-may-precede-unwind-error', 'operation': 'payload_verify', 'category': 'payload_rejected'})
+
+    def test_double_fault_keeps_exception_precedence_and_marks_uncertain_attribution(self):
+        stage = self.root / 'double-fault'
+        before = lab.archive_identity(self.source.lstat())
+        row = {'source': self.source, 'identity': before, 'kind': 'file',
+               'size': 7, 'sha256': hashlib.sha256(b'payload').hexdigest()}
+        original_open = Path.open
+        first = ValueError('private-read-error')
+        second = PermissionError(lab.errno.EACCES, 'private-close-error', 'private-path')
+        counts, diagnostic = {}, {}
+
+        class Proxy:
+            def __init__(self, stream, role):
+                self.stream, self.role = stream, role
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, kind, value, traceback):
+                self.stream.close()
+                counts[self.role + '_close'] = counts.get(self.role + '_close', 0) + 1
+                if self.role == 'stage':
+                    raise second
+
+            def fileno(self):
+                return self.stream.fileno()
+
+            def read(self, size):
+                counts['source_read'] = counts.get('source_read', 0) + 1
+                raise first
+
+        def opened(path, mode='r', *args, **kwargs):
+            stream = original_open(path, mode, *args, **kwargs)
+            return Proxy(stream, 'source' if path == self.source else 'stage')
+
+        with patch.object(Path, 'open', opened), patch.object(lab, 'archive_remove') as remove, \
+                patch.object(lab.shutil, 'rmtree') as rmtree:
+            with self.assertRaises(PermissionError) as caught:
+                lab.archive_stage({'member': row}, stage, time.monotonic() + 10, diagnostic)
+            remove.assert_not_called()
+            rmtree.assert_not_called()
+        self.assertIs(caught.exception, second)
+        self.assertIs(caught.exception.__context__, first)
+        self.assertEqual(counts, {'source_read': 1, 'stage_close': 1, 'source_close': 1})
+        self.assertEqual(diagnostic, {'status': 'failed', 'operation': 'source_read',
+            'category': 'io_permission',
+            'operationAttribution': 'last-marked-boundary-may-precede-unwind-error'})
+        encoded = json.dumps(diagnostic)
+        for private in ('private-', str(self.root), 'member', row['sha256']):
+            self.assertNotIn(private, encoded)
+        self.assertLess(len(encoded), 1024)
+        self.assertEqual(self.source.read_bytes(), b'payload')
+        self.assertEqual(lab.archive_identity(self.source.lstat()), before)
+        self.assertTrue((stage / 'member').is_file())
+
+    def test_identity_diagnostics_are_only_already_observed_field_equalities(self):
+        for fault, changed in [('source_identity_before', 'st_mtime_ns'),
+                               ('source_identity_after', 'st_mtime_ns'),
+                               ('source_identity_after_metadata', 'st_mtime_ns'),
+                               ('handle_identity_after', 'st_ctime_ns')]:
+            with self.subTest(fault=fault):
+                fields = self.run_failure(fault)['fieldEqual']
+                self.assertEqual(set(fields), set(lab.ARCHIVE_STAGE_FIELDS))
+                self.assertEqual([key for key, value in fields.items() if not value], [changed])
+                self.assertTrue(all(type(value) is bool for value in fields.values()))
+
+    def test_error_classifier_is_closed_and_never_serializes_private_operands(self):
+        for number, category in [(lab.errno.ENOENT, 'io_missing'), (lab.errno.EACCES, 'io_permission'),
+                                 (lab.errno.EPERM, 'io_permission'), (lab.errno.EEXIST, 'io_exists'),
+                                 (lab.errno.ENOSPC, 'io_disk_full'), (lab.errno.ENAMETOOLONG, 'io_path_length'),
+                                 (123456789, 'io_other')]:
+            result = lab.archive_stage_failure('source_open', OSError(number, 'private-error', 'private-path'))
+            self.assertEqual(result, {'status': 'failed',
+                          'operationAttribution': 'last-marked-boundary-may-precede-unwind-error', 'operation': 'source_open', 'category': category})
+        for number, category in [(2, 'io_missing'), (3, 'io_missing'), (5, 'io_permission'),
+                (32, 'io_sharing_or_lock'), (33, 'io_sharing_or_lock'), (80, 'io_exists'),
+                (112, 'io_disk_full'), (183, 'io_exists'), (206, 'io_path_length'), (50, 'io_unsupported')]:
+            error = OSError(13, 'private-error', 'private-path')
+            error.winerror = number
+            self.assertEqual(lab.archive_stage_failure('stage_write', error)['category'], category)
+        error = OSError(123456789, 'private-error-sentinel', 'private-path-sentinel')
+        error.winerror = ['private-noninteger']
+        result = lab.archive_stage_failure('private-operation-sentinel', error,
+            {'private-member-sentinel': True, 'st_ino': 123456789, 'st_mtime_ns': 'private-time', 'st_dev': False})
+        self.assertEqual(result, {'status': 'failed',
+                          'operationAttribution': 'last-marked-boundary-may-precede-unwind-error', 'operation': 'unknown_operation', 'category': 'io_other',
+                                  'fieldEqual': {'st_dev': False}})
+        for error in (ValueError('private-value'), RuntimeError('private-runtime'), KeyError('private-key'),
+                      NotImplementedError('private-unsupported'), TypeError('private-type')):
+            encoded = json.dumps(lab.archive_stage_failure('source_read', error))
+            self.assertNotIn('private', encoded)
+        class NoStringError(OSError):
+            def __str__(self):
+                raise AssertionError('exception string must never be used')
+        self.assertEqual(lab.archive_stage_failure('source_read', NoStringError(13, 'private'))['category'], 'io_permission')
+
+    def test_success_preserves_exact_filesystem_observation_counts(self):
+        info = self.source.lstat()
+        row = {'source': self.source, 'identity': lab.archive_identity(info), 'kind': 'file',
+               'size': 7, 'sha256': hashlib.sha256(b'payload').hexdigest()}
+        original = Path.lstat
+        calls = []
+
+        def lstat(path, *args, **kwargs):
+            calls.append(path)
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, 'lstat', lstat), patch.object(lab.os, 'fstat', wraps=os.fstat) as observed:
+            lab.archive_stage({'member': row}, self.root / 'observed', time.monotonic() + 10, {})
+        self.assertEqual(calls.count(self.source), 3)
+        self.assertEqual(observed.call_count, 2)
+
+    def test_success_record_is_bounded_and_has_no_identity_values(self):
+        info = self.source.lstat()
+        row = {'source': self.source, 'identity': lab.archive_identity(info), 'kind': 'file',
+               'size': 7, 'sha256': hashlib.sha256(b'payload').hexdigest()}
+        record = {'private-old-key': 'private-old-value'}
+        stage = self.root / 'successful'
+        lab.archive_stage({'member': row}, stage, time.monotonic() + 10, record)
+        self.assertEqual(record, {'status': 'completed'})
+        self.assertEqual((stage / 'member').read_bytes(), b'payload')
+        self.assertEqual(lab.archive_identity(self.source.lstat()), row['identity'])
+
+
+class ArchiveStageFailureReportTests(unittest.TestCase):
+    setUp = ArchiveTests.setUp
+
+    def test_failed_stage_survives_main_sanitization_without_promoting_sample(self):
+        tool = self.root / 'synthetic-tool'
+        tool.write_bytes(b'generic tool identity fixture')
+        plan = {'roots': [self.modules, self.build], 'key': 'synthetic-exact-key',
+                'platform': 'linux-fixture', 'source': {'fixture': 'generic'},
+                'commit': 'a' * 40, 'runner': 'synthetic'}
+        tools = {'tar': str(tool), 'pack': str(tool), 'unpack': str(tool), 'platform': 'linux-fixture'}
+        calls = []
+
+        def capture(phase, *args):
+            calls.append(phase)
+            return b'tar (GNU tar) 1.35' if phase == 'archive_tar_version' else b'*** Zstandard CLI (64-bit) v1.5.7 ***'
+
+        output = io.StringIO()
+        with patch.dict(os.environ, {'CACHE_HIT': 'true', 'CACHE_MATCHED_KEY': plan['key'],
+                    'RUNNER_TEMP': str(self.root), 'ImageVersion': '20260101.1', 'GITHUB_OUTPUT': str(self.root / 'outputs')}), \
+                patch.object(lab, 'admission', return_value=plan), patch.object(lab.os, 'umask'), \
+                patch.object(lab, 'archive_tools', return_value=tools), \
+                patch.object(lab, 'archive_environment', side_effect=lambda tools, private: dict(os.environ)), \
+                patch.object(lab, 'archive_capture', side_effect=capture), \
+                patch.object(lab.shutil, 'copystat', side_effect=OSError(13, 'private-error-sentinel', 'private-path-sentinel')), \
+                patch.object(lab, 'archive_remove') as remove, contextlib.redirect_stdout(output):
+            self.assertEqual(lab.main(['archive']), 1)
+            remove.assert_not_called()
+        encoded = (self.root / 'soba-native-cache-sanitized/result.json').read_text()
+        report = json.loads(encoded)
+        self.assertFalse(report['diagnosticPassed'])
+        self.assertIsNone(report['originalContentIdentityAndMembershipUnchanged'])
+        self.assertEqual(len(report['samples']), 1)
+        sample = report['samples'][0]
+        self.assertEqual(sample['staging'], {'status': 'failed',
+                          'operationAttribution': 'last-marked-boundary-may-precede-unwind-error', 'operation': 'metadata_copy', 'category': 'io_permission'})
+        self.assertEqual(sample['phases'], {})
+        self.assertNotIn('stagingSeconds', sample)
+        self.assertNotIn('sampleTotalSeconds', sample)
+        self.assertEqual(calls, ['archive_tar_version', 'archive_pack_version', 'archive_unpack_version'])
+        self.assertTrue(list(self.root.glob('soba-cache-archive-*/stage')))
+        self.assertLess(len(encoded.encode()), lab.ARCHIVE_RESULT_BYTES)
+        for private in (str(self.root), 'private-error-sentinel', 'private-path-sentinel'):
+            self.assertNotIn(private, encoded + output.getvalue())
 
 
 
