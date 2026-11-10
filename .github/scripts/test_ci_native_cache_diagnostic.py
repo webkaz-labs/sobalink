@@ -640,7 +640,7 @@ class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.modules, self.build = self.root / 'modules-source', self.root / 'build-source'
         self.modules.mkdir()
         (self.modules / 'empty').mkdir()
@@ -659,6 +659,31 @@ class ArchiveTests(unittest.TestCase):
 
     def snapshot(self):
         return lab.archive_snapshot(self.roots, self.deadline)
+
+    def test_owned_fixture_resolves_noncanonical_temporary_parent(self):
+        # Model a temporary parent alias without requiring native symlink
+        # privileges or a particular host's temporary-directory spelling.
+        intermediate = self.root / 'intermediate'
+        intermediate.mkdir()
+        owned = tempfile.TemporaryDirectory(dir=self.root)
+        self.addCleanup(owned.cleanup)
+        aliased = intermediate / '..' / Path(owned.name).name
+        self.assertTrue(aliased.is_dir())
+        self.assertFalse(aliased.is_symlink())
+        self.assertNotEqual(aliased, aliased.resolve())
+        temporary = type('TemporaryAlias', (), {'name': str(aliased), 'cleanup': staticmethod(owned.cleanup)})()
+        fixture = ArchiveTests()
+        try:
+            with patch.object(tempfile, 'TemporaryDirectory', return_value=temporary):
+                fixture.setUp()
+            self.assertEqual(fixture.root, Path(owned.name).resolve())
+            self.assertGreater(lab.archive_totals(fixture.snapshot())['files'], 0)
+            # Canonicalizing this owned fixture does not relax source admission.
+            roots = {'modules': aliased / 'modules-source', 'build': aliased / 'build-source'}
+            with self.assertRaises(ValueError):
+                lab.archive_snapshot(roots, fixture.deadline)
+        finally:
+            fixture.doCleanups()
 
     def test_projection_preserves_unknown_action_metadata_empty_dirs_and_programs(self):
         snapshot = self.snapshot()
