@@ -75,12 +75,12 @@ jobs:
             ${{ steps.plan.outputs.gocache }}
           key: ${{ steps.plan.outputs.key }}
           fail-on-cache-miss: true
-      - name: Compare shared and split-warm backend and companion caches
+      - name: Measure bounded original-snapshot archive pilot
         id: measure
         env:
           CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
           CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
-        run: python -B .github/scripts/ci-native-cache-diagnostic.py measure
+        run: python -B .github/scripts/ci-native-cache-diagnostic.py archive
       - name: Preserve only sanitized diagnostic measurements
         if: always() && steps.measure.outputs.sanitized_ready == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

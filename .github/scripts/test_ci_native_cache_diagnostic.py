@@ -2,6 +2,9 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import time
+import tarfile
+import random
 import unittest
 
 import importlib.util
@@ -333,7 +336,12 @@ class AdmissionTests(unittest.TestCase):
     def test_process_ownership_matches_reviewed_capture(self):
         guard = "            if shutil.disk_usage(env['GOTMPDIR']).free < MIN_FREE_BYTES:\n                status = 'disk_headroom'\n                break\n"
         self.assertIn(guard, inspect.getsource(lab.capture))
-        self.assertEqual(inspect.getsource(lab.capture).replace(guard, ''), inspect.getsource(lab.collector.capture))
+        archive_guard = "            if phase in ARCHIVE_BOUNDS and archive_budget_exceeded(env):\n                status = 'artifact_limit'\n                break\n"
+        deadline = "deadline = start + (ARCHIVE_BOUNDS[phase] if phase in ARCHIVE_BOUNDS else BOUNDS[phase])\n        if phase in ARCHIVE_BOUNDS:\n            deadline = min(deadline, float(env['SOBALINK_ARCHIVE_DEADLINE']))"
+        self.assertIn(archive_guard, inspect.getsource(lab.capture))
+        self.assertIn(deadline, inspect.getsource(lab.capture))
+        normalized = inspect.getsource(lab.capture).replace(guard, '').replace(archive_guard, '')
+        self.assertEqual(normalized.replace(deadline, 'deadline = start + BOUNDS[phase]'), inspect.getsource(lab.collector.capture))
         self.assertIs(lab.OwnedJob, lab.collector.OwnedJob)
         self.assertIs(lab.OwnedGroup, lab.collector.OwnedGroup)
 
@@ -626,6 +634,411 @@ class EventTests(unittest.TestCase):
             lab.companion_result(self.raw(good), names, process | {'ownersJoined': False})
         with self.assertRaises(ValueError):
             lab.companion_result(self.raw(good + good), names, process)
+
+
+class ArchiveTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.modules, self.build = self.root / 'modules-source', self.root / 'build-source'
+        self.modules.mkdir()
+        (self.modules / 'empty').mkdir()
+        (self.modules / 'ordinary.go').write_bytes(b'package fictional\n')
+        (self.build / 'aa').mkdir(parents=True)
+        for letter, raw in [('a', archive('go1.27.1')), ('b', archive('go1.27.3')),
+                            ('c', b'unknown payload')]:
+            (self.build / 'aa' / (letter * 64 + '-d')).write_bytes(raw)
+        (self.build / 'aa' / ('e' * 64 + '-a')).write_bytes(b'opaque action record')
+        (self.build / 'aa' / ('f' * 64 + '-d')).mkdir()
+        binary = self.build / 'aa' / ('f' * 64 + '-d') / 'program'
+        binary.write_bytes(b'fictional executable')
+        binary.chmod(0o755)
+        self.roots = {'modules': self.modules, 'build': self.build}
+        self.deadline = time.monotonic() + 60
+
+    def snapshot(self):
+        return lab.archive_snapshot(self.roots, self.deadline)
+
+    def test_projection_preserves_unknown_action_metadata_empty_dirs_and_programs(self):
+        snapshot = self.snapshot()
+        projected = {name: lab.archive_projection(snapshot, name) for name in lab.ARCHIVE_OBJECTS}
+        self.assertEqual(lab.archive_totals(projected['combined']), lab.archive_totals(snapshot))
+        for obj in ('backend', 'companion', 'unit-bundle'):
+            prefix = 'companion' if obj == 'companion' else 'backend'
+            for letter, suffix in [('c', '-d'), ('e', '-a')]:
+                self.assertIn(prefix + '/aa/' + letter * 64 + suffix, projected[obj])
+            self.assertIn(prefix + '/aa/' + 'f' * 64 + '-d/program', projected[obj])
+        self.assertIn('modules/empty', projected['unit-bundle'])
+        self.assertNotIn('backend/aa/' + 'b' * 64 + '-d', projected['backend'])
+        self.assertNotIn('companion/aa/' + 'a' * 64 + '-d', projected['companion'])
+        before = self.snapshot()
+        stage = self.root / 'stage'
+        lab.archive_stage(projected['unit-bundle'], stage, self.deadline)
+        lab.archive_verify_destination(stage, projected['unit-bundle'], self.deadline)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(os.path.samefile(stage / 'modules/ordinary.go', self.modules / 'ordinary.go'))
+        lab.archive_remove(stage)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_names_reject_escape_alias_and_collision(self):
+        for name in ('/absolute', '../escape', 'build/../escape', 'build/./x', 'build//x',
+                     'C:/drive', '//server/share', 'build\\x', 'build/file:stream',
+                     'build/end.', 'build/end ', 'build/CON', 'build/nul.txt', 'build/LPT¹',
+                     'build/CONIN$', 'build/conout$', 'build/CLOCK$',
+                     'build/a\0b', 'build/a\nb', '-option', 'build/e\u0301', 'x' * 1025):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                lab.archive_name(name)
+        self.assertEqual(lab.archive_name('modules/example.invalid/mod@v1.0.0/!upper.go'),
+                         'modules/example.invalid/mod@v1.0.0/!upper.go')
+        # Model both entries without relying on a case-sensitive filesystem.
+        # Native Windows/macOS may alias these names and overwrite one file.
+        scandir = os.scandir
+
+        def duplicate(directory):
+            if Path(directory) != self.modules:
+                return scandir(directory)
+            with scandir(directory) as entries:
+                children = list(entries)
+            alias = type('Entry', (), {'name': 'ORDINARY.GO', 'path': str(self.modules / 'ordinary.go')})()
+            return contextlib.nullcontext(children + [alias])
+
+        with patch.object(lab.os, 'scandir', side_effect=duplicate), self.assertRaises(ValueError):
+            self.snapshot()
+
+    def test_snapshot_rejects_links_reparse_modes_and_bounds(self):
+        link = self.modules / 'link'
+        link.symlink_to(self.modules / 'ordinary.go')
+        with self.assertRaises(ValueError):
+            self.snapshot()
+        link.unlink()
+        os.link(self.modules / 'ordinary.go', link)
+        with self.assertRaises(ValueError):
+            self.snapshot()
+        link.unlink()
+        fake = type('Info', (), {'st_file_attributes': 0x400})()
+        with self.assertRaises(ValueError):
+            lab.archive_identity(fake)
+        for key, value in [('MAX_ENTRIES', 1), ('ARCHIVE_MAX_BYTES', 1),
+                           ('ARCHIVE_MAX_FILE_BYTES', 1), ('ARCHIVE_NAME_TOTAL_BYTES', 1)]:
+            with patch.object(lab, key, value), self.assertRaises(ValueError):
+                self.snapshot()
+        if sys.platform != 'win32':
+            (self.modules / 'ordinary.go').chmod(0o4644)
+            with self.assertRaises(ValueError):
+                self.snapshot()
+
+    def test_content_hash_catches_same_size_and_mtime_mutation(self):
+        before = self.snapshot()
+        target = self.modules / 'ordinary.go'
+        original = target.stat()
+        target.write_bytes(b'X' * original.st_size)
+        os.utime(target, ns=(original.st_atime_ns, original.st_mtime_ns))
+        after = self.snapshot()
+        self.assertNotEqual(before['modules/ordinary.go']['sha256'], after['modules/ordinary.go']['sha256'])
+        with self.assertRaises(ValueError):
+            lab.archive_stage(before, self.root / 'stage', self.deadline)
+
+    def test_fresh_destination_exact_membership_and_modes_required(self):
+        rows = self.snapshot()
+        stage = self.root / 'stage'
+        lab.archive_stage(rows, stage, self.deadline)
+        (stage / 'extra').write_bytes(b'extra')
+        with self.assertRaises(ValueError):
+            lab.archive_verify_destination(stage, rows, self.deadline)
+        (stage / 'extra').unlink()
+        target = stage / 'modules/ordinary.go'
+        target.write_bytes(b'wrong content')
+        with self.assertRaises(ValueError):
+            lab.archive_verify_destination(stage, rows, self.deadline)
+        with self.assertRaises(ValueError):
+            lab.archive_stage(rows, stage, self.deadline)
+
+    def test_policy_geometry_counts_unique_writer_objects_and_unmeasured_controls(self):
+        projected = {name: lab.archive_projection(self.snapshot(), name) for name in lab.ARCHIVE_OBJECTS}
+        samples = {name: {'compressedBytes': 10 + i, 'phases': {
+            'archive_pack': {'wallSeconds': 3 + i}, 'archive_extract': {'wallSeconds': 2 + i}}}
+            for i, name in enumerate(lab.ARCHIVE_PILOT)}
+        result = lab.archive_accounting(projected, samples)
+        self.assertEqual(result['A']['writer']['objectCount'], 1)
+        self.assertEqual(result['H']['writer']['compressedBytes'], 21)
+        self.assertEqual(result['Q']['writer']['compressedBytes'], 23)
+        self.assertEqual(result['F']['writer']['objectCount'], 3)
+        self.assertEqual(result['F']['integration']['objects'], ['modules', 'backend', 'companion'])
+        self.assertEqual(result['Q']['integration']['componentSeconds'], 7)
+        for name in ('R', 'F'):
+            self.assertIsNone(result[name]['writer']['compressedBytes'])
+            self.assertIsNone(result[name]['integration']['componentSeconds'])
+            self.assertEqual(result[name]['unit']['measurement'], 'unmeasured')
+        output = json.dumps(result)
+        for private in ('ordinary.go', str(self.root), 'sha256', 'opaque'):
+            self.assertNotIn(private, output)
+        self.assertEqual(lab.ARCHIVE_ORDERS[1], tuple(reversed(lab.ARCHIVE_ORDERS[0])))
+        self.assertEqual(lab.archive_report()['plan']['objectSamples'], 6)
+        self.assertLessEqual(lab.ARCHIVE_SECONDS, 32 * 60)
+
+    def test_native_command_profiles_are_streaming_relative_and_fixed(self):
+        for target in ('windows-amd64', 'darwin-arm64', 'linux-fixture'):
+            spec = {'tools': {'tar': '/tool/tar', 'pack': '/tool/zstd',
+                             'unpack': '/tool/unzstd', 'platform': target}, 'private': '/private'}
+            pack = lab.archive_command('archive_pack', spec)
+            extract = lab.archive_command('archive_extract', spec)
+            self.assertIn('--posix', pack)
+            self.assertIn('--null', pack)
+            self.assertIn('--verbatim-files-from', pack)
+            self.assertIn('--no-recursion', pack)
+            self.assertIn('--no-same-owner', extract)
+            self.assertNotIn('-P', pack + extract)
+            self.assertNotIn('--absolute-names', pack + extract)
+            if target == 'windows-amd64':
+                self.assertIn('--force-local', pack)
+                self.assertEqual(pack[-1], 'zstd -T0')
+                self.assertEqual(extract[-1], 'zstd -d')
+            if target == 'darwin-arm64':
+                self.assertIn('--delay-directory-restore', pack)
+                self.assertIn('--delay-directory-restore', extract)
+                self.assertEqual(pack[-1], 'zstdmt')
+                self.assertEqual(extract[-1], 'unzstd')
+        self.assertEqual(lab.archive_version(b'tar (GNU tar) 1.35\nprivate paths', 'tar'), '1.35')
+        self.assertEqual(lab.archive_version(b'*** Zstandard CLI (64-bit) v1.5.7, by author ***', 'pack'), '1.5.7')
+        with self.assertRaises(ValueError):
+            lab.archive_version(b'bsdtar 3.8.0', 'tar')
+
+    def test_workflow_uses_archive_only_and_retains_compiler_fixtures(self):
+        workflow = (ROOT / lab.WORKFLOW).read_text()
+        self.assertIn('ci-native-cache-diagnostic.py archive', workflow)
+        self.assertNotIn('ci-native-cache-diagnostic.py measure', workflow)
+        self.assertEqual(workflow.count('RealGoFixtureTests -v'), 2)
+        source = inspect.getsource(lab.measure_archives)
+        self.assertNotIn('run_workload(', source)
+        self.assertNotIn('adapted-seed', source)
+        self.assertIn("archive_snapshot(roots, deadline) == before", source)
+        self.assertNotIn('finally:', source)
+        self.assertLess(source.index("archive_capture('archive_validate'"), source.index("archive_capture('archive_extract'"))
+        self.assertLess(source.index("archive_capture('archive_extract'"), source.index('archive_remove('))
+        for key in ('TMP', 'TEMP', 'TMPDIR'):
+            self.assertNotRegex(source, r'\b' + key + '=')
+
+    def test_unresolved_capture_retains_private_work_and_has_fixed_report(self):
+        private = self.root / 'private'
+        private.mkdir()
+        env = dict(os.environ, GOTMPDIR=str(private), SOBALINK_ARCHIVE_SPEC=str(private / 'spec.json'))
+        row = {}
+        with patch.object(lab, 'capture', return_value=({'process': 'cleanup_unresolved',
+                'returncode': 1, 'ownersJoined': False, 'wallSeconds': 1.0}, b'private payload')), \
+                patch.object(lab, 'archive_remove') as remove:
+            with self.assertRaises(ValueError):
+                lab.archive_capture('archive_pack', env, {}, self.deadline, row)
+            remove.assert_not_called()
+        self.assertNotIn('private payload', json.dumps(row))
+        self.assertFalse(row['archive_pack']['ownersJoined'])
+        self.assertTrue((private / 'spec.json').exists())
+
+    def test_archive_environment_clears_tool_knobs_preserves_runtime_tmp_and_checks_alias(self):
+        tools = {'tar': '/tools/tar', 'pack': '/tools/zstd', 'unpack': '/tools/zstd', 'platform': 'windows-amd64'}
+        with patch.dict(os.environ, {'TMP': '/short-tmp', 'TEMP': '/short-temp', 'TMPDIR': '/short-tmpdir',
+                'TAR_OPTIONS': '--unsafe', 'ZSTD_NBTHREADS': '1', 'ZSTD_CLEVEL': '9', 'ZSTD_OTHER': 'x'}), \
+                patch.object(lab.shutil, 'which', return_value='/tools/zstd') as which:
+            env = lab.archive_environment(tools, self.root)
+        self.assertEqual([env[k] for k in ('TMP', 'TEMP', 'TMPDIR')], ['/short-tmp', '/short-temp', '/short-tmpdir'])
+        for key in ('TAR_OPTIONS', 'ZSTD_NBTHREADS', 'ZSTD_CLEVEL', 'ZSTD_OTHER'):
+            self.assertNotIn(key, env)
+        self.assertEqual([call.args[0] for call in which.call_args_list], ['zstd', 'zstd'])
+        with patch.object(lab.shutil, 'which', return_value='/wrong/zstd'), self.assertRaises(ValueError):
+            lab.archive_environment(tools, self.root)
+
+    def test_windows_readonly_semantics_do_not_claim_posix_mode_identity(self):
+        row = {'kind': 'file', 'mode': 0o666}
+        self.assertTrue(lab.archive_mode_matches(0o755, row, windows=True))
+        self.assertFalse(lab.archive_mode_matches(0o555, row, windows=True))
+        self.assertFalse(lab.archive_mode_matches(0o755, row, windows=False))
+        self.assertTrue(lab.archive_mode_matches(0o555, row | {'mode': 0o444}, windows=True))
+        with self.assertRaises(ValueError):
+            lab.archive_mode_matches(0o4755, row, windows=True)
+
+    def test_deadline_size_caps_and_readonly_owned_cleanup(self):
+        with self.assertRaises(ValueError):
+            lab.archive_tick(time.monotonic() - 1)
+        stage = self.root / 'stage'
+        lab.archive_stage(self.snapshot(), stage, self.deadline)
+        (stage / 'modules/ordinary.go').chmod(0o444)
+        (stage / 'modules').chmod(0o555)
+        lab.archive_remove(stage)
+        self.assertFalse(stage.exists())
+        packed = self.root / 'cache.tzst'
+        packed.write_bytes(b'0123456789')
+        self.assertTrue(lab.archive_budget_exceeded({'GOTMPDIR': str(self.root), 'SOBALINK_ARCHIVE_FILE_BOUND': '9'}))
+        self.assertFalse(lab.archive_budget_exceeded({'GOTMPDIR': str(self.root), 'SOBALINK_ARCHIVE_FILE_BOUND': '10'}))
+
+
+class ArchiveFormatTests(unittest.TestCase):
+    def member(self, name='build/file', data=b'payload', kind=tarfile.REGTYPE, mode=0o644, link=''):
+        info = tarfile.TarInfo(name)
+        info.type, info.size, info.mode, info.linkname = kind, len(data), mode, link
+        return info.tobuf(format=tarfile.USTAR_FORMAT) + data + bytes((-len(data)) % 512)
+
+    def expected(self):
+        return {'build/file': {'kind': 'file', 'mode': 0o644, 'size': 7,
+                               'sha256': hashlib.sha256(b'payload').hexdigest()}}
+
+    def check(self, raw, expected=None, limit=1024 * 1024):
+        return lab.archive_validate_stream(io.BytesIO(raw), self.expected() if expected is None else expected, limit)
+
+    def test_valid_stream_padding_and_private_content_hash(self):
+        raw = self.member() + bytes(1024)
+        result = self.check(raw)
+        self.assertEqual(result['streamBytes'], len(raw))
+        self.assertEqual(result['filePayloadBytes'], 7)
+        self.assertEqual(result['headerBytes'], 512)
+        self.assertEqual(result['paxPayloadBytes'], 0)
+        self.assertEqual(result['membersVerified'], 1)
+        self.assertNotIn('sha256', json.dumps(result))
+
+    def test_reject_links_special_sparse_contiguous_global_and_unknown_types(self):
+        for kind in (tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.CHRTYPE, tarfile.BLKTYPE,
+                     tarfile.FIFOTYPE, tarfile.GNUTYPE_SPARSE, tarfile.CONTTYPE,
+                     tarfile.XGLTYPE, b'Z'):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.check(self.member(kind=kind) + bytes(1024))
+        with self.assertRaises(ValueError):
+            self.check(self.member(link='outside') + bytes(1024))
+
+    def test_reject_paths_duplicate_member_mode_content_checksum_and_trailing_payload(self):
+        for raw in [self.member(name='../escape'), self.member(name='/build/file'),
+                    self.member(name='C:/build/file'), self.member(name='build\\file'),
+                    self.member(name='build//file'), self.member(name='build/file:stream'),
+                    self.member() * 2, self.member(mode=0o755), self.member(data=b'changed'),
+                    b'X' + self.member()[1:], self.member() + bytes(1024) + b'trailing']:
+            with self.assertRaises(ValueError):
+                self.check(raw + bytes(1024))
+        with self.assertRaises(ValueError):
+            self.check(self.member() + bytes(1024), limit=1000)
+        with self.assertRaises(ValueError):
+            self.check(self.member() + bytes(512))
+        with self.assertRaises(ValueError):
+            self.check(bytes(1024))
+
+    def pax_record(self, key, value):
+        body = key + b'=' + value + b'\n'
+        size = len(body) + 2
+        while len(str(size)) + 1 + len(body) != size:
+            size = len(str(size)) + 1 + len(body)
+        return str(size).encode() + b' ' + body
+
+    def test_pax_override_allows_truncated_utf8_header_stub(self):
+        pax = self.pax_record(b'path', b'build/file')
+        header = bytearray(self.member())
+        header[:100] = (b'build/' + b'x' * 92 + b'\xe6\x97')
+        header[148:156] = b'        '
+        header[148:156] = ('%06o\0 ' % sum(header[:512])).encode()
+        raw = self.member(name='PaxHeaders/file', data=pax, kind=tarfile.XHDTYPE) + header + bytes(1024)
+        self.assertEqual(self.check(raw)['membersVerified'], 1)
+
+    def test_bounded_pax_path_and_times_only(self):
+        pax = self.pax_record(b'path', b'build/file') + self.pax_record(b'mtime', b'123.456')
+        raw = self.member(name='PaxHeaders/file', data=pax, kind=tarfile.XHDTYPE) + self.member(name='ignored') + bytes(1024)
+        self.assertEqual(self.check(raw)['paxPayloadBytes'], len(pax))
+        for key in (b'GNU.sparse.map', b'SCHILY.filetype', b'linkpath', b'size', b'unknown'):
+            with self.assertRaises(ValueError):
+                lab.archive_pax(self.pax_record(key, b'1'))
+        for raw in (b'999999999999999999 x=1\n', b'0 x=1\n', b'9 path=x',
+                    self.pax_record(b'mtime', b'nan'), self.pax_record(b'path', b'x') * 2,
+                    self.pax_record(b'mtime', b'1') * 2):
+            with self.assertRaises(ValueError):
+                lab.archive_pax(raw)
+        # Refuse huge PAX size before any read/allocation of its payload.
+        info = tarfile.TarInfo('PaxHeaders/file')
+        info.type, info.size = tarfile.XHDTYPE, lab.ARCHIVE_PAX_BYTES + 1
+        stream = io.BytesIO(info.tobuf(format=tarfile.USTAR_FORMAT))
+        with self.assertRaises(ValueError):
+            lab.archive_validate_stream(stream, self.expected(), 1024 * 1024)
+        self.assertEqual(stream.tell(), 512)
+        with self.assertRaises(ValueError):
+            self.check(self.member(data=pax, kind=tarfile.XHDTYPE) + bytes(1024))
+
+
+class RealArchiveFixtureTests(unittest.TestCase):
+    setUp = ArchiveTests.setUp
+    snapshot = ArchiveTests.snapshot
+    @unittest.skipUnless(sys.platform == 'linux' and shutil.which('zstd') and shutil.which('tar'),
+                         'real Linux GNU tar/zstd fixture requires both tools')
+    def test_real_streaming_roundtrip_preserves_large_files_long_pax_names_and_modes(self):
+        try:
+            self.check_streaming()
+        except Exception:
+            raise AssertionError('Offline streaming archive fixture failed; details withheld.') from None
+
+    @unittest.skipUnless(sys.platform == 'linux' and shutil.which('zstd') and shutil.which('tar'),
+                         'real Linux GNU tar/zstd fixture requires both tools')
+    def test_full_pilot_accounting_deadline_and_cleanup(self):
+        report = lab.archive_report()
+        plan = {'roots': [self.modules, self.build], 'key': 'synthetic-exact-key',
+                'platform': 'linux-fixture', 'source': {'fixture': 'generic'}}
+        with patch.dict(os.environ, {'CACHE_HIT': 'true', 'CACHE_MATCHED_KEY': plan['key'],
+                'RUNNER_TEMP': str(self.root), 'ImageVersion': '20260101.1'}), \
+                patch.object(lab.collector, 'source_inventory', return_value=plan['source']):
+            try:
+                lab.measure_archives(plan, report)
+            except Exception:
+                raise AssertionError('Offline archive pilot fixture failed; details withheld.') from None
+        self.assertEqual(len(report['samples']), 6)
+        self.assertEqual([row['object'] for row in report['samples']],
+                         [name for order in lab.ARCHIVE_ORDERS for name in order])
+        self.assertEqual(len(report['blocks']), 2)
+        self.assertTrue(report['originalContentIdentityAndMembershipUnchanged'])
+        self.assertTrue(report['toolExecutableIdentityUnchanged'])
+        self.assertLess(len(json.dumps(report)), lab.ARCHIVE_RESULT_BYTES)
+        self.assertFalse(list(self.root.glob('soba-cache-archive-*')))
+        for private in (str(self.root), 'ordinary.go', 'program', 'sha256'):
+            self.assertNotIn(private, json.dumps(report))
+
+    def check_streaming(self):
+        # Synthetic only: no source checkout or restored native cache bytes.
+        longdir = self.modules / ('long-' + 'x' * 90)
+        longdir.mkdir()
+        large = longdir / ('file-' + 'y' * 90)
+        large.write_bytes(random.Random(0).randbytes(2 * 1024 ** 2 + 256))  # > 2 MiB, not a tiny USTAR fixture.
+        large.chmod(0o444)
+        (self.modules / ('日本語' * 24)).write_bytes(b'generic unicode-name fixture')
+        (self.modules / 'ordinary.go').chmod(0o444)
+        before = self.snapshot()
+        tools = lab.archive_tools('linux-fixture')
+        private = self.root / 'private'
+        private.mkdir()
+        env = dict(os.environ, GOTMPDIR=str(private), SOBALINK_ARCHIVE_SPEC=str(private / 'spec.json'))
+        records, versions = [], {}
+        for name in lab.ARCHIVE_OBJECTS:
+            rows = lab.archive_projection(before, name)
+            lab.archive_stage(rows, private / 'stage', self.deadline)
+            (private / 'manifest.bin').write_bytes(b''.join(n.encode('utf-8') + b'\0' for n in rows))
+            spec = {'private': str(private), 'tools': tools, 'streamBound': lab.archive_stream_bound(rows),
+                    'expected': {n: {k: r[k] for k in ('kind', 'size', 'mode', 'sha256') if k in r} for n, r in rows.items()}}
+            phases = {}
+            for role in ('tar', 'pack', 'unpack'):
+                raw = lab.archive_capture('archive_' + role + '_version', env, spec, self.deadline, phases)
+                versions[role] = lab.archive_version(raw, role)
+            lab.archive_capture('archive_pack', env, spec, self.deadline, phases)
+            packed = private / 'cache.tzst'
+            lab.require(packed.is_file() and packed.stat().st_size > 0)
+            raw = lab.archive_capture('archive_validate', env, spec, self.deadline, phases)
+            validated = json.loads(raw)
+            lab.require(validated['membersVerified'] == len(rows))
+            lab.require(validated['filePayloadBytes'] == lab.archive_totals(rows)['payloadBytes'])
+            (private / 'destination').mkdir()
+            lab.archive_capture('archive_extract', env, spec, self.deadline, phases)
+            lab.archive_verify_destination(private / 'destination', rows, self.deadline)
+            lab.require(self.snapshot() == before)
+            records.append({'object': name, 'payload': lab.archive_totals(rows), 'compressedBytes': packed.stat().st_size,
+                            'archiveValidation': validated, 'phases': phases})
+            lab.archive_remove(private / 'destination')
+            lab.archive_remove(private / 'stage')
+            packed.unlink()
+            (private / 'manifest.bin').unlink()
+        lab.require(self.snapshot() == before)
+        (private / 'spec.json').unlink()
+        private.rmdir()
+        print(json.dumps({'scope': 'linux-synthetic-streaming-mechanics-only',
+                          'nativeCacheMeasurement': False, 'sourceContentUnchanged': True, 'versions': versions, 'objects': records}))
 
 
 if __name__ == '__main__':

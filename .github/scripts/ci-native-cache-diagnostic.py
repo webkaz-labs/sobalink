@@ -2,7 +2,7 @@
 """Restore-only native cache diagnostics. Never native/release acceptance.
 
 Only fixed trusted-main objects are restored. Existing restored roots are never
-modified. Owned private copies compare shared and separately warm build caches;
+modified. Archive pilots use original snapshots; the older warm probe is retained;
 no cache namespace is written and no raw output or object content is exported.
 """
 from collections import Counter
@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
@@ -134,6 +135,8 @@ def fixed_command(phase):
 
 
 def owned_child(phase):
+    if phase in ARCHIVE_BOUNDS:
+        return archive_owned(phase)
     if phase not in BOUNDS or sys.platform not in ('win32', 'darwin') or sys.stdin.buffer.read(1) != b'G':
         return 126
     command = fixed_command(phase)
@@ -177,9 +180,14 @@ def capture(phase, env):
         process.stdin.write(b'G')
         process.stdin.close()
         status = 'completed'
-        deadline = start + BOUNDS[phase]
+        deadline = start + (ARCHIVE_BOUNDS[phase] if phase in ARCHIVE_BOUNDS else BOUNDS[phase])
+        if phase in ARCHIVE_BOUNDS:
+            deadline = min(deadline, float(env['SOBALINK_ARCHIVE_DEADLINE']))
         observe = job.observe if posix else process.poll
         while (code := observe()) is None:
+            if phase in ARCHIVE_BOUNDS and archive_budget_exceeded(env):
+                status = 'artifact_limit'
+                break
             if shutil.disk_usage(env['GOTMPDIR']).free < MIN_FREE_BYTES:
                 status = 'disk_headroom'
                 break
@@ -627,11 +635,614 @@ def measure(plan, report):
     require(plan['source'] == collector.source_inventory())
 
 
+# Archive measurements use original restored roots, never the adapted warm seed.
+# Only owned generated archives are accepted. The relative-prefix GNU POSIX/PAX
+# format deliberately differs from actions/cache's absolute-path (-P) format.
+ARCHIVE_OBJECTS = ('combined', 'unit-bundle', 'modules', 'build', 'backend', 'companion')
+ARCHIVE_PILOT = ('combined', 'unit-bundle', 'companion')
+ARCHIVE_ORDERS = (ARCHIVE_PILOT, tuple(reversed(ARCHIVE_PILOT)))
+ARCHIVE_POLICIES = {
+    'A': (('combined',), ('combined',), ('combined',)),
+    'H': (('combined', 'unit-bundle'), ('unit-bundle',), ('combined',)),
+    'R': (('modules', 'build'), ('modules', 'build'), ('modules', 'build')),
+    'F': (('modules', 'backend', 'companion'), ('modules', 'backend'),
+          ('modules', 'backend', 'companion')),
+    'Q': (('unit-bundle', 'companion'), ('unit-bundle',), ('unit-bundle', 'companion')),
+}
+ARCHIVE_BOUNDS = {'archive_tar_version': 15, 'archive_pack_version': 15,
+                  'archive_unpack_version': 15, 'archive_pack': 240,
+                  'archive_validate': 240, 'archive_extract': 240}
+ARCHIVE_SECONDS = 32 * 60
+ARCHIVE_MAX_BYTES = 16 * 1024 ** 3
+ARCHIVE_MAX_FILE_BYTES = 4 * 1024 ** 3
+ARCHIVE_MAX_SPEC_BYTES = 256 * 1024 ** 2
+ARCHIVE_RESULT_BYTES = 256 * 1024
+ARCHIVE_NAME_BYTES = 1024
+ARCHIVE_NAME_TOTAL_BYTES = 32 * 1024 ** 2
+ARCHIVE_PAX_BYTES = 8192
+ARCHIVE_RESERVE_BYTES = 2 * 1024 ** 3
+ARCHIVE_ACTION = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+ARCHIVE_RESERVED = re.compile(r'(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|CLOCK\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?\Z', re.I)
+
+
+def archive_tick(deadline):
+    require(time.monotonic() < deadline)
+
+
+def archive_name(name):
+    require(isinstance(name, str) and 0 < len(name.encode('utf-8')) <= ARCHIVE_NAME_BYTES
+            and not any(ord(c) < 32 or ord(c) == 127 or c in '\\:' for c in name)
+            and not name.startswith(('/', '-')))
+    require(all(part not in ('', '.', '..') and not part.endswith(('.', ' '))
+                and not ARCHIVE_RESERVED.fullmatch(part) for part in name.split('/')))
+    # Apply the same cross-platform naming contract on every target.
+    require(unicodedata.normalize('NFC', name) == name)
+    return name
+
+
+def archive_identity(info):
+    require(not (getattr(info, 'st_file_attributes', 0) & 0x400))  # Windows reparse point.
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns, info.st_nlink, getattr(info, 'st_file_attributes', 0))
+
+
+def archive_hash(path, deadline, expected=None, limit=None):
+    limit = ARCHIVE_MAX_FILE_BYTES if limit is None else limit
+    before = path.lstat()
+    identity = archive_identity(before)
+    require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
+            and before.st_size <= limit)
+    if expected is not None:
+        require(identity == expected)
+    digest, count = hashlib.sha256(), 0
+    with path.open('rb') as stream:
+        require(archive_identity(os.fstat(stream.fileno())) == identity)
+        while block := stream.read(1024 * 1024):
+            archive_tick(deadline)
+            count += len(block)
+            require(count <= before.st_size)
+            digest.update(block)
+        require(archive_identity(os.fstat(stream.fileno())) == identity)
+    require(count == before.st_size and archive_identity(path.lstat()) == identity)
+    return digest.hexdigest()
+
+
+def archive_snapshot(roots, deadline):
+    """Hash one idle snapshot including empty directories; never export names/IDs.
+
+    Not a sandbox against a hostile concurrent writer. Changed identities,
+    content, directory membership, hardlinks, symlinks and reparse points fail.
+    """
+    require(set(roots) == {'modules', 'build'})
+    paths = [Path(p) for p in roots.values()]
+    for p in paths:
+        require(p.is_absolute() and not p.is_symlink() and p.resolve() == p)
+    require(paths[0] != paths[1] and paths[0] not in paths[1].parents and paths[1] not in paths[0].parents)
+    result, seen, total, name_bytes = {}, set(), 0, 0
+    for label, root in roots.items():
+        pending = [(root, label)]
+        while pending:
+            archive_tick(deadline)
+            path, name = pending.pop()
+            archive_name(name)
+            name_bytes += len(name.encode('utf-8')) + 1
+            require(name_bytes <= ARCHIVE_NAME_TOTAL_BYTES)
+            require(name.casefold() not in seen and len(result) < MAX_ENTRIES)
+            seen.add(name.casefold())
+            info = path.lstat()
+            identity = archive_identity(info)
+            require(stat.S_IMODE(info.st_mode) & ~0o777 == 0)
+            row = {'kind': 'directory' if stat.S_ISDIR(info.st_mode) else 'file',
+                   'size': 0, 'mode': stat.S_IMODE(info.st_mode), 'identity': identity,
+                   'source': path, 'category': 'directory'}
+            if row['kind'] == 'directory':
+                children = []
+                with os.scandir(path) as iterator:
+                    for child in iterator:
+                        require(len(result) + len(pending) + len(children) < MAX_ENTRIES)
+                        children.append((Path(child.path), name + '/' + child.name))
+                pending.extend(sorted(children, reverse=True))
+            else:
+                require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+                total += info.st_size
+                require(total <= ARCHIVE_MAX_BYTES)
+                row.update(size=info.st_size, sha256=archive_hash(path, deadline, identity),
+                           category=category(path) if label == 'build' else 'module_data')
+            require(archive_identity(path.lstat()) == identity)
+            result[name] = row
+    return dict(sorted(result.items()))
+
+
+def archive_projection(snapshot, object_name):
+    require(object_name in ARCHIVE_OBJECTS)
+    result = {}
+    for name, row in snapshot.items():
+        module = name == 'modules' or name.startswith('modules/')
+        selected = (object_name == 'combined'
+            or object_name == 'unit-bundle' and (module or row['category'] != 'go1.27.3_package_archive')
+            or object_name == 'modules' and module
+            or object_name == 'build' and not module
+            or object_name == 'backend' and not module and row['category'] != 'go1.27.3_package_archive'
+            or object_name == 'companion' and not module and row['category'] != 'go1.27.1_package_archive')
+        if not selected:
+            continue
+        if not module and object_name in ('unit-bundle', 'backend', 'companion'):
+            prefix = 'companion' if object_name == 'companion' else 'backend'
+            name = prefix + name[len('build'):]
+        result[archive_name(name)] = row
+    return result
+
+
+def archive_totals(rows):
+    return {'files': sum(row['kind'] == 'file' for row in rows.values()),
+            'directories': sum(row['kind'] == 'directory' for row in rows.values()),
+            'payloadBytes': sum(row['size'] for row in rows.values())}
+
+
+def archive_stream_bound(rows):
+    # One bounded local PAX header plus normal header/padding per member, with
+    # GNU tar's record/trailer padding. No full uncompressed tar is written.
+    return sum(row['size'] for row in rows.values()) + len(rows) * (ARCHIVE_PAX_BYTES + 1536) + 10240
+
+
+def archive_stage(rows, stage, deadline):
+    require(not stage.exists())
+    stage.mkdir()
+    for name, row in rows.items():
+        archive_tick(deadline)
+        source, target = row['source'], stage / name
+        require(archive_identity(source.lstat()) == row['identity'])
+        if row['kind'] == 'directory':
+            target.mkdir()
+        else:
+            digest, count = hashlib.sha256(), 0
+            with source.open('rb') as incoming, target.open('xb') as outgoing:
+                require(archive_identity(os.fstat(incoming.fileno())) == row['identity'])
+                while block := incoming.read(1024 * 1024):
+                    archive_tick(deadline)
+                    count += len(block)
+                    require(count <= row['size'])
+                    outgoing.write(block)
+                    digest.update(block)
+                require(archive_identity(os.fstat(incoming.fileno())) == row['identity'])
+            require(count == row['size'] and digest.hexdigest() == row['sha256'])
+        require(archive_identity(source.lstat()) == row['identity'])
+    # Finalize directories last so read-only module trees remain writable
+    # while staging, then retain their source modes and mtimes for packing.
+    for name, row in sorted(rows.items(), reverse=True):
+        shutil.copystat(row['source'], stage / name, follow_symlinks=False)
+        require(archive_identity(row['source'].lstat()) == row['identity'])
+
+
+def archive_remove(path):
+    # Caller must own the entire tree and have joined every child. Never use
+    # this against the original source, arbitrary archives, or unresolved work.
+    require(path.is_dir() and not path.is_symlink())
+    for directory, subdirs, files in os.walk(path, followlinks=False):
+        for item in [Path(directory), *(Path(directory) / n for n in subdirs + files)]:
+            info = item.lstat()
+            archive_identity(info)
+            require(stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+            item.chmod(stat.S_IMODE(info.st_mode) | stat.S_IWUSR | (stat.S_IXUSR if item.is_dir() else 0))
+    shutil.rmtree(path)
+
+
+def archive_tools(platform):
+    require(platform in ('windows-amd64', 'darwin-arm64', 'linux-fixture'))
+    if platform == 'windows-amd64':
+        # The cache toolkit chooses Git's GNU tar on Windows, not System32's
+        # BSD tar. Fail closed if that installation or its zstd is unavailable.
+        tar = Path(os.environ['ProgramFiles']) / 'Git/usr/bin/tar.exe'
+        names = ('zstd', 'zstd')
+    else:
+        tar = Path(shutil.which('gtar' if platform == 'darwin-arm64' else 'tar') or '')
+        names = ('zstdmt', 'unzstd') if platform == 'darwin-arm64' else ('zstd', 'zstd')
+    paths = [tar, *(Path(shutil.which(n) or '') for n in names)]
+    require(all(p.is_absolute() and p.is_file() for p in paths))
+    return {'tar': str(paths[0]), 'pack': str(paths[1]), 'unpack': str(paths[2]), 'platform': platform}
+
+
+def archive_command(phase, spec):
+    require(phase in ARCHIVE_BOUNDS)
+    tools = spec['tools']
+    if phase.endswith('_version'):
+        role = phase.removeprefix('archive_').removesuffix('_version')
+        return [tools[role], '--version']
+    require(phase in ('archive_pack', 'archive_extract'))
+    private = Path(spec['private'])
+    tar = tools['tar']
+    platform = tools['platform']
+    if phase == 'archive_pack':
+        command = [tar, '--posix', '-cf', (private / 'cache.tzst').as_posix(), '--exclude', 'cache.tzst',
+                   '-C', (private / 'stage').as_posix(), '--null', '--verbatim-files-from', '--no-recursion',
+                   '--files-from', (private / 'manifest.bin').as_posix()]
+        compressor = 'zstdmt' if platform == 'darwin-arm64' else 'zstd -T0'
+    else:
+        command = [tar, '-xf', (private / 'cache.tzst').as_posix(), '-C', (private / 'destination').as_posix(),
+                   '--no-same-owner', '--same-permissions']
+        compressor = 'unzstd' if platform == 'darwin-arm64' else 'zstd -d'
+    if platform == 'windows-amd64':
+        command.append('--force-local')
+    if platform == 'darwin-arm64':
+        command.append('--delay-directory-restore')
+    return command + ['--use-compress-program', compressor]
+
+
+class ArchiveReader:
+    def __init__(self, stream, limit):
+        self.stream, self.limit, self.count = stream, limit, 0
+
+    def read(self, size):
+        require(0 <= size <= 1024 * 1024)
+        data = self.stream.read(size)
+        self.count += len(data)
+        require(self.count <= self.limit)
+        return data
+
+    def exact(self, size):
+        data = self.read(size)
+        require(len(data) == size)
+        return data
+
+
+def archive_octal(raw):
+    require(re.fullmatch(rb'[0-7]+[\0 ]*', raw.lstrip(b' ')))
+    return int(raw.strip(b'\0 '), 8)
+
+
+def archive_pax(raw):
+    # Never feed an attacker-declared size into tarfile's allocating PAX parser.
+    require(len(raw) <= ARCHIVE_PAX_BYTES)
+    result = {}
+    while raw:
+        space = raw.find(b' ')
+        require(0 < space <= 8 and raw[:space].isdigit())
+        count = int(raw[:space])
+        require(space + 3 <= count <= len(raw) and raw[count - 1:count] == b'\n')
+        key, separator, value = raw[space + 1:count - 1].partition(b'=')
+        require(separator and key in (b'path', b'atime', b'ctime', b'mtime') and key not in result)
+        if key == b'path':
+            result[key] = value.decode('utf-8')
+        else:
+            require(re.fullmatch(rb'-?[0-9]{1,20}(?:\.[0-9]{1,20})?', value))
+            result[key] = value
+        raw = raw[count:]
+    return result
+
+
+def archive_mode_matches(mode, row, windows):
+    require(type(mode) is int and mode & ~0o777 == 0)
+    # Git/MSYS tar's executable bits are not Python's Windows mode model.
+    # Verify regular-file read-only semantics there; do not claim ACL/mode identity.
+    return ((row['kind'] == 'directory' or bool(mode & 0o200) == bool(row['mode'] & 0o200))
+            if windows else mode == row['mode'])
+
+
+def archive_validate_stream(stream, expected, limit, windows=False):
+    reader, seen, pending = ArchiveReader(stream, limit), set(), None
+    payload, headers, pax_bytes, padding = 0, 0, 0, 0
+    while True:
+        header = reader.exact(512)
+        if header == bytes(512):
+            require(reader.exact(512) == bytes(512) and pending is None)
+            padding += 1024
+            while block := reader.read(1024 * 1024):
+                require(not any(block))
+                padding += len(block)
+            break
+        headers += 512
+        require(header[257:265] == b'ustar\x0000')
+        checksum = archive_octal(header[148:156])
+        require(checksum == sum(header[:148]) + 8 * 32 + sum(header[156:]))
+        size, mode = archive_octal(header[124:136]), archive_octal(header[100:108])
+        kind = header[156:157]
+        require(kind in (b'0', b'\0', b'5', b'x') and not header[157:257].rstrip(b'\0'))
+        if kind == b'x':
+            require(pending is None and size <= ARCHIVE_PAX_BYTES)
+            pending = archive_pax(reader.exact(size))
+            pax_bytes += size
+        else:
+            prefix = header[345:500].split(b'\0', 1)[0]
+            name = header[:100].split(b'\0', 1)[0]
+            name = ((prefix + b'/') if prefix else b'') + name
+            # GNU tar's short header stub can end mid-codepoint when a long
+            # UTF-8 path has a valid complete PAX override. Do not decode it.
+            name = pending[b'path'] if pending and b'path' in pending else name.decode('utf-8')
+            if kind == b'5':
+                name = name.removesuffix('/')
+            archive_name(name)
+            require(name in expected and name not in seen)
+            row = expected[name]
+            require(archive_mode_matches(mode, row, windows) and size == row['size']
+                    and row['kind'] == ('directory' if kind == b'5' else 'file'))
+            seen.add(name)
+            digest, remaining = hashlib.sha256(), size
+            while remaining:
+                block = reader.exact(min(remaining, 1024 * 1024))
+                digest.update(block)
+                remaining -= len(block)
+            if kind != b'5':
+                require(digest.hexdigest() == row['sha256'])
+            payload += size
+            pending = None
+        pad = (-size) % 512
+        require(reader.exact(pad) == bytes(pad))
+        padding += pad
+    require(seen == set(expected))
+    return {'streamBytes': reader.count, 'filePayloadBytes': payload,
+            'headerBytes': headers, 'paxPayloadBytes': pax_bytes, 'paddingBytes': padding,
+            'membersVerified': len(seen)}
+
+
+def archive_owned(phase):
+    if phase not in ARCHIVE_BOUNDS or sys.stdin.buffer.read(1) != b'G':
+        return 126
+    try:
+        path = Path(os.environ['SOBALINK_ARCHIVE_SPEC'])
+        require(path.is_absolute() and path.stat().st_size <= ARCHIVE_MAX_SPEC_BYTES)
+        spec = json.loads(path.read_bytes())
+        if phase != 'archive_validate':
+            return subprocess.run(archive_command(phase, spec), stdin=subprocess.DEVNULL,
+                                  shell=False, check=False).returncode
+        private = Path(spec['private'])
+        # Entire decompressor/validator remains under the existing owned job.
+        # Drain incrementally, never communicate() an unbounded tar into memory.
+        process = subprocess.Popen([spec['tools']['unpack'], '-d', '-c', '--', str(private / 'cache.tzst')],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, shell=False)
+        try:
+            result = archive_validate_stream(process.stdout, spec['expected'], spec['streamBound'],
+                                             windows=spec['tools']['platform'] == 'windows-amd64')
+            require(process.wait(timeout=10) == 0)
+            print(json.dumps(result))
+            return 0
+        finally:
+            process.stdout.close()
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return 1  # Raw member names, source paths and parser errors stay private.
+
+
+def archive_budget_exceeded(env):
+    archive = Path(env['GOTMPDIR']) / 'cache.tzst'
+    return archive.exists() and archive.stat().st_size > int(env['SOBALINK_ARCHIVE_FILE_BOUND'])
+
+
+def archive_capture(phase, env, spec, deadline, row):
+    archive_tick(deadline)
+    require(phase in ARCHIVE_BOUNDS)
+    path = Path(env['SOBALINK_ARCHIVE_SPEC'])
+    preparing = time.monotonic()
+    raw = json.dumps(spec, separators=(',', ':')).encode('utf-8')
+    require(len(raw) <= ARCHIVE_MAX_SPEC_BYTES)
+    path.write_bytes(raw)
+    preparation = time.monotonic() - preparing
+    process, output = capture(phase, dict(env, SOBALINK_ARCHIVE_DEADLINE=str(deadline),
+        SOBALINK_ARCHIVE_FILE_BOUND=str(spec.get('streamBound', 0) + 64 * 1024 ** 2)))
+    row[phase] = {key: process[key] for key in ('process', 'ownersJoined', 'returncode', 'wallSeconds')}
+    row[phase]['specPreparationSeconds'] = round(preparation, 6)
+    require(process['ownersJoined'] and process['process'] == 'completed')
+    return output
+
+
+def archive_version(raw, role):
+    pattern = (rb'tar \(GNU tar\) ([0-9]+\.[0-9]+(?:\.[0-9]+)?)' if role == 'tar' else
+               rb'(?:Zstandard CLI|zstd command line interface)[^\r\n]{0,80} v([0-9]+\.[0-9]+(?:\.[0-9]+)?)')
+    match = re.search(pattern, raw)
+    require(match is not None)
+    return match.group(1).decode('ascii')
+
+
+def archive_verify_destination(destination, rows, deadline, windows=False):
+    seen = set()
+    pending = [destination]
+    while pending:
+        archive_tick(deadline)
+        directory = pending.pop()
+        with os.scandir(directory) as children:
+            for child in children:
+                path = Path(child.path)
+                name = archive_name(path.relative_to(destination).as_posix())
+                require(name in rows and name not in seen)
+                seen.add(name)
+                row, info = rows[name], path.lstat()
+                archive_identity(info)
+                require(archive_mode_matches(stat.S_IMODE(info.st_mode), row, windows))
+                if row['kind'] == 'directory':
+                    require(stat.S_ISDIR(info.st_mode))
+                    pending.append(path)
+                else:
+                    require(stat.S_ISREG(info.st_mode) and info.st_size == row['size']
+                            and archive_hash(path, deadline) == row['sha256'])
+    require(seen == set(rows))
+
+
+def archive_accounting(projections, samples):
+    result = {}
+    for label, (writer, unit, integration) in ARCHIVE_POLICIES.items():
+        # Unique object lists are intentional. Baseline A's object is shared
+        # with H; M is counted once for F's writer/integration, not once per role.
+        result[label] = {}
+        for role, names in (('writer', writer), ('unit', unit), ('integration', integration)):
+            totals = [archive_totals(projections[name]) for name in names]
+            measured = all(name in samples for name in names)
+            result[label][role] = {'objects': list(names), 'objectCount': len(names),
+                'payloadBytes': sum(value['payloadBytes'] for value in totals),
+                'files': sum(value['files'] for value in totals),
+                'directories': sum(value['directories'] for value in totals),
+                'compressedBytes': sum(samples[n]['compressedBytes'] for n in names) if measured else None,
+                'componentSeconds': sum(samples[n]['phases']['archive_pack' if role == 'writer' else 'archive_extract']['wallSeconds']
+                                        for n in names) if measured else None,
+                'measurement': 'derived-component-sum' if measured else 'unmeasured',
+                'remoteTransferSeconds': None}
+    return result
+
+
+def archive_environment(tools, private):
+    # Ignore inherited compressor/tar knobs so both blocks have the same fixed
+    # profile. Runtime temporary-directory variables are deliberately untouched.
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() not in ('TAR_OPTIONS', 'TAPE', 'POSIXLY_CORRECT')
+           and not key.upper().startswith('ZSTD_')}
+    env.update(GOTMPDIR=str(private), SOBALINK_ARCHIVE_SPEC=str(private / 'spec.json'))
+    env['PATH'] = os.pathsep.join(dict.fromkeys([str(Path(tools[n]).parent) for n in ('pack', 'unpack')])) + os.pathsep + env['PATH']
+    names = ('zstdmt', 'unzstd') if tools['platform'] == 'darwin-arm64' else ('zstd', 'zstd')
+    for role, name in zip(('pack', 'unpack'), names):
+        found = shutil.which(name, path=env['PATH'])
+        require(found is not None and Path(found).resolve() == Path(tools[role]).resolve())
+    return env
+
+
+def measure_archives(plan, report):
+    require(os.environ.get('CACHE_HIT') == 'true' and os.environ.get('CACHE_MATCHED_KEY') == plan['key'])
+    started = time.monotonic()
+    deadline = started + ARCHIVE_SECONDS
+    roots = dict(zip(('modules', 'build'), plan['roots']))
+    before = archive_snapshot(roots, deadline)
+    report['snapshotSeconds'] = round(time.monotonic() - started, 6)
+    report['restored'] = archive_totals(before) | {'match': 'exact', 'source': 'original-restored-roots'}
+    planning = time.monotonic()
+    projections = {name: archive_projection(before, name) for name in ARCHIVE_OBJECTS}
+    report['objects'] = {name: archive_totals(rows) for name, rows in projections.items()}
+    report['planningSeconds'] = round(time.monotonic() - planning, 6)
+    temporary = Path(os.environ['RUNNER_TEMP']).resolve()
+    require(temporary.is_dir() and not temporary.is_symlink())
+    for root in roots.values():
+        require(temporary != root and root not in temporary.parents)
+    # Sequential lifetime: one stage + one compressed archive + one fresh
+    # destination; original roots already consume disk and are not copied again.
+    max_payload = max(archive_totals(projections[n])['payloadBytes'] for n in ARCHIVE_PILOT)
+    max_archive = max(archive_stream_bound(projections[n]) for n in ARCHIVE_PILOT) + 64 * 1024 ** 2
+    required = max_payload + max_archive + ARCHIVE_RESERVE_BYTES
+    report['space'] = {'prepackAdditionalRequiredBytes': required,
+                       'worstCaseCoexistenceBytes': 2 * max_payload + max_archive + ARCHIVE_RESERVE_BYTES,
+                       'extractionAdmission': 'fresh-destination-payload-plus-reserve-after-measured-pack',
+                       'initialFreeBytes': shutil.disk_usage(temporary).free,
+                       'compressedObjectBoundBytes': max_archive, 'diskQuotaEnforced': False}
+    require(report['space']['initialFreeBytes'] >= required)
+    private = Path(tempfile.mkdtemp(prefix='soba-cache-archive-', dir=temporary))
+    require(all(root != private and root not in private.parents and private not in root.parents for root in roots.values()))
+    tools = archive_tools(plan['platform'])
+    env = archive_environment(tools, private)
+    tool_identity = {role: archive_hash(Path(tools[role]).resolve(), deadline) for role in ('tar', 'pack', 'unpack')}
+    spec = {'tools': tools, 'private': str(private)}
+    report['tools'] = {'versions': {}, 'phases': {}, 'cacheAction': ARCHIVE_ACTION, 'cacheToolkitVersion': '6.1.0'}
+    for role in ('tar', 'pack', 'unpack'):
+        raw = archive_capture('archive_' + role + '_version', env, spec, deadline, report['tools']['phases'])
+        report['tools']['versions'][role] = archive_version(raw, role)
+    # Capture hosted image identity only if it matches a closed public format.
+    image = os.environ.get('ImageVersion', '')
+    require(re.fullmatch(r'[0-9]{8}\.[0-9]+(?:\.[0-9]+)?', image))
+    report['runnerImageVersion'] = image
+    report['toolArgumentProfile'] = {'windows-amd64': 'gnu-posix-zstd-T0-force-local',
+        'darwin-arm64': 'gnu-posix-zstdmt-delay-directory-restore',
+        'linux-fixture': 'gnu-posix-zstd-T0-synthetic-only'}[plan['platform']]
+    report['metadataVerification'] = ('windows-file-readonly-not-posix-modes-or-acls'
+        if plan['platform'] == 'windows-amd64' else 'posix-permission-bits-not-acls-or-xattrs')
+    min_free = shutil.disk_usage(private).free
+    report['blocks'] = []
+    for block, order in enumerate(ARCHIVE_ORDERS, 1):
+        measured = {}
+        for object_name in order:
+            archive_tick(deadline)
+            require(shutil.disk_usage(private).free >= required)
+            rows = projections[object_name]
+            row = {'block': block, 'object': object_name, 'position': len(measured) + 1, 'phases': {}}
+            report['samples'].append(row)
+            sample_started = at = time.monotonic()
+            archive_stage(rows, private / 'stage', deadline)
+            row['stagingSeconds'] = round(time.monotonic() - at, 6)
+            at = time.monotonic()
+            (private / 'manifest.bin').write_bytes(b''.join(n.encode('utf-8') + b'\0' for n in rows))
+            expected = {n: {k: r[k] for k in ('kind', 'size', 'mode', 'sha256') if k in r} for n, r in rows.items()}
+            spec.update(expected=expected, streamBound=archive_stream_bound(rows))
+            row['manifestSeconds'] = round(time.monotonic() - at, 6)
+            archive_capture('archive_pack', env, spec, deadline, row['phases'])
+            packed = private / 'cache.tzst'
+            require(packed.stat().st_size <= spec['streamBound'] + 64 * 1024 ** 2)
+            row['compressedBytes'] = packed.stat().st_size
+            # Only this generated file is validated/extracted. Source bytes and
+            # modes, complete membership and bounded PAX framing are all checked.
+            at = time.monotonic()
+            packed_identity = archive_identity(packed.lstat())
+            packed_hash = archive_hash(packed, deadline, packed_identity, max_archive)
+            identity_seconds = time.monotonic() - at
+            raw = archive_capture('archive_validate', env, spec, deadline, row['phases'])
+            validated = json.loads(raw)
+            require(set(validated) == {'streamBytes', 'filePayloadBytes', 'headerBytes', 'paxPayloadBytes', 'paddingBytes', 'membersVerified'}
+                    and all(type(v) is int and v >= 0 for v in validated.values()))
+            row['archiveValidation'] = validated
+            at = time.monotonic()
+            require(archive_hash(packed, deadline, packed_identity, max_archive) == packed_hash)
+            row['archiveIdentityCheckSeconds'] = round(identity_seconds + time.monotonic() - at, 6)
+            require(shutil.disk_usage(private).free >= archive_totals(rows)['payloadBytes'] + ARCHIVE_RESERVE_BYTES)
+            (private / 'destination').mkdir()
+            archive_capture('archive_extract', env, spec, deadline, row['phases'])
+            at = time.monotonic()
+            archive_verify_destination(private / 'destination', rows, deadline,
+                                       windows=plan['platform'] == 'windows-amd64')
+            row['destinationValidationSeconds'] = round(time.monotonic() - at, 6)
+            require(archive_identity(packed.lstat()) == packed_identity)
+            row['destinationContentMetadataAndMembershipVerified'] = True
+            min_free = min(min_free, shutil.disk_usage(private).free)
+            # No finally cleanup: failure/unknown ownership retains private work.
+            at = time.monotonic()
+            archive_remove(private / 'destination')
+            archive_remove(private / 'stage')
+            packed.unlink()
+            (private / 'manifest.bin').unlink()
+            row['cleanupSeconds'] = round(time.monotonic() - at, 6)
+            row['sampleTotalSeconds'] = round(time.monotonic() - sample_started, 6)
+            measured[object_name] = row
+        report['blocks'].append({'block': block, 'order': list(order), 'policies': archive_accounting(projections, measured)})
+    at = time.monotonic()
+    require(archive_snapshot(roots, deadline) == before)
+    require(plan['source'] == collector.source_inventory())
+    report['sourceRevalidationSeconds'] = round(time.monotonic() - at, 6)
+    require(all(archive_hash(Path(tools[role]).resolve(), deadline) == digest for role, digest in tool_identity.items()))
+    report['toolExecutableIdentityUnchanged'] = True
+    report['originalContentIdentityAndMembershipUnchanged'] = True
+    report['space'].update(observedFreeSpaceLowWaterBytes=min_free,
+                         observedFreeSpaceDecreaseBytes=max(0, report['space']['initialFreeBytes'] - min_free),
+                         observation='phase-boundary-filesystem-free-space-not-process-peak')
+    (private / 'spec.json').unlink()
+    private.rmdir()
+    report['elapsedSeconds'] = round(time.monotonic() - started, 6)
+
+
+def archive_report():
+    return {'schema': 3, 'diagnosticPassed': False, 'releaseValidation': False,
+            'remoteCacheWrites': False, 'scope': 'original-snapshot-native-streaming-archive-pilot',
+            'samples': [], 'originalContentIdentityAndMembershipUnchanged': None,
+            'plan': {'blocks': 2, 'orders': [list(order) for order in ARCHIVE_ORDERS],
+                     'objectSamples': 6, 'archiveBudgetSeconds': ARCHIVE_SECONDS,
+                     'measuredPolicies': ['A', 'H', 'Q'], 'unmeasuredPolicies': ['R', 'F'],
+                     'automaticRetries': 0, 'confirmatory': False},
+            'limitations': ['local streaming archive pilot; no candidate remote upload/download or production speed claim',
+                'two forward/reverse blocks on one runner are not confirmatory or a physical cold-disk measurement',
+                'source is the original idle restored snapshot; no Go workload or adapted seed is used',
+                'safe relative prefixes replace absolute -P archive members; not byte-identical production archives',
+                'explicit NUL verbatim nonrecursive member lists and no-same-owner extraction are safety adaptations',
+                'all source directories including empty ones and metadata/unknown objects are retained in each projection',
+                'independent hash/format validation includes an additional decompression pass outside extraction timing',
+                'pre-extraction validation reads the compressed archive and may warm filesystem caches',
+                'writer and consumer policy totals are derived sums of object measurements, not measured job latency',
+                'staging and validation are diagnostic isolation, not production baseline writer costs',
+                'production partition/request/finalization overhead and CI critical path remain unmeasured',
+                'R/F compressed bytes and times remain unmeasured; no linear compressed-size estimate is made',
+                'one stage, compressed object and fresh destination coexist; no uncompressed tar intermediate',
+                'disk admission and polling are conservative headroom checks, not a hard filesystem quota',
+                'source snapshots and paths stay private; uploaded output is bounded fixed-label aggregate JSON',
+                'POSIX permission bits or Windows regular-file read-only semantics are checked; ACLs/xattrs are not validated',
+                'existing pinned compiler fixtures remain required; native workload routing/release acceptance is not established']}
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) == 2 and argv[0] == '--owned':
         return owned_child(argv[1])
-    if argv not in (['plan'], ['measure']):
+    if argv not in (['plan'], ['measure'], ['archive']):
         print('Native cache diagnostic requires its fixed entry point.')
         return 1
     report = {'schema': 2, 'diagnosticPassed': False, 'releaseValidation': False,
@@ -651,6 +1262,8 @@ def main(argv=None):
                   'disk headroom is monitored, not a filesystem quota',
                   'test event accounting fails closed beyond 12 minutes despite the 15-minute command timeout',
                   'no package reproduction, full native coverage or release approval']}
+    if argv == ['archive']:
+        report = archive_report()
     output = None
     try:
         os.umask(0o077)
@@ -662,18 +1275,25 @@ def main(argv=None):
                 print('key=' + plan['key'], file=stream)
             print('Exact trusted-main cache diagnostic admitted.')
             return 0
-        report.update(commit=plan['commit'], baselineCommit=BASE, platform=plan['platform'],
+        report.update(commit=plan['commit'], baselineCommit=BASE, platform=plan['platform'], runner=plan['runner'],
                       toolchains=['go1.27.1', 'go1.27.3'])
         destination = Path(os.environ['RUNNER_TEMP']) / 'soba-native-cache-sanitized'
         destination.mkdir(mode=0o700, exist_ok=False)
         output = destination
-        measure(plan, report)
+        if argv == ['archive']:
+            measure_archives(plan, report)
+        else:
+            measure(plan, report)
         report['diagnosticPassed'] = True
     except (OSError, ValueError, KeyError, RuntimeError):
         report['failure'] = 'diagnostic_did_not_complete'
     finally:
         if output is not None:
-            (output / 'result.json').write_text(json.dumps(report, sort_keys=True, indent=2) + '\n', encoding='utf-8')
+            encoded = json.dumps(report, sort_keys=True, indent=2) + '\n'
+            if len(encoded.encode('utf-8')) > ARCHIVE_RESULT_BYTES:
+                report = {'schema': 3, 'diagnosticPassed': False, 'failure': 'sanitized_output_limit'}
+                encoded = json.dumps(report) + '\n'
+            (output / 'result.json').write_text(encoded, encoding='utf-8')
             with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
                 print('sanitized_ready=true', file=stream)
     print('Native cache diagnostic completed.' if report['diagnosticPassed'] else 'Native cache diagnostic failed; raw diagnostics withheld.')
