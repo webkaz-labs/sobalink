@@ -683,7 +683,38 @@ def archive_name(name):
 def archive_identity(info):
     require(not (getattr(info, 'st_file_attributes', 0) & 0x400))  # Windows reparse point.
     return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
-            info.st_mtime_ns, info.st_ctime_ns, info.st_nlink, getattr(info, 'st_file_attributes', 0))
+            info.st_mtime_ns, info.st_ctime_ns, info.st_nlink, getattr(info, 'st_file_attributes', 0),
+            getattr(info, 'st_birthtime_ns', None))
+
+
+def archive_handle_identity(path_info, handle_info, *, windows=None):
+    """Link an admitted path to its open handle without mixing API semantics.
+
+    CPython Windows lstat can expose creation time as ctime and executable
+    suffix-derived mode bits, while fstat exposes ChangeTime and attribute
+    modes. Compare shared fields across APIs, then retain the COMPLETE raw
+    identities for separate path/path and handle/handle invariance checks.
+    See https://github.com/python/cpython/issues/157671.
+    """
+    windows = sys.platform == 'win32' if windows is None else windows
+    path_identity, handle_identity = archive_identity(path_info), archive_identity(handle_info)
+    require(stat.S_ISREG(handle_info.st_mode) and handle_info.st_nlink == 1)
+    if not windows:
+        require(path_identity == handle_identity)
+        return handle_identity
+    require(path_info.st_ino != 0 and handle_info.st_ino != 0)
+    shared_path, shared_handle = list(path_identity), list(handle_identity)
+    shared_path[2] &= ~0o111
+    shared_handle[2] &= ~0o111
+    births = [getattr(info, 'st_birthtime_ns', None) for info in (path_info, handle_info)]
+    require(all(value is None for value in births) or all(type(value) is int for value in births))
+    if births[0] is not None:
+        shared_path[5], shared_handle[5] = births
+    # Older runtimes without birthtime must still agree on raw ctime. Nothing
+    # else is omitted: device, file ID, type/read-write bits, size, mtime,
+    # link count and attributes must match. Reparse points fail in identity().
+    require(shared_path == shared_handle)
+    return handle_identity
 
 
 def archive_hash(path, deadline, expected=None, limit=None):
@@ -696,13 +727,13 @@ def archive_hash(path, deadline, expected=None, limit=None):
         require(identity == expected)
     digest, count = hashlib.sha256(), 0
     with path.open('rb') as stream:
-        require(archive_identity(os.fstat(stream.fileno())) == identity)
+        opened = archive_handle_identity(before, os.fstat(stream.fileno()))
         while block := stream.read(1024 * 1024):
             archive_tick(deadline)
             count += len(block)
             require(count <= before.st_size)
             digest.update(block)
-        require(archive_identity(os.fstat(stream.fileno())) == identity)
+        require(archive_identity(os.fstat(stream.fileno())) == opened)
     require(count == before.st_size and archive_identity(path.lstat()) == identity)
     return digest.hexdigest()
 
@@ -791,20 +822,21 @@ def archive_stage(rows, stage, deadline):
     for name, row in rows.items():
         archive_tick(deadline)
         source, target = row['source'], stage / name
-        require(archive_identity(source.lstat()) == row['identity'])
+        before = source.lstat()
+        require(archive_identity(before) == row['identity'])
         if row['kind'] == 'directory':
             target.mkdir()
         else:
             digest, count = hashlib.sha256(), 0
             with source.open('rb') as incoming, target.open('xb') as outgoing:
-                require(archive_identity(os.fstat(incoming.fileno())) == row['identity'])
+                opened = archive_handle_identity(before, os.fstat(incoming.fileno()))
                 while block := incoming.read(1024 * 1024):
                     archive_tick(deadline)
                     count += len(block)
                     require(count <= row['size'])
                     outgoing.write(block)
                     digest.update(block)
-                require(archive_identity(os.fstat(incoming.fileno())) == row['identity'])
+                require(archive_identity(os.fstat(incoming.fileno())) == opened)
             require(count == row['size'] and digest.hexdigest() == row['sha256'])
         require(archive_identity(source.lstat()) == row['identity'])
     # Finalize directories last so read-only module trees remain writable

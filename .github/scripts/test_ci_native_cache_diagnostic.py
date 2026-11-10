@@ -5,6 +5,7 @@ import tempfile
 import time
 import tarfile
 import random
+import stat
 import unittest
 
 import importlib.util
@@ -15,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name('ci-native-cache-diagnostic.py')
@@ -894,6 +896,114 @@ class ArchiveTests(unittest.TestCase):
         packed.write_bytes(b'0123456789')
         self.assertTrue(lab.archive_budget_exceeded({'GOTMPDIR': str(self.root), 'SOBALINK_ARCHIVE_FILE_BOUND': '9'}))
         self.assertFalse(lab.archive_budget_exceeded({'GOTMPDIR': str(self.root), 'SOBALINK_ARCHIVE_FILE_BOUND': '10'}))
+
+
+class ArchiveHandleIdentityTests(unittest.TestCase):
+    FIELDS = ('st_dev', 'st_ino', 'st_mode', 'st_size', 'st_mtime_ns',
+              'st_ctime_ns', 'st_nlink', 'st_file_attributes', 'st_birthtime_ns')
+
+    def info(self, **changes):
+        return SimpleNamespace(**(dict(st_dev=17, st_ino=23, st_mode=stat.S_IFREG | 0o666,
+            st_size=7, st_mtime_ns=31, st_ctime_ns=37, st_nlink=1,
+            st_file_attributes=32, st_birthtime_ns=37) | changes))
+
+    def test_windows_cross_api_semantics_preserve_every_shared_identity_field(self):
+        pathname = self.info(st_mode=stat.S_IFREG | 0o777)
+        handle = self.info(st_ctime_ns=41)
+        self.assertEqual(lab.archive_handle_identity(pathname, handle, windows=True), lab.archive_identity(handle))
+        with self.assertRaises(ValueError):
+            lab.archive_handle_identity(pathname, handle, windows=False)
+        for field in ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_nlink', 'st_file_attributes', 'st_birthtime_ns'):
+            changed = self.info(**(vars(handle) | {field: getattr(handle, field) + 1}))
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                lab.archive_handle_identity(pathname, changed, windows=True)
+        for mode in (stat.S_IFDIR | 0o666, stat.S_IFREG | 0o444, stat.S_IFREG | 0o4666):
+            with self.assertRaises(ValueError):
+                lab.archive_handle_identity(pathname, self.info(st_mode=mode), windows=True)
+        for info in (self.info(st_file_attributes=0x400), self.info(st_ino=0)):
+            with self.assertRaises(ValueError):
+                lab.archive_handle_identity(info, info, windows=True)
+
+    def test_birthtime_capability_is_explicit_and_older_runtime_ctime_remains_checked(self):
+        pathname, handle = self.info(), self.info()
+        del handle.st_birthtime_ns
+        with self.assertRaises(ValueError):
+            lab.archive_handle_identity(pathname, handle, windows=True)
+        del pathname.st_birthtime_ns
+        self.assertEqual(lab.archive_handle_identity(pathname, handle, windows=True), lab.archive_identity(handle))
+        handle.st_ctime_ns += 1
+        with self.assertRaises(ValueError):
+            lab.archive_handle_identity(pathname, handle, windows=True)
+
+    def test_hash_rejects_every_raw_handle_and_path_change_even_with_windows_semantics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'fixture.exe'
+            path.write_bytes(b'payload')
+            pathname, handle = self.info(st_mode=stat.S_IFREG | 0o777), self.info(st_ctime_ns=41)
+            helper = lab.archive_handle_identity
+            with patch.object(lab, 'archive_handle_identity', side_effect=lambda a, b: helper(a, b, windows=True)):
+                for source in ('path', 'handle'):
+                    for field in self.FIELDS:
+                        original = pathname if source == 'path' else handle
+                        changed = self.info(**(vars(original) | {field: getattr(original, field) + 1}))
+                        path_values = [pathname, changed] if source == 'path' else [pathname, pathname]
+                        handle_values = [handle, changed] if source == 'handle' else [handle, handle]
+                        with self.subTest(source=source, field=field), \
+                                patch.object(Path, 'lstat', side_effect=path_values), \
+                                patch.object(lab.os, 'fstat', side_effect=handle_values), self.assertRaises(ValueError):
+                            lab.archive_hash(path, time.monotonic() + 10)
+                with patch.object(Path, 'lstat', return_value=pathname), \
+                        patch.object(lab.os, 'fstat', return_value=handle):
+                    self.assertEqual(lab.archive_hash(path, time.monotonic() + 10), hashlib.sha256(b'payload').hexdigest())
+
+    def test_staging_uses_shared_comparison_and_keeps_full_handle_revalidation(self):
+        source = inspect.getsource(lab.archive_stage)
+        self.assertIn("require(archive_identity(before) == row['identity'])", source)
+        self.assertIn('opened = archive_handle_identity(before, os.fstat(incoming.fileno()))', source)
+        self.assertIn('require(archive_identity(os.fstat(incoming.fileno())) == opened)', source)
+        self.assertIn("require(archive_identity(source.lstat()) == row['identity'])", source)
+        self.assertIn("digest.hexdigest() == row['sha256']", source)
+
+    def test_synthetic_native_identity_reports_only_field_equalities(self):
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary).resolve() / 'fixture.exe'
+                path.write_bytes(b'before!')
+                time.sleep(0.02)
+                path.write_bytes(b'payload')
+                pathname = path.lstat()
+                with path.open('rb') as stream:
+                    handle = os.fstat(stream.fileno())
+                    available = all(hasattr(info, 'st_birthtime_ns') for info in (pathname, handle))
+                    # Emit fixed boolean comparisons BEFORE compatibility checks
+                    # so a new native mismatch remains diagnosable without IDs.
+                    result = {'schema': 1, 'scope': 'synthetic-path-handle-identity-only',
+                        'pythonVersion': list(sys.version_info[:3]),
+                        'platform': sys.platform if sys.platform in ('linux', 'darwin', 'win32') else 'other',
+                        'rawFieldEqual': {field: getattr(pathname, field, None) == getattr(handle, field, None) for field in self.FIELDS},
+                        'birthtimeAvailable': available}
+                    print(json.dumps(result))
+                    opened = lab.archive_handle_identity(pathname, handle)
+                    lab.require(stream.read() == b'payload')
+                    lab.require(lab.archive_identity(os.fstat(stream.fileno())) == opened)
+                lab.require(lab.archive_identity(path.lstat()) == lab.archive_identity(pathname))
+        except Exception:
+            raise AssertionError('Synthetic file identity fixture failed; details withheld.') from None
+
+    def test_native_field_diagnostic_survives_failure_without_raw_values(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+                patch.object(lab, 'archive_handle_identity', side_effect=ValueError('private-identity-sentinel')), \
+                self.assertRaisesRegex(AssertionError, 'Synthetic file identity fixture failed; details withheld.'):
+            self.test_synthetic_native_identity_reports_only_field_equalities()
+        record = json.loads(output.getvalue())
+        self.assertEqual(set(record), {'schema', 'scope', 'pythonVersion', 'platform', 'rawFieldEqual', 'birthtimeAvailable'})
+        self.assertEqual(set(record['rawFieldEqual']), set(self.FIELDS))
+        self.assertTrue(all(type(value) is bool for value in record['rawFieldEqual'].values()))
+        self.assertTrue(all(type(value) is int for value in record['pythonVersion']))
+        self.assertNotIn('private-identity-sentinel', output.getvalue())
+        self.assertNotIn('fixture.exe', output.getvalue())
+
 
 
 class ArchiveFormatTests(unittest.TestCase):
